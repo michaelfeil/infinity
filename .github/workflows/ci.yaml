@@ -1,0 +1,45 @@
+---
+name: libs/infinity_emb CI
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+    - main
+    - dev
+  pull_request:
+    branches:
+    - main
+    - dev
+  workflow_dispatch:  # Allows to trigger the workflow manually in GitHub UI
+
+# If another push to the same PR or branch happens while this workflow is still running,
+# cancel the earlier run in favor of the next run.
+#
+# There's no point in testing an outdated version of the code. GitHub only allows
+# a limited number of job runners to be active at the same time, so it's better to cancel
+# pointless jobs early so that more useful jobs can run sooner.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  POETRY_VERSION: "1.6.1"
+  WORKDIR: "libs/infinity_emb"
+
+jobs:
+  lint:
+    uses:
+      ./.github/workflows/linting.yaml
+    with:
+      working-directory: libs/infinity_emb
+    secrets: inherit
+
+  test:
+    uses:
+      ./.github/workflows/test.yaml
+    with:
+      working-directory: libs/infinity_emb
+      upload_coverage: true
+    secrets: inherit

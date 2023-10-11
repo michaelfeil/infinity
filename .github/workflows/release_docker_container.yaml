@@ -1,0 +1,73 @@
+name: release_docker
+
+on:
+  workflow_call:
+    inputs:
+      dockerfile:
+        required: true
+        type: string
+        description: "Path to the Dockerfile to build"
+      image:
+        required: true
+        type: string
+        description: "Name of the image to build"
+      context:
+        required: false
+        type: string
+        description: "Path to the build context"
+        default: "./libs/infinity_emb"
+
+env:
+  TEST_TAG: ${{ inputs.image }}:test
+  LATEST_TAG: ${{ inputs.image }}:latest
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove unnecessary files
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Get git tag
+        uses: actions-ecosystem/action-get-latest-tag@v1
+        id: get-latest-tag
+      - name: Set docker tag
+        env:
+          VERSION: ${{ steps.get-latest-tag.outputs.tag }}
+        run: |
+          echo "VERSION_TAG=${{ inputs.image }}:${VERSION#v}" >> $GITHUB_ENV
+          echo $VERSION_TAG
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      # - name: Build for Test
+      #   uses: docker/build-push-action@v5
+      #   with:
+      #     context: ${{ inputs.context }}
+      #     file: ${{ inputs.dockerfile }}
+      #     load: true
+      #     tags: ${{ env.TEST_TAG }}
+      # - name: Test
+      #   # show that at least --help command is running
+      #   run: |
+      #     docker run --rm ${{ env.TEST_TAG }} --help
+      - name: Build and Push to Docker Hub
+        uses: docker/build-push-action@v5
+        with:
+          context:  ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          # We can only build for the intersection of platforms supported by
+          # QEMU and base python image, for now build only for
+          # linux/amd64 and linux/arm64
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ env.LATEST_TAG }},${{ env.VERSION_TAG }}
+          push: true

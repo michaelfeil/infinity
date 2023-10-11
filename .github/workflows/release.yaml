@@ -1,0 +1,27 @@
+---
+name: libs/infinity_emb Release
+
+on:
+  release:
+    types: [published]
+
+env:
+  POETRY_VERSION: "1.6.1"
+  WORKDIR: "libs/infinity_emb"
+
+jobs:
+  docker-container-push:
+    uses:
+      ./.github/workflows/release_docker_container.yaml
+    with:
+      # working-directory: libs/infinity_emb
+      dockerfile: libs/infinity_emb/Dockerfile
+      image: michaelf34/infinity
+    secrets: inherit
+
+  # push-to-pypy:
+  #   uses:
+  #     ./.github/workflows/pypi_release.yaml
+  #   with:
+  #     working-directory: libs/infinity_emb
+  #   secrets: inherit
