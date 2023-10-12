@@ -77,7 +77,6 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         self._infinity_tokenizer = copy.deepcopy(self._first_module().tokenizer)
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
-        
         features = self.tokenize(sentences)
 
         return features
@@ -86,10 +85,10 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         """
         Computes sentence embeddings
         """
-         
+
         with torch.inference_mode():
             device = self._target_device
-            features = util.batch_to_device(features, device)     
+            features = util.batch_to_device(features, device)
             out_features = self.forward(features)["sentence_embedding"]
 
         return out_features

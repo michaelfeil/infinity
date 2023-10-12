@@ -11,7 +11,6 @@ import torch
 from infinity_emb.inference import BatchHandler
 from infinity_emb.inference.models import (
     SentenceTransformerPatched,
-    get_lengths_with_tokenize,
 )
 
 BATCH_SIZE = 32

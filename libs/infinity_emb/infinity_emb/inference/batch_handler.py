@@ -142,7 +142,9 @@ class BatchHandler:
         uuid_event = []
         prioqueue = []
 
-        prios, usage = get_lengths_with_tokenize(sentences) #, self.model.tokenize_lengths)
+        prios, usage = get_lengths_with_tokenize(
+            sentences
+        )  # , self.model.tokenize_lengths)
 
         for s, p in zip(sentences, prios):
             inner = EmbeddingResult(sentence=s, event=EventTS(self._threadpool))
