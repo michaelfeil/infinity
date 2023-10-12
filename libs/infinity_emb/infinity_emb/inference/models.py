@@ -77,6 +77,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         self._infinity_tokenizer = copy.deepcopy(self._first_module().tokenizer)
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
+        
         features = self.tokenize(sentences)
 
         return features
@@ -85,23 +86,22 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         """
         Computes sentence embeddings
         """
-        device = self._target_device
-        features = util.batch_to_device(features, device)
-        # move forward
+         
+        with torch.inference_mode():
+            device = self._target_device
+            features = util.batch_to_device(features, device)     
+            out_features = self.forward(features)["sentence_embedding"]
 
-        with torch.no_grad():
-            out_features = self.forward(features)
-
-        return out_features["sentence_embedding"].detach().cpu()
+        return out_features
 
     def encode_post(
         self, out_features: Tensor, normalize_embeddings: bool = True
     ) -> NpEmbeddingType:
-        with torch.no_grad():
-            embeddings = out_features
+        with torch.inference_mode():
+            embeddings = out_features.detach().cpu()
             if normalize_embeddings:
                 embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-            embeddings_out: np.ndarray = embeddings.cpu().numpy()
+            embeddings_out: np.ndarray = embeddings.numpy()
 
         return embeddings_out
 

@@ -117,7 +117,7 @@ class BatchHandler:
         self._queue_prio = CustomPrioQueue()
         self._result_store = ResultKVStore()
         self._feature_queue: queue.Queue = queue.Queue(4)
-        self._postprocess_queue: queue.Queue = queue.Queue(5)
+        self._postprocess_queue: queue.Queue = queue.Queue(4)
         self.max_batch_size = max_batch_size
         self.model = model
         self.max_queue_wait = max_queue_wait
@@ -266,7 +266,7 @@ class BatchHandler:
                 except queue.Empty:
                     # 7 ms, assuming this is below
                     # 3-50ms for inference on avg.
-                    await asyncio.sleep(7e-3)
+                    await asyncio.sleep(5e-3)
                     continue
                 embed, batch = post_batch
                 embeddings = self.model.encode_post(embed).tolist()

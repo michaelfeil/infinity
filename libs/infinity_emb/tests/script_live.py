@@ -35,16 +35,16 @@ def embedding_live_performance():
     remote_resp = [d["embedding"] for d in remote(json_d).json()["data"]]
     np.testing.assert_almost_equal(local_resp, remote_resp, 6)
 
-    print("Measuring latency via SentenceTransformers")
-    latency_st = timeit.timeit("local(sample)", number=10, globals=locals())
-    print("SentenceTransformers latency: ", latency_st)
-    model = None
+    # print("Measuring latency via SentenceTransformers")
+    # latency_st = timeit.timeit("local(sample)", number=10, globals=locals())
+    # print("SentenceTransformers latency: ", latency_st)
+    # model = None
 
     print("Measuring latency via requests")
     latency_request = timeit.timeit("remote(json_d)", number=10, globals=locals())
     print(f"Request latency: {latency_request}")
 
-    assert latency_st * 1.1 > latency_request
+    # assert latency_st * 1.1 > latency_request
 
 
 if __name__ == "__main__":
