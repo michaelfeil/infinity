@@ -37,6 +37,7 @@ In this gif below, we use [sentence-transformers/all-MiniLM-L6-v2](https://huggi
 ![](docs/demo_v0_0_1.gif)
 
 # Getting started
+
 Install via pip
 ```bash
 pip install infinity-emb[all]
@@ -68,13 +69,40 @@ infinity_emb --help
 ```
 
 ### or launch the CLI using a pre-built docker container
-Get the Python
+
 ```bash
 model=sentence-transformers/all-MiniLM-L6-v2
 port=8080
 docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
 ```
 The download path at runtime, can be controlled via the environment variable `SENTENCE_TRANSFORMERS_HOME`.
+
+### Launch FAQ:
+<details>
+  <summary>What are embedding models?</summary>
+  Embedding models can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. 
+  And it also can be used in vector databases for LLMs. 
+  
+  The most know architecture are encoder-only transformers such as BERT, and most popular implementation include [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/).
+</details>
+
+<details>
+  <summary>What models are supported?</summary>
+  
+  All models of the sentence transformers org are supported https://huggingface.co/sentence-transformers / sbert.net. 
+  LLM's like LLAMA2-7B are not intended for deployment.
+
+  With the command `--engine torch` the model must be compatible with https://github.com/UKPLab/sentence-transformers/.
+    - only models from Huggingface are supported.
+  
+  With the command `--engine ctranslate2`
+    - only `BERT` models are supported.
+    - only models from Huggingface are supported.
+  
+  For the latest trends, you might want to check out one of the folloing models.
+    https://huggingface.co/spaces/mteb/leaderboard
+    
+</details>
 
 # Documentation
 After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:8080/docs`.
