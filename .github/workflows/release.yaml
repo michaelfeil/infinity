@@ -1,5 +1,5 @@
 ---
-name: libs/infinity_emb Release
+name: libs/infinity_emb - Release docker
 
 on:
   release:

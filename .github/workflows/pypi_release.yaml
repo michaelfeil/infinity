@@ -1,5 +1,5 @@
 ---
-name: libs/infinity_emb -> Publish to pypi
+name: libs/infinity_emb - Release Publish to pypi
 
 on:
   release:
@@ -11,13 +11,16 @@ env:
 
 jobs:
   build:
-    # Disallow publishing from branches that aren't `master`.
     defaults:
       run:
         working-directory: ${{ env.WORKDIR }}
     runs-on: ubuntu-latest
     permissions:
-      # IMPORTANT: this permission is mandatory for trusted publishing
+      # This permission is used for trusted publishing:
+      # https://blog.pypi.org/posts/2023-04-20-introducing-trusted-publishers/
+      #
+      # Trusted publishing has to also be configured on PyPI for each package:
+      # https://docs.pypi.org/trusted-publishers/adding-a-publisher/
       id-token: write
     steps:
       - uses: actions/checkout@v3
@@ -27,21 +30,18 @@ jobs:
         with:
           python-version: "3.10"
           poetry-version: ${{ env.POETRY_VERSION }}
-          working-directory: ${{ inputs.working-directory }}
+          working-directory: ${{ env.WORKDIR }}
           cache-key: release
 
       - name: Build project for distribution
-        shell: bash
         run: poetry build
-      
       - name: Check Version
         id: check-version
         run: |
           echo version=$(poetry version --short) >> $GITHUB_OUTPUT
-          
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: ${{ inputs.working-directory }}/dist/
+          packages-dir: ${{ env.WORKDIR }}/dist/
           verbose: true
           print-hash: true
