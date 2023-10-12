@@ -30,7 +30,7 @@ jobs:
 
       - name: Build project for distribution
         shell: bash
-        run: poetry build --extras all
+        run: poetry build
       
       - name: Check Version
         id: check-version
