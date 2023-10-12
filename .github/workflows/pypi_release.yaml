@@ -9,9 +9,6 @@ env:
   POETRY_VERSION: "1.6.1"
   WORKDIR: "libs/infinity_emb"
 
-env:
-  POETRY_VERSION: "1.6.1"
-
 jobs:
   build:
     # Disallow publishing from branches that aren't `master`.
