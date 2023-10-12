@@ -2,8 +2,8 @@
 Embedding Inference Server - finding TGI for embeddings. Infinity is developed under MIT Licence - https://github.com/michaelfeil/infinity
 
 <!-- PROJECT SHIELDS -->
-![codecov](https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ)
-![CI](https://github.com/michaelfeil/infinity/actions/workflows/ci.yaml/badge.svg)
+[![codecov](https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ)]
+[![CI](https://github.com/michaelfeil/infinity/actions/workflows/ci.yaml/badge.svg)]
 [![Contributors][contributors-shield]][contributors-url]
 [![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]

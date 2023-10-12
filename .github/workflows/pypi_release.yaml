@@ -1,5 +1,5 @@
 ---
-name: Publish to pypi -> libs/infinity_emb
+name: libs/infinity_emb -> Publish to pypi
 
 on:
   release:
@@ -14,7 +14,7 @@ jobs:
     # Disallow publishing from branches that aren't `master`.
     defaults:
       run:
-        working-directory: $WORKDIR
+        working-directory: ${{ env.WORKDIR }}
     runs-on: ubuntu-latest
     permissions:
       # IMPORTANT: this permission is mandatory for trusted publishing
