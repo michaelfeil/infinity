@@ -14,7 +14,7 @@ jobs:
     # Disallow publishing from branches that aren't `master`.
     defaults:
       run:
-        working-directory: ${{ inputs.working-directory }}
+        working-directory: $WORKDIR
     runs-on: ubuntu-latest
     permissions:
       # IMPORTANT: this permission is mandatory for trusted publishing
