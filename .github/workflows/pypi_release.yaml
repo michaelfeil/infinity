@@ -13,6 +13,9 @@ env:
 jobs:
   build:
     # Disallow publishing from branches that aren't `master`.
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -26,7 +29,9 @@ jobs:
           cache-key: release
 
       - name: Build project for distribution
-        run: poetry build
+        shell: bash
+        run: poetry build --extras all
+      
       - name: Check Version
         id: check-version
         run: |
