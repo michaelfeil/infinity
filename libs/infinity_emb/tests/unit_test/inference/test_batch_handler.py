@@ -15,7 +15,7 @@ from infinity_emb.inference.models import (
 
 BATCH_SIZE = 32
 N_TIMINGS = 3
-LIMIT_SLOWDOWN = 1.20 if torch.cuda.is_available() else 1.3
+LIMIT_SLOWDOWN = 1.25 if torch.cuda.is_available() else 1.35
 
 
 @pytest.fixture

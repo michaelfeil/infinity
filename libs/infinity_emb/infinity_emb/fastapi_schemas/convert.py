@@ -1,5 +1,5 @@
-from ..inference.primitives import NpEmbeddingType
-from .pymodels import OpenAIEmbeddingResult
+from infinity_emb.fastapi_schemas.pymodels import OpenAIEmbeddingResult
+from infinity_emb.inference.primitives import NpEmbeddingType
 
 
 def list_embeddings_to_response(

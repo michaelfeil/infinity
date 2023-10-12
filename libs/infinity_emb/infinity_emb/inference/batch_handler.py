@@ -7,15 +7,15 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Union
 
-from ..log_handler import logger
-from .models import BaseTransformer, get_lengths_with_tokenize
-from .primitives import (
+from infinity_emb.inference.models import BaseTransformer, get_lengths_with_tokenize
+from infinity_emb.inference.primitives import (
     EmbeddingResult,
     NpEmbeddingType,
     OverloadStatus,
     PrioritizedQueueItem,
 )
-from .threading_asyncio import EventTS
+from infinity_emb.inference.threading_asyncio import EventTS
+from infinity_emb.log_handler import logger
 
 
 class CustomPrioQueue:
@@ -286,34 +286,3 @@ class BatchHandler:
         self._threadpool.submit(self._preprocess_batch)
         self._threadpool.submit(self._core_batch)
         asyncio.create_task(self._postprocess_batch())
-
-    async def spawn_one_thread(self):
-        """set up the resources in batch"""
-        logger.info("creating batching engine")
-        # self._threadpool.submit(self._preprocess_batch)
-        self._threadpool.submit(self._single_process)
-        asyncio.create_task(self._postprocess_batch())
-
-    def _single_process(self):
-        while not self._shutdown.is_set():
-            # decision to pop a batch
-            batch = self._queue_prio.pop_optimal_batch(self.max_batch_size)
-            if not batch:
-                # not a single sentence available / len=0, wait for more
-                continue
-            # optimal batch has been selected ->
-            # lets tokenize it and move tensors to GPU.
-            sentences = [item.sentence for item in batch]
-            feat = self.model.encode_pre(sentences)
-            embed = self.model.encode_core(feat)
-            while not self._shutdown.is_set():
-                try:
-                    self._postprocess_queue.put((embed, batch), timeout=1)
-                    break
-                except queue.Full:
-                    continue
-
-            # embeddings = self.model.encode_post(embed).tolist()
-            # for i, item in enumerate(batch):
-            #     item.embedding = embeddings[i]
-            # self._result_store.extend(batch)
