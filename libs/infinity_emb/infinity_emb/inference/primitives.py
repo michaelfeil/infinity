@@ -5,7 +5,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from .threading_asyncio import EventTS
+from infinity_emb.inference.threading_asyncio import EventTS
 
 NpEmbeddingType = np.ndarray
 

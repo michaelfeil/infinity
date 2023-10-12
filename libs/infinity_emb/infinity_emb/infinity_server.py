@@ -25,11 +25,13 @@ def create_server(
     batch_size: int = 64,
     engine: models.InferenceEngine = models.InferenceEngine.torch,
     verbose: bool = False,
+    model_warmup=True,
     doc_extra: dict = {},
 ):
     app = FastAPI(
         title=docs.FASTAPI_TITLE,
         summary=docs.FASTAPI_SUMMARY,
+        description=docs.FASTAPI_DESCRIPTION,
         version=infinity_emb.__version__,
         contact=dict(name="Michael Feil"),
         docs_url="/docs",
@@ -46,7 +48,10 @@ def create_server(
         instrumentator.expose(app)
 
         model = select_model_to_functional(
-            model_name_or_path=model_name_or_path, batch_size=batch_size, engine=engine
+            model_name_or_path=model_name_or_path,
+            batch_size=batch_size,
+            engine=engine,
+            model_warmup=model_warmup,
         )
 
         app.tp = concurrent.futures.ThreadPoolExecutor()
@@ -148,6 +153,7 @@ def start_uvicorn(
     port: int = 8001,
     log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
     engine: models.InferenceEngineTypeHint = models.InferenceEngineTypeHint.torch.name,  # type: ignore # noqa
+    model_warmup: bool = True,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
     MIT License; Copyright (c) 2023 Michael Feil
@@ -162,6 +168,7 @@ def start_uvicorn(
         log_level: logging level.
             For high performance, use "info" or higher levels. Defaults to "info".
         engine: framework that should perform inference.
+        model_warmup: perform model warmup before starting the server. Defaults to True.
     """
     engine_load: models.InferenceEngine = models.InferenceEngine[engine.name]
     logger.setLevel(log_level.to_int())
@@ -173,6 +180,7 @@ def start_uvicorn(
         engine=engine_load,
         verbose=log_level.to_int() <= 10,
         doc_extra=dict(host=host, port=port),
+        model_warmup=model_warmup,
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 

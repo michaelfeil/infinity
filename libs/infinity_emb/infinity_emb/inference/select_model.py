@@ -1,17 +1,17 @@
 from time import perf_counter
 
-from ..log_handler import logger
-from .models import BaseTransformer, InferenceEngine
-from .primitives import EmbeddingResult, NpEmbeddingType
+from infinity_emb.inference.models import BaseTransformer, InferenceEngine
+from infinity_emb.inference.primitives import EmbeddingResult, NpEmbeddingType
+from infinity_emb.log_handler import logger
 
 
 def select_model_to_functional(
-    model_name_or_path: str, batch_size: int, engine: InferenceEngine, warmup=True
+    model_name_or_path: str, batch_size: int, engine: InferenceEngine, model_warmup=True
 ):
     logger.info(f"model {model_name_or_path} selected, using engine={engine.value}")
     init_engine = engine.value(model_name_or_path)
 
-    if warmup:
+    if model_warmup:
         # size one
         runtime_check_callable(init_engine, log=False)
         # size one

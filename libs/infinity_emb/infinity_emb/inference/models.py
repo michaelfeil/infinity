@@ -9,8 +9,8 @@ import torch
 from sentence_transformers import SentenceTransformer, util  # type: ignore
 from torch import Tensor
 
-from ..log_handler import logger
-from .primitives import NpEmbeddingType
+from infinity_emb.inference.primitives import NpEmbeddingType
+from infinity_emb.log_handler import logger
 
 __all__ = [
     "InferenceEngine",

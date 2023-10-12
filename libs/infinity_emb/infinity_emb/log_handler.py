@@ -11,8 +11,7 @@ FORMAT = "%(asctime)s %(name)s %(levelname)s: %(message)s"
 logging.basicConfig(
     level="INFO",
     format=FORMAT,
-    datefmt="[%x %X]",
-    handlers=[RichHandler(console=Console(stderr=True))],
+    handlers=[RichHandler(console=Console(stderr=True), show_time=False)],
 )
 
 logger = logging.getLogger("infinity_emb")

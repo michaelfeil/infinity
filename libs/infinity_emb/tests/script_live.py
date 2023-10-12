@@ -5,11 +5,12 @@ import numpy as np
 import requests
 from sentence_transformers import SentenceTransformer
 
-LIVE_URL = "http://localhost:8001/v1"
+LIVE_URL = "http://localhost:8080/v1"
 
 
 def embedding_live_performance():
-    sample = ["This is a test sentence" * 128] * 2048
+    sample = [f"Test count {i} {(list(range(i % (384))))} " for i in range(2048)]
+
     json_d = json.dumps({"input": sample, "model": "model"})
     session = requests.Session()
     req = session.get(f"{LIVE_URL}/models")
@@ -34,17 +35,18 @@ def embedding_live_performance():
     local_resp = local(sample)
     remote_resp = [d["embedding"] for d in remote(json_d).json()["data"]]
     np.testing.assert_almost_equal(local_resp, remote_resp, 6)
+    print("Both methods provide the identical output.")
 
-    # print("Measuring latency via SentenceTransformers")
-    # latency_st = timeit.timeit("local(sample)", number=10, globals=locals())
-    # print("SentenceTransformers latency: ", latency_st)
-    # model = None
+    print("Measuring latency via SentenceTransformers")
+    latency_st = timeit.timeit("local(sample)", number=10, globals=locals())
+    print("SentenceTransformers latency: ", latency_st)
+    model = None
 
     print("Measuring latency via requests")
     latency_request = timeit.timeit("remote(json_d)", number=10, globals=locals())
     print(f"Request latency: {latency_request}")
 
-    # assert latency_st * 1.1 > latency_request
+    assert latency_st * 1.1 > latency_request
 
 
 if __name__ == "__main__":
