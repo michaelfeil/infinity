@@ -4,9 +4,9 @@ Embedding Inference Server - finding TGI for embeddings
 ## Why Infinity:
 Infinity provides the following features:
 - **Fast inference**: The inference server is built on top of [torch](https:) and [ctranslate2](https://github.com/OpenNMT/CTranslate2) under the hood, getting most out of your **CUDA** or **CPU** hardware.
-- **Continous batching**: All new embedding requests are queued while GPU is busy with the previous ones. New requests are served as soon as GPU is ready. Adds only ~2% overhead for large datasets, over static batching.
+- **Dynamic, optimal batching**: New embedding requests are queued while GPU is busy with the previous ones. New requests are squeezed intro your GPU/CPU as soon as ready. 
 - **Correct and tested implementation**: Unit and end-to-end tested. API embeddings are identical to [sentence-transformers](https://github.com/UKPLab/sentence-transformers/) (up to numerical precision). Lets API users create embeddings till infinity and beyond.
-- **Easy to use**: The API is built on top of [FastAPI](https://fastapi.tiangolo.com/) and [Swagger](https://swagger.io/) and is fully documented. See below on how to get started.
+- **Easy to use**: The API is built on top of [FastAPI](https://fastapi.tiangolo.com/), [Swagger](https://swagger.io/) makes it fully documented. API specs are aligned to OpenAI. See below on how to get started.
 
 # Demo:
 A quick demo of launching: [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) with batch-size=2 and sending 3 requests via cURL.

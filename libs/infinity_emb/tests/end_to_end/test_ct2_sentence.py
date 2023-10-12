@@ -97,9 +97,9 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base):
             f"{PREFIX}/embeddings", json=dict(input=inputs, model=MODEL)
         )
 
-    await _post_batch(inputs=dummy_sentences)
+    response = await _post_batch(inputs=dummy_sentences)
 
-    _request_size = batch_size // 2
+    _request_size = int(batch_size * 1.5)
     tasks = [
         _post_batch(inputs=sentences[sl : sl + _request_size])
         for sl in range(0, len(sentences), _request_size)

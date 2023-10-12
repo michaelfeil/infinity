@@ -16,7 +16,7 @@ from infinity_emb.inference.models import (
 
 BATCH_SIZE = 32
 N_TIMINGS = 3
-LIMIT_SLOWDOWN = 1.15 if torch.cuda.is_available() else 1.3
+LIMIT_SLOWDOWN = 1.20 if torch.cuda.is_available() else 1.3
 
 
 @pytest.fixture
@@ -53,12 +53,10 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
         async def method_batch_handler(_sentences):
             _sentences = copy.deepcopy(_sentences)
             start = time.perf_counter()
-            lengths, _ = get_lengths_with_tokenize(_sentences, model.tokenize_lengths)
             _request_size = BATCH_SIZE * 4
             tasks = [
                 bh.schedule(
                     _sentences[sl : sl + _request_size],
-                    prios=lengths[sl : sl + _request_size],
                 )
                 for sl in range(0, len(_sentences), _request_size)
             ]

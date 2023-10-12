@@ -1,3 +1,4 @@
+import copy
 import os
 from abc import ABC, abstractmethod
 from enum import Enum
@@ -70,9 +71,12 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         device = self._target_device
         self.eval()
         self.to(device)
+        # make a copy of the tokenizer,
+        # to be able to could the tokens in another thread
+        # without corrupting the original.
+        self._infinity_tokenizer = copy.deepcopy(self._first_module().tokenizer)
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
-        # features = self._tokenize_actual(sentences)
         features = self.tokenize(sentences)
 
         return features
@@ -81,7 +85,6 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         """
         Computes sentence embeddings
         """
-        # features = self._tokenize_actual(features)
         device = self._target_device
         features = util.batch_to_device(features, device)
         # move forward
@@ -103,28 +106,16 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         return embeddings_out
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
-        fm = self._first_module()
-        tks = fm.tokenizer.batch_encode_plus(
+        tks = self._infinity_tokenizer.batch_encode_plus(
             sentences,
             add_special_tokens=False,
             return_token_type_ids=False,
             return_attention_mask=False,
             return_length=False,
+            max_length=self._infinity_tokenizer.model_max_length,
+            truncation="longest_first",
         ).encodings
         return [len(t.tokens) for t in tks]
-
-    def _tokenize_actual(self, sentences: List[str]):
-        fm = self._first_module()
-        output = fm.tokenizer(
-            sentences,
-            padding=True,
-            truncation="longest_first",
-            return_tensors="pt",
-            max_length=fm.tokenizer.model_max_length,
-            # pad_to_multiple_of=16,
-        )
-
-        return dict(**output)
 
 
 class CT2SentenceTransformer(SentenceTransformerPatched):
