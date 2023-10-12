@@ -1,16 +1,20 @@
-# Infinity ♾️
-Embedding Inference Server - finding TGI for embeddings. Infinity is developed under MIT Licence - https://github.com/michaelfeil/infinity
 
 <!-- PROJECT SHIELDS -->
-[![codecov](https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ)]
-[![CI](https://github.com/michaelfeil/infinity/actions/workflows/ci.yaml/badge.svg)]
 [![Contributors][contributors-shield]][contributors-url]
 [![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 [![MIT License][license-shield]][license-url]
 [![LinkedIn][linkedin-shield]][linkedin-url]
+
 --------
+
+# Infinity ♾️
+Embedding Inference Server - finding TGI for embeddings. Infinity is developed under MIT Licence - https://github.com/michaelfeil/infinity
+
+[![codecov](https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ)]
+[![CI](https://github.com/michaelfeil/infinity/actions/workflows/ci.yaml/badge.svg)]
+
 
 ## Why Infinity:
 Infinity provides the following features:
