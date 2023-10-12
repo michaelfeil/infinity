@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Union
 
 from ..log_handler import logger
-from .models import BaseTransformer
+from .models import BaseTransformer, get_lengths_with_tokenize
 from .primitives import (
     EmbeddingResult,
     NpEmbeddingType,
@@ -117,7 +117,7 @@ class BatchHandler:
         self._queue_prio = CustomPrioQueue()
         self._result_store = ResultKVStore()
         self._feature_queue: queue.Queue = queue.Queue(4)
-        self._postprocess_queue: queue.Queue = queue.Queue(5)
+        self._postprocess_queue: queue.Queue = queue.Queue(4)
         self.max_batch_size = max_batch_size
         self.model = model
         self.max_queue_wait = max_queue_wait
@@ -128,9 +128,7 @@ class BatchHandler:
     def shutdown(self):
         self._shutdown.set()
 
-    async def schedule(
-        self, sentences: List[str], prios: List[int]
-    ) -> NpEmbeddingType | None:
+    async def schedule(self, sentences: List[str]) -> tuple[List[NpEmbeddingType], int]:
         """Schedule a sentence to be embedded. Awaits until embedded.
 
         Args:
@@ -143,6 +141,11 @@ class BatchHandler:
         # add an unique identifier
         uuid_event = []
         prioqueue = []
+
+        prios, usage = get_lengths_with_tokenize(
+            sentences
+        )  # , self.model.tokenize_lengths)
+
         for s, p in zip(sentences, prios):
             inner = EmbeddingResult(sentence=s, event=EventTS(self._threadpool))
             item = PrioritizedQueueItem(item=inner, priority=p)
@@ -154,7 +157,8 @@ class BatchHandler:
             self._result_store.wait_for_response(uuid, event)
             for uuid, event in uuid_event
         ]
-        return await asyncio.gather(*gather_results)
+        embeddings = await asyncio.gather(*gather_results)
+        return embeddings, usage
 
     def is_overloaded(self) -> bool:
         # start consuming
@@ -176,7 +180,7 @@ class BatchHandler:
     def _preprocess_batch(self):
         """loops and checks if the _core_batch has worked on all items"""
         self._ready = True
-        logger.info("ready to receive requests.")
+        logger.info("ready to batch requests.")
         try:
             while not self._shutdown.is_set():
                 # patience:
@@ -264,7 +268,7 @@ class BatchHandler:
                 except queue.Empty:
                     # 7 ms, assuming this is below
                     # 3-50ms for inference on avg.
-                    await asyncio.sleep(7e-3)
+                    await asyncio.sleep(5e-3)
                     continue
                 embed, batch = post_batch
                 embeddings = self.model.encode_post(embed).tolist()

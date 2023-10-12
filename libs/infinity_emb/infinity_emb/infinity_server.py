@@ -3,15 +3,14 @@ import time
 
 import typer
 import uvicorn
-from fastapi import FastAPI, status
+from fastapi import FastAPI, responses, status
 from prometheus_fastapi_instrumentator import Instrumentator
 
 # prometheus
 import infinity_emb
-from infinity_emb.fastapi_schemas import errors
+from infinity_emb.fastapi_schemas import docs, errors
 from infinity_emb.fastapi_schemas.convert import list_embeddings_to_response
 from infinity_emb.fastapi_schemas.pymodels import (
-    ModelInfo,
     OpenAIEmbeddingInput,
     OpenAIEmbeddingResult,
     OpenAIModelInfo,
@@ -26,10 +25,11 @@ def create_server(
     batch_size: int = 64,
     engine: models.InferenceEngine = models.InferenceEngine.torch,
     verbose: bool = False,
+    doc_extra: dict = {},
 ):
     app = FastAPI(
-        title="♾️ Infinity - Embedding Inference Server",
-        summary="Embedding Inference Server - finding TGI for embeddings",
+        title=docs.FASTAPI_TITLE,
+        summary=docs.FASTAPI_SUMMARY,
         version=infinity_emb.__version__,
         contact=dict(name="Michael Feil"),
         docs_url="/docs",
@@ -53,9 +53,16 @@ def create_server(
         app.batch_handler = BatchHandler(
             max_batch_size=batch_size, model=model, threadpool=app.tp, verbose=verbose
         )
-        app.tokenize_len = model.tokenize_lengths
         # start in a threadpool
         await app.batch_handler.spawn()
+
+        logger.info(
+            docs.startup_message(
+                host=doc_extra.pop("host", "localhost"),
+                port=doc_extra.pop("port", "PORT"),
+                prefix=url_prefix,
+            )
+        )
 
     @app.on_event("shutdown")
     async def _shutdown():
@@ -71,23 +78,32 @@ def create_server(
                 "model not ready", code=status.HTTP_503_SERVICE_UNAVAILABLE
             )
 
-    @app.get(f"{url_prefix}/models")
-    async def _models() -> OpenAIModelInfo:
+    @app.get(
+        f"{url_prefix}/models",
+        response_model=OpenAIModelInfo,
+        response_class=responses.ORJSONResponse,
+    )
+    async def _models():
         """get models endpoint"""
         s = app.batch_handler.overload_status()  # type: ignore
-        return OpenAIModelInfo(
-            data=ModelInfo(
+        return dict(
+            data=dict(
                 id=model_name_or_path,
                 stats=dict(
                     queue_fraction=s.queue_fraction,
                     queue_absolute=s.queue_absolute,
                     results_pending=s.results_absolute,
+                    batch_size=batch_size,
                 ),
             )
         )
 
-    @app.post(f"{url_prefix}/embeddings")
-    async def _embeddings(data: OpenAIEmbeddingInput) -> OpenAIEmbeddingResult:
+    @app.post(
+        f"{url_prefix}/embeddings",
+        response_model=OpenAIEmbeddingResult,
+        response_class=responses.ORJSONResponse,
+    )
+    async def _embeddings(data: OpenAIEmbeddingInput):
         """Encode Embeddings
 
         ```python
@@ -102,25 +118,16 @@ def create_server(
             )
 
         try:
+            logger.debug("[📝] Received request with %s inputs ", len(data.input))
             start = time.perf_counter()
 
-            # lengths, usage = await to_thread(
-            #   models.get_lengths_with_tokenize, app.tp, data.input, app.tokenize_len)
-            lengths, usage = models.get_lengths_with_tokenize(
-                data.input  # , app.tokenize_len
-            )
-            logger.debug("[📝] Received request with %s inputs ", len(lengths))
-
-            # emb = await asyncio.gather(
-            #     *[(bh.schedule(s, prio=prio)) for s, prio in zip(data.input, lengths)]
-            # )
-            emb = await bh.schedule(data.input, prios=lengths)
+            embedding, usage = await bh.schedule(data.input)
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
 
             res = list_embeddings_to_response(
-                embeddings=emb, model=data.model, usage=usage
+                embeddings=embedding, model=data.model, usage=usage
             )
 
             return res
@@ -165,6 +172,7 @@ def start_uvicorn(
         batch_size=batch_size,
         engine=engine_load,
         verbose=log_level.to_int() <= 10,
+        doc_extra=dict(host=host, port=port),
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
@@ -174,6 +182,7 @@ def cli():
     typer.run(start_uvicorn)
 
 
+# app = create_server()
 if __name__ == "__main__":
     # for debugging
     cli()

@@ -49,4 +49,6 @@ jobs:
 
       - name: Upload coverage Report to Codecov for python 3.10
         if: ${{ matrix.python-version == '3.10' && inputs.upload_coverage == true }}
-        uses: codecov/codecov-action@v2
+        uses: codecov/codecov-action@v3
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
