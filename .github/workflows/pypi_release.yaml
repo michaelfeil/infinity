@@ -1,5 +1,4 @@
-name: release
-
+name: Publish to pypi
 on:
   workflow_call:
     inputs:
@@ -12,23 +11,10 @@ env:
   POETRY_VERSION: "1.6.1"
 
 jobs:
-  if_release:
+  build:
     # Disallow publishing from branches that aren't `master`.
     if: github.ref == 'refs/heads/master'
     runs-on: ubuntu-latest
-    permissions:
-      # This permission is used for trusted publishing:
-      # https://blog.pypi.org/posts/2023-04-20-introducing-trusted-publishers/
-      #
-      # Trusted publishing has to also be configured on PyPI for each package:
-      # https://docs.pypi.org/trusted-publishers/adding-a-publisher/
-      id-token: write
-
-      # This permission is needed by `ncipollo/release-action` to create the GitHub release.
-      contents: write
-    defaults:
-      run:
-        working-directory: ${{ inputs.working-directory }}
     steps:
       - uses: actions/checkout@v3
 
@@ -46,19 +32,26 @@ jobs:
         id: check-version
         run: |
           echo version=$(poetry version --short) >> $GITHUB_OUTPUT
-      - name: Create Release
-        uses: ncipollo/release-action@v1
-        if: ${{ inputs.working-directory == 'libs/infinity_emb' }}
+
+      - uses: actions/upload-artifact@v3
         with:
-          artifacts: "dist/*"
-          token: ${{ secrets.GITHUB_TOKEN }}
-          draft: false
-          generateReleaseNotes: true
-          tag: v${{ steps.check-version.outputs.version }}
-          commit: master
+          path: ./dist
+
+  pypi-publish:
+    needs: ['build']
+    environment: 'publish'
+
+    name: upload release to PyPI
+    runs-on: ubuntu-latest
+    permissions:
+      # IMPORTANT: this permission is mandatory for trusted publishing
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v3
+
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: ${{ inputs.working-directory }}/dist/
+          packages_dir: artifact/
           verbose: true
           print-hash: true
