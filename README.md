@@ -72,7 +72,7 @@ Get the Python
 ```bash
 model=sentence-transformers/all-MiniLM-L6-v2
 port=8080
-docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port --engine ctranslate2
+docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
 ```
 The download path at runtime, can be controlled via the environment variable `SENTENCE_TRANSFORMERS_HOME`.
 
