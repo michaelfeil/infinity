@@ -7,7 +7,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Union
 
-from infinity_emb.inference.models import BaseTransformer, get_lengths_with_tokenize
+from infinity_emb.transformer.abstract import BaseTransformer
+from infinity_emb.transformer.utils import get_lengths_with_tokenize
 from infinity_emb.inference.primitives import (
     EmbeddingResult,
     NpEmbeddingType,

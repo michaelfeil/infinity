@@ -11,7 +11,7 @@ from sentence_transformers.evaluation import (  # type: ignore
     EmbeddingSimilarityEvaluator,  # type: ignore
 )
 
-from infinity_emb.inference.models import (
+from infinity_emb.transformer.sentence_transformer import (
     CT2SentenceTransformer,
     SentenceTransformerPatched,
 )

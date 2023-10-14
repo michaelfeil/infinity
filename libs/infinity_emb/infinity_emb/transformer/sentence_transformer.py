@@ -1,8 +1,7 @@
 import copy
 import os
-from abc import ABC, abstractmethod
-from enum import Enum
-from typing import Any, Callable, Dict, List, Tuple, Union
+
+from typing import Dict, List, Union
 
 import numpy as np
 import torch
@@ -10,57 +9,13 @@ from sentence_transformers import SentenceTransformer, util  # type: ignore
 from torch import Tensor
 
 from infinity_emb.inference.primitives import NpEmbeddingType
+from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.log_handler import logger
 
 __all__ = [
-    "InferenceEngine",
-    "InferenceEngineTypeHint",
-    "DummyTransformer",
+    "SentenceTransformerPatched",
     "CT2SentenceTransformer",
-    "BaseTransformer",
 ]
-
-INPUT_FEATURE = Any
-OUT_FEATURES = Any
-
-
-class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
-    @abstractmethod  # Decorator to define an abstract method
-    def encode_pre(self, sentences: List[str]) -> INPUT_FEATURE:
-        pass
-
-    @abstractmethod
-    def encode_core(self, features: INPUT_FEATURE) -> OUT_FEATURES:
-        pass
-
-    @abstractmethod
-    def encode_post(self, embedding: OUT_FEATURES) -> NpEmbeddingType:
-        pass
-
-    @abstractmethod
-    def tokenize_lengths(self, sentences: List[str]) -> List[int]:
-        pass
-
-
-class DummyTransformer(BaseTransformer):
-    """fix-13 dimension embedding, filled with length of sentence"""
-
-    def __init__(self, *args, **kwargs) -> None:
-        pass
-
-    def encode_pre(self, sentences: List[str]) -> np.ndarray:
-        return np.asarray(sentences)
-
-    def encode_core(self, features: np.ndarray) -> NpEmbeddingType:
-        lengths = np.array([[len(s) for s in features]])
-        # embedding of size 13
-        return np.ones([len(features), 13]) * lengths.T
-
-    def encode_post(self, embedding: NpEmbeddingType):
-        return embedding
-
-    def tokenize_lengths(self, sentences: List[str]) -> List[int]:
-        return [len(s) for s in sentences]
 
 
 class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
@@ -314,24 +269,6 @@ class CT2Transformer(torch.nn.Module):
         return self._tokenize(*args, **kwargs)
 
 
-def length_tokenizer(
-    _sentences: List[str],
-) -> List[int]:
-    return [len(i) for i in _sentences]
 
 
-def get_lengths_with_tokenize(
-    _sentences: List[str], tokenize: Callable = length_tokenizer
-) -> Tuple[List[int], int]:
-    _lengths = tokenize(_sentences)
-    return _lengths, sum(_lengths)
 
-
-class InferenceEngine(Enum):
-    torch = SentenceTransformerPatched
-    debugengine = DummyTransformer
-    ctranslate2 = CT2SentenceTransformer
-
-
-types: Dict[str, str] = {e.name: e.name for e in InferenceEngine}
-InferenceEngineTypeHint = Enum("InferenceEngineTypeHint", types)  # type: ignore

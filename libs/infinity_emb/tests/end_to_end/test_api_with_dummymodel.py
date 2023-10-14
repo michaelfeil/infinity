@@ -8,7 +8,7 @@ from asgi_lifespan import LifespanManager
 from httpx import AsyncClient
 
 from infinity_emb import create_server
-from infinity_emb.inference.models import InferenceEngine
+from infinity_emb.transformer.utils import InferenceEngine
 
 PREFIX = "/v2"
 MODEL_NAME = str(uuid4())

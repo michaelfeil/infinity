@@ -9,7 +9,7 @@ import pytest
 import torch
 
 from infinity_emb.inference import BatchHandler
-from infinity_emb.inference.models import (
+from infinity_emb.transformer.sentence_transformer import (
     SentenceTransformerPatched,
 )
 

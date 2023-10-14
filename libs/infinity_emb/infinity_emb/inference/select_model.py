@@ -1,6 +1,7 @@
 from time import perf_counter
 
-from infinity_emb.inference.models import BaseTransformer, InferenceEngine
+from infinity_emb.transformer.utils import InferenceEngine
+from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.inference.primitives import EmbeddingResult, NpEmbeddingType
 from infinity_emb.log_handler import logger
 

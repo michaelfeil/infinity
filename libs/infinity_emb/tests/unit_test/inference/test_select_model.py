@@ -1,6 +1,6 @@
 import pytest
 
-from infinity_emb.inference.models import InferenceEngine
+from infinity_emb.transformer.utils import InferenceEngine
 from infinity_emb.inference.select_model import select_model_to_functional
 
 

@@ -5,7 +5,7 @@ import numpy as np
 import requests
 from sentence_transformers import SentenceTransformer
 
-LIVE_URL = "http://localhost:8080/v1"
+LIVE_URL = "http://localhost:8001/v1"
 
 
 def embedding_live_performance():
@@ -17,9 +17,10 @@ def embedding_live_performance():
     assert req.status_code == 200
 
     batch_size = req.json()["data"]["stats"]["batch_size"]
+    model_name = req.json()["data"]["id"]
     print(f"batch_size is {batch_size}")
     model = SentenceTransformer(
-        model_name_or_path="sentence-transformers/all-MiniLM-L6-v2"
+        model_name_or_path=model_name
     )
 
     def local(data: str):
