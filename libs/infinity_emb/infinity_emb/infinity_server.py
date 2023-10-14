@@ -16,8 +16,8 @@ from infinity_emb.fastapi_schemas.pymodels import (
     OpenAIModelInfo,
 )
 from infinity_emb.inference import BatchHandler, select_model_to_functional
-from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
+from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
 
 
 def create_server(

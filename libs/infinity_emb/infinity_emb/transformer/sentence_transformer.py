@@ -1,6 +1,5 @@
 import copy
 import os
-
 from typing import Dict, List, Union
 
 import numpy as np
@@ -9,8 +8,8 @@ from sentence_transformers import SentenceTransformer, util  # type: ignore
 from torch import Tensor
 
 from infinity_emb.inference.primitives import NpEmbeddingType
-from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.log_handler import logger
+from infinity_emb.transformer.abstract import BaseTransformer
 
 __all__ = [
     "SentenceTransformerPatched",
@@ -267,8 +266,3 @@ class CT2Transformer(torch.nn.Module):
 
     def tokenize(self, *args, **kwargs):
         return self._tokenize(*args, **kwargs)
-
-
-
-
-

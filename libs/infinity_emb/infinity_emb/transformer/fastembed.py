@@ -13,13 +13,13 @@
 # except:
 #     FlagEmbedding = FlagEmbeddingFake
 
-# class FastEmbed(FlagEmbedding, BaseTransformer):  # Inherit from ABC(Abstract base class)
+# class FastEmbed(FlagEmbedding, BaseTransformer):
 #     def __init__(self, *args, **kwargs):
 #         FlagEmbedding.__init__(self)(*args, **kwargs)
 #         if FlagEmbedding == FlagEmbeddingFake:
 #             raise ImportError("fastembed is not installed.")
 #         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
-        
+
 #     def encode_pre(self, sentences: List[str]) -> Dict[str, np.ndarray[int]]:
 #         encoded = self.tokenizer.encode_batch(sentences)
 #         input_ids = np.array([e.ids for e in encoded])

@@ -1,9 +1,9 @@
 from time import perf_counter
 
-from infinity_emb.transformer.utils import InferenceEngine
-from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.inference.primitives import EmbeddingResult, NpEmbeddingType
 from infinity_emb.log_handler import logger
+from infinity_emb.transformer.abstract import BaseTransformer
+from infinity_emb.transformer.utils import InferenceEngine
 
 
 def select_model_to_functional(

@@ -1,7 +1,10 @@
 from typing import List
+
+import numpy as np
+
 from infinity_emb.inference.primitives import NpEmbeddingType
 from infinity_emb.transformer.abstract import BaseTransformer
-import numpy as np
+
 
 class DummyTransformer(BaseTransformer):
     """fix-13 dimension embedding, filled with length of sentence"""

@@ -1,10 +1,10 @@
 from abc import ABC, abstractmethod
-from typing import List, Any
+from typing import Any, List
+
+from infinity_emb.inference.primitives import NpEmbeddingType
 
 INPUT_FEATURE = Any
 OUT_FEATURES = Any
-
-from infinity_emb.inference.primitives import NpEmbeddingType
 
 
 class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
