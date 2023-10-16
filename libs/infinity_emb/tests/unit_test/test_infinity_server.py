@@ -3,7 +3,7 @@ import subprocess
 from fastapi import FastAPI
 
 from infinity_emb import create_server
-from infinity_emb.inference.models import InferenceEngine
+from infinity_emb.transformer.utils import InferenceEngine
 
 
 def test_cli_help():

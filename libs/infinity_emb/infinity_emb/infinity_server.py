@@ -15,15 +15,16 @@ from infinity_emb.fastapi_schemas.pymodels import (
     OpenAIEmbeddingResult,
     OpenAIModelInfo,
 )
-from infinity_emb.inference import BatchHandler, models, select_model_to_functional
+from infinity_emb.inference import BatchHandler, select_model_to_functional
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
+from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
 
 
 def create_server(
     model_name_or_path: str = "sentence-transformers/all-MiniLM-L6-v2",
     url_prefix: str = "/v1",
     batch_size: int = 64,
-    engine: models.InferenceEngine = models.InferenceEngine.torch,
+    engine: InferenceEngine = InferenceEngine.torch,
     verbose: bool = False,
     model_warmup=True,
     doc_extra: dict = {},
@@ -152,7 +153,7 @@ def start_uvicorn(
     host: str = "0.0.0.0",
     port: int = 8001,
     log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
-    engine: models.InferenceEngineTypeHint = models.InferenceEngineTypeHint.torch.name,  # type: ignore # noqa
+    engine: InferenceEngineTypeHint = InferenceEngineTypeHint.torch.name,  # type: ignore # noqa
     model_warmup: bool = True,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
@@ -170,7 +171,7 @@ def start_uvicorn(
         engine: framework that should perform inference.
         model_warmup: perform model warmup before starting the server. Defaults to True.
     """
-    engine_load: models.InferenceEngine = models.InferenceEngine[engine.name]
+    engine_load: InferenceEngine = InferenceEngine[engine.name]
     logger.setLevel(log_level.to_int())
 
     app = create_server(

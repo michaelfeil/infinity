@@ -7,7 +7,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Union
 
-from infinity_emb.inference.models import BaseTransformer, get_lengths_with_tokenize
 from infinity_emb.inference.primitives import (
     EmbeddingResult,
     NpEmbeddingType,
@@ -16,6 +15,8 @@ from infinity_emb.inference.primitives import (
 )
 from infinity_emb.inference.threading_asyncio import EventTS
 from infinity_emb.log_handler import logger
+from infinity_emb.transformer.abstract import BaseTransformer
+from infinity_emb.transformer.utils import get_lengths_with_tokenize
 
 
 class CustomPrioQueue:

@@ -10,7 +10,8 @@ from httpx import AsyncClient
 from sentence_transformers import SentenceTransformer  # type: ignore
 
 from infinity_emb import create_server
-from infinity_emb.inference.models import CT2SentenceTransformer, InferenceEngine
+from infinity_emb.transformer.sentence_transformer import CT2SentenceTransformer
+from infinity_emb.transformer.utils import InferenceEngine
 
 PREFIX = "/v1_torch"
 MODEL: str = pytest.DEFAULT_BERT_MODEL  # type: ignore
