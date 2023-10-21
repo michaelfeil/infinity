@@ -51,7 +51,7 @@ def create_server(
     async def _startup():
         instrumentator.expose(app)
 
-        model = select_model_to_functional(
+        model, _ = select_model_to_functional(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,
