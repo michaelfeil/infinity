@@ -7,32 +7,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 __all__ = ["to_thread", "EventTS"]
 
-
-# class EventTS(threading.Event):
-#     """making asyncio.Event threadsafe"""
-
-#     def __init__(self, tp: ThreadPoolExecutor) -> None:
-#         super().__init__()
-#         self.tp = tp
-
-#     async def wait(self):
-#         wait = partial(super().wait, None)
-#         await to_thread(wait, self.tp)
-
-# class EventTS(asyncio.Event):
-#     def __init__(self, tp=None, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-#     #     if self._loop is None:
-#     #         self._loop = asyncio.get_event_loop()
-
-#     # def set(self):
-#     #     self._loop.call_soon_threadsafe(super().set)
-
-#     def clear(self):
-#         raise NotImplementedError
-#         # self._loop.call_soon_threadsafe(super().clear)
-
-
 class EventTS:
     """Throw-away async event.
     wait and set once, and forget.

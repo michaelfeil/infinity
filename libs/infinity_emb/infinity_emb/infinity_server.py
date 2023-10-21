@@ -28,7 +28,10 @@ def create_server(
     verbose: bool = False,
     model_warmup=True,
     doc_extra: dict = {},
-):
+) -> FastAPI:
+    """
+    creates the FastAPI App
+    """
     app = FastAPI(
         title=docs.FASTAPI_TITLE,
         summary=docs.FASTAPI_SUMMARY,
@@ -55,9 +58,8 @@ def create_server(
             model_warmup=model_warmup,
         )
 
-        app.tp = concurrent.futures.ThreadPoolExecutor()
         app.batch_handler = BatchHandler(
-            max_batch_size=batch_size, model=model, threadpool=app.tp, verbose=verbose
+            max_batch_size=batch_size, model=model, verbose=verbose
         )
         # start in a threadpool
         await app.batch_handler.spawn()
@@ -73,16 +75,14 @@ def create_server(
     @app.on_event("shutdown")
     async def _shutdown():
         app.batch_handler.shutdown()
-        app.tp.shutdown()
 
     @app.get("/ready")
     async def _ready() -> float:
-        if app.batch_handler.ready():  # type: ignore
-            return time.time()
-        else:
-            raise errors.OpenAIException(
-                "model not ready", code=status.HTTP_503_SERVICE_UNAVAILABLE
-            )
+        """
+        returns always the current time 
+        """
+        return time.time()
+        
 
     @app.get(
         f"{url_prefix}/models",

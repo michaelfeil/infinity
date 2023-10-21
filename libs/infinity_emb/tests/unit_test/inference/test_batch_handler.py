@@ -19,17 +19,12 @@ LIMIT_SLOWDOWN = 1.25 if torch.cuda.is_available() else 1.35
 
 
 @pytest.fixture
-def temp_threadpool():
-    return concurrent.futures.ThreadPoolExecutor()
-
-
-@pytest.fixture
 @pytest.mark.anyio
-async def load_patched_bh(temp_threadpool):
+async def load_patched_bh():
     model = SentenceTransformerPatched(pytest.DEFAULT_BERT_MODEL)
     model.encode(["hello " * 512] * BATCH_SIZE)
     bh = BatchHandler(
-        model=model, max_batch_size=BATCH_SIZE, threadpool=temp_threadpool
+        model=model, max_batch_size=BATCH_SIZE
     )
     await bh.spawn()
     return model, bh
@@ -122,4 +117,3 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
 
     finally:
         bh.shutdown()
-        bh._threadpool.shutdown(wait=True)

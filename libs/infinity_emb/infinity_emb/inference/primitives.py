@@ -17,6 +17,8 @@ class EmbeddingResult:
     uuid: str = field(default_factory=lambda: str(uuid4()))
     created: float = field(default_factory=time.time)
     embedding: Optional[NpEmbeddingType] = None
+    # TODO: check annotation
+    future: concurrent.future = None
 
 
 @dataclass(order=True)
