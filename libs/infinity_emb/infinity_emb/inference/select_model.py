@@ -33,7 +33,7 @@ def select_model_to_functional(
             f" embeddings/sec at batch_size={batch_size}"
         )
 
-    return init_engine, min_inference_t / 2
+    return init_engine, min_inference_t
 
 
 def runtime_check_callable(
