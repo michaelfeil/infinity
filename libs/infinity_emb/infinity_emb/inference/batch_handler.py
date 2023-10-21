@@ -22,9 +22,9 @@ from infinity_emb.transformer.utils import get_lengths_with_tokenize
 class CustomPrioQueue:
     def __init__(self, sort_on_arrival=True) -> None:
         """"""
-        self._lock_queue_event = threading.Lock() 
+        self._lock_queue_event = threading.Lock()
         self._queue: List[PrioritizedQueueItem] = []
-        # event that indicates items in queue. 
+        # event that indicates items in queue.
         self._sync_event = threading.Event()
         self._sort_on_arrival = sort_on_arrival
 
@@ -61,7 +61,7 @@ class CustomPrioQueue:
             start = max(0, min(len(self._queue) - size, start))
         elif len(self._queue) > size:
             # TODO: TEST code below
-            start = min(range(len(self._queue)), key= lambda i: i.item.created)
+            start = min(range(len(self._queue)), key=lambda i: i.item.created)
             start = max(0, min(len(self._queue) - size, start))
         else:
             start = 0
@@ -120,7 +120,6 @@ class ResultKVStoreFuture:
         """extend store with results"""
         for item in batch:
             item.future.set_result(item.embedding)
-            
 
 
 class BatchHandler:
@@ -129,17 +128,17 @@ class BatchHandler:
         model: BaseTransformer,
         max_batch_size: int,
         max_queue_wait: int = 64_000,
-        batch_delay: float=5e-3,
+        batch_delay: float = 5e-3,
         verbose=False,
     ) -> None:
         """
         performs batching around the model.
-        
+
         model: BaseTransformer, implements fn (core|pre|post)_encode
         max_batch_size: max batch size of the models
         max_queue_wait: max items to queue in the batch, default 64_000 sentences
-        batch_delay: sleep in seconds, wait time for pre/post methods. 
-            Best result: setting to 1/2 or 1/3 the minimal expected 
+        batch_delay: sleep in seconds, wait time for pre/post methods.
+            Best result: setting to 1/2 or 1/3 the minimal expected
             time for core_encode method / "gpu inference".
             Dont set it above 1x minimal expected time of interence.
             Should not be 0 to not block Python's GIL.
@@ -157,13 +156,14 @@ class BatchHandler:
         self._threadpool = ThreadPoolExecutor()
         self._ready = False
         self._last_inference = time.time()
-        
+
         if batch_delay > 0.5:
             logger.warn(f"high batch delay of {self._batch_delay}")
         if max_batch_size > max_queue_wait * 10:
-            logger.warn(f"queue_size={self.max_queue_wait} to small over batch_size={self.max_batch_size}."
-                        " Consider increasing queue size")
-        
+            logger.warn(
+                f"queue_size={self.max_queue_wait} to small over batch_size={self.max_batch_size}."
+                " Consider increasing queue size"
+            )
 
     async def schedule(self, sentences: List[str]) -> tuple[List[NpEmbeddingType], int]:
         """Schedule a sentence to be embedded. Awaits until embedded.
@@ -179,9 +179,7 @@ class BatchHandler:
         uuid_event = []
         prioqueue = []
 
-        prios, usage = get_lengths_with_tokenize(
-            sentences
-        )
+        prios, usage = get_lengths_with_tokenize(sentences)
 
         for s, p in zip(sentences, prios):
             inner = EmbeddingResult(sentence=s, event=EventTS(self._threadpool))
@@ -295,14 +293,19 @@ class BatchHandler:
                 try:
                     post_batch = self._postprocess_queue.get_nowait()
                 except queue.Empty:
-                    # instead use async await to get 
+                    # instead use async await to get
                     try:
-                        post_batch = await to_thread(self._postprocess_queue.get, tp=self._threadpool, timeout=1)
+                        post_batch = await to_thread(
+                            self._postprocess_queue.get, self._threadpool, timeout=1
+                        )
                     except queue.Empty:
                         # in case of timeout start again
                         continue
-                
-                if not self._postprocess_queue.qsize() and self._last_inference < time.time() + self._batch_delay * 2:
+
+                if (
+                    not self._postprocess_queue.qsize()
+                    and self._last_inference < time.time() + self._batch_delay * 2
+                ):
                     # 5 ms, assuming this is below
                     # 3-50ms for inference on avg.
                     # give the CPU some time to focus
@@ -325,10 +328,10 @@ class BatchHandler:
         self._threadpool.submit(self._preprocess_batch)
         self._threadpool.submit(self._core_batch)
         asyncio.create_task(self._postprocess_batch())
-        
+
     def shutdown(self):
         """
-        set the shutdown event and close threadpool. 
+        set the shutdown event and close threadpool.
         Blocking event, until shutdown complete.
         """
         self._shutdown.set()

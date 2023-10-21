@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 __all__ = ["to_thread", "EventTS"]
 
+
 class EventTS:
     """Throw-away async event.
     wait and set once, and forget.

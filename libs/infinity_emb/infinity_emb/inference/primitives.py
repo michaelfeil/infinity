@@ -18,7 +18,7 @@ class EmbeddingResult:
     created: float = field(default_factory=time.time)
     embedding: Optional[NpEmbeddingType] = None
     # TODO: check annotation
-    future: concurrent.future = None
+    future = None
 
 
 @dataclass(order=True)

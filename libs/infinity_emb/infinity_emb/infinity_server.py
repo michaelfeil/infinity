@@ -79,10 +79,9 @@ def create_server(
     @app.get("/ready")
     async def _ready() -> float:
         """
-        returns always the current time 
+        returns always the current time
         """
         return time.time()
-        
 
     @app.get(
         f"{url_prefix}/models",

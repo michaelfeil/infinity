@@ -75,4 +75,4 @@ def runtime_check_callable(
         )
 
     emb_per_sec = len(sample) / (post_time - start)
-    return emb_per_sec, inference_time-tokenization_time
+    return emb_per_sec, inference_time - tokenization_time
