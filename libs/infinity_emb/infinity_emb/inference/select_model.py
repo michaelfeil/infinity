@@ -12,17 +12,18 @@ def select_model_to_functional(
     logger.info(f"model {model_name_or_path} selected, using engine={engine.value}")
     init_engine = engine.value(model_name_or_path)
 
+    min_inference_t = 2e-3
     if model_warmup:
-        # size one
+        # size one, warm up warm start timings.
         runtime_check_callable(init_engine, log=False)
         # size one
-        runtime_check_callable(init_engine, log=True)
+        _, min_inference_t = runtime_check_callable(init_engine, log=True)
         # warm-up with max batch size
-        emb_per_sec_short = runtime_check_callable(
+        emb_per_sec_short, _ = runtime_check_callable(
             init_engine, sample=["up"] * batch_size
         )
         # warm-up with max batch size
-        emb_per_sec = runtime_check_callable(
+        emb_per_sec, _ = runtime_check_callable(
             init_engine,
             sample=["warming up with max batch size and 1K tokens per sentence " * 76]
             * batch_size,
@@ -32,13 +33,13 @@ def select_model_to_functional(
             f" embeddings/sec at batch_size={batch_size}"
         )
 
-    return init_engine
+    return init_engine, min_inference_t
 
 
 def runtime_check_callable(
     model: BaseTransformer, sample=["warmup"], log=True
 ) -> float:
-    inp = [EmbeddingResult(sentence=s, event=None) for s in sample]  # type: ignore
+    inp = [EmbeddingResult(sentence=s) for s in sample]  # type: ignore
     start = perf_counter()
     sentences = [item.sentence for item in inp]
     feat = model.encode_pre(sentences)
@@ -74,4 +75,4 @@ def runtime_check_callable(
         )
 
     emb_per_sec = len(sample) / (post_time - start)
-    return emb_per_sec
+    return emb_per_sec, inference_time - tokenization_time
