@@ -182,9 +182,8 @@ class BatchHandler:
         prioqueue = []
 
         prios, usage = get_lengths_with_tokenize(sentences)
-        loop = asyncio.events._get_running_loop()
 
-        futures = [loop.create_future() for _ in prios]
+        futures = [self.loop.create_future() for _ in prios]
 
         for s, p, fut in zip(sentences, prios, futures):
             item = PrioritizedQueueItem(
@@ -331,9 +330,11 @@ class BatchHandler:
     async def spawn(self):
         """set up the resources in batch"""
         logger.info("creating batching engine")
+        self.loop = asyncio.get_event_loop() # asyncio.events._get_running_loop()
         self._threadpool.submit(self._preprocess_batch)
         self._threadpool.submit(self._core_batch)
         asyncio.create_task(self._postprocess_batch())
+        
 
     def shutdown(self):
         """
