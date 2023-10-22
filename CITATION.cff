@@ -3,6 +3,6 @@ message: "If you use this software, please cite it as below."
 authors:
 - family-names: "Feil"
   given-names: "Michael"
-title: "Embeddings - To Infinity and Beyond"
+title: "Infinity - To Embeddings and Beyond"
 date-released: 2023-10-17
 url: "https://github.com/michaelfeil/infinity"
