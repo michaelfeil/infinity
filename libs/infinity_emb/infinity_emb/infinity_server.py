@@ -1,4 +1,3 @@
-import concurrent.futures
 import time
 
 import typer

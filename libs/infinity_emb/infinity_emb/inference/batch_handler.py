@@ -5,6 +5,7 @@ import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from operator import attrgetter
 from typing import Dict, List, Union
 
 from infinity_emb.inference.primitives import (
@@ -13,42 +14,45 @@ from infinity_emb.inference.primitives import (
     OverloadStatus,
     PrioritizedQueueItem,
 )
-from infinity_emb.inference.threading_asyncio import EventTS, to_thread
+from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
 
 
 class CustomPrioQueue:
-    def __init__(self, sort_on_arrival=True) -> None:
+    def __init__(self) -> None:
         """"""
         self._lock_queue_event = threading.Lock()
         self._queue: List[PrioritizedQueueItem] = []
         # event that indicates items in queue.
         self._sync_event = threading.Event()
-        self._sort_on_arrival = sort_on_arrival
 
     def __len__(self):
         return len(self._queue)
 
     async def extend(self, items: List[PrioritizedQueueItem]):
         with self._lock_queue_event:
-            if self._sort_on_arrival:
-                for item in items:
-                    bisect.insort(self._queue, item)
-            else:
-                self._queue.extend(items)
+            for item in items:
+                bisect.insort(self._queue, item)
 
             self._sync_event.set()
 
     def pop_optimal_batch(
-        self, size: int, timeout=0.2
+        self, size: int, timeout=0.2, latest_first=False
     ) -> Union[List[EmbeddingResult], None]:
         """
         pop batch `up to size` + `continuous (sorted)` from queue
 
+        Args:
+            size (int): max size of batch
+            timeout (float, optional): timeout until None is returned. Defaults to 0.2.
+            latest_first (bool, optional): guarantees processing of oldest item in list.
+                As latest first requires getting argmin of created timestamps,
+                which is slow.  Defaults to False.
+
         returns:
-            None: if there is not a single item in self._queue
+            None: if there is not a single item in self._queue after timeout
             else: List[EmbeddingResult] with len(1<=size)
         """
         if not self._queue:
@@ -56,62 +60,60 @@ class CustomPrioQueue:
                 return None
 
         if len(self._queue) > size:
-            # pick a random continuous slice, at beginning or at the end.
-            start = random.randrange(-size, len(self._queue))
-            start = max(0, min(len(self._queue) - size, start))
-        elif len(self._queue) > size:
-            # TODO: TEST code below
-            start = min(range(len(self._queue)), key=lambda i: i.item.created)
+            if latest_first:
+                # slower operation: we have a large list
+                # and can spend some time computing the argmin
+                # pick oldest one -> argmin timestamp
+                start = self._queue.index(min(self._queue, key=attrgetter("timestamp")))
+            else:
+                # pick a random continuous slice, at beginning or at the end.
+                start = random.randrange(-size, len(self._queue))
             start = max(0, min(len(self._queue) - size, start))
         else:
             start = 0
         end = start + size
-
-        if not self._sort_on_arrival:
-            self._queue.sort()
 
         with self._lock_queue_event:
             new_items = self._queue[start:end]
             self._queue = self._queue[:start] + self._queue[end:]
             if not self._queue:
                 self._sync_event.clear()
+        # assert 1 <= len(new_items) <= size
+        return [i.item for i in new_items]
 
-        return list(n.item for n in new_items)
 
+# class ResultKVStore:
+#     def __init__(self) -> None:
+#         self._kv: Dict[str, NpEmbeddingType] = {}
 
-class ResultKVStore:
-    def __init__(self) -> None:
-        self._kv: Dict[str, NpEmbeddingType] = {}
+#     def __len__(self):
+#         return len(self._kv)
 
-    def __len__(self):
-        return len(self._kv)
+#     async def wait_for_response(self, uuid: str, event: EventTS) -> NpEmbeddingType:
+#         await event.wait()
+#         response = self._kv[uuid]
+#         del self._kv[uuid]
+#         return response
 
-    async def wait_for_response(self, uuid: str, event: EventTS) -> NpEmbeddingType:
-        await event.wait()
-        response = self._kv[uuid]
-        del self._kv[uuid]
-        return response
+#     async def extend(self, batch: List[EmbeddingResult]) -> None:
+#         """extend store with results"""
+#         _update = {item.uuid: item.embedding for item in batch}
 
-    async def extend(self, batch: List[EmbeddingResult]) -> None:
-        """extend store with results"""
-        _update = {item.uuid: item.embedding for item in batch}
-
-        self._kv.update(_update)
-        for item in batch:
-            # all done, mark EmbeddingResult for collection
-            item.event.set()
+#         self._kv.update(_update)
+#         for item in batch:
+#             # all done, mark EmbeddingResult for collection
+#             item.event.set()
 
 
 class ResultKVStoreFuture:
     # TODO: test if this works.
     def __init__(self) -> None:
-        self._lock = threading.Lock()
         self._kv: Dict[str, NpEmbeddingType] = {}
 
     def __len__(self):
         return len(self._kv)
 
-    async def wait_for_response(self, fut) -> NpEmbeddingType:
+    async def wait_for_response(self, fut: asyncio.Future) -> NpEmbeddingType:
         """wait for future to return"""
         response = await fut
         return response
@@ -149,7 +151,7 @@ class BatchHandler:
         self._verbose = verbose
         self._shutdown = threading.Event()
         self._queue_prio = CustomPrioQueue()
-        self._result_store = ResultKVStore()
+        self._result_store = ResultKVStoreFuture()
         self._feature_queue: queue.Queue = queue.Queue(4)
         self._postprocess_queue: queue.Queue = queue.Queue(4)
         self._batch_delay = float(max(1e-5, batch_delay))
@@ -161,7 +163,8 @@ class BatchHandler:
             logger.warn(f"high batch delay of {self._batch_delay}")
         if max_batch_size > max_queue_wait * 10:
             logger.warn(
-                f"queue_size={self.max_queue_wait} to small over batch_size={self.max_batch_size}."
+                f"queue_size={self.max_queue_wait} to small "
+                f"over batch_size={self.max_batch_size}."
                 " Consider increasing queue size"
             )
 
@@ -176,23 +179,23 @@ class BatchHandler:
             NpEmbeddingType: embedding as 1darray
         """
         # add an unique identifier
-        uuid_event = []
         prioqueue = []
 
         prios, usage = get_lengths_with_tokenize(sentences)
+        loop = asyncio.events._get_running_loop()
 
-        for s, p in zip(sentences, prios):
-            inner = EmbeddingResult(sentence=s, event=EventTS(self._threadpool))
-            item = PrioritizedQueueItem(item=inner, priority=p)
-            uuid_event.append((inner.uuid, inner.event))
+        futures = [loop.create_future() for _ in prios]
+
+        for s, p, fut in zip(sentences, prios, futures):
+            item = PrioritizedQueueItem(
+                priority=p, item=EmbeddingResult(sentence=s, future=fut)
+            )
             prioqueue.append(item)
         await self._queue_prio.extend(prioqueue)
 
-        gather_results = [
-            self._result_store.wait_for_response(uuid, event)
-            for uuid, event in uuid_event
-        ]
-        embeddings = await asyncio.gather(*gather_results)
+        embeddings = await asyncio.gather(
+            *[self._result_store.wait_for_response(fut) for fut in futures]
+        )
         return embeddings, usage
 
     def is_overloaded(self) -> bool:
@@ -229,7 +232,10 @@ class BatchHandler:
                     continue
                 # decision to attemp to pop a batch
                 # -> will happen if a single datapoint is available
-                batch = self._queue_prio.pop_optimal_batch(self.max_batch_size)
+
+                batch = self._queue_prio.pop_optimal_batch(
+                    self.max_batch_size, latest_first=False
+                )
                 if not batch:
                     # not a single sentence available / len=0, wait for more
                     continue

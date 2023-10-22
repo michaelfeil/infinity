@@ -39,7 +39,7 @@ def select_model_to_functional(
 def runtime_check_callable(
     model: BaseTransformer, sample=["warmup"], log=True
 ) -> float:
-    inp = [EmbeddingResult(sentence=s, event=None) for s in sample]  # type: ignore
+    inp = [EmbeddingResult(sentence=s) for s in sample]  # type: ignore
     start = perf_counter()
     sentences = [item.sentence for item in inp]
     feat = model.encode_pre(sentences)
