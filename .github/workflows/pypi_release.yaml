@@ -15,6 +15,8 @@ jobs:
       run:
         working-directory: ${{ env.WORKDIR }}
     runs-on: ubuntu-latest
+    environment:
+      name: publish
     permissions:
       # This permission is used for trusted publishing:
       # https://blog.pypi.org/posts/2023-04-20-introducing-trusted-publishers/
