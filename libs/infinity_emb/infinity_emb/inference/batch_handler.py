@@ -330,11 +330,10 @@ class BatchHandler:
     async def spawn(self):
         """set up the resources in batch"""
         logger.info("creating batching engine")
-        self.loop = asyncio.get_event_loop() # asyncio.events._get_running_loop()
+        self.loop = asyncio.get_event_loop()  # asyncio.events._get_running_loop()
         self._threadpool.submit(self._preprocess_batch)
         self._threadpool.submit(self._core_batch)
         asyncio.create_task(self._postprocess_batch())
-        
 
     def shutdown(self):
         """
