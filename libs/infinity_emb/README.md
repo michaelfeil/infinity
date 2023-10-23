@@ -19,10 +19,7 @@
 ![codecov](https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ)
 ![CI](https://github.com/michaelfeil/infinity/actions/workflows/ci.yaml/badge.svg)
 
-Embedding Inference Server - finding TGI for embeddings. Infinity is developed under MIT Licence - https://github.com/michaelfeil/infinity
-
-
-
+Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks. Infinity is developed under MIT Licence: https://github.com/michaelfeil/infinity
 
 ## Why Infinity:
 Infinity provides the following features:
@@ -30,13 +27,14 @@ Infinity provides the following features:
 - **Fast inference**: The inference server is built on top of [torch](https:) and [ctranslate2](https://github.com/OpenNMT/CTranslate2) under the hood, getting most out of your **CUDA** or **CPU** hardware.
 - **Dynamic batching**: New embedding requests are queued while GPU is busy with the previous ones. New requests are squeezed intro your GPU/CPU as soon as ready. 
 - **Correct and tested implementation**: Unit and end-to-end tested. Embeddings via infinity are identical to [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/) (up to numerical precision). Lets API users create embeddings till infinity and beyond.
-- **Easy to use**: The API is built on top of [FastAPI](https://fastapi.tiangolo.com/), [Swagger](https://swagger.io/) makes it fully documented. API specs are aligned to OpenAI. See below on how to get started.
+- **Easy to use**: The API is built on top of [FastAPI](https://fastapi.tiangolo.com/), [Swagger](https://swagger.io/) makes it fully documented. API are aligned to [OpenAI's Embedding specs](https://platform.openai.com/docs/guides/embeddings/what-are-embeddings). See below on how to get started.
 
 # Infinity demo:
 In this gif below, we use [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), deployed at batch-size=2. After initialization, from a second terminal 3 requests  (payload 1,1,and 5 sentences) are sent via cURL.
 ![](docs/demo_v0_0_1.gif)
 
 # Getting started
+
 Install via pip
 ```bash
 pip install infinity-emb[all]
@@ -68,13 +66,61 @@ infinity_emb --help
 ```
 
 ### or launch the CLI using a pre-built docker container
-Get the Python
+
 ```bash
 model=sentence-transformers/all-MiniLM-L6-v2
 port=8080
-docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port --engine ctranslate2
+docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
 ```
 The download path at runtime, can be controlled via the environment variable `SENTENCE_TRANSFORMERS_HOME`.
+
+### Launch FAQ:
+<details>
+  <summary>What are embedding models?</summary>
+  Embedding models can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. 
+  And it also can be used in vector databases for LLMs. 
+  
+  The most know architecture are encoder-only transformers such as BERT, and most popular implementation include [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/).
+</details>
+
+<details>
+  <summary>What models are supported?</summary>
+  
+  All models of the sentence transformers org are supported https://huggingface.co/sentence-transformers / sbert.net. 
+  LLM's like LLAMA2-7B are not intended for deployment.
+
+  With the command `--engine torch` the model must be compatible with https://github.com/UKPLab/sentence-transformers/.
+    - only models from Huggingface are supported.
+  
+  With the command `--engine ctranslate2`
+    - only `BERT` models are supported.
+    - only models from Huggingface are supported.
+  
+  For the latest trends, you might want to check out one of the folloing models.
+    https://huggingface.co/spaces/mteb/leaderboard
+    
+</details>
+
+<details>
+  <summary>Launching multiple models in one dockerfile</summary>
+  
+  Multiple models on one GPU is in experimental mode. You can use the following temporary solution:
+  ```Dockerfile
+  # Dockerfile for multiple models via multiple ports
+  FROM michaelf34/infinity:latest
+  ENTRYPOINT ["/bin/sh", "-c", \
+   "(/opt/poetry/bin/poetry run infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &);\
+   (/opt/poetry/bin/poetry run infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
+  ```
+  
+  You can build and run it via:  
+  ```bash
+  docker build -t custominfinity . && docker run -it --gpus all -p 8080:8080 -p 8081:8081 custominfinity
+  ```
+
+  Both models now run on two instances in one dockerfile servers.
+     
+</details>
 
 # Documentation
 After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:8080/docs`.
