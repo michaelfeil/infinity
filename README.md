@@ -19,10 +19,7 @@
 ![codecov](https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ)
 ![CI](https://github.com/michaelfeil/infinity/actions/workflows/ci.yaml/badge.svg)
 
-Embedding Inference Server - finding TGI for embeddings. Infinity is developed under MIT Licence - https://github.com/michaelfeil/infinity
-
-
-
+Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks. Infinity is developed under MIT Licence: https://github.com/michaelfeil/infinity
 
 ## Why Infinity:
 Infinity provides the following features:
