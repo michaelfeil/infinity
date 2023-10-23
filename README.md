@@ -104,6 +104,27 @@ The download path at runtime, can be controlled via the environment variable `SE
     
 </details>
 
+<details>
+  <summary>Launching multiple models in one dockerfile</summary>
+  
+  Multiple models on one GPU is in experimental mode. You can use the following temporary solution:
+  ```Dockerfile
+  # Dockerfile for multiple models via multiple ports
+  FROM michaelf34/infinity:latest
+  ENTRYPOINT ["/bin/sh", "-c", \
+   "(/opt/poetry/bin/poetry run infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &);\
+   (/opt/poetry/bin/poetry run infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
+  ```
+  
+  You can build and run it via:  
+  ```bash
+  docker build -t custominfinity . && docker run -it --gpus all -p 8080:8080 -p 8081:8081 custominfinity
+  ```
+
+  Both models now run on two instances in one dockerfile servers.
+     
+</details>
+
 # Documentation
 After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:8080/docs`.
 
