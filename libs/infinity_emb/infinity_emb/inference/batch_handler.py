@@ -40,7 +40,7 @@ class CustomPrioQueue:
 
     def pop_optimal_batch(
         self, size: int, timeout=0.2, latest_first=False
-    ) -> Union[List[EmbeddingResult], None]:
+    ) -> Union[List[List[EmbeddingResult]], None]:
         """
         pop batch `up to size` + `continuous (sorted)` from queue
 
@@ -79,30 +79,71 @@ class CustomPrioQueue:
             if not self._queue:
                 self._sync_event.clear()
         # assert 1 <= len(new_items) <= size
-        return [i.item for i in new_items]
+        return [[i.item for i in new_items]]
 
 
-# class ResultKVStore:
-#     def __init__(self) -> None:
-#         self._kv: Dict[str, NpEmbeddingType] = {}
+class CustomFIFOQueue:
+    def __init__(self) -> None:
+        """"""
+        self._lock_queue_event = threading.Lock()
+        self._queue: List[PrioritizedQueueItem] = []
+        # event that indicates items in queue.
+        self._sync_event = threading.Event()
 
-#     def __len__(self):
-#         return len(self._kv)
+    def __len__(self):
+        return len(self._queue)
 
-#     async def wait_for_response(self, uuid: str, event: EventTS) -> NpEmbeddingType:
-#         await event.wait()
-#         response = self._kv[uuid]
-#         del self._kv[uuid]
-#         return response
+    async def extend(self, items: List[PrioritizedQueueItem]):
+        with self._lock_queue_event:
+            self._queue.extend(items)
 
-#     async def extend(self, batch: List[EmbeddingResult]) -> None:
-#         """extend store with results"""
-#         _update = {item.uuid: item.embedding for item in batch}
+    def pop_optimal_batch(
+        self, size: int, timeout=0.2, **kwargs
+    ) -> Union[List[List[EmbeddingResult]], None]:
+        """
+        pop batch `up to size` + `continuous (sorted)` from queue
 
-#         self._kv.update(_update)
-#         for item in batch:
-#             # all done, mark EmbeddingResult for collection
-#             item.event.set()
+        Args:
+            size (int): max size of batch
+            timeout (float, optional): timeout until None is returned. Defaults to 0.2.
+            latest_first (bool, optional): guarantees processing of oldest item in list.
+                As latest first requires getting argmin of created timestamps,
+                which is slow.  Defaults to False.
+
+        returns:
+            None: if there is not a single item in self._queue after timeout
+            else: List[EmbeddingResult] with len(1<=size)
+        """
+        if not self._queue:
+            if not self._sync_event.wait(timeout):
+                return None
+
+        # slice as many batches as possible
+        n_batches = max(1, len(self._queue) // size)
+        size_batches = size * n_batches
+
+        with self._lock_queue_event:
+            new_items_l = self._queue[:size_batches]
+            self._queue = self._queue[size_batches:]
+            if not self._queue:
+                self._sync_event.clear()
+
+        if n_batches > 1:
+            # sort the sentences by len ->
+            # optimal padding per batch
+            new_items_l.sort()
+
+        new_items = []
+        for i in range(n_batches):
+            mini_batch = new_items_l[size * i : size * (i + 1)]
+            mini_batch = [mi.item for mi in mini_batch]
+            new_items.append(mini_batch)
+            # runtime checks
+            # assert 1 <= len(mini_batch) <= size
+            # if i > 0:
+            #     assert len(mini_batch) == size
+
+        return new_items
 
 
 class ResultKVStoreFuture:
@@ -129,7 +170,7 @@ class BatchHandler:
         self,
         model: BaseTransformer,
         max_batch_size: int,
-        max_queue_wait: int = 64_000,
+        max_queue_wait: int = 32_000,
         batch_delay: float = 5e-3,
         verbose=False,
     ) -> None:
@@ -138,7 +179,7 @@ class BatchHandler:
 
         model: BaseTransformer, implements fn (core|pre|post)_encode
         max_batch_size: max batch size of the models
-        max_queue_wait: max items to queue in the batch, default 64_000 sentences
+        max_queue_wait: max items to queue in the batch, default 32_000 sentences
         batch_delay: sleep in seconds, wait time for pre/post methods.
             Best result: setting to 1/2 or 1/3 the minimal expected
             time for core_encode method / "gpu inference".
@@ -150,9 +191,9 @@ class BatchHandler:
         self.max_queue_wait = max_queue_wait
         self._verbose = verbose
         self._shutdown = threading.Event()
-        self._queue_prio = CustomPrioQueue()
+        self._queue_prio = CustomFIFOQueue()
         self._result_store = ResultKVStoreFuture()
-        self._feature_queue: queue.Queue = queue.Queue(4)
+        self._feature_queue: queue.Queue = queue.Queue(6)
         self._postprocess_queue: queue.Queue = queue.Queue(4)
         self._batch_delay = float(max(1e-5, batch_delay))
         self._threadpool = ThreadPoolExecutor()
@@ -232,29 +273,32 @@ class BatchHandler:
                 # decision to attemp to pop a batch
                 # -> will happen if a single datapoint is available
 
-                batch = self._queue_prio.pop_optimal_batch(
+                batches = self._queue_prio.pop_optimal_batch(
                     self.max_batch_size, latest_first=False
                 )
-                if not batch:
+                if not batches:
                     # not a single sentence available / len=0, wait for more
                     continue
                 # optimal batch has been selected ->
                 # lets tokenize it and move tensors to GPU.
-                sentences = [item.sentence for item in batch]
-                feat = self.model.encode_pre(sentences)
-                if self._verbose:
-                    logger.debug(
-                        "[📦] batched %s requests, queue remaining:  %s",
-                        len(sentences),
-                        len(self._queue_prio),
-                    )
-                # while-loop just for shutdown
-                while not self._shutdown.is_set():
-                    try:
-                        self._feature_queue.put((feat, batch), timeout=1)
+                for batch in batches:
+                    sentences = [item.sentence for item in batch]
+                    feat = self.model.encode_pre(sentences)
+                    if self._verbose:
+                        logger.debug(
+                            "[📦] batched %s requests, queue remaining:  %s",
+                            len(sentences),
+                            len(self._queue_prio),
+                        )
+                    if self._shutdown.is_set():
                         break
-                    except queue.Full:
-                        continue
+                    # while-loop just for shutdown
+                    while not self._shutdown.is_set():
+                        try:
+                            self._feature_queue.put((feat, batch), timeout=1)
+                            break
+                        except queue.Full:
+                            continue
         except Exception as ex:
             logger.exception(ex)
             exit("_preprocess_batch crashed")

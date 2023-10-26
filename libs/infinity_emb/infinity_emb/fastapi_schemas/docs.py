@@ -1,7 +1,7 @@
 # from infinity_emb import __version__
 
 FASTAPI_TITLE = "♾️ Infinity - Embedding Inference Server"
-FASTAPI_SUMMARY = "Embedding Inference Server - finding TGI for embeddings"
+FASTAPI_SUMMARY = "Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks."
 FASTAPI_DESCRIPTION = ""
 
 
