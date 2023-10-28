@@ -47,6 +47,12 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         else:
             logger.info("No optimizations via Huggingface optimum.")
         
+        if self._target_device.type == "cuda" and not os.environ.get("INFINITY_DISABLE_FLASH", False):
+            logger.info("Adding flash_attention."
+                        "Disable by setting the env var `INFINITY_DISABLE_FLASH`")
+            self._use_flash_attn = True
+        else:
+            self._use_flash_attn = False
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
         features = self.tokenize(sentences)
@@ -61,7 +67,13 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         with torch.inference_mode():
             device = self._target_device
             features = util.batch_to_device(features, device)
-            out_features = self.forward(features)["sentence_embedding"]
+            if self._use_flash_attn:
+                with torch.backends.cuda.sdp_kernel(
+                        enable_flash=True, enable_math=True, enable_mem_efficient=True
+                    ):
+                    out_features = self.forward(features)["sentence_embedding"]
+            else:
+                out_features = self.forward(features)["sentence_embedding"]
 
         return out_features
 
