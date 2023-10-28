@@ -18,7 +18,7 @@ def embedding_live_performance():
 
     batch_size = req.json()["data"]["stats"]["batch_size"]
     model_name = req.json()["data"]["id"]
-    print(f"batch_size is {batch_size}")
+    print(f"batch_size is {batch_size}, model={model_name}")
     model = SentenceTransformer(model_name_or_path=model_name)
 
     def local(data: str):

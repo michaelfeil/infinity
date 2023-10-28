@@ -37,9 +37,15 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         fm = self._first_module()
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         if OPTIMUM_AVAILABLE and not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
-            logger.info("Adding optimizations via Huggingface optimum."
-                        " disable via `INFINITY_DISABLE_OPTIMUM`")
-            fm.auto_model = BetterTransformer.transform(fm.auto_model)
+            logger.info("Adding optimizations via Huggingface optimum. "
+                        "Disable by setting the env var `INFINITY_DISABLE_OPTIMUM`")
+            try:
+                fm.auto_model = BetterTransformer.transform(fm.auto_model)
+            except Exception as ex:
+                logger.exception(f"BetterTransformer failed with {ex}")
+                exit(1)
+        else:
+            logger.info("No optimizations via Huggingface optimum.")
         
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
