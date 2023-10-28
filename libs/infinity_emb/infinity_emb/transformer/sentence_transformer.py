@@ -11,6 +11,12 @@ from infinity_emb.inference.primitives import NpEmbeddingType
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseTransformer
 
+try:
+    from optimum.bettertransformer import BetterTransformer
+    OPTIMUM_AVAILABLE = True
+except ImportError:
+    OPTIMUM_AVAILABLE = False
+
 __all__ = [
     "SentenceTransformerPatched",
     "CT2SentenceTransformer",
@@ -28,7 +34,13 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
         # without corrupting the original.
-        self._infinity_tokenizer = copy.deepcopy(self._first_module().tokenizer)
+        fm = self._first_module()
+        self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
+        if OPTIMUM_AVAILABLE and not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
+            logger.info("Adding optimizations via Huggingface optimum."
+                        " disable via `INFINITY_DISABLE_OPTIMUM`")
+            fm.auto_model = BetterTransformer.transform(fm.auto_model)
+        
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
         features = self.tokenize(sentences)

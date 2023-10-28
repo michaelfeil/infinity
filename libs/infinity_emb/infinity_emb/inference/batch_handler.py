@@ -3,6 +3,7 @@ import bisect
 import queue
 import random
 import threading
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from operator import attrgetter
@@ -170,7 +171,7 @@ class BatchHandler:
         self,
         model: BaseTransformer,
         max_batch_size: int,
-        max_queue_wait: int = 32_000,
+        max_queue_wait: int = int(os.environ.get("INFINITY_QUEUE_SIZE", 32_000)),
         batch_delay: float = 5e-3,
         verbose=False,
     ) -> None:
