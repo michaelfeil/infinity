@@ -13,6 +13,7 @@ from infinity_emb.transformer.abstract import BaseTransformer
 
 try:
     from optimum.bettertransformer import BetterTransformer
+
     OPTIMUM_AVAILABLE = True
 except ImportError:
     OPTIMUM_AVAILABLE = False
@@ -37,8 +38,10 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         fm = self._first_module()
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         if OPTIMUM_AVAILABLE and not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
-            logger.info("Adding optimizations via Huggingface optimum. "
-                        "Disable by setting the env var `INFINITY_DISABLE_OPTIMUM`")
+            logger.info(
+                "Adding optimizations via Huggingface optimum. "
+                "Disable by setting the env var `INFINITY_DISABLE_OPTIMUM`"
+            )
             try:
                 fm.auto_model = BetterTransformer.transform(fm.auto_model)
             except Exception as ex:
@@ -46,10 +49,14 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
                 exit(1)
         else:
             logger.info("No optimizations via Huggingface optimum.")
-        
-        if self._target_device.type == "cuda" and not os.environ.get("INFINITY_DISABLE_FLASH", False):
-            logger.info("Adding flash_attention."
-                        "Disable by setting the env var `INFINITY_DISABLE_FLASH`")
+
+        if self._target_device.type == "cuda" and not os.environ.get(
+            "INFINITY_DISABLE_FLASH", False
+        ):
+            logger.info(
+                "Adding flash_attention."
+                "Disable by setting the env var `INFINITY_DISABLE_FLASH`"
+            )
             self._use_flash_attn = True
         else:
             self._use_flash_attn = False
@@ -69,8 +76,8 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
             features = util.batch_to_device(features, device)
             if self._use_flash_attn:
                 with torch.backends.cuda.sdp_kernel(
-                        enable_flash=True, enable_math=True, enable_mem_efficient=True
-                    ):
+                    enable_flash=True, enable_math=True, enable_mem_efficient=True
+                ):
                     out_features = self.forward(features)["sentence_embedding"]
             else:
                 out_features = self.forward(features)["sentence_embedding"]
@@ -138,7 +145,7 @@ class CT2SentenceTransformer(SentenceTransformerPatched):
         compute_type="default",
         force=False,
         vmap: Union[str, None] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self[0] = CT2Transformer(

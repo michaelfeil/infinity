@@ -1,9 +1,9 @@
 import asyncio
 import bisect
+import os
 import queue
 import random
 import threading
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor
 from operator import attrgetter
