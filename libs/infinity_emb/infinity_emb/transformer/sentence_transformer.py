@@ -11,6 +11,13 @@ from infinity_emb.inference.primitives import NpEmbeddingType
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseTransformer
 
+try:
+    from optimum.bettertransformer import BetterTransformer
+
+    OPTIMUM_AVAILABLE = True
+except ImportError:
+    OPTIMUM_AVAILABLE = False
+
 __all__ = [
     "SentenceTransformerPatched",
     "CT2SentenceTransformer",
@@ -23,12 +30,34 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         device = self._target_device
-        self.eval()
         self.to(device)
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
         # without corrupting the original.
-        self._infinity_tokenizer = copy.deepcopy(self._first_module().tokenizer)
+        fm = self._first_module()
+        self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
+        if OPTIMUM_AVAILABLE and not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
+            logger.info(
+                "Adding optimizations via Huggingface optimum. "
+                "Disable by setting the env var `INFINITY_DISABLE_OPTIMUM`"
+            )
+            try:
+                fm.auto_model = BetterTransformer.transform(fm.auto_model)
+            except Exception as ex:
+                logger.exception(f"BetterTransformer failed with {ex}")
+                exit(1)
+        else:
+            logger.info("No optimizations via Huggingface optimum.")
+
+        self.eval()
+        if self._target_device.type == "cuda" and os.environ.get(
+            "INFINITY_TORCH_ENABLE_HALF", False
+        ):
+            logger.info(
+                "Switching to half() precision (fp16)."
+                "Enabled by the setting the env var `INFINITY_TORCH_ENABLE_HALF`"
+            )
+            self.half()
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
         features = self.tokenize(sentences)
@@ -108,7 +137,7 @@ class CT2SentenceTransformer(SentenceTransformerPatched):
         compute_type="default",
         force=False,
         vmap: Union[str, None] = None,
-        **kwargs
+        **kwargs,
     ):
         super().__init__(*args, **kwargs)
         self[0] = CT2Transformer(

@@ -1,10 +1,13 @@
-from infinity_emb.fastapi_schemas.pymodels import OpenAIEmbeddingResult
+from typing import Any, Dict, Iterable, Union
+
 from infinity_emb.inference.primitives import NpEmbeddingType
 
 
 def list_embeddings_to_response(
-    embeddings: NpEmbeddingType, model: str, usage: int
-) -> OpenAIEmbeddingResult:
+    embeddings: Union[NpEmbeddingType, Iterable[NpEmbeddingType]],
+    model: str,
+    usage: int,
+) -> Dict[str, Any]:
     return dict(
         model=model,
         data=[
