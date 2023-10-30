@@ -30,7 +30,6 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         device = self._target_device
-        self.eval()
         self.to(device)
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
@@ -50,16 +49,15 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         else:
             logger.info("No optimizations via Huggingface optimum.")
 
-        if self._target_device.type == "cuda" and not os.environ.get(
-            "INFINITY_DISABLE_FLASH", False
+        self.eval()
+        if self._target_device.type == "cuda" and os.environ.get(
+            "INFINITY_TORCH_ENABLE_HALF", False
         ):
             logger.info(
-                "Adding flash_attention."
-                "Disable by setting the env var `INFINITY_DISABLE_FLASH`"
+                "Switching to half() precision (fp16)."
+                "Enabled by the setting the env var `INFINITY_TORCH_ENABLE_HALF`"
             )
-            self._use_flash_attn = True
-        else:
-            self._use_flash_attn = False
+            self.half()
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
         features = self.tokenize(sentences)
@@ -74,13 +72,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         with torch.inference_mode():
             device = self._target_device
             features = util.batch_to_device(features, device)
-            if self._use_flash_attn:
-                with torch.backends.cuda.sdp_kernel(
-                    enable_flash=True, enable_math=True, enable_mem_efficient=True
-                ):
-                    out_features = self.forward(features)["sentence_embedding"]
-            else:
-                out_features = self.forward(features)["sentence_embedding"]
+            out_features = self.forward(features)["sentence_embedding"]
 
         return out_features
 

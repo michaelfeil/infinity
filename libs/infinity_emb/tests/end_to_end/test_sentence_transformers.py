@@ -13,7 +13,7 @@ from infinity_emb import create_server
 from infinity_emb.transformer.utils import InferenceEngine
 
 PREFIX = "/v1_ct2"
-model = pytest.DEFAULT_BERT_MODEL
+model: str = pytest.DEFAULT_BERT_MODEL
 batch_size = 64 if torch.cuda.is_available() else 8
 
 app = create_server(

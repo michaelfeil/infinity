@@ -39,7 +39,7 @@ class CustomPrioQueue:
 
             self._sync_event.set()
 
-    def pop_optimal_batch(
+    def pop_optimal_batches(
         self, size: int, timeout=0.2, latest_first=False
     ) -> Union[List[List[EmbeddingResult]], None]:
         """
@@ -98,7 +98,7 @@ class CustomFIFOQueue:
         with self._lock_queue_event:
             self._queue.extend(items)
 
-    def pop_optimal_batch(
+    def pop_optimal_batches(
         self, size: int, timeout=0.2, **kwargs
     ) -> Union[List[List[EmbeddingResult]], None]:
         """
@@ -120,7 +120,7 @@ class CustomFIFOQueue:
                 return None
 
         # slice as many batches as possible
-        n_batches = max(1, len(self._queue) // size)
+        n_batches = min(32, max(1, len(self._queue) // size))
         size_batches = size * n_batches
 
         with self._lock_queue_event:
@@ -134,11 +134,11 @@ class CustomFIFOQueue:
             # optimal padding per batch
             new_items_l.sort()
 
-        new_items = []
+        new_items: List[List[EmbeddingResult]] = []
         for i in range(n_batches):
             mini_batch = new_items_l[size * i : size * (i + 1)]
-            mini_batch = [mi.item for mi in mini_batch]
-            new_items.append(mini_batch)
+            mini_batch_e: List[EmbeddingResult] = [mi.item for mi in mini_batch]
+            new_items.append(mini_batch_e)
             # runtime checks
             # assert 1 <= len(mini_batch) <= size
             # if i > 0:
@@ -274,7 +274,7 @@ class BatchHandler:
                 # decision to attemp to pop a batch
                 # -> will happen if a single datapoint is available
 
-                batches = self._queue_prio.pop_optimal_batch(
+                batches = self._queue_prio.pop_optimal_batches(
                     self.max_batch_size, latest_first=False
                 )
                 if not batches:
