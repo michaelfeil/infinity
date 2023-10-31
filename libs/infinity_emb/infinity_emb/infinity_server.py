@@ -99,6 +99,7 @@ def create_server(
                     results_pending=s.results_absolute,
                     batch_size=batch_size,
                 ),
+                backend=engine.name,
             )
         )
 
