@@ -68,7 +68,7 @@ infinity_emb --help
 ### or launch the CLI using a pre-built docker container
 
 ```bash
-model=sentence-transformers/all-MiniLM-L6-v2
+model=BAAI/bge-small-en-v1.5
 port=8080
 docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
 ```
@@ -109,7 +109,7 @@ The download path at runtime, can be controlled via the environment variable `SE
   # Dockerfile for multiple models via multiple ports
   FROM michaelf34/infinity:latest
   ENTRYPOINT ["/bin/sh", "-c", \
-   "(/opt/poetry/bin/poetry run infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &);\
+   "(/opt/poetry/bin/poetry run infinity_emb --port 8080 --model-name-or-path BAAI/bge-small-en-v1.5 &);\
    (/opt/poetry/bin/poetry run infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
   ```
   

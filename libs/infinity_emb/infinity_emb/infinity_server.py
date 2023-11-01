@@ -20,7 +20,7 @@ from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeH
 
 
 def create_server(
-    model_name_or_path: str = "sentence-transformers/all-MiniLM-L6-v2",
+    model_name_or_path: str = "BAAI/bge-small-en-v1.5",
     url_prefix: str = "/v1",
     batch_size: int = 64,
     engine: InferenceEngine = InferenceEngine.torch,
@@ -114,7 +114,7 @@ def create_server(
         ```python
         import requests
         requests.post("https://..:8000/v1/embeddings",
-            json={"model":"all-MiniLM-L6-v2","input":["A sentence to encode."]})
+            json={"model":"bge-small-en-v1.5","input":["A sentence to encode."]})
         """
         bh: BatchHandler = app.batch_handler
         if bh.is_overloaded():
@@ -146,7 +146,7 @@ def create_server(
 
 
 def start_uvicorn(
-    model_name_or_path: str = "sentence-transformers/all-MiniLM-L6-v2",
+    model_name_or_path: str = "BAAI/bge-small-en-v1.5",
     batch_size: int = 64,
     url_prefix: str = "/v1",
     host: str = "0.0.0.0",
@@ -160,7 +160,7 @@ def start_uvicorn(
 
     Args:
         model_name_or_path: str: Huggingface model, e.g.
-            "sentence-transformers/all-MiniLM-L6-v2".
+            "BAAI/bge-small-en-v1.5".
         batch_size: int: batch size for forward pass.
         url_prefix str: prefix for api. typically "/v1".
         host str: host-url, typically either "0.0.0.0" or "127.0.0.1".
