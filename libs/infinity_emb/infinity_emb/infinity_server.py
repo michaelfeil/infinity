@@ -58,7 +58,10 @@ def create_server(
         )
 
         app.batch_handler = BatchHandler(
-            max_batch_size=batch_size, model=model, verbose=verbose, batch_delay=min_inference_t/2
+            max_batch_size=batch_size,
+            model=model,
+            verbose=verbose,
+            batch_delay=min_inference_t / 2,
         )
         # start in a threadpool
         await app.batch_handler.spawn()

@@ -1,13 +1,10 @@
 import asyncio
-import bisect
 import os
 import queue
-from queue import Queue
-import random
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
-from operator import attrgetter
+from queue import Queue
 from typing import Dict, List, Union
 
 from infinity_emb.inference.primitives import (
@@ -21,7 +18,9 @@ from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
 
-
+# from operator import attrgetter
+# import random
+# import bisect
 # class CustomPrioQueue:
 #     def __init__(self) -> None:
 #         """"""
@@ -48,10 +47,11 @@ from infinity_emb.transformer.utils import get_lengths_with_tokenize
 
 #         Args:
 #             size (int): max size of batch
-#             timeout (float, optional): timeout until None is returned. Defaults to 0.2.
-#             latest_first (bool, optional): guarantees processing of oldest item in list.
-#                 As latest first requires getting argmin of created timestamps,
-#                 which is slow.  Defaults to False.
+#             timeout (float, optional): timeout until None is returned.
+#               Defaults to 0.2.
+#             latest_first (bool, optional): guarantees processing of oldest item
+#                 in list. As latest first requires getting argmin of created
+#                 timestamps, which is slow.  Defaults to False.
 
 #         returns:
 #             None: if there is not a single item in self._queue after timeout
@@ -66,7 +66,8 @@ from infinity_emb.transformer.utils import get_lengths_with_tokenize
 #                 # slower operation: we have a large list
 #                 # and can spend some time computing the argmin
 #                 # pick oldest one -> argmin timestamp
-#                 start = self._queue.index(min(self._queue, key=attrgetter("timestamp")))
+#                 start = self._queue.index(
+#                  min(self._queue, key=attrgetter("timestamp")))
 #             else:
 #                 # pick a random continuous slice, at beginning or at the end.
 #                 start = random.randrange(-size, len(self._queue))
@@ -100,7 +101,7 @@ class CustomFIFOQueue:
             self._queue.extend(items)
 
     def pop_optimal_batches(
-        self, size: int, max_n_batches: int =32, timeout=0.2, **kwargs
+        self, size: int, max_n_batches: int = 32, timeout=0.2, **kwargs
     ) -> Union[List[List[EmbeddingResult]], None]:
         """
         pop batch `up to size` + `continuous (sorted)` from queue
@@ -288,7 +289,7 @@ class BatchHandler:
                     if self._feature_queue.qsize() > 2:
                         # add some stochastic delay
                         time.sleep(self._batch_delay * 2)
-                        
+
                     sentences = [item.sentence for item in batch]
                     feat = self.model.encode_pre(sentences)
                     if self._verbose:
@@ -325,7 +326,6 @@ class BatchHandler:
                     logger.debug("[🏃] Inference on batch_size=%s", len(batch))
                 self._last_inference = time.perf_counter()
                 embed = self.model.encode_core(feat)
-                
 
                 # while-loop just for shutdown
                 while not self._shutdown.is_set():
@@ -361,7 +361,8 @@ class BatchHandler:
 
                 if (
                     self._postprocess_queue.empty()
-                    and self._last_inference < time.perf_counter() + self._batch_delay * 2
+                    and self._last_inference
+                    < time.perf_counter() + self._batch_delay * 2
                 ):
                     # 5 ms, assuming this is below
                     # 3-50ms for inference on avg.

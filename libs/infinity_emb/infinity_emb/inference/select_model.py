@@ -19,7 +19,9 @@ def select_model_to_functional(
         runtime_check_callable(init_engine, log=False)
         # size one
         runtime_check_callable(init_engine, log=True)
-        min_inference_t = min(runtime_check_callable(init_engine, log=False)[1] for _ in range(10))
+        min_inference_t = min(
+            runtime_check_callable(init_engine, log=False)[1] for _ in range(10)
+        )
         # warm-up with max batch size
         emb_per_sec_short, _ = runtime_check_callable(
             init_engine, sample=["up"] * batch_size
