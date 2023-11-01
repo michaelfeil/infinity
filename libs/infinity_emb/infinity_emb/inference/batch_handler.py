@@ -2,6 +2,7 @@ import asyncio
 import bisect
 import os
 import queue
+from queue import Queue
 import random
 import threading
 import time
@@ -194,8 +195,8 @@ class BatchHandler:
         self._shutdown = threading.Event()
         self._queue_prio = CustomFIFOQueue()
         self._result_store = ResultKVStoreFuture()
-        self._feature_queue: queue.Queue = queue.Queue(6)
-        self._postprocess_queue: queue.Queue = queue.Queue(4)
+        self._feature_queue: Queue = Queue(6)
+        self._postprocess_queue: Queue = Queue(4)
         self._batch_delay = float(max(1e-5, batch_delay))
         self._threadpool = ThreadPoolExecutor()
         self._ready = False
