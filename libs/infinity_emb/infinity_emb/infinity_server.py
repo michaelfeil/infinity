@@ -50,7 +50,7 @@ def create_server(
     async def _startup():
         instrumentator.expose(app)
 
-        model, _ = select_model_to_functional(
+        model, min_inference_t = select_model_to_functional(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,
@@ -58,7 +58,7 @@ def create_server(
         )
 
         app.batch_handler = BatchHandler(
-            max_batch_size=batch_size, model=model, verbose=verbose
+            max_batch_size=batch_size, model=model, verbose=verbose, batch_delay=min_inference_t/2
         )
         # start in a threadpool
         await app.batch_handler.spawn()

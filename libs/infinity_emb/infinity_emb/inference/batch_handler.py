@@ -22,66 +22,66 @@ from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
 
 
-class CustomPrioQueue:
-    def __init__(self) -> None:
-        """"""
-        self._lock_queue_event = threading.Lock()
-        self._queue: List[PrioritizedQueueItem] = []
-        # event that indicates items in queue.
-        self._sync_event = threading.Event()
+# class CustomPrioQueue:
+#     def __init__(self) -> None:
+#         """"""
+#         self._lock_queue_event = threading.Lock()
+#         self._queue: List[PrioritizedQueueItem] = []
+#         # event that indicates items in queue.
+#         self._sync_event = threading.Event()
 
-    def __len__(self):
-        return len(self._queue)
+#     def __len__(self):
+#         return len(self._queue)
 
-    async def extend(self, items: List[PrioritizedQueueItem]):
-        with self._lock_queue_event:
-            for item in items:
-                bisect.insort(self._queue, item)
+#     async def extend(self, items: List[PrioritizedQueueItem]):
+#         with self._lock_queue_event:
+#             for item in items:
+#                 bisect.insort(self._queue, item)
 
-            self._sync_event.set()
+#             self._sync_event.set()
 
-    def pop_optimal_batches(
-        self, size: int, timeout=0.2, latest_first=False
-    ) -> Union[List[List[EmbeddingResult]], None]:
-        """
-        pop batch `up to size` + `continuous (sorted)` from queue
+#     def pop_optimal_batches(
+#         self, size: int, timeout=0.2, latest_first=False
+#     ) -> Union[List[List[EmbeddingResult]], None]:
+#         """
+#         pop batch `up to size` + `continuous (sorted)` from queue
 
-        Args:
-            size (int): max size of batch
-            timeout (float, optional): timeout until None is returned. Defaults to 0.2.
-            latest_first (bool, optional): guarantees processing of oldest item in list.
-                As latest first requires getting argmin of created timestamps,
-                which is slow.  Defaults to False.
+#         Args:
+#             size (int): max size of batch
+#             timeout (float, optional): timeout until None is returned. Defaults to 0.2.
+#             latest_first (bool, optional): guarantees processing of oldest item in list.
+#                 As latest first requires getting argmin of created timestamps,
+#                 which is slow.  Defaults to False.
 
-        returns:
-            None: if there is not a single item in self._queue after timeout
-            else: List[EmbeddingResult] with len(1<=size)
-        """
-        if not self._queue:
-            if not self._sync_event.wait(timeout):
-                return None
+#         returns:
+#             None: if there is not a single item in self._queue after timeout
+#             else: List[EmbeddingResult] with len(1<=size)
+#         """
+#         if not self._queue:
+#             if not self._sync_event.wait(timeout):
+#                 return None
 
-        if len(self._queue) > size:
-            if latest_first:
-                # slower operation: we have a large list
-                # and can spend some time computing the argmin
-                # pick oldest one -> argmin timestamp
-                start = self._queue.index(min(self._queue, key=attrgetter("timestamp")))
-            else:
-                # pick a random continuous slice, at beginning or at the end.
-                start = random.randrange(-size, len(self._queue))
-            start = max(0, min(len(self._queue) - size, start))
-        else:
-            start = 0
-        end = start + size
+#         if len(self._queue) > size:
+#             if latest_first:
+#                 # slower operation: we have a large list
+#                 # and can spend some time computing the argmin
+#                 # pick oldest one -> argmin timestamp
+#                 start = self._queue.index(min(self._queue, key=attrgetter("timestamp")))
+#             else:
+#                 # pick a random continuous slice, at beginning or at the end.
+#                 start = random.randrange(-size, len(self._queue))
+#             start = max(0, min(len(self._queue) - size, start))
+#         else:
+#             start = 0
+#         end = start + size
 
-        with self._lock_queue_event:
-            new_items = self._queue[start:end]
-            self._queue = self._queue[:start] + self._queue[end:]
-            if not self._queue:
-                self._sync_event.clear()
-        # assert 1 <= len(new_items) <= size
-        return [[i.item for i in new_items]]
+#         with self._lock_queue_event:
+#             new_items = self._queue[start:end]
+#             self._queue = self._queue[:start] + self._queue[end:]
+#             if not self._queue:
+#                 self._sync_event.clear()
+#         # assert 1 <= len(new_items) <= size
+#         return [[i.item for i in new_items]]
 
 
 class CustomFIFOQueue:
@@ -100,7 +100,7 @@ class CustomFIFOQueue:
             self._queue.extend(items)
 
     def pop_optimal_batches(
-        self, size: int, timeout=0.2, **kwargs
+        self, size: int, max_n_batches: int =32, timeout=0.2, **kwargs
     ) -> Union[List[List[EmbeddingResult]], None]:
         """
         pop batch `up to size` + `continuous (sorted)` from queue
@@ -121,7 +121,7 @@ class CustomFIFOQueue:
                 return None
 
         # slice as many batches as possible
-        n_batches = min(32, max(1, len(self._queue) // size))
+        n_batches = min(max_n_batches, max(1, len(self._queue) // size))
         size_batches = size * n_batches
 
         with self._lock_queue_event:
@@ -140,10 +140,11 @@ class CustomFIFOQueue:
             mini_batch = new_items_l[size * i : size * (i + 1)]
             mini_batch_e: List[EmbeddingResult] = [mi.item for mi in mini_batch]
             new_items.append(mini_batch_e)
-            # runtime checks
-            # assert 1 <= len(mini_batch) <= size
-            # if i > 0:
+            # # runtime checks
+            # if n_batches > 1:
             #     assert len(mini_batch) == size
+            # else:
+            #     assert 1 <= len(mini_batch) <= size
 
         return new_items
 
@@ -183,7 +184,7 @@ class BatchHandler:
         max_batch_size: max batch size of the models
         max_queue_wait: max items to queue in the batch, default 32_000 sentences
         batch_delay: sleep in seconds, wait time for pre/post methods.
-            Best result: setting to 1/2 or 1/3 the minimal expected
+            Best result: setting to 1/2 the minimal expected
             time for core_encode method / "gpu inference".
             Dont set it above 1x minimal expected time of interence.
             Should not be 0 to not block Python's GIL.
@@ -197,12 +198,12 @@ class BatchHandler:
         self._result_store = ResultKVStoreFuture()
         self._feature_queue: Queue = Queue(6)
         self._postprocess_queue: Queue = Queue(4)
-        self._batch_delay = float(max(1e-5, batch_delay))
+        self._batch_delay = float(max(1e-4, batch_delay))
         self._threadpool = ThreadPoolExecutor()
         self._ready = False
-        self._last_inference = time.time()
+        self._last_inference = time.perf_counter()
 
-        if batch_delay > 0.5:
+        if batch_delay > 0.1:
             logger.warn(f"high batch delay of {self._batch_delay}")
         if max_batch_size > max_queue_wait * 10:
             logger.warn(
@@ -284,6 +285,10 @@ class BatchHandler:
                 # optimal batch has been selected ->
                 # lets tokenize it and move tensors to GPU.
                 for batch in batches:
+                    if self._feature_queue.qsize() > 2:
+                        # add some stochastic delay
+                        time.sleep(self._batch_delay * 2)
+                        
                     sentences = [item.sentence for item in batch]
                     feat = self.model.encode_pre(sentences)
                     if self._verbose:
@@ -316,10 +321,11 @@ class BatchHandler:
                 except queue.Empty:
                     continue
                 (feat, batch) = core_batch
-                self._last_inference = time.time()
-                embed = self.model.encode_core(feat)
                 if self._verbose:
-                    logger.debug("[🏃] Inference done on batch_size=%s", len(batch))
+                    logger.debug("[🏃] Inference on batch_size=%s", len(batch))
+                self._last_inference = time.perf_counter()
+                embed = self.model.encode_core(feat)
+                
 
                 # while-loop just for shutdown
                 while not self._shutdown.is_set():
@@ -354,8 +360,8 @@ class BatchHandler:
                         continue
 
                 if (
-                    not self._postprocess_queue.qsize()
-                    and self._last_inference < time.time() + self._batch_delay * 2
+                    self._postprocess_queue.empty()
+                    and self._last_inference < time.perf_counter() + self._batch_delay * 2
                 ):
                     # 5 ms, assuming this is below
                     # 3-50ms for inference on avg.
