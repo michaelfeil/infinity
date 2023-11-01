@@ -41,7 +41,7 @@ def _pretrained_model_score(
 
     score = model.evaluate(evaluator) * 100
     print(model_name, "{:.2f} vs. exp: {:.2f}".format(score, expected_score))
-    assert score > expected_score or abs(score - expected_score) < 0.1
+    assert score > expected_score or abs(score - expected_score) < 0.01
 
 
 @pytest.mark.parametrize(
@@ -53,6 +53,8 @@ def _pretrained_model_score(
         ("sentence-transformers/all-MiniLM-L6-v2", 82.03, "default", "cuda"),
         ("sentence-transformers/all-MiniLM-L6-v2", 81.73, "int8", "cuda"),
         ("sentence-transformers/all-MiniLM-L6-v2", 82.03, "default", "cpu"),
+        ("BAAI/bge-small-en-v1.5", 86.03, None, "cuda"),
+        ("BAAI/bge-small-en-v1.5", 86.03, "int8", "cuda"),
     ],
 )
 def test_bert(get_sts_bechmark_dataset, model, score, compute_type, device):
