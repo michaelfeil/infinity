@@ -13,12 +13,13 @@ def select_model_to_functional(
     logger.info(f"model {model_name_or_path} selected, using engine={engine.value}")
     init_engine = engine.value(model_name_or_path)
 
-    min_inference_t = 2e-3
+    min_inference_t = 4e-3
     if model_warmup:
         # size one, warm up warm start timings.
         runtime_check_callable(init_engine, log=False)
         # size one
-        _, min_inference_t = runtime_check_callable(init_engine, log=True)
+        runtime_check_callable(init_engine, log=True)
+        min_inference_t = min(runtime_check_callable(init_engine, log=False)[1] for _ in range(10))
         # warm-up with max batch size
         emb_per_sec_short, _ = runtime_check_callable(
             init_engine, sample=["up"] * batch_size
@@ -38,7 +39,7 @@ def select_model_to_functional(
 
 
 def runtime_check_callable(
-    model: BaseTransformer, sample=["warmup"], log=True
+    model: BaseTransformer, sample=["warm"], log=True
 ) -> Tuple[float, float]:
     inp = [EmbeddingResult(sentence=s, future=None) for s in sample]  # type: ignore
     start = perf_counter()
