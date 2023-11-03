@@ -10,7 +10,7 @@ from infinity_emb.transformer.utils import InferenceEngine
 def select_model_to_functional(
     model_name_or_path: str, batch_size: int, engine: InferenceEngine, model_warmup=True
 ):
-    logger.info(f"model {model_name_or_path} selected, using engine={engine.value}")
+    logger.info(f"model=`{model_name_or_path}` selected, using engine=`{engine.value}`")
     init_engine = engine.value(model_name_or_path)
 
     min_inference_t = 4e-3

@@ -116,7 +116,7 @@ def create_server(
 
         ```python
         import requests
-        requests.post("https://..:8000/v1/embeddings",
+        requests.post("http://..:7997/v1/embeddings",
             json={"model":"bge-small-en-v1.5","input":["A sentence to encode."]})
         """
         bh: BatchHandler = app.batch_handler
@@ -153,7 +153,7 @@ def start_uvicorn(
     batch_size: int = 64,
     url_prefix: str = "/v1",
     host: str = "0.0.0.0",
-    port: int = 8001,
+    port: int = 7997,
     log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
     engine: InferenceEngineTypeHint = InferenceEngineTypeHint.torch.name,  # type: ignore # noqa
     model_warmup: bool = True,

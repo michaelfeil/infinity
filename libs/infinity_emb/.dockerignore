@@ -1,0 +1,5 @@
+.venv
+tests
+**/*_cache
+Dockerfile
+**/__pycache__
