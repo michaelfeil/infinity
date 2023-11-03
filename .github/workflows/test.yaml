@@ -25,6 +25,7 @@ jobs:
       matrix:
         python-version:
           - "3.10"
+          - "3.11"
 
     name: Python ${{ matrix.python-version }}
     steps:
@@ -47,8 +48,8 @@ jobs:
           poetry run coverage run -m --source ./infinity_emb pytest tests 
           poetry run coverage xml
 
-      - name: Upload coverage Report to Codecov for python 3.10
-        if: ${{ matrix.python-version == '3.10' && inputs.upload_coverage == true }}
+      - name: Upload coverage Report to Codecov for python 3.11
+        if: ${{ matrix.python-version == '3.11' && inputs.upload_coverage == true }}
         uses: codecov/codecov-action@v3
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
