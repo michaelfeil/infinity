@@ -109,7 +109,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         self, out_features: Tensor, normalize_embeddings: bool = True
     ) -> NpEmbeddingType:
         with torch.inference_mode():
-            embeddings = out_features.detach().cpu()
+            embeddings = out_features.detach().cpu().to(torch.float32)
             if normalize_embeddings:
                 embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
             embeddings_out: np.ndarray = embeddings.numpy()

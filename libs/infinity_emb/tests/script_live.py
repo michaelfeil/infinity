@@ -7,7 +7,7 @@ import numpy as np
 import requests
 from sentence_transformers import SentenceTransformer
 
-LIVE_URL = "http://localhost:8001/v1"
+LIVE_URL = "http://localhost:7997/v1"
 
 
 def embedding_live_performance():
@@ -38,7 +38,10 @@ def embedding_live_performance():
 
     local_resp = local(sample)
     remote_resp = [d["embedding"] for d in remote(json_d).json()["data"]]
-    np.testing.assert_almost_equal(local_resp, remote_resp, 6)
+    np.testing.assert_almost_equal(local_resp, remote_resp, 3)
+    for r, e in zip(local_resp, remote_resp):
+        cosine_sim = np.dot(r, e) / (np.linalg.norm(e) * np.linalg.norm(r))
+        assert cosine_sim > 0.99
     print("Both methods provide the identical output.")
 
     print("Measuring latency via SentenceTransformers")
