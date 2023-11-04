@@ -14,10 +14,10 @@
 [![MIT License][license-shield]][license-url]
 [![LinkedIn][linkedin-shield]][linkedin-url]
 
-
 # Infinity ♾️
-![codecov](https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ)
-![CI](https://github.com/michaelfeil/infinity/actions/workflows/ci.yaml/badge.svg)
+[![codecov][codecov-shield]][codecov-url]
+[![ci][ci-shield]][ci-url]
+[![Downloads][pepa-shield]][pepa-url]
 
 Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks. Infinity is developed under MIT Licence: https://github.com/michaelfeil/infinity
 
@@ -106,11 +106,11 @@ The download path at runtime, can be controlled via the environment variable `SE
   
   Multiple models on one GPU is in experimental mode. You can use the following temporary solution:
   ```Dockerfile
-  # Dockerfile for multiple models via multiple ports
   FROM michaelf34/infinity:latest
+  # Dockerfile-ENTRYPOINT for multiple models via multiple ports
   ENTRYPOINT ["/bin/sh", "-c", \
-   "(/opt/poetry/bin/poetry run infinity_emb --port 8080 --model-name-or-path BAAI/bge-small-en-v1.5 &);\
-   (/opt/poetry/bin/poetry run infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
+   "(. /app/.venv/bin/activate && infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &);\
+   (. /app/.venv/bin/activate && infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
   ```
   
   You can build and run it via:  
@@ -157,3 +157,9 @@ poetry run pytest ./tests
 [license-url]: https://github.com/michaelfeil/infinity/blob/master/LICENSE.txt
 [linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
 [linkedin-url]: https://linkedin.com/in/michael-feil
+[pepa-shield]: https://static.pepy.tech/badge/infinity-emb
+[pepa-url]: https://www.pepy.tech/projects/infinity-emb
+[codecov-shield]: https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ
+[codecov-url]: https://codecov.io/gh/michaelfeil/infinity/branch/main
+[ci-shield]: https://github.com/michaelfeil/infinity/actions/workflows/ci.yaml/badge.svg
+[ci-url]: https://github.com/michaelfeil/infinity/actions

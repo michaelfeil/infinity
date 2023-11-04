@@ -11,12 +11,12 @@ from infinity_emb.transformer.abstract import BaseTransformer
 try:
     import torch
     from sentence_transformers import SentenceTransformer, util  # type: ignore
-    from torch import Tensor, device, dtype
+    from torch import Tensor
     from torch.nn import Module
 
     TORCH_AVAILABLE = True
 except ImportError:
-    torch, Tensor, device, dtype = None, None, None, None
+    torch, Tensor = None, None
 
     class SentenceTransformer:
         pass
@@ -232,56 +232,6 @@ class CT2Transformer(Module):
         # Do not consider the "transformer" attribute as a
         # child module so that it will stay on the CPU.
         return []
-
-    def half(self):
-        self.to(dtype="float16")
-        return self
-
-    def to(
-        self,
-        device: int | device | None = None,
-        dtype: dtype | str | None = None,
-        non_blocking: bool = False,
-    ) -> "CT2Transformer":
-        if not isinstance(device, int):
-            raise ValueError("param `dtype` needs to be of type int")
-        if not isinstance(dtype, str) or dtype is not None:
-            raise ValueError("param `dtype` needs to be of type str")
-
-        if dtype and not ("float" in dtype or "int" in dtype):
-            raise ValueError(
-                "dtype should be one of `int8`, `float16`, `int8_float16`, `float32`"
-            )
-        elif dtype:
-            new_dtype = True
-            self.compute_type = new_dtype
-        else:
-            new_dtype = False
-
-        if device and (device.startswith("cuda") or device.startswith("cpu")):
-            raise ValueError(
-                "for param `device`, f'cuda:{index}' or f'cpu:{index}' are supported"
-            )
-        elif device:
-            if ":" in device:
-                new_device = device.split(":")[0]
-                new_index = device.split(":")[1]
-            else:
-                new_device = device
-                new_index = "0"
-        else:
-            new_device = ""
-            new_index = ""
-
-        if new_device or new_dtype or new_index:
-            self.encoder = self._ctranslate2_encoder_cls(
-                self.ct2_model_dir,
-                device=new_device,
-                device_index=new_index,
-                intra_threads=torch.get_num_threads(),
-                compute_type=self.compute_type,
-            )
-        return self
 
     def forward(self, features):
         """overwrites torch forward method with CTranslate model"""
