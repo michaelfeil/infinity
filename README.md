@@ -106,11 +106,11 @@ The download path at runtime, can be controlled via the environment variable `SE
   
   Multiple models on one GPU is in experimental mode. You can use the following temporary solution:
   ```Dockerfile
-  # Dockerfile for multiple models via multiple ports
   FROM michaelf34/infinity:latest
+  # Dockerfile-ENTRYPOINT for multiple models via multiple ports
   ENTRYPOINT ["/bin/sh", "-c", \
-   "(/opt/poetry/bin/poetry run infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &);\
-   (/opt/poetry/bin/poetry run infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
+   "(. /app/.venv/bin/activate && infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &);\
+   (. /app/.venv/bin/activate && infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
   ```
   
   You can build and run it via:  
