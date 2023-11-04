@@ -3918,11 +3918,11 @@ multidict = ">=4.0"
 all = ["ctranslate2", "fastembed", "optimum", "sentence-transformers", "torch"]
 ct2 = ["ctranslate2", "sentence-transformers", "torch"]
 fastembed = ["fastembed"]
-onnxgpu = ["onnxruntime-gpu"]
+onnxruntime-gpu = ["onnxruntime-gpu"]
 optimum = ["optimum"]
 torch = ["sentence-transformers", "torch"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "a281101e20ae22ec5ddfe6d7b29d5e13c1c5f4730175acee63260350a17f4caa"
+content-hash = "e107eb46bda3f7b66a0931180ba6f573a24cd4dffb0f17518d3ade8154b0e2f9"
