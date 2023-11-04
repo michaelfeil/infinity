@@ -18,6 +18,7 @@ app = create_server(
     batch_size=BATCH_SIZE,
     url_prefix=PREFIX,
     engine=InferenceEngine.debugengine,
+    verbose=True,
 )
 
 

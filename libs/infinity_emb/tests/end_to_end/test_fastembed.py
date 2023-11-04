@@ -1,5 +1,4 @@
 import pytest
-import torch
 from asgi_lifespan import LifespanManager
 from httpx import AsyncClient
 from sentence_transformers import SentenceTransformer  # type: ignore
@@ -7,21 +6,22 @@ from sentence_transformers import SentenceTransformer  # type: ignore
 from infinity_emb import create_server
 from infinity_emb.transformer.utils import InferenceEngine
 
-PREFIX = "/v1_ct2"
-MODEL: str = pytest.DEFAULT_BERT_MODEL
-batch_size = 64 if torch.cuda.is_available() else 8
+PREFIX = "/v1_fastembed"
+MODEL: str = "BAAI/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
+
+batch_size = 8
 
 app = create_server(
     model_name_or_path=MODEL,
     batch_size=batch_size,
     url_prefix=PREFIX,
-    engine=InferenceEngine.torch,
+    engine=InferenceEngine.fastembed,
 )
 
 
 @pytest.fixture
 def model_base() -> SentenceTransformer:
-    return SentenceTransformer(MODEL)
+    return SentenceTransformer(MODEL, device="cpu")
 
 
 @pytest.fixture()
@@ -30,12 +30,6 @@ async def client():
         app=app, base_url="http://test", timeout=20
     ) as client, LifespanManager(app):
         yield client
-
-
-def test_load_model(model_base):
-    # this makes sure that the error below is not based on a slow download
-    # or internal pytorch errors
-    model_base.encode(["This is a test sentence."])
 
 
 @pytest.mark.anyio
@@ -63,5 +57,5 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, hel
         prefix=PREFIX,
         model_name=MODEL,
         batch_size=batch_size,
-        downsample=2 if torch.cuda.is_available() else 16,
+        downsample=16,
     )

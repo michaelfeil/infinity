@@ -3,13 +3,28 @@ import os
 from typing import Dict, List, Union
 
 import numpy as np
-import torch
-from sentence_transformers import SentenceTransformer, util  # type: ignore
-from torch import Tensor
 
 from infinity_emb.inference.primitives import NpEmbeddingType
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseTransformer
+
+try:
+    import torch
+    from sentence_transformers import SentenceTransformer, util  # type: ignore
+    from torch import Tensor, device, dtype
+    from torch.nn import Module
+
+    TORCH_AVAILABLE = True
+except ImportError:
+    torch, Tensor, device, dtype = None, None, None, None
+
+    class SentenceTransformer:
+        pass
+
+    class Module:
+        pass
+
+    TORCH_AVAILABLE = False
 
 try:
     from optimum.bettertransformer import BetterTransformer
@@ -28,6 +43,12 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
     """SentenceTransformer with .encode_core() and no microbatching"""
 
     def __init__(self, *args, **kwargs):
+        if not TORCH_AVAILABLE:
+            raise ImportError(
+                "torch is not installed."
+                " `pip install infinity-emb[torch]` "
+                "or pip install infinity-emb[torch,optimum]`"
+            )
         super().__init__(*args, **kwargs)
         device = self._target_device
         self.to(device)
@@ -46,8 +67,16 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
             except Exception as ex:
                 logger.exception(f"BetterTransformer failed with {ex}")
                 exit(1)
+        elif not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
+            logger.info(
+                "No optimizations via Huggingface optimum,"
+                " it is disabled via env INFINITY_DISABLE_OPTIMUM "
+            )
         else:
-            logger.info("No optimizations via Huggingface optimum.")
+            logger.info(
+                "No optimizations via Huggingface optimum, "
+                "install `pip install infinity-emb[optimum]`"
+            )
 
         self.eval()
         if self._target_device.type == "cuda" and os.environ.get(
@@ -80,7 +109,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         self, out_features: Tensor, normalize_embeddings: bool = True
     ) -> NpEmbeddingType:
         with torch.inference_mode():
-            embeddings = out_features.detach().cpu()
+            embeddings = out_features.detach().cpu().to(torch.float32)
             if normalize_embeddings:
                 embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
             embeddings_out: np.ndarray = embeddings.numpy()
@@ -148,7 +177,7 @@ class CT2SentenceTransformer(SentenceTransformerPatched):
         )
 
 
-class CT2Transformer(torch.nn.Module):
+class CT2Transformer(Module):
     """Wrapper around a sentence_transformers.models.Transformer
     which routes the forward call to a CTranslate2 encoder model.
 
@@ -210,8 +239,8 @@ class CT2Transformer(torch.nn.Module):
 
     def to(
         self,
-        device: int | torch.device | None = None,
-        dtype: torch.dtype | str | None = None,
+        device: int | device | None = None,
+        dtype: dtype | str | None = None,
         non_blocking: bool = False,
     ) -> "CT2Transformer":
         if not isinstance(device, int):

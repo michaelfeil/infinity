@@ -41,6 +41,7 @@ class ModelInfo(BaseModel):
     object: Literal["model"] = "model"
     owned_by: Literal["infinity"] = "infinity"
     created: int = int(time.time())  # no default factory
+    backend: str = ""
 
 
 class OpenAIModelInfo(BaseModel):

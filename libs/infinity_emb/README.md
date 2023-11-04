@@ -24,7 +24,7 @@ Infinity is a high-throughput, low-latency REST API for serving vector embedding
 ## Why Infinity:
 Infinity provides the following features:
 - **Deploy virtually any SentenceTransformer** - deploy the model you know from [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/)
-- **Fast inference**: The inference server is built on top of [torch](https:) and [ctranslate2](https://github.com/OpenNMT/CTranslate2) under the hood, getting most out of your **CUDA** or **CPU** hardware.
+- **Fast inference backends**: The inference server is built on top of [torch](https://github.com/pytorch/pytorch), [fastembed(onnx-cpu)](https://github.com/qdrant/fastembed) and [CTranslate2](https://github.com/OpenNMT/CTranslate2), getting most out of your **CUDA** or **CPU** hardware.
 - **Dynamic batching**: New embedding requests are queued while GPU is busy with the previous ones. New requests are squeezed intro your GPU/CPU as soon as ready. 
 - **Correct and tested implementation**: Unit and end-to-end tested. Embeddings via infinity are identical to [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/) (up to numerical precision). Lets API users create embeddings till infinity and beyond.
 - **Easy to use**: The API is built on top of [FastAPI](https://fastapi.tiangolo.com/), [Swagger](https://swagger.io/) makes it fully documented. API are aligned to [OpenAI's Embedding specs](https://platform.openai.com/docs/guides/embeddings/what-are-embeddings). See below on how to get started.
@@ -68,7 +68,7 @@ infinity_emb --help
 ### or launch the CLI using a pre-built docker container
 
 ```bash
-model=sentence-transformers/all-MiniLM-L6-v2
+model=BAAI/bge-small-en-v1.5
 port=8080
 docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
 ```

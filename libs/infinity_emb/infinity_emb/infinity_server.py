@@ -20,7 +20,7 @@ from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeH
 
 
 def create_server(
-    model_name_or_path: str = "sentence-transformers/all-MiniLM-L6-v2",
+    model_name_or_path: str = "BAAI/bge-small-en-v1.5",
     url_prefix: str = "/v1",
     batch_size: int = 64,
     engine: InferenceEngine = InferenceEngine.torch,
@@ -50,7 +50,7 @@ def create_server(
     async def _startup():
         instrumentator.expose(app)
 
-        model, _ = select_model_to_functional(
+        model, min_inference_t = select_model_to_functional(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,
@@ -58,7 +58,10 @@ def create_server(
         )
 
         app.batch_handler = BatchHandler(
-            max_batch_size=batch_size, model=model, verbose=verbose
+            max_batch_size=batch_size,
+            model=model,
+            verbose=verbose,
+            batch_delay=min_inference_t / 2,
         )
         # start in a threadpool
         await app.batch_handler.spawn()
@@ -99,6 +102,7 @@ def create_server(
                     results_pending=s.results_absolute,
                     batch_size=batch_size,
                 ),
+                backend=engine.name,
             )
         )
 
@@ -112,8 +116,8 @@ def create_server(
 
         ```python
         import requests
-        requests.post("https://..:8000/v1/embeddings",
-            json={"model":"all-MiniLM-L6-v2","input":["A sentence to encode."]})
+        requests.post("http://..:7997/v1/embeddings",
+            json={"model":"bge-small-en-v1.5","input":["A sentence to encode."]})
         """
         bh: BatchHandler = app.batch_handler
         if bh.is_overloaded():
@@ -145,11 +149,11 @@ def create_server(
 
 
 def start_uvicorn(
-    model_name_or_path: str = "sentence-transformers/all-MiniLM-L6-v2",
+    model_name_or_path: str = "BAAI/bge-small-en-v1.5",
     batch_size: int = 64,
     url_prefix: str = "/v1",
     host: str = "0.0.0.0",
-    port: int = 8001,
+    port: int = 7997,
     log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
     engine: InferenceEngineTypeHint = InferenceEngineTypeHint.torch.name,  # type: ignore # noqa
     model_warmup: bool = True,
@@ -159,7 +163,7 @@ def start_uvicorn(
 
     Args:
         model_name_or_path: str: Huggingface model, e.g.
-            "sentence-transformers/all-MiniLM-L6-v2".
+            "BAAI/bge-small-en-v1.5".
         batch_size: int: batch size for forward pass.
         url_prefix str: prefix for api. typically "/v1".
         host str: host-url, typically either "0.0.0.0" or "127.0.0.1".
