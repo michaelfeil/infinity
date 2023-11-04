@@ -1735,6 +1735,31 @@ protobuf = "*"
 sympy = "*"
 
 [[package]]
+name = "onnxruntime-gpu"
+version = "1.16.1"
+description = "ONNX Runtime is a runtime accelerator for Machine Learning models"
+optional = true
+python-versions = "*"
+files = [
+    {file = "onnxruntime_gpu-1.16.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9c4f4b964c15832bf414bbdec272de070c6be3b1fe97f2b7fdcb18a9a1143ac0"},
+    {file = "onnxruntime_gpu-1.16.1-cp310-cp310-win_amd64.whl", hash = "sha256:55e3713e57203d2785f9ec3b23883a3ed13fcf795f26aa615db0e6a4a9cf0f91"},
+    {file = "onnxruntime_gpu-1.16.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d4de0d8ffe43339f8b0a8b528629cb7b5615786673cde526a092bfebe821fd7b"},
+    {file = "onnxruntime_gpu-1.16.1-cp311-cp311-win_amd64.whl", hash = "sha256:532bad0e89ec072881c5236da0a458ab2a56d333075d1a656dce206a3100775d"},
+    {file = "onnxruntime_gpu-1.16.1-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0a255af5f5b3e630fe0061f55da707923aa80821e24841043f69d3faf49060bf"},
+    {file = "onnxruntime_gpu-1.16.1-cp38-cp38-win_amd64.whl", hash = "sha256:6158b08ac0b9abf59cf72e36d31fc0b2ed2067f627459bb878338017699841d7"},
+    {file = "onnxruntime_gpu-1.16.1-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:17c35c845831e3f4929e4e6a7c91ead0f1ceeb5dcf1bdf2680d359d03ee718d2"},
+    {file = "onnxruntime_gpu-1.16.1-cp39-cp39-win_amd64.whl", hash = "sha256:b8eb2221dff94db1815278c84cc5e84f104bbe49a2269749bc68baaa73f3583f"},
+]
+
+[package.dependencies]
+coloredlogs = "*"
+flatbuffers = "*"
+numpy = ">=1.21.6"
+packaging = "*"
+protobuf = "*"
+sympy = "*"
+
+[[package]]
 name = "optimum"
 version = "1.13.3"
 description = "Optimum Library is an extension of the Hugging Face Transformers library, providing a framework to integrate third-party libraries from Hardware Partners and interface with their specific functionality."
@@ -3893,10 +3918,11 @@ multidict = ">=4.0"
 all = ["ctranslate2", "fastembed", "optimum", "sentence-transformers", "torch"]
 ct2 = ["ctranslate2", "sentence-transformers", "torch"]
 fastembed = ["fastembed"]
+onnxgpu = ["onnxruntime-gpu"]
 optimum = ["optimum"]
 torch = ["sentence-transformers", "torch"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "11c93f67df7466778bcf55768f4c5e6ecd09c6da34012a68e1893a74c75435f1"
+content-hash = "a281101e20ae22ec5ddfe6d7b29d5e13c1c5f4730175acee63260350a17f4caa"
