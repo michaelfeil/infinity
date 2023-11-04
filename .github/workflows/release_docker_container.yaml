@@ -24,6 +24,10 @@ env:
 jobs:
   docker:
     runs-on: ubuntu-latest
+    environment:
+      name: publish
+    permissions:
+      id-token: read
     steps:
       - name: Remove unnecessary files
         run: |
