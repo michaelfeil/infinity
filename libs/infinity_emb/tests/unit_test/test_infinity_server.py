@@ -29,6 +29,7 @@ def test_cli_wrong_batch_size():
     log = subprocess.run(["infinity_emb", "--batch-size", "WrongArgument"])
     assert log.returncode == 2
 
+
 def test_create_server():
     app = create_server(engine=InferenceEngine.debugengine)
     assert isinstance(app, FastAPI)
