@@ -5,7 +5,6 @@ import copy
 from typing import List
 
 import pytest
-import torch
 from sentence_transformers import InputExample  # type: ignore
 from sentence_transformers.evaluation import (  # type: ignore
     EmbeddingSimilarityEvaluator,  # type: ignore
@@ -27,7 +26,6 @@ def _pretrained_model_score(
 
     if ct2_compute_type:
         model = CT2SentenceTransformer(model_name, compute_type=ct2_compute_type)
-            
 
     else:
         model = SentenceTransformerPatched(model_name)
