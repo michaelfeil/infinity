@@ -3232,13 +3232,13 @@ vision = ["Pillow (<10.0.0)"]
 
 [[package]]
 name = "trio"
-version = "0.22.2"
+version = "0.23.0"
 description = "A friendly Python library for async concurrency and I/O"
 optional = false
-python-versions = ">=3.7"
+python-versions = ">=3.8"
 files = [
-    {file = "trio-0.22.2-py3-none-any.whl", hash = "sha256:f43da357620e5872b3d940a2e3589aa251fd3f881b65a608d742e00809b1ec38"},
-    {file = "trio-0.22.2.tar.gz", hash = "sha256:3887cf18c8bcc894433420305468388dac76932e9668afa1c49aa3806b6accb3"},
+    {file = "trio-0.23.0-py3-none-any.whl", hash = "sha256:213cd69a05962b1ba24d48caf08f7e7acf02bf1ebfac17c06d1248497f05795e"},
+    {file = "trio-0.23.0.tar.gz", hash = "sha256:662cfe10018018607a8e7ee191c274bcffbf9056be60b3ccb4f1790df98fc0a3"},
 ]
 
 [package.dependencies]
@@ -3247,7 +3247,7 @@ cffi = {version = ">=1.14", markers = "os_name == \"nt\" and implementation_name
 exceptiongroup = {version = ">=1.0.0rc9", markers = "python_version < \"3.11\""}
 idna = "*"
 outcome = "*"
-sniffio = "*"
+sniffio = ">=1.3.0"
 sortedcontainers = "*"
 
 [[package]]
@@ -3360,13 +3360,13 @@ files = [
 
 [[package]]
 name = "types-redis"
-version = "4.6.0.8"
+version = "4.6.0.9"
 description = "Typing stubs for redis"
 optional = false
 python-versions = ">=3.7"
 files = [
-    {file = "types-redis-4.6.0.8.tar.gz", hash = "sha256:1abb2859bbf9b171a22ef69d1ece0e35ef93e642fba97538497add884ad75b5e"},
-    {file = "types_redis-4.6.0.8-py3-none-any.whl", hash = "sha256:4839923b4cce77bbf987290ca83710f8218529eebe1d2c3a0f067416c86847f5"},
+    {file = "types-redis-4.6.0.9.tar.gz", hash = "sha256:06ac31ed7b23aae2d230a62e4bf7d0037aee10ab9f68eee261ac8be8402daf92"},
+    {file = "types_redis-4.6.0.9-py3-none-any.whl", hash = "sha256:12fb29ff019b62998b17bb086cff260e625477db1a17bfca6bae0f43ab3447a5"},
 ]
 
 [package.dependencies]
