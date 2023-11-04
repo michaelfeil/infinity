@@ -22,16 +22,12 @@ def _pretrained_model_score(
     model_name,
     expected_score,
     ct2_compute_type: str = "",
-    device: str = "cuda",
 ):
     test_samples = dataset[::3]
 
     if ct2_compute_type:
         model = CT2SentenceTransformer(model_name, compute_type=ct2_compute_type)
-        if not torch.cuda.is_available() or device == "cpu":
-            model.to("cpu")
-        else:
-            model.to("cuda")
+            
 
     else:
         model = SentenceTransformerPatched(model_name)
