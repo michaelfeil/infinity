@@ -14,10 +14,10 @@
 [![MIT License][license-shield]][license-url]
 [![LinkedIn][linkedin-shield]][linkedin-url]
 
-
 # Infinity ♾️
-![codecov](https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ)
-![CI](https://github.com/michaelfeil/infinity/actions/workflows/ci.yaml/badge.svg)
+[![codecov][codecov-shield]][codecov-url]
+[![ci][ci-shield]][ci-url]
+[![Downloads][pepa-shield]][pepa-url]
 
 Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks. Infinity is developed under MIT Licence: https://github.com/michaelfeil/infinity
 
@@ -157,3 +157,9 @@ poetry run pytest ./tests
 [license-url]: https://github.com/michaelfeil/infinity/blob/master/LICENSE.txt
 [linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
 [linkedin-url]: https://linkedin.com/in/michael-feil
+[pepa-shield]: https://static.pepy.tech/badge/infinity-emb
+[pepa-url]: https://www.pepy.tech/projects/infinity-emb
+[codecov-shield]: https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ
+[codecov-url]: https://codecov.io/gh/michaelfeil/infinity/branch/main
+[ci-shield]: https://github.com/michaelfeil/infinity/actions/workflows/ci.yaml/badge.svg
+[ci-url]: https://github.com/michaelfeil/infinity/actions
