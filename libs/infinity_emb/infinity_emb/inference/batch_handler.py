@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from typing import Dict, List, Union
 
+from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.inference.primitives import (
     EmbeddingResult,
     NpEmbeddingType,
@@ -17,72 +18,6 @@ from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
-
-# from operator import attrgetter
-# import random
-# import bisect
-# class CustomPrioQueue:
-#     def __init__(self) -> None:
-#         """"""
-#         self._lock_queue_event = threading.Lock()
-#         self._queue: List[PrioritizedQueueItem] = []
-#         # event that indicates items in queue.
-#         self._sync_event = threading.Event()
-
-#     def __len__(self):
-#         return len(self._queue)
-
-#     async def extend(self, items: List[PrioritizedQueueItem]):
-#         with self._lock_queue_event:
-#             for item in items:
-#                 bisect.insort(self._queue, item)
-
-#             self._sync_event.set()
-
-#     def pop_optimal_batches(
-#         self, size: int, timeout=0.2, latest_first=False
-#     ) -> Union[List[List[EmbeddingResult]], None]:
-#         """
-#         pop batch `up to size` + `continuous (sorted)` from queue
-
-#         Args:
-#             size (int): max size of batch
-#             timeout (float, optional): timeout until None is returned.
-#               Defaults to 0.2.
-#             latest_first (bool, optional): guarantees processing of oldest item
-#                 in list. As latest first requires getting argmin of created
-#                 timestamps, which is slow.  Defaults to False.
-
-#         returns:
-#             None: if there is not a single item in self._queue after timeout
-#             else: List[EmbeddingResult] with len(1<=size)
-#         """
-#         if not self._queue:
-#             if not self._sync_event.wait(timeout):
-#                 return None
-
-#         if len(self._queue) > size:
-#             if latest_first:
-#                 # slower operation: we have a large list
-#                 # and can spend some time computing the argmin
-#                 # pick oldest one -> argmin timestamp
-#                 start = self._queue.index(
-#                  min(self._queue, key=attrgetter("timestamp")))
-#             else:
-#                 # pick a random continuous slice, at beginning or at the end.
-#                 start = random.randrange(-size, len(self._queue))
-#             start = max(0, min(len(self._queue) - size, start))
-#         else:
-#             start = 0
-#         end = start + size
-
-#         with self._lock_queue_event:
-#             new_items = self._queue[start:end]
-#             self._queue = self._queue[:start] + self._queue[end:]
-#             if not self._queue:
-#                 self._sync_event.clear()
-#         # assert 1 <= len(new_items) <= size
-#         return [[i.item for i in new_items]]
 
 
 class CustomFIFOQueue:
@@ -139,34 +74,40 @@ class CustomFIFOQueue:
         new_items: List[List[EmbeddingResult]] = []
         for i in range(n_batches):
             mini_batch = new_items_l[size * i : size * (i + 1)]
-            mini_batch_e: List[EmbeddingResult] = [mi.item for mi in mini_batch]
-            new_items.append(mini_batch_e)
-            # # runtime checks
-            # if n_batches > 1:
-            #     assert len(mini_batch) == size
-            # else:
-            #     assert 1 <= len(mini_batch) <= size
-
-        return new_items
+            mini_batch_e: List[EmbeddingResult] = [
+                mi.item for mi in mini_batch if not mi.item.future.done()
+            ]
+            if mini_batch_e:
+                new_items.append(mini_batch_e)
+        if new_items:
+            return new_items
+        else:
+            return None
 
 
 class ResultKVStoreFuture:
-    # TODO: test if this works.
-    def __init__(self) -> None:
+    def __init__(self, cache: Union[Cache, None]) -> None:
         self._kv: Dict[str, NpEmbeddingType] = {}
+        self._cache = cache
 
     def __len__(self):
         return len(self._kv)
 
-    async def wait_for_response(self, fut: asyncio.Future) -> NpEmbeddingType:
+    async def wait_for_response(self, item: EmbeddingResult) -> NpEmbeddingType:
         """wait for future to return"""
-        response = await fut
-        return response
+        if self._cache:
+            asyncio.create_task(self._cache.aget_complete(item))
+        return await item.future
+
+    async def _extend(self, batch: List[EmbeddingResult]):
+        for item in batch:
+            item.complete()
 
     async def extend(self, batch: List[EmbeddingResult]) -> None:
         """extend store with results"""
-        for item in batch:
-            item.future.set_result(item.embedding)
+        asyncio.create_task(self._extend(batch))
+        if self._cache:
+            asyncio.create_task(self._cache.add(batch))
 
 
 class BatchHandler:
@@ -176,6 +117,7 @@ class BatchHandler:
         max_batch_size: int,
         max_queue_wait: int = int(os.environ.get("INFINITY_QUEUE_SIZE", 32_000)),
         batch_delay: float = 5e-3,
+        vector_disk_cache_path: str = "",
         verbose=False,
     ) -> None:
         """
@@ -195,12 +137,22 @@ class BatchHandler:
         self.max_queue_wait = max_queue_wait
         self._verbose = verbose
         self._shutdown = threading.Event()
-        self._queue_prio = CustomFIFOQueue()
-        self._result_store = ResultKVStoreFuture()
         self._feature_queue: Queue = Queue(6)
         self._postprocess_queue: Queue = Queue(4)
         self._batch_delay = float(max(1e-4, batch_delay))
         self._threadpool = ThreadPoolExecutor()
+        self._queue_prio = CustomFIFOQueue()
+        cache = (
+            Cache(
+                cache_name=str(vector_disk_cache_path),
+                tp=self._threadpool,
+                shutdown=self._shutdown,
+            )
+            if vector_disk_cache_path
+            else None
+        )
+
+        self._result_store = ResultKVStoreFuture(cache)
         self._ready = False
         self._last_inference = time.perf_counter()
 
@@ -224,21 +176,20 @@ class BatchHandler:
             NpEmbeddingType: embedding as 1darray
         """
         # add an unique identifier
-        prioqueue = []
 
         prios, usage = get_lengths_with_tokenize(sentences)
 
-        futures = [self.loop.create_future() for _ in prios]
-
-        for s, p, fut in zip(sentences, prios, futures):
+        prioqueue = []
+        for s, p in zip(sentences, prios):
             item = PrioritizedQueueItem(
-                priority=p, item=EmbeddingResult(sentence=s, future=fut)
+                priority=p,
+                item=EmbeddingResult(sentence=s, future=self.loop.create_future()),
             )
             prioqueue.append(item)
         await self._queue_prio.extend(prioqueue)
 
         embeddings = await asyncio.gather(
-            *[self._result_store.wait_for_response(fut) for fut in futures]
+            *[self._result_store.wait_for_response(item.item) for item in prioqueue]
         )
         return embeddings, usage
 
@@ -380,6 +331,11 @@ class BatchHandler:
             logger.exception(ex)
             exit("Postprocessor crashed")
 
+    async def _delayed_warmup(self):
+        """in case there is no warmup -> perform some warmup."""
+        await asyncio.sleep(10)
+        await self.schedule(["test"])
+
     async def spawn(self):
         """set up the resources in batch"""
         logger.info("creating batching engine")
@@ -387,6 +343,7 @@ class BatchHandler:
         self._threadpool.submit(self._preprocess_batch)
         self._threadpool.submit(self._core_batch)
         asyncio.create_task(self._postprocess_batch())
+        asyncio.create_task(self._delayed_warmup())
 
     def shutdown(self):
         """

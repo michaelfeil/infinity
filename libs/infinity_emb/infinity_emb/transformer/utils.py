@@ -63,7 +63,7 @@ def infinity_cache_dir(overwrite=False):
     elif hf_home:
         cache_dir = hf_home
     else:
-        cache_dir = Path(".").resolve() / ".infinity_cache"
+        cache_dir = str(Path(".").resolve() / ".infinity_cache")
 
     if overwrite:
         os.environ.setdefault("INFINITY_HOME", cache_dir)
