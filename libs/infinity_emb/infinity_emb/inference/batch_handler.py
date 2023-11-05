@@ -99,6 +99,7 @@ class CustomFIFOQueue:
     async def extend(self, items: List[PrioritizedQueueItem]):
         with self._lock_queue_event:
             self._queue.extend(items)
+        self._sync_event.set()
 
     def pop_optimal_batches(
         self, size: int, max_n_batches: int = 32, timeout=0.2, **kwargs
