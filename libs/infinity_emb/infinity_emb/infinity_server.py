@@ -15,7 +15,6 @@ from infinity_emb.fastapi_schemas.pymodels import (
     OpenAIModelInfo,
 )
 from infinity_emb.inference import BatchHandler, select_model_to_functional
-from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
 
@@ -27,7 +26,6 @@ def create_server(
     engine: InferenceEngine = InferenceEngine.torch,
     verbose: bool = False,
     model_warmup=True,
-    vector_disk_cache=INFINITY_CACHE_VECTORS,
     doc_extra: dict = {},
 ) -> FastAPI:
     """
@@ -48,10 +46,6 @@ def create_server(
     instrumentator = Instrumentator().instrument(app)
     app.add_exception_handler(errors.OpenAIException, errors.openai_exception_handler)
 
-    vector_disk_cache_path = (
-        f"{engine}_{model_name_or_path.replace('/','_')}" if vector_disk_cache else ""
-    )
-
     @app.on_event("startup")
     async def _startup():
         instrumentator.expose(app)
@@ -68,7 +62,6 @@ def create_server(
             model=model,
             verbose=verbose,
             batch_delay=min_inference_t / 2,
-            vector_disk_cache_path=vector_disk_cache_path,
         )
         # start in a threadpool
         await app.batch_handler.spawn()
@@ -164,7 +157,6 @@ def start_uvicorn(
     log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
     engine: InferenceEngineTypeHint = InferenceEngineTypeHint.torch.name,  # type: ignore # noqa
     model_warmup: bool = True,
-    vector_disk_cache: bool = INFINITY_CACHE_VECTORS,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
     MIT License; Copyright (c) 2023 Michael Feil
@@ -180,7 +172,6 @@ def start_uvicorn(
             For high performance, use "info" or higher levels. Defaults to "info".
         engine: framework that should perform inference.
         model_warmup: perform model warmup before starting the server. Defaults to True.
-        vector_disk_cache:
     """
     engine_load: InferenceEngine = InferenceEngine[engine.name]
     logger.setLevel(log_level.to_int())
@@ -193,7 +184,6 @@ def start_uvicorn(
         verbose=log_level.to_int() <= 10,
         doc_extra=dict(host=host, port=port),
         model_warmup=model_warmup,
-        vector_disk_cache=vector_disk_cache,
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
@@ -203,6 +193,7 @@ def cli():
     typer.run(start_uvicorn)
 
 
+# app = create_server()
 if __name__ == "__main__":
     # for debugging
     cli()

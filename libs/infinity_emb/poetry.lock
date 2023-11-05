@@ -708,17 +708,6 @@ files = [
 graph = ["objgraph (>=1.7.2)"]
 
 [[package]]
-name = "diskcache"
-version = "5.6.3"
-description = "Disk Cache -- Disk and file backed persistent cache."
-optional = true
-python-versions = ">=3"
-files = [
-    {file = "diskcache-5.6.3-py3-none-any.whl", hash = "sha256:5e31b2d5fbad117cc363ebaf6b689474db18a1f6438bc82358b024abd4c2ca19"},
-    {file = "diskcache-5.6.3.tar.gz", hash = "sha256:2c3a3fa2743d8535d832ec61c2054a1641f41775aa7c556758a109941e33e4fc"},
-]
-
-[[package]]
 name = "exceptiongroup"
 version = "1.1.3"
 description = "Backport of PEP 654 (exception groups)"
@@ -3902,7 +3891,6 @@ multidict = ">=4.0"
 
 [extras]
 all = ["ctranslate2", "fastembed", "optimum", "sentence-transformers", "torch"]
-cache = ["diskcache"]
 ct2 = ["ctranslate2", "sentence-transformers", "torch"]
 fastembed = ["fastembed"]
 optimum = ["optimum"]
@@ -3911,4 +3899,4 @@ torch = ["sentence-transformers", "torch"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "64f6d1a2f1c2afa5cae3b6b5c4cad2a5298b042c1aece77dff3ae2145a593478"
+content-hash = "11c93f67df7466778bcf55768f4c5e6ecd09c6da34012a68e1893a74c75435f1"

@@ -6,10 +6,6 @@ from typing import List, Tuple
 import pytest
 from sentence_transformers import InputExample, util  # type: ignore
 
-from infinity_emb.inference import caching_layer
-
-caching_layer.INFINITY_CACHE_VECTORS = False
-
 pytest.DEFAULT_BERT_MODEL = "BAAI/bge-small-en-v1.5"
 
 
