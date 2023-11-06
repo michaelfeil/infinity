@@ -54,5 +54,6 @@ COPY --from=builder /app /app
 WORKDIR /app
 
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
+ENV PATH=/app/.venv/bin:$PATH
 
-CMD . /app/.venv/bin/activate && infinity_emb
+ENTRYPOINT ["infinity_emb"]
