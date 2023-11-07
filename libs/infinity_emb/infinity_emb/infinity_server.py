@@ -60,7 +60,7 @@ class EmbeddingEngine:
     def _stop(self):
         """stop engine"""
         self.running = False
-        self._batch_handler.shutdown(wait=False)
+        self._batch_handler.shutdown()
 
     async def __aenter__(self):
         await self._start()

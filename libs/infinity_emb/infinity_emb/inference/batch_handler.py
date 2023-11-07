@@ -196,6 +196,7 @@ class BatchHandler:
         self.max_queue_wait = max_queue_wait
         self._verbose = verbose
         self._shutdown = threading.Event()
+        self._threadpool = ThreadPoolExecutor()
         self._queue_prio = CustomFIFOQueue()
         self._result_store = ResultKVStoreFuture()
         self._feature_queue: Queue = Queue(6)
@@ -309,7 +310,8 @@ class BatchHandler:
                             continue
         except Exception as ex:
             logger.exception(ex)
-            exit("_preprocess_batch crashed")
+            raise ValueError("_preprocess_batch crashed")
+        self._ready = False
 
     def _core_batch(self):
         """waiting for preprocessed batches (on device)
@@ -337,7 +339,7 @@ class BatchHandler:
                 self._feature_queue.task_done()
         except Exception as ex:
             logger.exception(ex)
-            exit("_core_batch crashed.")
+            raise ValueError("_core_batch crashed.")
 
     async def _postprocess_batch(self):
         """collecting forward(.encode) results and put them into the result store"""
@@ -378,21 +380,24 @@ class BatchHandler:
                 self._postprocess_queue.task_done()
         except Exception as ex:
             logger.exception(ex)
-            exit("Postprocessor crashed")
+            raise ValueError("Postprocessor crashed")
 
     async def spawn(self):
         """set up the resources in batch"""
+        if self._ready:
+            raise ValueError("previous threads are still running.")
         logger.info("creating batching engine")
-        self.loop = asyncio.get_event_loop()  # asyncio.events._get_running_loop()
+        self._shutdown.clear()
+        self.loop = asyncio.get_event_loop()
         self._threadpool = ThreadPoolExecutor()
         self._threadpool.submit(self._preprocess_batch)
         self._threadpool.submit(self._core_batch)
         asyncio.create_task(self._postprocess_batch())
 
-    def shutdown(self, wait=True):
+    def shutdown(self):
         """
         set the shutdown event and close threadpool.
         Blocking event, until shutdown complete.
         """
         self._shutdown.set()
-        self._threadpool.shutdown(wait=wait)
+        self._threadpool.shutdown(wait=True)
