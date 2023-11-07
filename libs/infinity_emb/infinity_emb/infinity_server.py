@@ -1,4 +1,5 @@
 import time
+from typing import List
 
 import typer
 import uvicorn
@@ -17,6 +18,88 @@ from infinity_emb.fastapi_schemas.pymodels import (
 from infinity_emb.inference import BatchHandler, select_model_to_functional
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
+
+
+class EmbeddingEngine:
+    def __init__(
+        self,
+        model_name_or_path: str = "BAAI/bge-small-en-v1.5",
+        batch_size: int = 64,
+        engine: InferenceEngine = InferenceEngine.torch,
+        model_warmup=True,
+    ) -> None:
+        """_summary_
+
+        Args:
+            model_name_or_path, str:  Defaults to "BAAI/bge-small-en-v1.5".
+            batch_size, int: Defaults to 64.
+            engine, InferenceEngine: backend for inference.
+                Defaults to InferenceEngine.torch.
+            model_warmup bool: decide which . Defaults to True.
+        """
+        self.running = False
+        model, min_inference_t = select_model_to_functional(
+            model_name_or_path=model_name_or_path,
+            batch_size=batch_size,
+            engine=engine,
+            model_warmup=model_warmup,
+        )
+
+        self._batch_handler = BatchHandler(
+            max_batch_size=batch_size,
+            model=model,
+            verbose=logger.level <= 10,
+            batch_delay=min_inference_t / 2,
+        )
+
+    async def _start(self):
+        """startup engine"""
+        self.running = True
+        await self._batch_handler.spawn()
+
+    def _stop(self):
+        """stop engine"""
+        self.running = False
+        self._batch_handler.shutdown(wait=False)
+
+    async def __aenter__(self):
+        await self._start()
+
+    async def __aexit__(self, *args):
+        self._stop()
+
+    def overload_status(self):
+        self._check_running()
+        return self._batch_handler.overload_status()
+
+    def is_overloaded(self) -> bool:
+        self._check_running()
+        return self._batch_handler.is_overloaded()
+
+    async def embed(self, sentences: List[str]) -> List[List[float]]:
+        """embed multiple sentences
+
+        Args:
+            sentences (List[str]): sentences to be embedded
+
+        Raises:
+            ValueError: raised if engine is not started yet"
+
+        Returns:
+            List[List[float]]: embeddings
+                2D list-array of shape( len(sentences),embed_dim )
+        """
+        self._check_running()
+        embeddings, _ = await self._batch_handler.schedule(sentences)
+        return embeddings
+
+    def _check_running(self):
+        if not self.running:
+            raise ValueError(
+                "didn't start `EmbeddingEngine` "
+                "via AsyncContextManager:"
+                " recommended use is `async with engine: ..`"
+            )
 
 
 def create_server(

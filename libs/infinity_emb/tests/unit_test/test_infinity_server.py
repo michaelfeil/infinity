@@ -1,17 +1,52 @@
 import subprocess
 
+import numpy as np
+import pytest
 import typer
 import uvicorn
 from fastapi import FastAPI
 
 from infinity_emb.infinity_server import (
     UVICORN_LOG_LEVELS,
+    EmbeddingEngine,
     InferenceEngineTypeHint,
     cli,
     create_server,
     start_uvicorn,
 )
 from infinity_emb.transformer.utils import InferenceEngine
+
+
+@pytest.mark.anyio
+async def test_async_api_debug():
+    sentences = ["Hi", "how", "are you doing?"]
+    engine = EmbeddingEngine(engine=InferenceEngine.debugengine)
+    async with engine:
+        embeddings = np.array(await engine.embed(sentences))
+        assert embeddings.shape[0] == len(sentences)
+        assert embeddings.shape[1] >= 10
+        for idx, s in enumerate(sentences):
+            assert embeddings[idx][0] == len(s), f"{embeddings}, {s}"
+
+
+@pytest.mark.anyio
+async def test_async_api_torch():
+    sentences = ["Hi", "how"]
+    engine = EmbeddingEngine(engine=InferenceEngine.torch)
+    async with engine:
+        embeddings = np.array(await engine.embed(sentences))
+        assert embeddings.shape[0] == 2
+        assert embeddings.shape[1] >= 10
+
+
+@pytest.mark.anyio
+async def test_async_api_fastembed():
+    sentences = ["Hi", "how"]
+    engine = EmbeddingEngine(engine=InferenceEngine.fastembed)
+    async with engine:
+        embeddings = np.array(await engine.embed(sentences))
+        assert embeddings.shape[0] == 2
+        assert embeddings.shape[1] >= 10
 
 
 def test_cli_help():

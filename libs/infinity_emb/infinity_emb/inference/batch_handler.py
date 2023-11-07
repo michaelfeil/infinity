@@ -201,7 +201,6 @@ class BatchHandler:
         self._feature_queue: Queue = Queue(6)
         self._postprocess_queue: Queue = Queue(4)
         self._batch_delay = float(max(1e-4, batch_delay))
-        self._threadpool = ThreadPoolExecutor()
         self._ready = False
         self._last_inference = time.perf_counter()
 
@@ -385,14 +384,15 @@ class BatchHandler:
         """set up the resources in batch"""
         logger.info("creating batching engine")
         self.loop = asyncio.get_event_loop()  # asyncio.events._get_running_loop()
+        self._threadpool = ThreadPoolExecutor()
         self._threadpool.submit(self._preprocess_batch)
         self._threadpool.submit(self._core_batch)
         asyncio.create_task(self._postprocess_batch())
 
-    def shutdown(self):
+    def shutdown(self, wait=True):
         """
         set the shutdown event and close threadpool.
         Blocking event, until shutdown complete.
         """
         self._shutdown.set()
-        self._threadpool.shutdown(wait=True)
+        self._threadpool.shutdown(wait=wait)
