@@ -93,6 +93,10 @@ class ResultKVStoreFuture:
 
     def __len__(self):
         return len(self._kv)
+    
+    def _start_cache(self):
+        if self._cache:
+            self._cache.startup()
 
     async def wait_for_response(self, item: EmbeddingResult) -> NpEmbeddingType:
         """wait for future to return"""
@@ -146,7 +150,6 @@ class BatchHandler:
         cache = (
             Cache(
                 cache_name=str(vector_disk_cache_path),
-                tp=self._threadpool,
                 shutdown=self._shutdown,
             )
             if vector_disk_cache_path

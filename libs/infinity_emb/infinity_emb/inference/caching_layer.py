@@ -25,7 +25,7 @@ INFINITY_CACHE_VECTORS = (
 
 class Cache:
     def __init__(
-        self, cache_name: str, tp: ThreadPoolExecutor, shutdown: threading.Event
+        self, cache_name: str, shutdown: threading.Event
     ) -> None:
         if not DISKCACHE_AVAILABLE:
             raise ImportError(
@@ -33,13 +33,18 @@ class Cache:
                 "install via `pip install infinity-emb[cache]`"
             )
 
-        self._threadpool = tp
         self._shutdown = shutdown
         self._add_q = queue.Queue()
         dir = os.path.join(infinity_cache_dir(), "cache_vectors", f"cache_{cache_name}")
         logger.info(f"caching vectors under: {dir}")
         self._cache = dc.Cache(dir, size_limit=2**28)
-        self._threadpool.submit(self._consume_queue)
+        self.is_running = False
+        self.startup()
+        
+    def startup(self):
+        if not self.is_running:
+            self._threadpool = ThreadPoolExecutor()
+            self._threadpool.submit(self._consume_queue)
 
     @staticmethod
     def _hash(key: str) -> int:
