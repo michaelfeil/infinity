@@ -46,13 +46,13 @@ def embedding_live_performance():
     print("Both methods provide the identical output.")
 
     print("Measuring latency via SentenceTransformers")
-    latency_st = timeit.timeit("local(sample, iters=2)", number=2, globals=locals())
+    latency_st = timeit.timeit("local(sample, iters=5)", number=2, globals=locals())
     print("SentenceTransformers latency: ", latency_st)
     model = None
 
     print("Measuring latency via requests")
     latency_request = timeit.timeit(
-        "remote(json_d, iters=2)", number=2, globals=locals()
+        "remote(json_d, iters=5)", number=2, globals=locals()
     )
     print(f"Request latency: {latency_request}")
 
