@@ -1,7 +1,7 @@
 import logging
 from enum import Enum
 
-from uvicorn.config import LOG_LEVELS
+from typing import Dict
 
 logging.getLogger().handlers.clear()
 
@@ -13,6 +13,15 @@ try:
     handlers.append(RichHandler(console=Console(stderr=True), show_time=False))
 except ImportError:
     pass
+
+LOG_LEVELS: Dict[str, int] = {
+    "critical": logging.CRITICAL,
+    "error": logging.ERROR,
+    "warning": logging.WARNING,
+    "info": logging.INFO,
+    "debug": logging.DEBUG,
+    "trace": 5,
+}
 
 FORMAT = "%(asctime)s %(name)s %(levelname)s: %(message)s"
 logging.basicConfig(

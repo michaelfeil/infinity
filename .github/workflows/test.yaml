@@ -42,7 +42,7 @@ jobs:
       - name: Install minimal dependencies and import
         shell: bash
         run: |
-          poetry install
+          poetry install --without test
           python -c "import infinity_emb"
 
       - name: Install dependencies

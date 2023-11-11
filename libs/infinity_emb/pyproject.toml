@@ -10,13 +10,12 @@ packages = [{include = "infinity_emb"}]
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
 # basics
-
 numpy = "^1"
+pydantic = ">=2.4.2,<3"
 # logging
 rich = {version = "^13", optional=true}
 # webserver-only
 fastapi = {version = "^0.103.2", optional=true}
-pydantic = {version = ">=2.4.2,<3", optional=true}
 orjson = {version = ">=3.9.8,<4", optional=true} 
 prometheus-fastapi-instrumentator = {version = "^6.1.0", optional=true}
 uvicorn = {extras = ["standard"], version = "^0.23.2", optional=true}
