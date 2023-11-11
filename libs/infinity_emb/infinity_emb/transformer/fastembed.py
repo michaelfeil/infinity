@@ -30,6 +30,9 @@ class Fastembed(DefaultEmbedding, BaseTransformer):
             kwargs["cache_dir"] = infinity_cache_dir()
         super(DefaultEmbedding, self).__init__(*args, **kwargs)
         self._infinity_tokenizer = copy.deepcopy(self.model.tokenizer)
+        self.model.model.set_providers(
+            ["CUDAExecutionProvider", "CPUExecutionProvider"]
+        )
 
     def encode_pre(self, sentences: List[str]) -> Dict[str, np.ndarray[int]]:
         encoded = self.model.tokenizer.encode_batch(sentences)
