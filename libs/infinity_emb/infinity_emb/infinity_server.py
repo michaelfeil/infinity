@@ -20,7 +20,7 @@ from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
 
 
-class EmbeddingEngine:
+class AsyncEmbeddingEngine:
     def __init__(
         self,
         model_name_or_path: str = "BAAI/bge-small-en-v1.5",
@@ -28,7 +28,7 @@ class EmbeddingEngine:
         engine: InferenceEngine = InferenceEngine.torch,
         model_warmup=True,
     ) -> None:
-        """_summary_
+        """Creating a Async EmbeddingEngine object.
 
         Args:
             model_name_or_path, str:  Defaults to "BAAI/bge-small-en-v1.5".
@@ -36,6 +36,17 @@ class EmbeddingEngine:
             engine, InferenceEngine: backend for inference.
                 Defaults to InferenceEngine.torch.
             model_warmup bool: decide which . Defaults to True.
+
+        Example:
+            ```python
+            from infinity_emb import AsyncEmbeddingEngine, transformer
+            sentences = ["Embedded this via Infinity.", "Paris is in France."]
+            engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.torch)
+            async with engine: # engine starts with engine.astart()
+                embeddings = np.array(await engine.embed(sentences))
+            # engine stops with engine.astop().
+            # For frequent restarts, handle start/stop yourself.
+            ```
         """
         self.batch_size = batch_size
         self.running = False
@@ -65,7 +76,7 @@ class EmbeddingEngine:
     async def __aenter__(self):
         if self.running:
             raise ValueError(
-                "already started `EmbeddingEngine`. "
+                "DoubleSpawn: already started `AsyncEmbeddingEngine`. "
                 " recommended use is via AsyncContextManager"
                 " `async with engine: ..`"
             )
@@ -103,7 +114,7 @@ class EmbeddingEngine:
     def _check_running(self):
         if not self.running:
             raise ValueError(
-                "didn't start `EmbeddingEngine` "
+                "didn't start `AsyncEmbeddingEngine` "
                 " recommended use is via AsyncContextManager"
                 " `async with engine: ..`"
             )

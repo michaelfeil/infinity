@@ -196,12 +196,12 @@ class BatchHandler:
         self.max_queue_wait = max_queue_wait
         self._verbose = verbose
         self._shutdown = threading.Event()
-        self._threadpool = ThreadPoolExecutor()
         self._queue_prio = CustomFIFOQueue()
         self._result_store = ResultKVStoreFuture()
         self._feature_queue: Queue = Queue(6)
         self._postprocess_queue: Queue = Queue(4)
         self._batch_delay = float(max(1e-4, batch_delay))
+        self._threadpool = ThreadPoolExecutor()
         self._ready = False
         self._last_inference = time.perf_counter()
 
