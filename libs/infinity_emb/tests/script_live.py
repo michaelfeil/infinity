@@ -1,5 +1,6 @@
 import concurrent.futures
 import json
+import time
 import timeit
 from functools import partial
 
@@ -45,7 +46,7 @@ def embedding_live_performance():
     print("Both methods provide the identical output.")
 
     print("Measuring latency via SentenceTransformers")
-    latency_st = timeit.timeit("local(sample, iters=5)", number=2, globals=locals())
+    latency_st = timeit.timeit("local(sample, iters=1)", number=1, globals=locals())
     print("SentenceTransformers latency: ", latency_st)
     model = None
 
@@ -56,6 +57,22 @@ def embedding_live_performance():
     print(f"Request latency: {latency_request}")
 
     assert latency_st * 1.1 > latency_request
+
+
+def latency_single():
+    session = requests.Session()
+
+    def _post(i):
+        json_d = json.dumps({"input": [str(i)], "model": "model"})
+        s = time.perf_counter()
+        res = session.post(f"{LIVE_URL}/embeddings", data=json_d)
+        e = time.perf_counter()
+        assert res.status_code == 200
+        return (e - s) * 10**3
+
+    _post("hi")
+    times = [_post(i) for i in range(32)]
+    print(f"{np.median(times)}+-{np.std(times)}")
 
 
 if __name__ == "__main__":

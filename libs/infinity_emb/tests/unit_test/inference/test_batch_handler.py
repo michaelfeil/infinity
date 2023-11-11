@@ -79,15 +79,15 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
         # yappi.get_func_stats().print_all()
         # yappi.stop()
         method_st(sentences[::10])
-        time.sleep(0.2)
+        time.sleep(0.5)
         time_batch_handler = np.median(
             [(await method_batch_handler(sentences)) for _ in range(N_TIMINGS)]
         )
-        time.sleep(0.2)
+        time.sleep(0.5)
         time_st_patched = np.median(
             [method_patched(sentences) for _ in range(N_TIMINGS)]
         )
-        time.sleep(0.2)
+        time.sleep(0.5)
         time_st = np.median([method_st(sentences) for _ in range(N_TIMINGS)])
 
         print(
@@ -113,4 +113,4 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
         )
 
     finally:
-        bh.shutdown()
+        await bh.shutdown()

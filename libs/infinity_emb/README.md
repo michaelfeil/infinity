@@ -57,7 +57,17 @@ pip install infinity-emb[all]
 ### Launch via Python
 ```Python
 from infinity_emb import create server
-create_server()
+fastapi_app = create_server()
+```
+or use the AsyncAPI directly.:
+
+```python
+from infinity_emb import AsyncEmbeddingEngine, transformer
+sentences = ["Embedded this is sentence via Infinity.", "Paris is in France."]
+engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.torch)
+async with engine: # engine starts with engine.astart()
+    embeddings = np.array(await engine.embed(sentences))
+# engine stops with engine.astop()
 ```
 
 ### or launch the `create_server()` command via CLI
