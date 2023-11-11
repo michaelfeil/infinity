@@ -37,36 +37,43 @@ class EmbeddingEngine:
                 Defaults to InferenceEngine.torch.
             model_warmup bool: decide which . Defaults to True.
         """
+        self.batch_size = batch_size
         self.running = False
-        model, min_inference_t = select_model_to_functional(
+        self._model, self._min_inference_t = select_model_to_functional(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,
             model_warmup=model_warmup,
         )
 
-        self._batch_handler = BatchHandler(
-            max_batch_size=batch_size,
-            model=model,
-            verbose=logger.level <= 10,
-            batch_delay=min_inference_t / 2,
-        )
-
-    async def _start(self):
+    async def astart(self):
         """startup engine"""
         self.running = True
+        self._batch_handler = BatchHandler(
+            max_batch_size=self.batch_size,
+            model=self._model,
+            verbose=logger.level <= 10,
+            batch_delay=self._min_inference_t / 2,
+        )
         await self._batch_handler.spawn()
 
-    def _stop(self):
+    async def astop(self):
         """stop engine"""
         self.running = False
-        self._batch_handler.shutdown()
+        await self._batch_handler.shutdown()
 
     async def __aenter__(self):
-        await self._start()
+        if self.running:
+            raise ValueError(
+                "already started `EmbeddingEngine`. "
+                " recommended use is via AsyncContextManager"
+                " `async with engine: ..`"
+            )
+        await self.astart()
 
     async def __aexit__(self, *args):
-        self._stop()
+        self._check_running()
+        await self.astop()
 
     def overload_status(self):
         self._check_running()
@@ -97,8 +104,8 @@ class EmbeddingEngine:
         if not self.running:
             raise ValueError(
                 "didn't start `EmbeddingEngine` "
-                "via AsyncContextManager:"
-                " recommended use is `async with engine: ..`"
+                " recommended use is via AsyncContextManager"
+                " `async with engine: ..`"
             )
 
 
@@ -159,7 +166,7 @@ def create_server(
 
     @app.on_event("shutdown")
     async def _shutdown():
-        app.batch_handler.shutdown()
+        await app.batch_handler.shutdown()
 
     @app.get("/ready")
     async def _ready() -> float:

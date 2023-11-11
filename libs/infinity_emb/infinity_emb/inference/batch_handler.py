@@ -387,17 +387,16 @@ class BatchHandler:
         if self._ready:
             raise ValueError("previous threads are still running.")
         logger.info("creating batching engine")
-        self._shutdown.clear()
         self.loop = asyncio.get_event_loop()
-        self._threadpool = ThreadPoolExecutor()
         self._threadpool.submit(self._preprocess_batch)
         self._threadpool.submit(self._core_batch)
         asyncio.create_task(self._postprocess_batch())
 
-    def shutdown(self):
+    async def shutdown(self):
         """
         set the shutdown event and close threadpool.
         Blocking event, until shutdown complete.
         """
         self._shutdown.set()
-        self._threadpool.shutdown(wait=True)
+        with ThreadPoolExecutor() as tp_temp:
+            await to_thread(self._threadpool.shutdown, tp_temp)

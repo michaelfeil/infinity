@@ -113,4 +113,4 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
         )
 
     finally:
-        bh.shutdown()
+        await bh.shutdown()
