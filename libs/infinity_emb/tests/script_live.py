@@ -1,5 +1,6 @@
 import concurrent.futures
 import json
+import time
 import timeit
 from functools import partial
 
@@ -58,5 +59,21 @@ def embedding_live_performance():
     assert latency_st * 1.1 > latency_request
 
 
+def latency_single():
+    session = requests.Session()
+
+    def _post(i):
+        json_d = json.dumps({"input": [str(i)], "model": "model"})
+        s = time.perf_counter()
+        res = session.post(f"{LIVE_URL}/embeddings", data=json_d)
+        e = time.perf_counter()
+        assert res.status_code == 200
+        return (e - s) * 10**3
+
+    _post("hi")
+    times = [_post(i) for i in range(32)]
+    print(f"{np.median(times)}+-{np.std(times)}")
+
+
 if __name__ == "__main__":
-    embedding_live_performance()
+    latency_single()

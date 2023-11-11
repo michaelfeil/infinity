@@ -1,4 +1,5 @@
 import time
+from typing import List
 
 import typer
 import uvicorn
@@ -17,6 +18,106 @@ from infinity_emb.fastapi_schemas.pymodels import (
 from infinity_emb.inference import BatchHandler, select_model_to_functional
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
+
+
+class AsyncEmbeddingEngine:
+    def __init__(
+        self,
+        model_name_or_path: str = "BAAI/bge-small-en-v1.5",
+        batch_size: int = 64,
+        engine: InferenceEngine = InferenceEngine.torch,
+        model_warmup=True,
+    ) -> None:
+        """Creating a Async EmbeddingEngine object.
+
+        Args:
+            model_name_or_path, str:  Defaults to "BAAI/bge-small-en-v1.5".
+            batch_size, int: Defaults to 64.
+            engine, InferenceEngine: backend for inference.
+                Defaults to InferenceEngine.torch.
+            model_warmup bool: decide which . Defaults to True.
+
+        Example:
+            ```python
+            from infinity_emb import AsyncEmbeddingEngine, transformer
+            sentences = ["Embedded this via Infinity.", "Paris is in France."]
+            engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.torch)
+            async with engine: # engine starts with engine.astart()
+                embeddings = np.array(await engine.embed(sentences))
+            # engine stops with engine.astop().
+            # For frequent restarts, handle start/stop yourself.
+            ```
+        """
+        self.batch_size = batch_size
+        self.running = False
+        self._model, self._min_inference_t = select_model_to_functional(
+            model_name_or_path=model_name_or_path,
+            batch_size=batch_size,
+            engine=engine,
+            model_warmup=model_warmup,
+        )
+
+    async def astart(self):
+        """startup engine"""
+        self.running = True
+        self._batch_handler = BatchHandler(
+            max_batch_size=self.batch_size,
+            model=self._model,
+            verbose=logger.level <= 10,
+            batch_delay=self._min_inference_t / 2,
+        )
+        await self._batch_handler.spawn()
+
+    async def astop(self):
+        """stop engine"""
+        self.running = False
+        await self._batch_handler.shutdown()
+
+    async def __aenter__(self):
+        if self.running:
+            raise ValueError(
+                "DoubleSpawn: already started `AsyncEmbeddingEngine`. "
+                " recommended use is via AsyncContextManager"
+                " `async with engine: ..`"
+            )
+        await self.astart()
+
+    async def __aexit__(self, *args):
+        self._check_running()
+        await self.astop()
+
+    def overload_status(self):
+        self._check_running()
+        return self._batch_handler.overload_status()
+
+    def is_overloaded(self) -> bool:
+        self._check_running()
+        return self._batch_handler.is_overloaded()
+
+    async def embed(self, sentences: List[str]) -> List[List[float]]:
+        """embed multiple sentences
+
+        Args:
+            sentences (List[str]): sentences to be embedded
+
+        Raises:
+            ValueError: raised if engine is not started yet"
+
+        Returns:
+            List[List[float]]: embeddings
+                2D list-array of shape( len(sentences),embed_dim )
+        """
+        self._check_running()
+        embeddings, _ = await self._batch_handler.schedule(sentences)
+        return embeddings
+
+    def _check_running(self):
+        if not self.running:
+            raise ValueError(
+                "didn't start `AsyncEmbeddingEngine` "
+                " recommended use is via AsyncContextManager"
+                " `async with engine: ..`"
+            )
 
 
 def create_server(
@@ -76,7 +177,7 @@ def create_server(
 
     @app.on_event("shutdown")
     async def _shutdown():
-        app.batch_handler.shutdown()
+        await app.batch_handler.shutdown()
 
     @app.get("/ready")
     async def _ready() -> float:
