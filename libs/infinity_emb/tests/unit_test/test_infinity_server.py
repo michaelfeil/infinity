@@ -45,9 +45,23 @@ async def test_async_api_fastembed():
     engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.fastembed)
     async with engine:
         embeddings = np.array(await engine.embed(sentences))
+        assert not engine.is_overloaded()
         assert embeddings.shape[0] == 2
         assert embeddings.shape[1] >= 10
 
+@pytest.mark.anyio
+async def test_async_api_failing():
+    sentences = ["Hi", "how"]
+    engine = AsyncEmbeddingEngine()
+    with pytest.raises(ValueError):
+        await engine.embed(sentences)
+    await engine.astart()
+    assert not engine.is_overloaded()
+    assert engine.overload_status()
+    
+    with pytest.raises(ValueError):
+        engine.astart()
+    engine.stop()
 
 def test_cli_help():
     log = subprocess.run(["infinity_emb", "--help"])
