@@ -39,6 +39,12 @@ jobs:
           working-directory: ${{ inputs.working-directory }}
           cache-key: core
 
+      - name: Install minimal dependencies and import
+        shell: bash
+        run: |
+          poetry install
+          python -c "import infinity_emb"
+
       - name: Install dependencies
         shell: bash
         run: poetry install --extras all --with test

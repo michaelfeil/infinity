@@ -1,17 +1,24 @@
 import logging
 from enum import Enum
 
-from rich.console import Console
-from rich.logging import RichHandler
 from uvicorn.config import LOG_LEVELS
 
 logging.getLogger().handlers.clear()
+
+handlers = []
+try:
+    from rich.console import Console
+    from rich.logging import RichHandler
+
+    handlers.append(RichHandler(console=Console(stderr=True), show_time=False))
+except ImportError:
+    pass
 
 FORMAT = "%(asctime)s %(name)s %(levelname)s: %(message)s"
 logging.basicConfig(
     level="INFO",
     format=FORMAT,
-    handlers=[RichHandler(console=Console(stderr=True), show_time=False)],
+    handlers=handlers,
 )
 
 logger = logging.getLogger("infinity_emb")

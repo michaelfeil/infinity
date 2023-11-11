@@ -1,5 +1,5 @@
 # Use the Python base image
-FROM nvidia/cuda:12.2.0-base-ubuntu22.04 AS base
+FROM nvidia/cuda:11.8.0-base-ubuntu22.04 AS base
 
 ENV PYTHONUNBUFFERED=1 \
     # prevents python creating .pyc files

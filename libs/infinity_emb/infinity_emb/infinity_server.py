@@ -1,11 +1,6 @@
 import time
 from typing import List
 
-import typer
-import uvicorn
-from fastapi import FastAPI, responses, status
-from prometheus_fastapi_instrumentator import Instrumentator
-
 # prometheus
 import infinity_emb
 from infinity_emb.fastapi_schemas import docs, errors
@@ -128,10 +123,13 @@ def create_server(
     verbose: bool = False,
     model_warmup=True,
     doc_extra: dict = {},
-) -> FastAPI:
+):
     """
     creates the FastAPI App
     """
+    from fastapi import FastAPI, responses, status
+    from prometheus_fastapi_instrumentator import Instrumentator
+
     app = FastAPI(
         title=docs.FASTAPI_TITLE,
         summary=docs.FASTAPI_SUMMARY,
@@ -274,6 +272,8 @@ def start_uvicorn(
         engine: framework that should perform inference.
         model_warmup: perform model warmup before starting the server. Defaults to True.
     """
+    import uvicorn
+
     engine_load: InferenceEngine = InferenceEngine[engine.name]
     logger.setLevel(log_level.to_int())
 
@@ -291,6 +291,8 @@ def start_uvicorn(
 
 def cli():
     """fires the command line using Python `typer.run()`"""
+    import typer
+
     typer.run(start_uvicorn)
 
 

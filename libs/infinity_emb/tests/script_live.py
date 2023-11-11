@@ -46,7 +46,7 @@ def embedding_live_performance():
     print("Both methods provide the identical output.")
 
     print("Measuring latency via SentenceTransformers")
-    latency_st = timeit.timeit("local(sample, iters=5)", number=2, globals=locals())
+    latency_st = timeit.timeit("local(sample, iters=1)", number=1, globals=locals())
     print("SentenceTransformers latency: ", latency_st)
     model = None
 
@@ -76,4 +76,4 @@ def latency_single():
 
 
 if __name__ == "__main__":
-    latency_single()
+    embedding_live_performance()
