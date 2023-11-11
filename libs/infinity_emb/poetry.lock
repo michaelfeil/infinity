@@ -3902,4 +3902,4 @@ torch = ["sentence-transformers", "torch"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "124dcad777e9b1766423625c65a32469f370f70eb243e6f482d5e8ed0d037686"
+content-hash = "80f2b46330c48a28d42708348ac65d56f377a5ea5144f120200628e953d37c68"

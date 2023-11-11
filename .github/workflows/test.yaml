@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           poetry install --without test
-          python -c "import infinity_emb"
+          poetry run python -c "import infinity_emb"
 
       - name: Install dependencies
         shell: bash

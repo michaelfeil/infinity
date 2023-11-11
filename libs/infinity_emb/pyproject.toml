@@ -10,8 +10,8 @@ packages = [{include = "infinity_emb"}]
 [tool.poetry.dependencies]
 python = ">=3.10,<3.12"
 # basics
-numpy = "^1"
-pydantic = ">=2.4.2,<3"
+numpy = ">=1.20.0"
+pydantic = ">=2.4.0,<3"
 # logging
 rich = {version = "^13", optional=true}
 # webserver-only
