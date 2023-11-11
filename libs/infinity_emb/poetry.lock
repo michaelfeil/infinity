@@ -1737,19 +1737,19 @@ sympy = "*"
 
 [[package]]
 name = "onnxruntime-gpu"
-version = "1.16.1"
+version = "1.16.2"
 description = "ONNX Runtime is a runtime accelerator for Machine Learning models"
 optional = true
 python-versions = "*"
 files = [
-    {file = "onnxruntime_gpu-1.16.1-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:9c4f4b964c15832bf414bbdec272de070c6be3b1fe97f2b7fdcb18a9a1143ac0"},
-    {file = "onnxruntime_gpu-1.16.1-cp310-cp310-win_amd64.whl", hash = "sha256:55e3713e57203d2785f9ec3b23883a3ed13fcf795f26aa615db0e6a4a9cf0f91"},
-    {file = "onnxruntime_gpu-1.16.1-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:d4de0d8ffe43339f8b0a8b528629cb7b5615786673cde526a092bfebe821fd7b"},
-    {file = "onnxruntime_gpu-1.16.1-cp311-cp311-win_amd64.whl", hash = "sha256:532bad0e89ec072881c5236da0a458ab2a56d333075d1a656dce206a3100775d"},
-    {file = "onnxruntime_gpu-1.16.1-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0a255af5f5b3e630fe0061f55da707923aa80821e24841043f69d3faf49060bf"},
-    {file = "onnxruntime_gpu-1.16.1-cp38-cp38-win_amd64.whl", hash = "sha256:6158b08ac0b9abf59cf72e36d31fc0b2ed2067f627459bb878338017699841d7"},
-    {file = "onnxruntime_gpu-1.16.1-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:17c35c845831e3f4929e4e6a7c91ead0f1ceeb5dcf1bdf2680d359d03ee718d2"},
-    {file = "onnxruntime_gpu-1.16.1-cp39-cp39-win_amd64.whl", hash = "sha256:b8eb2221dff94db1815278c84cc5e84f104bbe49a2269749bc68baaa73f3583f"},
+    {file = "onnxruntime_gpu-1.16.2-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0cfcac6d84ca94b1785c95c6412edc7d7a894055c2fbb854c75f875fb44b2df9"},
+    {file = "onnxruntime_gpu-1.16.2-cp310-cp310-win_amd64.whl", hash = "sha256:6713feab198ad67db44c9354c052603872b926a4175e496a7b5069224d7b75bc"},
+    {file = "onnxruntime_gpu-1.16.2-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:f10399d051dae1c496ee812e388da74bf03888ad0e01dcac4859eed4750f8c42"},
+    {file = "onnxruntime_gpu-1.16.2-cp311-cp311-win_amd64.whl", hash = "sha256:bae364c4bb281c654e5ee5f74fd1779ca3517ab1801cd81cfd3014aae490592e"},
+    {file = "onnxruntime_gpu-1.16.2-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a2638e46d4139c8e1eb08246661ae51ef206c90178f1d8872695681e157b8a44"},
+    {file = "onnxruntime_gpu-1.16.2-cp38-cp38-win_amd64.whl", hash = "sha256:65848e0a01546a78207824c44e893dc03eead71ce22bf70530f53fbe358b0e3d"},
+    {file = "onnxruntime_gpu-1.16.2-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5a692c53604558dc80880401875f6e975c544af141f650c295b970a3fa59c723"},
+    {file = "onnxruntime_gpu-1.16.2-cp39-cp39-win_amd64.whl", hash = "sha256:42ba53e866efa59d03e9ef5b21b1fb4e11222600b8843b91c488138e091dfca7"},
 ]
 
 [package.dependencies]
@@ -3920,6 +3920,7 @@ all = ["ctranslate2", "fastapi", "fastembed", "optimum", "orjson", "prometheus-f
 ct2 = ["ctranslate2", "sentence-transformers", "torch"]
 fastembed = ["fastembed"]
 logging = ["rich"]
+onnxruntime-gpu = ["onnxruntime-gpu"]
 optimum = ["optimum"]
 server = ["fastapi", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "typer", "uvicorn"]
 torch = ["sentence-transformers", "torch"]
@@ -3927,4 +3928,4 @@ torch = ["sentence-transformers", "torch"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "80f2b46330c48a28d42708348ac65d56f377a5ea5144f120200628e953d37c68"
+content-hash = "d89cf1ca3095a5b0b4c993d1bafbe899827f73721f8a567a7c225b74eb8c9968"
