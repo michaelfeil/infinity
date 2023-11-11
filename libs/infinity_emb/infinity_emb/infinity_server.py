@@ -54,6 +54,12 @@ class AsyncEmbeddingEngine:
 
     async def astart(self):
         """startup engine"""
+        if self.running:
+            raise ValueError(
+                "DoubleSpawn: already started `AsyncEmbeddingEngine`. "
+                " recommended use is via AsyncContextManager"
+                " `async with engine: ..`"
+            )
         self.running = True
         self._batch_handler = BatchHandler(
             max_batch_size=self.batch_size,
@@ -65,20 +71,14 @@ class AsyncEmbeddingEngine:
 
     async def astop(self):
         """stop engine"""
+        self._check_running()
         self.running = False
         await self._batch_handler.shutdown()
 
     async def __aenter__(self):
-        if self.running:
-            raise ValueError(
-                "DoubleSpawn: already started `AsyncEmbeddingEngine`. "
-                " recommended use is via AsyncContextManager"
-                " `async with engine: ..`"
-            )
         await self.astart()
 
     async def __aexit__(self, *args):
-        self._check_running()
         await self.astop()
 
     def overload_status(self):
