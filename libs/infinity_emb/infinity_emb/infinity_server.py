@@ -1,11 +1,6 @@
 import time
 from typing import List
 
-import typer
-import uvicorn
-from fastapi import FastAPI, responses, status
-from prometheus_fastapi_instrumentator import Instrumentator
-
 # prometheus
 import infinity_emb
 from infinity_emb.fastapi_schemas import docs, errors
@@ -59,6 +54,12 @@ class AsyncEmbeddingEngine:
 
     async def astart(self):
         """startup engine"""
+        if self.running:
+            raise ValueError(
+                "DoubleSpawn: already started `AsyncEmbeddingEngine`. "
+                " recommended use is via AsyncContextManager"
+                " `async with engine: ..`"
+            )
         self.running = True
         self._batch_handler = BatchHandler(
             max_batch_size=self.batch_size,
@@ -70,20 +71,14 @@ class AsyncEmbeddingEngine:
 
     async def astop(self):
         """stop engine"""
+        self._check_running()
         self.running = False
         await self._batch_handler.shutdown()
 
     async def __aenter__(self):
-        if self.running:
-            raise ValueError(
-                "DoubleSpawn: already started `AsyncEmbeddingEngine`. "
-                " recommended use is via AsyncContextManager"
-                " `async with engine: ..`"
-            )
         await self.astart()
 
     async def __aexit__(self, *args):
-        self._check_running()
         await self.astop()
 
     def overload_status(self):
@@ -128,10 +123,13 @@ def create_server(
     verbose: bool = False,
     model_warmup=True,
     doc_extra: dict = {},
-) -> FastAPI:
+):
     """
     creates the FastAPI App
     """
+    from fastapi import FastAPI, responses, status
+    from prometheus_fastapi_instrumentator import Instrumentator
+
     app = FastAPI(
         title=docs.FASTAPI_TITLE,
         summary=docs.FASTAPI_SUMMARY,
@@ -274,6 +272,8 @@ def start_uvicorn(
         engine: framework that should perform inference.
         model_warmup: perform model warmup before starting the server. Defaults to True.
     """
+    import uvicorn
+
     engine_load: InferenceEngine = InferenceEngine[engine.name]
     logger.setLevel(log_level.to_int())
 
@@ -291,6 +291,8 @@ def start_uvicorn(
 
 def cli():
     """fires the command line using Python `typer.run()`"""
+    import typer
+
     typer.run(start_uvicorn)
 
 
