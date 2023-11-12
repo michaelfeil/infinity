@@ -1,7 +1,10 @@
 from typing import Optional
 
-from fastapi import Request
-from fastapi.responses import JSONResponse
+try:
+    from fastapi import Request
+    from fastapi.responses import JSONResponse
+except ImportError:
+    Request = None
 
 
 class OpenAIException(Exception):

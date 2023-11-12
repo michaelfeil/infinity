@@ -1,5 +1,5 @@
 # Use the Python base image
-FROM nvidia/cuda:12.2.0-base-ubuntu22.04 AS base
+FROM nvidia/cuda:11.8.0-base-ubuntu22.04 AS base
 
 ENV PYTHONUNBUFFERED=1 \
     # prevents python creating .pyc files
@@ -54,5 +54,6 @@ COPY --from=builder /app /app
 WORKDIR /app
 
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
+ENV PATH=/app/.venv/bin:$PATH
 
-CMD . /app/.venv/bin/activate && infinity_emb
+ENTRYPOINT ["infinity_emb"]
