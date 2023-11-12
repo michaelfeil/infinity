@@ -3927,7 +3927,7 @@ idna = ">=2.0"
 multidict = ">=4.0"
 
 [extras]
-all = ["ctranslate2", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn"]
+all = ["ctranslate2", "diskcache", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn"]
 cache = ["diskcache"]
 ct2 = ["ctranslate2", "sentence-transformers", "torch"]
 fastembed = ["fastembed"]
@@ -3940,4 +3940,4 @@ torch = ["sentence-transformers", "torch"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.10,<3.12"
-content-hash = "6496e0242931305a0fa3c4001947ff9f75a109a3706faead96367a9160204a2e"
+content-hash = "37d737c7a119eda29acb38e44c0afedd5dea1a9dc99edd459f1e6f6bd19d92f4"
