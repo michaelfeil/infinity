@@ -1,6 +1,5 @@
 import asyncio
 import threading
-from concurrent.futures import ThreadPoolExecutor
 
 import numpy as np
 import pytest
@@ -36,4 +35,3 @@ async def test_cache():
     finally:
         INFINITY_CACHE_VECTORS = False
         shutdown.set()
-        tp.shutdown()
