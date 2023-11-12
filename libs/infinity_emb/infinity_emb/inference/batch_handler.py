@@ -93,7 +93,7 @@ class ResultKVStoreFuture:
 
     def __len__(self):
         return len(self._kv)
-    
+
     async def wait_for_response(self, item: EmbeddingResult) -> NpEmbeddingType:
         """wait for future to return"""
         if self._cache:
@@ -331,12 +331,12 @@ class BatchHandler:
         except Exception as ex:
             logger.exception(ex)
             raise ValueError("Postprocessor crashed")
-        
-        async def _delayed_warmup(self):
-            """in case there is no warmup -> perform some warmup."""
-            await asyncio.sleep(10)
-            logger.debug("Sending a warm up through embedding.")
-            await self.schedule(["test"]*self.max_batch_size)
+
+    async def _delayed_warmup(self):
+        """in case there is no warmup -> perform some warmup."""
+        await asyncio.sleep(10)
+        logger.debug("Sending a warm up through embedding.")
+        await self.schedule(["test"] * self.max_batch_size)
 
     async def spawn(self):
         """set up the resources in batch"""

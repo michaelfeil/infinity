@@ -24,9 +24,7 @@ INFINITY_CACHE_VECTORS = (
 
 
 class Cache:
-    def __init__(
-        self, cache_name: str, shutdown: threading.Event
-    ) -> None:
+    def __init__(self, cache_name: str, shutdown: threading.Event) -> None:
         if not DISKCACHE_AVAILABLE:
             raise ImportError(
                 "diskcache is not available. "
@@ -40,7 +38,7 @@ class Cache:
         self._cache = dc.Cache(dir, size_limit=2**28)
         self.is_running = False
         self.startup()
-        
+
     def startup(self):
         if not self.is_running:
             self._threadpool = ThreadPoolExecutor()
