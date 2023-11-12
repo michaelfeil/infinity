@@ -14,11 +14,10 @@ async def test_cache():
     global INFINITY_CACHE_VECTORS
 
     loop = asyncio.get_event_loop()
-    tp = ThreadPoolExecutor()
     shutdown = threading.Event()
     try:
         INFINITY_CACHE_VECTORS = True
-        c = caching_layer.Cache(cache_name="pytest", tp=tp, shutdown=shutdown)
+        c = caching_layer.Cache(cache_name="pytest", shutdown=shutdown)
         sentence = "dummy"
         embedding = np.random.random(30)
         sample = EmbeddingResult(sentence=sentence, future=loop.create_future())
