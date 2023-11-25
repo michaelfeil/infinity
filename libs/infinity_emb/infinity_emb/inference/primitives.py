@@ -16,6 +16,16 @@ class EmbeddingResult:
     uuid: str = field(default_factory=lambda: str(uuid4()), compare=False)
     embedding: Optional[NpEmbeddingType] = field(default=None, compare=False)
 
+    def complete(self):
+        """marks the future for completion.
+        only call from the same thread as created future."""
+        if self.embedding is None:
+            raise ValueError("calling complete on an uncompleted embedding")
+        try:
+            self.future.set_result(self.embedding)
+        except asyncio.exceptions.InvalidStateError:
+            pass
+
 
 @dataclass(order=True)
 class PrioritizedQueueItem:

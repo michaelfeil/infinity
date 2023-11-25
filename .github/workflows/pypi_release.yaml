@@ -47,3 +47,33 @@ jobs:
           packages-dir: ${{ env.WORKDIR }}/dist/
           verbose: true
           print-hash: true
+
+  post-test-pypi-publish:
+    defaults:
+      run:
+        working-directory: ${{ env.WORKDIR }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version:
+          - "3.9"
+          - "3.10"
+          - "3.11"
+
+    name: Python ${{ matrix.python-version }}
+    steps:
+      - name: Set up Python ${{ matrix.python-version }} + Poetry ${{ env.POETRY_VERSION }}
+        uses: "./.github/actions/poetry_setup"
+        with:
+          python-version: ${{ matrix.python-version }}
+          poetry-version: ${{ env.POETRY_VERSION }}
+          working-directory: ${{ inputs.working-directory }}
+          cache-key: core${{ matrix.python-version }}
+
+      - name: Install minimal dependencies and import
+        shell: bash
+        run: |
+          sleep 60
+          poetry run pip install infinity-emb[server]
+          poetry run infinity-emb --help
+          poetry run python -c "import infinity_emb"

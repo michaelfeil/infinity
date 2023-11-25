@@ -8,7 +8,7 @@ readme = "README.md"
 packages = [{include = "infinity_emb"}]
 
 [tool.poetry.dependencies]
-python = ">=3.10,<3.12"
+python = ">=3.9,<3.12"
 # basics
 numpy = ">=1.20.0"
 pydantic = ">=2.4.0,<3"
@@ -26,7 +26,9 @@ sentence-transformers = {version = "2.2.2", optional=true}
 ctranslate2 = {version = "^3.21.0", optional=true}
 optimum = {version = "^1.13.2", optional=true}
 fastembed = {version = "0.1.1", optional=true} 
-onnxruntime-gpu = {version = "*", optional=true} 
+onnxruntime-gpu = {version = "*", optional=true}
+# cache
+diskcache = {version = "*", optional=true}
 
 [tool.poetry.scripts]
 infinity_emb = "infinity_emb.infinity_server:cli"
@@ -60,8 +62,9 @@ fastembed=["fastembed"]
 torch=["sentence-transformers","torch"]
 onnxruntime-gpu=["onnxruntime-gpu"]
 logging=["rich"]
+cache=["diskcache"]
 server=["fastapi", "pydantic", "orjson", "prometheus-fastapi-instrumentator", "uvicorn", "typer","rich"]
-all=["ctranslate2", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn"]
+all=["ctranslate2", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn","diskcache"]
 
 [tool.pytest.ini_options]
 markers = [

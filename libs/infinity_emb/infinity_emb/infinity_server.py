@@ -11,6 +11,7 @@ from infinity_emb.fastapi_schemas.pymodels import (
     OpenAIModelInfo,
 )
 from infinity_emb.inference import BatchHandler, select_model_to_functional
+from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
 
@@ -22,6 +23,7 @@ class AsyncEmbeddingEngine:
         batch_size: int = 64,
         engine: InferenceEngine = InferenceEngine.torch,
         model_warmup=True,
+        vector_disk_cache_path: str = "",
     ) -> None:
         """Creating a Async EmbeddingEngine object.
 
@@ -30,7 +32,9 @@ class AsyncEmbeddingEngine:
             batch_size, int: Defaults to 64.
             engine, InferenceEngine: backend for inference.
                 Defaults to InferenceEngine.torch.
-            model_warmup bool: decide which . Defaults to True.
+            model_warmup, bool: decide if warmup with max batch size . Defaults to True.
+            vector_disk_cache_path, str: file path to folder of cache.
+                Defaults to "" - default no caching.
 
         Example:
             ```python
@@ -45,11 +49,12 @@ class AsyncEmbeddingEngine:
         """
         self.batch_size = batch_size
         self.running = False
+        self._vector_disk_cache_path=vector_disk_cache_path,
         self._model, self._min_inference_t = select_model_to_functional(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,
-            model_warmup=model_warmup,
+            model_warmup=model_warmup
         )
 
     async def astart(self):
@@ -64,8 +69,9 @@ class AsyncEmbeddingEngine:
         self._batch_handler = BatchHandler(
             max_batch_size=self.batch_size,
             model=self._model,
-            verbose=logger.level <= 10,
             batch_delay=self._min_inference_t / 2,
+            vector_disk_cache_path=self._vector_disk_cache_path,
+            verbose=logger.level <= 10,
         )
         await self._batch_handler.spawn()
 
@@ -122,6 +128,7 @@ def create_server(
     engine: InferenceEngine = InferenceEngine.torch,
     verbose: bool = False,
     model_warmup=True,
+    vector_disk_cache=INFINITY_CACHE_VECTORS,
     doc_extra: dict = {},
 ):
     """
@@ -144,6 +151,9 @@ def create_server(
     )
     instrumentator = Instrumentator().instrument(app)
     app.add_exception_handler(errors.OpenAIException, errors.openai_exception_handler)
+    vector_disk_cache_path = (
+        f"{engine}_{model_name_or_path.replace('/','_')}" if vector_disk_cache else ""
+    )
 
     @app.on_event("startup")
     async def _startup():
@@ -161,6 +171,7 @@ def create_server(
             model=model,
             verbose=verbose,
             batch_delay=min_inference_t / 2,
+            vector_disk_cache_path=vector_disk_cache_path,
         )
         # start in a threadpool
         await app.batch_handler.spawn()
@@ -256,21 +267,25 @@ def start_uvicorn(
     log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
     engine: InferenceEngineTypeHint = InferenceEngineTypeHint.torch.name,  # type: ignore # noqa
     model_warmup: bool = True,
+    vector_disk_cache: bool = INFINITY_CACHE_VECTORS,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
     MIT License; Copyright (c) 2023 Michael Feil
 
     Args:
-        model_name_or_path: str: Huggingface model, e.g.
+        model_name_or_path, str: Huggingface model, e.g.
             "BAAI/bge-small-en-v1.5".
-        batch_size: int: batch size for forward pass.
-        url_prefix str: prefix for api. typically "/v1".
-        host str: host-url, typically either "0.0.0.0" or "127.0.0.1".
-        port int: port that you want to expose.
+        batch_size, int: batch size for forward pass.
+        url_prefix, str: prefix for api. typically "/v1".
+        host, str: host-url, typically either "0.0.0.0" or "127.0.0.1".
+        port, int: port that you want to expose.
         log_level: logging level.
             For high performance, use "info" or higher levels. Defaults to "info".
-        engine: framework that should perform inference.
-        model_warmup: perform model warmup before starting the server. Defaults to True.
+        engine, str: framework that should perform inference.
+        model_warmup, bool: perform model warmup before starting the server.
+            Defaults to True.
+        vector_disk_cache, bool: cache past embeddings in SQL.
+            Defaults to False or env-INFINITY_CACHE_VECTORS if set
     """
     import uvicorn
 
@@ -285,6 +300,7 @@ def start_uvicorn(
         verbose=log_level.to_int() <= 10,
         doc_extra=dict(host=host, port=port),
         model_warmup=model_warmup,
+        vector_disk_cache=vector_disk_cache,
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
