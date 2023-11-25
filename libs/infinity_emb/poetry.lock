@@ -2999,6 +2999,7 @@ files = [
 
 [package.dependencies]
 anyio = ">=3.4.0,<5"
+typing-extensions = {version = ">=3.10.0", markers = "python_version < \"3.10\""}
 
 [package.extras]
 full = ["httpx (>=0.22.0)", "itsdangerous", "jinja2", "python-multipart", "pyyaml"]
@@ -3939,5 +3940,5 @@ torch = ["sentence-transformers", "torch"]
 
 [metadata]
 lock-version = "2.0"
-python-versions = ">=3.10,<3.12"
-content-hash = "37d737c7a119eda29acb38e44c0afedd5dea1a9dc99edd459f1e6f6bd19d92f4"
+python-versions = ">=3.9,<3.12"
+content-hash = "672169496a445ac5d2d35ac2b28763f39496bd5c44b9eac0a9ef8d204d10d4ea"
