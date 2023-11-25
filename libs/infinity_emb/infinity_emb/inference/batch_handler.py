@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Optional
 
 from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.inference.primitives import (
@@ -87,7 +87,7 @@ class CustomFIFOQueue:
 
 
 class ResultKVStoreFuture:
-    def __init__(self, cache: Union[Cache, None]) -> None:
+    def __init__(self, cache: Optional[Cache] = None) -> None:
         self._kv: Dict[str, NpEmbeddingType] = {}
         self._cache = cache
 

@@ -1,5 +1,5 @@
 from time import perf_counter
-from typing import Tuple
+from typing import Tuple, Optional, List
 
 from infinity_emb.inference.primitives import EmbeddingResult, NpEmbeddingType
 from infinity_emb.log_handler import logger
@@ -41,8 +41,10 @@ def select_model_to_functional(
 
 
 def runtime_check_callable(
-    model: BaseTransformer, sample=["warm"], log=True
+    model: BaseTransformer, sample: Optional[List[str]]=None, log=True
 ) -> Tuple[float, float]:
+    if sample is None:
+        sample=["warm"]
     inp = [EmbeddingResult(sentence=s, future=None) for s in sample]  # type: ignore
     start = perf_counter()
     sentences = [item.sentence for item in inp]

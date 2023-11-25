@@ -2,7 +2,7 @@ import os
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Union
+from typing import List, Union, Any
 
 import numpy as np
 
@@ -45,8 +45,8 @@ class Cache:
             self._threadpool.submit(self._consume_queue)
 
     @staticmethod
-    def _hash(key: str) -> int:
-        return hash(key)
+    def _hash(key: str | Any) -> str:
+        return str(key)
 
     def _consume_queue(self) -> None:
         while not self._shutdown.is_set():
@@ -55,8 +55,8 @@ class Cache:
             except queue.Empty:
                 continue
             if item is not None:
-                sentence, embedding = item
-                self._cache.add(key=self._hash(sentence), value=embedding)
+                k, v = item
+                self._cache.add(key=self._hash(k), value=v, expire=86400)
             self._add_q.task_done()
 
     async def add(self, items: List[EmbeddingResult]) -> None:

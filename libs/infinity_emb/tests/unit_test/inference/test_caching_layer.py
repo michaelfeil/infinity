@@ -16,9 +16,10 @@ async def test_cache():
     shutdown = threading.Event()
     try:
         INFINITY_CACHE_VECTORS = True
-        c = caching_layer.Cache(cache_name="pytest", shutdown=shutdown)
         sentence = "dummy"
-        embedding = np.random.random(30)
+        embedding = np.random.random(5).tolist()
+        c = caching_layer.Cache(cache_name=f"pytest_{hash((sentence, tuple(embedding)))}", shutdown=shutdown)
+        
         sample = EmbeddingResult(sentence=sentence, future=loop.create_future())
         sample_embedded = EmbeddingResult(
             sentence=sentence, future=loop.create_future(), embedding=embedding
@@ -31,7 +32,7 @@ async def test_cache():
         await c.aget_complete(sample)
         assert sample.future.done()
         assert sample.embedding is not None
-        assert (sample.embedding == embedding).all()
+        np.testing.assert_array_equal(sample.embedding, embedding)
     finally:
         INFINITY_CACHE_VECTORS = False
         shutdown.set()

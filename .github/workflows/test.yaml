@@ -37,7 +37,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           poetry-version: ${{ env.POETRY_VERSION }}
           working-directory: ${{ inputs.working-directory }}
-          cache-key: core
+          cache-key: core${{ matrix.python-version }}
 
       - name: Install minimal dependencies and import
         shell: bash
