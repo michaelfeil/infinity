@@ -23,7 +23,7 @@ class AsyncEmbeddingEngine:
         batch_size: int = 64,
         engine: InferenceEngine = InferenceEngine.torch,
         model_warmup=True,
-        vector_disk_cache_path: str = ""
+        vector_disk_cache_path: str = "",
     ) -> None:
         """Creating a Async EmbeddingEngine object.
 
@@ -33,7 +33,8 @@ class AsyncEmbeddingEngine:
             engine, InferenceEngine: backend for inference.
                 Defaults to InferenceEngine.torch.
             model_warmup, bool: decide if warmup with max batch size . Defaults to True.
-            vector_disk_cache_path, str: file path to folder of cache. Defaults to "" - default no caching.
+            vector_disk_cache_path, str: file path to folder of cache.
+                Defaults to "" - default no caching.
 
         Example:
             ```python
@@ -280,8 +281,10 @@ def start_uvicorn(
         log_level: logging level.
             For high performance, use "info" or higher levels. Defaults to "info".
         engine, str: framework that should perform inference.
-        model_warmup, bool: perform model warmup before starting the server. Defaults to True.
-        vector_disk_cache, bool: cache past embeddings in SQL. Defaults to False or INFINITY_CACHE_VECTORS if set
+        model_warmup, bool: perform model warmup before starting the server.
+            Defaults to True.
+        vector_disk_cache, bool: cache past embeddings in SQL.
+            Defaults to False or env-INFINITY_CACHE_VECTORS if set
     """
     import uvicorn
 
