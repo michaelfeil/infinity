@@ -18,8 +18,10 @@ async def test_cache():
         INFINITY_CACHE_VECTORS = True
         sentence = "dummy"
         embedding = np.random.random(5).tolist()
-        c = caching_layer.Cache(cache_name=f"pytest_{hash((sentence, tuple(embedding)))}", shutdown=shutdown)
-        
+        c = caching_layer.Cache(
+            cache_name=f"pytest_{hash((sentence, tuple(embedding)))}", shutdown=shutdown
+        )
+
         sample = EmbeddingResult(sentence=sentence, future=loop.create_future())
         sample_embedded = EmbeddingResult(
             sentence=sentence, future=loop.create_future(), embedding=embedding

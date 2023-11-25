@@ -2,7 +2,7 @@ import os
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import List, Union, Any
+from typing import Any, List, Union
 
 import numpy as np
 
@@ -45,7 +45,7 @@ class Cache:
             self._threadpool.submit(self._consume_queue)
 
     @staticmethod
-    def _hash(key: str | Any) -> str:
+    def _hash(key: Union[str, Any]) -> str:
         return str(key)
 
     def _consume_queue(self) -> None:

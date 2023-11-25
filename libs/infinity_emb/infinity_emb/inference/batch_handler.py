@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Dict, List, Union, Optional
+from typing import Dict, List, Optional, Union
 
 from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.inference.primitives import (
