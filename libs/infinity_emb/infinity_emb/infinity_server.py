@@ -49,12 +49,12 @@ class AsyncEmbeddingEngine:
         """
         self.batch_size = batch_size
         self.running = False
+        self._vector_disk_cache_path=vector_disk_cache_path,
         self._model, self._min_inference_t = select_model_to_functional(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,
-            model_warmup=model_warmup,
-            vector_disk_cache_path=vector_disk_cache_path,
+            model_warmup=model_warmup
         )
 
     async def astart(self):
@@ -69,8 +69,9 @@ class AsyncEmbeddingEngine:
         self._batch_handler = BatchHandler(
             max_batch_size=self.batch_size,
             model=self._model,
-            verbose=logger.level <= 10,
             batch_delay=self._min_inference_t / 2,
+            vector_disk_cache_path=self._vector_disk_cache_path,
+            verbose=logger.level <= 10,
         )
         await self._batch_handler.spawn()
 
