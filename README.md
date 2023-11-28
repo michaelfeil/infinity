@@ -132,6 +132,25 @@ The download path at runtime, can be controlled via the environment variable `SE
      
 </details>
 
+<details>
+  <summary>Using Langchain with Infinity</summary>
+  
+  Infinity has a official integration into `pip install langchain>=0.342`. 
+  You can find more documentation on that here:
+  https://python.langchain.com/docs/integrations/text_embedding/infinity
+
+  ```python
+  from langchain.embeddings.infinity import InfinityEmbeddings
+  from langchain.docstore.document import Document
+  
+  documents = [Document(page_content="Hello world!", metadata={"source": "unknown"})]
+
+  emb_model = InfinityEmbeddings(model="BAAI/bge-small", infinity_api_url="http://localhost:7997/v1")
+  print(emb_model.embed_documents([doc.page_content for doc in docs]))
+  ```
+     
+</details>
+
 # Documentation
 After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:8080/docs`.
 
