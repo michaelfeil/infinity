@@ -56,7 +56,7 @@ pip install infinity-emb[all]
 
 ### Launch via Python
 ```Python
-from infinity_emb import create server
+from infinity_emb import create_server
 fastapi_app = create_server()
 ```
 or use the AsyncAPI directly.:
