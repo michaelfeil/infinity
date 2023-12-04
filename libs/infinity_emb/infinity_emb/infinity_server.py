@@ -56,7 +56,7 @@ class AsyncEmbeddingEngine:
         """
         self.batch_size = batch_size
         self.running = False
-        self._vector_disk_cache_path = (vector_disk_cache_path,)
+        self._vector_disk_cache_path = vector_disk_cache_path
         self._model, self._min_inference_t = select_model_to_functional(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
@@ -173,7 +173,7 @@ def create_server(
             batch_size=batch_size,
             engine=engine,
             model_warmup=model_warmup,
-            device=Device.auto,
+            device=device,
         )
 
         app.batch_handler = BatchHandler(
@@ -268,7 +268,7 @@ def create_server(
     return app
 
 
-def start_uvicorn(
+def _start_uvicorn(
     model_name_or_path: str = "BAAI/bge-small-en-v1.5",
     batch_size: int = 64,
     url_prefix: str = "/v1",
@@ -302,7 +302,7 @@ def start_uvicorn(
     import uvicorn
 
     engine_load: InferenceEngine = InferenceEngine[engine.name]
-    device: Device = Device[device]
+    device: Device = Device[device.name]
     logger.setLevel(log_level.to_int())
 
     app = create_server(
@@ -314,6 +314,7 @@ def start_uvicorn(
         doc_extra=dict(host=host, port=port),
         model_warmup=model_warmup,
         vector_disk_cache=vector_disk_cache,
+        device=device,
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
@@ -322,7 +323,7 @@ def cli():
     """fires the command line using Python `typer.run()`"""
     import typer
 
-    typer.run(start_uvicorn)
+    typer.run(_start_uvicorn)
 
 
 # app = create_server()

@@ -14,7 +14,10 @@ def select_model_to_functional(
     model_warmup=True,
     device: Device = Device.auto,
 ):
-    logger.info(f"model=`{model_name_or_path}` selected, using engine=`{engine.value}`")
+    logger.info(
+        f"model=`{model_name_or_path}` selected, using engine=`{engine.value}`"
+        f" and device=`{device.value}`"
+    )
     init_engine = engine.value(model_name_or_path, device=device.value)
 
     min_inference_t = 4e-3
