@@ -57,6 +57,8 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
         # without corrupting the original.
         fm = self._first_module()
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
+        self.eval()
+
         if OPTIMUM_AVAILABLE and not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
             logger.info(
                 "Adding optimizations via Huggingface optimum. "
@@ -78,7 +80,6 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
                 "install `pip install infinity-emb[optimum]`"
             )
 
-        self.eval()
         if self._target_device.type == "cuda" and os.environ.get(
             "INFINITY_TORCH_ENABLE_HALF", False
         ):

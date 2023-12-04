@@ -26,8 +26,8 @@ class InferenceEngine(Enum):
     debugengine = DummyTransformer
 
 
-types: Dict[str, str] = {e.name: e.name for e in InferenceEngine}
-InferenceEngineTypeHint = Enum("InferenceEngineTypeHint", types)  # type: ignore
+_types: Dict[str, str] = {e.name: e.name for e in InferenceEngine}
+InferenceEngineTypeHint = Enum("InferenceEngineTypeHint", _types)  # type: ignore
 
 
 def length_tokenizer(

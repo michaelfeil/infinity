@@ -1,12 +1,23 @@
 import asyncio
+import enum
 import time
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Dict, Optional
 from uuid import uuid4
 
 import numpy as np
 
 NpEmbeddingType = np.ndarray
+
+
+class Device(enum.Enum):
+    cpu = "cpu"
+    cuda = "cuda"
+    auto = None
+
+
+_devices: Dict[str, str] = {e.name: e.name for e in Device}
+DeviceTypeHint = enum.Enum("DeviceTypeHint", _devices)  # type: ignore
 
 
 @dataclass(order=True)
