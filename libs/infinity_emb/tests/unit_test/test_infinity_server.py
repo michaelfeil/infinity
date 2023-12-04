@@ -32,7 +32,9 @@ async def test_async_api_debug():
 @pytest.mark.anyio
 async def test_async_api_torch():
     sentences = ["Hi", "how"]
-    engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.torch)
+    engine = AsyncEmbeddingEngine(
+        engine=transformer.InferenceEngine.torch, device="auto"
+    )
     async with engine:
         embeddings = np.array(await engine.embed(sentences))
         assert embeddings.shape[0] == 2
@@ -42,7 +44,9 @@ async def test_async_api_torch():
 @pytest.mark.anyio
 async def test_async_api_fastembed():
     sentences = ["Hi", "how"]
-    engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.fastembed)
+    engine = AsyncEmbeddingEngine(
+        engine=transformer.InferenceEngine.fastembed, device="cpu"
+    )
     async with engine:
         embeddings = np.array(await engine.embed(sentences))
         assert not engine.is_overloaded()

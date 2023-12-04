@@ -302,7 +302,7 @@ def start_uvicorn(
     import uvicorn
 
     engine_load: InferenceEngine = InferenceEngine[engine.name]
-    device: Device = Device[device.name]
+    device: Device = Device[device]
     logger.setLevel(log_level.to_int())
 
     app = create_server(
