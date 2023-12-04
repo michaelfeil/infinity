@@ -24,15 +24,17 @@ class Fastembed(DefaultEmbedding, BaseTransformer):
             raise ImportError(
                 "fastembed is not installed." "`pip install infinity-emb[fastembed]`"
             )
+        providers = ["CPUExecutionProvider"]
+
         if not kwargs.get("cache_dir"):
             from infinity_emb.transformer.utils import infinity_cache_dir
 
             kwargs["cache_dir"] = infinity_cache_dir()
+        if kwargs.pop("device", None) != "cpu":
+            providers = ["CUDAExecutionProvider"] + providers
         super(DefaultEmbedding, self).__init__(*args, **kwargs)
         self._infinity_tokenizer = copy.deepcopy(self.model.tokenizer)
-        self.model.model.set_providers(
-            ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        )
+        self.model.model.set_providers(providers)
 
     def encode_pre(self, sentences: List[str]) -> Dict[str, np.ndarray[int]]:
         encoded = self.model.tokenizer.encode_batch(sentences)

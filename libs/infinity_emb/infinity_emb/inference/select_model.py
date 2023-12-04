@@ -1,17 +1,21 @@
 from time import perf_counter
 from typing import List, Optional, Tuple
 
-from infinity_emb.inference.primitives import EmbeddingResult, NpEmbeddingType
+from infinity_emb.inference.primitives import Device, EmbeddingResult, NpEmbeddingType
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import InferenceEngine
 
 
 def select_model_to_functional(
-    model_name_or_path: str, batch_size: int, engine: InferenceEngine, model_warmup=True
+    model_name_or_path: str,
+    batch_size: int,
+    engine: InferenceEngine,
+    model_warmup=True,
+    device: Device = Device.auto,
 ):
     logger.info(f"model=`{model_name_or_path}` selected, using engine=`{engine.value}`")
-    init_engine = engine.value(model_name_or_path)
+    init_engine = engine.value(model_name_or_path, device=device.value)
 
     min_inference_t = 4e-3
     if model_warmup:

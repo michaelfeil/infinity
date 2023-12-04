@@ -1,5 +1,5 @@
 import time
-from typing import List
+from typing import List, Union
 
 # prometheus
 import infinity_emb
@@ -10,7 +10,12 @@ from infinity_emb.fastapi_schemas.pymodels import (
     OpenAIEmbeddingResult,
     OpenAIModelInfo,
 )
-from infinity_emb.inference import BatchHandler, select_model_to_functional
+from infinity_emb.inference import (
+    BatchHandler,
+    Device,
+    DeviceTypeHint,
+    select_model_to_functional,
+)
 from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
@@ -24,6 +29,7 @@ class AsyncEmbeddingEngine:
         engine: InferenceEngine = InferenceEngine.torch,
         model_warmup=True,
         vector_disk_cache_path: str = "",
+        device: Union[Device, str] = Device.auto,
     ) -> None:
         """Creating a Async EmbeddingEngine object.
 
@@ -35,6 +41,7 @@ class AsyncEmbeddingEngine:
             model_warmup, bool: decide if warmup with max batch size . Defaults to True.
             vector_disk_cache_path, str: file path to folder of cache.
                 Defaults to "" - default no caching.
+            device, Device: device to use for inference. Defaults to Device.auto
 
         Example:
             ```python
@@ -49,12 +56,13 @@ class AsyncEmbeddingEngine:
         """
         self.batch_size = batch_size
         self.running = False
-        self._vector_disk_cache_path=vector_disk_cache_path,
+        self._vector_disk_cache_path = (vector_disk_cache_path,)
         self._model, self._min_inference_t = select_model_to_functional(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,
-            model_warmup=model_warmup
+            model_warmup=model_warmup,
+            device=Device[device] if isinstance(device, str) else device,
         )
 
     async def astart(self):
@@ -129,6 +137,7 @@ def create_server(
     verbose: bool = False,
     model_warmup=True,
     vector_disk_cache=INFINITY_CACHE_VECTORS,
+    device: Device = Device.auto,
     doc_extra: dict = {},
 ):
     """
@@ -164,6 +173,7 @@ def create_server(
             batch_size=batch_size,
             engine=engine,
             model_warmup=model_warmup,
+            device=Device.auto,
         )
 
         app.batch_handler = BatchHandler(
@@ -268,6 +278,7 @@ def start_uvicorn(
     engine: InferenceEngineTypeHint = InferenceEngineTypeHint.torch.name,  # type: ignore # noqa
     model_warmup: bool = True,
     vector_disk_cache: bool = INFINITY_CACHE_VECTORS,
+    device: DeviceTypeHint = DeviceTypeHint.auto.name,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
     MIT License; Copyright (c) 2023 Michael Feil
@@ -286,10 +297,12 @@ def start_uvicorn(
             Defaults to True.
         vector_disk_cache, bool: cache past embeddings in SQL.
             Defaults to False or env-INFINITY_CACHE_VECTORS if set
+        device, Device: device to use for inference. Defaults to Device.auto or "auto"
     """
     import uvicorn
 
     engine_load: InferenceEngine = InferenceEngine[engine.name]
+    device: Device = Device[device.name]
     logger.setLevel(log_level.to_int())
 
     app = create_server(
