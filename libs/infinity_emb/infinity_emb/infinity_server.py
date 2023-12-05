@@ -26,8 +26,8 @@ class AsyncEmbeddingEngine:
         self,
         model_name_or_path: str = "BAAI/bge-small-en-v1.5",
         batch_size: int = 64,
-        engine: InferenceEngine = InferenceEngine.torch,
-        model_warmup=True,
+        engine: Union[InferenceEngine, str] = InferenceEngine.torch,
+        model_warmup: bool = True,
         vector_disk_cache_path: str = "",
         device: Union[Device, str] = Device.auto,
     ) -> None:
@@ -57,12 +57,17 @@ class AsyncEmbeddingEngine:
         self.batch_size = batch_size
         self.running = False
         self._vector_disk_cache_path = vector_disk_cache_path
+        if isinstance(engine, str):
+            engine = InferenceEngine[engine]
+        if isinstance(device, str):
+            device = Device[device]
+
         self._model, self._min_inference_t = select_model_to_functional(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,
             model_warmup=model_warmup,
-            device=Device[device] if isinstance(device, str) else device,
+            device=device,
         )
 
     async def astart(self):

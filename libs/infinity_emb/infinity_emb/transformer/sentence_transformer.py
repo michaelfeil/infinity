@@ -84,7 +84,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
             "INFINITY_TORCH_ENABLE_HALF", False
         ):
             logger.info(
-                "Switching to half() precision (fp16)."
+                "Switching to half() precision (fp16). "
                 "Enabled by the setting the env var `INFINITY_TORCH_ENABLE_HALF`"
             )
             self.half()
