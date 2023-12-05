@@ -23,7 +23,9 @@ async def test_async_api_debug():
     sentences = ["Embedded this is sentence via Infinity.", "Paris is in France."]
     engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.debugengine)
     async with engine:
-        embeddings = np.array(await engine.embed(sentences))
+        embeddings, usage = await engine.embed(sentences)
+        embeddings = np.array(embeddings)
+        assert usage == sum([len(s) for s in sentences])
         assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
         for idx, s in enumerate(sentences):
@@ -37,10 +39,25 @@ async def test_async_api_torch():
         engine=transformer.InferenceEngine.torch, device="auto"
     )
     async with engine:
-        embeddings = np.array(await engine.embed(sentences))
-        assert embeddings.shape[0] == 2
+        embeddings, usage = await engine.embed(sentences)
+        embeddings = np.array(embeddings)
+        assert usage == sum([len(s) for s in sentences])
+        assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
 
+@pytest.mark.anyio
+async def test_async_api_torch_usage():
+    sentences = ["Hi", "how", "school", "Pizza Hi"]
+    engine = AsyncEmbeddingEngine(
+        engine=transformer.InferenceEngine.torch, device="auto", lengths_via_tokenize=True
+    )
+    async with engine:
+        embeddings, usage = await engine.embed(sentences)
+        embeddings = np.array(embeddings)
+        # usage should be similar to
+        assert usage == 5 
+        assert embeddings.shape[0] == len(sentences)
+        assert embeddings.shape[1] >= 10
 
 @pytest.mark.anyio
 async def test_async_api_fastembed():
@@ -49,10 +66,12 @@ async def test_async_api_fastembed():
         engine=transformer.InferenceEngine.fastembed, device="cpu"
     )
     async with engine:
-        embeddings = np.array(await engine.embed(sentences))
-        assert not engine.is_overloaded()
-        assert embeddings.shape[0] == 2
+        embeddings, usage = await engine.embed(sentences)
+        embeddings = np.array(embeddings)
+        assert usage == sum([len(s) for s in sentences])
+        assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
+        assert not engine.is_overloaded()
 
 
 @pytest.mark.anyio

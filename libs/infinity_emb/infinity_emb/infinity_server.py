@@ -1,5 +1,5 @@
 import time
-from typing import List, Union
+from typing import List, Tuple, Union
 
 # prometheus
 import infinity_emb
@@ -30,6 +30,7 @@ class AsyncEmbeddingEngine:
         model_warmup: bool = True,
         vector_disk_cache_path: str = "",
         device: Union[Device, str] = Device.auto,
+        lengths_via_tokenize: bool = False,
     ) -> None:
         """Creating a Async EmbeddingEngine object.
 
@@ -41,7 +42,8 @@ class AsyncEmbeddingEngine:
             model_warmup, bool: decide if warmup with max batch size . Defaults to True.
             vector_disk_cache_path, str: file path to folder of cache.
                 Defaults to "" - default no caching.
-            device, Device: device to use for inference. Defaults to Device.auto
+            device, Device: device to use for inference. Defaults to Device.auto,
+            lengths_via_tokenize: bool: schedule by token usage. Defaults to False
 
         Example:
             ```python
@@ -57,6 +59,7 @@ class AsyncEmbeddingEngine:
         self.batch_size = batch_size
         self.running = False
         self._vector_disk_cache_path = vector_disk_cache_path
+        self._lengths_via_tokenize = lengths_via_tokenize
         if isinstance(engine, str):
             engine = InferenceEngine[engine]
         if isinstance(device, str):
@@ -85,6 +88,7 @@ class AsyncEmbeddingEngine:
             batch_delay=self._min_inference_t / 2,
             vector_disk_cache_path=self._vector_disk_cache_path,
             verbose=logger.level <= 10,
+            lengths_via_tokenize=self._lengths_via_tokenize,
         )
         await self._batch_handler.spawn()
 
@@ -108,7 +112,7 @@ class AsyncEmbeddingEngine:
         self._check_running()
         return self._batch_handler.is_overloaded()
 
-    async def embed(self, sentences: List[str]) -> List[List[float]]:
+    async def embed(self, sentences: List[str]) -> Tuple[List[List[float]], int]:
         """embed multiple sentences
 
         Args:
@@ -120,10 +124,11 @@ class AsyncEmbeddingEngine:
         Returns:
             List[List[float]]: embeddings
                 2D list-array of shape( len(sentences),embed_dim )
+            Usage:
         """
         self._check_running()
-        embeddings, _ = await self._batch_handler.schedule(sentences)
-        return embeddings
+        embeddings, lengths = await self._batch_handler.schedule(sentences)
+        return embeddings, lengths
 
     def _check_running(self):
         if not self.running:

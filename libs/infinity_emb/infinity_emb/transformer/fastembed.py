@@ -61,8 +61,7 @@ class Fastembed(DefaultEmbedding, BaseTransformer):
         return normalize(embedding).astype(np.float32)
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
-        # tks = self._infinity_tokenizer.encode_batch(
-        #     sentences,
-        # )
-        # return [len(t.tokens) for t in tks]
-        return [len(s) for s in sentences]
+        tks = self._infinity_tokenizer.encode_batch(
+            sentences,
+        )
+        return [len(t.tokens) for t in tks]

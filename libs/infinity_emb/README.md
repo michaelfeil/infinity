@@ -66,7 +66,7 @@ from infinity_emb import AsyncEmbeddingEngine, transformer
 sentences = ["Embedded this is sentence via Infinity.", "Paris is in France."]
 engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.torch)
 async with engine: # engine starts with engine.astart()
-    embeddings = np.array(await engine.embed(sentences))
+    embeddings, usage = await engine.embed(sentences)
 # engine stops with engine.astop()
 ```
 

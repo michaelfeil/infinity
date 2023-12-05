@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Tuple, Union
 
 from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.inference.primitives import (
@@ -120,6 +120,7 @@ class BatchHandler:
         batch_delay: float = 5e-3,
         vector_disk_cache_path: str = "",
         verbose=False,
+        lengths_via_tokenize: bool = False,
     ) -> None:
         """
         performs batching around the model.
@@ -132,10 +133,13 @@ class BatchHandler:
             time for core_encode method / "gpu inference".
             Dont set it above 1x minimal expected time of interence.
             Should not be 0 to not block Python's GIL.
+        vector_disk_cache_path: path to cache vectors on disk.
+        lengths_via_tokenize: if True, use the tokenizer to get the lengths else len()
         """
         self.model = model
         self.max_batch_size = max_batch_size
         self.max_queue_wait = max_queue_wait
+        self._lengths_via_tokenize = lengths_via_tokenize
         self._verbose = verbose
         self._shutdown = threading.Event()
         self._feature_queue: Queue = Queue(6)
@@ -177,7 +181,7 @@ class BatchHandler:
         """
         # add an unique identifier
 
-        prios, usage = get_lengths_with_tokenize(sentences)
+        prios, usage = await self._get_prios_usage(sentences)
 
         prioqueue = []
         for s, p in zip(sentences, prios):
@@ -206,6 +210,25 @@ class BatchHandler:
             queue_absolute=len(self._queue_prio),
             results_absolute=len(self._result_store),
         )
+
+    async def _get_prios_usage(self, sentences: List[str]) -> Tuple[List[int], int]:
+        """get priorities and usage
+
+        Args:
+            sentences (List[str]): _description_
+
+        Returns:
+            Tuple[List[int], int]: prios, length
+        """
+        if not self._lengths_via_tokenize:
+            return get_lengths_with_tokenize(sentences)
+        else:
+            return await to_thread(
+                get_lengths_with_tokenize,
+                self._threadpool,
+                _sentences=sentences,
+                tokenize=self.model.tokenize_lengths,
+            )
 
     def _preprocess_batch(self):
         """loops and checks if the _core_batch has worked on all items"""
