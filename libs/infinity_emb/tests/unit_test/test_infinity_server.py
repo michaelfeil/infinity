@@ -45,19 +45,23 @@ async def test_async_api_torch():
         assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
 
+
 @pytest.mark.anyio
 async def test_async_api_torch_usage():
     sentences = ["Hi", "how", "school", "Pizza Hi"]
     engine = AsyncEmbeddingEngine(
-        engine=transformer.InferenceEngine.torch, device="auto", lengths_via_tokenize=True
+        engine=transformer.InferenceEngine.torch,
+        device="auto",
+        lengths_via_tokenize=True,
     )
     async with engine:
         embeddings, usage = await engine.embed(sentences)
         embeddings = np.array(embeddings)
         # usage should be similar to
-        assert usage == 5 
+        assert usage == 5
         assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
+
 
 @pytest.mark.anyio
 async def test_async_api_fastembed():

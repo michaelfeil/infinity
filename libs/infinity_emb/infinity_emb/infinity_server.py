@@ -43,7 +43,7 @@ class AsyncEmbeddingEngine:
             vector_disk_cache_path, str: file path to folder of cache.
                 Defaults to "" - default no caching.
             device, Device: device to use for inference. Defaults to Device.auto,
-            lengths_via_tokenize: bool: schedule by token usage. Defaults to False
+            lengths_via_tokenize, bool: schedule by token usage. Defaults to False
 
         Example:
             ```python
@@ -148,6 +148,7 @@ def create_server(
     model_warmup=True,
     vector_disk_cache=INFINITY_CACHE_VECTORS,
     device: Device = Device.auto,
+    lengths_via_tokenize: bool = False,
     doc_extra: dict = {},
 ):
     """
@@ -192,6 +193,7 @@ def create_server(
             verbose=verbose,
             batch_delay=min_inference_t / 2,
             vector_disk_cache_path=vector_disk_cache_path,
+            lengths_via_tokenize=lengths_via_tokenize,
         )
         # start in a threadpool
         await app.batch_handler.spawn()
@@ -289,6 +291,7 @@ def _start_uvicorn(
     model_warmup: bool = True,
     vector_disk_cache: bool = INFINITY_CACHE_VECTORS,
     device: DeviceTypeHint = DeviceTypeHint.auto.name,
+    lengths_via_tokenize: bool = False,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
     MIT License; Copyright (c) 2023 Michael Feil
@@ -308,6 +311,7 @@ def _start_uvicorn(
         vector_disk_cache, bool: cache past embeddings in SQL.
             Defaults to False or env-INFINITY_CACHE_VECTORS if set
         device, Device: device to use for inference. Defaults to Device.auto or "auto"
+        lengths_via_tokenize: bool,
     """
     import uvicorn
 
@@ -325,6 +329,7 @@ def _start_uvicorn(
         model_warmup=model_warmup,
         vector_disk_cache=vector_disk_cache,
         device=device,
+        lengths_via_tokenize=lengths_via_tokenize,
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
