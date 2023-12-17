@@ -121,17 +121,21 @@ class AsyncEmbeddingEngine:
         embeddings, lengths = await self._batch_handler.embed(sentences)
         return embeddings, lengths
 
-    async def rerank(self, query: str, docs: List[str], raw_scores: bool = False ) -> Tuple[List[float], int]:
+    async def rerank(
+        self, query: str, docs: List[str], raw_scores: bool = False
+    ) -> Tuple[List[float], int]:
         """rerank multiple sentences
-        
+
         Args:
             query (str): query to be reranked
             docs (List[str]): docs to be reranked
-            raw_scores (bool): return raw scores, if False then normalize with softmax, defaults to False
+            raw_scores (bool): return raw scores instead of sigmoid
         """
         self._check_running()
-        scores, lengths = await self._batch_handler.rerank(query=query, docs=docs, raw_scores=raw_scores)
-        
+        scores, lengths = await self._batch_handler.rerank(
+            query=query, docs=docs, raw_scores=raw_scores
+        )
+
         return scores, lengths
 
     def _check_running(self):

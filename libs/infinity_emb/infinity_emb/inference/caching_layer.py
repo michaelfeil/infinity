@@ -70,8 +70,6 @@ class Cache:
 
     async def aget_complete(self, item: QueueItemInner) -> None:
         """sets the item.complete() and sets embedding, if in cache."""
-        result = await to_thread(
-            self._get, self._threadpool, item.content.str_repr()
-        )
+        result = await to_thread(self._get, self._threadpool, item.content.str_repr())
         if result is not None and not item.future.done():
             await item.complete(result)

@@ -54,7 +54,7 @@ class EmbeddingInner:
         """marks the future for completion.
         only call from the same thread as created future."""
         self.embedding = embedding
-    
+
         if self.embedding is None:
             raise ValueError("embedding is None")
         try:

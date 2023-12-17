@@ -6,7 +6,9 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from typing import Any, List, Tuple
-import numpy as np 
+
+import numpy as np
+
 from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.inference.queue import CustomFIFOQueue, ResultKVStoreFuture
 from infinity_emb.inference.threading_asyncio import to_thread
@@ -97,15 +99,16 @@ class BatchHandler:
         """
         if "embed" not in self.model.capabilities:
             raise ValueError(
-                "model not loaded from embeddings. Loaded"
-                f" {self.model.__class__}"
+                "model not loaded from embeddings. Loaded" f" {self.model.__class__}"
             )
         input_sentences = [EmbeddingSingle(s) for s in sentences]
 
         embeddings, usage = await self._schedule(input_sentences)
         return embeddings, usage
 
-    async def rerank(self, query: str, docs: List[str], raw_scores: bool = True) -> tuple[List[float], int]:
+    async def rerank(
+        self, query: str, docs: List[str], raw_scores: bool = True
+    ) -> tuple[List[float], int]:
         """Schedule a query to be reranked with documents. Awaits until embedded.
 
         Args:
@@ -117,12 +120,11 @@ class BatchHandler:
         """
         if "rerank" not in self.model.capabilities:
             raise ValueError(
-                "model not loaded from embeddings. Loaded"
-                f" {self.model.__class__}"
+                "model not loaded from embeddings. Loaded" f" {self.model.__class__}"
             )
         rerankables = [ReRankSingle(query=query, document=doc) for doc in docs]
         scores, usage = await self._schedule(rerankables)
-        
+
         if not raw_scores:
             # perform sigmoid
             scores = (1 / (1 + np.exp(-np.array(scores)))).tolist()

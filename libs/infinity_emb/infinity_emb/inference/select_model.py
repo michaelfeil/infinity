@@ -21,6 +21,7 @@ def get_engine_type_from_config(
         config_path = Path(model_name_or_path) / "config.json"
     else:
         from huggingface_hub import hf_hub_download
+
         config_path = hf_hub_download(
             model_name_or_path,
             filename="config.json",
@@ -29,7 +30,9 @@ def get_engine_type_from_config(
     with open(config_path, "r") as f:
         config = json.load(f)
 
-    if any("SequenceClassification" in arch for arch in config.get("architectures",[])):
+    if any(
+        "SequenceClassification" in arch for arch in config.get("architectures", [])
+    ):
         return RerankEngine.from_inference_engine(engine)
     else:
         return EmbedderEngine.from_inference_engine(engine)

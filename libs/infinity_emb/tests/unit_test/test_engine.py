@@ -1,9 +1,8 @@
-
-
 import numpy as np
 import pytest
 
 from infinity_emb import AsyncEmbeddingEngine, transformer
+
 
 @pytest.mark.anyio
 async def test_async_api_debug():
@@ -24,7 +23,8 @@ async def test_async_api_torch():
     sentences = ["Hi", "how"]
     engine = AsyncEmbeddingEngine(
         model_name_or_path="BAAI/bge-small-en-v1.5",
-        engine=transformer.InferenceEngine.torch, device="auto",
+        engine=transformer.InferenceEngine.torch,
+        device="auto",
     )
     async with engine:
         embeddings, usage = await engine.embed(sentences)
@@ -32,7 +32,7 @@ async def test_async_api_torch():
         assert usage == sum([len(s) for s in sentences])
         assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
-        
+
 
 @pytest.mark.anyio
 async def test_async_api_torch_CROSSENCODER():
@@ -44,16 +44,16 @@ async def test_async_api_torch_CROSSENCODER():
     ]
     engine = AsyncEmbeddingEngine(
         model_name_or_path="BAAI/bge-reranker-base",
-        engine=transformer.InferenceEngine.torch, device="auto", 
-        model_warmup=True
+        engine=transformer.InferenceEngine.torch,
+        device="auto",
+        model_warmup=True,
     )
     async with engine:
         rankings, usage = await engine.rerank(query=query, docs=documents)
-        
+
         assert usage == sum([len(query) + len(d) for d in documents])
         assert len(rankings) == len(documents)
         np.testing.assert_almost_equal(rankings, [0.9958, 0.9439, 0.000037], decimal=3)
-        
 
 
 @pytest.mark.anyio
@@ -78,8 +78,7 @@ async def test_async_api_torch_usage():
 async def test_async_api_fastembed():
     sentences = ["Hi", "how"]
     engine = AsyncEmbeddingEngine(
-        engine=transformer.InferenceEngine.fastembed, device="cpu",
-        model_warmup=False
+        engine=transformer.InferenceEngine.fastembed, device="cpu", model_warmup=False
     )
     async with engine:
         embeddings, usage = await engine.embed(sentences)
@@ -104,4 +103,3 @@ async def test_async_api_failing():
     with pytest.raises(ValueError):
         await engine.astart()
     await engine.astop()
-

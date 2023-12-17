@@ -1,4 +1,5 @@
 import subprocess
+
 import typer
 import uvicorn
 from fastapi import FastAPI
@@ -12,7 +13,6 @@ from infinity_emb.infinity_server import (
     create_server,
 )
 from infinity_emb.transformer.utils import InferenceEngine
-
 
 
 def test_cli_help():
