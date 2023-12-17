@@ -41,6 +41,7 @@ jobs:
           cache-key: core${{ matrix.python-version }}
 
       - name: Install minimal dependencies and import
+        if: ${{ matrix.python-version == '3.9' }}
         shell: bash
         run: |
           poetry install --without test
