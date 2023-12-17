@@ -1,91 +1,73 @@
-from time import perf_counter
-from typing import List, Optional, Tuple
+import json
+from pathlib import Path
+from typing import Union
 
-from infinity_emb.primitives import Device, EmbeddingResult, NpEmbeddingType
+from huggingface_hub import hf_hub_download
+
 from infinity_emb.log_handler import logger
-from infinity_emb.transformer.abstract import BaseTransformer
-from infinity_emb.transformer.utils import InferenceEngine
+from infinity_emb.primitives import (
+    Device,
+)
+from infinity_emb.transformer.abstract import BaseCrossEncoder, BaseEmbedder
+from infinity_emb.transformer.utils import EmbedderEngine, InferenceEngine, RerankEngine
 
 
-def select_model_to_functional(
+def get_engine_type_from_config(
+    model_name_or_path: str, engine: InferenceEngine
+) -> Union[EmbedderEngine, RerankEngine]:
+    if engine in [InferenceEngine.debugengine, InferenceEngine.fastembed]:
+        return EmbedderEngine.from_inference_engine(engine)
+
+    if Path(model_name_or_path).is_dir():
+        logger.debug("model is a directory, opening config.json")
+        config_path = Path(model_name_or_path) / "config.json"
+    else:
+        config_path = hf_hub_download(
+            model_name_or_path,
+            filename="config.json",
+        )
+
+    with open(config_path, "r") as f:
+        config = json.load(f)
+
+    if "SequenceClassification" in config["architectures"]:
+        return RerankEngine.from_inference_engine(engine)
+    else:
+        return EmbedderEngine.from_inference_engine(engine)
+
+
+def select_model(
     model_name_or_path: str,
     batch_size: int,
-    engine: InferenceEngine,
+    engine: InferenceEngine = InferenceEngine.torch,
     model_warmup=True,
     device: Device = Device.auto,
-):
+) -> Union[BaseCrossEncoder, BaseEmbedder]:
     logger.info(
         f"model=`{model_name_or_path}` selected, using engine=`{engine.value}`"
         f" and device=`{device.value}`"
     )
-    init_engine = engine.value(model_name_or_path, device=device.value)
+    # TODO: add EncoderEngine
+    unloaded_engine = get_engine_type_from_config(model_name_or_path, engine)
+
+    loaded_engine = unloaded_engine.value(model_name_or_path, device=device.value)
 
     min_inference_t = 4e-3
     if model_warmup:
         # size one, warm up warm start timings.
-        runtime_check_callable(init_engine, log=False)
-        # size one
-        runtime_check_callable(init_engine, log=True)
-        min_inference_t = min(
-            runtime_check_callable(init_engine, log=False)[1] for _ in range(10)
+        loaded_engine.warmup(batch_size=batch_size)
+        # size one token
+        min_inference_t = min(loaded_engine.warmup(batch_size=1)[1] for _ in range(10))
+        emb_per_sec_short, _, log_msg = loaded_engine.warmup(batch_size=1)
+        logger.info(log_msg)
+        # now warm up with max_token, max batch size
+        emb_per_sec, _, log_msg = loaded_engine.warmup(
+            batch_size=batch_size, n_tokens=512
         )
-        # warm-up with max batch size
-        emb_per_sec_short, _ = runtime_check_callable(
-            init_engine, sample=["up"] * batch_size
-        )
-        # warm-up with max batch size
-        emb_per_sec, _ = runtime_check_callable(
-            init_engine,
-            sample=["warming up with max batch size and 1K tokens per sentence " * 76]
-            * batch_size,
-        )
+        logger.info(log_msg)
         logger.info(
             f"model warmed up, between {emb_per_sec:.2f}-{emb_per_sec_short:.2f}"
             f" embeddings/sec at batch_size={batch_size}"
         )
 
-    return init_engine, min_inference_t
-
-
-def runtime_check_callable(
-    model: BaseTransformer, sample: Optional[List[str]] = None, log=True
-) -> Tuple[float, float]:
-    if sample is None:
-        sample = ["warm"]
-    inp = [EmbeddingResult(sentence=s, future=None) for s in sample]  # type: ignore
-    start = perf_counter()
-    sentences = [item.sentence for item in inp]
-    feat = model.encode_pre(sentences)
-    tokenization_time = perf_counter()
-    embed = model.encode_core(feat)
-    inference_time = perf_counter()
-    embeddings = model.encode_post(embed)
-    for i, item in enumerate(inp):
-        item.embedding = embeddings[i]
-    post_time = perf_counter()
-
-    if not len(inp) == len(sample):
-        raise ValueError(
-            "The output of the callable function is not of the same length as the input"
-        )
-
-    if not isinstance(inp[0].embedding, NpEmbeddingType):
-        raise ValueError(
-            "The output of the callable function is not of type EmbeddingResult"
-        )
-
-    if log:
-        logger.info(
-            (
-                f"Getting timings for batch_size={len(sample)}"
-                f" and avg tokens per sentence={model.tokenize_lengths(sample)[0]}\n"
-                f"\t{(tokenization_time - start)*1000:.2f} \t ms tokenization\n"
-                f"\t{(inference_time-tokenization_time)*1000:.2f} \t ms inference\n"
-                f"\t{(post_time-inference_time)*1000:.2f} \t ms post-processing\n"
-                f"\t{(post_time - start)*1000:.2f} \t ms total\n"
-                f"embeddings/sec: {len(sample) / (post_time - start):.2f}"
-            )
-        )
-
-    emb_per_sec = len(sample) / (post_time - start)
-    return emb_per_sec, inference_time - tokenization_time
+    return loaded_engine, min_inference_t

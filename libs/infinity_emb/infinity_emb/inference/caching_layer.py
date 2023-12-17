@@ -6,9 +6,9 @@ from typing import Any, List, Union
 
 import numpy as np
 
-from infinity_emb.primitives import EmbeddingResult
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
+from infinity_emb.primitives import QueueItemInner
 from infinity_emb.transformer.utils import infinity_cache_dir
 
 try:
@@ -59,18 +59,20 @@ class Cache:
                 self._cache.add(key=self._hash(k), value=v, expire=86400)
             self._add_q.task_done()
 
-    async def add(self, items: List[EmbeddingResult]) -> None:
+    async def add(self, items: List[QueueItemInner]) -> None:
         """add the item if in cache."""
         for item in items[::-1]:
-            self._add_q.put((item.sentence, item.embedding))
+            self._add_q.put((item.content.str_repr(), item.embedding))
 
     def _get(self, sentence: str) -> Union[None, np.ndarray, List[float]]:
         """sets the item.complete() and sets embedding, if in cache."""
         return self._cache.get(key=self._hash(sentence))
 
-    async def aget_complete(self, item: EmbeddingResult) -> None:
+    async def aget_complete(self, item: QueueItemInner) -> None:
         """sets the item.complete() and sets embedding, if in cache."""
-        embedding = await to_thread(self._get, self._threadpool, item.sentence)
+        embedding = await to_thread(
+            self._get, self._threadpool, item.content.str_repr()
+        )
         if embedding is not None and not item.future.done():
             item.embedding = embedding
             item.complete()

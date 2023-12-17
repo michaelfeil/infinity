@@ -5,110 +5,25 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Any, List, Tuple
 
 from infinity_emb.inference.caching_layer import Cache
-from infinity_emb.primitives import (
-    EmbeddingResult,
-    NpEmbeddingType,
-    OverloadStatus,
-    PrioritizedQueueItem,
-)
+from infinity_emb.inference.queue import CustomFIFOQueue, ResultKVStoreFuture
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
+from infinity_emb.primitives import (
+    EmbeddingInner,
+    EmbeddingReturnType,
+    EmbeddingSingle,
+    OverloadStatus,
+    PipelineItem,
+    PrioritizedQueueItem,
+    QueueItemInner,
+    ReRankInner,
+    ReRankSingle,
+)
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
-
-
-class CustomFIFOQueue:
-    def __init__(self) -> None:
-        """"""
-        self._lock_queue_event = threading.Lock()
-        self._queue: List[PrioritizedQueueItem] = []
-        # event that indicates items in queue.
-        self._sync_event = threading.Event()
-
-    def __len__(self):
-        return len(self._queue)
-
-    async def extend(self, items: List[PrioritizedQueueItem]):
-        with self._lock_queue_event:
-            self._queue.extend(items)
-        self._sync_event.set()
-
-    def pop_optimal_batches(
-        self, size: int, max_n_batches: int = 32, timeout=0.2, **kwargs
-    ) -> Union[List[List[EmbeddingResult]], None]:
-        """
-        pop batch `up to size` + `continuous (sorted)` from queue
-
-        Args:
-            size (int): max size of batch
-            timeout (float, optional): timeout until None is returned. Defaults to 0.2.
-            latest_first (bool, optional): guarantees processing of oldest item in list.
-                As latest first requires getting argmin of created timestamps,
-                which is slow.  Defaults to False.
-
-        returns:
-            None: if there is not a single item in self._queue after timeout
-            else: List[EmbeddingResult] with len(1<=size)
-        """
-        if not self._queue:
-            if not self._sync_event.wait(timeout):
-                return None
-
-        # slice as many batches as possible
-        n_batches = min(max_n_batches, max(1, len(self._queue) // size))
-        size_batches = size * n_batches
-
-        with self._lock_queue_event:
-            new_items_l = self._queue[:size_batches]
-            self._queue = self._queue[size_batches:]
-            if not self._queue:
-                self._sync_event.clear()
-
-        if n_batches > 1:
-            # sort the sentences by len ->
-            # optimal padding per batch
-            new_items_l.sort()
-
-        new_items: List[List[EmbeddingResult]] = []
-        for i in range(n_batches):
-            mini_batch = new_items_l[size * i : size * (i + 1)]
-            mini_batch_e: List[EmbeddingResult] = [
-                mi.item for mi in mini_batch if not mi.item.future.done()
-            ]
-            if mini_batch_e:
-                new_items.append(mini_batch_e)
-        if new_items:
-            return new_items
-        else:
-            return None
-
-
-class ResultKVStoreFuture:
-    def __init__(self, cache: Optional[Cache] = None) -> None:
-        self._kv: Dict[str, NpEmbeddingType] = {}
-        self._cache = cache
-
-    def __len__(self):
-        return len(self._kv)
-
-    async def wait_for_response(self, item: EmbeddingResult) -> NpEmbeddingType:
-        """wait for future to return"""
-        if self._cache:
-            asyncio.create_task(self._cache.aget_complete(item))
-        return await item.future
-
-    async def _extend(self, batch: List[EmbeddingResult]):
-        for item in batch:
-            item.complete()
-
-    async def extend(self, batch: List[EmbeddingResult]) -> None:
-        """extend store with results"""
-        asyncio.create_task(self._extend(batch))
-        if self._cache:
-            asyncio.create_task(self._cache.add(batch))
 
 
 class BatchHandler:
@@ -169,33 +84,63 @@ class BatchHandler:
                 " Consider increasing queue size"
             )
 
-    async def schedule(self, sentences: List[str]) -> tuple[List[NpEmbeddingType], int]:
+    async def embed(
+        self, sentences: List[str]
+    ) -> tuple[List[EmbeddingReturnType], int]:
         """Schedule a sentence to be embedded. Awaits until embedded.
 
         Args:
             sentences (List[str]): Sentences to be embedded
-            prio (List[int]): priority for this embedding
 
         Returns:
-            NpEmbeddingType: embedding as 1darray
+            EmbeddingReturnType: list of embedding as 1darray
         """
-        # add an unique identifier
+        input_sentences = [EmbeddingSingle(s) for s in sentences]
 
-        prios, usage = await self._get_prios_usage(sentences)
+        embeddings, usage = await self._schedule(input_sentences)
+        return embeddings, usage
 
-        prioqueue = []
-        for s, p in zip(sentences, prios):
+    async def rerank(self, query: str, documents: List[str]) -> tuple[List[Any], int]:
+        """Schedule a query to be reranked with documents. Awaits until embedded.
+
+        Args:
+            query (str): query
+            documents (List[str]): priority for this embedding
+
+        Returns:
+            EmbeddingReturnType: embedding as 1darray
+        """
+        rerankables = [ReRankSingle(query=query, document=doc) for doc in documents]
+        result_scores, usage = await self._schedule(rerankables)
+        scores = [r.score for r in result_scores]
+
+        return scores, usage
+
+    async def _schedule(
+        self, list_queueitem: List[QueueItemInner]
+    ) -> tuple[List[Any], int]:
+        prios, usage = await self._get_prios_usage(list_queueitem)
+        new_prioqueue: List[PrioritizedQueueItem] = []
+
+        if isinstance(list_queueitem[0], ReRankSingle):
+            inner_item = ReRankInner
+        elif isinstance(list_queueitem[0], EmbeddingSingle):
+            inner_item = EmbeddingInner
+        else:
+            raise ValueError(f"Unknown type of list_queueitem, {list_queueitem[0]}")
+
+        for re, p in zip(list_queueitem, prios):
             item = PrioritizedQueueItem(
                 priority=p,
-                item=EmbeddingResult(sentence=s, future=self.loop.create_future()),
+                item=inner_item(content=re, future=self.loop.create_future()),
             )
-            prioqueue.append(item)
-        await self._queue_prio.extend(prioqueue)
+            new_prioqueue.append(item)
+        await self._queue_prio.extend(new_prioqueue)
 
-        embeddings = await asyncio.gather(
-            *[self._result_store.wait_for_response(item.item) for item in prioqueue]
+        result = await asyncio.gather(
+            *[self._result_store.wait_for_response(item.item) for item in new_prioqueue]
         )
-        return embeddings, usage
+        return result, usage
 
     def is_overloaded(self) -> bool:
         """checks if more items can be queued."""
@@ -211,22 +156,25 @@ class BatchHandler:
             results_absolute=len(self._result_store),
         )
 
-    async def _get_prios_usage(self, sentences: List[str]) -> Tuple[List[int], int]:
+    async def _get_prios_usage(
+        self, items: List[PipelineItem]
+    ) -> Tuple[List[int], int]:
         """get priorities and usage
 
         Args:
-            sentences (List[str]): _description_
+            items (List[PipelineItem]): List of items that support a fn with signature
+                `.str_repr() -> str` to get the string representation of the item.
 
         Returns:
             Tuple[List[int], int]: prios, length
         """
         if not self._lengths_via_tokenize:
-            return get_lengths_with_tokenize(sentences)
+            return get_lengths_with_tokenize([it.str_repr() for it in items])
         else:
             return await to_thread(
                 get_lengths_with_tokenize,
                 self._threadpool,
-                _sentences=sentences,
+                _sentences=[it.str_repr() for it in items],
                 tokenize=self.model.tokenize_lengths,
             )
 
@@ -264,7 +212,7 @@ class BatchHandler:
                         # add some stochastic delay
                         time.sleep(self._batch_delay * 2)
 
-                    sentences = [item.sentence for item in batch]
+                    sentences = [item.content.to_input() for item in batch]
                     feat = self.model.encode_pre(sentences)
                     if self._verbose:
                         logger.debug(
@@ -359,7 +307,7 @@ class BatchHandler:
         """in case there is no warmup -> perform some warmup."""
         await asyncio.sleep(10)
         logger.debug("Sending a warm up through embedding.")
-        await self.schedule(["test"] * self.max_batch_size)
+        await self.embed(["test"] * self.max_batch_size)
 
     async def spawn(self):
         """set up the resources in batch"""

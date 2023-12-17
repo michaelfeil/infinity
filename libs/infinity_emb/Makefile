@@ -19,23 +19,8 @@ coverage:
 		$(TEST_FILE)
 
 test tests:
-	poetry run pytest --disable-socket --allow-unix-socket $(TEST_FILE)
+	poetry run pytest 
 
-extended_tests:
-	poetry run pytest --disable-socket --allow-unix-socket --only-extended tests/unit_tests
-
-test_watch:
-	poetry run ptw --now . -- tests/unit_tests
-
-integration_tests:
-	poetry run pytest tests/integration_tests
-
-scheduled_tests:
-	poetry run pytest -m scheduled tests/integration_tests
-
-docker_tests:
-	docker build -t my-infinity_emb-image:test .
-	docker run --rm my-infinity_emb-image:test
 
 ######################
 # LINTING AND FORMATTING

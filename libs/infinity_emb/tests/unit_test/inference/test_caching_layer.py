@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from infinity_emb.inference import caching_layer
-from infinity_emb.primitives import EmbeddingResult
+from infinity_emb.primitives import EmbeddingInner, EmbeddingSingle
 
 
 @pytest.mark.anyio
@@ -22,9 +22,13 @@ async def test_cache():
             cache_name=f"pytest_{hash((sentence, tuple(embedding)))}", shutdown=shutdown
         )
 
-        sample = EmbeddingResult(sentence=sentence, future=loop.create_future())
-        sample_embedded = EmbeddingResult(
-            sentence=sentence, future=loop.create_future(), embedding=embedding
+        sample = EmbeddingInner(
+            content=EmbeddingSingle(sentence), future=loop.create_future()
+        )
+        sample_embedded = EmbeddingInner(
+            content=EmbeddingSingle(sentence),
+            future=loop.create_future(),
+            embedding=embedding,
         )
         sample_embedded.complete()
         # add the embedded sample

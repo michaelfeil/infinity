@@ -1,10 +1,10 @@
 from typing import Any, Dict, Iterable, Union
 
-from infinity_emb.primitives import NpEmbeddingType
+from infinity_emb.primitives import EmbeddingReturnType
 
 
 def list_embeddings_to_response(
-    embeddings: Union[NpEmbeddingType, Iterable[NpEmbeddingType]],
+    embeddings: Union[EmbeddingReturnType, Iterable[EmbeddingReturnType]],
     model: str,
     usage: int,
 ) -> Dict[str, Any]:

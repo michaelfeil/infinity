@@ -46,7 +46,7 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
             start = time.perf_counter()
             _request_size = BATCH_SIZE * 4
             tasks = [
-                bh.schedule(
+                bh.embed(
                     _sentences[sl : sl + _request_size],
                 )
                 for sl in range(0, len(_sentences), _request_size)
