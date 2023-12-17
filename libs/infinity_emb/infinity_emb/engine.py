@@ -121,23 +121,18 @@ class AsyncEmbeddingEngine:
         embeddings, lengths = await self._batch_handler.embed(sentences)
         return embeddings, lengths
 
-    async def rerank(self, query: str, docs: List[str]) -> Tuple[List[float], int]:
-        """embed multiple sentences
-
+    async def rerank(self, query: str, docs: List[str], raw_scores: bool = False ) -> Tuple[List[float], int]:
+        """rerank multiple sentences
+        
         Args:
-            sentences (List[str]): sentences to be embedded
-
-        Raises:
-            ValueError: raised if engine is not started yet"
-
-        Returns:
-            List[List[float]]: embeddings
-                2D list-array of shape( len(sentences),embed_dim )
-            Usage:
+            query (str): query to be reranked
+            docs (List[str]): docs to be reranked
+            raw_scores (bool): return raw scores, if False then normalize with softmax, defaults to False
         """
         self._check_running()
-        rankings, lengths = await self._batch_handler.rerank(query=query, docs=docs)
-        return rankings, lengths
+        scores, lengths = await self._batch_handler.rerank(query=query, docs=docs, raw_scores=raw_scores)
+        
+        return scores, lengths
 
     def _check_running(self):
         if not self.running:

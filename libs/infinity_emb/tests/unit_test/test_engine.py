@@ -23,7 +23,8 @@ async def test_async_api_debug():
 async def test_async_api_torch():
     sentences = ["Hi", "how"]
     engine = AsyncEmbeddingEngine(
-        engine=transformer.InferenceEngine.torch, device="auto"
+        model_name_or_path="BAAI/bge-small-en-v1.5",
+        engine=transformer.InferenceEngine.torch, device="auto",
     )
     async with engine:
         embeddings, usage = await engine.embed(sentences)
@@ -31,6 +32,7 @@ async def test_async_api_torch():
         assert usage == sum([len(s) for s in sentences])
         assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
+        
 
 @pytest.mark.anyio
 async def test_async_api_torch_CROSSENCODER():
@@ -41,14 +43,17 @@ async def test_async_api_torch_CROSSENCODER():
         "You can now purchase my favorite dish",
     ]
     engine = AsyncEmbeddingEngine(
-        engine=transformer.InferenceEngine.torch, device="auto", model_name_or_path="BAAI/bge-reranker-base",
-        model_warmup=False
+        model_name_or_path="BAAI/bge-reranker-base",
+        engine=transformer.InferenceEngine.torch, device="auto", 
+        model_warmup=True
     )
     async with engine:
         rankings, usage = await engine.rerank(query=query, docs=documents)
         
         assert usage == sum([len(query) + len(d) for d in documents])
         assert len(rankings) == len(documents)
+        np.testing.assert_almost_equal(rankings, [0.9958, 0.9439, 0.000037], decimal=3)
+        
 
 
 @pytest.mark.anyio
