@@ -116,11 +116,7 @@ class AsyncEmbeddingEngine:
                 2D list-array of shape( len(sentences),embed_dim )
             Usage:
         """
-        if "embed" not in self._model.capabilities:
-            raise ValueError(
-                "model not loaded from embeddings. Loaded"
-                f" {self._model.__class__}, {self._model_name_or_path}"
-            )
+
         self._check_running()
         embeddings, lengths = await self._batch_handler.embed(sentences)
         return embeddings, lengths
@@ -139,11 +135,6 @@ class AsyncEmbeddingEngine:
                 2D list-array of shape( len(sentences),embed_dim )
             Usage:
         """
-        if "rerank" not in self._model.capabilities:
-            raise ValueError(
-                "model not loaded from embeddings. Loaded"
-                f" {self._model.__class__}, {self._model_name_or_path}"
-            )
         self._check_running()
         rankings, lengths = await self._batch_handler.rerank(query=query, docs=docs)
         return rankings, lengths

@@ -50,11 +50,13 @@ class EmbeddingInner:
     future: asyncio.Future
     embedding: Optional[EmbeddingReturnType] = None
 
-    def complete(self):
+    async def complete(self, embedding: EmbeddingReturnType):
         """marks the future for completion.
         only call from the same thread as created future."""
+        self.embedding = embedding
+    
         if self.embedding is None:
-            raise ValueError("calling complete on an uncompleted embedding")
+            raise ValueError("embedding is None")
         try:
             self.future.set_result(self.embedding)
         except asyncio.exceptions.InvalidStateError:
@@ -67,11 +69,13 @@ class ReRankInner:
     future: asyncio.Future
     score: Optional[float] = field(default=None, compare=False)
 
-    def complete(self):
+    async def complete(self, score: float):
         """marks the future for completion.
         only call from the same thread as created future."""
+        self.score = score
+
         if self.score is None:
-            raise ValueError("calling complete on an uncompleted embedding")
+            raise ValueError("score is None")
         try:
             self.future.set_result(self.score)
         except asyncio.exceptions.InvalidStateError:

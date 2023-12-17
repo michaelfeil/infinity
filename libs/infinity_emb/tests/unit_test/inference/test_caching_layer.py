@@ -28,9 +28,9 @@ async def test_cache():
         sample_embedded = EmbeddingInner(
             content=EmbeddingSingle(sentence),
             future=loop.create_future(),
-            embedding=embedding,
+            embedding=None,
         )
-        sample_embedded.complete()
+        await sample_embedded.complete(embedding)
         # add the embedded sample
         await c.add([sample_embedded])
         await asyncio.sleep(0.5)

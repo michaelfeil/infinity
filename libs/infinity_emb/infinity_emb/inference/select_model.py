@@ -30,7 +30,7 @@ def get_engine_type_from_config(
     with open(config_path, "r") as f:
         config = json.load(f)
 
-    if "SequenceClassification" in config["architectures"]:
+    if any("SequenceClassification" in arch for arch in config.get("architectures",[])):
         return RerankEngine.from_inference_engine(engine)
     else:
         return EmbedderEngine.from_inference_engine(engine)

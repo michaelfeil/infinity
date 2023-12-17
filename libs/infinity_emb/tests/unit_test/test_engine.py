@@ -32,6 +32,24 @@ async def test_async_api_torch():
         assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
 
+@pytest.mark.anyio
+async def test_async_api_torch_CROSSENCODER():
+    query = "Where is Paris?"
+    documents = [
+        "Paris is the capital of France.",
+        "Berlin is the capital of Germany.",
+        "You can now purchase my favorite dish",
+    ]
+    engine = AsyncEmbeddingEngine(
+        engine=transformer.InferenceEngine.torch, device="auto", model_name_or_path="BAAI/bge-reranker-base",
+        model_warmup=False
+    )
+    async with engine:
+        rankings, usage = await engine.rerank(query=query, docs=documents)
+        
+        assert usage == sum([len(query) + len(d) for d in documents])
+        assert len(rankings) == len(documents)
+
 
 @pytest.mark.anyio
 async def test_async_api_torch_usage():
@@ -40,6 +58,7 @@ async def test_async_api_torch_usage():
         engine=transformer.InferenceEngine.torch,
         device="auto",
         lengths_via_tokenize=True,
+        model_warmup=False,
     )
     async with engine:
         embeddings, usage = await engine.embed(sentences)
@@ -54,7 +73,8 @@ async def test_async_api_torch_usage():
 async def test_async_api_fastembed():
     sentences = ["Hi", "how"]
     engine = AsyncEmbeddingEngine(
-        engine=transformer.InferenceEngine.fastembed, device="cpu"
+        engine=transformer.InferenceEngine.fastembed, device="cpu",
+        model_warmup=False
     )
     async with engine:
         embeddings, usage = await engine.embed(sentences)

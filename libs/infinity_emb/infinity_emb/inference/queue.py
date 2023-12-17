@@ -92,7 +92,7 @@ class ResultKVStoreFuture:
 
     async def _extend(self, batch: List[QueueItemInner]):
         for item in batch:
-            item.complete()
+            item.mark_future()
 
     async def extend(self, batch: List[QueueItemInner]) -> None:
         """extend store with results"""

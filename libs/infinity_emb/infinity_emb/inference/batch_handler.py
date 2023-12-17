@@ -95,12 +95,17 @@ class BatchHandler:
         Returns:
             EmbeddingReturnType: list of embedding as 1darray
         """
+        if "embed" not in self.model.capabilities:
+            raise ValueError(
+                "model not loaded from embeddings. Loaded"
+                f" {self.model.__class__}"
+            )
         input_sentences = [EmbeddingSingle(s) for s in sentences]
 
         embeddings, usage = await self._schedule(input_sentences)
         return embeddings, usage
 
-    async def rerank(self, query: str, documents: List[str]) -> tuple[List[Any], int]:
+    async def rerank(self, query: str, docs: List[str]) -> tuple[List[float], int]:
         """Schedule a query to be reranked with documents. Awaits until embedded.
 
         Args:
@@ -110,9 +115,13 @@ class BatchHandler:
         Returns:
             EmbeddingReturnType: embedding as 1darray
         """
-        rerankables = [ReRankSingle(query=query, document=doc) for doc in documents]
-        result_scores, usage = await self._schedule(rerankables)
-        scores = [r.score for r in result_scores]
+        if "rerank" not in self.model.capabilities:
+            raise ValueError(
+                "model not loaded from embeddings. Loaded"
+                f" {self.model.__class__}"
+            )
+        rerankables = [ReRankSingle(query=query, document=doc) for doc in docs]
+        scores, usage = await self._schedule(rerankables)
 
         return scores, usage
 
@@ -212,12 +221,12 @@ class BatchHandler:
                         # add some stochastic delay
                         time.sleep(self._batch_delay * 2)
 
-                    sentences = [item.content.to_input() for item in batch]
-                    feat = self.model.encode_pre(sentences)
+                    items_for_pre = [item.content.to_input() for item in batch]
+                    feat = self.model.encode_pre(items_for_pre)
                     if self._verbose:
                         logger.debug(
                             "[📦] batched %s requests, queue remaining:  %s",
-                            len(sentences),
+                            len(items_for_pre),
                             len(self._queue_prio),
                         )
                     if self._shutdown.is_set():
@@ -294,10 +303,10 @@ class BatchHandler:
                     # before proceeding
                     await asyncio.sleep(self._batch_delay)
                 embed, batch = post_batch
-                embeddings = self.model.encode_post(embed).tolist()
+                results = self.model.encode_post(embed).tolist()
                 for i, item in enumerate(batch):
-                    item.embedding = embeddings[i]
-                await self._result_store.extend(batch)
+                    await item.complete(results[i])
+
                 self._postprocess_queue.task_done()
         except Exception as ex:
             logger.exception(ex)
@@ -307,7 +316,10 @@ class BatchHandler:
         """in case there is no warmup -> perform some warmup."""
         await asyncio.sleep(10)
         logger.debug("Sending a warm up through embedding.")
-        await self.embed(["test"] * self.max_batch_size)
+        if "embed" in self.model.capabilities:
+            await self.embed(["test"] * self.max_batch_size)
+        if "rerank" in self.model.capabilities:
+            await self.rerank("query", ["test"] * self.max_batch_size)
 
     async def spawn(self):
         """set up the resources in batch"""
