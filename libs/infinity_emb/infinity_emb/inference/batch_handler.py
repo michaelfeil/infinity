@@ -8,7 +8,7 @@ from queue import Queue
 from typing import Dict, List, Optional, Tuple, Union
 
 from infinity_emb.inference.caching_layer import Cache
-from infinity_emb.inference.primitives import (
+from infinity_emb.primitives import (
     EmbeddingResult,
     NpEmbeddingType,
     OverloadStatus,

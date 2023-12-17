@@ -3,7 +3,7 @@ from typing import Dict, List
 
 import numpy as np
 
-from infinity_emb.inference.primitives import NpEmbeddingType
+from infinity_emb.primitives import NpEmbeddingType
 from infinity_emb.transformer.abstract import BaseTransformer
 
 try:

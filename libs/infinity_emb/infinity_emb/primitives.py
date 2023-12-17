@@ -1,9 +1,7 @@
 import asyncio
 import enum
-import time
 from dataclasses import dataclass, field
-from typing import Dict, Optional
-from uuid import uuid4
+from typing import Dict, Optional, Union, List
 
 import numpy as np
 
@@ -22,10 +20,9 @@ DeviceTypeHint = enum.Enum("DeviceTypeHint", _devices)  # type: ignore
 
 @dataclass(order=True)
 class EmbeddingResult:
-    sentence: str = field(compare=False)
-    future: asyncio.Future = field(compare=False)
-    uuid: str = field(default_factory=lambda: str(uuid4()), compare=False)
-    embedding: Optional[NpEmbeddingType] = field(default=None, compare=False)
+    sentence: str 
+    future: asyncio.Future 
+    embedding: Optional[NpEmbeddingType] = None
 
     def complete(self):
         """marks the future for completion.
@@ -36,13 +33,30 @@ class EmbeddingResult:
             self.future.set_result(self.embedding)
         except asyncio.exceptions.InvalidStateError:
             pass
+        
+
+@dataclass(order=True)
+class ReRankResult:
+    query: str 
+    documents: List[str] 
+    future: asyncio.Future 
+    score: Optional[float] = field(default=None, compare=False)
+
+    def complete(self):
+        """marks the future for completion.
+        only call from the same thread as created future."""
+        if self.score is None:
+            raise ValueError("calling complete on an uncompleted embedding")
+        try:
+            self.future.set_result(self.score)
+        except asyncio.exceptions.InvalidStateError:
+            pass
 
 
 @dataclass(order=True)
 class PrioritizedQueueItem:
     priority: int
-    item: EmbeddingResult = field(compare=False)
-    timestamp: float = field(default_factory=time.time, compare=False)
+    item: Union[EmbeddingResult, ReRankResult] = field(compare=False)
 
 
 @dataclass

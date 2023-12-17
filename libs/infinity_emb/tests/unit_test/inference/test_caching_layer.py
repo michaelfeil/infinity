@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from infinity_emb.inference import caching_layer
-from infinity_emb.inference.primitives import EmbeddingResult
+from infinity_emb.primitives import EmbeddingResult
 
 
 @pytest.mark.anyio

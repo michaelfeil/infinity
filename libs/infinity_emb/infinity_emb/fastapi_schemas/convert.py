@@ -1,6 +1,6 @@
 from typing import Any, Dict, Iterable, Union
 
-from infinity_emb.inference.primitives import NpEmbeddingType
+from infinity_emb.primitives import NpEmbeddingType
 
 
 def list_embeddings_to_response(

@@ -1,5 +1,5 @@
 from infinity_emb.inference.batch_handler import BatchHandler
-from infinity_emb.inference.primitives import (
+from infinity_emb.primitives import (
     Device,
     DeviceTypeHint,
     EmbeddingResult,

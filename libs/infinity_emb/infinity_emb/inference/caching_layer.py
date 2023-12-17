@@ -6,7 +6,7 @@ from typing import Any, List, Union
 
 import numpy as np
 
-from infinity_emb.inference.primitives import EmbeddingResult
+from infinity_emb.primitives import EmbeddingResult
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.utils import infinity_cache_dir

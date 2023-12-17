@@ -3,9 +3,9 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
-from infinity_emb.transformer.dummytransformer import DummyTransformer
-from infinity_emb.transformer.fastembed import Fastembed
-from infinity_emb.transformer.sentence_transformer import (
+from infinity_emb.transformer.embedder.dummytransformer import DummyTransformer
+from infinity_emb.transformer.embedder.fastembed import Fastembed
+from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
     SentenceTransformerPatched,
 )
@@ -16,6 +16,7 @@ __all__ = [
     "InferenceEngineTypeHint",
     "length_tokenizer",
     "get_lengths_with_tokenize",
+    "infinity_cache_dir",
 ]
 
 
@@ -28,7 +29,6 @@ class InferenceEngine(Enum):
 
 _types: Dict[str, str] = {e.name: e.name for e in InferenceEngine}
 InferenceEngineTypeHint = Enum("InferenceEngineTypeHint", _types)  # type: ignore
-
 
 def length_tokenizer(
     _sentences: List[str],

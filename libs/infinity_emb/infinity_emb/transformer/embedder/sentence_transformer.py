@@ -4,7 +4,7 @@ from typing import Dict, List, Union
 
 import numpy as np
 
-from infinity_emb.inference.primitives import NpEmbeddingType
+from infinity_emb.primitives import NpEmbeddingType
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseTransformer
 

@@ -1,7 +1,7 @@
 from time import perf_counter
 from typing import List, Optional, Tuple
 
-from infinity_emb.inference.primitives import Device, EmbeddingResult, NpEmbeddingType
+from infinity_emb.primitives import Device, EmbeddingResult, NpEmbeddingType
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import InferenceEngine
