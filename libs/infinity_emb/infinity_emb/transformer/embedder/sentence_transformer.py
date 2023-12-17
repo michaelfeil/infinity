@@ -16,18 +16,18 @@ try:
 
     TORCH_AVAILABLE = True
 except ImportError:
-    torch, Tensor = None, None
+    torch, Tensor = None, None  # type: ignore
 
-    class SentenceTransformer:
+    class SentenceTransformer:  # type: ignore
         pass
 
-    class Module:
+    class Module:  # type: ignore
         pass
 
     TORCH_AVAILABLE = False
 
 try:
-    from optimum.bettertransformer import BetterTransformer
+    from optimum.bettertransformer import BetterTransformer  # type: ignore
 
     OPTIMUM_AVAILABLE = True
 except ImportError:

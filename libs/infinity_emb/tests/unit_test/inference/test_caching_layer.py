@@ -31,8 +31,8 @@ async def test_cache():
             embedding=None,
         )
         await sample_embedded.complete(embedding)
+        await c.aget_complete(sample_embedded)
         # add the embedded sample
-        await c.add([sample_embedded])
         await asyncio.sleep(0.5)
         # launch the ba
         await c.aget_complete(sample)

@@ -36,6 +36,7 @@ class EmbedderEngine(Enum):
     fastembed = Fastembed
     debugengine = DummyTransformer
 
+    @staticmethod
     def from_inference_engine(engine: InferenceEngine):
         if engine == InferenceEngine.torch:
             return EmbedderEngine.torch
@@ -52,6 +53,7 @@ class EmbedderEngine(Enum):
 class RerankEngine(Enum):
     torch = CrossEncoderTorch
 
+    @staticmethod
     def from_inference_engine(engine: InferenceEngine):
         if engine == InferenceEngine.torch:
             return RerankEngine.torch

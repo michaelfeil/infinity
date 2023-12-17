@@ -89,13 +89,3 @@ class ResultKVStoreFuture:
         if self._cache:
             asyncio.create_task(self._cache.aget_complete(item))
         return await item.future
-
-    async def _extend(self, batch: List[QueueItemInner]):
-        for item in batch:
-            item.mark_future()
-
-    async def extend(self, batch: List[QueueItemInner]) -> None:
-        """extend store with results"""
-        asyncio.create_task(self._extend(batch))
-        if self._cache:
-            asyncio.create_task(self._cache.add(batch))

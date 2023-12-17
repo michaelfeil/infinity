@@ -62,6 +62,11 @@ class EmbeddingInner:
         except asyncio.exceptions.InvalidStateError:
             pass
 
+    async def get_result(self) -> EmbeddingReturnType:
+        """waits for future to complete and returns result"""
+        await self.future
+        return self.embedding
+
 
 @dataclass(order=True)
 class ReRankInner:
@@ -80,6 +85,11 @@ class ReRankInner:
             self.future.set_result(self.score)
         except asyncio.exceptions.InvalidStateError:
             pass
+
+    async def get_result(self) -> float:
+        """waits for future to complete and returns result"""
+        await self.future
+        return self.score
 
 
 QueueItemInner = Union[EmbeddingInner, ReRankInner]

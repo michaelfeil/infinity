@@ -197,7 +197,7 @@ def _start_uvicorn(
     import uvicorn
 
     engine_load: InferenceEngine = InferenceEngine[engine.name]
-    device: Device = Device[device.name]
+    used_device: Device = Device[device.name]
     logger.setLevel(log_level.to_int())
 
     app = create_server(
@@ -209,7 +209,7 @@ def _start_uvicorn(
         doc_extra=dict(host=host, port=port),
         model_warmup=model_warmup,
         vector_disk_cache=vector_disk_cache,
-        device=device,
+        device=used_device,
         lengths_via_tokenize=lengths_via_tokenize,
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)
