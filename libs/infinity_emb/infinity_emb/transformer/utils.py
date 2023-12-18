@@ -3,6 +3,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
+from infinity_emb.transformer.classifier.torch import SentenceClassifier
 from infinity_emb.transformer.crossencoder.torch import (
     CrossEncoderPatched as CrossEncoderTorch,
 )
@@ -59,6 +60,17 @@ class RerankEngine(Enum):
             return RerankEngine.torch
         else:
             raise NotImplementedError(f"RerankEngine for {engine} not implemented")
+
+
+class PredictEngine(Enum):
+    torch = SentenceClassifier
+
+    @staticmethod
+    def from_inference_engine(engine: InferenceEngine):
+        if engine == InferenceEngine.torch:
+            return PredictEngine.torch
+        else:
+            raise NotImplementedError(f"PredictEngine for {engine} not implemented")
 
 
 _types: Dict[str, str] = {e.name: e.name for e in InferenceEngine}

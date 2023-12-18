@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -19,6 +19,8 @@ from infinity_emb.primitives import (
     EmbeddingSingle,
     OverloadStatus,
     PipelineItem,
+    PredictInner,
+    PredictSingle,
     PrioritizedQueueItem,
     QueueItemInner,
     ReRankInner,
@@ -109,18 +111,19 @@ class BatchHandler:
     async def rerank(
         self, query: str, docs: List[str], raw_scores: bool = False
     ) -> tuple[List[float], int]:
-        """Schedule a query to be reranked with documents. Awaits until embedded.
+        """Schedule a query to be reranked with documents. Awaits until reranked.
 
         Args:
-            query (str): query
-            documents (List[str]): priority for this embedding
+            query (str): query for reranking
+            documents (List[str]): documents to be reranked
 
         Returns:
-            EmbeddingReturnType: embedding as 1darray
+            List[float]: list of scores
+            int: token usage
         """
         if "rerank" not in self.model.capabilities:
             raise ValueError(
-                "model not loaded from embeddings. Loaded" f" {self.model.__class__}"
+                "model not loaded for reranking. Loaded" f" {self.model.__class__}"
             )
         rerankables = [ReRankSingle(query=query, document=doc) for doc in docs]
         scores, usage = await self._schedule(rerankables)
@@ -131,16 +134,43 @@ class BatchHandler:
 
         return scores, usage
 
+    async def classify(
+        self, *, sentences: List[str], raw_scores: bool = True
+    ) -> Tuple[List[Dict[str, float]], int]:
+        """Schedule a query to be classified with documents. Awaits until classified.
+
+        Args:
+            sentences (List[str]): sentences to be classified
+            raw_scores (bool): if True, return raw scores, else softmax
+
+        Returns:
+            EmbeddingReturnType: embedding as 1darray
+        """
+        if "classify" not in self.model.capabilities:
+            raise ValueError(
+                "model not loaded from embeddings. Loaded" f" {self.model.__class__}"
+            )
+        sentences = [PredictSingle(sentence=s) for s in sentences]
+        classifications, usage = await self._schedule(sentences)
+
+        if raw_scores:
+            # perform softmax on scores
+            pass
+
+        return classifications, usage
+
     async def _schedule(
         self, list_queueitem: List[QueueItemInner]
-    ) -> tuple[List[Any], int]:
+    ) -> Tuple[List[Any], int]:
         prios, usage = await self._get_prios_usage(list_queueitem)
         new_prioqueue: List[PrioritizedQueueItem] = []
 
-        if isinstance(list_queueitem[0], ReRankSingle):
-            inner_item = ReRankInner
-        elif isinstance(list_queueitem[0], EmbeddingSingle):
+        if isinstance(list_queueitem[0], EmbeddingSingle):
             inner_item = EmbeddingInner
+        elif isinstance(list_queueitem[0], ReRankSingle):
+            inner_item = ReRankInner
+        elif isinstance(list_queueitem[0], PredictSingle):
+            inner_item = PredictInner
         else:
             raise ValueError(f"Unknown type of list_queueitem, {list_queueitem[0]}")
 
@@ -309,7 +339,7 @@ class BatchHandler:
                     # before proceeding
                     await asyncio.sleep(self._batch_delay)
                 embed, batch = post_batch
-                results = self.model.encode_post(embed).tolist()
+                results = self.model.encode_post(embed)
                 for i, item in enumerate(batch):
                     await item.complete(results[i])
 

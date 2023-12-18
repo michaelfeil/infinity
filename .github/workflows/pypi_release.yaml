@@ -34,7 +34,10 @@ jobs:
           poetry-version: ${{ env.POETRY_VERSION }}
           working-directory: ${{ env.WORKDIR }}
           cache-key: release
-
+      - name: Copy readme
+        id: readme-copy
+        run: |
+          cp ../../README.md .
       - name: Build project for distribution
         run: poetry build
       - name: Check Version

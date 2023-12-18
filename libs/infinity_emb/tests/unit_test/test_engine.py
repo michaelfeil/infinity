@@ -57,6 +57,25 @@ async def test_async_api_torch_CROSSENCODER():
 
 
 @pytest.mark.anyio
+async def test_async_api_torch_CLASSIFY():
+    sentences = ["This is awesome.", "I am depressed."]
+    engine = AsyncEmbeddingEngine(
+        model_name_or_path="SamLowe/roberta-base-go_emotions",
+        engine="torch",
+        model_warmup=True,
+    )
+
+    async with engine:
+        predictions, usage = await engine.classify(sentences=sentences)
+    assert usage == sum([len(s) for s in sentences])
+    assert len(predictions) == len(sentences)
+    assert predictions[0][0]["label"] == "admiration"
+    assert 0.95 > predictions[0][0]["score"] > 0.94
+    assert predictions[1][0]["label"] == "sadness"
+    assert 0.81 > predictions[1][0]["score"] > 0.79
+
+
+@pytest.mark.anyio
 async def test_async_api_torch_usage():
     sentences = ["Hi", "how", "school", "Pizza Hi"]
     engine = AsyncEmbeddingEngine(
