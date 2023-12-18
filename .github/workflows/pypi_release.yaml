@@ -10,7 +10,7 @@ env:
   WORKDIR: "libs/infinity_emb"
 
 jobs:
-  build:
+  publish-to-pypi:
     defaults:
       run:
         working-directory: ${{ env.WORKDIR }}
@@ -52,6 +52,8 @@ jobs:
     defaults:
       run:
         working-directory: ${{ env.WORKDIR }}
+    
+    needs: publish-to-pypi
     runs-on: ubuntu-latest
     strategy:
       matrix:

@@ -1,5 +1,4 @@
 import time
-from typing import List, Tuple, Union
 
 # prometheus
 import infinity_emb
@@ -14,129 +13,11 @@ from infinity_emb.inference import (
     BatchHandler,
     Device,
     DeviceTypeHint,
-    select_model_to_functional,
+    select_model,
 )
 from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
-
-
-class AsyncEmbeddingEngine:
-    def __init__(
-        self,
-        model_name_or_path: str = "BAAI/bge-small-en-v1.5",
-        batch_size: int = 64,
-        engine: Union[InferenceEngine, str] = InferenceEngine.torch,
-        model_warmup: bool = True,
-        vector_disk_cache_path: str = "",
-        device: Union[Device, str] = Device.auto,
-        lengths_via_tokenize: bool = False,
-    ) -> None:
-        """Creating a Async EmbeddingEngine object.
-
-        Args:
-            model_name_or_path, str:  Defaults to "BAAI/bge-small-en-v1.5".
-            batch_size, int: Defaults to 64.
-            engine, InferenceEngine: backend for inference.
-                Defaults to InferenceEngine.torch.
-            model_warmup, bool: decide if warmup with max batch size . Defaults to True.
-            vector_disk_cache_path, str: file path to folder of cache.
-                Defaults to "" - default no caching.
-            device, Device: device to use for inference. Defaults to Device.auto,
-            lengths_via_tokenize, bool: schedule by token usage. Defaults to False
-
-        Example:
-            ```python
-            from infinity_emb import AsyncEmbeddingEngine, transformer
-            sentences = ["Embedded this via Infinity.", "Paris is in France."]
-            engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.torch)
-            async with engine: # engine starts with engine.astart()
-                embeddings = np.array(await engine.embed(sentences))
-            # engine stops with engine.astop().
-            # For frequent restarts, handle start/stop yourself.
-            ```
-        """
-        self.batch_size = batch_size
-        self.running = False
-        self._vector_disk_cache_path = vector_disk_cache_path
-        self._lengths_via_tokenize = lengths_via_tokenize
-        if isinstance(engine, str):
-            engine = InferenceEngine[engine]
-        if isinstance(device, str):
-            device = Device[device]
-
-        self._model, self._min_inference_t = select_model_to_functional(
-            model_name_or_path=model_name_or_path,
-            batch_size=batch_size,
-            engine=engine,
-            model_warmup=model_warmup,
-            device=device,
-        )
-
-    async def astart(self):
-        """startup engine"""
-        if self.running:
-            raise ValueError(
-                "DoubleSpawn: already started `AsyncEmbeddingEngine`. "
-                " recommended use is via AsyncContextManager"
-                " `async with engine: ..`"
-            )
-        self.running = True
-        self._batch_handler = BatchHandler(
-            max_batch_size=self.batch_size,
-            model=self._model,
-            batch_delay=self._min_inference_t / 2,
-            vector_disk_cache_path=self._vector_disk_cache_path,
-            verbose=logger.level <= 10,
-            lengths_via_tokenize=self._lengths_via_tokenize,
-        )
-        await self._batch_handler.spawn()
-
-    async def astop(self):
-        """stop engine"""
-        self._check_running()
-        self.running = False
-        await self._batch_handler.shutdown()
-
-    async def __aenter__(self):
-        await self.astart()
-
-    async def __aexit__(self, *args):
-        await self.astop()
-
-    def overload_status(self):
-        self._check_running()
-        return self._batch_handler.overload_status()
-
-    def is_overloaded(self) -> bool:
-        self._check_running()
-        return self._batch_handler.is_overloaded()
-
-    async def embed(self, sentences: List[str]) -> Tuple[List[List[float]], int]:
-        """embed multiple sentences
-
-        Args:
-            sentences (List[str]): sentences to be embedded
-
-        Raises:
-            ValueError: raised if engine is not started yet"
-
-        Returns:
-            List[List[float]]: embeddings
-                2D list-array of shape( len(sentences),embed_dim )
-            Usage:
-        """
-        self._check_running()
-        embeddings, lengths = await self._batch_handler.schedule(sentences)
-        return embeddings, lengths
-
-    def _check_running(self):
-        if not self.running:
-            raise ValueError(
-                "didn't start `AsyncEmbeddingEngine` "
-                " recommended use is via AsyncContextManager"
-                " `async with engine: ..`"
-            )
 
 
 def create_server(
@@ -179,7 +60,7 @@ def create_server(
     async def _startup():
         instrumentator.expose(app)
 
-        model, min_inference_t = select_model_to_functional(
+        model, min_inference_t = select_model(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,
@@ -261,7 +142,7 @@ def create_server(
             logger.debug("[📝] Received request with %s inputs ", len(data.input))
             start = time.perf_counter()
 
-            embedding, usage = await bh.schedule(data.input)
+            embedding, usage = await bh.embed(data.input)
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
@@ -316,7 +197,7 @@ def _start_uvicorn(
     import uvicorn
 
     engine_load: InferenceEngine = InferenceEngine[engine.name]
-    device: Device = Device[device.name]
+    used_device: Device = Device[device.name]
     logger.setLevel(log_level.to_int())
 
     app = create_server(
@@ -328,7 +209,7 @@ def _start_uvicorn(
         doc_extra=dict(host=host, port=port),
         model_warmup=model_warmup,
         vector_disk_cache=vector_disk_cache,
-        device=device,
+        device=used_device,
         lengths_via_tokenize=lengths_via_tokenize,
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)

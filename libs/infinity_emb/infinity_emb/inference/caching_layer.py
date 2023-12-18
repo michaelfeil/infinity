@@ -1,3 +1,4 @@
+import asyncio
 import os
 import queue
 import threading
@@ -6,13 +7,13 @@ from typing import Any, List, Union
 
 import numpy as np
 
-from infinity_emb.inference.primitives import EmbeddingResult
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
+from infinity_emb.primitives import QueueItemInner
 from infinity_emb.transformer.utils import infinity_cache_dir
 
 try:
-    import diskcache as dc
+    import diskcache as dc  # type: ignore
 
     DISKCACHE_AVAILABLE = True
 except ImportError:
@@ -59,18 +60,20 @@ class Cache:
                 self._cache.add(key=self._hash(k), value=v, expire=86400)
             self._add_q.task_done()
 
-    async def add(self, items: List[EmbeddingResult]) -> None:
-        """add the item if in cache."""
-        for item in items[::-1]:
-            self._add_q.put((item.sentence, item.embedding))
-
     def _get(self, sentence: str) -> Union[None, np.ndarray, List[float]]:
         """sets the item.complete() and sets embedding, if in cache."""
         return self._cache.get(key=self._hash(sentence))
 
-    async def aget_complete(self, item: EmbeddingResult) -> None:
+    async def aget_complete(self, item: QueueItemInner) -> None:
         """sets the item.complete() and sets embedding, if in cache."""
-        embedding = await to_thread(self._get, self._threadpool, item.sentence)
-        if embedding is not None and not item.future.done():
-            item.embedding = embedding
-            item.complete()
+        item_as_str = item.content.str_repr()
+        result = await to_thread(self._get, self._threadpool, item_as_str)
+        if result is not None:
+            # update item with cached result
+            if not item.future.done():
+                await item.complete(result)
+        else:
+            # result is not in cache yet, lets wait for it and add it
+            result_new = await item.get_result()
+            await asyncio.sleep(1e-3)
+            self._add_q.put((item_as_str, result_new))

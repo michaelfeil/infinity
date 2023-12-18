@@ -3,11 +3,11 @@ from typing import Dict, List
 
 import numpy as np
 
-from infinity_emb.inference.primitives import NpEmbeddingType
-from infinity_emb.transformer.abstract import BaseTransformer
+from infinity_emb.primitives import EmbeddingReturnType
+from infinity_emb.transformer.abstract import BaseEmbedder
 
 try:
-    from fastembed.embedding import DefaultEmbedding, normalize
+    from fastembed.embedding import DefaultEmbedding, normalize  # type: ignore
 
     FASTEMBED_AVAILABLE = True
 except ImportError:
@@ -18,7 +18,7 @@ except ImportError:
             pass
 
 
-class Fastembed(DefaultEmbedding, BaseTransformer):
+class Fastembed(DefaultEmbedding, BaseEmbedder):
     def __init__(self, *args, **kwargs):
         if not FASTEMBED_AVAILABLE:
             raise ImportError(
@@ -57,7 +57,7 @@ class Fastembed(DefaultEmbedding, BaseTransformer):
         last_hidden_state = model_output[0][:, 0]
         return last_hidden_state
 
-    def encode_post(self, embedding: np.ndarray) -> NpEmbeddingType:
+    def encode_post(self, embedding: np.ndarray) -> EmbeddingReturnType:
         return normalize(embedding).astype(np.float32)
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:

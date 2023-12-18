@@ -4,9 +4,9 @@ from typing import Dict, List, Union
 
 import numpy as np
 
-from infinity_emb.inference.primitives import NpEmbeddingType
 from infinity_emb.log_handler import logger
-from infinity_emb.transformer.abstract import BaseTransformer
+from infinity_emb.primitives import EmbeddingReturnType
+from infinity_emb.transformer.abstract import BaseEmbedder
 
 try:
     import torch
@@ -16,18 +16,18 @@ try:
 
     TORCH_AVAILABLE = True
 except ImportError:
-    torch, Tensor = None, None
+    torch, Tensor = None, None  # type: ignore
 
-    class SentenceTransformer:
+    class SentenceTransformer:  # type: ignore
         pass
 
-    class Module:
+    class Module:  # type: ignore
         pass
 
     TORCH_AVAILABLE = False
 
 try:
-    from optimum.bettertransformer import BetterTransformer
+    from optimum.bettertransformer import BetterTransformer  # type: ignore
 
     OPTIMUM_AVAILABLE = True
 except ImportError:
@@ -39,7 +39,7 @@ __all__ = [
 ]
 
 
-class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
+class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
     """SentenceTransformer with .encode_core() and no microbatching"""
 
     def __init__(self, *args, **kwargs):
@@ -108,7 +108,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseTransformer):
 
     def encode_post(
         self, out_features: Tensor, normalize_embeddings: bool = True
-    ) -> NpEmbeddingType:
+    ) -> EmbeddingReturnType:
         with torch.inference_mode():
             embeddings = out_features.detach().cpu().to(torch.float32)
             if normalize_embeddings:

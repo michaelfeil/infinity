@@ -3,9 +3,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
-from infinity_emb.transformer.dummytransformer import DummyTransformer
-from infinity_emb.transformer.fastembed import Fastembed
-from infinity_emb.transformer.sentence_transformer import (
+from infinity_emb.transformer.crossencoder.torch import (
+    CrossEncoderPatched as CrossEncoderTorch,
+)
+from infinity_emb.transformer.embedder.dummytransformer import DummyTransformer
+from infinity_emb.transformer.embedder.fastembed import Fastembed
+from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
     SentenceTransformerPatched,
 )
@@ -16,14 +19,46 @@ __all__ = [
     "InferenceEngineTypeHint",
     "length_tokenizer",
     "get_lengths_with_tokenize",
+    "infinity_cache_dir",
 ]
 
 
 class InferenceEngine(Enum):
+    torch = "torch"
+    ctranslate2 = "ctranslate2"
+    fastembed = "fastembed"
+    debugengine = "dummytransformer"
+
+
+class EmbedderEngine(Enum):
     torch = SentenceTransformerPatched
     ctranslate2 = CT2SentenceTransformer
     fastembed = Fastembed
     debugengine = DummyTransformer
+
+    @staticmethod
+    def from_inference_engine(engine: InferenceEngine):
+        if engine == InferenceEngine.torch:
+            return EmbedderEngine.torch
+        elif engine == InferenceEngine.ctranslate2:
+            return EmbedderEngine.ctranslate2
+        elif engine == InferenceEngine.fastembed:
+            return EmbedderEngine.fastembed
+        elif engine == InferenceEngine.debugengine:
+            return EmbedderEngine.debugengine
+        else:
+            raise NotImplementedError(f"EmbedderEngine for {engine} not implemented")
+
+
+class RerankEngine(Enum):
+    torch = CrossEncoderTorch
+
+    @staticmethod
+    def from_inference_engine(engine: InferenceEngine):
+        if engine == InferenceEngine.torch:
+            return RerankEngine.torch
+        else:
+            raise NotImplementedError(f"RerankEngine for {engine} not implemented")
 
 
 _types: Dict[str, str] = {e.name: e.name for e in InferenceEngine}

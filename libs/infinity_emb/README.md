@@ -62,12 +62,33 @@ fastapi_app = create_server()
 or use the AsyncAPI directly.:
 
 ```python
-from infinity_emb import AsyncEmbeddingEngine, transformer
-sentences = ["Embedded this is sentence via Infinity.", "Paris is in France."]
-engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.torch)
-async with engine: # engine starts with engine.astart()
-    embeddings, usage = await engine.embed(sentences)
-# engine stops with engine.astop()
+import asyncio
+from infinity_emb import AsyncEmbeddingEngine
+sentences = ["Embed this is sentence via Infinity.", "Paris is in France."]
+engine = AsyncEmbeddingEngine(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch")
+async def main(): 
+    async with engine: # engine starts with engine.astart()
+        embeddings, usage = await engine.embed(sentences=sentences)
+    # engine stops with engine.astop()
+asyncio.run(main())
+```
+
+You can also use rerank (beta, slowish and API subject to change):
+```python
+import asyncio
+from infinity_emb import AsyncEmbeddingEngine
+query = "What is the python package infinity_emb?"
+docs = ["This is a document not related to the python package infinity_emb, hence...", 
+    "Paris is in France!",
+    "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
+engine = AsyncEmbeddingEngine(model_name_or_path = "BAAI/bge-reranker-base", 
+engine="torch", model_warmup=False)
+async def main(): 
+    async with engine:
+        ranking, usage = await engine.rerank(query=query, docs=docs)
+        print(list(zip(ranking, docs)))
+asyncio.run(main())
+
 ```
 
 ### or launch the `create_server()` command via CLI

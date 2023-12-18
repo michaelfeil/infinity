@@ -8,7 +8,7 @@ import pytest
 import torch
 
 from infinity_emb.inference import BatchHandler
-from infinity_emb.transformer.sentence_transformer import (
+from infinity_emb.transformer.embedder.sentence_transformer import (
     SentenceTransformerPatched,
 )
 
@@ -46,7 +46,7 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
             start = time.perf_counter()
             _request_size = BATCH_SIZE * 4
             tasks = [
-                bh.schedule(
+                bh.embed(
                     _sentences[sl : sl + _request_size],
                 )
                 for sl in range(0, len(_sentences), _request_size)
@@ -79,16 +79,17 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
         # yappi.get_func_stats().print_all()
         # yappi.stop()
         method_st(sentences[::10])
-        time.sleep(0.5)
+        await method_batch_handler(sentences[::10])
+        time.sleep(2)
         time_batch_handler = np.median(
             [(await method_batch_handler(sentences)) for _ in range(N_TIMINGS)]
         )
-        time.sleep(0.5)
+        time.sleep(2)
+        time_st = np.median([method_st(sentences) for _ in range(N_TIMINGS)])
+        time.sleep(2)
         time_st_patched = np.median(
             [method_patched(sentences) for _ in range(N_TIMINGS)]
         )
-        time.sleep(0.5)
-        time_st = np.median([method_st(sentences) for _ in range(N_TIMINGS)])
 
         print(
             f"times are sentence-transformers: {time_st},"

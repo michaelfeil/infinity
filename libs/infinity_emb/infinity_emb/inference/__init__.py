@@ -1,19 +1,19 @@
 from infinity_emb.inference.batch_handler import BatchHandler
-from infinity_emb.inference.primitives import (
+from infinity_emb.inference.select_model import select_model
+from infinity_emb.primitives import (
     Device,
     DeviceTypeHint,
-    EmbeddingResult,
-    NpEmbeddingType,
+    EmbeddingInner,
+    EmbeddingReturnType,
     PrioritizedQueueItem,
 )
-from infinity_emb.inference.select_model import select_model_to_functional
 
 __all__ = [
-    "EmbeddingResult",
-    "NpEmbeddingType",
+    "EmbeddingInner",
+    "EmbeddingReturnType",
     "PrioritizedQueueItem",
     "Device",
     "DeviceTypeHint",
     "BatchHandler",
-    "select_model_to_functional",
+    "select_model",
 ]

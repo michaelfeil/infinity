@@ -10,7 +10,7 @@ from sentence_transformers.evaluation import (  # type: ignore
     EmbeddingSimilarityEvaluator,  # type: ignore
 )
 
-from infinity_emb.transformer.sentence_transformer import (
+from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
     SentenceTransformerPatched,
 )
