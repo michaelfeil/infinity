@@ -22,12 +22,7 @@ except ImportError:
 
     TORCH_AVAILABLE = False
 
-try:
-    from optimum.bettertransformer import BetterTransformer
-
-    OPTIMUM_AVAILABLE = True
-except ImportError:
-    OPTIMUM_AVAILABLE = False
+from infinity_emb.transformer.acceleration import to_bettertransformer
 
 __all__ = [
     "CrossEncoderPatched",
@@ -53,35 +48,16 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
         self.model.eval()
 
-        if OPTIMUM_AVAILABLE and not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
-            logger.info(
-                "Adding optimizations via Huggingface optimum. "
-                "Disable by setting the env var `INFINITY_DISABLE_OPTIMUM`"
-            )
-            try:
-                self.model = BetterTransformer.transform(self.model)
-            except Exception as ex:
-                logger.exception(f"BetterTransformer failed with {ex}")
-                exit(1)
-        elif not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
-            logger.info(
-                "No optimizations via Huggingface optimum,"
-                " it is disabled via env INFINITY_DISABLE_OPTIMUM "
-            )
-        else:
-            logger.info(
-                "No optimizations via Huggingface optimum, "
-                "install `pip install infinity-emb[optimum]`"
-            )
+        self.model = to_bettertransformer(self.model, logger)
 
-        if self._target_device.type == "cuda" and os.environ.get(
-            "INFINITY_TORCH_ENABLE_HALF", False
+        if self.model.device == "cuda" and not os.environ.get(
+            "INFINITY_DISABLE_HALF", ""
         ):
             logger.info(
-                "Switching to half() precision (fp16). "
-                "Enabled by the setting the env var `INFINITY_TORCH_ENABLE_HALF`"
+                "Switching to half() precision (cuda: fp16). "
+                "Disable by the setting the env var `INFINITY_DISABLE_HALF`"
             )
-            self.half()
+            self.model.to(dtype=torch.float16)
 
     def encode_pre(self, input_tuples):
         # TODO: improve

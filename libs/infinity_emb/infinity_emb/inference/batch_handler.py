@@ -353,9 +353,11 @@ class BatchHandler:
         await asyncio.sleep(10)
         logger.debug("Sending a warm up through embedding.")
         if "embed" in self.model.capabilities:
-            await self.embed(["test"] * self.max_batch_size)
+            await self.embed(sentences=["test"] * self.max_batch_size)
         if "rerank" in self.model.capabilities:
-            await self.rerank("query", ["test"] * self.max_batch_size)
+            await self.rerank(query="query", docs=["test"] * self.max_batch_size)
+        if "classify" in self.model.capabilities:
+            await self.classify(sentences=["test"] * self.max_batch_size)
 
     async def spawn(self):
         """set up the resources in batch"""
