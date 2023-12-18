@@ -51,9 +51,9 @@ async def test_async_api_torch_CROSSENCODER():
     async with engine:
         rankings, usage = await engine.rerank(query=query, docs=documents)
 
-        assert usage == sum([len(query) + len(d) for d in documents])
-        assert len(rankings) == len(documents)
-        np.testing.assert_almost_equal(rankings, [0.9958, 0.9439, 0.000037], decimal=3)
+    assert usage == sum([len(query) + len(d) for d in documents])
+    assert len(rankings) == len(documents)
+    np.testing.assert_almost_equal(rankings, [0.9958, 0.9439, 0.000037], decimal=3)
 
 
 @pytest.mark.anyio

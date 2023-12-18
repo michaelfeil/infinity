@@ -14,6 +14,7 @@ class AsyncEmbeddingEngine:
     def __init__(
         self,
         model_name_or_path: str = "BAAI/bge-small-en-v1.5",
+        *,
         batch_size: int = 64,
         engine: Union[InferenceEngine, str] = InferenceEngine.torch,
         model_warmup: bool = True,
@@ -122,7 +123,7 @@ class AsyncEmbeddingEngine:
         return embeddings, lengths
 
     async def rerank(
-        self, query: str, docs: List[str], raw_scores: bool = False
+        self, *, query: str, docs: List[str], raw_scores: bool = False
     ) -> Tuple[List[float], int]:
         """rerank multiple sentences
 

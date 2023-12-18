@@ -107,7 +107,7 @@ class BatchHandler:
         return embeddings, usage
 
     async def rerank(
-        self, query: str, docs: List[str], raw_scores: bool = True
+        self, query: str, docs: List[str], raw_scores: bool = False
     ) -> tuple[List[float], int]:
         """Schedule a query to be reranked with documents. Awaits until embedded.
 
@@ -126,7 +126,7 @@ class BatchHandler:
         scores, usage = await self._schedule(rerankables)
 
         if not raw_scores:
-            # perform sigmoid
+            # perform sigmoid on scores
             scores = (1 / (1 + np.exp(-np.array(scores)))).tolist()
 
         return scores, usage
