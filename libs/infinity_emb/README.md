@@ -95,21 +95,21 @@ asyncio.run(main())
 </details>
 
 <details>
-    <summary>You can also use predict / text-classification (beta, slowish and API subject to change):</summary>
-    
-    ```python
-    import asyncio
-    from infinity_emb import AsyncEmbeddingEngine
+  <summary>You can also use predict / text-classification (beta, slowish and API subject to change):</summary>
+  
+  ```python
+  import asyncio
+  from infinity_emb import AsyncEmbeddingEngine
 
-    sentences = ["This is awesome.", "I am bored."]
-    engine = AsyncEmbeddingEngine(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
-        engine="torch", model_warmup=False)
-    async def main(): 
-        async with engine:
-            predictions, usage = await engine.classify(sentences=sentences)
-            return predictions, usage
-    asyncio.run(main())
-    ```
+  sentences = ["This is awesome.", "I am bored."]
+  engine = AsyncEmbeddingEngine(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
+      engine="torch", model_warmup=True)
+  async def main(): 
+      async with engine:
+          predictions, usage = await engine.classify(sentences=sentences)
+          return predictions, usage
+  asyncio.run(main())
+  ```
      
 </details>
 

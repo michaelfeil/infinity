@@ -7,6 +7,7 @@ import numpy as np
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
+from infinity_emb.transformer.acceleration import to_bettertransformer
 
 try:
     import torch
@@ -26,12 +27,6 @@ except ImportError:
 
     TORCH_AVAILABLE = False
 
-try:
-    from optimum.bettertransformer import BetterTransformer  # type: ignore
-
-    OPTIMUM_AVAILABLE = True
-except ImportError:
-    OPTIMUM_AVAILABLE = False
 
 __all__ = [
     "SentenceTransformerPatched",
@@ -59,33 +54,14 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         self.eval()
 
-        if OPTIMUM_AVAILABLE and not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
-            logger.info(
-                "Adding optimizations via Huggingface optimum. "
-                "Disable by setting the env var `INFINITY_DISABLE_OPTIMUM`"
-            )
-            try:
-                fm.auto_model = BetterTransformer.transform(fm.auto_model)
-            except Exception as ex:
-                logger.exception(f"BetterTransformer failed with {ex}")
-                exit(1)
-        elif not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
-            logger.info(
-                "No optimizations via Huggingface optimum,"
-                " it is disabled via env INFINITY_DISABLE_OPTIMUM "
-            )
-        else:
-            logger.info(
-                "No optimizations via Huggingface optimum, "
-                "install `pip install infinity-emb[optimum]`"
-            )
+        fm.auto_model = to_bettertransformer(fm.auto_model, logger)
 
-        if self._target_device.type == "cuda" and os.environ.get(
-            "INFINITY_TORCH_ENABLE_HALF", False
+        if self._target_device.type == "cuda" and not os.environ.get(
+            "INFINITY_DISABLE_HALF", ""
         ):
             logger.info(
-                "Switching to half() precision (fp16). "
-                "Enabled by the setting the env var `INFINITY_TORCH_ENABLE_HALF`"
+                "Switching to half() precision (cuda: fp16). "
+                "Disable by the setting the env var `INFINITY_DISABLE_HALF`"
             )
             self.half()
 
