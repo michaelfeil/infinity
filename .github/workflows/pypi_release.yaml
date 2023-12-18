@@ -79,7 +79,7 @@ jobs:
       - name: Install minimal dependencies and import
         shell: bash
         run: |
-          sleep 120
+          sleep 30
           poetry run pip install infinity-emb[server]
           poetry run infinity_emb --help
           poetry run python -c "import infinity_emb"
