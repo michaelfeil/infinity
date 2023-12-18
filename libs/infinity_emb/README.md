@@ -95,7 +95,7 @@ asyncio.run(main())
 </details>
 
 <details>
-  <summary>You can also use predict / text-classification (beta, slowish and API subject to change):</summary>
+  <summary>You can also use text-classification (beta, slowish and API subject to change):</summary>
   
   ```python
   import asyncio
