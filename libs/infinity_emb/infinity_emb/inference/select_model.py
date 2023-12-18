@@ -7,7 +7,12 @@ from infinity_emb.primitives import (
     Device,
 )
 from infinity_emb.transformer.abstract import BaseCrossEncoder, BaseEmbedder
-from infinity_emb.transformer.utils import EmbedderEngine, InferenceEngine, RerankEngine
+from infinity_emb.transformer.utils import (
+    EmbedderEngine,
+    InferenceEngine,
+    PredictEngine,
+    RerankEngine,
+)
 
 
 def get_engine_type_from_config(
@@ -33,7 +38,11 @@ def get_engine_type_from_config(
     if any(
         "SequenceClassification" in arch for arch in config.get("architectures", [])
     ):
-        return RerankEngine.from_inference_engine(engine)
+        id2label = config.get("id2label", {"0": "dummy"})
+        if len(id2label) < 2:
+            return RerankEngine.from_inference_engine(engine)
+        else:
+            return PredictEngine.from_inference_engine(engine)
     else:
         return EmbedderEngine.from_inference_engine(engine)
 

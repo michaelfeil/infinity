@@ -1,4 +1,4 @@
-from typing import List, Tuple, Union
+from typing import Dict, List, Tuple, Union
 
 # prometheus
 from infinity_emb.inference import (
@@ -17,7 +17,7 @@ class AsyncEmbeddingEngine:
         *,
         batch_size: int = 64,
         engine: Union[InferenceEngine, str] = InferenceEngine.torch,
-        model_warmup: bool = True,
+        model_warmup: bool = False,
         vector_disk_cache_path: str = "",
         device: Union[Device, str] = Device.auto,
         lengths_via_tokenize: bool = False,
@@ -119,11 +119,28 @@ class AsyncEmbeddingEngine:
         """
 
         self._check_running()
-        embeddings, lengths = await self._batch_handler.embed(sentences)
-        return embeddings, lengths
+        embeddings, usage = await self._batch_handler.embed(sentences)
+        return embeddings, usage
 
     async def rerank(
         self, *, query: str, docs: List[str], raw_scores: bool = False
+    ) -> Tuple[List[Dict[str, float]], int]:
+        """rerank multiple sentences
+
+        Args:
+            query (str): query to be reranked
+            docs (List[str]): docs to be reranked
+            raw_scores (bool): return raw scores instead of sigmoid
+        """
+        self._check_running()
+        scores, usage = await self._batch_handler.rerank(
+            query=query, docs=docs, raw_scores=raw_scores
+        )
+
+        return scores, usage
+
+    async def classify(
+        self, *, sentences: List[str], raw_scores: bool = False
     ) -> Tuple[List[float], int]:
         """rerank multiple sentences
 
@@ -133,11 +150,9 @@ class AsyncEmbeddingEngine:
             raw_scores (bool): return raw scores instead of sigmoid
         """
         self._check_running()
-        scores, lengths = await self._batch_handler.rerank(
-            query=query, docs=docs, raw_scores=raw_scores
-        )
+        scores, usage = await self._batch_handler.classify(sentences=sentences)
 
-        return scores, lengths
+        return scores, usage
 
     def _check_running(self):
         if not self.running:

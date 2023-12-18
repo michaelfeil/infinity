@@ -73,23 +73,45 @@ async def main():
 asyncio.run(main())
 ```
 
-You can also use rerank (beta, slowish and API subject to change):
-```python
-import asyncio
-from infinity_emb import AsyncEmbeddingEngine
-query = "What is the python package infinity_emb?"
-docs = ["This is a document not related to the python package infinity_emb, hence...", 
-    "Paris is in France!",
-    "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
-engine = AsyncEmbeddingEngine(model_name_or_path = "BAAI/bge-reranker-base", 
-engine="torch", model_warmup=False)
-async def main(): 
-    async with engine:
-        ranking, usage = await engine.rerank(query=query, docs=docs)
-        print(list(zip(ranking, docs)))
-asyncio.run(main())
+<details>
+  <summary>You can also use rerank (beta, slowish and API subject to change):</summary>
+  
+  ```python
+  import asyncio
+  from infinity_emb import AsyncEmbeddingEngine
+  query = "What is the python package infinity_emb?"
+  docs = ["This is a document not related to the python package infinity_emb, hence...", 
+      "Paris is in France!",
+      "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
+  engine = AsyncEmbeddingEngine(model_name_or_path = "BAAI/bge-reranker-base", 
+      engine="torch", model_warmup=False)
+  async def main(): 
+      async with engine:
+          ranking, usage = await engine.rerank(query=query, docs=docs)
+          print(list(zip(ranking, docs)))
+  asyncio.run(main())
+  ```
+     
+</details>
 
-```
+<details>
+    <summary>You can also use predict / text-classification (beta, slowish and API subject to change):</summary>
+    
+    ```python
+    import asyncio
+    from infinity_emb import AsyncEmbeddingEngine
+
+    sentences = ["This is awesome.", "I am bored."]
+    engine = AsyncEmbeddingEngine(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
+        engine="torch", model_warmup=False)
+    async def main(): 
+        async with engine:
+            predictions, usage = await engine.classify(sentences=sentences)
+            return predictions, usage
+    asyncio.run(main())
+    ```
+     
+</details>
 
 ### or launch the `create_server()` command via CLI
 ```bash
@@ -150,6 +172,25 @@ The download path at runtime, can be controlled via the environment variable `SE
   ```
 
   Both models now run on two instances in one dockerfile servers.
+     
+</details>
+
+<details>
+  <summary>Using Langchain with Infinity</summary>
+  
+  Infinity has a official integration into `pip install langchain>=0.342`. 
+  You can find more documentation on that here:
+  https://python.langchain.com/docs/integrations/text_embedding/infinity
+
+  ```python
+  from langchain.embeddings.infinity import InfinityEmbeddings
+  from langchain.docstore.document import Document
+  
+  documents = [Document(page_content="Hello world!", metadata={"source": "unknown"})]
+
+  emb_model = InfinityEmbeddings(model="BAAI/bge-small", infinity_api_url="http://localhost:7997/v1")
+  print(emb_model.embed_documents([doc.page_content for doc in docs]))
+  ```
      
 </details>
 
