@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 from sentence_transformers import CrossEncoder
+
 from infinity_emb import AsyncEmbeddingEngine, transformer
 
 

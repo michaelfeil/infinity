@@ -1,5 +1,6 @@
-from infinity_emb.transformer.classifier.torch import SentenceClassifier
 from transformers import pipeline
+
+from infinity_emb.transformer.classifier.torch import SentenceClassifier
 
 
 def test_classifier():
