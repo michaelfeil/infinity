@@ -32,14 +32,14 @@ __all__ = [
 class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
     """CrossEncoder with .encode_core() and no microbatching"""
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, model_name_or_path, **kwargs):
         if not TORCH_AVAILABLE:
             raise ImportError(
                 "torch is not installed."
                 " `pip install infinity-emb[torch]` "
                 "or pip install infinity-emb[torch,optimum]`"
             )
-        super().__init__(*args, **kwargs)
+        super().__init__(model_name_or_path, **kwargs)
 
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
@@ -48,9 +48,10 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
         self.model.eval()
 
-        self.model = to_bettertransformer(self.model, logger)
 
-        if self.model.device == "cuda" and not os.environ.get(
+        self.model = to_bettertransformer(self.model, logger)
+        
+        if self._target_device.type == "cuda" and not os.environ.get(
             "INFINITY_DISABLE_HALF", ""
         ):
             logger.info(
