@@ -9,7 +9,7 @@ import numpy as np
 
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import QueueItemInner
+from infinity_emb.primitives import EmbeddingReturnType, QueueItemInner
 from infinity_emb.transformer.utils import infinity_cache_dir
 
 try:
@@ -60,7 +60,7 @@ class Cache:
                 self._cache.add(key=self._hash(k), value=v, expire=86400)
             self._add_q.task_done()
 
-    def _get(self, sentence: str) -> Union[None, np.ndarray, List[float]]:
+    def _get(self, sentence: str) -> Union[None, EmbeddingReturnType, List[float]]:
         """sets the item.complete() and sets embedding, if in cache."""
         return self._cache.get(key=self._hash(sentence))
 
