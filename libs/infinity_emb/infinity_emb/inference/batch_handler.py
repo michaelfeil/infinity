@@ -17,6 +17,7 @@ from infinity_emb.primitives import (
     EmbeddingInner,
     EmbeddingReturnType,
     EmbeddingSingle,
+    ModelNotDeployedError,
     OverloadStatus,
     PipelineItem,
     PredictInner,
@@ -99,8 +100,10 @@ class BatchHandler:
             EmbeddingReturnType: list of embedding as 1darray
         """
         if "embed" not in self.model.capabilities:
-            raise ValueError(
-                "model not loaded from embeddings. Loaded" f" {self.model.__class__}"
+            raise ModelNotDeployedError(
+                "the loaded moded cannot fullyfill `embed`."
+                f"options are {self.model.capabilities} inherited "
+                f"from model_class={self.model.__class__}"
             )
         input_sentences = [EmbeddingSingle(s) for s in sentences]
 
@@ -121,8 +124,10 @@ class BatchHandler:
             int: token usage
         """
         if "rerank" not in self.model.capabilities:
-            raise ValueError(
-                "model not loaded for reranking. Loaded" f" {self.model.__class__}"
+            raise ModelNotDeployedError(
+                "the loaded moded cannot fullyfill `rerank`."
+                f"options are {self.model.capabilities} inherited "
+                f"from model_class={self.model.__class__}"
             )
         rerankables = [ReRankSingle(query=query, document=doc) for doc in docs]
         scores, usage = await self._schedule(rerankables)
@@ -146,8 +151,10 @@ class BatchHandler:
             EmbeddingReturnType: embedding as 1darray
         """
         if "classify" not in self.model.capabilities:
-            raise ValueError(
-                "model not loaded from embeddings. Loaded" f" {self.model.__class__}"
+            raise ModelNotDeployedError(
+                "the loaded moded cannot fullyfill `classify`."
+                f"options are {self.model.capabilities} inherited "
+                f"from model_class={self.model.__class__}"
             )
         sentences = [PredictSingle(sentence=s) for s in sentences]
         classifications, usage = await self._schedule(sentences)

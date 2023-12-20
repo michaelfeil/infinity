@@ -158,3 +158,7 @@ class OverloadStatus:
     queue_fraction: float
     queue_absolute: int
     results_absolute: int
+
+
+class ModelNotDeployedError(Exception):
+    pass
