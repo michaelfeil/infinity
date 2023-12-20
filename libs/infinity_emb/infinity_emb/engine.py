@@ -7,6 +7,7 @@ from infinity_emb.inference import (
     select_model,
 )
 from infinity_emb.log_handler import logger
+from infinity_emb.primitives import EmbeddingReturnType
 from infinity_emb.transformer.utils import InferenceEngine
 
 
@@ -103,7 +104,9 @@ class AsyncEmbeddingEngine:
         self._check_running()
         return self._batch_handler.is_overloaded()
 
-    async def embed(self, sentences: List[str]) -> Tuple[List[List[float]], int]:
+    async def embed(
+        self, sentences: List[str]
+    ) -> Tuple[List[EmbeddingReturnType], int]:
         """embed multiple sentences
 
         Args:
@@ -113,7 +116,7 @@ class AsyncEmbeddingEngine:
             ValueError: raised if engine is not started yet"
 
         Returns:
-            List[List[float]]: embeddings
+            List[numpy.ndarray]: embeddings
                 2D list-array of shape( len(sentences),embed_dim )
             Usage:
         """
@@ -124,7 +127,7 @@ class AsyncEmbeddingEngine:
 
     async def rerank(
         self, *, query: str, docs: List[str], raw_scores: bool = False
-    ) -> Tuple[List[Dict[str, float]], int]:
+    ) -> Tuple[List[float], int]:
         """rerank multiple sentences
 
         Args:
@@ -141,7 +144,7 @@ class AsyncEmbeddingEngine:
 
     async def classify(
         self, *, sentences: List[str], raw_scores: bool = False
-    ) -> Tuple[List[float], int]:
+    ) -> Tuple[List[Dict[str, float]], int]:
         """rerank multiple sentences
 
         Args:

@@ -5,8 +5,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
+import numpy.typing as npt
 
-EmbeddingReturnType = np.ndarray
+EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
 
 
 class Device(enum.Enum):

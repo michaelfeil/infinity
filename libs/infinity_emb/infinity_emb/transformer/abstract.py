@@ -47,7 +47,10 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
 
     def warmup(self, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm" * n_tokens] * batch_size
-        inp = [EmbeddingInner(content=EmbeddingSingle(s), future=None) for s in sample]
+        inp = [
+            EmbeddingInner(content=EmbeddingSingle(s), future=None)  # type: ignore
+            for s in sample
+        ]
         return run_warmup(self, inp)
 
 
@@ -64,7 +67,10 @@ class BaseClassifer(BaseTransformer):  # Inherit from ABC(Abstract base class)
 
     def warmup(self, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm" * n_tokens] * batch_size
-        inp = [PredictInner(content=PredictSingle(s), future=None) for s in sample]
+        inp = [
+            PredictInner(content=PredictSingle(s), future=None)  # type: ignore
+            for s in sample
+        ]
         return run_warmup(self, inp)
 
 
@@ -82,7 +88,9 @@ class BaseCrossEncoder(BaseTransformer):  # Inherit from ABC(Abstract base class
     def warmup(self, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm" * n_tokens] * batch_size
         inp = [
-            ReRankInner(content=ReRankSingle(query=s, document=s), future=None)
+            ReRankInner(
+                content=ReRankSingle(query=s, document=s), future=None
+            )  # type: ignore
             for s in sample
         ]
         return run_warmup(self, inp)

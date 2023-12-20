@@ -22,7 +22,6 @@ from infinity_emb.primitives import (
     PredictInner,
     PredictSingle,
     PrioritizedQueueItem,
-    QueueItemInner,
     ReRankInner,
     ReRankSingle,
 )
@@ -160,7 +159,7 @@ class BatchHandler:
         return classifications, usage
 
     async def _schedule(
-        self, list_queueitem: List[QueueItemInner]
+        self, list_queueitem: List[PipelineItem]
     ) -> Tuple[List[Any], int]:
         prios, usage = await self._get_prios_usage(list_queueitem)
         new_prioqueue: List[PrioritizedQueueItem] = []

@@ -48,9 +48,8 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
         self.model.eval()
 
-
         self.model = to_bettertransformer(self.model, logger)
-        
+
         if self._target_device.type == "cuda" and not os.environ.get(
             "INFINITY_DISABLE_HALF", ""
         ):
