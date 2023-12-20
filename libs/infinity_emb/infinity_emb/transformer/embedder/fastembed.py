@@ -19,7 +19,7 @@ except ImportError:
 
 
 class Fastembed(DefaultEmbedding, BaseEmbedder):
-    def __init__(self, *args, **kwargs):
+    def __init__(self, model_name_or_path, **kwargs):
         if not FASTEMBED_AVAILABLE:
             raise ImportError(
                 "fastembed is not installed." "`pip install infinity-emb[fastembed]`"
@@ -32,7 +32,7 @@ class Fastembed(DefaultEmbedding, BaseEmbedder):
             kwargs["cache_dir"] = infinity_cache_dir()
         if kwargs.pop("device", None) != "cpu":
             providers = ["CUDAExecutionProvider"] + providers
-        super(DefaultEmbedding, self).__init__(*args, **kwargs)
+        super(DefaultEmbedding, self).__init__(model_name_or_path, **kwargs)
         self._infinity_tokenizer = copy.deepcopy(self.model.tokenizer)
         self.model.model.set_providers(providers)
 

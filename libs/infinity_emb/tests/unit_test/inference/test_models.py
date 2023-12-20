@@ -42,7 +42,7 @@ def _pretrained_model_score(
     "model,score,compute_type",
     [
         ("sentence-transformers/bert-base-nli-mean-tokens", 76.76, "int8"),
-        ("sentence-transformers/bert-base-nli-mean-tokens", 76.86, None),
+        ("sentence-transformers/bert-base-nli-mean-tokens", 76.84, None),
         ("sentence-transformers/all-MiniLM-L6-v2", 82.03, None),
         ("sentence-transformers/all-MiniLM-L6-v2", 82.03, "default"),
         ("sentence-transformers/all-MiniLM-L6-v2", 81.73, "int8"),
