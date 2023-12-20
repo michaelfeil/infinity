@@ -34,8 +34,11 @@ class OpenAIEmbeddingResult(BaseModel):
     id: str = Field(default_factory=lambda: f"infinity-{uuid4()}")
     created: int = Field(default_factory=lambda: int(time.time()))
 
+
 class RerankInput(BaseModel):
-    query: Annotated[str, StringConstraints(max_length=1024 * 10, strip_whitespace=True)]
+    query: Annotated[
+        str, StringConstraints(max_length=1024 * 10, strip_whitespace=True)
+    ]
     documents: conlist(
         Annotated[str, StringConstraints(max_length=1024 * 10, strip_whitespace=True)],
         min_length=1,
@@ -43,10 +46,12 @@ class RerankInput(BaseModel):
     )
     return_documents: bool = False
 
+
 class _ReRankObject(BaseModel):
     relevance_score: float
     index: int
     document: Optional[str] = None
+
 
 class ReRankResult(BaseModel):
     object: Literal["rerank"] = "rerank"
@@ -55,7 +60,6 @@ class ReRankResult(BaseModel):
     usage: _Usage
     id: str = Field(default_factory=lambda: f"infinity-{uuid4()}")
     created: int = Field(default_factory=lambda: int(time.time()))
-    
 
 
 class ModelInfo(BaseModel):

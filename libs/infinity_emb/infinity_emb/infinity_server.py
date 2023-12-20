@@ -189,7 +189,7 @@ def create_server(
                 docs = data.documents
             else:
                 docs = None
-            
+
             res = to_rerank_response(
                 scores=scores, documents=docs, model=model_name_offical, usage=usage
             )

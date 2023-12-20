@@ -1,4 +1,4 @@
-from typing import Any, Dict, Iterable, List, Union, Optional
+from typing import Any, Dict, Iterable, List, Optional, Union
 
 from infinity_emb.primitives import EmbeddingReturnType
 
@@ -23,7 +23,10 @@ def list_embeddings_to_response(
 
 
 def to_rerank_response(
-    scores: List[float], model=str, usage=int, documents: Optional[List[str]] = None, 
+    scores: List[float],
+    model=str,
+    usage=int,
+    documents: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     if documents is None:
         return dict(
