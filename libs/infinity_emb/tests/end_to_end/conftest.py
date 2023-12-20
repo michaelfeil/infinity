@@ -60,7 +60,7 @@ class Helpers:
         end = time.perf_counter()
         time_st = end - start
 
-        responses = np.array(responses)
+        responses = np.array(responses)  # type: ignore
         encodings = np.array(encodings)
 
         for r, e in zip(responses, encodings):

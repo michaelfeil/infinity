@@ -7,17 +7,16 @@ from infinity_emb.transformer.abstract import BaseCrossEncoder
 
 try:
     import torch
-    from sentence_transformers import CrossEncoder
-    from torch import Tensor
+    from sentence_transformers import CrossEncoder  # type: ignore
 
     TORCH_AVAILABLE = True
 except ImportError:
-    torch, Tensor = None, None
+    torch = None  # type: ignore
 
-    class CrossEncoder:
+    class CrossEncoder:  # type: ignore
         pass
 
-    class Module:
+    class Module:  # type: ignore
         pass
 
     TORCH_AVAILABLE = False

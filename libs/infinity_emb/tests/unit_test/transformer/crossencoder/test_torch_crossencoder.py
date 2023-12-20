@@ -1,5 +1,5 @@
 import numpy as np
-from sentence_transformers import CrossEncoder
+from sentence_transformers import CrossEncoder  # type: ignore
 
 from infinity_emb.transformer.crossencoder.torch import CrossEncoderPatched
 

@@ -31,7 +31,7 @@ class Cache:
             )
 
         self._shutdown = shutdown
-        self._add_q = queue.Queue()
+        self._add_q: queue.Queue = queue.Queue()
         dir = os.path.join(infinity_cache_dir(), "cache_vectors", f"cache_{cache_name}")
         logger.info(f"caching vectors under: {dir}")
         self._cache = dc.Cache(dir, size_limit=2**28)

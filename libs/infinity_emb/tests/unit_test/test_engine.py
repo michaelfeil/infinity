@@ -1,6 +1,6 @@
 import numpy as np
 import pytest
-from sentence_transformers import CrossEncoder
+from sentence_transformers import CrossEncoder  # type: ignore
 
 from infinity_emb import AsyncEmbeddingEngine, transformer
 from infinity_emb.primitives import ModelNotDeployedError

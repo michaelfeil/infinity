@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
 from time import perf_counter
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Set, Tuple
 
 from infinity_emb.primitives import (
     EmbeddingInner,
     EmbeddingReturnType,
     EmbeddingSingle,
+    ModelCapabilites,
     PredictInner,
     PredictSingle,
     ReRankInner,
@@ -17,7 +18,7 @@ OUT_FEATURES = Any
 
 
 class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
-    capabilities = set()
+    capabilities: Set[ModelCapabilites] = set()
 
     @abstractmethod
     def encode_core(self, features: INPUT_FEATURE) -> OUT_FEATURES:
@@ -82,15 +83,15 @@ class BaseCrossEncoder(BaseTransformer):  # Inherit from ABC(Abstract base class
         """takes care of the tokenization and feature preparation"""
 
     @abstractmethod
-    def encode_post(self, embedding: OUT_FEATURES) -> EmbeddingReturnType:
+    def encode_post(self, embedding: OUT_FEATURES) -> List[float]:
         """runs post encoding such as normlization"""
 
     def warmup(self, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm" * n_tokens] * batch_size
         inp = [
             ReRankInner(
-                content=ReRankSingle(query=s, document=s), future=None
-            )  # type: ignore
+                content=ReRankSingle(query=s, document=s), future=None  # type: ignore
+            )
             for s in sample
         ]
         return run_warmup(self, inp)
