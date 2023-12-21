@@ -1,8 +1,9 @@
 import numpy as np
 import pytest
-from sentence_transformers import CrossEncoder
+from sentence_transformers import CrossEncoder  # type: ignore
 
 from infinity_emb import AsyncEmbeddingEngine, transformer
+from infinity_emb.primitives import ModelNotDeployedError
 
 
 @pytest.mark.anyio
@@ -35,6 +36,12 @@ async def test_async_api_torch():
         assert usage == sum([len(s) for s in sentences])
         assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
+
+        # test if model denies classification and reranking
+        with pytest.raises(ModelNotDeployedError):
+            await engine.classify(sentences=sentences)
+        with pytest.raises(ModelNotDeployedError):
+            await engine.rerank(query="dummy", docs=sentences)
 
 
 @pytest.mark.anyio

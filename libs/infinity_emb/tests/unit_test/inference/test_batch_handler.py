@@ -2,6 +2,7 @@ import asyncio
 import copy
 import random
 import time
+from typing import Tuple
 
 import numpy as np
 import pytest
@@ -19,7 +20,7 @@ LIMIT_SLOWDOWN = 1.25 if torch.cuda.is_available() else 1.35
 
 @pytest.fixture
 @pytest.mark.anyio
-async def load_patched_bh():
+async def load_patched_bh() -> Tuple[SentenceTransformerPatched, BatchHandler]:
     model = SentenceTransformerPatched(pytest.DEFAULT_BERT_MODEL)
     model.encode(["hello " * 512] * BATCH_SIZE)
     bh = BatchHandler(model=model, max_batch_size=BATCH_SIZE)
@@ -32,8 +33,6 @@ async def load_patched_bh():
 async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
     model, bh = load_patched_bh
     try:
-        model: SentenceTransformerPatched = model
-        bh: BatchHandler = bh
         sentences = []
         for d in get_sts_bechmark_dataset:
             for item in d:

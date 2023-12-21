@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -17,6 +17,8 @@ from infinity_emb.primitives import (
     EmbeddingInner,
     EmbeddingReturnType,
     EmbeddingSingle,
+    ModelCapabilites,
+    ModelNotDeployedError,
     OverloadStatus,
     PipelineItem,
     PredictInner,
@@ -99,8 +101,10 @@ class BatchHandler:
             EmbeddingReturnType: list of embedding as 1darray
         """
         if "embed" not in self.model.capabilities:
-            raise ValueError(
-                "model not loaded from embeddings. Loaded" f" {self.model.__class__}"
+            raise ModelNotDeployedError(
+                "the loaded moded cannot fullyfill `embed`."
+                f"options are {self.model.capabilities} inherited "
+                f"from model_class={self.model.__class__}"
             )
         input_sentences = [EmbeddingSingle(s) for s in sentences]
 
@@ -121,8 +125,10 @@ class BatchHandler:
             int: token usage
         """
         if "rerank" not in self.model.capabilities:
-            raise ValueError(
-                "model not loaded for reranking. Loaded" f" {self.model.__class__}"
+            raise ModelNotDeployedError(
+                "the loaded moded cannot fullyfill `rerank`."
+                f"options are {self.model.capabilities} inherited "
+                f"from model_class={self.model.__class__}"
             )
         rerankables = [ReRankSingle(query=query, document=doc) for doc in docs]
         scores, usage = await self._schedule(rerankables)
@@ -146,11 +152,13 @@ class BatchHandler:
             EmbeddingReturnType: embedding as 1darray
         """
         if "classify" not in self.model.capabilities:
-            raise ValueError(
-                "model not loaded from embeddings. Loaded" f" {self.model.__class__}"
+            raise ModelNotDeployedError(
+                "the loaded moded cannot fullyfill `classify`."
+                f"options are {self.model.capabilities} inherited "
+                f"from model_class={self.model.__class__}"
             )
-        sentences = [PredictSingle(sentence=s) for s in sentences]
-        classifications, usage = await self._schedule(sentences)
+        items = [PredictSingle(sentence=s) for s in sentences]
+        classifications, usage = await self._schedule(items)
 
         if raw_scores:
             # perform softmax on scores
@@ -159,24 +167,26 @@ class BatchHandler:
         return classifications, usage
 
     async def _schedule(
-        self, list_queueitem: List[PipelineItem]
+        self, list_queueitem: Sequence[PipelineItem]
     ) -> Tuple[List[Any], int]:
         prios, usage = await self._get_prios_usage(list_queueitem)
         new_prioqueue: List[PrioritizedQueueItem] = []
 
         if isinstance(list_queueitem[0], EmbeddingSingle):
-            inner_item = EmbeddingInner
+            inner_item = EmbeddingInner  # type: ignore
         elif isinstance(list_queueitem[0], ReRankSingle):
-            inner_item = ReRankInner
+            inner_item = ReRankInner  # type: ignore
         elif isinstance(list_queueitem[0], PredictSingle):
-            inner_item = PredictInner
+            inner_item = PredictInner  # type: ignore
         else:
             raise ValueError(f"Unknown type of list_queueitem, {list_queueitem[0]}")
 
         for re, p in zip(list_queueitem, prios):
             item = PrioritizedQueueItem(
                 priority=p,
-                item=inner_item(content=re, future=self.loop.create_future()),
+                item=inner_item(
+                    content=re, future=self.loop.create_future()  # type: ignore
+                ),
             )
             new_prioqueue.append(item)
         await self._queue_prio.extend(new_prioqueue)
@@ -185,6 +195,9 @@ class BatchHandler:
             *[self._result_store.wait_for_response(item.item) for item in new_prioqueue]
         )
         return result, usage
+
+    def get_capabilities(self) -> Set[ModelCapabilites]:
+        return self.model.capabilities
 
     def is_overloaded(self) -> bool:
         """checks if more items can be queued."""
@@ -201,7 +214,7 @@ class BatchHandler:
         )
 
     async def _get_prios_usage(
-        self, items: List[PipelineItem]
+        self, items: Sequence[PipelineItem]
     ) -> Tuple[List[int], int]:
         """get priorities and usage
 

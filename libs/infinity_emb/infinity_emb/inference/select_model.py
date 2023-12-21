@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Union
+from typing import Tuple, Union
 
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
@@ -25,7 +25,7 @@ def get_engine_type_from_config(
         logger.debug("model is a directory, opening config.json")
         config_path = Path(model_name_or_path) / "config.json"
     else:
-        from huggingface_hub import hf_hub_download
+        from huggingface_hub import hf_hub_download  # type: ignore
 
         config_path = hf_hub_download(
             model_name_or_path,
@@ -53,7 +53,7 @@ def select_model(
     engine: InferenceEngine = InferenceEngine.torch,
     model_warmup=True,
     device: Device = Device.auto,
-) -> Union[BaseCrossEncoder, BaseEmbedder]:
+) -> Tuple[Union[BaseCrossEncoder, BaseEmbedder], float]:
     logger.info(
         f"model=`{model_name_or_path}` selected, using engine=`{engine.value}`"
         f" and device=`{device.value}`"

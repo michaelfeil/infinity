@@ -83,16 +83,16 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         return out_features
 
     def encode_post(
-        self, out_features: Tensor, normalize_embeddings: bool = True, to_numpy=True
+        self, out_features: Tensor, normalize_embeddings: bool = True
     ) -> EmbeddingReturnType:
         with torch.inference_mode():
             embeddings = out_features.detach().cpu().to(torch.float32)
             if normalize_embeddings:
                 embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-            if to_numpy:
-                embeddings: np.ndarray = embeddings.numpy()
 
-        return embeddings
+            embeddings: np.ndarray = embeddings.numpy()  # type: ignore
+
+        return embeddings  # type: ignore
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
         tks = self._infinity_tokenizer.batch_encode_plus(

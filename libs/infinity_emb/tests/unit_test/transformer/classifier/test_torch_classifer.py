@@ -1,4 +1,4 @@
-from transformers import pipeline
+from transformers import pipeline  # type: ignore
 
 from infinity_emb.transformer.classifier.torch import SentenceClassifier
 
