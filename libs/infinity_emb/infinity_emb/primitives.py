@@ -2,11 +2,12 @@ import asyncio
 import enum
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, Literal, Optional, Tuple, Union
 
 import numpy as np
+import numpy.typing as npt
 
-EmbeddingReturnType = np.ndarray
+EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
 
 
 class Device(enum.Enum):
@@ -26,7 +27,7 @@ class AbstractSingle(ABC):
         pass
 
     @abstractmethod
-    def to_input(self) -> str:
+    def to_input(self) -> Union[str, Tuple[str, str]]:
         pass
 
 
@@ -66,11 +67,11 @@ class AbstractInner(ABC):
     future: asyncio.Future
 
     @abstractmethod
-    def complete(self, *args) -> None:
+    async def complete(self, result: Any) -> None:
         pass
 
     @abstractmethod
-    def get_result(self) -> Any:
+    async def get_result(self) -> Any:
         pass
 
 
@@ -79,10 +80,10 @@ class EmbeddingInner(AbstractInner):
     content: EmbeddingSingle
     embedding: Optional[EmbeddingReturnType] = None
 
-    async def complete(self, embedding: EmbeddingReturnType) -> None:
+    async def complete(self, result: EmbeddingReturnType) -> None:
         """marks the future for completion.
         only call from the same thread as created future."""
-        self.embedding = embedding
+        self.embedding = result
 
         if self.embedding is None:
             raise ValueError("embedding is None")
@@ -94,7 +95,7 @@ class EmbeddingInner(AbstractInner):
     async def get_result(self) -> EmbeddingReturnType:
         """waits for future to complete and returns result"""
         await self.future
-        return self.embedding
+        return self.embedding  # type: ignore
 
 
 @dataclass(order=True)
@@ -102,10 +103,10 @@ class ReRankInner(AbstractInner):
     content: ReRankSingle
     score: Optional[float] = field(default=None, compare=False)
 
-    async def complete(self, score: float) -> None:
+    async def complete(self, result: float) -> None:
         """marks the future for completion.
         only call from the same thread as created future."""
-        self.score = score
+        self.score = result
 
         if self.score is None:
             raise ValueError("score is None")
@@ -117,7 +118,7 @@ class ReRankInner(AbstractInner):
     async def get_result(self) -> float:
         """waits for future to complete and returns result"""
         await self.future
-        return self.score
+        return self.score  # type: ignore
 
 
 @dataclass(order=True)
@@ -125,13 +126,13 @@ class PredictInner(AbstractInner):
     content: PredictSingle
     class_encoding: Optional[EmbeddingReturnType] = None
 
-    async def complete(self, class_encoding: EmbeddingReturnType) -> None:
+    async def complete(self, result: EmbeddingReturnType) -> None:
         """marks the future for completion.
         only call from the same thread as created future."""
-        self.embeclass_encodingdding = class_encoding
+        self.class_encoding = result
 
         if self.class_encoding is None:
-            raise ValueError("embedding is None")
+            raise ValueError("class_encoding is None")
         try:
             self.future.set_result(self.class_encoding)
         except asyncio.exceptions.InvalidStateError:
@@ -140,7 +141,7 @@ class PredictInner(AbstractInner):
     async def get_result(self) -> EmbeddingReturnType:
         """waits for future to complete and returns result"""
         await self.future
-        return self.class_encoding
+        return self.class_encoding  # type: ignore
 
 
 QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner]
@@ -157,3 +158,10 @@ class OverloadStatus:
     queue_fraction: float
     queue_absolute: int
     results_absolute: int
+
+
+class ModelNotDeployedError(Exception):
+    pass
+
+
+ModelCapabilites = Literal["embed", "rerank", "classify"]

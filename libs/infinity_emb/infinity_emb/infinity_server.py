@@ -214,7 +214,7 @@ def _start_uvicorn(
     engine: InferenceEngineTypeHint = InferenceEngineTypeHint.torch.name,  # type: ignore # noqa
     model_warmup: bool = True,
     vector_disk_cache: bool = INFINITY_CACHE_VECTORS,
-    device: DeviceTypeHint = DeviceTypeHint.auto.name,
+    device: DeviceTypeHint = DeviceTypeHint.auto.name,  # type: ignore
     lengths_via_tokenize: bool = False,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;

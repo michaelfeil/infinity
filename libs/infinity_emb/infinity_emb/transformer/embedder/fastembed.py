@@ -13,7 +13,7 @@ try:
 except ImportError:
     FASTEMBED_AVAILABLE = False
 
-    class DefaultEmbedding:
+    class DefaultEmbedding:  # type: ignore
         def __init__(self, *args, **kwargs) -> None:
             pass
 
@@ -36,7 +36,7 @@ class Fastembed(DefaultEmbedding, BaseEmbedder):
         self._infinity_tokenizer = copy.deepcopy(self.model.tokenizer)
         self.model.model.set_providers(providers)
 
-    def encode_pre(self, sentences: List[str]) -> Dict[str, np.ndarray[int]]:
+    def encode_pre(self, sentences: List[str]) -> Dict[str, np.ndarray]:
         encoded = self.model.tokenizer.encode_batch(sentences)
         input_ids = np.array([e.ids for e in encoded])
         attention_mask = np.array([e.attention_mask for e in encoded])
@@ -52,7 +52,7 @@ class Fastembed(DefaultEmbedding, BaseEmbedder):
             )
         return onnx_input
 
-    def encode_core(self, features: Dict[str, np.ndarray[int]]) -> np.ndarray:
+    def encode_core(self, features: Dict[str, np.ndarray]) -> np.ndarray:
         model_output = self.model.model.run(None, features)
         last_hidden_state = model_output[0][:, 0]
         return last_hidden_state

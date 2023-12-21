@@ -1,7 +1,9 @@
 import numpy as np
 import pytest
+from sentence_transformers import CrossEncoder  # type: ignore
 
 from infinity_emb import AsyncEmbeddingEngine, transformer
+from infinity_emb.primitives import ModelNotDeployedError
 
 
 @pytest.mark.anyio
@@ -28,10 +30,18 @@ async def test_async_api_torch():
     )
     async with engine:
         embeddings, usage = await engine.embed(sentences)
+        assert isinstance(embeddings, list)
+        assert isinstance(embeddings[0], np.ndarray)
         embeddings = np.array(embeddings)
         assert usage == sum([len(s) for s in sentences])
         assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
+
+        # test if model denies classification and reranking
+        with pytest.raises(ModelNotDeployedError):
+            await engine.classify(sentences=sentences)
+        with pytest.raises(ModelNotDeployedError):
+            await engine.rerank(query="dummy", docs=sentences)
 
 
 @pytest.mark.anyio
@@ -54,6 +64,32 @@ async def test_async_api_torch_CROSSENCODER():
     assert usage == sum([len(query) + len(d) for d in documents])
     assert len(rankings) == len(documents)
     np.testing.assert_almost_equal(rankings, [0.9958, 0.9439, 0.000037], decimal=3)
+
+
+@pytest.mark.anyio
+async def test_engine_crossencoder_vs_sentence_transformers():
+    model_unpatched = CrossEncoder("BAAI/bge-reranker-base")
+    query = "Where is Paris?"
+    documents = [
+        "Paris is the capital of France.",
+        "Berlin is the capital of Germany.",
+        "You can now purchase my favorite dish",
+    ] * 100
+    engine = AsyncEmbeddingEngine(
+        model_name_or_path="BAAI/bge-reranker-base",
+        engine=transformer.InferenceEngine.torch,
+        device="auto",
+        model_warmup=False,
+    )
+
+    query_docs = [(query, doc) for doc in documents]
+
+    async with engine:
+        rankings, _ = await engine.rerank(query=query, docs=documents)
+
+    rankings_unpatched = model_unpatched.predict(query_docs)
+
+    np.testing.assert_allclose(rankings, rankings_unpatched, rtol=1e-2, atol=1e-2)
 
 
 @pytest.mark.anyio

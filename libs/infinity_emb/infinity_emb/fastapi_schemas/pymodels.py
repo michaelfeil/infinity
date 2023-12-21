@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field, StringConstraints, conlist
 
 
 class OpenAIEmbeddingInput(BaseModel):
-    input: conlist(
+    input: conlist(  # type: ignore
         Annotated[str, StringConstraints(max_length=1024 * 10, strip_whitespace=True)],
         min_length=1,
         max_length=2048,

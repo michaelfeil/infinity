@@ -3,7 +3,7 @@ from typing import Dict, List, Optional
 try:
     # autotokenizer
     import torch
-    from transformers import AutoTokenizer, pipeline
+    from transformers import AutoTokenizer, pipeline  # type: ignore
 
     TORCH_AVAILABLE = True
 except ImportError:

@@ -109,7 +109,7 @@ jobs:
         # It doesn't matter how you change it, any change will cause a cache-bust.
         working-directory: ${{ inputs.working-directory }}
         run: |
-          poetry install --with test,lint,codespell
+          poetry install --all-extras --with test,lint,codespell
 
       - name: Install infinity_emb editable
         working-directory: ${{ inputs.working-directory }}
@@ -130,19 +130,21 @@ jobs:
       #       # If we can't find an exact match for our cache key, accept any with this prefix.
       #       ${{ env.CACHE_BASE }}-
 
-      # - name: Get .mypy_cache to speed up mypy
-      #   uses: actions/cache@v3
-      #   env:
-      #     SEGMENT_DOWNLOAD_TIMEOUT_MIN: "2"
-      #   with:
-      #     path: |
-      #       ${{ env.WORKDIR }}/.mypy_cache
-      #     key: mypy-${{ runner.os }}-${{ runner.arch }}-py${{ matrix.python-version }}-${{ inputs.working-directory }}-${{ hashFiles(format('{0}/poetry.lock', env.WORKDIR)) }}
+      - name: Get .mypy_cache to speed up mypy
+        uses: actions/cache@v3
+        env:
+          SEGMENT_DOWNLOAD_TIMEOUT_MIN: "2"
+        with:
+          path: |
+            ${{ env.WORKDIR }}/.mypy_cache
+          key: mypy-${{ runner.os }}-${{ runner.arch }}-py${{ matrix.python-version }}-${{ inputs.working-directory }}-${{ hashFiles(format('{0}/poetry.lock', env.WORKDIR)) }}
 
       - name: Analysing the code with our lint
         working-directory: ${{ inputs.working-directory }}
         env:
           BLACK_CACHE_DIR: .black_cache
         run: |
-          # make lint
-          poetry run ruff .
+          make lint
+          # poetry run ruff .
+
+      

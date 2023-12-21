@@ -4,7 +4,7 @@ try:
     from fastapi import Request
     from fastapi.responses import JSONResponse
 except ImportError:
-    Request = None
+    Request = None  # type: ignore
 
 
 class OpenAIException(Exception):
