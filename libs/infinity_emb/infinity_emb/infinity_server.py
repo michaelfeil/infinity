@@ -129,7 +129,7 @@ def create_server(
         requests.post("http://..:7997/v1/embeddings",
             json={"model":"bge-small-en-v1.5","input":["A sentence to encode."]})
         """
-        model: AsyncEmbeddingEngine = app.model
+        model: AsyncEmbeddingEngine = app.model  # type: ignore
         if model.is_overloaded():
             raise errors.OpenAIException(
                 "model overloaded", code=status.HTTP_429_TOO_MANY_REQUESTS
@@ -168,7 +168,7 @@ def create_server(
         requests.post("http://..:7997/rerank",
             json={"query":"Where is Munich?","texts":["Munich is in Germany."]})
         """
-        model: AsyncEmbeddingEngine = app.model
+        model: AsyncEmbeddingEngine = app.model  # type: ignore
         if model.is_overloaded():
             raise errors.OpenAIException(
                 "model overloaded", code=status.HTTP_429_TOO_MANY_REQUESTS

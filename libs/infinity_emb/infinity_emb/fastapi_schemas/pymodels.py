@@ -39,7 +39,7 @@ class RerankInput(BaseModel):
     query: Annotated[
         str, StringConstraints(max_length=1024 * 10, strip_whitespace=True)
     ]
-    documents: conlist(
+    documents: conlist(  # type: ignore
         Annotated[str, StringConstraints(max_length=1024 * 10, strip_whitespace=True)],
         min_length=1,
         max_length=2048,
