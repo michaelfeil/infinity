@@ -28,6 +28,7 @@ async def test_async_api_torch():
         engine=transformer.InferenceEngine.torch,
         device="auto",
     )
+    assert engine.capabilities == {"embed"}
     async with engine:
         embeddings, usage = await engine.embed(sentences)
         assert isinstance(embeddings, list)
@@ -58,6 +59,9 @@ async def test_async_api_torch_CROSSENCODER():
         device="auto",
         model_warmup=True,
     )
+    
+    assert engine.capabilities == {"rerank"}
+    
     async with engine:
         rankings, usage = await engine.rerank(query=query, docs=documents)
 
@@ -100,6 +104,7 @@ async def test_async_api_torch_CLASSIFY():
         engine="torch",
         model_warmup=True,
     )
+    assert engine.capabilities == {"classify"}
 
     async with engine:
         predictions, usage = await engine.classify(sentences=sentences)

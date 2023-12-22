@@ -32,6 +32,7 @@ async def load_patched_bh() -> Tuple[SentenceTransformerPatched, BatchHandler]:
 @pytest.mark.anyio
 async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
     model, bh = load_patched_bh
+    assert bh.capabilities == {"embed"}
     try:
         sentences = []
         for d in get_sts_bechmark_dataset:
