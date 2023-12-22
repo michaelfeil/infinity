@@ -196,7 +196,8 @@ class BatchHandler:
         )
         return result, usage
 
-    def get_capabilities(self) -> Set[ModelCapabilites]:
+    @property
+    def capabilities(self) -> Set[ModelCapabilites]:
         return self.model.capabilities
 
     def is_overloaded(self) -> bool:
@@ -362,14 +363,20 @@ class BatchHandler:
 
     async def _delayed_warmup(self):
         """in case there is no warmup -> perform some warmup."""
-        await asyncio.sleep(10)
-        logger.debug("Sending a warm up through embedding.")
-        if "embed" in self.model.capabilities:
-            await self.embed(sentences=["test"] * self.max_batch_size)
-        if "rerank" in self.model.capabilities:
-            await self.rerank(query="query", docs=["test"] * self.max_batch_size)
-        if "classify" in self.model.capabilities:
-            await self.classify(sentences=["test"] * self.max_batch_size)
+        await asyncio.sleep(5)
+        if not self._shutdown.is_set():
+            logger.debug("Sending a warm up through embedding.")
+            try:
+                if "embed" in self.model.capabilities:
+                    await self.embed(sentences=["test"] * self.max_batch_size)
+                if "rerank" in self.model.capabilities:
+                    await self.rerank(
+                        query="query", docs=["test"] * self.max_batch_size
+                    )
+                if "classify" in self.model.capabilities:
+                    await self.classify(sentences=["test"] * self.max_batch_size)
+            except Exception:
+                pass
 
     async def spawn(self):
         """set up the resources in batch"""
