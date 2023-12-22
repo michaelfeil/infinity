@@ -57,6 +57,7 @@ class Cache:
                 k, v = item
                 self._cache.add(key=self._hash(k), value=v, expire=86400)
             self._add_q.task_done()
+        self._threadpool.shutdown(wait=True)
 
     def _get(self, sentence: str) -> Union[None, EmbeddingReturnType, List[float]]:
         """sets the item.complete() and sets embedding, if in cache."""

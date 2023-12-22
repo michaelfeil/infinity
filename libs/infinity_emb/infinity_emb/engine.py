@@ -1,4 +1,4 @@
-from typing import Dict, List, Tuple, Union
+from typing import Dict, List, Set, Tuple, Union
 
 # prometheus
 from infinity_emb.inference import (
@@ -7,7 +7,7 @@ from infinity_emb.inference import (
     select_model,
 )
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import EmbeddingReturnType
+from infinity_emb.primitives import EmbeddingReturnType, ModelCapabilites
 from infinity_emb.transformer.utils import InferenceEngine
 
 
@@ -40,7 +40,7 @@ class AsyncEmbeddingEngine:
             ```python
             from infinity_emb import AsyncEmbeddingEngine, transformer
             sentences = ["Embedded this via Infinity.", "Paris is in France."]
-            engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.torch)
+            engine = AsyncEmbeddingEngine(engine="torch")
             async with engine: # engine starts with engine.astart()
                 embeddings = np.array(await engine.embed(sentences))
             # engine stops with engine.astop().
@@ -103,6 +103,10 @@ class AsyncEmbeddingEngine:
     def is_overloaded(self) -> bool:
         self._check_running()
         return self._batch_handler.is_overloaded()
+
+    @property
+    def capabilities(self) -> Set[ModelCapabilites]:
+        return self._model.capabilities
 
     async def embed(
         self, sentences: List[str]

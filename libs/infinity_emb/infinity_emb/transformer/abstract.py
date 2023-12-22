@@ -29,7 +29,7 @@ class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
         """gets the lengths of each sentences according to tokenize/len etc."""
 
     @abstractmethod
-    def warmup(self, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
+    def warmup(self, *, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         """warmup the model
 
         returns embeddings per second, inference time, and a log message"""
@@ -46,7 +46,7 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
     def encode_post(self, embedding: OUT_FEATURES) -> EmbeddingReturnType:
         """runs post encoding such as normlization"""
 
-    def warmup(self, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
+    def warmup(self, *, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm" * n_tokens] * batch_size
         inp = [
             EmbeddingInner(content=EmbeddingSingle(s), future=None)  # type: ignore
@@ -66,7 +66,7 @@ class BaseClassifer(BaseTransformer):  # Inherit from ABC(Abstract base class)
     def encode_post(self, embedding: OUT_FEATURES) -> Dict[str, float]:
         """runs post encoding such as normlization"""
 
-    def warmup(self, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
+    def warmup(self, *, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm" * n_tokens] * batch_size
         inp = [
             PredictInner(content=PredictSingle(s), future=None)  # type: ignore
@@ -86,7 +86,7 @@ class BaseCrossEncoder(BaseTransformer):  # Inherit from ABC(Abstract base class
     def encode_post(self, embedding: OUT_FEATURES) -> List[float]:
         """runs post encoding such as normlization"""
 
-    def warmup(self, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
+    def warmup(self, *, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm" * n_tokens] * batch_size
         inp = [
             ReRankInner(
