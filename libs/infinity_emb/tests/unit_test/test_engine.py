@@ -59,9 +59,9 @@ async def test_async_api_torch_CROSSENCODER():
         device="auto",
         model_warmup=True,
     )
-    
+
     assert engine.capabilities == {"rerank"}
-    
+
     async with engine:
         rankings, usage = await engine.rerank(query=query, docs=documents)
 
