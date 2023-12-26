@@ -23,22 +23,21 @@ async def test_cache():
         )
 
         sample = EmbeddingInner(
-            content=EmbeddingSingle(sentence), future=loop.create_future()
+            content=EmbeddingSingle(sentence)
         )
         sample_embedded = EmbeddingInner(
             content=EmbeddingSingle(sentence),
-            future=loop.create_future(),
-            embedding=None,
         )
-        await sample_embedded.complete(embedding)
-        await c.aget_complete(sample_embedded)
-        # add the embedded sample
-        await asyncio.sleep(0.5)
+        sample_embedded.set_result(embedding)
+        fut = loop.create_future()
+        fut.set_result(None)
+        await c.aget(sample_embedded, fut)
+        await asyncio.sleep(1)
         # launch the ba
-        await c.aget_complete(sample)
-        assert sample.future.done()
-        assert sample.embedding is not None
-        np.testing.assert_array_equal(sample.embedding, embedding)
+        await c.aget(sample, loop.create_future())
+        result = sample.get_result()
+        assert result is not None
+        np.testing.assert_array_equal(result, embedding)
     finally:
         INFINITY_CACHE_VECTORS = False
         shutdown.set()

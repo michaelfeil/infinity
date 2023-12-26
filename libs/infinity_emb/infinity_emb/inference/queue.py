@@ -1,6 +1,7 @@
 import asyncio
 import threading
 from typing import Dict, List, Optional, Union
+import enum
 
 from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.primitives import (
@@ -8,7 +9,8 @@ from infinity_emb.primitives import (
     PrioritizedQueueItem,
     QueueItemInner,
 )
-
+class QueueSignal(enum.Enum):
+    KILL = "kill"
 
 class CustomFIFOQueue:
     def __init__(self) -> None:
@@ -66,7 +68,7 @@ class CustomFIFOQueue:
         for i in range(n_batches):
             mini_batch = new_items_l[size * i : size * (i + 1)]
             mini_batch_e: List[QueueItemInner] = [
-                mi.item for mi in mini_batch if not mi.item.future.done()
+                mi.item for mi in mini_batch 
             ]
             if mini_batch_e:
                 new_items.append(mini_batch_e)
@@ -78,14 +80,37 @@ class CustomFIFOQueue:
 
 class ResultKVStoreFuture:
     def __init__(self, cache: Optional[Cache] = None) -> None:
-        self._kv: Dict[str, EmbeddingReturnType] = {}
+        self._kv: Dict[str, asyncio.Future] = {}
         self._cache = cache
+        self._loop = None
+        
+    async def _loop_running(self):
+        if self._loop is None:
+            self._loop = asyncio.get_running_loop()
 
     def __len__(self):
         return len(self._kv)
 
     async def wait_for_response(self, item: QueueItemInner) -> EmbeddingReturnType:
         """wait for future to return"""
+        await self._loop_running()
+        uuid = item.get_id()
+        fut = self._loop.create_future()
+        self._kv[uuid] = fut
         if self._cache:
-            asyncio.create_task(self._cache.aget_complete(item))
-        return await item.future
+            asyncio.create_task(self._cache.aget(item))
+        await fut
+        return item.get_result()
+        
+    
+    async def mark_item_ready(self, item: QueueItemInner) -> None:
+        """mark item as ready. Item.get_result() must be set before calling this"""
+        await self._loop_running()
+        uuid = item.get_id()
+        fut = self._kv[uuid]
+        try:
+            fut.set_result(None)
+        except asyncio.InvalidStateError:
+            pass
+        del self._kv[uuid]
+        

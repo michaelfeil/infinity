@@ -60,19 +60,24 @@ class Cache:
         self._threadpool.shutdown(wait=True)
 
     def _get(self, sentence: str) -> Union[None, EmbeddingReturnType, List[float]]:
-        """sets the item.complete() and sets embedding, if in cache."""
         return self._cache.get(key=self._hash(sentence))
 
-    async def aget_complete(self, item: QueueItemInner) -> None:
-        """sets the item.complete() and sets embedding, if in cache."""
+    async def aget(self, item: QueueItemInner, future: asyncio.Future) -> None:
+        """Sets result to item and future, if in cache.
+        If not in cache, sets future to be done when result is set.
+        """
         item_as_str = item.content.str_repr()
         result = await to_thread(self._get, self._threadpool, item_as_str)
         if result is not None:
             # update item with cached result
-            if not item.future.done():
-                await item.complete(result)
+            if item.get_result() is None:
+                item.set_result(result)
+                try:
+                    future.set_result(None)
+                except asyncio.InvalidStateError:
+                    pass
         else:
-            # result is not in cache yet, lets wait for it and add it
-            result_new = await item.get_result()
-            await asyncio.sleep(1e-3)
-            self._add_q.put((item_as_str, result_new))
+            await future
+            result = item.get_result()
+            self._add_q.put((item_as_str, result))
+        
