@@ -2,18 +2,21 @@ import time
 
 # prometheus
 import infinity_emb
+from infinity_emb.engine import AsyncEmbeddingEngine
 from infinity_emb.fastapi_schemas import docs, errors
-from infinity_emb.fastapi_schemas.convert import list_embeddings_to_response
+from infinity_emb.fastapi_schemas.convert import (
+    list_embeddings_to_response,
+    to_rerank_response,
+)
 from infinity_emb.fastapi_schemas.pymodels import (
     OpenAIEmbeddingInput,
     OpenAIEmbeddingResult,
     OpenAIModelInfo,
+    RerankInput,
 )
 from infinity_emb.inference import (
-    BatchHandler,
     Device,
     DeviceTypeHint,
-    select_model,
 )
 from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
@@ -55,29 +58,23 @@ def create_server(
     vector_disk_cache_path = (
         f"{engine}_{model_name_or_path.replace('/','_')}" if vector_disk_cache else ""
     )
+    model_name_offical = "".join(model_name_or_path.split("/")[-2:])
 
     @app.on_event("startup")
     async def _startup():
         instrumentator.expose(app)
 
-        model, min_inference_t = select_model(
+        app.model = AsyncEmbeddingEngine(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,
             model_warmup=model_warmup,
-            device=device,
-        )
-
-        app.batch_handler = BatchHandler(
-            max_batch_size=batch_size,
-            model=model,
-            verbose=verbose,
-            batch_delay=min_inference_t / 2,
             vector_disk_cache_path=vector_disk_cache_path,
+            device=device,
             lengths_via_tokenize=lengths_via_tokenize,
         )
         # start in a threadpool
-        await app.batch_handler.spawn()
+        await app.model.astart()
 
         logger.info(
             docs.startup_message(
@@ -89,7 +86,7 @@ def create_server(
 
     @app.on_event("shutdown")
     async def _shutdown():
-        await app.batch_handler.shutdown()
+        await app.model.astop()
 
     @app.get("/ready")
     async def _ready() -> float:
@@ -105,7 +102,7 @@ def create_server(
     )
     async def _models():
         """get models endpoint"""
-        s = app.batch_handler.overload_status()  # type: ignore
+        s = app.model.overload_status()  # type: ignore
         return dict(
             data=dict(
                 id=model_name_or_path,
@@ -132,8 +129,8 @@ def create_server(
         requests.post("http://..:7997/v1/embeddings",
             json={"model":"bge-small-en-v1.5","input":["A sentence to encode."]})
         """
-        bh: BatchHandler = app.batch_handler  # type: ignore
-        if bh.is_overloaded():
+        model: AsyncEmbeddingEngine = app.model  # type: ignore
+        if model.is_overloaded():
             raise errors.OpenAIException(
                 "model overloaded", code=status.HTTP_429_TOO_MANY_REQUESTS
             )
@@ -142,19 +139,65 @@ def create_server(
             logger.debug("[📝] Received request with %s inputs ", len(data.input))
             start = time.perf_counter()
 
-            embedding, usage = await bh.embed(data.input)
+            embedding, usage = await model.embed(data.input)
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
 
             res = list_embeddings_to_response(
-                embeddings=embedding, model=data.model, usage=usage
+                embeddings=embedding, model=model_name_offical, usage=usage
             )
 
             return res
         except Exception as ex:
             raise errors.OpenAIException(
-                f"internal server error {ex}",
+                f"InternalServerError: {ex}",
+                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @app.post(
+        f"{url_prefix}/rerank",
+        # response_model=RerankResult,
+        response_class=responses.ORJSONResponse,
+    )
+    async def _rerank(data: RerankInput):
+        """Encode Embeddings
+
+        ```python
+        import requests
+        requests.post("http://..:7997/rerank",
+            json={"query":"Where is Munich?","texts":["Munich is in Germany."]})
+        """
+        model: AsyncEmbeddingEngine = app.model  # type: ignore
+        if model.is_overloaded():
+            raise errors.OpenAIException(
+                "model overloaded", code=status.HTTP_429_TOO_MANY_REQUESTS
+            )
+
+        try:
+            logger.debug("[📝] Received request with %s docs ", len(data.documents))
+            start = time.perf_counter()
+
+            scores, usage = await model.rerank(
+                query=data.query, docs=data.documents, raw_scores=False
+            )
+
+            duration = (time.perf_counter() - start) * 1000
+            logger.debug("[✅] Done in %s ms", duration)
+
+            if data.return_documents:
+                docs = data.documents
+            else:
+                docs = None
+
+            res = to_rerank_response(
+                scores=scores, documents=docs, model=model_name_offical, usage=usage
+            )
+
+            return res
+        except Exception as ex:
+            raise errors.OpenAIException(
+                f"InternalServerError: {ex}",
                 code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
@@ -164,7 +207,7 @@ def create_server(
 def _start_uvicorn(
     model_name_or_path: str = "BAAI/bge-small-en-v1.5",
     batch_size: int = 64,
-    url_prefix: str = "/v1",
+    url_prefix: str = "",
     host: str = "0.0.0.0",
     port: int = 7997,
     log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
@@ -181,7 +224,7 @@ def _start_uvicorn(
         model_name_or_path, str: Huggingface model, e.g.
             "BAAI/bge-small-en-v1.5".
         batch_size, int: batch size for forward pass.
-        url_prefix, str: prefix for api. typically "/v1".
+        url_prefix, str: prefix for api. typically "".
         host, str: host-url, typically either "0.0.0.0" or "127.0.0.1".
         port, int: port that you want to expose.
         log_level: logging level.
