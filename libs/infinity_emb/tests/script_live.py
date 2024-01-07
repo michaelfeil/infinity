@@ -8,7 +8,7 @@ import numpy as np
 import requests  # type: ignore
 from sentence_transformers import SentenceTransformer  # type: ignore
 
-LIVE_URL = "http://localhost:7997/v1"
+LIVE_URL = "http://localhost:7997"
 
 
 def embedding_live_performance():
@@ -24,7 +24,7 @@ def embedding_live_performance():
     model_name = req.json()["data"]["id"]
     print(f"batch_size is {batch_size}, model={model_name}")
     model = SentenceTransformer(model_name_or_path=model_name)
-
+    model.half()
     def local(data: list[str], iters=1):
         data_in = data * iters
         enc = model.encode(data_in, batch_size=batch_size)
@@ -76,4 +76,4 @@ def latency_single():
 
 
 if __name__ == "__main__":
-    latency_single()
+    embedding_live_performance()
