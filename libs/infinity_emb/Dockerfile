@@ -2,8 +2,6 @@
 FROM nvidia/cuda:12.1.0-base-ubuntu22.04 AS base
 
 ENV PYTHONUNBUFFERED=1 \
-    # prevents python creating .pyc files
-    PYTHONDONTWRITEBYTECODE=1 \
     \
     # pip
     PIP_NO_CACHE_DIR=off \
@@ -39,18 +37,20 @@ RUN echo "Poetry version:" && poetry --version
 
 # Copy the rest of the app source code (this layer will be invalidated and rebuilt whenever the source code changes)
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
+# Install dependencies only
+RUN poetry install --no-interaction --no-ansi --no-root --extras all --without lint,test
 COPY infinity_emb infinity_emb
-
-# Install dependencies and project
-RUN poetry config virtualenvs.create false
+# Install dependency with infinity_emb package
 RUN poetry install --no-interaction --no-ansi --extras all --without lint,test
 # remove cache
 RUN poetry cache clear pypi --all
 
 FROM builder as pytest
+RUN apt-get install build-essential
 RUN poetry install --no-interaction --no-ansi --extras all
 COPY tests tests
 COPY Makefile Makefile
+
 RUN make lint
 RUN poetry run python -m pytest
 RUN echo "all tests passed" > "test_results.txt"
