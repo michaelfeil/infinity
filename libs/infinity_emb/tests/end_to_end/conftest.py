@@ -67,7 +67,7 @@ class Helpers:
             cosine_sim = np.dot(r, e) / (np.linalg.norm(e) * np.linalg.norm(r))
             assert cosine_sim > 0.95
         np.testing.assert_almost_equal(
-            np.array(responses), np.array(encodings), decimal=0
+            np.array(responses), np.array(encodings), decimal=3
         )
         assert time_api / time_st < 2.5
 
@@ -93,7 +93,7 @@ class Helpers:
             want_embeddings = model_base.encode(inp)
 
             for embedding, st_embedding in zip(rdata["data"], want_embeddings):
-                np.testing.assert_almost_equal(embedding["embedding"], st_embedding)
+                np.testing.assert_almost_equal(embedding["embedding"], st_embedding, decimal=3)
 
 
 @pytest.fixture

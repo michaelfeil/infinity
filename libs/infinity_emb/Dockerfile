@@ -1,5 +1,5 @@
 # Use the Python base image
-FROM nvidia/cuda:11.8.0-base-ubuntu22.04 AS base
+FROM nvidia/cuda:12.1.0-base-ubuntu22.04 AS base
 
 ENV PYTHONUNBUFFERED=1 \
     # prevents python creating .pyc files
@@ -38,19 +38,27 @@ ENV PATH=$POETRY_HOME/bin:$PATH
 RUN echo "Poetry version:" && poetry --version
 
 # Copy the rest of the app source code (this layer will be invalidated and rebuilt whenever the source code changes)
-COPY poetry.lock poetry.toml pyproject.toml README.md .
+COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 COPY infinity_emb infinity_emb
 
 # Install dependencies and project
 RUN poetry config virtualenvs.create false
-RUN poetry install --no-interaction --no-ansi --extras all
+RUN poetry install --no-interaction --no-ansi --extras all --without lint,test
 # remove cache
 RUN poetry cache clear pypi --all
 
+FROM builder as pytest
+COPY tests tests
+COPY Makefile Makefile
+RUN make lint
+RUN poetry run python -m pytest
+RUN echo "all tests passed" > "test_results.txt"
+
 # Use a multi-stage build -> production version
-from base AS production
+FROM base AS production
 
 COPY --from=builder /app /app
+COPY --from=pytest /app/test_results.txt /app/test_results.txt
 WORKDIR /app
 
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
