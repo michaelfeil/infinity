@@ -213,8 +213,13 @@ class BatchHandler:
                 item=inner_item(content=re),  # type: ignore
             )
             new_prioqueue.append(item)
+            
+        await asyncio.gather(
+            *[self._result_store.register_item(item.item) for item in new_prioqueue]
+        )
+        
         await self._queue_prio.extend(new_prioqueue)
-
+        
         result = await asyncio.gather(
             *[self._result_store.wait_for_response(item.item) for item in new_prioqueue]
         )
@@ -263,7 +268,7 @@ class BatchHandler:
     def _preprocess_batch(self):
         """loops and checks if the _core_batch has worked on all items"""
         self._ready = True
-        logger.info("ready to batch requests.")
+        logger.info("Batch_handler: Ready to batch requests.")
         try:
             while not self._shutdown.is_set():
                 # patience:
@@ -319,53 +324,58 @@ class BatchHandler:
         self._ready = False
 
     async def _queue_finalizer(self):
-        while not self._shutdown.is_set():
-            try:
-                _, batch = self._shared_queue_model_out.get_nowait()
-            except queue.Empty:
-                # instead use async await to get
+        try:
+            while not self._shutdown.is_set():
                 try:
-                    _, batch = await asyncio.to_thread(
-                        self._shared_queue_model_out.get, timeout=1
-                    )
+                    _, batch = self._shared_queue_model_out.get_nowait()
                 except queue.Empty:
-                    continue
-
-            for item in batch:
-                await self._result_store.mark_item_ready(item)
+                    # instead use async await to get
+                    try:
+                        _, batch = await asyncio.to_thread(
+                            self._shared_queue_model_out.get, timeout=1
+                        )
+                    except queue.Empty:
+                        continue
+                for item in batch:
+                    await self._result_store.mark_item_ready(item)
+        except Exception as ex:
+            logger.exception(ex)
+            raise ValueError("_queue_finalizer crashed")
 
     async def _delayed_warmup(self):
         """in case there is no warmup -> perform some warmup."""
         await asyncio.sleep(5)
         if not self._shutdown.is_set():
-            logger.debug("Sending a warm up through embedding.")
             try:
                 if "embed" in self.model_capabilities:
+                    logger.debug("Sending a warm up to `embed`.")
                     await self.embed(sentences=["test"] * self.max_batch_size)
                 if "rerank" in self.model_capabilities:
+                    logger.debug("Sending a warm up to `rerank`.")
                     await self.rerank(
                         query="query", docs=["test"] * self.max_batch_size
                     )
                 if "classify" in self.model_capabilities:
+                    logger.debug("Sending a warm up to `classify`.")
                     await self.classify(sentences=["test"] * self.max_batch_size)
-            except Exception:
-                pass
+            except Exception as ex:
+                logger.exception(ex)
 
-    async def spawn(self):
+    async def astart(self):
         """set up the resources in batch"""
         if self._ready:
             raise ValueError("previous threads are still running.")
         logger.info("creating batching engine")
-        await self.model_worker.spawn()
+        await self.model_worker.astart()
         asyncio.create_task(self._queue_finalizer())
         asyncio.create_task(asyncio.to_thread(self._preprocess_batch))
         asyncio.create_task(self._delayed_warmup())
 
-    async def shutdown(self):
+    async def astop(self):
         """
         set the shutdown event and close threadpool.
         Blocking event, until shutdown.
         """
         self._shutdown.set()
-        await self.model_worker.shutdown()
+        await self.model_worker.astop()
         print("all shutdown")

@@ -3,7 +3,7 @@ import copy
 import random
 import time
 from typing import Tuple
-
+import logging
 import numpy as np
 import pytest
 import torch
@@ -29,7 +29,7 @@ async def load_patched_bh() -> Tuple[SentenceTransformerPatched, BatchHandler]:
         engine=InferenceEngine.torch,
         max_batch_size=BATCH_SIZE,
     )
-    await bh.spawn()
+    await bh.astart()
     return model, bh
 
 
@@ -38,6 +38,8 @@ async def load_patched_bh() -> Tuple[SentenceTransformerPatched, BatchHandler]:
 @pytest.mark.anyio
 async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
     model, bh = load_patched_bh
+    model: SentenceTransformerPatched = model
+    bh: BatchHandler = bh
     assert bh.capabilities == {"embed"}
     try:
         sentences = []
@@ -59,6 +61,7 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
             ]
             _ = await asyncio.gather(*tasks)
             end = time.perf_counter()
+            logging.info(f"batch_handler: {end - start}")
             return round(end - start, 4)
 
         def method_patched(_sentences):
@@ -73,6 +76,7 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
                 emb.append(model.encode_post(embed))
             np.concatenate(emb).tolist()
             end = time.perf_counter()
+            logging.info(f"method_patched: {end - start}")
             return round(end - start, 4)
 
         def method_st(_sentences):
@@ -80,6 +84,7 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
             start = time.perf_counter()
             _ = model.encode(_sentences, batch_size=BATCH_SIZE).tolist()
             end = time.perf_counter()
+            logging.info(f"method_st: {end - start}")
             return round(end - start, 4)
 
         # yappi.get_func_stats().print_all()
@@ -97,7 +102,7 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
             [method_patched(sentences) for _ in range(N_TIMINGS)]
         )
 
-        print(
+        logging.info(
             f"times are sentence-transformers: {time_st},"
             " patched-sentence-transformers: "
             f" {time_st_patched}, batch-handler: {time_batch_handler}"
@@ -120,4 +125,4 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
         )
 
     finally:
-        await bh.shutdown()
+        await bh.astop()

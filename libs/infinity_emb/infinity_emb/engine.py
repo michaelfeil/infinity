@@ -82,13 +82,13 @@ class AsyncEmbeddingEngine:
             lengths_via_tokenize=self._lengths_via_tokenize,
             device=self.device,
         )
-        await self._batch_handler.spawn()
+        await self._batch_handler.astart()
 
     async def astop(self):
         """stop engine"""
         self._assert_running()
         self.running = False
-        await self._batch_handler.shutdown()
+        await self._batch_handler.astop()
         self._batch_handler = None
 
     async def __aenter__(self):

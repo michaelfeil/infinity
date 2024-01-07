@@ -11,7 +11,7 @@ from infinity_emb.primitives import EmbeddingInner, EmbeddingSingle
 @pytest.mark.timeout(20)
 @pytest.mark.anyio
 async def test_cache():
-    global INFINITY_CACHE_VECTORS
+    
 
     loop = asyncio.get_event_loop()
     shutdown = threading.Event()

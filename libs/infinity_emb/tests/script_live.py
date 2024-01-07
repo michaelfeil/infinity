@@ -48,7 +48,7 @@ def embedding_live_performance():
 
     print("Measuring latency via SentenceTransformers")
     latency_st = timeit.timeit("local(sample, iters=1)", number=2, globals=locals())
-    print("SentenceTransformers latency: ", latency_st)
+    print(f"SentenceTransformers latency: {latency_st}")
     model = None
 
     print("Measuring latency via requests")

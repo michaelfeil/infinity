@@ -9,6 +9,9 @@ import numpy.typing as npt
 
 EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
 
+class QueueSignalMessages(enum.Enum):
+    POISON_KILL = 1
+    WAKE_ON_NOTIFY = 2
 
 class Device(enum.Enum):
     cpu = "cpu"

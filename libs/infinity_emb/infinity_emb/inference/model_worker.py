@@ -52,7 +52,7 @@ class ModelWorker:
         self._postprocess_queue: Queue = Queue(4)
         self._shared_out_queue = out_queue
 
-        self._verbose = verbose
+        self._verbose = logger.level <= 5 or verbose
         self._last_inference = time.perf_counter()
 
     def _general_batch(
@@ -108,7 +108,7 @@ class ModelWorker:
             raise ValueError(f"{alias_name} crashed.")
         self._ready = False
 
-    async def spawn(self):
+    async def astart(self):
         """set up the resources in batch"""
         logger.info("creating ModelWorker")
         self.tasks = [
@@ -143,11 +143,10 @@ class ModelWorker:
             ),
         ]
 
-    async def shutdown(self):
+    async def astop(self):
         """
         set the shutdown event.
         Blocking event, until shutdown.
         """
         self._shutdown.set()
-
         await asyncio.gather(*self.tasks)
