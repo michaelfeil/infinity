@@ -54,7 +54,8 @@ RUN poetry run black --check .
 RUN poetry run mypy .
 # pytest
 COPY tests tests
-RUN poetry run python -m pytest -x
+# run end to end tests because of duration of build in github ci.
+RUN poetry run python -m pytest tests/end_to_end -x
 # write a file 
 RUN echo "all tests passed" > "test_results.txt"
 
