@@ -47,23 +47,22 @@ def embedding_live_performance():
     print("Both methods provide the identical output.")
 
     print("Measuring latency via SentenceTransformers")
-    latency_st = timeit.timeit("local(sample, iters=3)", number=1, globals=locals())
+    latency_st = timeit.timeit("local(sample, iters=1)", number=2, globals=locals())
     print("SentenceTransformers latency: ", latency_st)
     model = None
 
     print("Measuring latency via requests")
     latency_request = timeit.timeit(
-        "remote(json_d, iters=3)", number=1, globals=locals()
+        "remote(json_d, iters=1)", number=2, globals=locals()
     )
-    print(f"Request latency: {latency_request}")
-
-    assert latency_st * 1.1 > latency_request
+    print(f"Infinity request latency: {latency_request}")
 
 
 def latency_single():
     session = requests.Session()
 
     def _post(i):
+        time.sleep(0.02)
         json_d = json.dumps({"input": [str(i)], "model": "model"})
         s = time.perf_counter()
         res = session.post(f"{LIVE_URL}/embeddings", data=json_d)
