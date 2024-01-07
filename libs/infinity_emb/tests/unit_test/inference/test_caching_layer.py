@@ -22,9 +22,7 @@ async def test_cache():
             cache_name=f"pytest_{hash((sentence, tuple(embedding)))}", shutdown=shutdown
         )
 
-        sample = EmbeddingInner(
-            content=EmbeddingSingle(sentence)
-        )
+        sample = EmbeddingInner(content=EmbeddingSingle(sentence))
         sample_embedded = EmbeddingInner(
             content=EmbeddingSingle(sentence),
         )

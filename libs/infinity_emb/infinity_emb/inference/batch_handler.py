@@ -10,7 +10,10 @@ from typing import Any, Dict, List, Sequence, Set, Tuple
 import numpy as np
 
 from infinity_emb.inference.caching_layer import Cache
-from infinity_emb.inference.queue import CustomFIFOQueue, ResultKVStoreFuture, QueueSignal
+from infinity_emb.inference.queue import (
+    CustomFIFOQueue,
+    ResultKVStoreFuture,
+)
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
@@ -29,6 +32,7 @@ from infinity_emb.primitives import (
 )
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
+
 
 class BatchHandler:
     def __init__(
@@ -183,9 +187,7 @@ class BatchHandler:
         for re, p in zip(list_queueitem, prios):
             item = PrioritizedQueueItem(
                 priority=p,
-                item=inner_item(
-                    content=re  # type: ignore
-                ),
+                item=inner_item(content=re),  # type: ignore
             )
             new_prioqueue.append(item)
         await self._queue_prio.extend(new_prioqueue)
@@ -338,7 +340,7 @@ class BatchHandler:
                     except queue.Empty:
                         # in case of timeout start again
                         continue
-                
+
                 if (
                     self._postprocess_queue.empty()
                     and self._last_inference

@@ -1,7 +1,7 @@
 import asyncio
+import enum
 import threading
 from typing import Dict, List, Optional, Union
-import enum
 
 from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.primitives import (
@@ -9,8 +9,11 @@ from infinity_emb.primitives import (
     PrioritizedQueueItem,
     QueueItemInner,
 )
+
+
 class QueueSignal(enum.Enum):
     KILL = "kill"
+
 
 class CustomFIFOQueue:
     def __init__(self) -> None:
@@ -67,9 +70,7 @@ class CustomFIFOQueue:
         new_items: List[List[QueueItemInner]] = []
         for i in range(n_batches):
             mini_batch = new_items_l[size * i : size * (i + 1)]
-            mini_batch_e: List[QueueItemInner] = [
-                mi.item for mi in mini_batch 
-            ]
+            mini_batch_e: List[QueueItemInner] = [mi.item for mi in mini_batch]
             if mini_batch_e:
                 new_items.append(mini_batch_e)
         if new_items:
@@ -82,30 +83,29 @@ class ResultKVStoreFuture:
     def __init__(self, cache: Optional[Cache] = None) -> None:
         self._kv: Dict[str, asyncio.Future] = {}
         self._cache = cache
-        self._loop = None
-        
-    async def _loop_running(self):
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+
+    @property
+    def loop(self) -> asyncio.AbstractEventLoop:
         if self._loop is None:
             self._loop = asyncio.get_running_loop()
+        return self._loop
 
     def __len__(self):
         return len(self._kv)
 
     async def wait_for_response(self, item: QueueItemInner) -> EmbeddingReturnType:
         """wait for future to return"""
-        await self._loop_running()
         uuid = item.get_id()
-        fut = self._loop.create_future()
+        fut = self.loop.create_future()
         self._kv[uuid] = fut
         if self._cache:
-            asyncio.create_task(self._cache.aget(item))
+            asyncio.create_task(self._cache.aget(item, fut))
         await fut
         return item.get_result()
-        
-    
+
     async def mark_item_ready(self, item: QueueItemInner) -> None:
         """mark item as ready. Item.get_result() must be set before calling this"""
-        await self._loop_running()
         uuid = item.get_id()
         fut = self._kv[uuid]
         try:
@@ -113,4 +113,3 @@ class ResultKVStoreFuture:
         except asyncio.InvalidStateError:
             pass
         del self._kv[uuid]
-        

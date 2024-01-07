@@ -1,11 +1,11 @@
 import enum
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Optional, Tuple, Union, List
+from typing import Any, Dict, List, Literal, Optional, Tuple, Union
+from uuid import uuid4
 
 import numpy as np
 import numpy.typing as npt
-from uuid import uuid4
 
 EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
 
@@ -64,11 +64,8 @@ PipelineItem = Union[EmbeddingSingle, ReRankSingle, PredictSingle]
 
 @dataclass
 class AbstractInner(ABC):
-    
-    _result: Any 
+    _result: Any
     _uuid: str = field(default_factory=lambda: str(uuid4()))
-
-    
 
     def get_id(self) -> str:
         return self._uuid
@@ -76,7 +73,7 @@ class AbstractInner(ABC):
     def get_result(self) -> Any:
         """returns result"""
         return self._result  # type: ignore
-    
+
     def set_result(self, result: Any) -> None:
         if result is None:
             raise ValueError("result is None")
@@ -85,22 +82,20 @@ class AbstractInner(ABC):
 
 @dataclass
 class EmbeddingInner(AbstractInner):
-    content: EmbeddingSingle = None
+    content: EmbeddingSingle = None  # type: ignore
     _result: Optional[EmbeddingReturnType] = None
 
 
 @dataclass
 class ReRankInner(AbstractInner):
-    content: ReRankSingle = None
+    content: ReRankSingle = None  # type: ignore
     _result: Optional[float] = field(default=None, compare=False)
-
-
 
 
 @dataclass
 class PredictInner(AbstractInner):
-    content: PredictSingle = None
-    _result: Optional[List[Dict[str,Any]]] = None
+    content: PredictSingle = None  # type: ignore
+    _result: Optional[List[Dict[str, Any]]] = None
 
 
 QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner]
