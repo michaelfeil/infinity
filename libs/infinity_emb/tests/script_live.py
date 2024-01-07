@@ -25,6 +25,7 @@ def embedding_live_performance():
     print(f"batch_size is {batch_size}, model={model_name}")
     model = SentenceTransformer(model_name_or_path=model_name)
     model.half()
+
     def local(data: list[str], iters=1):
         data_in = data * iters
         enc = model.encode(data_in, batch_size=batch_size)
@@ -46,13 +47,13 @@ def embedding_live_performance():
     print("Both methods provide the identical output.")
 
     print("Measuring latency via SentenceTransformers")
-    latency_st = timeit.timeit("local(sample, iters=5)", number=2, globals=locals())
+    latency_st = timeit.timeit("local(sample, iters=3)", number=1, globals=locals())
     print("SentenceTransformers latency: ", latency_st)
     model = None
 
     print("Measuring latency via requests")
     latency_request = timeit.timeit(
-        "remote(json_d, iters=5)", number=2, globals=locals()
+        "remote(json_d, iters=3)", number=1, globals=locals()
     )
     print(f"Request latency: {latency_request}")
 
