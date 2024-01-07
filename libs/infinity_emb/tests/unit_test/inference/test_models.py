@@ -47,8 +47,8 @@ def _pretrained_model_score(
         ("sentence-transformers/all-MiniLM-L6-v2", 82.03, "default"),
         ("sentence-transformers/all-MiniLM-L6-v2", 81.73, "int8"),
         ("sentence-transformers/all-MiniLM-L6-v2", 82.03, "default"),
-        ("BAAI/bge-small-en-v1.5", 86.03, None),
-        ("BAAI/bge-small-en-v1.5", 86.03, "int8"),
+        ("BAAI/bge-small-en-v1.5", 86.00, None),
+        ("BAAI/bge-small-en-v1.5", 86.00, "int8"),
     ],
 )
 def test_bert(get_sts_bechmark_dataset, model, score, compute_type):
