@@ -93,7 +93,9 @@ class Helpers:
             want_embeddings = model_base.encode(inp)
 
             for embedding, st_embedding in zip(rdata["data"], want_embeddings):
-                np.testing.assert_almost_equal(embedding["embedding"], st_embedding, decimal=3)
+                np.testing.assert_almost_equal(
+                    embedding["embedding"], st_embedding, decimal=3
+                )
 
 
 @pytest.fixture

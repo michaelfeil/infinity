@@ -48,6 +48,7 @@ RUN poetry install --no-interaction --no-ansi --extras all --without lint,test
 RUN poetry cache clear pypi --all
 
 FROM builder as pytest
+RUN poetry install --no-interaction --no-ansi --extras all
 COPY tests tests
 COPY Makefile Makefile
 RUN make lint
