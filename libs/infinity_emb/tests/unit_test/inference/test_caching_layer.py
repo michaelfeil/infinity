@@ -7,6 +7,7 @@ import pytest
 from infinity_emb.inference import caching_layer
 from infinity_emb.primitives import EmbeddingInner, EmbeddingSingle
 
+
 @pytest.mark.timeout(20)
 @pytest.mark.anyio
 async def test_cache():

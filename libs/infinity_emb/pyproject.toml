@@ -71,6 +71,8 @@ all=["ctranslate2", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fas
 markers = [
     "performance: tests that measure performance (deselect with '-m \"not performance\"')",
 ]
+[tool.pytest]
+timeout = 300
 
 [build-system]
 requires = ["poetry-core"]
