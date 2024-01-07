@@ -16,11 +16,11 @@ ENV PYTHONUNBUFFERED=1 \
 
 RUN apt-get update && apt-get install python3.10 curl -y 
 # python3.10-venv 
+WORKDIR /app
 
 FROM base as builder
 
 # Set the working directory for the app
-WORKDIR /app
 
 # Define the version of Poetry to install (default is 1.6.1)
 # Define the directory to install Poetry to (default is /opt/poetry)
@@ -45,22 +45,25 @@ RUN poetry install --no-interaction --no-ansi --extras all --without lint,test
 # remove cache
 RUN poetry cache clear pypi --all
 
-FROM builder as pytest
-RUN apt-get install build-essential
+FROM builder as testing
+# install lint and test dependencies
 RUN poetry install --no-interaction --no-ansi --extras all
+# lint 
+RUN poetry run ruff .
+RUN poetry run black --check .
+RUN poetry run mypy .
+# pytest
 COPY tests tests
-COPY Makefile Makefile
-
-RUN make lint
-RUN poetry run python -m pytest
+RUN poetry run python -m pytest -x
+# write a file 
 RUN echo "all tests passed" > "test_results.txt"
 
 # Use a multi-stage build -> production version
 FROM base AS production
 
 COPY --from=builder /app /app
-COPY --from=pytest /app/test_results.txt /app/test_results.txt
-WORKDIR /app
+# force testing stage to run
+COPY --from=testing /app/test_results.txt /app/test_results.txt
 
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
 ENV PATH=/app/.venv/bin:$PATH
