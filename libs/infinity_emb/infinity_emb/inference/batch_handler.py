@@ -3,18 +3,26 @@ import os
 import queue
 import threading
 import time
+
+# from multiprocessing import Process
+# from multiprocessing import Queue as MPQueue
 from queue import Queue
 from typing import Any, Dict, List, Sequence, Set, Tuple
 
 import numpy as np
 
 from infinity_emb.inference.caching_layer import Cache
+from infinity_emb.inference.model_worker import ModelWorker
 from infinity_emb.inference.queue import (
     CustomFIFOQueue,
     ResultKVStoreFuture,
 )
+from infinity_emb.inference.select_model import (
+    get_engine_type_from_config,
+)
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
+    Device,
     EmbeddingInner,
     EmbeddingReturnType,
     EmbeddingSingle,
@@ -28,213 +36,41 @@ from infinity_emb.primitives import (
     ReRankInner,
     ReRankSingle,
 )
-from infinity_emb.transformer.abstract import BaseTransformer
-from infinity_emb.transformer.utils import get_lengths_with_tokenize
-
-
-class ModelWorker:
-    def __init__(
-        self,
-        in_queue: CustomFIFOQueue,
-        out_queue: Queue,
-        shutdown_event: threading.Event,
-        batch_delay: float,
-        model: BaseTransformer,
-        max_batch_size: int,
-        verbose: bool = False,
-    ) -> None:
-        self.model = model
-        self._shutdown = shutdown_event
-        self.max_batch_size = max_batch_size
-
-        self._in_queue = in_queue
-        self._feature_queue: Queue = Queue(6)
-        self._postprocess_queue: Queue = Queue(4)
-        self._out_queue = out_queue
-
-        self._batch_delay = batch_delay
-        self._verbose = verbose
-        self._last_inference = time.perf_counter()
-
-    def _preprocess_batch(self):
-        """loops and checks if the _core_batch has worked on all items"""
-        self._ready = True
-        logger.info("ready to batch requests.")
-        try:
-            while not self._shutdown.is_set():
-                # patience:
-                # do not pop a batch if self._feature_queue still has an item left
-                # - until GPU / _core_batch starts processing the previous item
-                # - or if many items are queued anyhow, so that a good batch
-                #   may be popped already.
-                if not self._feature_queue.empty() and (
-                    self._feature_queue.full()
-                    or (len(self._in_queue) < self.max_batch_size * 4)
-                ):
-                    # add some stochastic delay
-                    time.sleep(self._batch_delay)
-                    continue
-                # decision to attemp to pop a batch
-                # -> will happen if a single datapoint is available
-
-                batches = self._in_queue.pop_optimal_batches(
-                    self.max_batch_size, latest_first=False
-                )
-                if not batches:
-                    # not a single sentence available / len=0, wait for more
-                    continue
-                # optimal batch has been selected ->
-                # lets tokenize it and move tensors to GPU.
-                for batch in batches:
-                    if self._feature_queue.qsize() > 2:
-                        # add some stochastic delay
-                        time.sleep(self._batch_delay * 2)
-
-                    items_for_pre = [item.content.to_input() for item in batch]
-                    feat = self.model.encode_pre(items_for_pre)
-                    if self._verbose:
-                        logger.debug(
-                            "[📦] batched %s requests, queue remaining:  %s",
-                            len(items_for_pre),
-                            len(self._in_queue),
-                        )
-                    if self._shutdown.is_set():
-                        break
-                    # while-loop just for shutdown
-                    while not self._shutdown.is_set():
-                        try:
-                            self._feature_queue.put((feat, batch), timeout=1)
-                            break
-                        except queue.Full:
-                            continue
-        except Exception as ex:
-            logger.exception(ex)
-            raise ValueError("_preprocess_batch crashed")
-        self._ready = False
-
-    def _core_batch(self):
-        """waiting for preprocessed batches (on device)
-        and do the forward pass / `.encode`
-        """
-        try:
-            while not self._shutdown.is_set():
-                try:
-                    core_batch = self._feature_queue.get(timeout=0.5)
-                except queue.Empty:
-                    continue
-                (feat, batch) = core_batch
-                if self._verbose:
-                    logger.debug("[🏃] Inference on batch_size=%s", len(batch))
-                self._last_inference = time.perf_counter()
-                embed = self.model.encode_core(feat)
-
-                # while-loop just for shutdown
-                while not self._shutdown.is_set():
-                    try:
-                        self._postprocess_queue.put((embed, batch), timeout=1)
-                        break
-                    except queue.Full:
-                        continue
-                self._feature_queue.task_done()
-        except Exception as ex:
-            logger.exception(ex)
-            raise ValueError("_core_batch crashed.")
-
-    def _postprocess_batch(self):
-        """collecting forward(.encode) results and put them into the result store"""
-        # TODO: the ugly asyncio.sleep() could add to 3-8ms of latency worst case
-        # In constrast, at full batch size, sleep releases cruical CPU at time of
-        # the forward pass to GPU (after which there is crical time again)
-        # and not affecting the latency
-        try:
-            while not self._shutdown.is_set():
-                try:
-                    post_batch = self._postprocess_queue.get(timeout=0.5)
-                except queue.Empty:
-                    # instead use async await to get
-                    continue
-
-                if (
-                    self._postprocess_queue.empty()
-                    and self._last_inference
-                    < time.perf_counter() + self._batch_delay * 2
-                ):
-                    # 5 ms, assuming this is below
-                    # 3-50ms for inference on avg.
-                    # give the CPU some time to focus
-                    # on moving the next batch to GPU on the forward pass
-                    # before proceeding
-                    time.sleep(self._batch_delay)
-                embed, batch = post_batch
-                results = self.model.encode_post(embed)
-                for i, item in enumerate(batch):
-                    item.set_result(results[i])
-
-                while not self._shutdown.is_set():
-                    try:
-                        self._out_queue.put(batch, timeout=1)
-                        break
-                    except queue.Full:
-                        continue
-
-                self._postprocess_queue.task_done()
-        except Exception as ex:
-            logger.exception(ex)
-            raise ValueError("Postprocessor crashed")
-
-    async def spawn(self):
-        """set up the resources in batch"""
-        logger.info("creating batching engine")
-        self.tasks = [
-            asyncio.create_task(asyncio.to_thread(self._preprocess_batch)),
-            asyncio.create_task(asyncio.to_thread(self._core_batch)),
-            asyncio.create_task(asyncio.to_thread(self._postprocess_batch)),
-        ]
-
-    async def shutdown(self):
-        """
-        set the shutdown event.
-        Blocking event, until shutdown.
-        """
-        self._shutdown.set()
-
-        await asyncio.gather(*self.tasks)
+from infinity_emb.transformer.utils import (
+    CapableEngineType,
+    InferenceEngine,
+    get_lengths_with_tokenize,
+)
 
 
 class BatchHandler:
     def __init__(
         self,
-        model: BaseTransformer,
+        model_name_or_path: str,
         max_batch_size: int,
+        engine: InferenceEngine = InferenceEngine.torch,
+        model_warmup: bool = True,
         max_queue_wait: int = int(os.environ.get("INFINITY_QUEUE_SIZE", 32_000)),
-        batch_delay: float = 5e-3,
         vector_disk_cache_path: str = "",
         verbose=False,
         lengths_via_tokenize: bool = False,
+        device: Device = Device.auto,
     ) -> None:
         """
         performs batching around the model.
 
-        model: BaseTransformer, implements fn (core|pre|post)_encode
         max_batch_size: max batch size of the models
-        max_queue_wait: max items to queue in the batch, default 32_000 sentences
-        batch_delay: sleep in seconds, wait time for pre/post methods.
-            Best result: setting to 1/2 the minimal expected
-            time for core_encode method / "gpu inference".
-            Dont set it above 1x minimal expected time of interence.
-            Should not be 0 to not block Python's GIL.
         vector_disk_cache_path: path to cache vectors on disk.
         lengths_via_tokenize: if True, use the tokenizer to get the lengths else len()
         """
-        self.model = model
-        self.max_batch_size = max_batch_size
+        self._verbose = verbose
         self.max_queue_wait = max_queue_wait
+        self.max_batch_size = max_batch_size
         self._lengths_via_tokenize = lengths_via_tokenize
 
         self._shutdown = threading.Event()
-
-        self._final_queue: Queue = Queue()
-        self._batch_delay = float(max(1e-4, batch_delay))
+        self._shared_queue_model_out: Queue = Queue()
+        self._shared_queue_model_in: Queue = Queue()
         self._queue_prio = CustomFIFOQueue()
         cache = (
             Cache(
@@ -248,23 +84,39 @@ class BatchHandler:
         self._result_store = ResultKVStoreFuture(cache)
         self._ready = False
 
-        if batch_delay > 0.1:
-            logger.warn(f"high batch delay of {self._batch_delay}")
-        if max_batch_size > max_queue_wait * 10:
-            logger.warn(
-                f"queue_size={self.max_queue_wait} to small "
-                f"over batch_size={self.max_batch_size}."
-                " Consider increasing queue size"
-            )
-        self.model_worker = ModelWorker(
-            in_queue=self._queue_prio,
-            out_queue=self._final_queue,
-            shutdown_event=self._shutdown,
-            batch_delay=self._batch_delay,
-            model=self.model,
-            verbose=verbose,
-            max_batch_size=self.max_batch_size,
+        capable_engine: CapableEngineType = get_engine_type_from_config(
+            model_name_or_path=model_name_or_path,
+            engine=engine,
         )
+        self.model_capabilities = capable_engine.value.capabilities
+
+        self.model_worker = ModelWorker(
+            in_queue=self._shared_queue_model_in,
+            out_queue=self._shared_queue_model_out,
+            shutdown_event=self._shutdown,
+            verbose=self._verbose,
+            max_batch_size=self.max_batch_size,
+            model_name_or_path=model_name_or_path,
+            capable_engine=capable_engine,
+            model_warmup=model_warmup,
+            device=device,
+        )
+        # else:
+        #     # start a process
+        #     self.model_worker = Process(
+        #         target=ModelWorker,
+        #         kwargs=dict(
+        #             in_queue=self._shared_queue_model_in,
+        #             out_queue=self._shared_queue_model_out,
+        #             shutdown_event=self._shutdown,
+        #             verbose=self._verbose,
+        #             max_batch_size=self.max_batch_size,
+        #             model_name_or_path=model_name_or_path,
+        #             capable_engine=capable_engine,
+        #             model_warmup=model_warmup,
+        #             device=device,
+        #         ),
+        #     )
 
     async def embed(
         self, sentences: List[str]
@@ -277,11 +129,10 @@ class BatchHandler:
         Returns:
             EmbeddingReturnType: list of embedding as 1darray
         """
-        if "embed" not in self.model.capabilities:
+        if "embed" not in self.model_capabilities:
             raise ModelNotDeployedError(
                 "the loaded moded cannot fullyfill `embed`."
-                f"options are {self.model.capabilities} inherited "
-                f"from model_class={self.model.__class__}"
+                f"options are {self.model_capabilities}"
             )
         input_sentences = [EmbeddingSingle(s) for s in sentences]
 
@@ -301,11 +152,10 @@ class BatchHandler:
             List[float]: list of scores
             int: token usage
         """
-        if "rerank" not in self.model.capabilities:
+        if "rerank" not in self.model_capabilities:
             raise ModelNotDeployedError(
                 "the loaded moded cannot fullyfill `rerank`."
-                f"options are {self.model.capabilities} inherited "
-                f"from model_class={self.model.__class__}"
+                f"options are {self.model_capabilities}"
             )
         rerankables = [ReRankSingle(query=query, document=doc) for doc in docs]
         scores, usage = await self._schedule(rerankables)
@@ -328,11 +178,10 @@ class BatchHandler:
         Returns:
             EmbeddingReturnType: embedding as 1darray
         """
-        if "classify" not in self.model.capabilities:
+        if "classify" not in self.model_capabilities:
             raise ModelNotDeployedError(
                 "the loaded moded cannot fullyfill `classify`."
-                f"options are {self.model.capabilities} inherited "
-                f"from model_class={self.model.__class__}"
+                f"options are {self.model_capabilities}"
             )
         items = [PredictSingle(sentence=s) for s in sentences]
         classifications, usage = await self._schedule(items)
@@ -373,7 +222,7 @@ class BatchHandler:
 
     @property
     def capabilities(self) -> Set[ModelCapabilites]:
-        return self.model.capabilities
+        return self.model_capabilities
 
     def is_overloaded(self) -> bool:
         """checks if more items can be queued."""
@@ -404,20 +253,81 @@ class BatchHandler:
         if not self._lengths_via_tokenize:
             return get_lengths_with_tokenize([it.str_repr() for it in items])
         else:
+            # TODO: fix lengths_via_tokenize
             return await asyncio.to_thread(
                 get_lengths_with_tokenize,
                 _sentences=[it.str_repr() for it in items],
-                tokenize=self.model.tokenize_lengths,
+                # tokenize=self.model.tokenize_lengths, # TODO: fix
             )
+
+    def _preprocess_batch(self):
+        """loops and checks if the _core_batch has worked on all items"""
+        self._ready = True
+        logger.info("ready to batch requests.")
+        try:
+            while not self._shutdown.is_set():
+                # patience:
+                # do not pop a batch if self._feature_queue still has an item left
+                # - until GPU / _core_batch starts processing the previous item
+                # - or if many items are queued anyhow, so that a good batch
+                #   may be popped already.
+                if not self._shared_queue_model_in.empty() and (
+                    self._shared_queue_model_in.full()
+                    or (len(self._queue_prio) < self.max_batch_size * 4)
+                ):
+                    # add some stochastic delay
+                    time.sleep(2e-4)
+                    continue
+                # decision to attemp to pop a batch
+                # -> will happen if a single datapoint is available
+
+                batches = self._queue_prio.pop_optimal_batches(
+                    self.max_batch_size, latest_first=False
+                )
+                if not batches:
+                    # not a single sentence available / len=0, wait for more
+                    continue
+                # optimal batch has been selected ->
+                # lets tokenize it and move tensors to GPU.
+                for batch in batches:
+                    if self._shared_queue_model_in.qsize() > 2:
+                        # add some stochastic delay
+                        time.sleep(2e-4)
+
+                    items_for_pre = [item.content.to_input() for item in batch]
+
+                    if self._verbose:
+                        logger.debug(
+                            "[📦] batched %s requests, queue remaining:  %s",
+                            len(items_for_pre),
+                            self._shared_queue_model_in.qsize(),
+                        )
+                    if self._shutdown.is_set():
+                        break
+                    # while-loop just for shutdown
+                    while not self._shutdown.is_set():
+                        try:
+                            self._shared_queue_model_in.put(
+                                (items_for_pre, batch), timeout=1
+                            )
+                            break
+                        except queue.Full:
+                            continue
+        except Exception as ex:
+            logger.exception(ex)
+            raise ValueError("_preprocess_batch crashed")
+        self._ready = False
 
     async def _queue_finalizer(self):
         while not self._shutdown.is_set():
             try:
-                batch = self._final_queue.get_nowait()
+                _, batch = self._shared_queue_model_out.get_nowait()
             except queue.Empty:
                 # instead use async await to get
                 try:
-                    batch = await asyncio.to_thread(self._final_queue.get, timeout=1)
+                    _, batch = await asyncio.to_thread(
+                        self._shared_queue_model_out.get, timeout=1
+                    )
                 except queue.Empty:
                     continue
 
@@ -430,13 +340,13 @@ class BatchHandler:
         if not self._shutdown.is_set():
             logger.debug("Sending a warm up through embedding.")
             try:
-                if "embed" in self.model.capabilities:
+                if "embed" in self.model_capabilities:
                     await self.embed(sentences=["test"] * self.max_batch_size)
-                if "rerank" in self.model.capabilities:
+                if "rerank" in self.model_capabilities:
                     await self.rerank(
                         query="query", docs=["test"] * self.max_batch_size
                     )
-                if "classify" in self.model.capabilities:
+                if "classify" in self.model_capabilities:
                     await self.classify(sentences=["test"] * self.max_batch_size)
             except Exception:
                 pass
@@ -448,6 +358,7 @@ class BatchHandler:
         logger.info("creating batching engine")
         await self.model_worker.spawn()
         asyncio.create_task(self._queue_finalizer())
+        asyncio.create_task(asyncio.to_thread(self._preprocess_batch))
         asyncio.create_task(self._delayed_warmup())
 
     async def shutdown(self):

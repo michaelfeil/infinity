@@ -12,6 +12,7 @@ from infinity_emb.inference import BatchHandler
 from infinity_emb.transformer.embedder.sentence_transformer import (
     SentenceTransformerPatched,
 )
+from infinity_emb.transformer.utils import InferenceEngine
 
 BATCH_SIZE = 32
 N_TIMINGS = 3
@@ -23,11 +24,16 @@ LIMIT_SLOWDOWN = 1.25 if torch.cuda.is_available() else 1.35
 async def load_patched_bh() -> Tuple[SentenceTransformerPatched, BatchHandler]:
     model = SentenceTransformerPatched(pytest.DEFAULT_BERT_MODEL)
     model.encode(["hello " * 512] * BATCH_SIZE)
-    bh = BatchHandler(model=model, max_batch_size=BATCH_SIZE)
+    bh = BatchHandler(
+        model_name_or_path=str(pytest.DEFAULT_BERT_MODEL),
+        engine=InferenceEngine.torch,
+        max_batch_size=BATCH_SIZE,
+    )
     await bh.spawn()
     return model, bh
 
 
+@pytest.mark.timeout(300)
 @pytest.mark.performance
 @pytest.mark.anyio
 async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):

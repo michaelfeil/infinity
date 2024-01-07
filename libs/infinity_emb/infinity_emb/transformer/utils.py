@@ -1,7 +1,7 @@
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Tuple, Union
 
 from infinity_emb.transformer.classifier.torch import SentenceClassifier
 from infinity_emb.transformer.crossencoder.torch import (
@@ -75,6 +75,7 @@ class PredictEngine(Enum):
 
 _types: Dict[str, str] = {e.name: e.name for e in InferenceEngine}
 InferenceEngineTypeHint = Enum("InferenceEngineTypeHint", _types)  # type: ignore
+CapableEngineType = Union[EmbedderEngine, RerankEngine, PredictEngine]
 
 
 def length_tokenizer(
