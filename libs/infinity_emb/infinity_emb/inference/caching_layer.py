@@ -63,7 +63,7 @@ class Cache:
         """Sets result to item and future, if in cache.
         If not in cache, sets future to be done when result is set.
         """
-        self._verify_running()
+        await self._verify_running()
         item_as_str = item.content.str_repr()
         result = await asyncio.to_thread(self._get, item_as_str)
         if result is not None:

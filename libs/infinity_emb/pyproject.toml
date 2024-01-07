@@ -36,6 +36,7 @@ infinity_emb = "infinity_emb.infinity_server:cli"
 [tool.poetry.group.test.dependencies]
 pytest = "^7.0.0"
 pytest-mock = "*"
+pytest-timeout = "*"
 httpx  = "*"
 asgi_lifespan = "*"
 anyio = "*"
