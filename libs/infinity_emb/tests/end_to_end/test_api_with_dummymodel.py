@@ -89,6 +89,7 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset):
 
     responses = []
     for response in _responses:
+        assert response.status_code == 200, f"{response.status_code}, {response.text}"
         responses.extend(response.json()["data"])
     for i in range(len(responses)):
         responses[i] = responses[i]["embedding"]
