@@ -10,7 +10,10 @@ from typing import Any, Dict, List, Sequence, Set, Tuple
 import numpy as np
 
 from infinity_emb.inference.caching_layer import Cache
-from infinity_emb.inference.queue import CustomFIFOQueue, ResultKVStoreFuture
+from infinity_emb.inference.queue import (
+    CustomFIFOQueue,
+    ResultKVStoreFuture,
+)
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
@@ -184,11 +187,14 @@ class BatchHandler:
         for re, p in zip(list_queueitem, prios):
             item = PrioritizedQueueItem(
                 priority=p,
-                item=inner_item(
-                    content=re, future=self.loop.create_future()  # type: ignore
-                ),
+                item=inner_item(content=re),  # type: ignore
             )
             new_prioqueue.append(item)
+
+        await asyncio.gather(
+            *[self._result_store.register_item(item.item) for item in new_prioqueue]
+        )
+
         await self._queue_prio.extend(new_prioqueue)
 
         result = await asyncio.gather(
@@ -354,7 +360,8 @@ class BatchHandler:
                 embed, batch = post_batch
                 results = self.model.encode_post(embed)
                 for i, item in enumerate(batch):
-                    await item.complete(results[i])
+                    item.set_result(results[i])
+                    await self._result_store.mark_item_ready(item)
 
                 self._postprocess_queue.task_done()
         except Exception as ex:
@@ -383,7 +390,6 @@ class BatchHandler:
         if self._ready:
             raise ValueError("previous threads are still running.")
         logger.info("creating batching engine")
-        self.loop = asyncio.get_event_loop()
         self._threadpool.submit(self._preprocess_batch)
         self._threadpool.submit(self._core_batch)
         asyncio.create_task(self._postprocess_batch())
@@ -392,7 +398,7 @@ class BatchHandler:
     async def shutdown(self):
         """
         set the shutdown event and close threadpool.
-        Blocking event, until shutdown complete.
+        Blocking event, until shutdown.
         """
         self._shutdown.set()
         with ThreadPoolExecutor() as tp_temp:

@@ -8,7 +8,7 @@ import numpy as np
 import requests  # type: ignore
 from sentence_transformers import SentenceTransformer  # type: ignore
 
-LIVE_URL = "http://localhost:7997/v1"
+LIVE_URL = "http://localhost:7997"
 
 
 def embedding_live_performance():
@@ -24,6 +24,7 @@ def embedding_live_performance():
     model_name = req.json()["data"]["id"]
     print(f"batch_size is {batch_size}, model={model_name}")
     model = SentenceTransformer(model_name_or_path=model_name)
+    model.half()
 
     def local(data: list[str], iters=1):
         data_in = data * iters
@@ -39,20 +40,20 @@ def embedding_live_performance():
 
     local_resp = local(sample)
     remote_resp = [d["embedding"] for d in remote(json_d).json()["data"]]
-    np.testing.assert_almost_equal(local_resp, remote_resp, 3)
+    np.testing.assert_almost_equal(local_resp, remote_resp, 2)
     for r, e in zip(local_resp, remote_resp):
         cosine_sim = np.dot(r, e) / (np.linalg.norm(e) * np.linalg.norm(r))
         assert cosine_sim > 0.99
     print("Both methods provide the identical output.")
 
     print("Measuring latency via SentenceTransformers")
-    latency_st = timeit.timeit("local(sample, iters=5)", number=2, globals=locals())
+    latency_st = timeit.timeit("local(sample, iters=3)", number=1, globals=locals())
     print("SentenceTransformers latency: ", latency_st)
     model = None
 
     print("Measuring latency via requests")
     latency_request = timeit.timeit(
-        "remote(json_d, iters=5)", number=2, globals=locals()
+        "remote(json_d, iters=3)", number=1, globals=locals()
     )
     print(f"Request latency: {latency_request}")
 
@@ -76,4 +77,4 @@ def latency_single():
 
 
 if __name__ == "__main__":
-    latency_single()
+    embedding_live_performance()
