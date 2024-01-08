@@ -45,17 +45,15 @@ def embedding_live_performance():
         cosine_sim = np.dot(r, e) / (np.linalg.norm(e) * np.linalg.norm(r))
         assert cosine_sim > 0.99
     print("Both methods provide the identical output.")
-
-    print("Measuring latency via SentenceTransformers")
-    latency_st = timeit.timeit("local(sample, iters=1)", number=2, globals=locals())
-    print(f"SentenceTransformers latency: {latency_st}")
-    model = None
-
     print("Measuring latency via requests")
     latency_request = timeit.timeit(
-        "remote(json_d, iters=1)", number=2, globals=locals()
+        "remote(json_d, iters=3)", number=2, globals=locals()
     )
     print(f"Infinity request latency: {latency_request}")
+
+    print("Measuring latency via SentenceTransformers")
+    latency_st = timeit.timeit("local(sample, iters=3)", number=2, globals=locals())
+    print(f"SentenceTransformers latency: {latency_st}")
 
 
 def latency_single():

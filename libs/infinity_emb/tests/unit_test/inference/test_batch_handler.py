@@ -1,9 +1,10 @@
 import asyncio
 import copy
+import logging
 import random
 import time
 from typing import Tuple
-import logging
+
 import numpy as np
 import pytest
 import torch
@@ -15,7 +16,7 @@ from infinity_emb.transformer.embedder.sentence_transformer import (
 from infinity_emb.transformer.utils import InferenceEngine
 
 BATCH_SIZE = 32
-N_TIMINGS = 3
+N_TIMINGS = 1
 LIMIT_SLOWDOWN = 1.25 if torch.cuda.is_available() else 1.35
 
 
@@ -38,8 +39,7 @@ async def load_patched_bh() -> Tuple[SentenceTransformerPatched, BatchHandler]:
 @pytest.mark.anyio
 async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
     model, bh = load_patched_bh
-    model: SentenceTransformerPatched = model
-    bh: BatchHandler = bh
+
     assert bh.capabilities == {"embed"}
     try:
         sentences = []
@@ -91,13 +91,14 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
         # yappi.stop()
         method_st(sentences[::10])
         await method_batch_handler(sentences[::10])
-        time.sleep(2)
+        time.sleep(0.5)
         time_batch_handler = np.median(
             [(await method_batch_handler(sentences)) for _ in range(N_TIMINGS)]
         )
-        time.sleep(2)
+        return await bh.astop()
+        time.sleep(0.5)
         time_st = np.median([method_st(sentences) for _ in range(N_TIMINGS)])
-        time.sleep(2)
+        time.sleep(0.5)
         time_st_patched = np.median(
             [method_patched(sentences) for _ in range(N_TIMINGS)]
         )

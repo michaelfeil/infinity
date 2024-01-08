@@ -3,9 +3,8 @@ import os
 import queue
 import threading
 import time
-
-# from multiprocessing import Process
-# from multiprocessing import Queue as MPQueue
+from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import Manager, Process, set_start_method
 from queue import Queue
 from typing import Any, Dict, List, Sequence, Set, Tuple
 
@@ -33,6 +32,7 @@ from infinity_emb.primitives import (
     PredictInner,
     PredictSingle,
     PrioritizedQueueItem,
+    QueueSignalMessages,
     ReRankInner,
     ReRankSingle,
 )
@@ -41,6 +41,14 @@ from infinity_emb.transformer.utils import (
     InferenceEngine,
     get_lengths_with_tokenize,
 )
+
+_mp_manager = None
+
+
+def get_mp_manager():
+    global _mp_manager
+    _mp_manager = Manager()
+    return _mp_manager
 
 
 class BatchHandler:
@@ -63,14 +71,15 @@ class BatchHandler:
         vector_disk_cache_path: path to cache vectors on disk.
         lengths_via_tokenize: if True, use the tokenizer to get the lengths else len()
         """
-        self._verbose = verbose
-        self.max_queue_wait = max_queue_wait
+        self.model_name_or_path = model_name_or_path
         self.max_batch_size = max_batch_size
-        self._lengths_via_tokenize = lengths_via_tokenize
+        self.model_warmup = model_warmup
+        self.max_queue_wait = max_queue_wait
+        self.lengths_via_tokenize = lengths_via_tokenize
+        self.device = device
 
         self._shutdown = threading.Event()
-        self._shared_queue_model_out: Queue = Queue()
-        self._shared_queue_model_in: Queue = Queue()
+
         self._queue_prio = CustomFIFOQueue()
         cache = (
             Cache(
@@ -84,39 +93,51 @@ class BatchHandler:
         self._result_store = ResultKVStoreFuture(cache)
         self._ready = False
 
-        capable_engine: CapableEngineType = get_engine_type_from_config(
+        self.capable_engine: CapableEngineType = get_engine_type_from_config(
             model_name_or_path=model_name_or_path,
             engine=engine,
         )
-        self.model_capabilities = capable_engine.value.capabilities
+        self.model_capabilities = self.capable_engine.value.capabilities
+        self._shared_queue_model_out: Queue = Queue()
+        self._shared_queue_model_in: Queue = Queue()
 
-        self.model_worker = ModelWorker(
+    def _register_model_kwargs(self):
+        self.worker_args = dict(
             in_queue=self._shared_queue_model_in,
             out_queue=self._shared_queue_model_out,
-            shutdown_event=self._shutdown,
-            verbose=self._verbose,
             max_batch_size=self.max_batch_size,
-            model_name_or_path=model_name_or_path,
-            capable_engine=capable_engine,
-            model_warmup=model_warmup,
-            device=device,
+            model_name_or_path=self.model_name_or_path,
+            capable_engine=self.capable_engine,
+            model_warmup=self.model_warmup,
+            device=self.device,
         )
-        # else:
-        #     # start a process
-        #     self.model_worker = Process(
-        #         target=ModelWorker,
-        #         kwargs=dict(
-        #             in_queue=self._shared_queue_model_in,
-        #             out_queue=self._shared_queue_model_out,
-        #             shutdown_event=self._shutdown,
-        #             verbose=self._verbose,
-        #             max_batch_size=self.max_batch_size,
-        #             model_name_or_path=model_name_or_path,
-        #             capable_engine=capable_engine,
-        #             model_warmup=model_warmup,
-        #             device=device,
-        #         ),
-        #     )
+
+    def run_model_worker(self, num_workers=1, start_method="thread"):
+        if start_method == "thread":
+            self._register_model_kwargs()
+            with ThreadPoolExecutor(max_workers=num_workers) as pool:
+                tasks = [
+                    pool.submit(ModelWorker, **self.worker_args)
+                    for _ in range(num_workers)
+                ]
+                for task in tasks:
+                    task.result()
+        else:
+            set_start_method("spawn", force=True)
+            if 1:
+                mp_manager = get_mp_manager()
+                self._shared_queue_model_out = mp_manager.Queue()
+                self._shared_queue_model_in = mp_manager.Queue()
+                self._register_model_kwargs()
+                tasks = [
+                    Process(target=ModelWorker, kwargs=self.worker_args)
+                    for _ in range(num_workers)
+                ]
+                for task in tasks:
+                    task.start()
+                for task in tasks:
+                    task.join()
+        logger.info("ModelWorker: all workers finished.")
 
     async def embed(
         self, sentences: List[str]
@@ -213,13 +234,13 @@ class BatchHandler:
                 item=inner_item(content=re),  # type: ignore
             )
             new_prioqueue.append(item)
-            
+
         await asyncio.gather(
             *[self._result_store.register_item(item.item) for item in new_prioqueue]
         )
-        
+
         await self._queue_prio.extend(new_prioqueue)
-        
+
         result = await asyncio.gather(
             *[self._result_store.wait_for_response(item.item) for item in new_prioqueue]
         )
@@ -255,7 +276,7 @@ class BatchHandler:
         Returns:
             Tuple[List[int], int]: prios, length
         """
-        if not self._lengths_via_tokenize:
+        if not self.lengths_via_tokenize:
             return get_lengths_with_tokenize([it.str_repr() for it in items])
         else:
             # TODO: fix lengths_via_tokenize
@@ -301,14 +322,12 @@ class BatchHandler:
 
                     items_for_pre = [item.content.to_input() for item in batch]
 
-                    if self._verbose:
-                        logger.debug(
-                            "[📦] batched %s requests, queue remaining:  %s",
-                            len(items_for_pre),
-                            self._shared_queue_model_in.qsize(),
-                        )
-                    if self._shutdown.is_set():
-                        break
+                    logger.debug(
+                        "[📦] batched %s requests, queue remaining:  %s",
+                        len(items_for_pre),
+                        self._shared_queue_model_in.qsize(),
+                    )
+
                     # while-loop just for shutdown
                     while not self._shutdown.is_set():
                         try:
@@ -325,18 +344,16 @@ class BatchHandler:
 
     async def _queue_finalizer(self):
         try:
-            while not self._shutdown.is_set():
+            while True:
                 try:
-                    _, batch = self._shared_queue_model_out.get_nowait()
+                    batch = self._shared_queue_model_out.get_nowait()
                 except queue.Empty:
                     # instead use async await to get
-                    try:
-                        _, batch = await asyncio.to_thread(
-                            self._shared_queue_model_out.get, timeout=1
-                        )
-                    except queue.Empty:
-                        continue
-                for item in batch:
+                    batch = await asyncio.to_thread(self._shared_queue_model_out.get)
+                if batch == QueueSignalMessages.KILL:
+                    break
+
+                for item in batch[1]:
                     await self._result_store.mark_item_ready(item)
         except Exception as ex:
             logger.exception(ex)
@@ -366,7 +383,11 @@ class BatchHandler:
         if self._ready:
             raise ValueError("previous threads are still running.")
         logger.info("creating batching engine")
-        await self.model_worker.astart()
+        self.model_worker = asyncio.create_task(
+            asyncio.to_thread(self.run_model_worker)
+        )
+        await asyncio.sleep(5)
+
         asyncio.create_task(self._queue_finalizer())
         asyncio.create_task(asyncio.to_thread(self._preprocess_batch))
         asyncio.create_task(self._delayed_warmup())
@@ -376,6 +397,11 @@ class BatchHandler:
         set the shutdown event and close threadpool.
         Blocking event, until shutdown.
         """
+        logger.debug("batch handler -> start astop")
         self._shutdown.set()
-        await self.model_worker.astop()
-        print("all shutdown")
+
+        self._shared_queue_model_out.put(QueueSignalMessages.KILL)
+        # at last, kill the models, which kill the MP Manager.
+        self._shared_queue_model_in.put(QueueSignalMessages.KILL)
+        time.sleep(1)
+        logger.debug("batch handler <- done astop")

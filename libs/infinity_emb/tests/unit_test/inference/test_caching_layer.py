@@ -4,22 +4,19 @@ import threading
 import numpy as np
 import pytest
 
-from infinity_emb.inference import caching_layer
+from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.primitives import EmbeddingInner, EmbeddingSingle
 
 
 @pytest.mark.timeout(20)
 @pytest.mark.anyio
 async def test_cache():
-    
-
     loop = asyncio.get_event_loop()
     shutdown = threading.Event()
     try:
-        INFINITY_CACHE_VECTORS = True
         sentence = "dummy"
         embedding = np.random.random(5).tolist()
-        c = caching_layer.Cache(
+        c = Cache(
             cache_name=f"pytest_{hash((sentence, tuple(embedding)))}", shutdown=shutdown
         )
 
@@ -38,5 +35,4 @@ async def test_cache():
         assert result is not None
         np.testing.assert_array_equal(result, embedding)
     finally:
-        INFINITY_CACHE_VECTORS = False
         shutdown.set()
