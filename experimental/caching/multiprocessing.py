@@ -1,5 +1,5 @@
 from typing import Iterator
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+
 import torch.multiprocessing as mp 
 from transformers import AutoTokenizer, AutoModel
 import torch
@@ -88,15 +88,15 @@ class BoringPipeline(object):
             pass
     
 class TokenizePipeline(BoringPipeline):
-    def post_init(self, device: str):
+    def post_init(self):
         self.tokenizer = AutoTokenizer.from_pretrained("BAAI/bge-small-en-v1.5")
-        self.device = device  
+        
         
     def working_function(self, item):
         assert isinstance(item, list) and all(isinstance(i, str) for i in item)
         try:
             with torch.inference_mode():
-                return self.tokenizer(item, padding="max_length", truncation=True, return_tensors="pt").to(self.device)
+                return self.tokenizer(item, padding="max_length", truncation=True, return_tensors="pt")
         except Exception as ex:
             print(ex)
             return None
@@ -109,7 +109,9 @@ class ModelPipeline(BoringPipeline):
         
     def working_function(self, item):
         with torch.inference_mode():
-            return self.model(**item).last_hidden_state.shape
+            item = item.to(self.model.device)
+            output = self.model(**item).last_hidden_state
+            return output.detach().cpu().shape
 
 def main():    
     mp.set_start_method('spawn')

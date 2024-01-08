@@ -1,5 +1,4 @@
 from infinity_emb.inference.batch_handler import BatchHandler
-from infinity_emb.inference.select_model import select_model
 from infinity_emb.primitives import (
     Device,
     DeviceTypeHint,
@@ -15,5 +14,4 @@ __all__ = [
     "Device",
     "DeviceTypeHint",
     "BatchHandler",
-    "select_model",
 ]

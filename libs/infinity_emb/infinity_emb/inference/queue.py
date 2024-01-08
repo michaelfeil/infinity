@@ -94,22 +94,29 @@ class ResultKVStoreFuture:
     def __len__(self):
         return len(self._kv)
 
+    async def register_item(self, item: QueueItemInner) -> None:
+        """wait for future to return"""
+        uuid = item.get_id()
+        self._kv[uuid] = self.loop.create_future()
+        return None
+
     async def wait_for_response(self, item: QueueItemInner) -> EmbeddingReturnType:
         """wait for future to return"""
         uuid = item.get_id()
-        fut = self.loop.create_future()
-        self._kv[uuid] = fut
         if self._cache:
-            asyncio.create_task(self._cache.aget(item, fut))
-        await fut
+            asyncio.create_task(self._cache.aget(item, self._kv[uuid]))
+        item = await self._kv[uuid]
+
         return item.get_result()
 
     async def mark_item_ready(self, item: QueueItemInner) -> None:
         """mark item as ready. Item.get_result() must be set before calling this"""
         uuid = item.get_id()
+        # faster than .pop
         fut = self._kv[uuid]
+        del self._kv[uuid]
         try:
-            fut.set_result(None)
+            fut.set_result(item)
+            # logger.debug(f"marked {uuid} as ready with {len(item.get_result())}")
         except asyncio.InvalidStateError:
             pass
-        del self._kv[uuid]

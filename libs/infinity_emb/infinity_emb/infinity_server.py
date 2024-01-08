@@ -85,7 +85,7 @@ def create_server(
         )
 
     @app.on_event("shutdown")
-    async def _shutdown():
+    async def _astop():
         await app.model.astop()
 
     @app.get("/ready")

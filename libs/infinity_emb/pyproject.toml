@@ -36,6 +36,7 @@ infinity_emb = "infinity_emb.infinity_server:cli"
 [tool.poetry.group.test.dependencies]
 pytest = "^7.0.0"
 pytest-mock = "*"
+pytest-timeout = "*"
 httpx  = "*"
 asgi_lifespan = "*"
 anyio = "*"
@@ -70,6 +71,8 @@ all=["ctranslate2", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fas
 markers = [
     "performance: tests that measure performance (deselect with '-m \"not performance\"')",
 ]
+[tool.pytest]
+timeout = 300
 
 [build-system]
 requires = ["poetry-core"]

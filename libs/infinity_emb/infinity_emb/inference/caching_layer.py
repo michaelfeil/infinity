@@ -2,10 +2,8 @@ import asyncio
 import os
 import queue
 import threading
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Union
 
-from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import EmbeddingReturnType, QueueItemInner
 from infinity_emb.transformer.utils import infinity_cache_dir
@@ -36,18 +34,17 @@ class Cache:
         logger.info(f"caching vectors under: {dir}")
         self._cache = dc.Cache(dir, size_limit=2**28)
         self.is_running = False
-        self.startup()
 
-    def startup(self):
+    async def _verify_running(self):
         if not self.is_running:
-            self._threadpool = ThreadPoolExecutor()
-            self._threadpool.submit(self._consume_queue)
+            asyncio.create_task(asyncio.to_thread(self._consume_queue))
 
     @staticmethod
     def _hash(key: Union[str, Any]) -> str:
         return str(key)
 
     def _consume_queue(self) -> None:
+        self.is_running = True
         while not self._shutdown.is_set():
             try:
                 item = self._add_q.get(timeout=1)
@@ -57,7 +54,7 @@ class Cache:
                 k, v = item
                 self._cache.add(key=self._hash(k), value=v, expire=86400)
             self._add_q.task_done()
-        self._threadpool.shutdown(wait=True)
+        self.is_running = False
 
     def _get(self, sentence: str) -> Union[None, EmbeddingReturnType, List[float]]:
         return self._cache.get(key=self._hash(sentence))
@@ -66,8 +63,9 @@ class Cache:
         """Sets result to item and future, if in cache.
         If not in cache, sets future to be done when result is set.
         """
+        await self._verify_running()
         item_as_str = item.content.str_repr()
-        result = await to_thread(self._get, self._threadpool, item_as_str)
+        result = await asyncio.to_thread(self._get, item_as_str)
         if result is not None:
             # update item with cached result
             if item.get_result() is None:

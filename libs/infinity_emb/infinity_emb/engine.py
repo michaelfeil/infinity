@@ -4,7 +4,6 @@ from typing import Dict, List, Set, Tuple, Union
 from infinity_emb.inference import (
     BatchHandler,
     Device,
-    select_model,
 )
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import EmbeddingReturnType, ModelCapabilites
@@ -51,19 +50,18 @@ class AsyncEmbeddingEngine:
         self.running = False
         self._vector_disk_cache_path = vector_disk_cache_path
         self._model_name_or_path = model_name_or_path
+        self._model_name_or_pathengine = engine
+        self._model_warmup = model_warmup
         self._lengths_via_tokenize = lengths_via_tokenize
-        if isinstance(engine, str):
-            engine = InferenceEngine[engine]
-        if isinstance(device, str):
-            device = Device[device]
 
-        self._model, self._min_inference_t = select_model(
-            model_name_or_path=model_name_or_path,
-            batch_size=batch_size,
-            engine=engine,
-            model_warmup=model_warmup,
-            device=device,
-        )
+        if isinstance(engine, str):
+            self._engine_type = InferenceEngine[engine]
+        else:
+            self._engine_type = engine
+        if isinstance(device, str):
+            self.device = Device[device]
+        else:
+            self.device = device
 
     async def astart(self):
         """startup engine"""
@@ -75,20 +73,23 @@ class AsyncEmbeddingEngine:
             )
         self.running = True
         self._batch_handler = BatchHandler(
+            model_name_or_path=self._model_name_or_path,
+            engine=self._engine_type,
             max_batch_size=self.batch_size,
-            model=self._model,
-            batch_delay=self._min_inference_t / 2,
+            model_warmup=self._model_warmup,
             vector_disk_cache_path=self._vector_disk_cache_path,
             verbose=logger.level <= 10,
             lengths_via_tokenize=self._lengths_via_tokenize,
+            device=self.device,
         )
-        await self._batch_handler.spawn()
+        await self._batch_handler.astart()
 
     async def astop(self):
         """stop engine"""
-        self._check_running()
+        self._assert_running()
         self.running = False
-        await self._batch_handler.shutdown()
+        await self._batch_handler.astop()
+        self._batch_handler = None
 
     async def __aenter__(self):
         await self.astart()
@@ -97,16 +98,17 @@ class AsyncEmbeddingEngine:
         await self.astop()
 
     def overload_status(self):
-        self._check_running()
+        self._assert_running()
         return self._batch_handler.overload_status()
 
     def is_overloaded(self) -> bool:
-        self._check_running()
+        self._assert_running()
         return self._batch_handler.is_overloaded()
 
     @property
     def capabilities(self) -> Set[ModelCapabilites]:
-        return self._model.capabilities
+        self._assert_running()
+        return self._batch_handler.capabilities
 
     async def embed(
         self, sentences: List[str]
@@ -125,7 +127,7 @@ class AsyncEmbeddingEngine:
             Usage:
         """
 
-        self._check_running()
+        self._assert_running()
         embeddings, usage = await self._batch_handler.embed(sentences)
         return embeddings, usage
 
@@ -139,7 +141,7 @@ class AsyncEmbeddingEngine:
             docs (List[str]): docs to be reranked
             raw_scores (bool): return raw scores instead of sigmoid
         """
-        self._check_running()
+        self._assert_running()
         scores, usage = await self._batch_handler.rerank(
             query=query, docs=docs, raw_scores=raw_scores
         )
@@ -156,12 +158,12 @@ class AsyncEmbeddingEngine:
             docs (List[str]): docs to be reranked
             raw_scores (bool): return raw scores instead of sigmoid
         """
-        self._check_running()
+        self._assert_running()
         scores, usage = await self._batch_handler.classify(sentences=sentences)
 
         return scores, usage
 
-    def _check_running(self):
+    def _assert_running(self):
         if not self.running:
             raise ValueError(
                 "didn't start `AsyncEmbeddingEngine` "

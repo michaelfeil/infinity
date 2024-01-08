@@ -8,6 +8,7 @@ from infinity_emb.primitives import (
 )
 from infinity_emb.transformer.abstract import BaseCrossEncoder, BaseEmbedder
 from infinity_emb.transformer.utils import (
+    CapableEngineType,
     EmbedderEngine,
     InferenceEngine,
     PredictEngine,
@@ -17,7 +18,7 @@ from infinity_emb.transformer.utils import (
 
 def get_engine_type_from_config(
     model_name_or_path: str, engine: InferenceEngine
-) -> Union[EmbedderEngine, RerankEngine]:
+) -> CapableEngineType:
     if engine in [InferenceEngine.debugengine, InferenceEngine.fastembed]:
         return EmbedderEngine.from_inference_engine(engine)
 
@@ -50,18 +51,15 @@ def get_engine_type_from_config(
 def select_model(
     model_name_or_path: str,
     batch_size: int,
-    engine: InferenceEngine = InferenceEngine.torch,
+    capable_engine: CapableEngineType,
     model_warmup=True,
     device: Device = Device.auto,
 ) -> Tuple[Union[BaseCrossEncoder, BaseEmbedder], float]:
     logger.info(
-        f"model=`{model_name_or_path}` selected, using engine=`{engine.value}`"
+        f"model=`{model_name_or_path}` selected, using engine=`{capable_engine.value}`"
         f" and device=`{device.value}`"
     )
-    # TODO: add EncoderEngine
-    unloaded_engine = get_engine_type_from_config(model_name_or_path, engine)
-
-    loaded_engine = unloaded_engine.value(model_name_or_path, device=device.value)
+    loaded_engine = capable_engine.value(model_name_or_path, device=device.value)
 
     min_inference_t = 4e-3
     if model_warmup:
