@@ -60,7 +60,7 @@ def latency_single():
     session = requests.Session()
 
     def _post(i):
-        time.sleep(0.02)
+        time.sleep(0.05)
         json_d = json.dumps({"input": [str(i)], "model": "model"})
         s = time.perf_counter()
         res = session.post(f"{LIVE_URL}/embeddings", data=json_d)
@@ -74,4 +74,4 @@ def latency_single():
 
 
 if __name__ == "__main__":
-    embedding_live_performance()
+    latency_single()

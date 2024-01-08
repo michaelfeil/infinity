@@ -63,6 +63,8 @@ class BatchHandler:
         verbose=False,
         lengths_via_tokenize: bool = False,
         device: Device = Device.auto,
+        num_workers: int = 1,
+        worker_method: str = "thread",
     ) -> None:
         """
         performs batching around the model.
@@ -77,6 +79,8 @@ class BatchHandler:
         self.max_queue_wait = max_queue_wait
         self.lengths_via_tokenize = lengths_via_tokenize
         self.device = device
+        self.num_workers = num_workers
+        self.worker_method = worker_method
 
         self._shutdown = threading.Event()
 
@@ -98,10 +102,17 @@ class BatchHandler:
             engine=engine,
         )
         self.model_capabilities = self.capable_engine.value.capabilities
-        self._shared_queue_model_out: Queue = Queue()
-        self._shared_queue_model_in: Queue = Queue()
 
-    def _register_model_kwargs(self):
+        if self.worker_method == "thread":
+            self._shared_queue_model_out: Queue = Queue()
+            self._shared_queue_model_in: Queue = Queue()
+        else:
+            set_start_method("spawn", force=True)
+
+            mp_manager = get_mp_manager()
+            self._shared_queue_model_out = mp_manager.Queue()
+            self._shared_queue_model_in = mp_manager.Queue()
+
         self.worker_args = dict(
             in_queue=self._shared_queue_model_in,
             out_queue=self._shared_queue_model_out,
@@ -112,31 +123,24 @@ class BatchHandler:
             device=self.device,
         )
 
-    def run_model_worker(self, num_workers=4, start_method="process"):
-        if start_method == "thread":
-            self._register_model_kwargs()
-            with ThreadPoolExecutor(max_workers=num_workers) as pool:
+    def run_model_worker(self):
+        if self.worker_method == "thread":
+            with ThreadPoolExecutor(max_workers=self.num_workers) as pool:
                 tasks = [
                     pool.submit(ModelWorker, **self.worker_args)
-                    for _ in range(num_workers)
+                    for _ in range(self.num_workers)
                 ]
                 for task in tasks:
                     task.result()
         else:
-            set_start_method("spawn", force=True)
-            if 1:
-                mp_manager = get_mp_manager()
-                self._shared_queue_model_out = mp_manager.Queue()
-                self._shared_queue_model_in = mp_manager.Queue()
-                self._register_model_kwargs()
-                tasks = [
-                    Process(target=ModelWorker, kwargs=self.worker_args)
-                    for _ in range(num_workers)
-                ]
-                for task in tasks:
-                    task.start()
-                for task in tasks:
-                    task.join()
+            tasks = [
+                Process(target=ModelWorker, kwargs=self.worker_args)
+                for _ in range(self.num_workers)
+            ]
+            for task in tasks:
+                task.start()
+            for task in tasks:
+                task.join()
         logger.info("ModelWorker: all workers finished.")
 
     async def embed(
@@ -386,8 +390,6 @@ class BatchHandler:
         self.model_worker = asyncio.create_task(
             asyncio.to_thread(self.run_model_worker)
         )
-        await asyncio.sleep(5)
-
         asyncio.create_task(self._queue_finalizer())
         asyncio.create_task(asyncio.to_thread(self._preprocess_batch))
         asyncio.create_task(self._delayed_warmup())
