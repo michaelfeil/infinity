@@ -190,6 +190,11 @@ class BatchHandler:
                 item=inner_item(content=re),  # type: ignore
             )
             new_prioqueue.append(item)
+
+        await asyncio.gather(
+            *[self._result_store.register_item(item.item) for item in new_prioqueue]
+        )
+
         await self._queue_prio.extend(new_prioqueue)
 
         result = await asyncio.gather(
