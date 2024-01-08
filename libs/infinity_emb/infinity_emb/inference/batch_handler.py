@@ -112,7 +112,7 @@ class BatchHandler:
             device=self.device,
         )
 
-    def run_model_worker(self, num_workers=2, start_method="threads"):
+    def run_model_worker(self, num_workers=4, start_method="process"):
         if start_method == "thread":
             self._register_model_kwargs()
             with ThreadPoolExecutor(max_workers=num_workers) as pool:

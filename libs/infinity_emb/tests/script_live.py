@@ -47,12 +47,12 @@ def embedding_live_performance():
     print("Both methods provide the identical output.")
     print("Measuring latency via requests")
     latency_request = timeit.timeit(
-        "remote(json_d, iters=3)", number=2, globals=locals()
+        "remote(json_d, iters=5)", number=3, globals=locals()
     )
     print(f"Infinity request latency: {latency_request}")
 
     print("Measuring latency via SentenceTransformers")
-    latency_st = timeit.timeit("local(sample, iters=3)", number=2, globals=locals())
+    latency_st = timeit.timeit("local(sample, iters=5)", number=3, globals=locals())
     print(f"SentenceTransformers latency: {latency_st}")
 
 
