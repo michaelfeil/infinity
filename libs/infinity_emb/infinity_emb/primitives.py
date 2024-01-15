@@ -13,6 +13,7 @@ EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
 class Device(enum.Enum):
     cpu = "cpu"
     cuda = "cuda"
+    mps = "mps"
     auto = None
 
 
