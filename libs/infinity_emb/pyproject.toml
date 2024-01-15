@@ -22,7 +22,9 @@ uvicorn = {extras = ["standard"], version = "^0.23.2", optional=true}
 typer = {extras = ["all"], version = "^0.9.0", optional=true}
 # backend
 torch = {version = ">=2.0.0", optional=true} 
-sentence-transformers = {version = "2.2.2", optional=true} 
+# Get whl from a master branch, which allows `trust_remote_code`.
+# Can be removed once 2.3.0 is released via Pypi, which did not happen since 06/22
+sentence-transformers = { url = "https://github.com/michaelfeil/sentence-transformers/releases/download/wheels-v2.2.3.rc1/sentence_transformers-2.2.3-py3-none-any.whl" }
 ctranslate2 = {version = "^3.21.0", optional=true}
 optimum = {version = "^1.13.2", optional=true}
 fastembed = {version = "0.1.2", optional=true} 
