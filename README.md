@@ -19,13 +19,13 @@
 [![ci][ci-shield]][ci-url]
 [![Downloads][pepa-shield]][pepa-url]
 
-Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks. Infinity is developed under MIT Licence: https://github.com/michaelfeil/infinity
+Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks. Infinity is developed under [MIT Licence](https://github.com/michaelfeil/infinity/blob/main/LICENSE) and supported by [Gradient.ai](https://gradient.ai).
 
 ## Why Infinity:
 Infinity provides the following features:
 - **Deploy virtually any SentenceTransformer** - deploy the model you know from [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/)
-- **Fast inference backends**: The inference server is built on top of [torch](https://github.com/pytorch/pytorch), [fastembed(onnx-cpu)](https://github.com/qdrant/fastembed) and [CTranslate2](https://github.com/OpenNMT/CTranslate2), getting most out of your **CUDA**, **CPU** or **MPS** hardware.
-- **Dynamic batching**: New embedding requests are queued while GPU is busy with the previous ones. New requests are squeezed intro your GPU/CPU as soon as ready. 
+- **Fast inference backends**: The inference server is built on top of [torch](https://github.com/pytorch/pytorch), [fastembed(onnx-cpu)](https://github.com/qdrant/fastembed) and [CTranslate2](https://github.com/OpenNMT/CTranslate2), using FlashAttention to get the most out of your **CUDA**, **CPU** or **MPS** hardware.
+- **Dynamic batching**: New embedding requests are queued while GPU is busy with the previous ones. New requests are squeezed intro your GPU/CPU as soon as ready. Similar max throughput on GPU as text-embeddings-inference.
 - **Correct and tested implementation**: Unit and end-to-end tested. Embeddings via infinity are identical to [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/) (up to numerical precision). Lets API users create embeddings till infinity and beyond.
 - **Easy to use**: The API is built on top of [FastAPI](https://fastapi.tiangolo.com/), [Swagger](https://swagger.io/) makes it fully documented. API are aligned to [OpenAI's Embedding specs](https://platform.openai.com/docs/guides/embeddings/what-are-embeddings). See below on how to get started.
 
@@ -53,19 +53,30 @@ pip install infinity-emb[all]
   ```
 </details>
 
-
-### Launch via Python
-```Python
-from infinity_emb import create_server
-fastapi_app = create_server()
+### Launch the CLI using a pre-built docker container (recommended)
+```bash
+model=BAAI/bge-small-en-v1.5
+port=7997
+docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
 ```
-or use the AsyncAPI directly.:
+The download path at runtime, can be controlled via the environment variable `SENTENCE_TRANSFORMERS_HOME`.
 
+### or launch the `create_server()` command via CLI
+This executes the same command 
+```bash
+infinity_emb --help
+```
+
+### or launch it via Python
+
+You can use in a async context with asyncio:
 ```python
 import asyncio
 from infinity_emb import AsyncEmbeddingEngine
+
 sentences = ["Embed this is sentence via Infinity.", "Paris is in France."]
 engine = AsyncEmbeddingEngine(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch")
+
 async def main(): 
     async with engine: # engine starts with engine.astart()
         embeddings, usage = await engine.embed(sentences=sentences)
@@ -73,8 +84,15 @@ async def main():
 asyncio.run(main())
 ```
 
+### or launch the cli from Python
+```Python
+from infinity_emb import create_server
+fastapi_app = create_server()
+```
+
+## Advanced features
 <details>
-  <summary>You can also use rerank (beta, slowish and API subject to change):</summary>
+  <summary>You can also use rerank (beta):</summary>
   
   ```python
   import asyncio
@@ -95,8 +113,9 @@ asyncio.run(main())
 </details>
 
 <details>
-  <summary>You can also use text-classification (beta, slowish and API subject to change):</summary>
+  <summary>You can also use text-classification (beta):</summary>
   
+  Note: PR's to speed this section up are welcome, a 40% speedup is propable, currently the backend uses huggingface pipelines + dynamic batching.
   ```python
   import asyncio
   from infinity_emb import AsyncEmbeddingEngine
@@ -110,22 +129,8 @@ asyncio.run(main())
           return predictions, usage
   asyncio.run(main())
   ```
-     
 </details>
 
-### or launch the `create_server()` command via CLI
-```bash
-infinity_emb --help
-```
-
-### or launch the CLI using a pre-built docker container
-
-```bash
-model=BAAI/bge-small-en-v1.5
-port=8080
-docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
-```
-The download path at runtime, can be controlled via the environment variable `SENTENCE_TRANSFORMERS_HOME`.
 
 ### Launch FAQ:
 <details>
@@ -149,7 +154,7 @@ The download path at runtime, can be controlled via the environment variable `SE
     - only `BERT` models are supported.
     - only models from Huggingface are supported.
   
-  For the latest trends, you might want to check out one of the folloing models.
+  For the latest trends, you might want to check out one of the following models.
     https://huggingface.co/spaces/mteb/leaderboard
     
 </details>
@@ -171,7 +176,7 @@ The download path at runtime, can be controlled via the environment variable `SE
   docker build -t custominfinity . && docker run -it --gpus all -p 8080:8080 -p 8081:8081 custominfinity
   ```
 
-  Both models now run on two instances in one dockerfile servers.
+  Both models now run on two instances in one dockerfile servers. Otherwise, you could build your own FastAPI instance, which wraps around the Async API.
      
 </details>
 
@@ -191,11 +196,10 @@ The download path at runtime, can be controlled via the environment variable `SE
   emb_model = InfinityEmbeddings(model="BAAI/bge-small", infinity_api_url="http://localhost:7997/v1")
   print(emb_model.embed_documents([doc.page_content for doc in docs]))
   ```
-     
 </details>
 
 # Documentation
-After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:8080/docs`.
+After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:7997/docs`.
 
 # Contribute and Develop
 
