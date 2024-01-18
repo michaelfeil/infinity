@@ -137,8 +137,10 @@ def get_onnx_files(
         onnx_file = onnx_files[-1]
         logger.info(f"Using {onnx_file} as the model")
         return onnx_file
-    else:
+    elif len(onnx_files) == 1:
         return onnx_files[0]
+    else:
+        raise ValueError(f"No onnx files found for {model_id}")
 
 
 class OptimumEmbedder(BaseEmbedder):
