@@ -67,7 +67,7 @@ def optimize_model(
 ):
     if model_class is None:
         model_class = ORTModelForFeatureExtraction
-    
+
     path_folder = (
         Path(model_name_or_path)
         if Path(model_name_or_path).exists()
@@ -90,7 +90,7 @@ def optimize_model(
         return unoptimized_model_path
 
     logger.info("Optimizing model")
-    
+
     optimizer = ORTOptimizer.from_pretrained(unoptimized_model_path)
 
     optimization_config = OptimizationConfig(
@@ -98,8 +98,6 @@ def optimize_model(
         optimize_with_onnxruntime_only=False,
         optimize_for_gpu="cpu" not in execution_provider.lower(),
     )
-
-    
 
     optimized_model_path = optimizer.optimize(
         optimization_config=optimization_config,
@@ -120,7 +118,7 @@ def optimize_model(
 
 def get_onnx_files(
     model_id: str, revision: str, use_auth_token: Union[bool, str] = True
-):
+) -> Path:
     """gets the onnx files from the repo"""
     if isinstance(use_auth_token, bool):
         token = HfFolder().get_token()
@@ -130,7 +128,17 @@ def get_onnx_files(
         Path, HfApi().list_repo_files(model_id, revision=revision, token=token)
     )
     pattern = "**.onnx"
-    return [p for p in repo_files if p.match(pattern)]
+    onnx_files = [p for p in repo_files if p.match(pattern)]
+    quantized_onnx = [f for f in onnx_files if "quantized" in f.name]
+    if len(onnx_files) > 1:
+        logger.info(f"Found {len(onnx_files)} onnx files: {onnx_files}")
+        if quantized_onnx:
+            onnx_files = quantized_onnx
+        onnx_file = onnx_files[-1]
+        logger.info(f"Using {onnx_file} as the model")
+        return onnx_file
+    else:
+        return onnx_files[0]
 
 
 class OptimumEmbedder(BaseEmbedder):
@@ -142,16 +150,12 @@ class OptimumEmbedder(BaseEmbedder):
             )
         providers = device_to_onnx(kwargs.get("device", "auto"))
 
-        onnx_files = get_onnx_files(model_name_or_path, None, use_auth_token=True)
-        if len(onnx_files) >= 0:
-            logger.info(
-                f"Found {len(onnx_files)} onnx files: "
-                f"{onnx_files}, selecting {onnx_files[-1]}"
-            )
+        onnx_file = get_onnx_files(model_name_or_path, None, use_auth_token=True)
+
         self.model = optimize_model(
             model_name_or_path,
             execution_provider=providers,
-            file_name=onnx_files[-1].as_posix(),
+            file_name=onnx_file.as_posix(),
             optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False),
         )
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
