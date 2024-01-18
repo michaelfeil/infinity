@@ -63,8 +63,11 @@ def optimize_model(
     execution_provider: List[str],
     file_name: str,
     optimize_model=False,
-    model_class=ORTModelForFeatureExtraction,
+    model_class=None,
 ):
+    if model_class is None:
+        model_class = ORTModelForFeatureExtraction
+        
     unoptimized_model_path = model_class.from_pretrained(
         model_name_or_path, provider=execution_provider, file_name=file_name
     )
@@ -109,7 +112,8 @@ def optimize_model(
     return model
 
 
-def get_files(model_id: str, revision: str, use_auth_token: Union[bool, str] = True):
+def get_onnx_files(model_id: str, revision: str, use_auth_token: Union[bool, str] = True):
+    """gets the onnx files from the repo"""
     if isinstance(use_auth_token, bool):
         token = HfFolder().get_token()
     else:
@@ -130,19 +134,16 @@ class OptimumEmbedder(BaseEmbedder):
             )
         providers = device_to_onnx(kwargs.get("device", "auto"))
 
-        files = get_files(model_name_or_path, None, use_auth_token=True)
-        if len(files) >= 0:
+        onnx_files = get_onnx_files(model_name_or_path, None, use_auth_token=True)
+        if len(onnx_files) >= 0:
             logger.info(
-                f"Found {len(files)} onnx files: {files}, selecting {files[-1]}"
+                f"Found {len(onnx_files)} onnx files: {onnx_files}, selecting {onnx_files[-1]}"
             )
         self.model = optimize_model(
             model_name_or_path,
             execution_provider=providers,
-            file_name=files[-1].as_posix(),
-            optimize_model=(
-                kwargs.get("optimize", True)
-                or os.environ.get("INFINITY_ONNX_OPTIMIZE", True)
-            ),
+            file_name=onnx_files[-1].as_posix(),
+            optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False)
         )
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.config = AutoConfig.from_pretrained(model_name_or_path)
@@ -169,8 +170,13 @@ class OptimumEmbedder(BaseEmbedder):
         return normalize(embedding).astype(np.float32)
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
-        # tks = self._infinity_tokenizer.encode_batch(
-        #     sentences
-        # )
-        # return [len(t.tokens) for t in tks]
-        return [len(s.split()) for s in sentences]
+        if hasattr(self._infinity_tokenizer, "encode_batch"):
+            tks = self._infinity_tokenizer.encode_batch(
+                sentences, padding=False, truncation=True
+            )
+        else:
+            tks = self._infinity_tokenizer(
+                sentences, padding=False, truncation=True
+            )
+
+        return [len(t) for t in tks["input_ids"]]

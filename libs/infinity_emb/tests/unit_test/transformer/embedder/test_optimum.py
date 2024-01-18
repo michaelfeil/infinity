@@ -4,9 +4,9 @@ from sentence_transformers import SentenceTransformer  # type: ignore
 from infinity_emb.transformer.embedder.optimum import OptimumEmbedder
 
 
-def test_embedder_optimum():
-    model = OptimumEmbedder("Xenova/bge-small-en-v1.5", device="cpu")
-    st_model = SentenceTransformer("BAAI/bge-small-en-v1.5")
+def test_embedder_optimum(size="large"):
+    model = OptimumEmbedder(f"Xenova/bge-{size}-en-v1.5", device="cpu")
+    st_model = SentenceTransformer(f"BAAI/bge-{size}-en-v1.5", device="cpu")
 
     sentences = ["This is awesome.", "I am depressed."]
 
