@@ -67,7 +67,7 @@ def optimize_model(
 ):
     if model_class is None:
         model_class = ORTModelForFeatureExtraction
-        
+
     unoptimized_model_path = model_class.from_pretrained(
         model_name_or_path, provider=execution_provider, file_name=file_name
     )
@@ -112,7 +112,9 @@ def optimize_model(
     return model
 
 
-def get_onnx_files(model_id: str, revision: str, use_auth_token: Union[bool, str] = True):
+def get_onnx_files(
+    model_id: str, revision: str, use_auth_token: Union[bool, str] = True
+):
     """gets the onnx files from the repo"""
     if isinstance(use_auth_token, bool):
         token = HfFolder().get_token()
@@ -137,13 +139,14 @@ class OptimumEmbedder(BaseEmbedder):
         onnx_files = get_onnx_files(model_name_or_path, None, use_auth_token=True)
         if len(onnx_files) >= 0:
             logger.info(
-                f"Found {len(onnx_files)} onnx files: {onnx_files}, selecting {onnx_files[-1]}"
+                f"Found {len(onnx_files)} onnx files: "
+                f"{onnx_files}, selecting {onnx_files[-1]}"
             )
         self.model = optimize_model(
             model_name_or_path,
             execution_provider=providers,
             file_name=onnx_files[-1].as_posix(),
-            optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False)
+            optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False),
         )
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.config = AutoConfig.from_pretrained(model_name_or_path)
@@ -175,8 +178,6 @@ class OptimumEmbedder(BaseEmbedder):
                 sentences, padding=False, truncation=True
             )
         else:
-            tks = self._infinity_tokenizer(
-                sentences, padding=False, truncation=True
-            )
+            tks = self._infinity_tokenizer(sentences, padding=False, truncation=True)
 
         return [len(t) for t in tks["input_ids"]]
