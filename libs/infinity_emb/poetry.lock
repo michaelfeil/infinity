@@ -3963,7 +3963,7 @@ cache = ["diskcache"]
 ct2 = ["ctranslate2", "sentence-transformers", "torch"]
 fastembed = ["fastembed"]
 logging = ["rich"]
-onnxruntime-gpu = ["onnxruntime-gpu"]
+onnxruntime = ["onnxruntime", "onnxruntime-gpu"]
 optimum = ["optimum"]
 server = ["fastapi", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "typer", "uvicorn"]
 torch = ["sentence-transformers", "torch"]
@@ -3971,4 +3971,4 @@ torch = ["sentence-transformers", "torch"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.12"
-content-hash = "52bf5a4c6ccda2b33e08cd9107bf8dbd6d0973f5ed92f1d1070f924fef6c8264"
+content-hash = "4ae3bdd996c8398167af163c9baeed18cad134de3cef57022c9f80f32d415e53"

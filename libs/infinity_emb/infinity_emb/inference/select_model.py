@@ -64,6 +64,7 @@ def select_model(
     loaded_engine = unloaded_engine.value(model_name_or_path, device=device.value)
 
     min_inference_t = 4e-3
+    max_inference_t = 4e-3
     if model_warmup:
         # size one, warm up warm start timings.
         loaded_engine.warmup(batch_size=batch_size, n_tokens=1)
