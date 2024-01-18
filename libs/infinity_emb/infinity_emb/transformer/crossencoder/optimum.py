@@ -13,7 +13,7 @@ from infinity_emb.transformer.utils_optimum import (
 )
 
 try:
-    from optimum.onnxruntime import ORTModelForFeatureExtraction  # type: ignore
+    from optimum.onnxruntime import ORTModelForSequenceClassification  # type: ignore
     from transformers import AutoConfig, AutoTokenizer  # type: ignore
 
     OPTIMUM_AVAILABLE = True
@@ -21,24 +21,7 @@ except ImportError:
     OPTIMUM_AVAILABLE = False
 
 
-def mean_pooling(last_hidden_states: np.ndarray, attention_mask: np.ndarray):
-    input_mask_expanded = (np.expand_dims(attention_mask, axis=-1)).astype(float)
-
-    sum_embeddings = np.sum(last_hidden_states * input_mask_expanded, axis=1)
-    mask_sum = np.maximum(np.sum(input_mask_expanded, axis=1), 1e-9)
-
-    return sum_embeddings / mask_sum
-
-
-def normalize(input_array: np.ndarray, p=2, dim=1, eps=1e-12):
-    # Calculate the Lp norm along the specified dimension
-    norm = np.linalg.norm(input_array, ord=p, axis=dim, keepdims=True)
-    norm = np.maximum(norm, eps)  # Avoid division by zero
-    normalized_array = input_array / norm
-    return normalized_array
-
-
-class OptimumEmbedder(BaseEmbedder):
+class OptimumCrossEncoder(BaseEmbedder):
     def __init__(self, model_name_or_path, **kwargs):
         if not OPTIMUM_AVAILABLE:
             raise ImportError(
@@ -54,15 +37,15 @@ class OptimumEmbedder(BaseEmbedder):
             execution_provider=providers,
             file_name=onnx_file.as_posix(),
             optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False),
-            model_class=ORTModelForFeatureExtraction,
+            model_class=ORTModelForSequenceClassification,
         )
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.config = AutoConfig.from_pretrained(model_name_or_path)
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
 
-    def encode_pre(self, sentences: List[str]) -> Dict[str, np.ndarray]:
+    def encode_pre(self, input_tuples: List[str]) -> Dict[str, np.ndarray]:
         encoded = self.tokenizer(
-            sentences,
+            input_tuples,
             max_length=self.config.max_length,
             padding=True,
             truncation=True,
@@ -71,14 +54,12 @@ class OptimumEmbedder(BaseEmbedder):
         return encoded
 
     def encode_core(self, features: Dict[str, np.ndarray]) -> np.ndarray:
-        outputs = self.model(**features)
-        embeddings = mean_pooling(
-            outputs["last_hidden_state"], features["attention_mask"]
-        )
-        return embeddings
+        outputs = self.model(**features, return_dict=True)
 
-    def encode_post(self, embedding: np.ndarray) -> EmbeddingReturnType:
-        return normalize(embedding).astype(np.float32)
+        return outputs.logits
+
+    def encode_post(self, out_features: np.ndarray) -> EmbeddingReturnType:
+        return out_features.flatten().astype(np.float32)
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
         if hasattr(self._infinity_tokenizer, "encode_batch"):

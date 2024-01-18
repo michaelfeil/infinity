@@ -145,6 +145,6 @@ jobs:
           BLACK_CACHE_DIR: .black_cache
         run: |
           make lint
-          # poetry run ruff .
+          poetry run ruff .
 
       

@@ -9,8 +9,8 @@ from infinity_emb.transformer.utils import InferenceEngine
 def test_engine(engine):
     select_model(
         engine=engine,
-        model_name_or_path="BAAI/bge-small-en-v1.5"
-        if engine == InferenceEngine.fastembed
+        model_name_or_path="TaylorAI/bge-micro-v2"
+        if engine == InferenceEngine.optimum
         else pytest.DEFAULT_BERT_MODEL,
         batch_size=4,
         device=Device.cpu,

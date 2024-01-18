@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
 from infinity_emb.transformer.classifier.torch import SentenceClassifier
+from infinity_emb.transformer.crossencoder.optimum import OptimumCrossEncoder
 from infinity_emb.transformer.crossencoder.torch import (
     CrossEncoderPatched as CrossEncoderTorch,
 )
@@ -58,11 +59,14 @@ class EmbedderEngine(Enum):
 
 class RerankEngine(Enum):
     torch = CrossEncoderTorch
+    optimum = OptimumCrossEncoder
 
     @staticmethod
     def from_inference_engine(engine: InferenceEngine):
         if engine == InferenceEngine.torch:
             return RerankEngine.torch
+        elif engine == InferenceEngine.optimum:
+            return EmbedderEngine.optimum
         else:
             raise NotImplementedError(f"RerankEngine for {engine} not implemented")
 
