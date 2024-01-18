@@ -10,4 +10,5 @@ def test_engine(engine):
         engine=engine,
         model_name_or_path=pytest.DEFAULT_BERT_MODEL,
         batch_size=4,
+        device="cpu",
     )
