@@ -8,7 +8,14 @@ except ImportError:
     OPTIMUM_AVAILABLE = False
 
 
-def to_bettertransformer(model, logger):
+def to_bettertransformer(model, logger, disable=False):
+    if disable:
+        logger.info(
+            "No optimizations via Huggingface optimum, "
+            "e.g. it is disabled via device mps"
+        )
+        return model
+
     if OPTIMUM_AVAILABLE and not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
         logger.info(
             "Adding optimizations via Huggingface optimum. "
