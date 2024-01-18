@@ -53,7 +53,7 @@ def select_model(
     engine: InferenceEngine = InferenceEngine.torch,
     model_warmup=True,
     device: Device = Device.auto,
-) -> Tuple[Union[BaseCrossEncoder, BaseEmbedder], float]:
+) -> Tuple[Union[BaseCrossEncoder, BaseEmbedder], float, float]:
     logger.info(
         f"model=`{model_name_or_path}` selected, using engine=`{engine.value}`"
         f" and device=`{device.value}`"
