@@ -46,7 +46,7 @@ def device_to_onnx(device) -> Union[str, List[str]]:
     if device == "cpu":
         return "CPUExecutionProvider"
     elif device == "cuda":
-        return "CudaExecutionProvider"
+        return "CUDAExecutionProvider"
     elif device == "mps":
         return "CoreMLExecutionProvider"
     elif device is None:
@@ -60,13 +60,28 @@ def device_to_onnx(device) -> Union[str, List[str]]:
 
 def optimize_model(
     model_name_or_path,
-    execution_provider: List[str],
+    execution_provider: str,
     file_name: str,
     optimize_model=False,
     model_class=None,
 ):
     if model_class is None:
         model_class = ORTModelForFeatureExtraction
+    
+    path_folder = (
+        Path(model_name_or_path)
+        if Path(model_name_or_path).exists()
+        else Path(HF_HUB_CACHE) / "infinity_onnx" / model_name_or_path
+    )
+    files_optimized = list(path_folder.glob("**/*optimized.onnx"))
+    if files_optimized:
+        file_optimized = files_optimized[0]
+        logger.info(f"Optimized model found at {file_optimized}, skipping optimization")
+        return model_class.from_pretrained(
+            file_optimized.parent.as_posix(),
+            provider=execution_provider,
+            file_name=file_optimized.name,
+        )
 
     unoptimized_model_path = model_class.from_pretrained(
         model_name_or_path, provider=execution_provider, file_name=file_name
@@ -75,25 +90,16 @@ def optimize_model(
         return unoptimized_model_path
 
     logger.info("Optimizing model")
+    
     optimizer = ORTOptimizer.from_pretrained(unoptimized_model_path)
-
-    first_execution_provider = (
-        execution_provider
-        if isinstance(execution_provider, str)
-        else execution_provider[0]
-    )
 
     optimization_config = OptimizationConfig(
         optimization_level=99,
         optimize_with_onnxruntime_only=False,
-        optimize_for_gpu="cuda" in first_execution_provider.lower(),
+        optimize_for_gpu="cpu" not in execution_provider.lower(),
     )
 
-    path_folder = (
-        Path(model_name_or_path)
-        if Path(model_name_or_path).exists()
-        else Path(HF_HUB_CACHE) / "infinity_onnx" / model_name_or_path
-    )
+    
 
     optimized_model_path = optimizer.optimize(
         optimization_config=optimization_config,

@@ -72,11 +72,17 @@ def select_model(
         min_inference_t = min(
             loaded_engine.warmup(batch_size=1, n_tokens=1)[1] for _ in range(10)
         )
+        loaded_engine.warmup(
+            batch_size=batch_size, n_tokens=1
+        )
         emb_per_sec_short, max_inference_t, log_msg = loaded_engine.warmup(
-            batch_size=64, n_tokens=1
+            batch_size=batch_size, n_tokens=1
         )
         logger.info(log_msg)
         # now warm up with max_token, max batch size
+        loaded_engine.warmup(
+            batch_size=batch_size, n_tokens=512
+        )
         emb_per_sec, _, log_msg = loaded_engine.warmup(
             batch_size=batch_size, n_tokens=512
         )
