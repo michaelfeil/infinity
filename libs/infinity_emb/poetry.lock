@@ -4150,9 +4150,10 @@ fastembed = ["fastembed"]
 logging = ["rich"]
 optimum = ["optimum"]
 server = ["fastapi", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "typer", "uvicorn"]
+tensorrt = ["tensorrt"]
 torch = ["sentence-transformers", "torch", "torch"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.12"
-content-hash = "5f69b99500f61e02702652847ebbe7332ba87451843cb40d734720db6d232178"
+content-hash = "37123ce2d93f58d6bbb945b0ef85be84ac6965cc9ee961ef5794c44eacf17819"

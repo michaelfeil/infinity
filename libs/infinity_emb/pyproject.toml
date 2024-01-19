@@ -41,7 +41,7 @@ optimum = {version = "^1.16.1", optional=true, extras=["onnxruntime","onnxruntim
 fastembed = {version = "0.1.2", optional=true} 
 # cache
 diskcache = {version = "*", optional=true}
-tensorrt = {version = "^8.6", optional=true}
+tensorrt = {version = "^8.6.1", optional=true}
 
 [tool.poetry.scripts]
 infinity_emb = "infinity_emb.infinity_server:cli"
@@ -75,6 +75,7 @@ fastembed=["fastembed"]
 torch=["sentence-transformers","torch"]
 logging=["rich"]
 cache=["diskcache"]
+tensorrt=["tensorrt"]
 server=["fastapi", "pydantic", "orjson", "prometheus-fastapi-instrumentator", "uvicorn", "typer","rich"]
 all=["ctranslate2", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn","diskcache"]
 

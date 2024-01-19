@@ -48,7 +48,7 @@ RUN poetry cache clear pypi --all
 
 FROM builder as testing
 # install lint and test dependencies
-RUN poetry install --no-interaction --no-ansi --all-extras
+RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"
 
 # lint 
 RUN poetry run ruff .
