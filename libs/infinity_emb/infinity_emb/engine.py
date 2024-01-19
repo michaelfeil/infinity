@@ -57,7 +57,7 @@ class AsyncEmbeddingEngine:
         if isinstance(device, str):
             device = Device[device]
 
-        self._model, self._min_inference_t, self._max_inference_t = select_model(
+        self._model, self._min_inference_t = select_model(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,

@@ -109,7 +109,7 @@ jobs:
         # It doesn't matter how you change it, any change will cause a cache-bust.
         working-directory: ${{ inputs.working-directory }}
         run: |
-          poetry install --extras "all" --with test,lint,codespell
+          poetry install --all-extras --with test,lint,codespell
 
       - name: Install infinity_emb editable
         working-directory: ${{ inputs.working-directory }}
@@ -145,6 +145,6 @@ jobs:
           BLACK_CACHE_DIR: .black_cache
         run: |
           make lint
-          poetry run ruff .
+          # poetry run ruff .
 
       

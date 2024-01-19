@@ -4,7 +4,6 @@ from httpx import AsyncClient
 from sentence_transformers import SentenceTransformer  # type: ignore
 
 from infinity_emb import create_server
-from infinity_emb.primitives import Device
 from infinity_emb.transformer.utils import InferenceEngine
 
 PREFIX = "/v1_fastembed"
@@ -17,7 +16,6 @@ app = create_server(
     batch_size=batch_size,
     url_prefix=PREFIX,
     engine=InferenceEngine.fastembed,
-    device=Device.cpu,
 )
 
 

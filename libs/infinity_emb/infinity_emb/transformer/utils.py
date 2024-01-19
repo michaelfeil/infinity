@@ -4,13 +4,11 @@ from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
 from infinity_emb.transformer.classifier.torch import SentenceClassifier
-from infinity_emb.transformer.crossencoder.optimum import OptimumCrossEncoder
 from infinity_emb.transformer.crossencoder.torch import (
     CrossEncoderPatched as CrossEncoderTorch,
 )
 from infinity_emb.transformer.embedder.dummytransformer import DummyTransformer
 from infinity_emb.transformer.embedder.fastembed import Fastembed
-from infinity_emb.transformer.embedder.optimum import OptimumEmbedder
 from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
     SentenceTransformerPatched,
@@ -29,7 +27,6 @@ __all__ = [
 class InferenceEngine(Enum):
     torch = "torch"
     ctranslate2 = "ctranslate2"
-    optimum = "optimum"
     fastembed = "fastembed"
     debugengine = "dummytransformer"
 
@@ -39,7 +36,6 @@ class EmbedderEngine(Enum):
     ctranslate2 = CT2SentenceTransformer
     fastembed = Fastembed
     debugengine = DummyTransformer
-    optimum = OptimumEmbedder
 
     @staticmethod
     def from_inference_engine(engine: InferenceEngine):
@@ -51,22 +47,17 @@ class EmbedderEngine(Enum):
             return EmbedderEngine.fastembed
         elif engine == InferenceEngine.debugengine:
             return EmbedderEngine.debugengine
-        elif engine == InferenceEngine.optimum:
-            return EmbedderEngine.optimum
         else:
             raise NotImplementedError(f"EmbedderEngine for {engine} not implemented")
 
 
 class RerankEngine(Enum):
     torch = CrossEncoderTorch
-    optimum = OptimumCrossEncoder
 
     @staticmethod
     def from_inference_engine(engine: InferenceEngine):
         if engine == InferenceEngine.torch:
             return RerankEngine.torch
-        elif engine == InferenceEngine.optimum:
-            return EmbedderEngine.optimum
         else:
             raise NotImplementedError(f"RerankEngine for {engine} not implemented")
 

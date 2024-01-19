@@ -14,7 +14,6 @@ class Device(enum.Enum):
     cpu = "cpu"
     cuda = "cuda"
     mps = "mps"
-    tensorrt = "tensorrt"
     auto = None
 
 
