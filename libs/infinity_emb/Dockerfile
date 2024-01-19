@@ -1,5 +1,5 @@
 # Use the Python base image
-FROM nvidia/cuda:12.1.0-base-ubuntu22.04 AS base
+FROM nvidia/cuda:11.8.0-base-ubuntu22.04 AS base
 
 ENV PYTHONUNBUFFERED=1 \
     \
@@ -12,7 +12,8 @@ ENV PYTHONUNBUFFERED=1 \
     # it gets named `.venv`
     POETRY_VIRTUALENVS_IN_PROJECT=true \
     # do not ask any interactive question
-    POETRY_NO_INTERACTION=1 
+    POETRY_NO_INTERACTION=1 \
+    EXTRAS="all"
 
 RUN apt-get update && apt-get install python3.10 curl -y 
 # python3.10-venv 
@@ -38,16 +39,17 @@ RUN echo "Poetry version:" && poetry --version
 # Copy the rest of the app source code (this layer will be invalidated and rebuilt whenever the source code changes)
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
-RUN poetry install --no-interaction --no-ansi --no-root --extras all --without lint,test
+RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test
 COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package
-RUN poetry install --no-interaction --no-ansi --extras all --without lint,test
+RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"  --without lint,test
 # remove cache
 RUN poetry cache clear pypi --all
 
 FROM builder as testing
 # install lint and test dependencies
-RUN poetry install --no-interaction --no-ansi --extras all
+RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"
+
 # lint 
 RUN poetry run ruff .
 RUN poetry run black --check .

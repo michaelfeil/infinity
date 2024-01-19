@@ -27,13 +27,14 @@ class CustomFIFOQueue:
         self._sync_event.set()
 
     def pop_optimal_batches(
-        self, size: int, max_n_batches: int = 32, timeout=0.2, **kwargs
+        self, size: int, max_n_batches: int = 1, timeout=0.2, **kwargs
     ) -> Union[List[List[QueueItemInner]], None]:
         """
         pop batch `up to size` + `continuous (sorted)` from queue
 
         Args:
             size (int): max size of batch
+            max_n_batches: number of batches to be poped and sorted.
             timeout (float, optional): timeout until None is returned. Defaults to 0.2.
             latest_first (bool, optional): guarantees processing of oldest item in list.
                 As latest first requires getting argmin of created timestamps,

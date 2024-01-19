@@ -54,16 +54,11 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         self.eval()
 
-        if self._target_device.type == "mps":
-            logger.info(
-                "Disable Optimizations via Huggingface optimum for MPS Backend. "
-            )
-        else:
-            fm.auto_model = to_bettertransformer(fm.auto_model, logger)
+        fm.auto_model = to_bettertransformer(
+            fm.auto_model, logger, disable=device.type == "mps"
+        )
 
-        if self._target_device.type == "cuda" and not os.environ.get(
-            "INFINITY_DISABLE_HALF", ""
-        ):
+        if device.type == "cuda" and not os.environ.get("INFINITY_DISABLE_HALF", ""):
             logger.info(
                 "Switching to half() precision (cuda: fp16). "
                 "Disable by the setting the env var `INFINITY_DISABLE_HALF`"
