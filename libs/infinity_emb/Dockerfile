@@ -15,7 +15,7 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_NO_INTERACTION=1 \
     EXTRAS="all"
 
-RUN apt-get update && apt-get install gcc python3.10 curl -y 
+RUN apt-get update && apt-get install gcc python3-dev python3.10 curl -y 
 # python3.10-venv 
 WORKDIR /app
 
