@@ -4143,17 +4143,17 @@ idna = ">=2.0"
 multidict = ">=4.0"
 
 [extras]
-all = ["ctranslate2", "diskcache", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "torch", "typer", "uvicorn"]
+all = ["ctranslate2", "diskcache", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "torch", "torch", "typer", "uvicorn"]
 cache = ["diskcache"]
-ct2 = ["ctranslate2", "sentence-transformers", "torch", "torch"]
+ct2 = ["ctranslate2", "sentence-transformers", "torch", "torch", "torch"]
 fastembed = ["fastembed"]
 logging = ["rich"]
 optimum = ["optimum"]
 server = ["fastapi", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "typer", "uvicorn"]
 tensorrt = ["tensorrt"]
-torch = ["sentence-transformers", "torch", "torch"]
+torch = ["sentence-transformers", "torch", "torch", "torch"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.12"
-content-hash = "37123ce2d93f58d6bbb945b0ef85be84ac6965cc9ee961ef5794c44eacf17819"
+content-hash = "92c8399d9d213fe2ce339829381d85486157b25040f1fedc282f4ca03298b3b5"
