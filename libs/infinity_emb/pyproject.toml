@@ -40,7 +40,8 @@ torch = [
 ]
 sentence-transformers = {version = "2.2.2", optional=true} 
 ctranslate2 = {version = "^3.21.0", optional=true}
-optimum = {version = "^1.16.1", optional=true, extras=["onnxruntime","onnxruntime-gpu"]}
+optimum = {version = "^1.16.1", optional=true, extras=["onnxruntime"]}
+onnxruntime-gpu = {version = "*", optional=true} 
 fastembed = {version = "0.1.2", optional=true} 
 # cache
 diskcache = {version = "*", optional=true}
@@ -78,9 +79,11 @@ fastembed=["fastembed"]
 torch=["sentence-transformers","torch"]
 logging=["rich"]
 cache=["diskcache"]
-tensorrt=["tensorrt"]
 server=["fastapi", "pydantic", "orjson", "prometheus-fastapi-instrumentator", "uvicorn", "typer","rich"]
 all=["ctranslate2", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn","diskcache"]
+# non-default gpu
+tensorrt=["tensorrt"]
+onnxruntime-gpu=["onnxruntime-gpu"]
 
 [tool.pytest.ini_options]
 markers = [
