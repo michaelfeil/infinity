@@ -113,7 +113,7 @@ def get_onnx_files(
             )
         )
     else:
-        repo_files = list(Path(model_name_or_path).glob("**"))
+        repo_files = list(Path(model_name_or_path).glob("**/*"))
     pattern = "**.onnx"
     onnx_files = [p for p in repo_files if p.match(pattern)]
 
