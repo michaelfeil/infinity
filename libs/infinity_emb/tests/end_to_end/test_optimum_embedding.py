@@ -8,7 +8,9 @@ from infinity_emb.primitives import Device
 from infinity_emb.transformer.utils import InferenceEngine
 
 PREFIX = "/v1_fastembed"
-MODEL: str = "vectoriseai/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
+MODEL: str = (
+    "vectoriseai/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
+)
 
 batch_size = 8
 
@@ -46,7 +48,8 @@ async def test_model_route(client):
 
 # @pytest.mark.anyio
 # async def test_embedding(client, model_base, helpers):
-#     await helpers.embedding_verify(client, model_base, prefix=PREFIX, model_name=MODEL)
+#     await helpers.embedding_verify(client, model_base, prefix=PREFIX,
+#                           model_name=MODEL)
 
 
 # @pytest.mark.performance
