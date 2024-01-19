@@ -21,6 +21,8 @@ def device_to_onnx(device) -> Union[str, List[str]]:
         return "CUDAExecutionProvider"
     elif device == "mps":
         return "CoreMLExecutionProvider"
+    elif device == "tensorrt":
+        return "TensorrtExecutionProvider"
     elif device is None or device == "auto":
         raise ValueError(
             "for the optimum engine, the `device=auto` "
@@ -43,7 +45,7 @@ def optimize_model(
         else Path(HF_HUB_CACHE) / "infinity_onnx" / model_name_or_path
     )
     files_optimized = list(path_folder.glob("**/*optimized.onnx"))
-    if files_optimized:
+    if files_optimized and not execution_provider == "TensorrtExecutionProvider":
         file_optimized = files_optimized[0]
         logger.info(f"Optimized model found at {file_optimized}, skipping optimization")
         return model_class.from_pretrained(
@@ -55,7 +57,7 @@ def optimize_model(
     unoptimized_model_path = model_class.from_pretrained(
         model_name_or_path, provider=execution_provider, file_name=file_name
     )
-    if not optimize_model:
+    if not optimize_model or execution_provider == "TensorrtExecutionProvider":
         return unoptimized_model_path
 
     try:
@@ -73,7 +75,6 @@ def optimize_model(
             optimization_config=optimization_config,
             save_dir=path_folder.as_posix(),
             # if larger than 2gb use external data format
-            use_external_data_format=False,
             one_external_file=True,
         )
 
@@ -92,7 +93,10 @@ def optimize_model(
 
 
 def get_onnx_files(
-    model_id: str, revision: str, use_auth_token: Union[bool, str] = True
+    model_id: str,
+    revision: str,
+    use_auth_token: Union[bool, str] = True,
+    prefer_quantized=False,
 ) -> Path:
     """gets the onnx files from the repo"""
     if isinstance(use_auth_token, bool):
@@ -104,11 +108,13 @@ def get_onnx_files(
     )
     pattern = "**.onnx"
     onnx_files = [p for p in repo_files if p.match(pattern)]
-    quantized_onnx = [f for f in onnx_files if "quantized" in f.name]
+
+    prefered_regex = "quantize" if prefer_quantized else "model.onnx"
+    prefered_onnx = [f for f in onnx_files if prefered_regex in f.name]
     if len(onnx_files) > 1:
         logger.info(f"Found {len(onnx_files)} onnx files: {onnx_files}")
-        if quantized_onnx:
-            onnx_files = quantized_onnx
+        if prefered_onnx:
+            onnx_files = prefered_onnx
         onnx_file = onnx_files[-1]
         logger.info(f"Using {onnx_file} as the model")
         return onnx_file

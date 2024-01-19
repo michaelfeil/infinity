@@ -28,17 +28,23 @@ class OptimumCrossEncoder(BaseEmbedder):
                 "optimum.onnxruntime is not installed."
                 "`pip install optimum[onnxruntime]`"
             )
-        providers = device_to_onnx(kwargs.get("device", "auto"))
+        provider = device_to_onnx(kwargs.get("device"))
 
-        onnx_file = get_onnx_files(model_name_or_path, None, use_auth_token=True)
+        onnx_file = get_onnx_files(
+            model_name_or_path,
+            None,
+            use_auth_token=True,
+            prefer_quantized="cpu" in provider.lower(),
+        )
 
         self.model = optimize_model(
             model_name_or_path,
-            execution_provider=providers,
+            execution_provider=provider,
             file_name=onnx_file.as_posix(),
             optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False),
             model_class=ORTModelForSequenceClassification,
         )
+        self.model.use_io_binding = False
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.config = AutoConfig.from_pretrained(model_name_or_path)
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)

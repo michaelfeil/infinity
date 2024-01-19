@@ -24,7 +24,9 @@ except ImportError:
 def mean_pooling(last_hidden_states: np.ndarray, attention_mask: np.ndarray):
     input_mask_expanded = (np.expand_dims(attention_mask, axis=-1)).astype(float)
 
-    sum_embeddings = np.sum(last_hidden_states * input_mask_expanded, axis=1)
+    sum_embeddings = np.sum(
+        last_hidden_states.astype(float) * input_mask_expanded, axis=1
+    )
     mask_sum = np.maximum(np.sum(input_mask_expanded, axis=1), 1e-9)
 
     return sum_embeddings / mask_sum
@@ -45,17 +47,24 @@ class OptimumEmbedder(BaseEmbedder):
                 "optimum.onnxruntime is not installed."
                 "`pip install optimum[onnxruntime]`"
             )
-        providers = device_to_onnx(kwargs.get("device", "auto"))
+        provider = device_to_onnx(kwargs.get("device"))
 
-        onnx_file = get_onnx_files(model_name_or_path, None, use_auth_token=True)
+        onnx_file = get_onnx_files(
+            model_name_or_path,
+            None,
+            use_auth_token=True,
+            prefer_quantized="cpu" in provider.lower(),
+        )
 
         self.model = optimize_model(
             model_name_or_path,
-            execution_provider=providers,
+            execution_provider=provider,
             file_name=onnx_file.as_posix(),
             optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False),
             model_class=ORTModelForFeatureExtraction,
         )
+        self.model.use_io_binding = False
+
         self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
         self.config = AutoConfig.from_pretrained(model_name_or_path)
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
@@ -70,15 +79,13 @@ class OptimumEmbedder(BaseEmbedder):
         )
         return encoded
 
-    def encode_core(self, features: Dict[str, np.ndarray]) -> np.ndarray:
+    def encode_core(self, features: Dict[str, np.ndarray]) -> tuple:
         outputs = self.model(**features)
-        embeddings = mean_pooling(
-            outputs["last_hidden_state"], features["attention_mask"]
-        )
-        return embeddings
+        return (outputs["last_hidden_state"], features["attention_mask"])
 
-    def encode_post(self, embedding: np.ndarray) -> EmbeddingReturnType:
-        return normalize(embedding).astype(np.float32)
+    def encode_post(self, embedding: tuple) -> EmbeddingReturnType:
+        embeddings = mean_pooling(embedding[0], embedding[1])
+        return normalize(embeddings).astype(np.float32)
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
         if hasattr(self._infinity_tokenizer, "encode_batch"):
