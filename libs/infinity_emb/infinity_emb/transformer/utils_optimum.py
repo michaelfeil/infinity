@@ -13,6 +13,11 @@ except ImportError:
 except RuntimeError:
     pass
 
+try:
+    import torch
+except ImportError:
+    torch = None  # type: ignore
+
 
 def device_to_onnx(device) -> Union[str, List[str]]:
     if device == "cpu":
@@ -24,10 +29,10 @@ def device_to_onnx(device) -> Union[str, List[str]]:
     elif device == "tensorrt":
         return "TensorrtExecutionProvider"
     elif device is None or device == "auto":
-        raise ValueError(
-            "for the optimum engine, the `device=auto` "
-            "is not supported yet, select `cpu` or `cuda` explicitly"
-        )
+        if torch is not None and torch.cuda.is_available():
+            return "CUDAExecutionProvider"
+        else:
+            return "CPUExecutionProvider"
     else:
         raise ValueError(f"Unknown device {device}")
 
@@ -65,10 +70,12 @@ def optimize_model(
 
         optimizer = ORTOptimizer.from_pretrained(unoptimized_model_path)
 
+        is_gpu = "cpu" not in execution_provider.lower()
         optimization_config = OptimizationConfig(
             optimization_level=99,
             optimize_with_onnxruntime_only=False,
-            optimize_for_gpu="cpu" not in execution_provider.lower(),
+            optimize_for_gpu=is_gpu,
+            fp16=is_gpu,
         )
 
         optimized_model_path = optimizer.optimize(

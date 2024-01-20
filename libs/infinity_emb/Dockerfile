@@ -66,6 +66,18 @@ poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
 fi
 RUN echo "all tests passed" > "test_results.txt"
 
+# Export with tensorrt, not recommended.
+# docker buildx build --target=production-tensorrt -f Dockerfile .
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
+RUN apt-get update && apt-get install gcc python3-dev python3-pip python3.10 curl -y 
+COPY --from=builder /app /app
+# force testing stage to run
+COPY --from=testing /app/test_results.txt /app/test_results.txt
+ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
+ENV PATH=/app/.venv/bin:$PATH
+RUN pip install --no-cache-dir tensorrt onnxruntime-gpu
+ENTRYPOINT ["infinity_emb"]
+
 # Use a multi-stage build -> production version
 FROM base AS production
 
