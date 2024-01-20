@@ -25,7 +25,7 @@ app = create_server(
 
 @pytest.fixture
 def model_base() -> SentenceTransformer:
-    return SentenceTransformer(MODEL, device="cpu")
+    return SentenceTransformer(MODEL)
 
 
 @pytest.fixture()
@@ -46,21 +46,22 @@ async def test_model_route(client):
     assert isinstance(rdata["data"].get("stats"), dict)
 
 
-# @pytest.mark.anyio
-# async def test_embedding(client, model_base, helpers):
-#     await helpers.embedding_verify(client, model_base, prefix=PREFIX,
-#                           model_name=MODEL)
+@pytest.mark.anyio
+async def test_embedding(client, model_base, helpers):
+    await helpers.embedding_verify(
+        client, model_base, prefix=PREFIX, model_name=MODEL, decimal=2
+    )
 
 
-# @pytest.mark.performance
-# @pytest.mark.anyio
-# async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, helpers):
-#     await helpers.util_batch_embedding(
-#         client=client,
-#         sts_bechmark_dataset=get_sts_bechmark_dataset,
-#         model_base=model_base,
-#         prefix=PREFIX,
-#         model_name=MODEL,
-#         batch_size=batch_size,
-#         downsample=16,
-#     )
+@pytest.mark.performance
+@pytest.mark.anyio
+async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, helpers):
+    await helpers.util_batch_embedding(
+        client=client,
+        sts_bechmark_dataset=get_sts_bechmark_dataset,
+        model_base=model_base,
+        prefix=PREFIX,
+        model_name=MODEL,
+        batch_size=batch_size,
+        downsample=16,
+    )

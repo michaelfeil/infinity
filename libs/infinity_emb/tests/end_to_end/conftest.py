@@ -72,7 +72,7 @@ class Helpers:
         assert time_api / time_st < 2.5
 
     @staticmethod
-    async def embedding_verify(client, model_base, prefix, model_name):
+    async def embedding_verify(client, model_base, prefix, model_name, decimal=3):
         possible_inputs = [
             ["This is a test sentence."],
             ["This is a test sentence.", "This is another test sentence."],
@@ -94,7 +94,7 @@ class Helpers:
 
             for embedding, st_embedding in zip(rdata["data"], want_embeddings):
                 np.testing.assert_almost_equal(
-                    embedding["embedding"], st_embedding, decimal=3
+                    embedding["embedding"], st_embedding, decimal=decimal
                 )
 
 

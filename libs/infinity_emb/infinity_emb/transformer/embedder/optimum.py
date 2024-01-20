@@ -32,7 +32,11 @@ def mean_pooling(last_hidden_states: np.ndarray, attention_mask: np.ndarray):
     return sum_embeddings / mask_sum
 
 
-def normalize(input_array: np.ndarray, p=2, dim=1, eps=1e-12):
+def cls_token_pooling(model_output, *args):
+    return model_output[:, 0]
+
+
+def normalize(input_array, p=2, dim=1, eps=1e-12):
     # Calculate the Lp norm along the specified dimension
     norm = np.linalg.norm(input_array, ord=p, axis=dim, keepdims=True)
     norm = np.maximum(norm, eps)  # Avoid division by zero
@@ -56,6 +60,12 @@ class OptimumEmbedder(BaseEmbedder):
             prefer_quantized="cpu" in provider.lower(),
         )
 
+        self.pooling = (
+            mean_pooling
+            if os.environ.get("INFINITY_MEAN_POOLING", "") == "mean"
+            else cls_token_pooling
+        )
+
         self.model = optimize_model(
             model_name_or_path,
             execution_provider=provider,
@@ -72,27 +82,37 @@ class OptimumEmbedder(BaseEmbedder):
     def encode_pre(self, sentences: List[str]) -> Dict[str, np.ndarray]:
         encoded = self.tokenizer(
             sentences,
-            max_length=self.config.max_length,
+            max_length=self.config.max_position_embeddings,
             padding=True,
-            truncation=True,
+            truncation="longest_first",
             return_tensors="np",
         )
         return encoded
 
-    def encode_core(self, features: Dict[str, np.ndarray]) -> tuple:
-        outputs = self.model(**features)
-        return (outputs["last_hidden_state"], features["attention_mask"])
+    def encode_core(self, onnx_input: Dict[str, np.ndarray]) -> tuple:
+        outputs = self.model(**onnx_input)
+        return {
+            "token_embeddings": outputs["last_hidden_state"],
+            "attention_mask": onnx_input["attention_mask"],
+        }
 
     def encode_post(self, embedding: tuple) -> EmbeddingReturnType:
-        embeddings = mean_pooling(embedding[0], embedding[1])
-        return normalize(embeddings).astype(np.float32)
+        embedding = self.pooling(
+            embedding["token_embeddings"], embedding["attention_mask"]
+        )
+
+        return normalize(embedding).astype(np.float32)
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
         if hasattr(self._infinity_tokenizer, "encode_batch"):
             tks = self._infinity_tokenizer.encode_batch(
-                sentences, padding=False, truncation=True
+                sentences,
+                padding=False,
+                truncation="longest_first",
             )
         else:
-            tks = self._infinity_tokenizer(sentences, padding=False, truncation=True)
+            tks = self._infinity_tokenizer(
+                sentences, padding=False, truncation="longest_first"
+            )
 
         return [len(t) for t in tks["input_ids"]]

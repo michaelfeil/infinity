@@ -52,9 +52,9 @@ class OptimumCrossEncoder(BaseEmbedder):
     def encode_pre(self, input_tuples: List[str]) -> Dict[str, np.ndarray]:
         encoded = self.tokenizer(
             input_tuples,
-            max_length=self.config.max_length,
+            max_length=self.config.max_position_embeddings,
             padding=True,
-            truncation=True,
+            truncation="longest_first",
             return_tensors="np",
         )
         return encoded

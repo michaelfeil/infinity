@@ -92,19 +92,17 @@ def optimize_model(
     return model
 
 
-def get_onnx_files(
+def list_all_repo_files(
     model_name_or_path: str,
     revision: str,
     use_auth_token: Union[bool, str] = True,
-    prefer_quantized=False,
-) -> Path:
-    """gets the onnx files from the repo"""
+):
     if not Path(model_name_or_path).exists():
         if isinstance(use_auth_token, bool):
             token = HfFolder().get_token()
         else:
             token = use_auth_token
-        repo_files = list(
+        return list(
             map(
                 Path,
                 HfApi().list_repo_files(
@@ -113,7 +111,21 @@ def get_onnx_files(
             )
         )
     else:
-        repo_files = list(Path(model_name_or_path).glob("**/*"))
+        return list(Path(model_name_or_path).glob("**/*"))
+
+
+def get_onnx_files(
+    model_name_or_path: str,
+    revision: str,
+    use_auth_token: Union[bool, str] = True,
+    prefer_quantized=False,
+) -> Path:
+    """gets the onnx files from the repo"""
+    repo_files = list_all_repo_files(
+        model_name_or_path=model_name_or_path,
+        revision=revision,
+        use_auth_token=use_auth_token,
+    )
     pattern = "**.onnx"
     onnx_files = [p for p in repo_files if p.match(pattern)]
 
