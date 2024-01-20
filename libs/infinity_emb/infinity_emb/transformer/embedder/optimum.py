@@ -89,14 +89,14 @@ class OptimumEmbedder(BaseEmbedder):
         )
         return encoded
 
-    def encode_core(self, onnx_input: Dict[str, np.ndarray]) -> tuple:
+    def encode_core(self, onnx_input: Dict[str, np.ndarray]) -> dict:
         outputs = self.model(**onnx_input)
         return {
             "token_embeddings": outputs["last_hidden_state"],
             "attention_mask": onnx_input["attention_mask"],
         }
 
-    def encode_post(self, embedding: tuple) -> EmbeddingReturnType:
+    def encode_post(self, embedding: dict) -> EmbeddingReturnType:
         embedding = self.pooling(
             embedding["token_embeddings"], embedding["attention_mask"]
         )

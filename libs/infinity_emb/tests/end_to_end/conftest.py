@@ -16,6 +16,7 @@ class Helpers:
         model_name: str,
         batch_size: int,
         downsample: int = 2,
+        decimal=3,
     ):
         sentences = []
         for d in sts_bechmark_dataset:
@@ -67,7 +68,7 @@ class Helpers:
             cosine_sim = np.dot(r, e) / (np.linalg.norm(e) * np.linalg.norm(r))
             assert cosine_sim > 0.95
         np.testing.assert_almost_equal(
-            np.array(responses), np.array(encodings), decimal=3
+            np.array(responses), np.array(encodings), decimal=decimal
         )
         assert time_api / time_st < 2.5
 
