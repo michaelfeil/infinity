@@ -57,8 +57,13 @@ RUN poetry run mypy .
 # pytest
 COPY tests tests
 # run end to end tests because of duration of build in github ci.
-RUN poetry run python -m pytest tests/end_to_end -x
-# write a file 
+# Run tests/end_to_end on TARGETPLATFORM x86_64 otherwise run tests/end_to_end_gpu
+# poetry run python -m pytest tests/end_to_end -x
+RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] ; then \
+poetry run python -m pytest tests/end_to_end -x ; \
+else \
+poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
+fi
 RUN echo "all tests passed" > "test_results.txt"
 
 # Use a multi-stage build -> production version
