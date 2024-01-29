@@ -25,7 +25,6 @@ def to_bettertransformer(model, logger, disable=False):
             model = BetterTransformer.transform(model)
         except Exception as ex:
             logger.exception(f"BetterTransformer failed with {ex}")
-            exit(1)
     elif not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
         logger.info(
             "No optimizations via Huggingface optimum,"
