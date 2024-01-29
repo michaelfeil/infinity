@@ -91,7 +91,7 @@ def optimize_model(
             optimize_with_onnxruntime_only=False,
             optimize_for_gpu=is_gpu,
             fp16=is_gpu,
-            enable_gelu_approximation=True,
+            # enable_gelu_approximation=True,
             # enable_gemm_fast_gelu_fusion=True, # might not work
         )
 
