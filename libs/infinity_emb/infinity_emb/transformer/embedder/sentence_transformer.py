@@ -61,7 +61,9 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             fm.auto_model, logger, disable=self.device.type == "mps"
         )
 
-        if self.device.type == "cuda" and not os.environ.get("INFINITY_DISABLE_HALF", ""):
+        if self.device.type == "cuda" and not os.environ.get(
+            "INFINITY_DISABLE_HALF", ""
+        ):
             logger.info(
                 "Switching to half() precision (cuda: fp16). "
                 "Disable by the setting the env var `INFINITY_DISABLE_HALF`"
