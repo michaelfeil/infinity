@@ -39,14 +39,14 @@ __all__ = [
 class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
     """SentenceTransformer with .encode_core() and no microbatching"""
 
-    def __init__(self, model_name_or_path, **kwargs):
+    def __init__(self, model_name_or_path, trust_remote_code=True, **kwargs):
         if not TORCH_AVAILABLE:
             raise ImportError(
                 "torch is not installed."
                 " `pip install infinity-emb[torch]` "
                 "or pip install infinity-emb[torch,optimum]`"
             )
-        super().__init__(model_name_or_path, **kwargs)
+        super().__init__(model_name_or_path, trust_remote_code=trust_remote_code, **kwargs)
         device = self._target_device
         self.to(device)
         # make a copy of the tokenizer,
