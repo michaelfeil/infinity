@@ -95,6 +95,30 @@ from infinity_emb import create_server
 fastapi_app = create_server(**cli_kwargs)
 ```
 
+### or launch on the cloud via dstack
+
+dstack allows you to provision a VM instance on the cloud of your choice. Write a service configuration file as below for the deployment of `BAAI/bge-small-en-v1.5` model wrapped in Infinity.
+
+```yaml
+type: service
+
+image: michaelf34/infinity:latest
+env:
+  - MODEL_ID=BAAI/bge-small-en-v1.5
+commands:
+  - infinity_emb --model-name-or-path $MODEL_ID --port 80
+port: 80
+```
+
+Then, simply run the following dstack command. After this, a prompt will appear to let you choose which VM instance to deploy the Infinity.
+
+```shell
+dstack run . -f infinity/serve.dstack.yml --gpu 16GB
+```
+
+For more detailed tutorial and general information about dstack, visit the [official doc](https://dstack.ai/examples/infinity/#run-the-configuration).
+
+
 ## Non-embedding features
 <details>
   <summary>You can also use rerank (beta):</summary>
