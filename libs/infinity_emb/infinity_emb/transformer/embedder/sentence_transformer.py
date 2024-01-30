@@ -1,6 +1,7 @@
 import copy
 import os
-from typing import Dict, List, Union
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 
@@ -11,6 +12,7 @@ from infinity_emb.transformer.acceleration import to_bettertransformer
 
 try:
     import torch
+    from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
     from sentence_transformers import SentenceTransformer, util  # type: ignore
     from torch import Tensor
     from torch.nn import Module
@@ -142,16 +144,26 @@ class CT2SentenceTransformer(SentenceTransformerPatched):
         self,
         *args,
         compute_type="default",
+        device: Optional[str] = None,
         force=False,
         vmap: Union[str, None] = None,
         **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        self._prefered_device = device
+        super().__init__(*args, device=device, **kwargs)
         self[0] = CT2Transformer(
             self[0],
             compute_type=compute_type,
             force=force,
             vmap=vmap,
+        )
+
+    @property
+    def device(self):
+        if self._prefered_device is not None:
+            return torch.device(self._prefered_device)
+        return (
+            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         )
 
 
@@ -192,8 +204,9 @@ class CT2Transformer(Module):
         # Convert to the CTranslate2 model format, if not already done.
         model_dir = transformer.auto_model.config.name_or_path
         self.ct2_model_dir = os.path.join(
-            model_dir,
+            HUGGINGFACE_HUB_CACHE,
             "ctranslate2_" + ctranslate2.__version__,
+            str(Path(model_dir).name.replace("/", "_")),
         )
 
         if not os.path.exists(os.path.join(self.ct2_model_dir, "model.bin")) or force:
