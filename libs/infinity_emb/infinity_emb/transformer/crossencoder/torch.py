@@ -51,7 +51,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
             self.model, logger, disable=self._target_device.type == "mps"
         )
 
-        if self._target_device.type == "cuda" and not os.environ.get(
+        if self.device.type == "cuda" and not os.environ.get(
             "INFINITY_DISABLE_HALF", ""
         ):
             logger.info(

@@ -49,8 +49,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         super().__init__(
             model_name_or_path, trust_remote_code=trust_remote_code, **kwargs
         )
-        device = self._target_device
-        self.to(device)
+        self.to(self.device)
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
         # without corrupting the original.
@@ -59,10 +58,12 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self.eval()
 
         fm.auto_model = to_bettertransformer(
-            fm.auto_model, logger, disable=device.type == "mps"
+            fm.auto_model, logger, disable=self.device.type == "mps"
         )
 
-        if device.type == "cuda" and not os.environ.get("INFINITY_DISABLE_HALF", ""):
+        if self.device.type == "cuda" and not os.environ.get(
+            "INFINITY_DISABLE_HALF", ""
+        ):
             logger.info(
                 "Switching to half() precision (cuda: fp16). "
                 "Disable by the setting the env var `INFINITY_DISABLE_HALF`"
@@ -80,8 +81,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         """
 
         with torch.inference_mode():
-            device = self._target_device
-            features = util.batch_to_device(features, device)
+            features = util.batch_to_device(features, self.device)
             out_features = self.forward(features)["sentence_embedding"]
 
         return out_features
