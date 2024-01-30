@@ -13,9 +13,10 @@ from infinity_emb.transformer.utils import InferenceEngine
 
 try:
     # enable hf hub transfer if available
-    import hf_transfer  # type: ignore
+    import hf_transfer  # type: ignore # noqa
 
-    os.environ.setdefault("HF_HUB_ENABLE_HF_TRANSFER", "1")
+    if "HF_HUB_ENABLE_HF_TRANSFER" not in os.environ:
+        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
 except ImportError:
     pass
 
