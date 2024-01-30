@@ -75,7 +75,9 @@ COPY --from=builder /app /app
 COPY --from=testing /app/test_results.txt /app/test_results.txt
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
 ENV PATH=/app/.venv/bin:$PATH
-RUN pip install --no-cache-dir tensorrt onnxruntime-gpu
+RUN pip install --no-cache-dir "onnxruntime-gpu==1.16.3" "tensorrt==8.6.*"
+ENV LD_LIBRARY_PATH /app/.venv/lib/python3.10/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/python3.10/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
+ENV PATH /app/.venv/lib/python3.10/site-packages/tensorrt/bin:${PATH}
 ENTRYPOINT ["infinity_emb"]
 
 # Use a multi-stage build -> production version

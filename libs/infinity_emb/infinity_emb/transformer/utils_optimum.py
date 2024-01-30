@@ -50,7 +50,22 @@ def optimize_model(
         else Path(HUGGINGFACE_HUB_CACHE) / "infinity_onnx" / model_name_or_path
     )
     files_optimized = list(path_folder.glob("**/*optimized.onnx"))
-    if files_optimized and not execution_provider == "TensorrtExecutionProvider":
+    if execution_provider == "TensorrtExecutionProvider":
+        return model_class.from_pretrained(
+            model_name_or_path,
+            provider=execution_provider,
+            file_name=file_name,
+            provider_options={
+                "trt_fp16_enable": True,
+                "trt_layer_norm_fp32_fallback": True,
+                "trt_cuda_graph_enable": True,  # helps small layers
+                "trt_builder_optimization_level": 3,  # select between 3-5
+                # int8, not working, needs calibration table.
+                # "trt_int8_use_native_calibration_table": True,
+                # "trt_int8_enable": "quantize" in file_name,
+            },
+        )
+    if files_optimized:
         file_optimized = files_optimized[0]
         logger.info(f"Optimized model found at {file_optimized}, skipping optimization")
         return model_class.from_pretrained(
@@ -76,6 +91,8 @@ def optimize_model(
             optimize_with_onnxruntime_only=False,
             optimize_for_gpu=is_gpu,
             fp16=is_gpu,
+            # enable_gelu_approximation=True,
+            # enable_gemm_fast_gelu_fusion=True, # might not work
         )
 
         optimized_model_path = optimizer.optimize(
