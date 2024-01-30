@@ -78,9 +78,9 @@ def select_model(
         )
         logger.info(log_msg)
         # now warm up with max_token, max batch size
-        loaded_engine.warmup(batch_size=batch_size, n_tokens=512)
+        loaded_engine.warmup(batch_size=batch_size, n_tokens=8192)
         emb_per_sec, _, log_msg = loaded_engine.warmup(
-            batch_size=batch_size, n_tokens=512
+            batch_size=batch_size, n_tokens=8192
         )
         logger.info(log_msg)
         logger.info(
