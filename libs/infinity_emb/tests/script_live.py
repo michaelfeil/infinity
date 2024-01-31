@@ -8,7 +8,7 @@ import numpy as np
 import requests  # type: ignore
 from sentence_transformers import SentenceTransformer  # type: ignore
 
-LIVE_URL = "http://localhost:7997/v1"
+LIVE_URL = "http://localhost:7997"
 
 
 def embedding_live_performance():

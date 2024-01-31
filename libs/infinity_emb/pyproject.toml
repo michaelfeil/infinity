@@ -31,20 +31,16 @@ prometheus-fastapi-instrumentator = {version = "^6.1.0", optional=true}
 uvicorn = {extras = ["standard"], version = "^0.23.2", optional=true}
 typer = {extras = ["all"], version = "^0.9.0", optional=true}
 # backend
-torch = [
-  # force x86_64 linux to install the right cuda version
-  {platform = "linux", version = "2.2.0+cu121", markers="platform_machine=='x86_64'", source = "cuda-torch", optional=true},
-  # all others relax the constraints
-  {platform = "darwin", version = "2.2.0", source = "pypi", optional=true},
-  {platform = "linux", version = "2.2.0", markers="platform_machine!='x86_64'", source = "pypi", optional=true},
-]
+torch = {version = "2.2.0", source = "pypi", optional=true}
 sentence-transformers = {version = "^2.3.0", optional=true} 
 ctranslate2 = {version = "^3.21.0", optional=true}
 optimum = {version = "^1.16.1", optional=true, extras=["onnxruntime"]}
-onnxruntime-gpu = {version = "*", optional=true} 
 fastembed = {version = "0.1.2", optional=true} 
+hf_transfer = {version="0.1.5", optional=true}
 # cache
 diskcache = {version = "*", optional=true}
+# gpu
+onnxruntime-gpu = {version = "*", optional=true} 
 tensorrt = {version = "^8.6.1", optional=true}
 
 [tool.poetry.scripts]
@@ -76,7 +72,7 @@ mypy-protobuf = "^3.0.0"
 ct2=["ctranslate2","sentence-transformers","torch"]
 optimum=["optimum"]
 fastembed=["fastembed"]
-torch=["sentence-transformers","torch"]
+torch=["sentence-transformers","torch","hf_transfer"]
 logging=["rich"]
 cache=["diskcache"]
 server=["fastapi", "pydantic", "orjson", "prometheus-fastapi-instrumentator", "uvicorn", "typer","rich"]
