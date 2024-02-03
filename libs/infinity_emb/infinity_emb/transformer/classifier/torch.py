@@ -31,12 +31,10 @@ class SentenceClassifier(BaseClassifer):
             top_k=None,
             torch_dtype=torch.float32 if used_device == "cpu" else torch.float16,
         )
-        if used_device == "mps":
-            logger.info(
-                "Disable Optimizations via Huggingface optimum for MPS Backend. "
-            )
-        else:
-            self._pipe.model = to_bettertransformer(self._pipe.model, logger)
+
+        self._pipe.model = to_bettertransformer(
+            self._pipe.model, logger, disable=used_device == "mps"
+        )
 
         self._infinity_tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
 

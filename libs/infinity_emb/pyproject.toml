@@ -1,11 +1,21 @@
 [tool.poetry]
 name = "infinity_emb"
-version = "0.0.17"
+version = "0.0.22"
 description = "Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks."
 authors = ["michaelfeil <me@michaelfeil.eu>"]
 license = "MIT"
 readme = "README.md"
 packages = [{include = "infinity_emb"}]
+
+[[tool.poetry.source]]
+name = "cuda-torch"
+priority = "explicit"
+url = "https://download.pytorch.org/whl/cu121"
+
+[[tool.poetry.source]]
+name = "cpu-torch"
+priority = "explicit"
+url = "https://download.pytorch.org/whl/cpu"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.12"
@@ -21,14 +31,17 @@ prometheus-fastapi-instrumentator = {version = "^6.1.0", optional=true}
 uvicorn = {extras = ["standard"], version = "^0.23.2", optional=true}
 typer = {extras = ["all"], version = "^0.9.0", optional=true}
 # backend
-torch = {version = ">=2.0.0", optional=true} 
-sentence-transformers = {version = "2.2.2", optional=true} 
+torch = {version = "2.2.0", source = "pypi", optional=true}
+sentence-transformers = {version = "^2.3.0", optional=true} 
 ctranslate2 = {version = "^3.21.0", optional=true}
-optimum = {version = "^1.13.2", optional=true}
+optimum = {version = "^1.16.1", optional=true, extras=["onnxruntime"]}
 fastembed = {version = "0.1.2", optional=true} 
-onnxruntime-gpu = {version = "*", optional=true}
+hf_transfer = {version="0.1.5", optional=true}
 # cache
 diskcache = {version = "*", optional=true}
+# gpu
+onnxruntime-gpu = {version = "*", optional=true} 
+tensorrt = {version = "^8.6.1", optional=true}
 
 [tool.poetry.scripts]
 infinity_emb = "infinity_emb.infinity_server:cli"
@@ -59,12 +72,14 @@ mypy-protobuf = "^3.0.0"
 ct2=["ctranslate2","sentence-transformers","torch"]
 optimum=["optimum"]
 fastembed=["fastembed"]
-torch=["sentence-transformers","torch"]
-onnxruntime-gpu=["onnxruntime-gpu"]
+torch=["sentence-transformers","torch","hf_transfer"]
 logging=["rich"]
 cache=["diskcache"]
 server=["fastapi", "pydantic", "orjson", "prometheus-fastapi-instrumentator", "uvicorn", "typer","rich"]
 all=["ctranslate2", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn","diskcache"]
+# non-default gpu
+tensorrt=["tensorrt"]
+onnxruntime-gpu=["onnxruntime-gpu"]
 
 [tool.pytest.ini_options]
 markers = [

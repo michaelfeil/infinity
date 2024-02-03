@@ -61,15 +61,18 @@ docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name
 ```
 The download path at runtime, can be controlled via the environment variable `SENTENCE_TRANSFORMERS_HOME`.
 
-### or launch the `create_server()` command via CLI
-This executes the same command 
+### or launch the cli after the pip install
+After your pip install, with your venv activate, you can run the CLI directly.
+Check the `--help` command to get a description for all parameters.
+
 ```bash
 infinity_emb --help
 ```
 
 ### or launch it via Python
 
-You can use in a async context with asyncio:
+You can use in a async context with asyncio. 
+This gives you most flexibility, but is a bit more advanced.
 ```python
 import asyncio
 from infinity_emb import AsyncEmbeddingEngine
@@ -84,16 +87,44 @@ async def main():
 asyncio.run(main())
 ```
 
-### or launch the cli from Python
+### or launch the `create_server()` command from Python
+This executes the same command as the cli.
+If you really don't enjoy to use the CLI, you can get the same options from python.
 ```Python
 from infinity_emb import create_server
-fastapi_app = create_server()
+fastapi_app = create_server(**cli_kwargs)
 ```
 
-## Advanced features
+### or launch on the cloud via dstack
+
+dstack allows you to provision a VM instance on the cloud of your choice. Write a service configuration file as below for the deployment of `BAAI/bge-small-en-v1.5` model wrapped in Infinity.
+
+```yaml
+type: service
+
+image: michaelf34/infinity:latest
+env:
+  - MODEL_ID=BAAI/bge-small-en-v1.5
+commands:
+  - infinity_emb --model-name-or-path $MODEL_ID --port 80
+port: 80
+```
+
+Then, simply run the following dstack command. After this, a prompt will appear to let you choose which VM instance to deploy the Infinity.
+
+```shell
+dstack run . -f infinity/serve.dstack.yml --gpu 16GB
+```
+
+For more detailed tutorial and general information about dstack, visit the [official doc](https://dstack.ai/examples/infinity/#run-the-configuration).
+
+
+## Non-embedding features
 <details>
   <summary>You can also use rerank (beta):</summary>
-  
+
+  Reranking gives you a score for similarity between a query and multiple documents. 
+  Use it in conjunction with a VectorDB+Embeddings, or as standalone for small amount of documents.
   ```python
   import asyncio
   from infinity_emb import AsyncEmbeddingEngine
@@ -176,7 +207,7 @@ fastapi_app = create_server()
   docker build -t custominfinity . && docker run -it --gpus all -p 8080:8080 -p 8081:8081 custominfinity
   ```
 
-  Both models now run on two instances in one dockerfile servers. Otherwise, you could build your own FastAPI instance, which wraps around the Async API.
+  Both models now run on two instances in one dockerfile servers. Otherwise, you could build your own FastAPI/flask instance, which wraps around the Async API.
      
 </details>
 

@@ -27,10 +27,17 @@ jobs:
     environment:
       name: publish
     steps:
-      - name: Remove unnecessary files
-        run: |
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@v1.3.0
+        if: runner.os == 'Linux'
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
       - name: Checkout
         uses: actions/checkout@v4
       - name: Get git tag
@@ -41,7 +48,7 @@ jobs:
           VERSION: ${{ steps.get-latest-tag.outputs.tag }}
         run: |
           echo "VERSION_TAG=${{ inputs.image }}:${VERSION#v}" >> $GITHUB_ENV
-          echo $VERSION_TAG
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
       - name: Set up Docker Buildx
@@ -70,7 +77,7 @@ jobs:
           # We can only build for the intersection of platforms supported by
           # QEMU and base python image, for now build only for
           # linux/amd64 and linux/arm64
-          cache-from: type=registry,ref=${{ env.LATEST_TAG }}
+          # cache-from: type=registry,ref=${{ env.LATEST_TAG }}
           platforms: linux/amd64,linux/arm64
           tags: ${{ env.LATEST_TAG }},${{ env.VERSION_TAG }}
           push: true

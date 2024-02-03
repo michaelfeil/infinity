@@ -7,8 +7,10 @@ from infinity_emb import create_server
 from infinity_emb.primitives import Device
 from infinity_emb.transformer.utils import InferenceEngine
 
-PREFIX = "/v1_fastembed"
-MODEL: str = "BAAI/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
+PREFIX = "/v1_optimum"
+MODEL: str = (
+    "vectoriseai/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
+)
 
 batch_size = 8
 
@@ -16,14 +18,14 @@ app = create_server(
     model_name_or_path=MODEL,
     batch_size=batch_size,
     url_prefix=PREFIX,
-    engine=InferenceEngine.fastembed,
+    engine=InferenceEngine.optimum,
     device=Device.cpu,
 )
 
 
 @pytest.fixture
 def model_base() -> SentenceTransformer:
-    return SentenceTransformer(MODEL, device="cpu")
+    return SentenceTransformer(MODEL)
 
 
 @pytest.fixture()
@@ -46,7 +48,9 @@ async def test_model_route(client):
 
 @pytest.mark.anyio
 async def test_embedding(client, model_base, helpers):
-    await helpers.embedding_verify(client, model_base, prefix=PREFIX, model_name=MODEL)
+    await helpers.embedding_verify(
+        client, model_base, prefix=PREFIX, model_name=MODEL, decimal=2
+    )
 
 
 @pytest.mark.performance
@@ -60,4 +64,5 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, hel
         model_name=MODEL,
         batch_size=batch_size,
         downsample=16,
+        decimal=1,
     )

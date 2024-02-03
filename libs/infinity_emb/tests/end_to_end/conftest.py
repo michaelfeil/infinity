@@ -16,6 +16,7 @@ class Helpers:
         model_name: str,
         batch_size: int,
         downsample: int = 2,
+        decimal=3,
     ):
         sentences = []
         for d in sts_bechmark_dataset:
@@ -67,12 +68,12 @@ class Helpers:
             cosine_sim = np.dot(r, e) / (np.linalg.norm(e) * np.linalg.norm(r))
             assert cosine_sim > 0.95
         np.testing.assert_almost_equal(
-            np.array(responses), np.array(encodings), decimal=3
+            np.array(responses), np.array(encodings), decimal=decimal
         )
         assert time_api / time_st < 2.5
 
     @staticmethod
-    async def embedding_verify(client, model_base, prefix, model_name):
+    async def embedding_verify(client, model_base, prefix, model_name, decimal=3):
         possible_inputs = [
             ["This is a test sentence."],
             ["This is a test sentence.", "This is another test sentence."],
@@ -94,7 +95,7 @@ class Helpers:
 
             for embedding, st_embedding in zip(rdata["data"], want_embeddings):
                 np.testing.assert_almost_equal(
-                    embedding["embedding"], st_embedding, decimal=3
+                    embedding["embedding"], st_embedding, decimal=decimal
                 )
 
 

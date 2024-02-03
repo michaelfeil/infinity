@@ -1,6 +1,7 @@
 import copy
 import os
-from typing import Dict, List, Union
+from pathlib import Path
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 
@@ -11,6 +12,7 @@ from infinity_emb.transformer.acceleration import to_bettertransformer
 
 try:
     import torch
+    from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
     from sentence_transformers import SentenceTransformer, util  # type: ignore
     from torch import Tensor
     from torch.nn import Module
@@ -37,16 +39,17 @@ __all__ = [
 class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
     """SentenceTransformer with .encode_core() and no microbatching"""
 
-    def __init__(self, model_name_or_path, **kwargs):
+    def __init__(self, model_name_or_path, trust_remote_code=True, **kwargs):
         if not TORCH_AVAILABLE:
             raise ImportError(
                 "torch is not installed."
                 " `pip install infinity-emb[torch]` "
                 "or pip install infinity-emb[torch,optimum]`"
             )
-        super().__init__(model_name_or_path, **kwargs)
-        device = self._target_device
-        self.to(device)
+        super().__init__(
+            model_name_or_path, trust_remote_code=trust_remote_code, **kwargs
+        )
+        self.to(self.device)
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
         # without corrupting the original.
@@ -54,14 +57,11 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         self.eval()
 
-        if self._target_device.type == "mps":
-            logger.info(
-                "Disable Optimizations via Huggingface optimum for MPS Backend. "
-            )
-        else:
-            fm.auto_model = to_bettertransformer(fm.auto_model, logger)
+        fm.auto_model = to_bettertransformer(
+            fm.auto_model, logger, disable=self.device.type == "mps"
+        )
 
-        if self._target_device.type == "cuda" and not os.environ.get(
+        if self.device.type == "cuda" and not os.environ.get(
             "INFINITY_DISABLE_HALF", ""
         ):
             logger.info(
@@ -69,6 +69,9 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
                 "Disable by the setting the env var `INFINITY_DISABLE_HALF`"
             )
             self.half()
+        if not os.environ.get("INFINITY_DISABLE_COMPILE", ""):
+            logger.info("using torch.compile()")
+            fm.auto_model = torch.compile(fm.auto_model)
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
         features = self.tokenize(sentences)
@@ -81,8 +84,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         """
 
         with torch.inference_mode():
-            device = self._target_device
-            features = util.batch_to_device(features, device)
+            features = util.batch_to_device(features, self.device)
             out_features = self.forward(features)["sentence_embedding"]
 
         return out_features
@@ -107,7 +109,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             return_attention_mask=False,
             return_length=False,
             # max_length=self._infinity_tokenizer.model_max_length,
-            # truncation="longest_first",
+            truncation="longest_first",
         ).encodings
         return [len(t.tokens) for t in tks]
 
@@ -147,16 +149,26 @@ class CT2SentenceTransformer(SentenceTransformerPatched):
         self,
         *args,
         compute_type="default",
+        device: Optional[str] = None,
         force=False,
         vmap: Union[str, None] = None,
         **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        self._prefered_device = device
+        super().__init__(*args, device=device, **kwargs)
         self[0] = CT2Transformer(
             self[0],
             compute_type=compute_type,
             force=force,
             vmap=vmap,
+        )
+
+    @property
+    def device(self):
+        if self._prefered_device is not None:
+            return torch.device(self._prefered_device)
+        return (
+            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
         )
 
 
@@ -197,8 +209,9 @@ class CT2Transformer(Module):
         # Convert to the CTranslate2 model format, if not already done.
         model_dir = transformer.auto_model.config.name_or_path
         self.ct2_model_dir = os.path.join(
-            model_dir,
+            HUGGINGFACE_HUB_CACHE,
             "ctranslate2_" + ctranslate2.__version__,
+            str(Path(model_dir).name.replace("/", "_")),
         )
 
         if not os.path.exists(os.path.join(self.ct2_model_dir, "model.bin")) or force:

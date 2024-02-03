@@ -1,3 +1,4 @@
+import os
 from typing import Dict, List, Set, Tuple, Union
 
 # prometheus
@@ -9,6 +10,15 @@ from infinity_emb.inference import (
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import EmbeddingReturnType, ModelCapabilites
 from infinity_emb.transformer.utils import InferenceEngine
+
+try:
+    # enable hf hub transfer if available
+    import hf_transfer  # type: ignore # noqa
+
+    if "HF_HUB_ENABLE_HF_TRANSFER" not in os.environ:
+        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+except ImportError:
+    pass
 
 
 class AsyncEmbeddingEngine:
@@ -57,7 +67,7 @@ class AsyncEmbeddingEngine:
         if isinstance(device, str):
             device = Device[device]
 
-        self._model, self._min_inference_t = select_model(
+        self._model, self._min_inference_t, self._max_inference_t = select_model(
             model_name_or_path=model_name_or_path,
             batch_size=batch_size,
             engine=engine,
