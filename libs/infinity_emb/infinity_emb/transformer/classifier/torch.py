@@ -19,6 +19,7 @@ class SentenceClassifier(BaseClassifer):
         self,
         model_name_or_path,
         device: Optional[str] = None,
+        trust_remote_code: bool = True,
         revision: Optional[str] = None,
     ) -> None:
         if not TORCH_AVAILABLE:
@@ -32,6 +33,7 @@ class SentenceClassifier(BaseClassifer):
         self._pipe = pipeline(
             task="text-classification",
             model=model_name_or_path,
+            trust_remote_code=trust_remote_code,
             device=used_device,
             top_k=None,
             torch_dtype=torch.float32 if used_device == "cpu" else torch.float16,

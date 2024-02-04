@@ -169,7 +169,7 @@ async def test_async_api_failing():
 
 @pytest.mark.anyio
 async def test_async_api_failing_revision():
-    with pytest.raises(ValueError):
+    with pytest.raises(OSError):
         # revision with just Readme.
         AsyncEmbeddingEngine(
             model_name_or_path="BAAI/bge-small-en-v1.5",
