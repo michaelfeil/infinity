@@ -13,10 +13,11 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_VIRTUALENVS_IN_PROJECT=true \
     # do not ask any interactive question
     POETRY_NO_INTERACTION=1 \
-    EXTRAS="all"
+    EXTRAS="all" \
+    PYTHON="python3.11"
 
-RUN apt-get update && apt-get install gcc python3-dev python3.10 curl -y 
-# python3.10-venv 
+RUN apt-get update && apt-get install build-essential python3-dev $PYTHON curl -y 
+
 WORKDIR /app
 
 FROM base as builder
@@ -29,7 +30,7 @@ ARG POETRY_VERSION=1.6.1
 ARG POETRY_HOME=/opt/poetry
 
 # Create a Python virtual environment for Poetry and install it
-RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION python3.10 -
+RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION $PYTHON -
 
 ENV PATH=$POETRY_HOME/bin:$PATH
 
@@ -69,15 +70,18 @@ RUN echo "all tests passed" > "test_results.txt"
 # Export with tensorrt, not recommended.
 # docker buildx build --target=production-tensorrt -f Dockerfile .
 FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
-RUN apt-get update && apt-get install gcc python3-dev python3-pip python3.10 curl -y 
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=off \
+    PYTHON="python3.11"
+RUN apt-get update && apt-get install python3-dev python3-pip $PYTHON build-essential curl -y 
 COPY --from=builder /app /app
 # force testing stage to run
 COPY --from=testing /app/test_results.txt /app/test_results.txt
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
 ENV PATH=/app/.venv/bin:$PATH
 RUN pip install --no-cache-dir "onnxruntime-gpu==1.16.3" "tensorrt==8.6.*"
-ENV LD_LIBRARY_PATH /app/.venv/lib/python3.10/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/python3.10/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
-ENV PATH /app/.venv/lib/python3.10/site-packages/tensorrt/bin:${PATH}
+ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
+ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
 ENTRYPOINT ["infinity_emb"]
 
 # Use a multi-stage build -> production version
