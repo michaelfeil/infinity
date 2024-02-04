@@ -30,7 +30,7 @@ jobs:
 
     name: Python ${{ matrix.python-version }}
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }} + Poetry ${{ env.POETRY_VERSION }}
         uses: "./.github/actions/poetry_setup"
@@ -38,7 +38,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           poetry-version: ${{ env.POETRY_VERSION }}
           working-directory: ${{ inputs.working-directory }}
-          cache-key: core${{ matrix.python-version }}
+          cache-key: core
 
       - name: Install minimal dependencies and import
         if: ${{ matrix.python-version == '3.9' }}
