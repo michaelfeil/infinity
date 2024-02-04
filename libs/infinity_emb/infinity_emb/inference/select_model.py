@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Optional, Tuple, Union
 
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
@@ -50,6 +50,8 @@ def get_engine_type_from_config(
 def select_model(
     model_name_or_path: str,
     batch_size: int,
+    revision: Optional[str] = None,
+    trust_remote_code: bool = True,
     engine: InferenceEngine = InferenceEngine.torch,
     model_warmup=True,
     device: Device = Device.auto,
@@ -61,7 +63,12 @@ def select_model(
     # TODO: add EncoderEngine
     unloaded_engine = get_engine_type_from_config(model_name_or_path, engine)
 
-    loaded_engine = unloaded_engine.value(model_name_or_path, device=device.value)
+    loaded_engine = unloaded_engine.value(
+        model_name_or_path,
+        revision=revision,
+        device=device.value,
+        trust_remote_code=trust_remote_code,
+    )
 
     min_inference_t = 4e-3
     max_inference_t = 4e-3

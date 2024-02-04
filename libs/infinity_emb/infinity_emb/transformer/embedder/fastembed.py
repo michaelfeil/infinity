@@ -3,6 +3,7 @@ from typing import Dict, List
 
 import numpy as np
 
+from infinity_emb.log_handler import logger
 from infinity_emb.primitives import EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 
@@ -32,6 +33,9 @@ class Fastembed(DefaultEmbedding, BaseEmbedder):
             kwargs["cache_dir"] = infinity_cache_dir()
         if kwargs.pop("device", None) != "cpu":
             providers = ["CUDAExecutionProvider"] + providers
+        kwargs.pop("trust_remote_code", None)
+        if kwargs.pop("revision", None) is not None:
+            logger.warning("revision is not used for CrossEncoder")
         super(DefaultEmbedding, self).__init__(model_name_or_path, **kwargs)
         self._infinity_tokenizer = copy.deepcopy(self.model.tokenizer)
         self.model.model.set_providers(providers)
