@@ -1,5 +1,5 @@
 import os
-from typing import Dict, List, Set, Tuple, Union
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 # prometheus
 from infinity_emb.inference import (
@@ -27,6 +27,8 @@ class AsyncEmbeddingEngine:
         model_name_or_path: str = "BAAI/bge-small-en-v1.5",
         *,
         batch_size: int = 64,
+        revision: Optional[str] = None,
+        trust_remote_code: bool = True,
         engine: Union[InferenceEngine, str] = InferenceEngine.torch,
         model_warmup: bool = False,
         vector_disk_cache_path: str = "",
@@ -38,6 +40,8 @@ class AsyncEmbeddingEngine:
         Args:
             model_name_or_path, str:  Defaults to "BAAI/bge-small-en-v1.5".
             batch_size, int: Defaults to 64.
+            revision, str: Defaults to None.
+            trust_remote_code, bool: Defaults to True.
             engine, InferenceEngine: backend for inference.
                 Defaults to InferenceEngine.torch.
             model_warmup, bool: decide if warmup with max batch size . Defaults to True.
@@ -69,6 +73,8 @@ class AsyncEmbeddingEngine:
 
         self._model, self._min_inference_t, self._max_inference_t = select_model(
             model_name_or_path=model_name_or_path,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
             batch_size=batch_size,
             engine=engine,
             model_warmup=model_warmup,

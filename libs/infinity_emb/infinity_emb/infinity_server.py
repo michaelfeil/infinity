@@ -1,4 +1,5 @@
 import time
+from typing import Optional
 
 # prometheus
 import infinity_emb
@@ -25,6 +26,8 @@ from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeH
 
 def create_server(
     model_name_or_path: str = "BAAI/bge-small-en-v1.5",
+    revision: Optional[str] = None,
+    trust_remote_code: bool = True,
     url_prefix: str = "/v1",
     batch_size: int = 64,
     engine: InferenceEngine = InferenceEngine.torch,
@@ -66,6 +69,8 @@ def create_server(
 
         app.model = AsyncEmbeddingEngine(
             model_name_or_path=model_name_or_path,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
             batch_size=batch_size,
             engine=engine,
             model_warmup=model_warmup,
@@ -207,6 +212,8 @@ def create_server(
 def _start_uvicorn(
     model_name_or_path: str = "BAAI/bge-small-en-v1.5",
     batch_size: int = 64,
+    revision: Optional[str] = None,
+    trust_remote_code: bool = True,
     url_prefix: str = "",
     host: str = "0.0.0.0",
     port: int = 7997,
@@ -224,6 +231,8 @@ def _start_uvicorn(
         model_name_or_path, str: Huggingface model, e.g.
             "BAAI/bge-small-en-v1.5".
         batch_size, int: batch size for forward pass.
+        revision: str: revision of the model.
+        trust_remote_code, bool: trust remote code.
         url_prefix, str: prefix for api. typically "".
         host, str: host-url, typically either "0.0.0.0" or "127.0.0.1".
         port, int: port that you want to expose.

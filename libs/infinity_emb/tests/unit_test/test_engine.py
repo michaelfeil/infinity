@@ -26,6 +26,7 @@ async def test_async_api_torch():
     engine = AsyncEmbeddingEngine(
         model_name_or_path="BAAI/bge-small-en-v1.5",
         engine=transformer.InferenceEngine.torch,
+        revision="main",
         device="auto",
     )
     assert engine.capabilities == {"embed"}
@@ -56,6 +57,7 @@ async def test_async_api_torch_CROSSENCODER():
     engine = AsyncEmbeddingEngine(
         model_name_or_path="BAAI/bge-reranker-base",
         engine=transformer.InferenceEngine.torch,
+        revision=None,
         device="auto",
         model_warmup=True,
     )
