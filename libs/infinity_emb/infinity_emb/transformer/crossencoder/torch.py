@@ -40,6 +40,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
             )
         if kwargs.pop("revision", None) is not None:
             logger.warning("revision is not used for CrossEncoder")
+        kwargs.pop("trust_remote_code", None)
         super().__init__(model_name_or_path, **kwargs)
 
         # make a copy of the tokenizer,
