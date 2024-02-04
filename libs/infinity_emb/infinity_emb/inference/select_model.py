@@ -65,9 +65,9 @@ def select_model(
 
     loaded_engine = unloaded_engine.value(
         model_name_or_path,
-        # revision=revision,
+        revision=revision,
         device=device.value,
-        # trust_remote_code=trust_remote_code,
+        trust_remote_code=trust_remote_code,
     )
 
     min_inference_t = 4e-3

@@ -15,7 +15,12 @@ from infinity_emb.transformer.acceleration import to_bettertransformer
 
 
 class SentenceClassifier(BaseClassifer):
-    def __init__(self, model_name_or_path, device: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        model_name_or_path,
+        device: Optional[str] = None,
+        revision: Optional[str] = None,
+    ) -> None:
         if not TORCH_AVAILABLE:
             raise ImportError(
                 "torch is not installed."
@@ -30,6 +35,7 @@ class SentenceClassifier(BaseClassifer):
             device=used_device,
             top_k=None,
             torch_dtype=torch.float32 if used_device == "cpu" else torch.float16,
+            revision=revision,
         )
 
         self._pipe.model = to_bettertransformer(
