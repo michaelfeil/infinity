@@ -25,6 +25,12 @@ class Fastembed(DefaultEmbedding, BaseEmbedder):
             raise ImportError(
                 "fastembed is not installed." "`pip install infinity-emb[fastembed]`"
             )
+
+        logger.warning(
+            "deprecated: fastembed inference"
+            " is deprecated and will be removed in the future."
+        )
+
         providers = ["CPUExecutionProvider"]
 
         if not kwargs.get("cache_dir"):
