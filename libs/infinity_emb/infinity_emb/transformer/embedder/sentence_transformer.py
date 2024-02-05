@@ -201,6 +201,10 @@ class CT2Transformer(Module):
                 " `pip install ctranslate2>=3.16.0`"
             )
 
+        logger.warning(
+            "deprecated: ct2 inference is deprecated and will be removed in the future."
+        )
+
         self.tokenizer = transformer.tokenizer
         self._tokenize = transformer.tokenize
         self.compute_type = compute_type
