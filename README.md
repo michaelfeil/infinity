@@ -234,7 +234,7 @@ After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in th
 
 # Contribute and Develop
 
-Install via Poetry 1.6.1 and Python3.10 on Ubuntu 22.04
+Install via Poetry 1.6.1 and Python3.11 on Ubuntu 22.04
 ```bash
 cd libs/infinity_emb
 poetry install --extras all --with test
@@ -248,7 +248,7 @@ make lint
 poetry run pytest ./tests
 ```
 
-
+All contributions must be made in a way to be compatible with the Apache 2 OSS License. 
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
