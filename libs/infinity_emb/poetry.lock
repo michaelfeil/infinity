@@ -4105,4 +4105,4 @@ torch = ["hf_transfer", "sentence-transformers", "torch"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.12"
-content-hash = "87168884faa9d1a15d8f502283b448596c83fd7d6f7fb18119a582b1d32290b9"
+content-hash = "bf1c369196e7a9213bb2e688f790d74606daf60c4a5d803ee2ef35cc757c0ab4"

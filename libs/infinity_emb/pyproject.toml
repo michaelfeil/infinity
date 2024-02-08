@@ -7,16 +7,6 @@ license = "MIT"
 readme = "README.md"
 packages = [{include = "infinity_emb"}]
 
-[[tool.poetry.source]]
-name = "cuda-torch"
-priority = "explicit"
-url = "https://download.pytorch.org/whl/cu121"
-
-[[tool.poetry.source]]
-name = "cpu-torch"
-priority = "explicit"
-url = "https://download.pytorch.org/whl/cpu"
-
 [tool.poetry.dependencies]
 python = ">=3.9,<3.12"
 # basics
