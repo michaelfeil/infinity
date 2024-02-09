@@ -69,7 +69,7 @@ RUN echo "all tests passed" > "test_results.txt"
 
 # Export with tensorrt, not recommended.
 # docker buildx build --target=production-tensorrt -f Dockerfile .
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
+FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=off \
     PYTHON="python3.11"
@@ -79,7 +79,7 @@ COPY --from=builder /app /app
 COPY --from=testing /app/test_results.txt /app/test_results.txt
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
 ENV PATH=/app/.venv/bin:$PATH
-RUN pip install --no-cache-dir "onnxruntime-gpu==1.16.3" "tensorrt==8.6.*"
+RUN pip install --no-cache-dir "onnxruntime-gpu==1.17.0" "tensorrt==8.6.*"
 ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
 ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
 ENTRYPOINT ["infinity_emb"]
