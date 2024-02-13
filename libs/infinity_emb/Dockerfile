@@ -16,7 +16,7 @@ ENV PYTHONUNBUFFERED=1 \
     EXTRAS="all" \
     PYTHON="python3.11"
 
-RUN apt-get update && apt-get install build-essential python3-dev $PYTHON curl -y 
+RUN apt-get update && apt-get install build-essential python3-dev $PYTHON-venv $PYTHON curl -y 
 
 WORKDIR /app
 

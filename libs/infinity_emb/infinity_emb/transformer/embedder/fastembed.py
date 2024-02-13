@@ -8,7 +8,9 @@ from infinity_emb.primitives import EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 
 try:
-    from fastembed.embedding import DefaultEmbedding, normalize  # type: ignore
+    from fastembed.embedding import DefaultEmbedding  # type: ignore
+
+    from infinity_emb.transformer.utils_optimum import normalize
 
     FASTEMBED_AVAILABLE = True
 except ImportError:

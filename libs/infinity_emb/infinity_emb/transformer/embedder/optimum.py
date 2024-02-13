@@ -9,6 +9,7 @@ from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.utils_optimum import (
     device_to_onnx,
     get_onnx_files,
+    normalize,
     optimize_model,
 )
 
@@ -34,14 +35,6 @@ def mean_pooling(last_hidden_states: np.ndarray, attention_mask: np.ndarray):
 
 def cls_token_pooling(model_output, *args):
     return model_output[:, 0]
-
-
-def normalize(input_array, p=2, dim=1, eps=1e-12):
-    # Calculate the Lp norm along the specified dimension
-    norm = np.linalg.norm(input_array, ord=p, axis=dim, keepdims=True)
-    norm = np.maximum(norm, eps)  # Avoid division by zero
-    normalized_array = input_array / norm
-    return normalized_array
 
 
 class OptimumEmbedder(BaseEmbedder):
