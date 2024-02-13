@@ -16,18 +16,13 @@ try:
 except ImportError:
     FASTEMBED_AVAILABLE = False
 
-    class DefaultEmbedding:  # type: ignore
-        def __init__(self, *args, **kwargs) -> None:
-            pass
 
-
-class Fastembed(DefaultEmbedding, BaseEmbedder):
+class Fastembed(BaseEmbedder):
     def __init__(self, model_name_or_path, **kwargs):
         if not FASTEMBED_AVAILABLE:
             raise ImportError(
                 "fastembed is not installed." "`pip install infinity-emb[fastembed]`"
             )
-
         logger.warning(
             "deprecated: fastembed inference"
             " is deprecated and will be removed in the future."
@@ -44,7 +39,11 @@ class Fastembed(DefaultEmbedding, BaseEmbedder):
         kwargs.pop("trust_remote_code", None)
         if kwargs.pop("revision", None) is not None:
             logger.warning("revision is not used for CrossEncoder")
-        super(DefaultEmbedding, self).__init__(model_name_or_path, **kwargs)
+
+        self.model = DefaultEmbedding(
+            model_name_or_path,
+            **kwargs,
+        ).model
         self._infinity_tokenizer = copy.deepcopy(self.model.tokenizer)
         self.model.model.set_providers(providers)
 
@@ -56,12 +55,10 @@ class Fastembed(DefaultEmbedding, BaseEmbedder):
         onnx_input = {
             "input_ids": np.array(input_ids, dtype=np.int64),
             "attention_mask": np.array(attention_mask, dtype=np.int64),
-        }
-
-        if not self.model.exclude_token_type_ids:
-            onnx_input["token_type_ids"] = np.array(
+            "token_type_ids": np.array(
                 [np.zeros(len(e), dtype=np.int64) for e in input_ids], dtype=np.int64
-            )
+            ),
+        }
         return onnx_input
 
     def encode_core(self, features: Dict[str, np.ndarray]) -> np.ndarray:
