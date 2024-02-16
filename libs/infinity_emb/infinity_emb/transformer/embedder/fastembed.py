@@ -8,7 +8,7 @@ from infinity_emb.primitives import EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 
 try:
-    from fastembed.embedding import DefaultEmbedding  # type: ignore
+    from fastembed.embedding import TextEmbedding  # type: ignore
 
     from infinity_emb.transformer.utils_optimum import normalize
 
@@ -40,7 +40,7 @@ class Fastembed(BaseEmbedder):
         if kwargs.pop("revision", None) is not None:
             logger.warning("revision is not used for CrossEncoder")
 
-        self.model = DefaultEmbedding(
+        self.model = TextEmbedding(
             model_name_or_path,
             **kwargs,
         ).model

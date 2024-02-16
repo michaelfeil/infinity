@@ -55,7 +55,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         # without corrupting the original.
         fm = self._first_module()
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
-        self.eval()
+        self.eval() 
 
         fm.auto_model = to_bettertransformer(
             fm.auto_model, logger, disable=self.device.type == "mps"
@@ -71,7 +71,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             self.half()
         if not os.environ.get("INFINITY_DISABLE_COMPILE", ""):
             logger.info("using torch.compile()")
-            fm.auto_model = torch.compile(fm.auto_model)
+            fm.auto_model = torch.compile(fm.auto_model, dynamic=True)
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
         features = self.tokenize(sentences)
