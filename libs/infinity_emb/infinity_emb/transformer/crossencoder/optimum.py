@@ -32,7 +32,7 @@ class OptimumCrossEncoder(BaseEmbedder):
 
         onnx_file = get_onnx_files(
             model_name_or_path,
-            None,
+            revision=kwargs.get("revision"),
             use_auth_token=True,
             prefer_quantized="cpu" in provider.lower(),
         )
