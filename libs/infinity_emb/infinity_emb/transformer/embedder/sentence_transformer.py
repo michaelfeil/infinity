@@ -55,7 +55,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         # without corrupting the original.
         fm = self._first_module()
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
-        self.eval() 
+        self.eval()
 
         fm.auto_model = to_bettertransformer(
             fm.auto_model, logger, disable=self.device.type == "mps"
