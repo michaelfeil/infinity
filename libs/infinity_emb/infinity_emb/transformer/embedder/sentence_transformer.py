@@ -71,7 +71,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             self.half()
         if not os.environ.get("INFINITY_DISABLE_COMPILE", ""):
             logger.info("using torch.compile()")
-            fm.auto_model = torch.compile(fm.auto_model)
+            fm.auto_model = torch.compile(fm.auto_model, dynamic=True)
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
         features = self.tokenize(sentences)
