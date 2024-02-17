@@ -38,7 +38,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           poetry-version: ${{ env.POETRY_VERSION }}
           working-directory: ${{ inputs.working-directory }}
-          cache-key: core
+          cache-key: infinity-emb-test
 
       - name: Install dependencies
         shell: bash
