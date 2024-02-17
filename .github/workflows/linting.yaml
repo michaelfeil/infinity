@@ -67,11 +67,11 @@ jobs:
         run: |
           poetry install --extras "all" --with test,lint,codespell
 
-      - name: Install infinity_emb editable
-        working-directory: ${{ inputs.working-directory }}
-        if: ${{ inputs.working-directory != 'libs/infinity_emb' }}
-        run: |
-          pip install -e ../infinity_emb
+      # - name: Install infinity_emb editable
+      #   working-directory: ${{ inputs.working-directory }}
+      #   if: ${{ inputs.working-directory != 'libs/infinity_emb' }}
+      #   run: |
+      #     pip install -e ../infinity_emb
 
       - name: Get .mypy_cache to speed up mypy
         uses: actions/cache@v4
@@ -86,4 +86,4 @@ jobs:
         working-directory: ${{ inputs.working-directory }}
         run: |
           make lint
-          poetry run ruff .
+          make spell_check

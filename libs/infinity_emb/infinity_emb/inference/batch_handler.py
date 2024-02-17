@@ -254,7 +254,7 @@ class BatchHandler:
                     # add some stochastic delay
                     time.sleep(self._batch_delay)
                     continue
-                # decision to attemp to pop a batch
+                # decision to attempt to pop a batch
                 # -> will happen if a single datapoint is available
 
                 batches = self._queue_prio.pop_optimal_batches(
@@ -323,7 +323,7 @@ class BatchHandler:
     async def _postprocess_batch(self):
         """collecting forward(.encode) results and put them into the result store"""
         # TODO: the ugly asyncio.sleep() could add to 3-8ms of latency worst case
-        # In constrast, at full batch size, sleep releases cruical CPU at time of
+        # In contrast, at full batch size, sleep releases cruical CPU at time of
         # the forward pass to GPU (after which there is crical time again)
         # and not affecting the latency
         try:

@@ -55,7 +55,7 @@ class SentenceClassifier(BaseClassifer):
         return self._pipe(features, batch_size=256, truncation=True, padding=True)
 
     def encode_post(self, classes) -> Dict[str, float]:
-        """runs post encoding such as normlization"""
+        """runs post encoding such as normalization"""
         return classes
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
