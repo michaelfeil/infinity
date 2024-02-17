@@ -34,7 +34,7 @@ class CustomFIFOQueue:
 
         Args:
             size (int): max size of batch
-            max_n_batches: number of batches to be poped and sorted.
+            max_n_batches: number of batches to be popped and sorted.
             timeout (float, optional): timeout until None is returned. Defaults to 0.2.
             latest_first (bool, optional): guarantees processing of oldest item in list.
                 As latest first requires getting argmin of created timestamps,
