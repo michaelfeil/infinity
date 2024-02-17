@@ -74,7 +74,8 @@ jobs:
           python-version: ${{ matrix.python-version }}
           poetry-version: ${{ env.POETRY_VERSION }}
           working-directory: ${{ inputs.working-directory }}
-          cache-key: core${{ matrix.python-version }}
+          cache-key: core-release-publish
+
       - name: Get git tag
         uses: actions-ecosystem/action-get-latest-tag@v1
         id: get-latest-tag
