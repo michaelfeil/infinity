@@ -12,7 +12,7 @@ on:
         default: true
 
 env:
-  POETRY_VERSION: "1.6.1"
+  POETRY_VERSION: "1.7.1"
 
 
 jobs:
