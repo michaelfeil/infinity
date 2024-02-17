@@ -62,7 +62,7 @@ jobs:
         #
         # If you change this configuration, make sure to change the `cache-key`
         # in the `poetry_setup` action above to stop using the old cache.
-        # It doesn't matter how you change it, any change will cause a cache-bust.
+        # It doesn't matter how you change it, any change will cause a cache-bust .
         working-directory: ${{ inputs.working-directory }}
         run: |
           poetry install --extras "all" --with test,lint,codespell
