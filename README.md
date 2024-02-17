@@ -44,7 +44,7 @@ pip install infinity-emb[all]
   <summary>Install from source with Poetry</summary>
   
   Advanced:
-  To install via Poetry use Poetry 1.6.1, Python 3.10 on Ubuntu 22.04
+  To install via Poetry use Poetry 1.7.1, Python 3.11 on Ubuntu 22.04
   ```bash
   git clone https://github.com/michaelfeil/infinity
   cd infinity
@@ -234,7 +234,7 @@ After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in th
 
 # Contribute and Develop
 
-Install via Poetry 1.6.1 and Python3.11 on Ubuntu 22.04
+Install via Poetry 1.7.1 and Python3.11 on Ubuntu 22.04
 ```bash
 cd libs/infinity_emb
 poetry install --extras all --with test

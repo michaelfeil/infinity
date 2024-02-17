@@ -44,7 +44,7 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
 
     @abstractmethod
     def encode_post(self, embedding: OUT_FEATURES) -> EmbeddingReturnType:
-        """runs post encoding such as normlization"""
+        """runs post encoding such as normalization"""
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm " * n_tokens] * batch_size
@@ -64,7 +64,7 @@ class BaseClassifer(BaseTransformer):  # Inherit from ABC(Abstract base class)
 
     @abstractmethod
     def encode_post(self, embedding: OUT_FEATURES) -> Dict[str, float]:
-        """runs post encoding such as normlization"""
+        """runs post encoding such as normalization"""
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm " * n_tokens] * batch_size
@@ -84,7 +84,7 @@ class BaseCrossEncoder(BaseTransformer):  # Inherit from ABC(Abstract base class
 
     @abstractmethod
     def encode_post(self, embedding: OUT_FEATURES) -> List[float]:
-        """runs post encoding such as normlization"""
+        """runs post encoding such as normalization"""
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm " * n_tokens] * batch_size

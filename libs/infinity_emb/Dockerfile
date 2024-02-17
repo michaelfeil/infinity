@@ -24,9 +24,9 @@ FROM base as builder
 
 # Set the working directory for the app
 
-# Define the version of Poetry to install (default is 1.6.1)
+# Define the version of Poetry to install (default is 1.7.1)
 # Define the directory to install Poetry to (default is /opt/poetry)
-ARG POETRY_VERSION=1.6.1
+ARG POETRY_VERSION=1.7.1
 ARG POETRY_HOME=/opt/poetry
 
 # Create a Python virtual environment for Poetry and install it
