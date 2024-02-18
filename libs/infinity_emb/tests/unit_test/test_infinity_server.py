@@ -4,6 +4,7 @@ import typer
 import uvicorn
 from fastapi import FastAPI
 
+from infinity_emb.args import EngineArgs
 from infinity_emb.infinity_server import (
     UVICORN_LOG_LEVELS,
     DeviceTypeHint,
@@ -12,7 +13,6 @@ from infinity_emb.infinity_server import (
     cli,
     create_server,
 )
-from infinity_emb.transformer.utils import InferenceEngine
 
 
 def test_cli_help():
@@ -32,7 +32,7 @@ def test_cli_wrong_batch_size():
 
 
 def test_create_server():
-    app = create_server(engine=InferenceEngine.debugengine)
+    app = create_server(EngineArgs(engine="debugengine"))
     assert isinstance(app, FastAPI)
 
 
