@@ -8,17 +8,20 @@ from asgi_lifespan import LifespanManager
 from httpx import AsyncClient
 
 from infinity_emb import create_server
+from infinity_emb.args import EngineArgs
 from infinity_emb.transformer.utils import InferenceEngine
 
 PREFIX = "/v2"
 MODEL_NAME = str(uuid4())
 BATCH_SIZE = 16
+
 app = create_server(
-    model_name_or_path=MODEL_NAME,
-    batch_size=BATCH_SIZE,
     url_prefix=PREFIX,
-    engine=InferenceEngine.debugengine,
-    verbose=True,
+    engine_args=EngineArgs(
+        model_name_or_path=MODEL_NAME,
+        batch_size=BATCH_SIZE,
+        engine=InferenceEngine.debugengine,
+    ),
 )
 
 

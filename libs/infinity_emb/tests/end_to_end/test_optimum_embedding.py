@@ -4,6 +4,7 @@ from httpx import AsyncClient
 from sentence_transformers import SentenceTransformer  # type: ignore
 
 from infinity_emb import create_server
+from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device
 from infinity_emb.transformer.utils import InferenceEngine
 
@@ -15,11 +16,13 @@ MODEL: str = (
 batch_size = 8
 
 app = create_server(
-    model_name_or_path=MODEL,
-    batch_size=batch_size,
     url_prefix=PREFIX,
-    engine=InferenceEngine.optimum,
-    device=Device.cpu,
+    engine_args=EngineArgs(
+        model_name_or_path=MODEL,
+        batch_size=batch_size,
+        engine=InferenceEngine.optimum,
+        device=Device.cpu,
+    ),
 )
 
 

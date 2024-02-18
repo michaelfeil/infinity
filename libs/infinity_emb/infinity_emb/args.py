@@ -38,8 +38,6 @@ class EngineArgs:
     lengths_via_tokenize: bool = False
 
     def __post_init__(self):
-        if self.batch_size < 1 or self.batch_size > 4096:
-            raise ValueError("batch_size must be between 1 and 4096")
         # convert the following strings to enums
         # so they don't need to be exported to the external interface
         if isinstance(self.engine, str):

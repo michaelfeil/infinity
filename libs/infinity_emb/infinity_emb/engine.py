@@ -1,4 +1,5 @@
 import os
+from dataclasses import asdict
 from typing import Dict, List, Optional, Set, Tuple
 
 from infinity_emb.args import EngineArgs
@@ -28,18 +29,20 @@ class AsyncEmbeddingEngine:
         """
         if model_name_or_path is not None:
             kwargs["model_name_or_path"] = model_name_or_path
-        self.from_args(EngineArgs(**kwargs))
+        self.engine_args = EngineArgs(**kwargs)
 
-    def from_args(
-        self,
-        engine_args: EngineArgs,
-    ) -> None:
-        self.engine_args = engine_args
         self.running = False
-
         self._model, self._min_inference_t, self._max_inference_t = select_model(
-            engine_args
+            self.engine_args
         )
+
+    @classmethod
+    def from_args(
+        cls,
+        engine_args: EngineArgs,
+    ) -> "AsyncEmbeddingEngine":
+        engine = cls(**asdict(engine_args))
+        return engine
 
     async def astart(self):
         """startup engine"""
