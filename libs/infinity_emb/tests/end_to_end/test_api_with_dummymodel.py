@@ -45,6 +45,21 @@ async def test_model_route(client):
 
 
 @pytest.mark.anyio
+async def test_embedding_max_length(client):
+    input = "A" * 8192 * 16
+    response = await client.post(
+        f"{PREFIX}/embeddings", json=dict(input=input, model=MODEL_NAME)
+    )
+    assert response.status_code == 422, f"{response.status_code}, {response.text}"
+
+    input = "A" * 8191 * 15
+    response = await client.post(
+        f"{PREFIX}/embeddings", json=dict(input=input, model=MODEL_NAME)
+    )
+    assert response.status_code == 200, f"{response.status_code}, {response.text}"
+
+
+@pytest.mark.anyio
 async def test_embedding(client):
     possible_inputs = [
         ["This is a test sentence."],

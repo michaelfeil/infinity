@@ -6,6 +6,7 @@ from httpx import AsyncClient
 from sentence_transformers import SentenceTransformer  # type: ignore
 
 from infinity_emb import create_server
+from infinity_emb.primitives import Device
 from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
 )
@@ -21,6 +22,7 @@ app = create_server(
     batch_size=batch_size,
     url_prefix=PREFIX,
     engine=InferenceEngine.ctranslate2,
+    device=Device.cpu,
 )
 
 
@@ -42,7 +44,7 @@ def test_load_model(model_base):
     # or internal pytorch errors
     s = ["This is a test sentence."]
     e1 = model_base.encode(s)
-    e2 = CT2SentenceTransformer(MODEL).encode(s)
+    e2 = CT2SentenceTransformer(MODEL, device="cpu").encode(s)
     np.testing.assert_almost_equal(e1, e2, decimal=6)
 
 
@@ -61,6 +63,7 @@ async def test_embedding(client, model_base, helpers):
     await helpers.embedding_verify(client, model_base, prefix=PREFIX, model_name=MODEL)
 
 
+@pytest.mark.skip("This test is slow")
 @pytest.mark.performance
 @pytest.mark.anyio
 async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, helpers):
