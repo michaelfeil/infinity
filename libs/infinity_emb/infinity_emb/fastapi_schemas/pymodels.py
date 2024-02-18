@@ -12,18 +12,25 @@ try:
     # Note: adding artificial limit, this might reveal splitting issues on the client side
     #      and is not a hard limit on the server side.
     INPUT_STRING = StringConstraints(max_length=8192 * 15, strip_whitespace=True)
+    ITEMS_LIMIT = {
+        "min_length": 1,
+        "max_length": 2048,
+    }
 except ImportError:
     from pydantic import constr
 
     INPUT_STRING = constr(max_length=255, strip_whitespace=True)  # type: ignore
+    ITEMS_LIMIT = {
+        "min_items": 1,
+        "max_items": 2048,
+    }
 
 
 class OpenAIEmbeddingInput(BaseModel):
     input: Union[  # type: ignore
         conlist(  # type: ignore
             Annotated[str, INPUT_STRING],
-            min_length=1,
-            max_length=2048,
+            **ITEMS_LIMIT,
         ),
         Annotated[str, INPUT_STRING],
     ]
@@ -55,8 +62,7 @@ class RerankInput(BaseModel):
     query: Annotated[str, INPUT_STRING]
     documents: conlist(  # type: ignore
         Annotated[str, INPUT_STRING],
-        min_length=1,
-        max_length=2048,
+        **ITEMS_LIMIT,
     )
     return_documents: bool = False
 
