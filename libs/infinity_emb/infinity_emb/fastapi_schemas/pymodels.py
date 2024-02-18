@@ -19,7 +19,7 @@ try:
 except ImportError:
     from pydantic import constr
 
-    INPUT_STRING = constr(max_length=255, strip_whitespace=True)  # type: ignore
+    INPUT_STRING = constr(max_length=8192 * 15, strip_whitespace=True)  # type: ignore
     ITEMS_LIMIT = {
         "min_items": 1,
         "max_items": 2048,
