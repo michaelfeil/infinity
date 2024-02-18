@@ -17,7 +17,7 @@ try:
     from transformers import AutoConfig, AutoTokenizer  # type: ignore
 
     OPTIMUM_AVAILABLE = True
-except ImportError:
+except (ImportError, RuntimeError):
     OPTIMUM_AVAILABLE = False
 
 

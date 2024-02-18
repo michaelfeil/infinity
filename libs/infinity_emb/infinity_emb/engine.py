@@ -23,10 +23,21 @@ except ImportError:
 
 
 class AsyncEmbeddingEngine:
-    def __init__(self, model_name_or_path: Optional[str] = None, **kwargs) -> None:
+    def __init__(
+        self,
+        model_name_or_path: Optional[str] = None,
+        _show_deprecation_warning=True,
+        **kwargs
+    ) -> None:
         """Creating a Async EmbeddingEngine object.
         preferred way to create an engine is via `from_args` method.
         """
+        # TODO: remove _show_deprecation_warning and __init__ option.
+        if _show_deprecation_warning:
+            logger.warning(
+                "AsyncEmbeddingEngine() is deprecated since 0.0.25. "
+                "Use `AsyncEmbeddingEngine.from_args()` instead"
+            )
         if model_name_or_path is not None:
             kwargs["model_name_or_path"] = model_name_or_path
         self.engine_args = EngineArgs(**kwargs)
@@ -41,7 +52,8 @@ class AsyncEmbeddingEngine:
         cls,
         engine_args: EngineArgs,
     ) -> "AsyncEmbeddingEngine":
-        engine = cls(**asdict(engine_args))
+        engine = cls(**asdict(engine_args), _show_deprecation_warning=False)
+
         return engine
 
     async def astart(self):

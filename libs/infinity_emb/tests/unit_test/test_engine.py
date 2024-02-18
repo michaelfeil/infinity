@@ -2,14 +2,16 @@ import numpy as np
 import pytest
 from sentence_transformers import CrossEncoder  # type: ignore
 
-from infinity_emb import AsyncEmbeddingEngine, transformer
+from infinity_emb import AsyncEmbeddingEngine, EngineArgs, transformer
 from infinity_emb.primitives import ModelNotDeployedError
 
 
 @pytest.mark.anyio
 async def test_async_api_debug():
     sentences = ["Embedded this is sentence via Infinity.", "Paris is in France."]
-    engine = AsyncEmbeddingEngine(engine=transformer.InferenceEngine.debugengine)
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(engine=transformer.InferenceEngine.debugengine)
+    )
     async with engine:
         embeddings, usage = await engine.embed(sentences)
         embeddings = np.array(embeddings)
@@ -23,11 +25,13 @@ async def test_async_api_debug():
 @pytest.mark.anyio
 async def test_async_api_torch():
     sentences = ["Hi", "how"]
-    engine = AsyncEmbeddingEngine(
-        model_name_or_path="BAAI/bge-small-en-v1.5",
-        engine=transformer.InferenceEngine.torch,
-        revision="main",
-        device="auto",
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="BAAI/bge-small-en-v1.5",
+            engine=transformer.InferenceEngine.torch,
+            revision="main",
+            device="auto",
+        )
     )
     assert engine.capabilities == {"embed"}
     async with engine:
@@ -54,12 +58,14 @@ async def test_async_api_torch_CROSSENCODER():
         "Berlin is the capital of Germany.",
         "You can now purchase my favorite dish",
     ]
-    engine = AsyncEmbeddingEngine(
-        model_name_or_path="BAAI/bge-reranker-base",
-        engine=transformer.InferenceEngine.torch,
-        revision=None,
-        device="auto",
-        model_warmup=True,
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="BAAI/bge-reranker-base",
+            engine=transformer.InferenceEngine.torch,
+            revision=None,
+            device="auto",
+            model_warmup=True,
+        )
     )
 
     assert engine.capabilities == {"rerank"}
@@ -81,11 +87,13 @@ async def test_engine_crossencoder_vs_sentence_transformers():
         "Berlin is the capital of Germany.",
         "You can now purchase my favorite dish",
     ] * 100
-    engine = AsyncEmbeddingEngine(
-        model_name_or_path="BAAI/bge-reranker-base",
-        engine=transformer.InferenceEngine.torch,
-        device="auto",
-        model_warmup=False,
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="BAAI/bge-reranker-base",
+            engine=transformer.InferenceEngine.torch,
+            device="auto",
+            model_warmup=False,
+        )
     )
 
     query_docs = [(query, doc) for doc in documents]
@@ -101,10 +109,12 @@ async def test_engine_crossencoder_vs_sentence_transformers():
 @pytest.mark.anyio
 async def test_async_api_torch_CLASSIFY():
     sentences = ["This is awesome.", "I am depressed."]
-    engine = AsyncEmbeddingEngine(
-        model_name_or_path="SamLowe/roberta-base-go_emotions",
-        engine="torch",
-        model_warmup=True,
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="SamLowe/roberta-base-go_emotions",
+            engine="torch",
+            model_warmup=True,
+        )
     )
     assert engine.capabilities == {"classify"}
 
@@ -121,11 +131,13 @@ async def test_async_api_torch_CLASSIFY():
 @pytest.mark.anyio
 async def test_async_api_torch_usage():
     sentences = ["Hi", "how", "school", "Pizza Hi"]
-    engine = AsyncEmbeddingEngine(
-        engine=transformer.InferenceEngine.torch,
-        device="auto",
-        lengths_via_tokenize=True,
-        model_warmup=False,
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            engine=transformer.InferenceEngine.torch,
+            device="auto",
+            lengths_via_tokenize=True,
+            model_warmup=False,
+        )
     )
     async with engine:
         embeddings, usage = await engine.embed(sentences)
@@ -139,8 +151,12 @@ async def test_async_api_torch_usage():
 @pytest.mark.anyio
 async def test_async_api_fastembed():
     sentences = ["Hi", "how"]
-    engine = AsyncEmbeddingEngine(
-        engine=transformer.InferenceEngine.fastembed, device="cpu", model_warmup=False
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            engine=transformer.InferenceEngine.fastembed,
+            device="cpu",
+            model_warmup=False,
+        )
     )
     async with engine:
         embeddings, usage = await engine.embed(sentences)
@@ -154,7 +170,7 @@ async def test_async_api_fastembed():
 @pytest.mark.anyio
 async def test_async_api_failing():
     sentences = ["Hi", "how"]
-    engine = AsyncEmbeddingEngine()
+    engine = AsyncEmbeddingEngine.from_args(EngineArgs())
     with pytest.raises(ValueError):
         await engine.embed(sentences)
 
@@ -171,7 +187,9 @@ async def test_async_api_failing():
 async def test_async_api_failing_revision():
     with pytest.raises(OSError):
         # revision with just Readme.
-        AsyncEmbeddingEngine(
-            model_name_or_path="BAAI/bge-small-en-v1.5",
-            revision="a32952c6d05d45f64f9f709a092c00839bcfe70a",
+        AsyncEmbeddingEngine.from_args(
+            EngineArgs(
+                model_name_or_path="BAAI/bge-small-en-v1.5",
+                revision="a32952c6d05d45f64f9f709a092c00839bcfe70a",
+            )
         )
