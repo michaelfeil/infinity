@@ -141,6 +141,9 @@ def create_server(
             )
 
         try:
+            if isinstance(data.input, str):
+                data.input = [data.input]
+
             logger.debug("[📝] Received request with %s inputs ", len(data.input))
             start = time.perf_counter()
 

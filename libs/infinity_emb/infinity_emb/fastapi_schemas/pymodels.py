@@ -1,17 +1,31 @@
 import time
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
-from pydantic import BaseModel, Field, StringConstraints, conlist
+from pydantic import BaseModel, Field, conlist
+
+# potential backwards compatibility to pydantic 1.X
+# pydantic 2.x is preffered by not strictly needed
+try:
+    from pydantic import StringConstraints
+
+    # Note: adding artifical limit, this might reveal splitting issues on the client side
+    #      and is not a hard limit on the server side.
+    INPUT_STRING = StringConstraints(max_length=8192 * 15, strip_whitespace=True)
+except ImportError:
+    INPUT_STRING = str
 
 
 class OpenAIEmbeddingInput(BaseModel):
-    input: conlist(  # type: ignore
-        Annotated[str, StringConstraints(max_length=8192 * 15, strip_whitespace=True)],
-        min_length=1,
-        max_length=2048,
-    )  # type: ignore
-    model: Annotated[str, StringConstraints(min_length=2)]
+    input: Union[
+        conlist(  # type: ignore
+            Annotated[str, INPUT_STRING],
+            min_length=1,
+            max_length=2048,
+        ),
+        Annotated[str, INPUT_STRING],
+    ]  # type: ignore
+    model: Optional[str] = None
     user: Optional[str] = None
 
 
@@ -36,11 +50,9 @@ class OpenAIEmbeddingResult(BaseModel):
 
 
 class RerankInput(BaseModel):
-    query: Annotated[
-        str, StringConstraints(max_length=1024 * 10, strip_whitespace=True)
-    ]
+    query: Annotated[str, INPUT_STRING]
     documents: conlist(  # type: ignore
-        Annotated[str, StringConstraints(max_length=1024 * 10, strip_whitespace=True)],
+        Annotated[str, INPUT_STRING],
         min_length=1,
         max_length=2048,
     )
