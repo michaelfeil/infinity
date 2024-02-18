@@ -3,6 +3,8 @@
 # Default target executed when no arguments are given to make.
 all: help
 
+precommit : | format spell_fix spell_check lint test
+
 ######################
 # TESTING AND COVERAGE
 ######################

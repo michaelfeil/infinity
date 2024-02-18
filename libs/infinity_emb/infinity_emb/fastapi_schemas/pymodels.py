@@ -5,11 +5,11 @@ from uuid import uuid4
 from pydantic import BaseModel, Field, conlist
 
 # potential backwards compatibility to pydantic 1.X
-# pydantic 2.x is preffered by not strictly needed
+# pydantic 2.x is preferred by not strictly needed
 try:
     from pydantic import StringConstraints
 
-    # Note: adding artifical limit, this might reveal splitting issues on the client side
+    # Note: adding artificial limit, this might reveal splitting issues on the client side
     #      and is not a hard limit on the server side.
     INPUT_STRING = StringConstraints(max_length=8192 * 15, strip_whitespace=True)
 except ImportError:
