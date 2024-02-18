@@ -31,7 +31,7 @@ app = create_server(
 
 @pytest.fixture
 def model_base() -> SentenceTransformer:
-    return SentenceTransformer(MODEL)
+    return SentenceTransformer(MODEL, device="cpu")
 
 
 @pytest.fixture()
@@ -66,7 +66,6 @@ async def test_embedding(client, model_base, helpers):
     await helpers.embedding_verify(client, model_base, prefix=PREFIX, model_name=MODEL)
 
 
-@pytest.mark.skip("This test is slow")
 @pytest.mark.performance
 @pytest.mark.anyio
 async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, helpers):
@@ -77,5 +76,5 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, hel
         prefix=PREFIX,
         model_name=MODEL,
         batch_size=batch_size,
-        downsample=2 if torch.cuda.is_available() else 16,
+        downsample=32,
     )

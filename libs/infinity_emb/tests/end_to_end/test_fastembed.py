@@ -63,5 +63,5 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, hel
         prefix=PREFIX,
         model_name=MODEL,
         batch_size=batch_size,
-        downsample=16,
+        downsample=32,
     )
