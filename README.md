@@ -75,10 +75,10 @@ You can use in a async context with asyncio.
 This gives you most flexibility, but is a bit more advanced.
 ```python
 import asyncio
-from infinity_emb import AsyncEmbeddingEngine
+from infinity_emb import AsyncEmbeddingEngine, EngineArgs
 
 sentences = ["Embed this is sentence via Infinity.", "Paris is in France."]
-engine = AsyncEmbeddingEngine(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch")
+engine = AsyncEmbeddingEngine.from_args(EngineArgs(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch"))
 
 async def main(): 
     async with engine: # engine starts with engine.astart()
@@ -127,13 +127,14 @@ For more detailed tutorial and general information about dstack, visit the [offi
   Use it in conjunction with a VectorDB+Embeddings, or as standalone for small amount of documents.
   ```python
   import asyncio
-  from infinity_emb import AsyncEmbeddingEngine
+  from infinity_emb import AsyncEmbeddingEngine, EngineArgs
   query = "What is the python package infinity_emb?"
   docs = ["This is a document not related to the python package infinity_emb, hence...", 
       "Paris is in France!",
       "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
-  engine = AsyncEmbeddingEngine(model_name_or_path = "BAAI/bge-reranker-base", 
-      engine="torch", model_warmup=False)
+  engine_args = EngineArgs(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch")
+
+  engine = AsyncEmbeddingEngine.from_args(engine_args)
   async def main(): 
       async with engine:
           ranking, usage = await engine.rerank(query=query, docs=docs)
@@ -149,11 +150,12 @@ For more detailed tutorial and general information about dstack, visit the [offi
   Note: PR's to speed this section up are welcome, a 40% speedup is propable, currently the backend uses huggingface pipelines + dynamic batching.
   ```python
   import asyncio
-  from infinity_emb import AsyncEmbeddingEngine
+  from infinity_emb import AsyncEmbeddingEngine, EngineArgs
 
   sentences = ["This is awesome.", "I am bored."]
-  engine = AsyncEmbeddingEngine(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
+  engine_args = EngineArgs(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
       engine="torch", model_warmup=True)
+  engine = AsyncEmbeddingEngine.from_args(engine_args)
   async def main(): 
       async with engine:
           predictions, usage = await engine.classify(sentences=sentences)

@@ -3,6 +3,7 @@ from typing import Optional
 
 # prometheus
 import infinity_emb
+from infinity_emb.args import EngineArgs
 from infinity_emb.engine import AsyncEmbeddingEngine
 from infinity_emb.fastapi_schemas import docs, errors
 from infinity_emb.fastapi_schemas.convert import (
@@ -16,26 +17,16 @@ from infinity_emb.fastapi_schemas.pymodels import (
     RerankInput,
 )
 from infinity_emb.inference import (
-    Device,
     DeviceTypeHint,
 )
 from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
-from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
+from infinity_emb.transformer.utils import InferenceEngineTypeHint
 
 
 def create_server(
-    model_name_or_path: str = "BAAI/bge-small-en-v1.5",
-    revision: Optional[str] = None,
-    trust_remote_code: bool = True,
-    url_prefix: str = "/v1",
-    batch_size: int = 64,
-    engine: InferenceEngine = InferenceEngine.torch,
-    verbose: bool = False,
-    model_warmup=True,
-    vector_disk_cache=INFINITY_CACHE_VECTORS,
-    device: Device = Device.auto,
-    lengths_via_tokenize: bool = False,
+    engine_args: EngineArgs,
+    url_prefix: str = "",
     doc_extra: dict = {},
 ):
     """
@@ -58,26 +49,14 @@ def create_server(
     )
     instrumentator = Instrumentator().instrument(app)
     app.add_exception_handler(errors.OpenAIException, errors.openai_exception_handler)
-    vector_disk_cache_path = (
-        f"{engine}_{model_name_or_path.replace('/','_')}" if vector_disk_cache else ""
-    )
-    model_name_offical = "".join(model_name_or_path.split("/")[-2:])
+
+    model_name_response_name = "".join(engine_args.model_name_or_path.split("/")[-2:])
 
     @app.on_event("startup")
     async def _startup():
         instrumentator.expose(app)
 
-        app.model = AsyncEmbeddingEngine(
-            model_name_or_path=model_name_or_path,
-            revision=revision,
-            trust_remote_code=trust_remote_code,
-            batch_size=batch_size,
-            engine=engine,
-            model_warmup=model_warmup,
-            vector_disk_cache_path=vector_disk_cache_path,
-            device=device,
-            lengths_via_tokenize=lengths_via_tokenize,
-        )
+        app.model = AsyncEmbeddingEngine.from_args(engine_args)
         # start in a threadpool
         await app.model.astart()
 
@@ -110,14 +89,14 @@ def create_server(
         s = app.model.overload_status()  # type: ignore
         return dict(
             data=dict(
-                id=model_name_or_path,
+                id=engine_args.model_name_or_path,
                 stats=dict(
                     queue_fraction=s.queue_fraction,
                     queue_absolute=s.queue_absolute,
                     results_pending=s.results_absolute,
-                    batch_size=batch_size,
+                    batch_size=engine_args.batch_size,
                 ),
-                backend=engine.name,
+                backend=engine_args.engine.name,
             )
         )
 
@@ -153,7 +132,7 @@ def create_server(
             logger.debug("[✅] Done in %s ms", duration)
 
             res = list_embeddings_to_response(
-                embeddings=embedding, model=model_name_offical, usage=usage
+                embeddings=embedding, model=model_name_response_name, usage=usage
             )
 
             return res
@@ -199,7 +178,10 @@ def create_server(
                 docs = None
 
             res = to_rerank_response(
-                scores=scores, documents=docs, model=model_name_offical, usage=usage
+                scores=scores,
+                documents=docs,
+                model=model_name_response_name,
+                usage=usage,
             )
 
             return res
@@ -228,7 +210,7 @@ def _start_uvicorn(
     lengths_via_tokenize: bool = False,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
-    MIT License; Copyright (c) 2023 Michael Feil
+    MIT License; Copyright (c) 2023-now Michael Feil
 
     Args:
         model_name_or_path, str: Huggingface model, e.g.
@@ -251,21 +233,28 @@ def _start_uvicorn(
     """
     import uvicorn
 
-    engine_load: InferenceEngine = InferenceEngine[engine.name]
-    used_device: Device = Device[device.name]
     logger.setLevel(log_level.to_int())
 
-    app = create_server(
+    vector_disk_cache_path = (
+        f"{engine}_{model_name_or_path.replace('/','_')}" if vector_disk_cache else ""
+    )
+
+    engine_args = EngineArgs(
         model_name_or_path=model_name_or_path,
-        url_prefix=url_prefix,
         batch_size=batch_size,
-        engine=engine_load,
-        verbose=log_level.to_int() <= 10,
-        doc_extra=dict(host=host, port=port),
+        revision=revision,
+        trust_remote_code=trust_remote_code,
+        engine=engine,  # type: ignore
         model_warmup=model_warmup,
-        vector_disk_cache=vector_disk_cache,
-        device=used_device,
+        vector_disk_cache_path=vector_disk_cache_path,
+        device=device,  # type: ignore
         lengths_via_tokenize=lengths_via_tokenize,
+    )
+
+    app = create_server(
+        engine_args,
+        url_prefix=url_prefix,
+        doc_extra=dict(host=host, port=port),
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
@@ -277,7 +266,6 @@ def cli():
     typer.run(_start_uvicorn)
 
 
-# app = create_server()
 if __name__ == "__main__":
     # for debugging
     cli()

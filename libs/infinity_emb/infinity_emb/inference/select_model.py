@@ -1,11 +1,11 @@
 import json
 from pathlib import Path
-from typing import Optional, Tuple, Union
+from typing import Tuple, Union
 
-from infinity_emb.log_handler import logger
-from infinity_emb.primitives import (
-    Device,
+from infinity_emb.args import (
+    EngineArgs,
 )
+from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseCrossEncoder, BaseEmbedder
 from infinity_emb.transformer.utils import (
     EmbedderEngine,
@@ -48,51 +48,47 @@ def get_engine_type_from_config(
 
 
 def select_model(
-    model_name_or_path: str,
-    batch_size: int,
-    revision: Optional[str] = None,
-    trust_remote_code: bool = True,
-    engine: InferenceEngine = InferenceEngine.torch,
-    model_warmup=True,
-    device: Device = Device.auto,
+    engine_args: EngineArgs,
 ) -> Tuple[Union[BaseCrossEncoder, BaseEmbedder], float, float]:
     logger.info(
-        f"model=`{model_name_or_path}` selected, using engine=`{engine.value}`"
-        f" and device=`{device.value}`"
+        f"model=`{engine_args.model_name_or_path}` selected, using engine=`{engine_args.engine.value}`"
+        f" and device=`{engine_args.device.value}`"
     )
     # TODO: add EncoderEngine
-    unloaded_engine = get_engine_type_from_config(model_name_or_path, engine)
+    unloaded_engine = get_engine_type_from_config(
+        engine_args.model_name_or_path, engine_args.engine
+    )
 
     loaded_engine = unloaded_engine.value(
-        model_name_or_path,
-        revision=revision,
-        device=device.value,
-        trust_remote_code=trust_remote_code,
+        engine_args.model_name_or_path,
+        revision=engine_args.revision,
+        device=engine_args.device.value,
+        trust_remote_code=engine_args.trust_remote_code,
     )
 
     min_inference_t = 4e-3
     max_inference_t = 4e-3
-    if model_warmup:
+    if engine_args.model_warmup:
         # size one, warm up warm start timings.
-        loaded_engine.warmup(batch_size=batch_size, n_tokens=1)
+        loaded_engine.warmup(batch_size=engine_args.batch_size, n_tokens=1)
         # size one token
         min_inference_t = min(
             loaded_engine.warmup(batch_size=1, n_tokens=1)[1] for _ in range(10)
         )
-        loaded_engine.warmup(batch_size=batch_size, n_tokens=1)
+        loaded_engine.warmup(batch_size=engine_args.batch_size, n_tokens=1)
         emb_per_sec_short, max_inference_t, log_msg = loaded_engine.warmup(
-            batch_size=batch_size, n_tokens=1
+            batch_size=engine_args.batch_size, n_tokens=1
         )
         logger.info(log_msg)
         # now warm up with max_token, max batch size
-        loaded_engine.warmup(batch_size=batch_size, n_tokens=512)
+        loaded_engine.warmup(batch_size=engine_args.batch_size, n_tokens=512)
         emb_per_sec, _, log_msg = loaded_engine.warmup(
-            batch_size=batch_size, n_tokens=512
+            batch_size=engine_args.batch_size, n_tokens=512
         )
         logger.info(log_msg)
         logger.info(
             f"model warmed up, between {emb_per_sec:.2f}-{emb_per_sec_short:.2f}"
-            f" embeddings/sec at batch_size={batch_size}"
+            f" embeddings/sec at batch_size={engine_args.batch_size}"
         )
 
     return loaded_engine, min_inference_t, max_inference_t

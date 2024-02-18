@@ -4,6 +4,7 @@ from httpx import AsyncClient
 from sentence_transformers import SentenceTransformer  # type: ignore
 
 from infinity_emb import create_server
+from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device
 from infinity_emb.transformer.utils import InferenceEngine
 
@@ -12,12 +13,15 @@ MODEL: str = "BAAI/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ign
 
 batch_size = 8
 
+
 app = create_server(
-    model_name_or_path=MODEL,
-    batch_size=batch_size,
     url_prefix=PREFIX,
-    engine=InferenceEngine.fastembed,
-    device=Device.cpu,
+    engine_args=EngineArgs(
+        model_name_or_path=MODEL,
+        batch_size=batch_size,
+        engine=InferenceEngine.fastembed,
+        device=Device.cpu,
+    ),
 )
 
 

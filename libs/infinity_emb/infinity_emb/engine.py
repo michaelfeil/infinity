@@ -1,15 +1,16 @@
 import os
-from typing import Dict, List, Optional, Set, Tuple, Union
+from dataclasses import asdict
+from typing import Dict, List, Optional, Set, Tuple
+
+from infinity_emb.args import EngineArgs
 
 # prometheus
 from infinity_emb.inference import (
     BatchHandler,
-    Device,
     select_model,
 )
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import EmbeddingReturnType, ModelCapabilites
-from infinity_emb.transformer.utils import InferenceEngine
 
 try:
     # enable hf hub transfer if available
@@ -24,62 +25,36 @@ except ImportError:
 class AsyncEmbeddingEngine:
     def __init__(
         self,
-        model_name_or_path: str = "BAAI/bge-small-en-v1.5",
-        *,
-        batch_size: int = 64,
-        revision: Optional[str] = None,
-        trust_remote_code: bool = True,
-        engine: Union[InferenceEngine, str] = InferenceEngine.torch,
-        model_warmup: bool = False,
-        vector_disk_cache_path: str = "",
-        device: Union[Device, str] = Device.auto,
-        lengths_via_tokenize: bool = False,
+        model_name_or_path: Optional[str] = None,
+        _show_deprecation_warning=True,
+        **kwargs
     ) -> None:
         """Creating a Async EmbeddingEngine object.
-
-        Args:
-            model_name_or_path, str:  Defaults to "BAAI/bge-small-en-v1.5".
-            batch_size, int: Defaults to 64.
-            revision, str: Defaults to None.
-            trust_remote_code, bool: Defaults to True.
-            engine, InferenceEngine: backend for inference.
-                Defaults to InferenceEngine.torch.
-            model_warmup, bool: decide if warmup with max batch size . Defaults to True.
-            vector_disk_cache_path, str: file path to folder of cache.
-                Defaults to "" - default no caching.
-            device, Device: device to use for inference. Defaults to Device.auto,
-            lengths_via_tokenize, bool: schedule by token usage. Defaults to False
-
-        Example:
-            ```python
-            from infinity_emb import AsyncEmbeddingEngine, transformer
-            sentences = ["Embedded this via Infinity.", "Paris is in France."]
-            engine = AsyncEmbeddingEngine(engine="torch")
-            async with engine: # engine starts with engine.astart()
-                embeddings = np.array(await engine.embed(sentences))
-            # engine stops with engine.astop().
-            # For frequent restarts, handle start/stop yourself.
-            ```
+        preferred way to create an engine is via `from_args` method.
         """
-        self.batch_size = batch_size
-        self.running = False
-        self._vector_disk_cache_path = vector_disk_cache_path
-        self._model_name_or_path = model_name_or_path
-        self._lengths_via_tokenize = lengths_via_tokenize
-        if isinstance(engine, str):
-            engine = InferenceEngine[engine]
-        if isinstance(device, str):
-            device = Device[device]
+        # TODO: remove _show_deprecation_warning and __init__ option.
+        if _show_deprecation_warning:
+            logger.warning(
+                "AsyncEmbeddingEngine() is deprecated since 0.0.25. "
+                "Use `AsyncEmbeddingEngine.from_args()` instead"
+            )
+        if model_name_or_path is not None:
+            kwargs["model_name_or_path"] = model_name_or_path
+        self.engine_args = EngineArgs(**kwargs)
 
+        self.running = False
         self._model, self._min_inference_t, self._max_inference_t = select_model(
-            model_name_or_path=model_name_or_path,
-            revision=revision,
-            trust_remote_code=trust_remote_code,
-            batch_size=batch_size,
-            engine=engine,
-            model_warmup=model_warmup,
-            device=device,
+            self.engine_args
         )
+
+    @classmethod
+    def from_args(
+        cls,
+        engine_args: EngineArgs,
+    ) -> "AsyncEmbeddingEngine":
+        engine = cls(**asdict(engine_args), _show_deprecation_warning=False)
+
+        return engine
 
     async def astart(self):
         """startup engine"""
@@ -91,12 +66,12 @@ class AsyncEmbeddingEngine:
             )
         self.running = True
         self._batch_handler = BatchHandler(
-            max_batch_size=self.batch_size,
+            max_batch_size=self.engine_args.batch_size,
             model=self._model,
             batch_delay=self._min_inference_t / 2,
-            vector_disk_cache_path=self._vector_disk_cache_path,
+            vector_disk_cache_path=self.engine_args.vector_disk_cache_path,
             verbose=logger.level <= 10,
-            lengths_via_tokenize=self._lengths_via_tokenize,
+            lengths_via_tokenize=self.engine_args.lengths_via_tokenize,
         )
         await self._batch_handler.spawn()
 

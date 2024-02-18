@@ -5,11 +5,13 @@ __all__ = [
     "logger",
     "create_server",
     "AsyncEmbeddingEngine",
+    "EngineArgs",
     "__version__",
 ]
 import importlib.metadata
 
 from infinity_emb import fastapi_schemas, inference, transformer
+from infinity_emb.args import EngineArgs
 from infinity_emb.engine import AsyncEmbeddingEngine
 
 # reexports

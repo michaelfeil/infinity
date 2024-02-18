@@ -6,6 +6,7 @@ from httpx import AsyncClient
 from sentence_transformers import SentenceTransformer  # type: ignore
 
 from infinity_emb import create_server
+from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device
 from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
@@ -18,11 +19,13 @@ MODEL: str = pytest.DEFAULT_BERT_MODEL  # type: ignore
 batch_size = 64 if torch.cuda.is_available() else 8
 
 app = create_server(
-    model_name_or_path=MODEL,
-    batch_size=batch_size,
     url_prefix=PREFIX,
-    engine=InferenceEngine.ctranslate2,
-    device=Device.cpu,
+    engine_args=EngineArgs(
+        model_name_or_path=MODEL,
+        batch_size=batch_size,
+        engine=InferenceEngine.ctranslate2,
+        device=Device.cpu,
+    ),
 )
 
 
