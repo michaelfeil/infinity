@@ -13,18 +13,20 @@ try:
     #      and is not a hard limit on the server side.
     INPUT_STRING = StringConstraints(max_length=8192 * 15, strip_whitespace=True)
 except ImportError:
-    INPUT_STRING = str
+    from pydantic import constr
+
+    INPUT_STRING = constr(max_length=255, strip_whitespace=True)  # type: ignore
 
 
 class OpenAIEmbeddingInput(BaseModel):
-    input: Union[
+    input: Union[  # type: ignore
         conlist(  # type: ignore
             Annotated[str, INPUT_STRING],
             min_length=1,
             max_length=2048,
         ),
         Annotated[str, INPUT_STRING],
-    ]  # type: ignore
+    ]
     model: Optional[str] = None
     user: Optional[str] = None
 
