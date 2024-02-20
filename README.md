@@ -141,9 +141,7 @@ async def main():
         ranking, usage = await engine.rerank(query=query, docs=docs)
         print(list(zip(ranking, docs)))
 asyncio.run(main())
-
-     
-</details>
+```
 
 <details>
   <summary>You can also use text-classification (beta):</summary>
