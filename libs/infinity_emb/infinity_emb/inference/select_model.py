@@ -16,7 +16,7 @@ from infinity_emb.transformer.utils import (
 
 
 def get_engine_type_from_config(
-    model_name_or_path: str, engine: InferenceEngine
+    model_name_or_path: str, revision: str, engine: InferenceEngine
 ) -> Union[EmbedderEngine, RerankEngine]:
     if engine in [InferenceEngine.debugengine, InferenceEngine.fastembed]:
         return EmbedderEngine.from_inference_engine(engine)
@@ -29,6 +29,7 @@ def get_engine_type_from_config(
 
         config_path = hf_hub_download(
             model_name_or_path,
+            revision=revision,
             filename="config.json",
         )
 
