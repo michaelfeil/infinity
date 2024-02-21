@@ -1,7 +1,7 @@
 __all__ = ["InferenceEngine"]
 from infinity_emb.transformer.utils import InferenceEngine
 
-# place the enabeling of hf hub transfer here
+# place the enabling of hf hub transfer here
 try:
     # enable hf hub transfer if available
     import hf_transfer  # type: ignore # noqa
