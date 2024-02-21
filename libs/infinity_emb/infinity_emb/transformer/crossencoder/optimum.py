@@ -5,7 +5,7 @@ from typing import Dict, List
 import numpy as np
 
 from infinity_emb.primitives import EmbeddingReturnType
-from infinity_emb.transformer.abstract import BaseEmbedder
+from infinity_emb.transformer.abstract import BaseCrossEncoder
 from infinity_emb.transformer.utils_optimum import (
     device_to_onnx,
     get_onnx_files,
@@ -21,7 +21,7 @@ except (ImportError, RuntimeError):
     OPTIMUM_AVAILABLE = False
 
 
-class OptimumCrossEncoder(BaseEmbedder):
+class OptimumCrossEncoder(BaseCrossEncoder):
     def __init__(self, model_name_or_path, **kwargs):
         if not OPTIMUM_AVAILABLE:
             raise ImportError(
