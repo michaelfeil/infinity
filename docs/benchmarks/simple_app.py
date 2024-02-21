@@ -3,7 +3,7 @@ from fastembed import TextEmbedding
 import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, responses
 
 from infinity_emb.fastapi_schemas.pymodels import (
     OpenAIEmbeddingInput,
@@ -13,16 +13,23 @@ from infinity_emb.fastapi_schemas.convert import list_embeddings_to_response
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
 import asyncio
 import numpy as np
+import torch
 
 # benchmark settings
-MODEL_NAME = "BAAI/bge-large-en-v1.5"
 BATCH_SIZE = os.environ.get("BATCH_SIZE", 32)
-BENCHMARK_NAME = os.environ.get("BENCHMARK_NAME", "infinity")
-DEVICE = os.environ.get("DEVICE", "cpu")
-
-# load the right settings
+BENCHMARK_NAME = os.environ.get("BENCHMARK_NAME", "")
 USE_FASTEMBED = BENCHMARK_NAME == "fastembed"
 USE_INFINITY = BENCHMARK_NAME == "infinity"
+DEVICE = os.environ.get("DEVICE", "cpu")
+
+# load large for cuda, small for cpu. (benchmarking large on cpu takes too long)
+MODEL_NAME = (
+    "BAAI/bge-large-en-v1.5"
+    if DEVICE == "cuda"
+    else ("Xenova/bge-small-en-v1.5" if USE_INFINITY else "BAAI/bge-small-en-v1.5")
+)
+
+# model loading
 
 if USE_FASTEMBED:
     model = TextEmbedding(MODEL_NAME, threads=None)
@@ -39,21 +46,25 @@ elif USE_INFINITY:
     )
 else:
     model = SentenceTransformer(MODEL_NAME, device=DEVICE)
+    if DEVICE == "cuda":
+        model.half()
 
 
 def encode_fastembed(text: list[str]):
-    return model.query_embed(text, batch_size=BATCH_SIZE)
+    return list(model.passage_embed(text, batch_size=BATCH_SIZE))
 
 
 def encode_sentence_transformer(text: list[str]):
     # not using multi_process_encode
-    # as its too slower for len(texts) < 10000 
+    # as its too slower for len(texts) < 10000
     # and parallel interference
-    return model.encode(text, batch_size=BATCH_SIZE)
+    with torch.inference_mode():
+        return model.encode(text, batch_size=BATCH_SIZE)
 
 
 async def encode_infinity(text: list[str]):
     return (await engine.embed(text))[0]
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -70,7 +81,11 @@ app = FastAPI(
 )
 
 
-@app.post("/embeddings")
+@app.post(
+    "/embeddings",
+    response_model=OpenAIEmbeddingResult,
+    response_class=responses.ORJSONResponse,
+)
 async def embed(request: OpenAIEmbeddingInput) -> OpenAIEmbeddingResult:
     """the goal of this code is to write an as simple as possible server
     that can we rebuild by any other p
@@ -87,6 +102,12 @@ async def embed(request: OpenAIEmbeddingInput) -> OpenAIEmbeddingResult:
 
     # response parsing
     response = list_embeddings_to_response(
-        np.array(encoded), MODEL_NAME, sum(len(t) for t in sentences)
+        encoded, MODEL_NAME, sum(len(t) for t in sentences)
     )
     return OpenAIEmbeddingResult(**response)
+
+
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run(app, host="127.0.0.1", port=7997)
