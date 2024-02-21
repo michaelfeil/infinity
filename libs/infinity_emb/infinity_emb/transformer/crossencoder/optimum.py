@@ -64,7 +64,7 @@ class OptimumCrossEncoder(BaseCrossEncoder):
         return outputs.logits
 
     def encode_post(self, out_features: np.ndarray) -> List[float]:
-        return out_features.flatten().astype(np.float32)
+        return out_features.flatten().astype(np.float32).tolist()
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
         if hasattr(self._infinity_tokenizer, "encode_batch"):
