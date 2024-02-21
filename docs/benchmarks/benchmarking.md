@@ -42,12 +42,19 @@ docker buildx build --target production-tensorrt -t inf-trt . && docker run -it 
 en-v1.5 --engine optimum --device "cuda OR tensorrt"
 ```
 
+
+
+# Results
+
 To launch the benchmarks
 ```
 make benchmark_embed
 ```
 
-Results: CPU
+Below are the following metrics:
+- tl;dr: Requests # / sec (1 requests = 256 sentences with 115000 tokens) and time to run benchmark
+
+### Results: CPU-only (BAAI/bge-SMALL-en-v1.5 / bert-small)
 infinity-optimum-int8: 100.490 seconds, 0.10 [#/sec] (mean)
 infinity-optimum (onnx): 125.342 seconds, 0.08 [#/sec] (mean)
 fastembed (onnx): 125.770 seconds, 0.08 [#/sec] (mean)
@@ -56,12 +63,12 @@ infinity (torch / compile): 353.065 seconds, 0.03 [#/sec] (mean)
 huggingface/TEI (candle): 1104.357 seconds, 0.009 [#/sec] (mean)
 
 
-Results: (Nvidia L4)
+### Results: NVIDIA L4 (BAAI/bge-LARGE-en-v1.5  / bert-large)
 huggingface/TEI (candle, flashbert) 0.54 [#/sec] (mean) 18.491 seconds
 infinity (torch + compile + fa2)  0.51 [#/sec] (mean) 19.562 seconds
 tensorrt (via infinity) 0.43 [#/sec] (mean), 23.367 seconds
 infinity onnx-gpu (via infinity, fp16, fused layers) 0.41 [#/sec] (mean), 24.448 seconds
 sentence-transformers (fp16) 0.17 [#/sec] (mean) 59.107 seconds
 
-Results: (AMD MI210)
+### Results: AMD MI210 NVIDIA L4 (BAAI/bge-LARGE-en-v1.5  / bert-large)
 infinity (torch + no compile + no fa2)  ?
