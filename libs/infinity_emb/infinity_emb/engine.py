@@ -1,4 +1,3 @@
-import os
 from dataclasses import asdict
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -11,15 +10,6 @@ from infinity_emb.inference import (
 )
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import EmbeddingReturnType, ModelCapabilites
-
-try:
-    # enable hf hub transfer if available
-    import hf_transfer  # type: ignore # noqa
-
-    if "HF_HUB_ENABLE_HF_TRANSFER" not in os.environ:
-        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
-except ImportError:
-    pass
 
 
 class AsyncEmbeddingEngine:

@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Union
+from typing import List, Optional, Union
 
 import numpy as np
 
@@ -53,6 +53,7 @@ def optimize_model(
     execution_provider: str,
     file_name: str,
     optimize_model=False,
+    revision: Optional[str] = None,
 ):
     path_folder = (
         Path(model_name_or_path)
@@ -63,6 +64,7 @@ def optimize_model(
     if execution_provider == "TensorrtExecutionProvider":
         return model_class.from_pretrained(
             model_name_or_path,
+            revision=revision,
             provider=execution_provider,
             file_name=file_name,
             provider_options={
@@ -80,12 +82,16 @@ def optimize_model(
         logger.info(f"Optimized model found at {file_optimized}, skipping optimization")
         return model_class.from_pretrained(
             file_optimized.parent.as_posix(),
+            revision=revision,
             provider=execution_provider,
             file_name=file_optimized.name,
         )
 
     unoptimized_model_path = model_class.from_pretrained(
-        model_name_or_path, provider=execution_provider, file_name=file_name
+        model_name_or_path,
+        provider=execution_provider,
+        file_name=file_name,
+        revision=revision,
     )
     if not optimize_model or execution_provider == "TensorrtExecutionProvider":
         return unoptimized_model_path
@@ -175,4 +181,6 @@ def get_onnx_files(
     elif len(onnx_files) == 1:
         return onnx_files[0]
     else:
-        raise ValueError(f"No onnx files found for {model_name_or_path}")
+        raise ValueError(
+            f"No onnx files found for {model_name_or_path} and revision {revision}"
+        )

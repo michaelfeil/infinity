@@ -120,29 +120,28 @@ For more detailed tutorial and general information about dstack, visit the [offi
 
 
 ## Non-embedding features
-<details>
-  <summary>You can also use rerank (beta):</summary>
+### Reranking
 
-  Reranking gives you a score for similarity between a query and multiple documents. 
-  Use it in conjunction with a VectorDB+Embeddings, or as standalone for small amount of documents.
-  ```python
-  import asyncio
-  from infinity_emb import AsyncEmbeddingEngine, EngineArgs
-  query = "What is the python package infinity_emb?"
-  docs = ["This is a document not related to the python package infinity_emb, hence...", 
-      "Paris is in France!",
-      "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
-  engine_args = EngineArgs(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch")
+Reranking gives you a score for similarity between a query and multiple documents. 
+Use it in conjunction with a VectorDB+Embeddings, or as standalone for small amount of documents.
+Please select a model from huggingface that is a AutoModelForSequenceClassification with one class classification.
 
-  engine = AsyncEmbeddingEngine.from_args(engine_args)
-  async def main(): 
-      async with engine:
-          ranking, usage = await engine.rerank(query=query, docs=docs)
-          print(list(zip(ranking, docs)))
-  asyncio.run(main())
-  ```
-     
-</details>
+```python
+import asyncio
+from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+query = "What is the python package infinity_emb?"
+docs = ["This is a document not related to the python package infinity_emb, hence...", 
+    "Paris is in France!",
+    "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
+engine_args = EngineArgs(model_name_or_path = "BAAI/bge-reranker-base", engine="torch")
+
+engine = AsyncEmbeddingEngine.from_args(engine_args)
+async def main(): 
+    async with engine:
+        ranking, usage = await engine.rerank(query=query, docs=docs)
+        print(list(zip(ranking, docs)))
+asyncio.run(main())
+```
 
 <details>
   <summary>You can also use text-classification (beta):</summary>
