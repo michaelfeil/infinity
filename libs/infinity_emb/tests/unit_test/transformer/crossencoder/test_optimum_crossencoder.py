@@ -40,7 +40,7 @@ def test_patched_crossencoder_vs_sentence_transformers():
     encode_pre = model.encode_pre(query_docs)
     encode_core = model.encode_core(encode_pre)
     rankings = model.encode_post(encode_core)
-    rankings_sigmoid = 1 / (1 + np.exp(-rankings))
+    rankings_sigmoid = 1 / (1 + np.exp(-np.array(rankings)))
 
     rankings_unpatched = model_unpatched.predict(query_docs)
 
