@@ -55,20 +55,32 @@ Below are the following metrics:
 - tl;dr: Requests # / sec (1 requests = 256 sentences with 115000 tokens) and time to run benchmark
 
 ### Results: CPU-only (BAAI/bge-SMALL-en-v1.5 / bert-small)
-- infinity-optimum-int8: 100.490 seconds, 0.10 [#/sec] (mean)
-- infinity-optimum (onnx): 125.342 seconds, 0.08 [#/sec] (mean)
-- fastembed (onnx): 125.770 seconds, 0.08 [#/sec] (mean)
-- sentence-transformers (torch): 256.884 seconds, 0.04 [#/sec] (mean)
-- infinity (torch / compile): 353.065 seconds, 0.03 [#/sec] (mean)
-- huggingface/TEI (candle): 1104.357 seconds, 0.009 [#/sec] (mean)
+
+| Model                             | Time (seconds) | Requests # / sec (mean) |
+|-----------------------------------|----------------|-------------------------|
+| infinity-optimum-int8             | 100.490        | 0.10                    |
+| infinity-optimum (onnx)           | 125.342        | 0.08                    |
+| fastembed (onnx)                  | 125.770        | 0.08                    |
+| sentence-transformers (torch)     | 256.884        | 0.04                    |
+| infinity (torch / compile)        | 353.065??      | 0.03???                 |
+| huggingface/TEI (candle)          | 1104.357       | 0.009                   |
+
 
 
 ### Results: NVIDIA L4 (BAAI/bge-LARGE-en-v1.5  / bert-large)
-- huggingface/TEI (candle, flashbert) 0.54 [#/sec] (mean) 18.491 seconds
-- infinity (torch + compile + fa2)  0.51 [#/sec] (mean) 19.562 seconds
-- tensorrt (via infinity) 0.43 [#/sec] (mean), 23.367 seconds
-- infinity onnx-gpu (via infinity, fp16, fused layers) 0.41 [#/sec] (mean), 24.448 seconds
-- sentence-transformers (fp16) 0.17 [#/sec] (mean) 59.107 seconds
+
+| Model                                        | Requests # / sec (mean) | Time (seconds) |
+|----------------------------------------------|-------------------------|----------------|
+| huggingface/TEI (candle, flashbert)          | 0.54                    | 18.491         |
+| infinity (torch + compile + fa2)             | 0.51                    | 19.562         |
+| tensorrt (via infinity)                      | 0.43                    | 23.367         |
+| infinity (onnx-gpu fp16, fused layers)       | 0.41                    | 24.448         |
+| sentence-transformers (fp16)                 | 0.17                    | 59.107         |
+
 
 ### Results: AMD MI210 NVIDIA L4 (BAAI/bge-LARGE-en-v1.5  / bert-large)
-- infinity (torch + no compile + no fa2)  ?
+
+| Model                                      | Requests # / sec (mean) | Time (seconds) |
+|--------------------------------------------|-------------------------|----------------|
+| infinity (torch + no compile + fa2 disabled)   | ?                       | ?              |
+
