@@ -10,8 +10,13 @@ Benchmarks are always optionated. The goal of this benchmark is to find the best
   6. accuracy: each backend must have a ~1e-4 prevision over the torch fp32 embeddings.
 
 # Benchmarking machines:
-CPU and NVIDIA: GCP g2-standard-16, Intel Cascade Lake, with 1 x NVIDIA L4, cu122
-AMD: 16 core CPU, AMD MI210
+CPU and NVIDIA:
+- GCP g2-standard-16
+- Intel Cascade Lake
+- 1 x NVIDIA L4, cu122
+AMD:
+- 16 core CPU
+- AMD MI210, rocm5.7 without flash-attn
 
 # Reproduction steps:
 Install the environment
