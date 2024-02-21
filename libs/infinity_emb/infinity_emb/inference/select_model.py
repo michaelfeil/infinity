@@ -16,19 +16,20 @@ from infinity_emb.transformer.utils import (
 
 
 def get_engine_type_from_config(
-    model_name_or_path: str, engine: InferenceEngine
+    engine_args: EngineArgs,
 ) -> Union[EmbedderEngine, RerankEngine]:
-    if engine in [InferenceEngine.debugengine, InferenceEngine.fastembed]:
-        return EmbedderEngine.from_inference_engine(engine)
+    if engine_args.engine in [InferenceEngine.debugengine, InferenceEngine.fastembed]:
+        return EmbedderEngine.from_inference_engine(engine_args.engine)
 
-    if Path(model_name_or_path).is_dir():
+    if Path(engine_args.model_name_or_path).is_dir():
         logger.debug("model is a directory, opening config.json")
-        config_path = Path(model_name_or_path) / "config.json"
+        config_path = Path(engine_args.model_name_or_path) / "config.json"
     else:
         from huggingface_hub import hf_hub_download  # type: ignore
 
         config_path = hf_hub_download(
-            model_name_or_path,
+            engine_args.model_name_or_path,
+            revision=engine_args.revision,
             filename="config.json",
         )
 
@@ -40,11 +41,11 @@ def get_engine_type_from_config(
     ):
         id2label = config.get("id2label", {"0": "dummy"})
         if len(id2label) < 2:
-            return RerankEngine.from_inference_engine(engine)
+            return RerankEngine.from_inference_engine(engine_args.engine)
         else:
-            return PredictEngine.from_inference_engine(engine)
+            return PredictEngine.from_inference_engine(engine_args.engine)
     else:
-        return EmbedderEngine.from_inference_engine(engine)
+        return EmbedderEngine.from_inference_engine(engine_args.engine)
 
 
 def select_model(
@@ -55,9 +56,7 @@ def select_model(
         f" and device=`{engine_args.device.value}`"
     )
     # TODO: add EncoderEngine
-    unloaded_engine = get_engine_type_from_config(
-        engine_args.model_name_or_path, engine_args.engine
-    )
+    unloaded_engine = get_engine_type_from_config(engine_args)
 
     loaded_engine = unloaded_engine.value(
         engine_args.model_name_or_path,
