@@ -75,17 +75,22 @@ Below are the following metrics:
 ### Results: NVIDIA L4 (BAAI/bge-LARGE-en-v1.5  / bert-large)
 
 | Model                                        | Requests # / sec (mean) | Time (seconds) |
-|----------------------------------------------|-------------------------|----------------|
-| huggingface/TEI (candle, flashbert)          | 0.54                    | 18.491         |
-| infinity (torch + compile + fa2)             | 0.51                    | 19.562         |
-| tensorrt (via infinity)                      | 0.43                    | 23.367         |
-| infinity (onnx-gpu fp16, fused layers)       | 0.41                    | 24.448         |
-| sentence-transformers (fp16)                 | 0.17                    | 59.107         |
+|---------------------------------------------|-------------------------|----------------|
+| huggingface/TEI (candle, flashbert)         | 0.54                    | 18.491         |
+| infinity (torch + compile + fa2)            | 0.51                    | 19.562         |
+| tensorrt (via infinity)                     | 0.43                    | 23.367         |
+| infinity (onnx-gpu fp16, fused layers)      | 0.41                    | 24.448         |
+| sentence-transformers (fp16)                | 0.17                    | 59.107         |
 
 
 ### Results: AMD MI210 NVIDIA L4 (BAAI/bge-LARGE-en-v1.5  / bert-large)
 
-| Model                                      | Requests # / sec (mean) | Time (seconds) |
-|--------------------------------------------|-------------------------|----------------|
-| infinity (torch + no compile + fa2 disabled)   | ?                       | ?              |
+| Model                                       | Requests # / sec (mean) | Time (seconds) |
+|---------------------------------------------|-------------------------|----------------|
+| infinity (torch + no compile + fa2 disabled)| 0.75                    | 13.400         |
 
+### Results: AWS INF2 xlarge (BAAI/bge-SMALL-en-v1.5  / bert-small)
+
+| Model                                       | Requests # / sec (mean) | Time (seconds) |
+|---------------------------------------------|-------------------------|----------------|
+| infinity (neuron, fp16, constant batch_size 1)      | 0.10                    | 105.079        |
