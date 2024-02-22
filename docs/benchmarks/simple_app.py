@@ -24,9 +24,9 @@ DEVICE = os.environ.get("DEVICE", "cpu")
 
 # load large for cuda, small for cpu. (benchmarking large on cpu takes too long)
 MODEL_NAME = (
-    "BAAI/bge-large-en-v1.5"
-    if DEVICE == "cuda"
-    else ("Xenova/bge-small-en-v1.5" if USE_INFINITY else "BAAI/bge-small-en-v1.5")
+    "BAAI/bge-small-en-v1.5" 
+    if DEVICE == "cpu"
+    else "BAAI/bge-large-en-v1.5"
 )
 
 # model loading
