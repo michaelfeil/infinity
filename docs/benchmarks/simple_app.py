@@ -23,11 +23,7 @@ USE_INFINITY = BENCHMARK_NAME == "infinity"
 DEVICE = os.environ.get("DEVICE", "cpu")
 
 # load large for cuda, small for cpu. (benchmarking large on cpu takes too long)
-MODEL_NAME = (
-    "BAAI/bge-small-en-v1.5" 
-    if DEVICE == "cpu"
-    else "BAAI/bge-large-en-v1.5"
-)
+MODEL_NAME = "BAAI/bge-small-en-v1.5" if DEVICE == "cpu" else "BAAI/bge-large-en-v1.5"
 
 # model loading
 
