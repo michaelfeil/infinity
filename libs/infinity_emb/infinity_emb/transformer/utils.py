@@ -11,6 +11,7 @@ from infinity_emb.transformer.crossencoder.torch import (
 from infinity_emb.transformer.embedder.dummytransformer import DummyTransformer
 from infinity_emb.transformer.embedder.fastembed import Fastembed
 from infinity_emb.transformer.embedder.optimum import OptimumEmbedder
+from infinity_emb.transformer.embedder.neuron import NeuronOptimumEmbedder
 from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
     SentenceTransformerPatched,
@@ -31,6 +32,7 @@ class InferenceEngine(Enum):
     ctranslate2 = "ctranslate2"
     optimum = "optimum"
     fastembed = "fastembed"
+    neuron = "neuron"
     debugengine = "dummytransformer"
 
 
@@ -40,6 +42,7 @@ class EmbedderEngine(Enum):
     fastembed = Fastembed
     debugengine = DummyTransformer
     optimum = OptimumEmbedder
+    neuron = NeuronOptimumEmbedder
 
     @staticmethod
     def from_inference_engine(engine: InferenceEngine):
@@ -53,6 +56,8 @@ class EmbedderEngine(Enum):
             return EmbedderEngine.debugengine
         elif engine == InferenceEngine.optimum:
             return EmbedderEngine.optimum
+        elif engine == InferenceEngine.neuron:
+            return EmbedderEngine.neuron
         else:
             raise NotImplementedError(f"EmbedderEngine for {engine} not implemented")
 
