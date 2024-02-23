@@ -94,8 +94,8 @@ Below are the following metrics:
 |---------------------------------------------|-------------------------|----------------|
 | infinity (torch + no compile + fa2 disabled)| 0.75                    | 13.400         |
 
-### Results: AWS INF2 xlarge (BAAI/bge-SMALL-en-v1.5  / bert-small)
+### Results: AWS INF2 xlarge (BAAI/bge-LARGE-en-v1.5  / bert-small)
 
 | Model                                       | Requests # / sec (mean) | Time (seconds) |
 |---------------------------------------------|-------------------------|----------------|
-| infinity (neuron, fp16, constant batch_size 4, 512)      | 0.11                    | 90.564        |
+| infinity (neuron, fp16, constant batch_size 4 / 512 seq)      | 0.11                    | 90.564        |
