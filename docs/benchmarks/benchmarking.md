@@ -14,9 +14,14 @@ CPU and NVIDIA:
 - GCP g2-standard-16
 - Intel Cascade Lake
 - 1 x NVIDIA L4, cu122
+
 AMD:
 - 16 core CPU
 - AMD MI210, rocm5.7 without flash-attn
+
+AWS Inferentia
+- Huggingface AMI (torch-neuronx 1.13, optimum 1.17)
+- inf2.xlarge instance (2 Neuron Cores  with 1 used)
 
 # Reproduction steps:
 Install the environment
