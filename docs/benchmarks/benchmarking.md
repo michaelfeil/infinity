@@ -93,4 +93,4 @@ Below are the following metrics:
 
 | Model                                       | Requests # / sec (mean) | Time (seconds) |
 |---------------------------------------------|-------------------------|----------------|
-| infinity (neuron, fp16, constant batch_size 1)      | 0.10                    | 105.079        |
+| infinity (neuron, fp16, constant batch_size 4, 512)      | 0.11                    | 90.564        |
