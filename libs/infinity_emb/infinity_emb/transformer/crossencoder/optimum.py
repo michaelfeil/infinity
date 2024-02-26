@@ -1,11 +1,10 @@
 import copy
 import os
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 
-from infinity_emb.primitives import EmbeddingReturnType
-from infinity_emb.transformer.abstract import BaseEmbedder
+from infinity_emb.transformer.abstract import BaseCrossEncoder
 from infinity_emb.transformer.utils_optimum import (
     device_to_onnx,
     get_onnx_files,
@@ -21,7 +20,7 @@ except (ImportError, RuntimeError):
     OPTIMUM_AVAILABLE = False
 
 
-class OptimumCrossEncoder(BaseEmbedder):
+class OptimumCrossEncoder(BaseCrossEncoder):
     def __init__(self, model_name_or_path, **kwargs):
         if not OPTIMUM_AVAILABLE:
             raise ImportError(
@@ -49,9 +48,9 @@ class OptimumCrossEncoder(BaseEmbedder):
         self.config = AutoConfig.from_pretrained(model_name_or_path)
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
 
-    def encode_pre(self, input_tuples: List[str]) -> Dict[str, np.ndarray]:
+    def encode_pre(self, queries_docs: List[Tuple[str, str]]) -> Dict[str, np.ndarray]:
         encoded = self.tokenizer(
-            input_tuples,
+            queries_docs,
             max_length=self.config.max_position_embeddings,
             padding=True,
             truncation="longest_first",
@@ -64,8 +63,8 @@ class OptimumCrossEncoder(BaseEmbedder):
 
         return outputs.logits
 
-    def encode_post(self, out_features: np.ndarray) -> EmbeddingReturnType:
-        return out_features.flatten().astype(np.float32)
+    def encode_post(self, out_features: np.ndarray) -> List[float]:
+        return out_features.flatten().astype(np.float32).tolist()
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
         if hasattr(self._infinity_tokenizer, "encode_batch"):

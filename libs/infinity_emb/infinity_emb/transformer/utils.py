@@ -66,7 +66,7 @@ class RerankEngine(Enum):
         if engine == InferenceEngine.torch:
             return RerankEngine.torch
         elif engine == InferenceEngine.optimum:
-            return EmbedderEngine.optimum
+            return RerankEngine.optimum
         else:
             raise NotImplementedError(f"RerankEngine for {engine} not implemented")
 

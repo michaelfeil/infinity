@@ -48,6 +48,13 @@ spell_check:
 spell_fix:
 	poetry run codespell --toml pyproject.toml -w
 
+benchmark_embed: tests/data/benchmark/benchmark_embed.json
+	ab -n 10 -c 10 -l -s 480 \
+	-T 'application/json' \
+	-p $< \
+	http://127.0.0.1:7997/embeddings
+	# sudo apt-get apache2-utils
+
 ######################
 # HELP
 ######################

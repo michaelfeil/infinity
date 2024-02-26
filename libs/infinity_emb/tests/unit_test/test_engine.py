@@ -107,6 +107,34 @@ async def test_engine_crossencoder_vs_sentence_transformers():
 
 
 @pytest.mark.anyio
+async def test_async_api_optimum_crossencoder():
+    query = "Where is Paris?"
+    documents = [
+        "Paris is the capital of France.",
+        "Berlin is the capital of Germany.",
+        "You can now purchase my favorite dish",
+    ]
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="Xenova/bge-reranker-base",
+            engine=transformer.InferenceEngine.optimum,
+            revision=None,
+            device="cpu",
+            model_warmup=False,
+        )
+    )
+
+    assert engine.capabilities == {"rerank"}
+
+    async with engine:
+        rankings, usage = await engine.rerank(query=query, docs=documents)
+
+    assert usage == sum([len(query) + len(d) for d in documents])
+    assert len(rankings) == len(documents)
+    np.testing.assert_almost_equal(rankings, [0.99743, 0.966, 0.000037], decimal=3)
+
+
+@pytest.mark.anyio
 async def test_async_api_torch_CLASSIFY():
     sentences = ["This is awesome.", "I am depressed."]
     engine = AsyncEmbeddingEngine.from_args(
