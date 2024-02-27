@@ -56,7 +56,7 @@ class OptimumCrossEncoder(BaseCrossEncoder):
             truncation="longest_first",
             return_tensors="np",
         )
-        encoded = {k: v.astype(np.int64) for k,v in encoded.items()}
+        encoded = {k: v.astype(np.int64) for k, v in encoded.items()}
         return encoded
 
     def encode_core(self, features: Dict[str, np.ndarray]) -> np.ndarray:
