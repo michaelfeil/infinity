@@ -72,6 +72,5 @@ class Fastembed(BaseEmbedder):
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
         tks = self._infinity_tokenizer.encode_batch(
             sentences,
-            truncation=True,
         )
         return [len(t.tokens) for t in tks]
