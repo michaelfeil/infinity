@@ -108,7 +108,7 @@ def create_server(
 
         ```python
         import requests
-        requests.post("http://..:7997/v1/embeddings",
+        requests.post("http://..:7997/embeddings",
             json={"model":"bge-small-en-v1.5","input":["A sentence to encode."]})
         """
         model: AsyncEmbeddingEngine = app.model  # type: ignore
