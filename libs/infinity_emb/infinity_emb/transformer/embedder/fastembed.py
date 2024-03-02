@@ -3,8 +3,9 @@ from typing import Dict, List
 
 import numpy as np
 
+from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import EmbeddingReturnType
+from infinity_emb.primitives import Device, EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
 
 try:
@@ -18,7 +19,7 @@ except ImportError:
 
 
 class Fastembed(BaseEmbedder):
-    def __init__(self, model_name_or_path, **kwargs):
+    def __init__(self, engine_args: EngineArgs) -> None:
         if not FASTEMBED_AVAILABLE:
             raise ImportError(
                 "fastembed is not installed." "`pip install infinity-emb[fastembed]`"
@@ -30,20 +31,19 @@ class Fastembed(BaseEmbedder):
 
         providers = ["CPUExecutionProvider"]
 
-        if not kwargs.get("cache_dir"):
-            from infinity_emb.transformer.utils import infinity_cache_dir
-
-            kwargs["cache_dir"] = infinity_cache_dir()
-        if kwargs.pop("device", None) != "cpu":
+        if engine_args.device != Device.cpu:
             providers = ["CUDAExecutionProvider"] + providers
-        kwargs.pop("trust_remote_code", None)
-        if kwargs.pop("revision", None) is not None:
-            logger.warning("revision is not used for CrossEncoder")
+
+        if engine_args.revision is not None:
+            logger.warning("revision is not used for fastembed")
 
         self.model = TextEmbedding(
-            model_name_or_path,
-            **kwargs,
+            model_name=engine_args.model_name_or_path, cache_dir=None
         ).model
+        if self.model is None:
+            raise ValueError("fastembed model is not available")
+        if engine_args.pooling_method != PoolingMethod.auto:
+            logger.warning("pooling_method is not used for fastembed")
         self._infinity_tokenizer = copy.deepcopy(self.model.tokenizer)
         self.model.model.set_providers(providers)
 

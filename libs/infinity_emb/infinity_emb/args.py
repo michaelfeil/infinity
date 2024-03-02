@@ -2,7 +2,7 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
-from infinity_emb.primitives import Device
+from infinity_emb.primitives import Device, Dtype, PoolingMethod
 from infinity_emb.transformer.utils import InferenceEngine
 
 # if python>=3.10 use kw_only
@@ -35,6 +35,10 @@ class EngineArgs:
     model_warmup: bool = False
     vector_disk_cache_path: str = ""
     device: Device = Device.auto
+    compile: bool = True
+    bettertransformer: bool = True
+    dtype: Dtype = Dtype.auto
+    pooling_method: PoolingMethod = PoolingMethod.auto
     lengths_via_tokenize: bool = False
 
     def __post_init__(self):
@@ -44,3 +48,5 @@ class EngineArgs:
             object.__setattr__(self, "engine", InferenceEngine[self.engine])
         if isinstance(self.device, str):
             object.__setattr__(self, "device", Device[self.device])
+        if isinstance(self.dtype, str):
+            object.__setattr__(self, "dtype", Dtype[self.dtype])

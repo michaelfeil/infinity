@@ -18,6 +18,17 @@ class Device(enum.Enum):
     auto = None
 
 
+class Dtype(enum.Enum):
+    float16: str = "float16"
+    auto: str = "auto"
+
+
+class PoolingMethod(enum.Enum):
+    mean: str = "mean"
+    cls: str = "cls"
+    auto: str = "auto"
+
+
 _devices: Dict[str, str] = {e.name: e.name for e in Device}
 DeviceTypeHint = enum.Enum("DeviceTypeHint", _devices)  # type: ignore
 

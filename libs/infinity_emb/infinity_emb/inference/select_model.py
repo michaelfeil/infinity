@@ -58,12 +58,7 @@ def select_model(
     # TODO: add EncoderEngine
     unloaded_engine = get_engine_type_from_config(engine_args)
 
-    loaded_engine = unloaded_engine.value(
-        engine_args.model_name_or_path,
-        revision=engine_args.revision,
-        device=engine_args.device.value,
-        trust_remote_code=engine_args.trust_remote_code,
-    )
+    loaded_engine = unloaded_engine.value(engine_args=engine_args)
 
     min_inference_t = 4e-3
     max_inference_t = 4e-3

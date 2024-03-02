@@ -1,8 +1,9 @@
 import copy
-import os
 from typing import List
 
+from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
+from infinity_emb.primitives import Dtype
 from infinity_emb.transformer.abstract import BaseCrossEncoder
 
 try:
@@ -31,32 +32,37 @@ __all__ = [
 class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
     """CrossEncoder with .encode_core() and no microbatching"""
 
-    def __init__(self, model_name_or_path, **kwargs):
+    def __init__(self, *, engine_args: EngineArgs):
         if not TORCH_AVAILABLE:
             raise ImportError(
                 "torch is not installed."
                 " `pip install infinity-emb[torch]` "
                 "or pip install infinity-emb[torch,optimum]`"
             )
-        if kwargs.pop("revision", None) is not None:
-            logger.warning("revision is not used for CrossEncoder")
-        kwargs.pop("trust_remote_code", None)
-        super().__init__(model_name_or_path, **kwargs)
+
+        super().__init__(
+            model_name_or_path=engine_args.model_name_or_path,
+            revision=engine_args.revision,
+            tokenizer_args={"trust_remote_code": engine_args.trust_remote_code},
+            autoautomodel_args={"trust_remote_code": engine_args.trust_remote_code},
+            device=engine_args.device,
+        )
 
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
         # without corrupting the original.
 
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
-        self.model.eval()
+        self.model.eval()  # type: ignore
 
         self.model = to_bettertransformer(
-            self.model, logger, disable=self._target_device.type == "mps"
+            self.model, logger, disable=self._target_device.type == "mps"  # type: ignore
         )
 
-        if self._target_device.type == "cuda" and not os.environ.get(
-            "INFINITY_DISABLE_HALF", ""
-        ):
+        if self._target_device.type == "cuda" and engine_args.dtype in [
+            Dtype.auto,
+            Dtype.float16,
+        ]:
             logger.info(
                 "Switching to half() precision (cuda: fp16). "
                 "Disable by the setting the env var `INFINITY_DISABLE_HALF`"

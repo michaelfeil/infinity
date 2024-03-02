@@ -1,12 +1,13 @@
 import copy
 import os
 from pathlib import Path
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Union
 
 import numpy as np
 
+from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import EmbeddingReturnType
+from infinity_emb.primitives import Dtype, EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.acceleration import to_bettertransformer
 
@@ -39,7 +40,7 @@ __all__ = [
 class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
     """SentenceTransformer with .encode_core() and no microbatching"""
 
-    def __init__(self, model_name_or_path, trust_remote_code=True, **kwargs):
+    def __init__(self, *, engine_args=EngineArgs):
         if not TORCH_AVAILABLE:
             raise ImportError(
                 "torch is not installed."
@@ -47,7 +48,9 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
                 "or pip install infinity-emb[torch,optimum]`"
             )
         super().__init__(
-            model_name_or_path, trust_remote_code=trust_remote_code, **kwargs
+            engine_args.model_name_or_path,
+            trust_remote_code=engine_args.trust_remote_code,
+            device=engine_args.device,
         )
         self.to(self.device)
         # make a copy of the tokenizer,
@@ -58,18 +61,18 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self.eval()
 
         fm.auto_model = to_bettertransformer(
-            fm.auto_model, logger, disable=self.device.type == "mps"
+            fm.auto_model,
+            logger,
+            disable=(engine_args.device == "mps" and not engine_args.bettertransformer),
         )
 
-        if self.device.type == "cuda" and not os.environ.get(
-            "INFINITY_DISABLE_HALF", ""
-        ):
-            logger.info(
-                "Switching to half() precision (cuda: fp16). "
-                "Disable by the setting the env var `INFINITY_DISABLE_HALF`"
-            )
+        if self.device.type == "cuda" and engine_args.dtype in [
+            Dtype.auto,
+            Dtype.float16,
+        ]:
+            logger.info("Switching to half() precision (cuda: fp16). ")
             self.half()
-        if not os.environ.get("INFINITY_DISABLE_COMPILE", ""):
+        if engine_args.compile:
             logger.info("using torch.compile()")
             fm.auto_model = torch.compile(fm.auto_model, dynamic=True)
 
@@ -147,20 +150,17 @@ class CT2SentenceTransformer(SentenceTransformerPatched):
 
     def __init__(
         self,
-        *args,
-        compute_type="default",
-        device: Optional[str] = None,
-        force=False,
-        vmap: Union[str, None] = None,
-        **kwargs,
+        *,
+        engine_args=EngineArgs,
+        ct2_compute_type: str = "default",
     ):
-        self._prefered_device = device
-        super().__init__(*args, device=device, **kwargs)
+        self._prefered_device = engine_args.device.value
+        super().__init__(engine_args=engine_args)
         self[0] = CT2Transformer(
             self[0],
-            compute_type=compute_type,
-            force=force,
-            vmap=vmap,
+            compute_type=ct2_compute_type,
+            force=None,
+            vmap=None,
         )
 
     @property

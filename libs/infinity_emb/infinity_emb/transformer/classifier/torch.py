@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 try:
     # autotokenizer
@@ -9,7 +9,9 @@ try:
 except ImportError:
     TORCH_AVAILABLE = False
 
+from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
+from infinity_emb.primitives import Device
 from infinity_emb.transformer.abstract import BaseClassifer
 from infinity_emb.transformer.acceleration import to_bettertransformer
 
@@ -17,10 +19,8 @@ from infinity_emb.transformer.acceleration import to_bettertransformer
 class SentenceClassifier(BaseClassifer):
     def __init__(
         self,
-        model_name_or_path,
-        device: Optional[str] = None,
-        trust_remote_code: bool = True,
-        revision: Optional[str] = None,
+        *,
+        engine_args: EngineArgs,
     ) -> None:
         if not TORCH_AVAILABLE:
             raise ImportError(
@@ -29,22 +29,30 @@ class SentenceClassifier(BaseClassifer):
                 "or pip install infinity-emb[torch,optimum]`"
             )
 
-        used_device = device or "cuda" if torch.cuda.is_available() else "cpu"
         self._pipe = pipeline(
             task="text-classification",
-            model=model_name_or_path,
-            trust_remote_code=trust_remote_code,
-            device=used_device,
+            model=engine_args.model_name_or_path,
+            trust_remote_code=engine_args.trust_remote_code,
+            device=engine_args.device.value,
             top_k=None,
-            torch_dtype=torch.float32 if used_device == "cpu" else torch.float16,
-            revision=revision,
+            torch_dtype=torch.float32
+            if engine_args.device == Device.cpu
+            else torch.float16,
+            revision=engine_args.revision,
         )
 
         self._pipe.model = to_bettertransformer(
-            self._pipe.model, logger, disable=used_device == "mps"
+            self._pipe.model,
+            logger,
+            disable=(
+                engine_args.device == Device.mps and not engine_args.bettertransformer
+            ),
         )
 
-        self._infinity_tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
+        self._infinity_tokenizer = AutoTokenizer.from_pretrained(
+            engine_args.model_name_or_path,
+            trust_remote_code=engine_args.trust_remote_code,
+        )
 
     def encode_pre(self, sentences: List[str]):
         """takes care of the tokenization and feature preparation"""

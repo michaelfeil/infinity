@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 import torch
 
+from infinity_emb.args import EngineArgs
 from infinity_emb.inference import BatchHandler
 from infinity_emb.transformer.embedder.sentence_transformer import (
     SentenceTransformerPatched,
@@ -21,7 +22,9 @@ LIMIT_SLOWDOWN = 1.25 if torch.cuda.is_available() else 1.35
 @pytest.fixture
 @pytest.mark.anyio
 async def load_patched_bh() -> Tuple[SentenceTransformerPatched, BatchHandler]:
-    model = SentenceTransformerPatched(pytest.DEFAULT_BERT_MODEL)
+    model = SentenceTransformerPatched(
+        EngineArgs(model_name_or_path=pytest.DEFAULT_BERT_MODEL)  # type: ignore
+    )
     model.encode(["hello " * 512] * BATCH_SIZE)
     bh = BatchHandler(model=model, max_batch_size=BATCH_SIZE)
     await bh.spawn()
