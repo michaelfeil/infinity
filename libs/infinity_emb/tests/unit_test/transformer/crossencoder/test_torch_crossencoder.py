@@ -7,7 +7,9 @@ from infinity_emb.transformer.crossencoder.torch import CrossEncoderPatched
 
 def test_crossencoder():
     model = CrossEncoderPatched(
-        engine_args=EngineArgs(model_name_or_path="BAAI/bge-reranker-base", compile=True)
+        engine_args=EngineArgs(
+            model_name_or_path="BAAI/bge-reranker-base", compile=True
+        )
     )
 
     query = "Where is Paris?"
