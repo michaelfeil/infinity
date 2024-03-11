@@ -2,6 +2,7 @@ from typing import List
 
 import numpy as np
 
+from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 
@@ -9,8 +10,8 @@ from infinity_emb.transformer.abstract import BaseEmbedder
 class DummyTransformer(BaseEmbedder):
     """fix-13 dimension embedding, filled with length of sentence"""
 
-    def __init__(self, *args, **kwargs) -> None:
-        print(f"running DummyTransformer.__init__ with args={args} and kwargs={kwargs}")
+    def __init__(self, *, engine_args: EngineArgs) -> None:
+        print(f"running DummyTransformer.__init__ with engine_args={engine_args}")
 
     def encode_pre(self, sentences: List[str]) -> np.ndarray:
         return np.asarray(sentences)

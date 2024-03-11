@@ -17,7 +17,7 @@ class AsyncEmbeddingEngine:
         self,
         model_name_or_path: Optional[str] = None,
         _show_deprecation_warning=True,
-        **kwargs
+        **kwargs,
     ) -> None:
         """Creating a Async EmbeddingEngine object.
         preferred way to create an engine is via `from_args` method.
@@ -45,6 +45,13 @@ class AsyncEmbeddingEngine:
         engine = cls(**asdict(engine_args), _show_deprecation_warning=False)
 
         return engine
+
+    def __str__(self) -> str:
+        return (
+            f"AsyncEmbeddingEngine(running={self.running}, "
+            f"inference_time={[self._min_inference_t, self._max_inference_t]}, "
+            f"{self.engine_args})"
+        )
 
     async def astart(self):
         """startup engine"""

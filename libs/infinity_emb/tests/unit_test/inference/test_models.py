@@ -11,6 +11,7 @@ from sentence_transformers.evaluation import (  # type: ignore
     EmbeddingSimilarityEvaluator,  # type: ignore
 )
 
+from infinity_emb.args import EngineArgs
 from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
     SentenceTransformerPatched,
@@ -26,10 +27,15 @@ def _pretrained_model_score(
     test_samples = dataset[::3]
 
     if ct2_compute_type:
-        model = CT2SentenceTransformer(model_name, compute_type=ct2_compute_type)
+        model = CT2SentenceTransformer(
+            engine_args=EngineArgs(model_name_or_path=model_name),
+            ct2_compute_type=ct2_compute_type,
+        )
 
     else:
-        model = SentenceTransformerPatched(model_name)
+        model = SentenceTransformerPatched(
+            engine_args=EngineArgs(model_name_or_path=model_name)
+        )
     evaluator = EmbeddingSimilarityEvaluator.from_input_examples(
         test_samples, name="sts-test"
     )

@@ -1,10 +1,14 @@
+import torch
 from transformers import pipeline  # type: ignore
 
+from infinity_emb.args import EngineArgs
 from infinity_emb.transformer.classifier.torch import SentenceClassifier
 
 
 def test_classifier(model_name: str = "SamLowe/roberta-base-go_emotions"):
-    model = SentenceClassifier(model_name)
+    model = SentenceClassifier(
+        engine_args=EngineArgs(model_name_or_path=model_name, device="cuda" if torch.cuda.is_available() else "cpu")  # type: ignore
+    )
     pipe = pipeline(model=model_name, task="text-classification")
 
     sentences = ["This is awesome.", "I am depressed."]

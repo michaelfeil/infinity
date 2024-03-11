@@ -1,16 +1,17 @@
 import numpy as np
 import pytest
+import torch
 from sentence_transformers import CrossEncoder  # type: ignore
 
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs, transformer
-from infinity_emb.primitives import ModelNotDeployedError
+from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+from infinity_emb.primitives import InferenceEngine, ModelNotDeployedError
 
 
 @pytest.mark.anyio
 async def test_async_api_debug():
     sentences = ["Embedded this is sentence via Infinity.", "Paris is in France."]
     engine = AsyncEmbeddingEngine.from_args(
-        EngineArgs(engine=transformer.InferenceEngine.debugengine)
+        EngineArgs(engine=InferenceEngine.debugengine)
     )
     async with engine:
         embeddings, usage = await engine.embed(sentences)
@@ -28,9 +29,9 @@ async def test_async_api_torch():
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
             model_name_or_path="BAAI/bge-small-en-v1.5",
-            engine=transformer.InferenceEngine.torch,
+            engine=InferenceEngine.torch,
             revision="main",
-            device="auto",
+            device="cpu",
         )
     )
     assert engine.capabilities == {"embed"}
@@ -61,7 +62,7 @@ async def test_async_api_torch_CROSSENCODER():
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
             model_name_or_path="BAAI/bge-reranker-base",
-            engine=transformer.InferenceEngine.torch,
+            engine=InferenceEngine.torch,
             revision=None,
             device="auto",
             model_warmup=True,
@@ -90,8 +91,8 @@ async def test_engine_crossencoder_vs_sentence_transformers():
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
             model_name_or_path="BAAI/bge-reranker-base",
-            engine=transformer.InferenceEngine.torch,
-            device="auto",
+            engine=InferenceEngine.torch,
+            device="cuda" if torch.cuda.is_available() else "cpu",
             model_warmup=False,
         )
     )
@@ -117,7 +118,7 @@ async def test_async_api_optimum_crossencoder():
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
             model_name_or_path="Xenova/bge-reranker-base",
-            engine=transformer.InferenceEngine.optimum,
+            engine=InferenceEngine.optimum,
             revision=None,
             device="cpu",
             model_warmup=False,
@@ -142,6 +143,7 @@ async def test_async_api_torch_CLASSIFY():
             model_name_or_path="SamLowe/roberta-base-go_emotions",
             engine="torch",
             model_warmup=True,
+            device="cpu",
         )
     )
     assert engine.capabilities == {"classify"}
@@ -161,7 +163,7 @@ async def test_async_api_torch_usage():
     sentences = ["Hi", "how", "school", "Pizza Hi"]
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
-            engine=transformer.InferenceEngine.torch,
+            engine=InferenceEngine.torch,
             device="auto",
             lengths_via_tokenize=True,
             model_warmup=False,
@@ -181,7 +183,7 @@ async def test_async_api_fastembed():
     sentences = ["Hi", "how"]
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
-            engine=transformer.InferenceEngine.fastembed,
+            engine=InferenceEngine.fastembed,
             device="cpu",
             model_warmup=False,
         )

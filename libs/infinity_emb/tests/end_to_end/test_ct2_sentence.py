@@ -7,11 +7,10 @@ from sentence_transformers import SentenceTransformer  # type: ignore
 
 from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
-from infinity_emb.primitives import Device
+from infinity_emb.primitives import Device, InferenceEngine
 from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
 )
-from infinity_emb.transformer.utils import InferenceEngine
 
 PREFIX = "/v1_torch"
 MODEL: str = pytest.DEFAULT_BERT_MODEL  # type: ignore
@@ -47,7 +46,9 @@ def test_load_model(model_base):
     # or internal pytorch errors
     s = ["This is a test sentence."]
     e1 = model_base.encode(s)
-    e2 = CT2SentenceTransformer(MODEL, device="cpu").encode(s)
+    e2 = CT2SentenceTransformer(
+        engine_args=EngineArgs(model_name_or_path=MODEL, device="cpu")
+    ).encode(s)
     np.testing.assert_almost_equal(e1, e2, decimal=6)
 
 
