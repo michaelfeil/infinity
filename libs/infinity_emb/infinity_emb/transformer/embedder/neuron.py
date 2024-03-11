@@ -1,22 +1,23 @@
 import copy
+import json
 import os
+import subprocess
 from typing import Dict, List, Union
 
 import numpy as np
-import json
-import subprocess
+
 from infinity_emb.primitives import EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.utils_optimum import (
-    normalize,
-    mean_pooling,
     cls_token_pooling,
+    mean_pooling,
+    normalize,
 )
 
 try:
+    import torch
     from optimum.neuron import NeuronModelForFeatureExtraction  # type: ignore
     from transformers import AutoConfig, AutoTokenizer  # type: ignore
-    import torch
 
     OPTIMUM_AVAILABLE = True
 except (ImportError, RuntimeError):
@@ -30,10 +31,10 @@ __all__ = [
 def get_nc_count() -> Union[int, None]:
     """Returns the number of neuron cores on the current instance."""
     try:
-
         cmd = "neuron-ls --json-output"
         result = subprocess.run(cmd, shell=True, capture_output=True)
-        print(f"inferring nc_count from `neuron-ls` {result.stdout}")
+        print("inferring nc_count from `neuron-ls`")
+        print(result.stdout.decode("utf-8"))
         json_output = json.loads(result.stdout)
         count = sum([x["nc_count"] for x in json_output])
         print(f"nc_count={count}")

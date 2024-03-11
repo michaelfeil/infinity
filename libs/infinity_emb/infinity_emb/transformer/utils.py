@@ -10,8 +10,8 @@ from infinity_emb.transformer.crossencoder.torch import (
 )
 from infinity_emb.transformer.embedder.dummytransformer import DummyTransformer
 from infinity_emb.transformer.embedder.fastembed import Fastembed
-from infinity_emb.transformer.embedder.optimum import OptimumEmbedder
 from infinity_emb.transformer.embedder.neuron import NeuronOptimumEmbedder
+from infinity_emb.transformer.embedder.optimum import OptimumEmbedder
 from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
     SentenceTransformerPatched,

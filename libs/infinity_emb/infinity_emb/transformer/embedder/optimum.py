@@ -7,12 +7,12 @@ import numpy as np
 from infinity_emb.primitives import EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.utils_optimum import (
+    cls_token_pooling,
     device_to_onnx,
     get_onnx_files,
+    mean_pooling,
     normalize,
     optimize_model,
-    mean_pooling,
-    cls_token_pooling,
 )
 
 try:
