@@ -19,7 +19,7 @@ from infinity_emb.fastapi_schemas.pymodels import (
 from infinity_emb.inference import Device, DeviceTypeHint
 from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
-from infinity_emb.transformer.utils import InferenceEngine, InferenceEngineTypeHint
+from infinity_emb.primitives import InferenceEngine, InferenceEngineTypeHint
 
 
 def create_server(

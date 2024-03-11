@@ -1,8 +1,9 @@
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, List, Tuple
 
+from infinity_emb.primitives import InferenceEngine
 from infinity_emb.transformer.classifier.torch import SentenceClassifier
 from infinity_emb.transformer.crossencoder.optimum import OptimumCrossEncoder
 from infinity_emb.transformer.crossencoder.torch import (
@@ -18,20 +19,10 @@ from infinity_emb.transformer.embedder.sentence_transformer import (
 
 # from infinity_emb.transformer.fastembed import FastEmbed
 __all__ = [
-    "InferenceEngine",
-    "InferenceEngineTypeHint",
     "length_tokenizer",
     "get_lengths_with_tokenize",
     "infinity_cache_dir",
 ]
-
-
-class InferenceEngine(Enum):
-    torch = "torch"
-    ctranslate2 = "ctranslate2"
-    optimum = "optimum"
-    fastembed = "fastembed"
-    debugengine = "dummytransformer"
 
 
 class EmbedderEngine(Enum):
@@ -80,10 +71,6 @@ class PredictEngine(Enum):
             return PredictEngine.torch
         else:
             raise NotImplementedError(f"PredictEngine for {engine} not implemented")
-
-
-_types: Dict[str, str] = {e.name: e.name for e in InferenceEngine}
-InferenceEngineTypeHint = Enum("InferenceEngineTypeHint", _types)  # type: ignore
 
 
 def length_tokenizer(

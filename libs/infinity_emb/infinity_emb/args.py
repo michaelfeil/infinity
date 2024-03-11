@@ -2,8 +2,7 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
-from infinity_emb.primitives import Device, Dtype, PoolingMethod
-from infinity_emb.transformer.utils import InferenceEngine
+from infinity_emb.primitives import Device, Dtype, InferenceEngine, PoolingMethod
 
 # if python>=3.10 use kw_only
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}

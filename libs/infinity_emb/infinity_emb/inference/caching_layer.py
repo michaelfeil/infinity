@@ -8,7 +8,6 @@ from typing import Any, List, Union
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import EmbeddingReturnType, QueueItemInner
-from infinity_emb.transformer.utils import infinity_cache_dir
 
 try:
     import diskcache as dc  # type: ignore
@@ -29,6 +28,7 @@ class Cache:
                 "diskcache is not available. "
                 "install via `pip install infinity-emb[cache]`"
             )
+        from infinity_emb.transformer.utils import infinity_cache_dir
 
         self._shutdown = shutdown
         self._add_q: queue.Queue = queue.Queue()

@@ -1,5 +1,12 @@
+"""
+Definition of enums and dataclasses used in the library.
+
+Do not import infinity_emb from this file, as it will cause a circular import.
+"""
+# if python>=3.10 use kw_only
 import asyncio
 import enum
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Dict, Literal, Optional, Tuple, Union
@@ -7,7 +14,17 @@ from typing import Any, Dict, Literal, Optional, Tuple, Union
 import numpy as np
 import numpy.typing as npt
 
+dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
+
 EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
+
+
+class InferenceEngine(enum.Enum):
+    torch = "torch"
+    ctranslate2 = "ctranslate2"
+    optimum = "optimum"
+    fastembed = "fastembed"
+    debugengine = "dummytransformer"
 
 
 class Device(enum.Enum):
@@ -178,3 +195,6 @@ class ModelNotDeployedError(Exception):
 
 
 ModelCapabilites = Literal["embed", "rerank", "classify"]
+
+_types: Dict[str, str] = {e.name: e.name for e in InferenceEngine}
+InferenceEngineTypeHint = enum.Enum("InferenceEngineTypeHint", _types)  # type: ignore
