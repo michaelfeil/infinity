@@ -56,7 +56,9 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
         self.model.eval()  # type: ignore
 
         self.model = to_bettertransformer(
-            self.model, logger, disable=self._target_device.type == "mps"  # type: ignore
+            self.model,  # type: ignore
+            logger,
+            disable=self._target_device.type == "mps",
         )
 
         if self._target_device.type == "cuda" and engine_args.dtype in [

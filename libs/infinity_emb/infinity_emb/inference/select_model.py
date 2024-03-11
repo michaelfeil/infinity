@@ -52,7 +52,8 @@ def select_model(
     engine_args: EngineArgs,
 ) -> Tuple[Union[BaseCrossEncoder, BaseEmbedder], float, float]:
     logger.info(
-        f"model=`{engine_args.model_name_or_path}` selected, using engine=`{engine_args.engine.value}`"
+        f"model=`{engine_args.model_name_or_path}` selected, "
+        f"using engine=`{engine_args.engine.value}`"
         f" and device=`{engine_args.device.value}`"
     )
     # TODO: add EncoderEngine
