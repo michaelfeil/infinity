@@ -1,5 +1,4 @@
 import numpy as np
-import torch
 from sentence_transformers import CrossEncoder  # type: ignore
 
 from infinity_emb.args import EngineArgs
@@ -10,7 +9,7 @@ def test_crossencoder():
     model = OptimumCrossEncoder(
         engine_args=EngineArgs(
             model_name_or_path="Xenova/bge-reranker-base",
-            device="cuda" if torch.cuda.is_available() else "cpu",
+            device="cpu",
         )
     )
 
@@ -35,7 +34,7 @@ def test_patched_crossencoder_vs_sentence_transformers():
     model = OptimumCrossEncoder(
         engine_args=EngineArgs(
             model_name_or_path="Xenova/bge-reranker-base",
-            device="cuda" if torch.cuda.is_available() else "cpu",
+            device="cpu",
         )
     )
     model_unpatched = CrossEncoder("BAAI/bge-reranker-base")
