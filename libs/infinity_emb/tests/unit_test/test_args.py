@@ -1,6 +1,7 @@
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device
-from infinity_emb.transformer.utils import InferenceEngine
+from infinity_emb.primitives import InferenceEngine
+
 
 
 def test_EngineArgs_no_input():

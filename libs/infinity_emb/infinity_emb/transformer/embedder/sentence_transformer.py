@@ -49,8 +49,9 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             )
         super().__init__(
             engine_args.model_name_or_path,
+            revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
-            device=engine_args.device,
+            device=engine_args.device.value,
         )
         self.to(self.device)
         # make a copy of the tokenizer,

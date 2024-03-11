@@ -41,11 +41,11 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
             )
 
         super().__init__(
-            model_name_or_path=engine_args.model_name_or_path,
+            engine_args.model_name_or_path,
             revision=engine_args.revision,
             tokenizer_args={"trust_remote_code": engine_args.trust_remote_code},
-            autoautomodel_args={"trust_remote_code": engine_args.trust_remote_code},
-            device=engine_args.device,
+            automodel_args={"trust_remote_code": engine_args.trust_remote_code},
+            device=engine_args.device.value,
         )
 
         # make a copy of the tokenizer,

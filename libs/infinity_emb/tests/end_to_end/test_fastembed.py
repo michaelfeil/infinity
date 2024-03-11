@@ -6,7 +6,8 @@ from sentence_transformers import SentenceTransformer  # type: ignore
 from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device
-from infinity_emb.transformer.utils import InferenceEngine
+from infinity_emb.primitives import InferenceEngine
+
 
 PREFIX = "/v1_fastembed"
 MODEL: str = "BAAI/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
