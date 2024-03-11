@@ -30,7 +30,11 @@ def test_crossencoder():
 
 
 def test_patched_crossencoder_vs_sentence_transformers():
-    model = CrossEncoderPatched("BAAI/bge-reranker-base")
+    model = CrossEncoderPatched(
+        engine_args=EngineArgs(
+            model_name_or_path="BAAI/bge-reranker-base", compile=True
+        )
+    )
     model_unpatched = CrossEncoder("BAAI/bge-reranker-base")
 
     query = "Where is Paris?"
