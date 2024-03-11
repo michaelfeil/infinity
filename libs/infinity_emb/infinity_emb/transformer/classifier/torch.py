@@ -2,7 +2,6 @@ from typing import Dict, List
 
 try:
     # autotokenizer
-    import torch
     from transformers import AutoTokenizer, pipeline  # type: ignore
 
     TORCH_AVAILABLE = True
@@ -35,11 +34,10 @@ class SentenceClassifier(BaseClassifer):
             trust_remote_code=engine_args.trust_remote_code,
             device=engine_args.device.value,
             top_k=None,
-            torch_dtype=torch.float32
-            if engine_args.device == Device.cpu
-            else torch.float16,
             revision=engine_args.revision,
         )
+        if self._pipe.device.type != "cpu":  # and engine_args.dtype == "float16":
+            self._pipe.model = self._pipe.model.half()
 
         self._pipe.model = to_bettertransformer(
             self._pipe.model,

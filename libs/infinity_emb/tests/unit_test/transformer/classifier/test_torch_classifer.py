@@ -5,7 +5,9 @@ from infinity_emb.transformer.classifier.torch import SentenceClassifier
 
 
 def test_classifier(model_name: str = "SamLowe/roberta-base-go_emotions"):
-    model = SentenceClassifier(engine_args=EngineArgs(model_name_or_path=model_name))
+    model = SentenceClassifier(
+        engine_args=EngineArgs(model_name_or_path=model_name, device="cpu")  # type: ignore
+    )
     pipe = pipeline(model=model_name, task="text-classification")
 
     sentences = ["This is awesome.", "I am depressed."]

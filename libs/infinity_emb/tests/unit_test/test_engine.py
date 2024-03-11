@@ -3,7 +3,7 @@ import pytest
 from sentence_transformers import CrossEncoder  # type: ignore
 
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
-from infinity_emb.primitives import ModelNotDeployedError, InferenceEngine
+from infinity_emb.primitives import InferenceEngine, ModelNotDeployedError
 
 
 @pytest.mark.anyio
@@ -142,6 +142,7 @@ async def test_async_api_torch_CLASSIFY():
             model_name_or_path="SamLowe/roberta-base-go_emotions",
             engine="torch",
             model_warmup=True,
+            device="cpu",
         )
     )
     assert engine.capabilities == {"classify"}

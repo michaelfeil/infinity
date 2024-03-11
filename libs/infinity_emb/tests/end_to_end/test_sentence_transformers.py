@@ -8,7 +8,6 @@ from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import InferenceEngine
 
-
 PREFIX = "/v1_ct2"
 MODEL: str = pytest.DEFAULT_BERT_MODEL  # type: ignore
 batch_size = 64 if torch.cuda.is_available() else 8
