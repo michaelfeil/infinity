@@ -1,5 +1,6 @@
 import numpy as np
 import pytest
+import torch
 from sentence_transformers import CrossEncoder  # type: ignore
 
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
@@ -91,7 +92,7 @@ async def test_engine_crossencoder_vs_sentence_transformers():
         EngineArgs(
             model_name_or_path="BAAI/bge-reranker-base",
             engine=InferenceEngine.torch,
-            device="auto",
+            device="cuda" if torch.cuda.is_available() else "cpu",
             model_warmup=False,
         )
     )
