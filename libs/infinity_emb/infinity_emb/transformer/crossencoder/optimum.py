@@ -22,7 +22,7 @@ except (ImportError, RuntimeError):
 
 
 class OptimumCrossEncoder(BaseCrossEncoder):
-    def __init__(self, engine_args: EngineArgs):
+    def __init__(self, *, engine_args: EngineArgs):
         if not OPTIMUM_AVAILABLE:
             raise ImportError(
                 "optimum.onnxruntime is not installed."

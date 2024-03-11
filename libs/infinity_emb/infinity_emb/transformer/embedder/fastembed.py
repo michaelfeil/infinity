@@ -19,7 +19,7 @@ except ImportError:
 
 
 class Fastembed(BaseEmbedder):
-    def __init__(self, engine_args: EngineArgs) -> None:
+    def __init__(self, *, engine_args: EngineArgs) -> None:
         if not FASTEMBED_AVAILABLE:
             raise ImportError(
                 "fastembed is not installed." "`pip install infinity-emb[fastembed]`"

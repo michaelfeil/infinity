@@ -12,9 +12,7 @@ def test_embedder_optimum(size="large"):
         )
     )
     st_model = SentenceTransformer(
-        engine_args=EngineArgs(
-            model_name_or_path=f"BAAI/bge-{size}-en-v1.5", device="cpu"
-        )
+        model_name_or_path=f"BAAI/bge-{size}-en-v1.5", device="cpu"
     )
 
     sentences = ["This is awesome.", "I am depressed."]
