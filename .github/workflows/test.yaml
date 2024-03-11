@@ -16,19 +16,24 @@ env:
 
 
 jobs:
-  build-linux:
+  testing-job:
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version:
           - "3.9"
           - "3.10"
           - "3.11"
+          - "3.12"
+        os:
+          - ubuntu-latest
+          # - windows-latest
+          # - macos-latest
 
-    name: Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
     steps:
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@v1.3.0
