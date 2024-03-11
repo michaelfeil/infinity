@@ -34,7 +34,7 @@ class EngineArgs:
     model_warmup: bool = False
     vector_disk_cache_path: str = ""
     device: Device = Device.auto
-    compile: bool = True
+    compile: bool = False
     bettertransformer: bool = True
     dtype: Dtype = Dtype.auto
     pooling_method: PoolingMethod = PoolingMethod.auto
