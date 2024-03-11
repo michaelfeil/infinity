@@ -30,7 +30,7 @@ async def test_async_api_torch():
             model_name_or_path="BAAI/bge-small-en-v1.5",
             engine=InferenceEngine.torch,
             revision="main",
-            device="auto",
+            device="cpu",
         )
     )
     assert engine.capabilities == {"embed"}

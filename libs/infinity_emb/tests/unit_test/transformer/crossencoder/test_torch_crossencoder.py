@@ -2,10 +2,10 @@ import numpy as np
 from sentence_transformers import CrossEncoder  # type: ignore
 
 from infinity_emb.transformer.crossencoder.torch import CrossEncoderPatched
-
+from infinity_emb.args import EngineArgs
 
 def test_crossencoder():
-    model = CrossEncoderPatched("BAAI/bge-reranker-base")
+    model = CrossEncoderPatched(engine_args=EngineArgs(model_name_or_path="BAAI/bge-reranker-base"))
 
     query = "Where is Paris?"
     documents = [

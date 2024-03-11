@@ -2,10 +2,10 @@ import numpy as np
 from sentence_transformers import CrossEncoder  # type: ignore
 
 from infinity_emb.transformer.crossencoder.optimum import OptimumCrossEncoder
-
+from infinity_emb.args import EngineArgs
 
 def test_crossencoder():
-    model = OptimumCrossEncoder("Xenova/bge-reranker-base", device="cpu")
+    model = OptimumCrossEncoder(engine_args=EngineArgs(model_name_or_path="Xenova/bge-reranker-base", device="cpu"))
 
     query = "Where is Paris?"
     documents = [

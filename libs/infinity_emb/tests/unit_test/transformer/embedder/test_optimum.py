@@ -2,11 +2,11 @@ import numpy as np
 from sentence_transformers import SentenceTransformer  # type: ignore
 
 from infinity_emb.transformer.embedder.optimum import OptimumEmbedder
-
+from infinity_emb.args import EngineArgs
 
 def test_embedder_optimum(size="large"):
-    model = OptimumEmbedder(f"Xenova/bge-{size}-en-v1.5", device="cpu")
-    st_model = SentenceTransformer(f"BAAI/bge-{size}-en-v1.5", device="cpu")
+    model = OptimumEmbedder(engine_args=EngineArgs(model_name_or_path=f"Xenova/bge-{size}-en-v1.5", device="cpu"))
+    st_model = SentenceTransformer(engine_args=EngineArgs(model_name_or_path=f"BAAI/bge-{size}-en-v1.5", device="cpu"))
 
     sentences = ["This is awesome.", "I am depressed."]
 
