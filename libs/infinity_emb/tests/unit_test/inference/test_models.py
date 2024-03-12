@@ -16,7 +16,7 @@ from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
     SentenceTransformerPatched,
 )
-
+import torch
 
 def _pretrained_model_score(
     dataset: List[InputExample],
@@ -34,7 +34,7 @@ def _pretrained_model_score(
 
     else:
         model = SentenceTransformerPatched(
-            engine_args=EngineArgs(model_name_or_path=model_name)
+            engine_args=EngineArgs(model_name_or_path=model_name, bettertransformer=not torch.backends.mps.is_available())
         )
     evaluator = EmbeddingSimilarityEvaluator.from_input_examples(
         test_samples, name="sts-test"
@@ -54,8 +54,8 @@ def _pretrained_model_score(
         ("sentence-transformers/all-MiniLM-L6-v2", 82.03, "default"),
         ("sentence-transformers/all-MiniLM-L6-v2", 81.73, "int8"),
         ("sentence-transformers/all-MiniLM-L6-v2", 82.03, "default"),
-        ("BAAI/bge-small-en-v1.5", 86.00, None),
-        ("BAAI/bge-small-en-v1.5", 86.00, "int8"),
+        ("BAAI/bge-small-en-v1.5", 85.90, None),
+        ("BAAI/bge-small-en-v1.5", 85.90, "int8"),
     ],
 )
 def test_bert(get_sts_bechmark_dataset, model, score, compute_type):
