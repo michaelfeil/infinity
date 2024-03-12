@@ -28,7 +28,7 @@ async def test_async_api_torch():
     sentences = ["Hi", "how"]
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
-            model_name_or_path="BAAI/bge-small-en-v1.5",
+            model_name_or_path="michaelfeil/bge-small-en-v1.5",
             engine=InferenceEngine.torch,
             revision="main",
             device="cpu",
@@ -219,7 +219,7 @@ async def test_async_api_failing_revision():
         # revision with just Readme.
         AsyncEmbeddingEngine.from_args(
             EngineArgs(
-                model_name_or_path="BAAI/bge-small-en-v1.5",
+                model_name_or_path="michaelfeil/bge-small-en-v1.5",
                 revision="a32952c6d05d45f64f9f709a092c00839bcfe70a",
             )
         )

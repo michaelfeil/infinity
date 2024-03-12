@@ -13,7 +13,7 @@ class EngineArgs:
     """Creating a Async EmbeddingEngine object.
 
     Args:
-        model_name_or_path, str:  Defaults to "BAAI/bge-small-en-v1.5".
+        model_name_or_path, str:  Defaults to "michaelfeil/bge-small-en-v1.5".
         batch_size, int: Defaults to 64.
         revision, str: Defaults to None.
         trust_remote_code, bool: Defaults to True.
@@ -26,7 +26,7 @@ class EngineArgs:
         lengths_via_tokenize, bool: schedule by token usage. Defaults to False
     """
 
-    model_name_or_path: str = "BAAI/bge-small-en-v1.5"
+    model_name_or_path: str = "michaelfeil/bge-small-en-v1.5"
     batch_size: int = 64
     revision: Optional[str] = None
     trust_remote_code: bool = True
