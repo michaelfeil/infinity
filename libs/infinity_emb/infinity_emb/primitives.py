@@ -37,6 +37,7 @@ class Device(enum.Enum):
 
 class Dtype(enum.Enum):
     float16: str = "float16"
+    int8: str = "int8"
     auto: str = "auto"
 
 

@@ -1,3 +1,4 @@
+import os
 import sys
 from dataclasses import dataclass
 from typing import Optional
@@ -34,7 +35,7 @@ class EngineArgs:
     model_warmup: bool = False
     vector_disk_cache_path: str = ""
     device: Device = Device.auto
-    compile: bool = False
+    compile: bool = not os.environ.get("INFINITY_DISABLE_COMPILE", "Disable")
     bettertransformer: bool = True
     dtype: Dtype = Dtype.auto
     pooling_method: PoolingMethod = PoolingMethod.auto

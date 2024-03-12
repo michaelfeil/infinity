@@ -73,9 +73,20 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         ]:
             logger.info("Switching to half() precision (cuda: fp16). ")
             self.half()
+
+        if engine_args.dtype in (Dtype.int8,):
+            from infinity_emb.transformer.quantization.quant import quantize
+
+            quant_handler, _ = quantize(fm.auto_model, mode=engine_args.dtype.value)
+            model = quant_handler.convert_for_runtime()
+            model.to(self.device)
+            # features1 = self.tokenize(["hello world"])
+            # features1 = util.batch_to_device(features1, self.device)
+            # model.forward(**features1)
+            fm.auto_model = model
         if engine_args.compile:
             logger.info("using torch.compile()")
-            fm.auto_model = torch.compile(fm.auto_model, dynamic=True)
+            fm.auto_model = torch.compile(fm.auto_model, dynamic=True, fullgraph=True)
 
     def encode_pre(self, sentences) -> Dict[str, Tensor]:
         features = self.tokenize(sentences)

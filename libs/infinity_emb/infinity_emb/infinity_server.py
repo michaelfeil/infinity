@@ -193,7 +193,7 @@ def create_server(
 
 
 def _start_uvicorn(
-    model_name_or_path: str = "BAAI/bge-small-en-v1.5",
+    model_name_or_path: str = "BAAI/bge-large-en-v1.5",
     batch_size: int = 64,
     revision: Optional[str] = None,
     trust_remote_code: bool = True,
