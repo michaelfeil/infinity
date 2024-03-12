@@ -15,7 +15,7 @@ class EngineArgs:
 
     Args:
         model_name_or_path, str:  Defaults to "BAAI/bge-small-en-v1.5".
-        batch_size, int: Defaults to 64.
+        batch_size, int: Defaults to 32.
         revision, str: Defaults to None.
         trust_remote_code, bool: Defaults to True.
         engine, InferenceEngine or str: backend for inference.
@@ -28,7 +28,7 @@ class EngineArgs:
     """
 
     model_name_or_path: str = "BAAI/bge-small-en-v1.5"
-    batch_size: int = 64
+    batch_size: int = 32
     revision: Optional[str] = None
     trust_remote_code: bool = True
     engine: InferenceEngine = InferenceEngine.torch

@@ -3,13 +3,15 @@
 # Adapted from this commit:
 # https://github.com/pytorch-labs/gpt-fast/commit/889e78ba468a411018a1d397ecebf07976ae6951
 
+import abc
 import time
 from pathlib import Path
+from typing import Any
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from sentencepiece import SentencePieceProcessor
+from sentencepiece import SentencePieceProcessor  # type: ignore
 
 # try:
 #     from GPTQ import GenericGPTQRunner, InputRecorder
@@ -162,13 +164,15 @@ def group_dequantize_tensor(w_int32, scales_and_zeros, n_bit=4, groupsize=128):
     )
 
 
-class QuantHandler:
+class QuantHandler(abc.ABC):
     def __init__(self, mod):
         self.mod = mod
 
-    def create_quantized_state_dict(self) -> "StateDict":
+    @abc.abstractmethod
+    def create_quantized_state_dict(self):
         pass
 
+    @abc.abstractmethod
     def convert_for_runtime(self) -> "nn.Module":
         pass
 
@@ -252,8 +256,8 @@ class GPTQQuantHandler(QuantHandler):
         calibration_limit,
         calibration_seq_length,
         pad_calibration_inputs,
-    ) -> "MultiInput":
-        input_recorder = InputRecorder(
+    ):
+        input_recorder = InputRecorder(  # noqa
             model,
             tokenizer,
             calibration_seq_length,
@@ -261,13 +265,13 @@ class GPTQQuantHandler(QuantHandler):
         )
 
         try:
-            lm_eval.tasks.initialize_tasks()
-        except:
+            lm_eval.tasks.initialize_tasks()  # noqa
+        except Exception:
             pass
-        task_dict = get_task_dict(calibration_tasks)
+        task_dict = get_task_dict(calibration_tasks)  # noqa
         print("Obtaining GPTQ calibration inputs on: ", calibration_tasks)
 
-        evaluate(
+        evaluate(  # noqa
             input_recorder,
             task_dict,
             limit=calibration_limit,
@@ -292,7 +296,7 @@ class GPTQQuantHandler(QuantHandler):
         calibration_limit,
         calibration_seq_length,
         pad_calibration_inputs,
-    ) -> "StateDict":
+    ):
         inputs = GPTQQuantHandler.get_inputs(
             self.mod,
             tokenizer,
@@ -302,7 +306,7 @@ class GPTQQuantHandler(QuantHandler):
             pad_calibration_inputs,
         )
         print("Tracing model for GPTQ")
-        GPTQ_runner = GenericGPTQRunner(
+        GPTQ_runner = GenericGPTQRunner(  # noqa
             self.mod,
             inputs,
             blocksize,
@@ -321,7 +325,7 @@ class GPTQQuantHandler(QuantHandler):
         GPTQ_runner.run()
         return GPTQ_runner.get_quantized_state_dict()
 
-    def convert_for_runtime(self) -> "nn.Module":
+    def convert_for_runtime(self):
         pass
 
 
@@ -345,7 +349,7 @@ class WeightOnlyInt8QuantHandler:
         self.mod = mod
 
     @torch.no_grad()
-    def create_quantized_state_dict(self):
+    def create_quantized_state_dict(self, **kwargs):
         cur_state_dict = self.mod.state_dict()
         for fqn, mod in self.mod.named_modules():
             if isinstance(mod, torch.nn.Linear):
@@ -478,12 +482,13 @@ class WeightOnlyInt4QuantHandler:
                 ):
                     if self.padding:
                         import torch.nn.functional as F
-                        from model import find_multiple
+
+                        # from model import find_multiple
 
                         print(
                             f"warning: {fqn} is padded to satisfy in_features % 1024 == 0"
                         )
-                        padded_in_features = find_multiple(in_features, 1024)
+                        padded_in_features = find_multiple(in_features, 1024)  # noqa
                         weight = F.pad(
                             weight, pad=(0, padded_in_features - in_features)
                         )
@@ -513,7 +518,7 @@ class WeightOnlyInt4QuantHandler:
 
 class WeightOnlyInt4GPTQQuantHandler(GPTQQuantHandler):
     def __init__(self, mod, groupsize=128, inner_k_tiles=8, padding=True):
-        from model import find_multiple
+        # from model import find_multiple
 
         self.mod = mod
         self.groupsize = groupsize
@@ -538,7 +543,7 @@ class WeightOnlyInt4GPTQQuantHandler(GPTQQuantHandler):
         # we need to do the padding here, both for q and the qparams if necessary
         def make_names_and_values_dict_func(q, qparams):
             k = q.shape[1]
-            new_k = find_multiple(k, 1024)
+            new_k = find_multiple(k, 1024)  # noqa
             # how much we need to pad the weight
             delta_k = new_k - q.shape[1]
             final_q = torch.ops.aten._convert_weight_to_int4pack(
@@ -583,10 +588,10 @@ class WeightOnlyInt4Linear(torch.nn.Module):
         super().__init__()
         self.padding = padding
         if padding:
-            from model import find_multiple
+            # from model import find_multiple
 
             self.origin_in_features = in_features
-            in_features = find_multiple(in_features, 1024)
+            # in_features = find_multiple(in_features, 1024)
 
         self.in_features = in_features
         self.out_features = out_features
@@ -649,7 +654,7 @@ def quantize(
     blocksize: int = 128,
     label: str = "",
     device: str = "cuda",
-) -> None:
+) -> tuple[QuantHandler, Any]:
     precision = torch.bfloat16
 
     print("Loading model ...")
@@ -667,7 +672,7 @@ def quantize(
         print(
             "Quantizing model weights for int8 weight-only symmetric per-channel quantization"
         )
-        quant_handler = WeightOnlyInt8QuantHandler(model)
+        quant_handler: QuantHandler = WeightOnlyInt8QuantHandler(model)  # type: ignore
         quantized_state_dict = quant_handler.create_quantized_state_dict()
 
         new_base_name = base_name.replace(".pth", f"{label}int8.pth")
@@ -677,7 +682,7 @@ def quantize(
             "Quantizing model weights for int4 weight-only affine per-channel groupwise quantization"
         )
         print(f"Prepacking model weights in {device} optimal layout")
-        quant_handler = WeightOnlyInt4QuantHandler(model, groupsize)
+        quant_handler = WeightOnlyInt4QuantHandler(model, groupsize)  # type: ignore
         quantized_state_dict = quant_handler.create_quantized_state_dict()
 
         new_base_name = base_name.replace(
@@ -688,13 +693,13 @@ def quantize(
         print(
             "Quantizing model weights for int4 weight-only affine per-channel groupwise quantization using GPTQ..."
         )
-        quant_handler = WeightOnlyInt4GPTQQuantHandler(model, groupsize)
-
+        quant_handler = WeightOnlyInt4GPTQQuantHandler(model, groupsize)  # type: ignore
+        assert checkpoint_path is not None, "checkpoint_path must be provided for GPTQ"
         tokenizer_path = checkpoint_path.parent / "tokenizer.model"
         assert tokenizer_path.is_file(), tokenizer_path
         tokenizer = SentencePieceProcessor(model_file=str(tokenizer_path))
 
-        quantized_state_dict = quant_handler.create_quantized_state_dict(
+        quantized_state_dict = quant_handler.create_quantized_state_dict(  # noqa
             tokenizer,
             blocksize,
             percdamp,
@@ -710,6 +715,7 @@ def quantize(
         raise ValueError(
             f"Invalid quantization mode {mode} needs to be one of [int8, int4, int4-gpptq]"
         )
+
     if checkpoint_path:
         quantize_path = dir_name / new_base_name
         print(f"Writing quantized weights to {quantize_path}")
@@ -718,7 +724,7 @@ def quantize(
         )  # remove existing file if one already there
         torch.save(quantized_state_dict, quantize_path)
     print(f"Quantization complete took {time.time() - t0:.02f} seconds")
-    return quant_handler, quantized_state_dict
+    return quant_handler, quantized_state_dict  # noqa
 
 
 if __name__ == "__main__":

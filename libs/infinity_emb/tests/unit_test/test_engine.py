@@ -183,6 +183,7 @@ async def test_async_api_fastembed():
     sentences = ["Hi", "how"]
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
+            model_name_or_path="BAAI/bge-small-en-v1.5",
             engine=InferenceEngine.fastembed,
             device="cpu",
             model_warmup=False,
