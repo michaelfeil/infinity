@@ -3,6 +3,7 @@ Tests that the pretrained models produce the correct scores on the STSbenchmark 
 """
 
 import copy
+import sys
 from typing import List
 
 import pytest
@@ -62,6 +63,7 @@ def _pretrained_model_score(
         ("BAAI/bge-small-en-v1.5", 85.90, "int8"),
     ],
 )
+@pytest.mark.skipif(sys.platform == "darwin", reason="does not run on mac")
 def test_bert(get_sts_bechmark_dataset, model, score, compute_type):
     samples = copy.deepcopy(get_sts_bechmark_dataset[2])
     _pretrained_model_score(samples, model, score, ct2_compute_type=compute_type)
