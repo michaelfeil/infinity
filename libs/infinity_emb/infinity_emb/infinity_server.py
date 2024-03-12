@@ -20,8 +20,12 @@ from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.primitives import (
     Device,
     DeviceTypeHint,
+    Dtype,
+    DtypeTypeHint,
     InferenceEngine,
     InferenceEngineTypeHint,
+    PoolingMethod,
+    PoolingMethodTypeHint,
 )
 
 
@@ -209,6 +213,8 @@ def _start_uvicorn(
     vector_disk_cache: bool = INFINITY_CACHE_VECTORS,
     device: DeviceTypeHint = DeviceTypeHint.auto.name,  # type: ignore
     lengths_via_tokenize: bool = False,
+    dtype: DtypeTypeHint = DtypeTypeHint.auto.name,  # type: ignore
+    pooling_method: PoolingMethodTypeHint = PoolingMethodTypeHint.auto.name,  # type: ignore
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
     MIT License; Copyright (c) 2023-now Michael Feil
@@ -250,6 +256,8 @@ def _start_uvicorn(
         vector_disk_cache_path=vector_disk_cache_path,
         device=Device[device.value],  # type: ignore
         lengths_via_tokenize=lengths_via_tokenize,
+        dtype=Dtype[dtype.value],  # type: ignore
+        pooling_method=PoolingMethod[pooling_method.value],  # type: ignore
     )
 
     app = create_server(
