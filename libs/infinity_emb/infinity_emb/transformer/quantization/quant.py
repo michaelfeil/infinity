@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sentencepiece import SentencePieceProcessor  # type: ignore
+from typing import Union
 
 # try:
 #     from GPTQ import GenericGPTQRunner, InputRecorder
@@ -641,7 +642,7 @@ class WeightOnlyInt4Linear(torch.nn.Module):
 
 def quantize(
     model,
-    checkpoint_path: Path | None = None,
+    checkpoint_path: Union[Path, None] = None,
     mode: str = "int8",
     # following arguments only available when setting int4 quantization.
     groupsize: int = 128,
