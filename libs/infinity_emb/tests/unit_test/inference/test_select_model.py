@@ -11,8 +11,8 @@ def test_engine(engine):
         EngineArgs(
             engine=engine,
             model_name_or_path=(
-                "TaylorAI/bge-micro-v2"
-                if engine == InferenceEngine.optimum
+                "BAAI/bge-small-en-v1.5"
+                if engine == InferenceEngine.fastembed
                 else pytest.DEFAULT_BERT_MODEL
             ),
             batch_size=4,
