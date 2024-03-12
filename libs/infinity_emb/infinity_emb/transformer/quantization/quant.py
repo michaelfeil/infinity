@@ -6,13 +6,12 @@
 import abc
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from sentencepiece import SentencePieceProcessor  # type: ignore
-from typing import Union
 
 # try:
 #     from GPTQ import GenericGPTQRunner, InputRecorder
