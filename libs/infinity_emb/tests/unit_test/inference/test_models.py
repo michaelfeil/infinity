@@ -6,6 +6,7 @@ import copy
 from typing import List
 
 import pytest
+import torch
 from sentence_transformers import InputExample  # type: ignore
 from sentence_transformers.evaluation import (  # type: ignore
     EmbeddingSimilarityEvaluator,  # type: ignore
@@ -16,7 +17,7 @@ from infinity_emb.transformer.embedder.sentence_transformer import (
     CT2SentenceTransformer,
     SentenceTransformerPatched,
 )
-import torch
+
 
 def _pretrained_model_score(
     dataset: List[InputExample],
@@ -34,7 +35,10 @@ def _pretrained_model_score(
 
     else:
         model = SentenceTransformerPatched(
-            engine_args=EngineArgs(model_name_or_path=model_name, bettertransformer=not torch.backends.mps.is_available())
+            engine_args=EngineArgs(
+                model_name_or_path=model_name,
+                bettertransformer=not torch.backends.mps.is_available(),
+            )
         )
     evaluator = EmbeddingSimilarityEvaluator.from_input_examples(
         test_samples, name="sts-test"
