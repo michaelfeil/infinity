@@ -1,5 +1,3 @@
-import sys
-
 import pytest
 from asgi_lifespan import LifespanManager
 from httpx import AsyncClient
@@ -59,7 +57,6 @@ async def test_embedding(client, model_base, helpers):
 
 @pytest.mark.performance
 @pytest.mark.anyio
-@pytest.mark.skipif(sys.platform == "darwin", reason="Skip on macOS")
 async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, helpers):
     await helpers.util_batch_embedding(
         client=client,
