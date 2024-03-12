@@ -1,7 +1,6 @@
 import time
 from typing import Optional
 
-# prometheus
 import infinity_emb
 from infinity_emb.args import EngineArgs
 from infinity_emb.engine import AsyncEmbeddingEngine
@@ -16,10 +15,14 @@ from infinity_emb.fastapi_schemas.pymodels import (
     OpenAIModelInfo,
     RerankInput,
 )
-from infinity_emb.inference import Device, DeviceTypeHint
 from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
-from infinity_emb.primitives import InferenceEngine, InferenceEngineTypeHint
+from infinity_emb.primitives import (
+    Device,
+    DeviceTypeHint,
+    InferenceEngine,
+    InferenceEngineTypeHint,
+)
 
 
 def create_server(

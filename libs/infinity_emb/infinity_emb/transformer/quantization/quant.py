@@ -275,7 +275,7 @@ class GPTQQuantHandler(QuantHandler):
         inputs = input_recorder.get_recorded_inputs()
         assert inputs is not None, (
             f"No inputs were collected, use a task other than {calibration_tasks}, "
-            + f"use option pad_calibration_inputs, or decrease calibration_sequence_length (currently "
+            + "use option pad_calibration_inputs, or decrease calibration_sequence_length (currently "
             + f"{calibration_seq_length})"
         )
         print(f"Obtained {len(inputs[0].values)} calibration samples")
@@ -376,7 +376,7 @@ class WeightOnlyInt8Linear(torch.nn.Module):
         device=None,
         dtype=None,
     ) -> None:
-        factory_kwargs = {"device": device, "dtype": dtype}
+        # factory_kwargs = {"device": device, "dtype": dtype}
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features

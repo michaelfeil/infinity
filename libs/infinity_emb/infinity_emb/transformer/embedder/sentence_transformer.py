@@ -10,6 +10,7 @@ from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Dtype, EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.acceleration import to_bettertransformer
+from infinity_emb.transformer.quantization.quant import quantize
 
 try:
     import torch
@@ -75,8 +76,6 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             self.half()
 
         if engine_args.dtype in (Dtype.int8,):
-            from infinity_emb.transformer.quantization.quant import quantize
-
             quant_handler, _ = quantize(fm.auto_model, mode=engine_args.dtype.value)
             model = quant_handler.convert_for_runtime()
             model.to(self.device)
