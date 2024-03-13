@@ -8,7 +8,7 @@ def test_EngineArgs_no_input():
 
 def test_engine_args():
     args = EngineArgs(
-        model_name_or_path="BAAI/bge-small-en-v1.5",
+        model_name_or_path="michaelfeil/bge-small-en-v1.5",
         batch_size=64,
         revision=None,
         trust_remote_code=True,
@@ -19,7 +19,7 @@ def test_engine_args():
         lengths_via_tokenize=False,
     )
 
-    assert args.model_name_or_path == "BAAI/bge-small-en-v1.5"
+    assert args.model_name_or_path == "michaelfeil/bge-small-en-v1.5"
     assert args.batch_size == 64
     assert args.revision is None
     assert args.trust_remote_code
