@@ -161,10 +161,13 @@ async def test_async_api_torch_CLASSIFY():
 @pytest.mark.anyio
 async def test_async_api_torch_usage():
     sentences = ["Hi", "how", "school", "Pizza Hi"]
+    device = "auto"
+    if torch.backends.mps.is_available():
+        device = "cpu"
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
             engine=InferenceEngine.torch,
-            device="auto",
+            device=device,
             lengths_via_tokenize=True,
             model_warmup=False,
         )

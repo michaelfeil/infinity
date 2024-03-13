@@ -73,8 +73,8 @@ async def test_embedding(client, model_base, helpers):
 
 
 @pytest.mark.performance
-@pytest.mark.skipif(sys.platform == "darwin", reason="Does not run on macOS")
 @pytest.mark.anyio
+@pytest.mark.skipif(sys.platform == "darwin", reason="Does not run on macOS")
 async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, helpers):
     await helpers.util_batch_embedding(
         client=client,
