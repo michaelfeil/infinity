@@ -30,6 +30,7 @@ class EngineArgs:
         pooling_method, PoolingMethod or str: pooling method to use. Defaults to PoolingMethod.auto.
         lengths_via_tokenize, bool: schedule by token usage. Defaults to False.
     """
+
     model_name_or_path: str = "michaelfeil/bge-small-en-v1.5"
     batch_size: int = 32
     revision: Optional[str] = None
