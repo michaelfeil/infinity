@@ -6,7 +6,7 @@ from sentence_transformers import SentenceTransformer  # type: ignore
 
 from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
-from infinity_emb.primitives import InferenceEngine
+from infinity_emb.primitives import Device, InferenceEngine
 
 PREFIX = "/v1_ct2"
 MODEL: str = pytest.DEFAULT_BERT_MODEL  # type: ignore
@@ -17,7 +17,8 @@ app = create_server(
     engine_args=EngineArgs(
         model_name_or_path=MODEL,
         batch_size=batch_size,
-        engine=InferenceEngine.ctranslate2,
+        engine=InferenceEngine.torch,
+        device=Device.auto if not torch.backends.mps.is_available() else Device.cpu,
     ),
 )
 

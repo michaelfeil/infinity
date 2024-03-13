@@ -23,7 +23,7 @@ LIMIT_SLOWDOWN = 1.25 if torch.cuda.is_available() else 1.35
 @pytest.mark.anyio
 async def load_patched_bh() -> Tuple[SentenceTransformerPatched, BatchHandler]:
     model = SentenceTransformerPatched(
-        engine_args=EngineArgs(model_name_or_path=pytest.DEFAULT_BERT_MODEL)  # type: ignore
+        engine_args=EngineArgs(model_name_or_path=pytest.DEFAULT_BERT_MODEL, bettertransformer=not torch.backends.mps.is_available())  # type: ignore
     )
     model.encode(["hello " * 512] * BATCH_SIZE)
     bh = BatchHandler(model=model, max_batch_size=BATCH_SIZE)

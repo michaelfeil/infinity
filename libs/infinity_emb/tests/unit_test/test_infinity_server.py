@@ -1,5 +1,7 @@
 import subprocess
+import sys
 
+import pytest
 import typer
 import uvicorn
 from fastapi import FastAPI
@@ -17,6 +19,8 @@ from infinity_emb.infinity_server import (
 )
 
 
+# only run subprocess on non-windows
+@pytest.mark.skipif(sys.platform == "win32", reason="does not run on windows")
 def test_cli_help():
     log = subprocess.run(["infinity_emb", "--help"])
     assert log.returncode == 0
@@ -28,6 +32,7 @@ def test_patched_cli_help(mocker):
     typer.run.assert_called_once_with(_start_uvicorn)
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="does not run on windows")
 def test_cli_wrong_batch_size():
     log = subprocess.run(["infinity_emb", "--batch-size", "WrongArgument"])
     assert log.returncode == 2

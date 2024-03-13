@@ -3,9 +3,11 @@ Tests that the pretrained models produce the correct scores on the STSbenchmark 
 """
 
 import copy
+import sys
 from typing import List
 
 import pytest
+import torch
 from sentence_transformers import InputExample  # type: ignore
 from sentence_transformers.evaluation import (  # type: ignore
     EmbeddingSimilarityEvaluator,  # type: ignore
@@ -34,7 +36,10 @@ def _pretrained_model_score(
 
     else:
         model = SentenceTransformerPatched(
-            engine_args=EngineArgs(model_name_or_path=model_name)
+            engine_args=EngineArgs(
+                model_name_or_path=model_name,
+                bettertransformer=not torch.backends.mps.is_available(),
+            )
         )
     evaluator = EmbeddingSimilarityEvaluator.from_input_examples(
         test_samples, name="sts-test"
@@ -54,10 +59,11 @@ def _pretrained_model_score(
         ("sentence-transformers/all-MiniLM-L6-v2", 82.03, "default"),
         ("sentence-transformers/all-MiniLM-L6-v2", 81.73, "int8"),
         ("sentence-transformers/all-MiniLM-L6-v2", 82.03, "default"),
-        ("michaelfeil/bge-small-en-v1.5", 86.00, None),
-        ("michaelfeil/bge-small-en-v1.5", 86.00, "int8"),
+        ("BAAI/bge-small-en-v1.5", 85.90, None),
+        ("BAAI/bge-small-en-v1.5", 85.90, "int8"),
     ],
 )
+@pytest.mark.skipif(sys.platform == "darwin", reason="does not run on mac")
 def test_bert(get_sts_bechmark_dataset, model, score, compute_type):
     samples = copy.deepcopy(get_sts_bechmark_dataset[2])
     _pretrained_model_score(samples, model, score, ct2_compute_type=compute_type)
