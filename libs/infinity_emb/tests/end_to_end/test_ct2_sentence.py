@@ -10,7 +10,7 @@ from sentence_transformers import SentenceTransformer  # type: ignore
 from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device, InferenceEngine
-from infinity_emb.transformer.embedder.sentence_transformer import (
+from infinity_emb.transformer.embedder.ct2 import (
     CT2SentenceTransformer,
 )
 
