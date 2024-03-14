@@ -2,11 +2,13 @@
 
 import importlib.util
 from functools import cached_property
-from typing import Optional, Tuple
+from typing import Iterable, Optional
 
 
 class OptionalImports:
-    def __init__(self, lib: str, extra_install: str, dependencies: Tuple[str] = tuple()) -> None:
+    def __init__(
+        self, lib: str, extra_install: str, dependencies: Optional[Iterable[str]] = None
+    ) -> None:
         self.lib = lib
         self.extra_install = extra_install
         self._marked_as_dirty: Optional[Exception] = None
@@ -14,7 +16,7 @@ class OptionalImports:
 
     @cached_property
     def is_available(self) -> bool:
-        if self.dependencies:
+        if self.dependencies is not None:
             for dep in self.dependencies:
                 if importlib.util.find_spec(dep) is None:
                     return False
@@ -23,10 +25,10 @@ class OptionalImports:
             lib = self.lib.split(".")
             for i in range(len(lib)):
                 module = ".".join(lib[: i + 1])
-                print("ckecking", module)
+                print("checking", module)
                 if importlib.util.find_spec(module) is None:
                     return False
-            
+
         return importlib.util.find_spec(self.lib) is not None
 
     def mark_dirty(self, exception: Exception) -> None:
@@ -52,7 +54,7 @@ CHECK_DISKCACHE = OptionalImports("diskcache", "cache")
 CHECK_CTRANSLATE2 = OptionalImports("ctranslate2", "ctranslate2")
 CHECK_FASTAPI = OptionalImports("fastapi", "server")
 CHECK_HF_TRANSFER = OptionalImports("hf_transfer", "hf_transfer")
-CHECK_ONNXRUNTIME = OptionalImports("optimum.onnxruntime", "optimum", dependencies="optimum")
+CHECK_ONNXRUNTIME = OptionalImports("optimum.onnxruntime", "optimum")
 CHECK_OPTIMUM = OptionalImports("optimum", "optimum")
 CHECK_SENTENCE_TRANSFORMERS = OptionalImports("sentence_transformers", "torch")
 CHECK_TRANSFORMERS = OptionalImports("transformers", "torch")

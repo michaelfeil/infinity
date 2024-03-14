@@ -13,14 +13,16 @@ if CHECK_PYDANTIC.is_available:
 
     try:
         from pydantic import StringConstraints
+
         # Note: adding artificial limit, this might reveal splitting
         # issues on the client side
         #      and is not a hard limit on the server side.
         INPUT_STRING = StringConstraints(max_length=8192 * 15, strip_whitespace=True)
     except ImportError:
         from pydantic import constr
+
         INPUT_STRING = constr(max_length=8192 * 15, strip_whitespace=True)  # type: ignore
-    
+
 else:
 
     class BaseModel:  # type: ignore
@@ -32,10 +34,13 @@ else:
     def conlist():  # type: ignore
         pass
 
+
 ITEMS_LIMIT = {
-        "min_items": 1,
-        "max_items": 2048,
-    }
+    "min_items": 1,
+    "max_items": 2048,
+}
+
+
 class OpenAIEmbeddingInput(BaseModel):
     input: Union[  # type: ignore
         conlist(  # type: ignore

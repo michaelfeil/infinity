@@ -15,10 +15,10 @@ from infinity_emb._optional_imports import (
 )
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import Device, Dtype, EmbeddingReturnType
+from infinity_emb.primitives import Dtype, EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.acceleration import to_bettertransformer
-from infinity_emb.transformer.quantization.quant import quantize
+from infinity_emb.transformer.quantization.interface import quant_interface
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -85,27 +85,9 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             self.half()
 
         if engine_args.dtype in (Dtype.int8,):
-            if engine_args.device == Device.cpu:
-                logger.info("using torch.quantization.quantize_dynamic()")
-                fm.auto_model = torch.quantization.quantize_dynamic(
-                    fm.auto_model.to("cpu"),  # the original model
-                    {torch.nn.Linear},  # a set of layers to dynamically quantize
-                    dtype=torch.qint8,
-                )
-            elif engine_args.device == Device.cuda:
-                logger.warning("Quantization is only supported on device=cpu,"
-                               f" but you are using device={engine_args.device} with dtype={engine_args.dtype}.")
-                quant_handler, _ = quantize(fm.auto_model, mode=engine_args.dtype.value)
-                model = quant_handler.convert_for_runtime()
-                model.to(self.device)
-                # features1 = self.tokenize(["hello world"])
-                # features1 = util.batch_to_device(features1, self.device)
-                # model.forward(**features1)
-                fm.auto_model = model
-            else:
-                raise ValueError(
-                    f"Quantization is not supported on {engine_args.device} with dtype {engine_args.dtype}."
-                )
+            fm.auto_model = quant_interface(
+                fm.auto_model, engine_args.dtype, device=engine_args.device
+            )
 
         if engine_args.compile:
             logger.info("using torch.compile()")

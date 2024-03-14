@@ -22,8 +22,10 @@ if CHECK_TORCH.is_available:
     import torch.nn.functional as F
     from torch.nn import Module
 else:
-    class Module: # type: ignore
+
+    class Module:  # type: ignore
         pass
+
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -303,7 +305,6 @@ class GPTQQuantHandler(QuantHandler):
         logger.info(f"Obtained {len(inputs[0].values)} calibration samples")
         return inputs
 
-    
     def create_quantized_state_dict(
         self,
         tokenizer,
@@ -376,7 +377,9 @@ class WeightOnlyInt8QuantHandler:
                         mod.weight.float(), -128, 127, torch.int8
                     )
                     cur_state_dict[f"{fqn}.weight"] = int8_weight.to("cpu")
-                    cur_state_dict[f"{fqn}.scales"] = scales.to(mod.weight.dtype).to("cpu")
+                    cur_state_dict[f"{fqn}.scales"] = scales.to(mod.weight.dtype).to(
+                        "cpu"
+                    )
 
             return cur_state_dict
 
@@ -523,7 +526,9 @@ class WeightOnlyInt4QuantHandler:
                         weight.to(torch.bfloat16), self.groupsize, self.inner_k_tiles
                     )
                     cur_state_dict[f"{fqn}.weight"] = weight_int4pack.to("cpu")
-                    cur_state_dict[f"{fqn}.scales_and_zeros"] = scales_and_zeros.to("cpu")
+                    cur_state_dict[f"{fqn}.scales_and_zeros"] = scales_and_zeros.to(
+                        "cpu"
+                    )
 
             return cur_state_dict
 
