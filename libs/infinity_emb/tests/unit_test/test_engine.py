@@ -9,7 +9,7 @@ from infinity_emb import AsyncEmbeddingEngine, EngineArgs
 from infinity_emb.primitives import InferenceEngine, ModelNotDeployedError
 
 # Only compile on Linux 3.9-3.11 with torch
-SHOULD_TORCH_COMPILE = sys.platform == "linux" and sys.version_info != (3, 12)
+SHOULD_TORCH_COMPILE = sys.platform == "linux" and sys.version_info < (3, 12)
 
 
 @pytest.mark.anyio
