@@ -8,7 +8,7 @@ readme = "README.md"
 packages = [{include = "infinity_emb"}]
 
 [tool.poetry.dependencies]
-python = ">=3.8,<3.13"
+python = ">=3.9,<3.13"
 # basics
 numpy = ">=1.20.0"
 pydantic = ">=2.4.0,<3"
