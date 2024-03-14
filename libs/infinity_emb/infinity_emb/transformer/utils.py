@@ -25,14 +25,6 @@ __all__ = [
     "infinity_cache_dir",
 ]
 
-class InferenceEngine(Enum):
-    torch = "torch"
-    ctranslate2 = "ctranslate2"
-    optimum = "optimum"
-    fastembed = "fastembed"
-    neuron = "neuron"
-    debugengine = "dummytransformer"
-
 
 class EmbedderEngine(Enum):
     torch = SentenceTransformerPatched
