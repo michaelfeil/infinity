@@ -380,6 +380,8 @@ class WeightOnlyInt8QuantHandler:
                     cur_state_dict[f"{fqn}.scales"] = scales.to(mod.weight.dtype).to(
                         "cpu"
                     )
+                    if mod.bias is not None:
+                        cur_state_dict[f"{fqn}.bias"] = mod.bias.to("cpu")
 
             return cur_state_dict
 
@@ -393,12 +395,13 @@ class WeightOnlyInt8Linear(Module):
     in_features: int
     out_features: int
     weight: Tensor
+    bias: Tensor
+    scales: Tensor
 
     def __init__(
         self,
         in_features: int,
         out_features: int,
-        bias: bool = True,
         device=None,
         dtype=None,
     ) -> None:
@@ -410,9 +413,13 @@ class WeightOnlyInt8Linear(Module):
             "weight", torch.empty((out_features, in_features), dtype=torch.int8)
         )
         self.register_buffer("scales", torch.ones(out_features, dtype=torch.bfloat16))
+        # initialize bias to zero, in case the original model has no bias
+        self.register_buffer("bias", torch.zeros((out_features), dtype=torch.bfloat16))
 
     def forward(self, input: Tensor) -> Tensor:
-        return F.linear(input, self.weight.to(dtype=input.dtype)) * self.scales
+        return F.linear(
+            input, self.weight.to(dtype=input.dtype)
+        ) * self.scales + self.bias.to(dtype=input.dtype)
 
 
 ##### weight only int4 per channel groupwise quantized code ######

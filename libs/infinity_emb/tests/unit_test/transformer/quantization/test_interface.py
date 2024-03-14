@@ -1,24 +1,25 @@
-
+import pytest
 import torch
-from transformers import BertModel, AutoTokenizer  # type: ignore
+from transformers import AutoTokenizer, BertModel  # type: ignore
 
 from infinity_emb.primitives import Device, Dtype
 from infinity_emb.transformer.quantization.interface import quant_interface
-import pytest
 
 devices = [Device.cpu]
 # TODO: add support for cuda
-# if torch.cuda.is_available():
-#     devices.append(Device.cuda)
+if torch.cuda.is_available():
+    devices.append(Device.cuda)
 
-def get_model(device: str ="cpu"):
+
+def get_model(device: str = "cpu"):
     name = "michaelfeil/bge-small-en-v1.5"
     model = BertModel.from_pretrained(
-        name, 
+        name,
     )
     model.to(device)
     tokenizer = AutoTokenizer.from_pretrained(name)
     return model, tokenizer
+
 
 @pytest.mark.parametrize("device", devices)
 def test_quantize_bert(device: Device):
@@ -33,7 +34,9 @@ def test_quantize_bert(device: Device):
     )
     tokens_encoded = {k: v.to(device.value) for k, v in tokens_encoded.items()}
     with torch.no_grad():
-        out_default = model_unquantized.forward(**tokens_encoded)["last_hidden_state"].mean(dim=1)
+        out_default = model_unquantized.forward(**tokens_encoded)[
+            "last_hidden_state"
+        ].mean(dim=1)
         out_quant = model.forward(**tokens_encoded)["last_hidden_state"].mean(dim=1)
 
     assert torch.cosine_similarity(out_default, out_quant) > 0.95

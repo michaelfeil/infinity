@@ -1,4 +1,4 @@
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from infinity_emb._optional_imports import CHECK_TORCH
 from infinity_emb.log_handler import logger
@@ -7,7 +7,6 @@ from infinity_emb.transformer.quantization.quant import quantize
 
 if CHECK_TORCH.is_available:
     import torch
-
 
 
 def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Device.cpu):
@@ -23,8 +22,9 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
             "Quantization is only supported on device=cpu,"
             f" but you are using device={device} with dtype={dtype}."
         )
-        quant_handler, _ = quantize(model, mode=dtype.value)
+        quant_handler, state_dict = quantize(model, mode=dtype.value)
         model = quant_handler.convert_for_runtime()
+        model.load_state_dict(state_dict)
         model.to(device.value)
         # features1 = self.tokenize(["hello world"])
         # features1 = util.batch_to_device(features1, self.device)
