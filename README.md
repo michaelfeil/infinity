@@ -87,14 +87,6 @@ async def main():
 asyncio.run(main())
 ```
 
-### or launch the `create_server()` command from Python
-This executes the same command as the cli.
-If you really don't enjoy to use the CLI, you can get the same options from python.
-```Python
-from infinity_emb import create_server
-fastapi_app = create_server(**cli_kwargs)
-```
-
 ### or launch on the cloud via dstack
 
 dstack allows you to provision a VM instance on the cloud of your choice. Write a service configuration file as below for the deployment of `BAAI/bge-small-en-v1.5` model wrapped in Infinity.
