@@ -69,7 +69,7 @@ RUN echo "all tests passed" > "test_results.txt"
 
 # Export with tensorrt, not recommended.
 # docker buildx build --target=production-tensorrt -f Dockerfile .
-FROM nvidia/cuda:12.2.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=off \
     PYTHON="python3.11"

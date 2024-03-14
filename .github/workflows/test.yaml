@@ -16,19 +16,24 @@ env:
 
 
 jobs:
-  build-linux:
+  testing-job:
     defaults:
       run:
         working-directory: ${{ inputs.working-directory }}
-    runs-on: ubuntu-latest
     strategy:
       matrix:
         python-version:
           - "3.9"
           - "3.10"
           - "3.11"
+          - "3.12"
+        os:
+          - ubuntu-latest
+          - windows-latest
+          - macos-latest 
 
-    name: Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
+    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
     steps:
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@v1.3.0
@@ -62,7 +67,7 @@ jobs:
           poetry run coverage xml
 
       - name: Upload coverage Report to Codecov for python 3.11
-        if: ${{ matrix.python-version == '3.11' && inputs.upload_coverage == true }}
+        if: ${{ matrix.python-version == '3.11' && inputs.upload_coverage == true && matrix.os == 'ubuntu-latest'}}
         uses: codecov/codecov-action@v4
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}

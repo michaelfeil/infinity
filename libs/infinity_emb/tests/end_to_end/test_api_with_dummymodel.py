@@ -9,7 +9,7 @@ from httpx import AsyncClient
 
 from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
-from infinity_emb.transformer.utils import InferenceEngine
+from infinity_emb.primitives import InferenceEngine
 
 PREFIX = "/v2"
 MODEL_NAME = str(uuid4())

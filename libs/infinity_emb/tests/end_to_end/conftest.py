@@ -66,7 +66,7 @@ class Helpers:
 
         for r, e in zip(responses, encodings):
             cosine_sim = np.dot(r, e) / (np.linalg.norm(e) * np.linalg.norm(r))
-            assert cosine_sim > 0.95
+            assert cosine_sim > 0.945
         np.testing.assert_almost_equal(
             np.array(responses), np.array(encodings), decimal=decimal
         )

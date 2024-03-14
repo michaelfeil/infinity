@@ -6,7 +6,7 @@ from typing import List, Tuple
 import pytest
 from sentence_transformers import InputExample, util  # type: ignore
 
-pytest.DEFAULT_BERT_MODEL = "BAAI/bge-small-en-v1.5"
+pytest.DEFAULT_BERT_MODEL = "michaelfeil/bge-small-en-v1.5"
 
 
 @pytest.fixture

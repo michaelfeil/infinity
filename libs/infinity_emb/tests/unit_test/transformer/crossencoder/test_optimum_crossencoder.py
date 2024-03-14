@@ -1,11 +1,17 @@
 import numpy as np
 from sentence_transformers import CrossEncoder  # type: ignore
 
+from infinity_emb.args import EngineArgs
 from infinity_emb.transformer.crossencoder.optimum import OptimumCrossEncoder
 
 
 def test_crossencoder():
-    model = OptimumCrossEncoder("Xenova/bge-reranker-base", device="cpu")
+    model = OptimumCrossEncoder(
+        engine_args=EngineArgs(
+            model_name_or_path="Xenova/bge-reranker-base",
+            device="cpu",
+        )
+    )
 
     query = "Where is Paris?"
     documents = [
@@ -25,7 +31,12 @@ def test_crossencoder():
 
 
 def test_patched_crossencoder_vs_sentence_transformers():
-    model = OptimumCrossEncoder("Xenova/bge-reranker-base", device="cpu")
+    model = OptimumCrossEncoder(
+        engine_args=EngineArgs(
+            model_name_or_path="Xenova/bge-reranker-base",
+            device="cpu",
+        )
+    )
     model_unpatched = CrossEncoder("BAAI/bge-reranker-base")
 
     query = "Where is Paris?"
@@ -40,7 +51,7 @@ def test_patched_crossencoder_vs_sentence_transformers():
     encode_pre = model.encode_pre(query_docs)
     encode_core = model.encode_core(encode_pre)
     rankings = model.encode_post(encode_core)
-    rankings_sigmoid = 1 / (1 + np.exp(-rankings))
+    rankings_sigmoid = 1 / (1 + np.exp(-np.array(rankings)))
 
     rankings_unpatched = model_unpatched.predict(query_docs)
 

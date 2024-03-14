@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field, conlist
 try:
     from pydantic import StringConstraints
 
-    # Note: adding artificial limit, this might reveal splitting issues on the client side
+    # Note: adding artificial limit, this might reveal splitting
+    # issues on the client side
     #      and is not a hard limit on the server side.
     INPUT_STRING = StringConstraints(max_length=8192 * 15, strip_whitespace=True)
     ITEMS_LIMIT = {

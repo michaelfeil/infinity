@@ -2,8 +2,7 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
-from infinity_emb.primitives import Device
-from infinity_emb.transformer.utils import InferenceEngine
+from infinity_emb.primitives import Device, Dtype, InferenceEngine, PoolingMethod
 
 # if python>=3.10 use kw_only
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
@@ -14,7 +13,7 @@ class EngineArgs:
     """Creating a Async EmbeddingEngine object.
 
     Args:
-        model_name_or_path, str:  Defaults to "BAAI/bge-small-en-v1.5".
+        model_name_or_path, str:  Defaults to "michaelfeil/bge-small-en-v1.5".
         batch_size, int: Defaults to 64.
         revision, str: Defaults to None.
         trust_remote_code, bool: Defaults to True.
@@ -27,7 +26,7 @@ class EngineArgs:
         lengths_via_tokenize, bool: schedule by token usage. Defaults to False
     """
 
-    model_name_or_path: str = "BAAI/bge-small-en-v1.5"
+    model_name_or_path: str = "michaelfeil/bge-small-en-v1.5"
     batch_size: int = 64
     revision: Optional[str] = None
     trust_remote_code: bool = True
@@ -35,6 +34,10 @@ class EngineArgs:
     model_warmup: bool = False
     vector_disk_cache_path: str = ""
     device: Device = Device.auto
+    compile: bool = False
+    bettertransformer: bool = True
+    dtype: Dtype = Dtype.auto
+    pooling_method: PoolingMethod = PoolingMethod.auto
     lengths_via_tokenize: bool = False
 
     def __post_init__(self):
@@ -44,3 +47,5 @@ class EngineArgs:
             object.__setattr__(self, "engine", InferenceEngine[self.engine])
         if isinstance(self.device, str):
             object.__setattr__(self, "device", Device[self.device])
+        if isinstance(self.dtype, str):
+            object.__setattr__(self, "dtype", Dtype[self.dtype])

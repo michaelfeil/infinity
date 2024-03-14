@@ -4,7 +4,8 @@ from typing import Dict, List
 
 import numpy as np
 
-from infinity_emb.primitives import EmbeddingReturnType
+from infinity_emb.args import EngineArgs
+from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.utils_optimum import (
     cls_token_pooling,
@@ -25,29 +26,29 @@ except (ImportError, RuntimeError):
 
 
 class OptimumEmbedder(BaseEmbedder):
-    def __init__(self, model_name_or_path, **kwargs):
+    def __init__(self, *, engine_args: EngineArgs):
         if not OPTIMUM_AVAILABLE:
             raise ImportError(
                 "optimum.onnxruntime is not installed."
                 "`pip install optimum[onnxruntime]`"
             )
-        provider = device_to_onnx(kwargs.get("device"))
+        provider = device_to_onnx(engine_args.device)
 
         onnx_file = get_onnx_files(
-            model_name_or_path,
-            revision=kwargs.get("revision"),
+            model_name_or_path=engine_args.model_name_or_path,
+            revision=engine_args.revision,
             use_auth_token=True,
             prefer_quantized="cpu" in provider.lower(),
         )
 
         self.pooling = (
             mean_pooling
-            if os.environ.get("INFINITY_MEAN_POOLING", "") == "mean"
+            if engine_args.pooling_method == PoolingMethod.mean
             else cls_token_pooling
         )
 
         self.model = optimize_model(
-            model_name_or_path,
+            model_name_or_path=engine_args.model_name_or_path,
             execution_provider=provider,
             file_name=onnx_file.as_posix(),
             optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False),
@@ -55,8 +56,14 @@ class OptimumEmbedder(BaseEmbedder):
         )
         self.model.use_io_binding = False
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
-        self.config = AutoConfig.from_pretrained(model_name_or_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            engine_args.model_name_or_path,
+            trust_remote_code=engine_args.trust_remote_code,
+        )
+        self.config = AutoConfig.from_pretrained(
+            engine_args.model_name_or_path,
+            trust_remote_code=engine_args.trust_remote_code,
+        )
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
 
     def encode_pre(self, sentences: List[str]) -> Dict[str, np.ndarray]:
@@ -67,6 +74,8 @@ class OptimumEmbedder(BaseEmbedder):
             truncation="longest_first",
             return_tensors="np",
         )
+        # int64 is required for onnxruntime on Windows
+        encoded = {k: v.astype(np.int64) for k, v in encoded.items()}
         return encoded
 
     def encode_core(self, onnx_input: Dict[str, np.ndarray]) -> dict:
@@ -77,7 +86,7 @@ class OptimumEmbedder(BaseEmbedder):
         }
 
     def encode_post(self, embedding: dict) -> EmbeddingReturnType:
-        embedding = self.pooling(
+        embedding = self.pooling(  # type: ignore
             embedding["token_embeddings"], embedding["attention_mask"]
         )
 

@@ -1,9 +1,10 @@
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Optional, Union
 
 import numpy as np
 
 from infinity_emb.log_handler import logger
+from infinity_emb.primitives import Device
 
 try:
     from huggingface_hub import HfApi, HfFolder  # type: ignore
@@ -44,16 +45,16 @@ def normalize(input_array, p=2, dim=1, eps=1e-12):
     return normalized_array
 
 
-def device_to_onnx(device) -> Union[str, List[str]]:
-    if device == "cpu":
+def device_to_onnx(device: Device) -> str:
+    if device == Device.cpu:
         return "CPUExecutionProvider"
-    elif device == "cuda":
+    elif device == Device.cuda:
         return "CUDAExecutionProvider"
-    elif device == "mps":
+    elif device == Device.mps:
         return "CoreMLExecutionProvider"
-    elif device == "tensorrt":
+    elif device == Device.tensorrt:
         return "TensorrtExecutionProvider"
-    elif device is None or device == "auto":
+    elif device is None or device == Device.auto:
         if torch is not None and torch.cuda.is_available():
             return "CUDAExecutionProvider"
         else:
@@ -149,7 +150,7 @@ def optimize_model(
 
 def list_all_repo_files(
     model_name_or_path: str,
-    revision: str,
+    revision: Union[str, None] = None,
     use_auth_token: Union[bool, str] = True,
 ):
     if not Path(model_name_or_path).exists():
@@ -170,8 +171,9 @@ def list_all_repo_files(
 
 
 def get_onnx_files(
+    *,
     model_name_or_path: str,
-    revision: str,
+    revision: Union[str, None] = None,
     use_auth_token: Union[bool, str] = True,
     prefer_quantized=False,
 ) -> Path:
