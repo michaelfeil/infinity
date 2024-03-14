@@ -29,13 +29,12 @@ class SentenceClassifier(BaseClassifer):
         if self._pipe.device.type != "cpu":  # and engine_args.dtype == "float16":
             self._pipe.model = self._pipe.model.half()
 
-        self._pipe.model = to_bettertransformer(
-            self._pipe.model,
-            logger,
-            force_usage=(
-                engine_args.device == Device.mps and not engine_args.bettertransformer
-            ),
-        )
+        if not (engine_args.device == Device.mps or not engine_args.bettertransformer):
+            self._pipe.model = to_bettertransformer(
+                self._pipe.model,
+                logger,
+
+            )
 
         self._infinity_tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,

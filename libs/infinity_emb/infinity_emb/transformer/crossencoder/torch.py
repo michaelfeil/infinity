@@ -45,12 +45,11 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
         self.model.eval()  # type: ignore
 
-        self.model = to_bettertransformer(
-            self.model,  # type: ignore
-            logger,
-            force_usage=self._target_device.type == "mps"
-            and not engine_args.bettertransformer,
-        )
+        if not (self._target_device.type == "mps" or not engine_args.bettertransformer):
+            self.model = to_bettertransformer(
+                self.model,  # type: ignore
+                logger,
+            )
 
         if self._target_device.type == "cuda" and engine_args.dtype in [
             Dtype.auto,

@@ -25,7 +25,6 @@ class OptionalImports:
             lib = self.lib.split(".")
             for i in range(len(lib)):
                 module = ".".join(lib[: i + 1])
-                print("checking", module)
                 if importlib.util.find_spec(module) is None:
                     return False
 

@@ -122,6 +122,7 @@ async def test_async_api_optimum_crossencoder():
             revision=None,
             device="cpu",
             model_warmup=False,
+            compile=True,
         )
     )
 
@@ -170,6 +171,7 @@ async def test_async_api_torch_usage():
             device=device,
             lengths_via_tokenize=True,
             model_warmup=False,
+            compile=True,
         )
     )
     async with engine:

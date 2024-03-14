@@ -11,7 +11,7 @@ from infinity_emb._optional_imports import (
 )
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import Dtype, EmbeddingReturnType
+from infinity_emb.primitives import Dtype, EmbeddingReturnType, Device
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.acceleration import to_bettertransformer
 from infinity_emb.transformer.quantization.interface import quant_interface
@@ -33,7 +33,7 @@ if CHECK_TORCH.is_available:
     import torch._dynamo.config
     import torch._inductor.config
 
-    torch._inductor.config.coordinate_descent_tuning = True
+    # torch._inductor.config.coordinate_descent_tuning = True
     torch._inductor.config.triton.unique_kernel_names = True
     torch._inductor.config.fx_graph_cache = True
 
@@ -58,13 +58,11 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         self.eval()
 
-        fm.auto_model = to_bettertransformer(
-            fm.auto_model,
-            logger,
-            force_usage=(
-                engine_args.device == "mps" and not engine_args.bettertransformer
-            ),
-        )
+        if not (self.device.type == "mps" or not engine_args.bettertransformer):
+            fm.auto_model = to_bettertransformer(
+                fm.auto_model,
+                logger,
+            )
 
         if self.device.type == "cuda" and engine_args.dtype in [
             Dtype.auto,
@@ -75,12 +73,12 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
 
         if engine_args.dtype in (Dtype.int8,):
             fm.auto_model = quant_interface(
-                fm.auto_model, engine_args.dtype, device=engine_args.device
+                fm.auto_model, engine_args.dtype, device=Device[self.device.type]
             )
 
         if engine_args.compile:
             logger.info("using torch.compile()")
-            fm.auto_model = torch.compile(fm.auto_model, dynamic=True, fullgraph=True)
+            fm.auto_model = torch.compile(fm.auto_model, dynamic=True)
 
     def encode_pre(self, sentences) -> Mapping[str, Tensor]:
         features = self.tokenize(sentences)
