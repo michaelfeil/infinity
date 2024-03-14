@@ -11,7 +11,7 @@ from infinity_emb._optional_imports import (
 )
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import Dtype, EmbeddingReturnType, Device
+from infinity_emb.primitives import Device, Dtype, EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.acceleration import to_bettertransformer
 from infinity_emb.transformer.quantization.interface import quant_interface

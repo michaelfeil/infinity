@@ -33,7 +33,6 @@ class SentenceClassifier(BaseClassifer):
             self._pipe.model = to_bettertransformer(
                 self._pipe.model,
                 logger,
-
             )
 
         self._infinity_tokenizer = AutoTokenizer.from_pretrained(

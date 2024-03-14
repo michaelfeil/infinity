@@ -10,18 +10,23 @@ if CHECK_TORCH.is_available:
 
 
 def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Device.cpu):
+    """Quantize a model to a specific dtype and device.
+
+    Args:
+        model (Any): The model (torch state dict) to quantize.
+        dtype (Dtype, optional): The dtype to quantize to. Defaults to Dtype.int8.
+        device (Device, optional): The device of the model. Do not use Device.auto, needs to be a resolved device.
+            Defaults to Device.cpu.
+    """
     if device == Device.cpu and dtype in [Dtype.int8, Dtype.auto]:
         logger.info("using torch.quantization.quantize_dynamic()")
+        # TODO: verify if cpu requires quantization with torch.quantization.quantize_dynamic()
         model = torch.quantization.quantize_dynamic(
             model.to("cpu"),  # the original model
             {torch.nn.Linear},  # a set of layers to dynamically quantize
             dtype=torch.qint8,
         )
     elif device == Device.cuda and dtype in [Dtype.int8, Dtype.auto]:
-        logger.warning(
-            "Quantization is only supported on device=cpu,"
-            f" but you are using device={device} with dtype={dtype}."
-        )
         quant_handler, state_dict = quantize(model, mode=dtype.value)
         model = quant_handler.convert_for_runtime()
         model.load_state_dict(state_dict)
