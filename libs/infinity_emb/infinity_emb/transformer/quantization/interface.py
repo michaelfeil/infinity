@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from infinity_emb._optional_imports import CHECK_TORCH
 from infinity_emb.log_handler import logger
