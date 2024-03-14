@@ -1,7 +1,6 @@
 import time
 from typing import Optional
 
-# prometheus
 import infinity_emb
 from infinity_emb.args import EngineArgs
 from infinity_emb.engine import AsyncEmbeddingEngine
@@ -16,10 +15,18 @@ from infinity_emb.fastapi_schemas.pymodels import (
     OpenAIModelInfo,
     RerankInput,
 )
-from infinity_emb.inference import Device, DeviceTypeHint
 from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
-from infinity_emb.primitives import InferenceEngine, InferenceEngineTypeHint
+from infinity_emb.primitives import (
+    Device,
+    DeviceTypeHint,
+    Dtype,
+    DtypeTypeHint,
+    InferenceEngine,
+    InferenceEngineTypeHint,
+    PoolingMethod,
+    PoolingMethodTypeHint,
+)
 
 
 def create_server(
@@ -194,7 +201,7 @@ def create_server(
 
 def _start_uvicorn(
     model_name_or_path: str = "michaelfeil/bge-small-en-v1.5",
-    batch_size: int = 64,
+    batch_size: int = 32,
     revision: Optional[str] = None,
     trust_remote_code: bool = True,
     url_prefix: str = "",
@@ -206,6 +213,9 @@ def _start_uvicorn(
     vector_disk_cache: bool = INFINITY_CACHE_VECTORS,
     device: DeviceTypeHint = DeviceTypeHint.auto.name,  # type: ignore
     lengths_via_tokenize: bool = False,
+    dtype: DtypeTypeHint = DtypeTypeHint.auto.name,  # type: ignore
+    pooling_method: PoolingMethodTypeHint = PoolingMethodTypeHint.auto.name,  # type: ignore
+    compile: bool = False,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
     MIT License; Copyright (c) 2023-now Michael Feil
@@ -227,7 +237,10 @@ def _start_uvicorn(
         vector_disk_cache, bool: cache past embeddings in SQL.
             Defaults to False or env-INFINITY_CACHE_VECTORS if set
         device, Device: device to use for inference. Defaults to Device.auto or "auto"
-        lengths_via_tokenize: bool,
+        lengths_via_tokenize: bool: schedule by token usage. Defaults to False.
+        dtype, Dtype: data type to use for inference. Defaults to Dtype.auto or "auto"
+        pooling_method, PoolingMethod: pooling method to use. Defaults to PoolingMethod.auto or "auto"
+        compile, bool: compile model for faster inference. Defaults to False.
     """
     import uvicorn
 
@@ -247,6 +260,9 @@ def _start_uvicorn(
         vector_disk_cache_path=vector_disk_cache_path,
         device=Device[device.value],  # type: ignore
         lengths_via_tokenize=lengths_via_tokenize,
+        dtype=Dtype[dtype.value],  # type: ignore
+        pooling_method=PoolingMethod[pooling_method.value],  # type: ignore
+        compile=compile,
     )
 
     app = create_server(

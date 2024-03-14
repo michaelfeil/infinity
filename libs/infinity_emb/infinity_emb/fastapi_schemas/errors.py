@@ -1,10 +1,14 @@
-from typing import Optional
+from __future__ import annotations
 
-try:
+from typing import TYPE_CHECKING, Optional
+
+from infinity_emb._optional_imports import CHECK_FASTAPI
+
+if CHECK_FASTAPI.is_available:
+    from fastapi.responses import ORJSONResponse
+
+if TYPE_CHECKING:
     from fastapi import Request
-    from fastapi.responses import JSONResponse
-except ImportError:
-    Request = None  # type: ignore
 
 
 class OpenAIException(Exception):
@@ -34,7 +38,7 @@ class OpenAIException(Exception):
 
 
 def openai_exception_handler(request: Request, exc: OpenAIException):
-    return JSONResponse(
+    return ORJSONResponse(
         status_code=exc.code,
         content=exc.json(),
     )

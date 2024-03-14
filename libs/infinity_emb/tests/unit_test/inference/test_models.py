@@ -14,8 +14,8 @@ from sentence_transformers.evaluation import (  # type: ignore
 )
 
 from infinity_emb.args import EngineArgs
+from infinity_emb.transformer.embedder.ct2 import CT2SentenceTransformer
 from infinity_emb.transformer.embedder.sentence_transformer import (
-    CT2SentenceTransformer,
     SentenceTransformerPatched,
 )
 

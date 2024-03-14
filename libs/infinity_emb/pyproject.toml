@@ -11,7 +11,7 @@ packages = [{include = "infinity_emb"}]
 python = ">=3.9,<3.13"
 # basics
 numpy = ">=1.20.0"
-pydantic = ">=2.4.0,<3"
+huggingface_hub="*"
 # logging
 rich = {version = "^13", optional=true}
 # webserver-only
@@ -20,9 +20,11 @@ orjson = {version = ">=3.9.8,<4", optional=true}
 prometheus-fastapi-instrumentator = {version = "^6.1.0", optional=true}
 uvicorn = {extras = ["standard"], version = "^0.23.2", optional=true}
 typer = {extras = ["all"], version = "^0.9.0", optional=true}
+pydantic = {version = ">=2.4.0,<3", optional=true}  
 # backend
 torch = {version = "2.2.1", source = "pypi", optional=true}
 sentence-transformers = {version = "^2.4.0", optional=true} 
+transformers = {version = ">4.8.0", optional=true} 
 ctranslate2 = {version = "^4.0.0", optional=true}
 optimum = {version = ">=1.16.2", optional=true, extras=["onnxruntime"]}
 fastembed = {version = ">=0.2.1", optional=true} 
@@ -59,7 +61,7 @@ types-chardet = "^5.0.4.6"
 mypy-protobuf = "^3.0.0"
 
 [tool.poetry.extras]
-ct2=["ctranslate2","sentence-transformers","torch"]
+ct2=["ctranslate2","sentence-transformers","torch","transformers"]
 optimum=["optimum"]
 fastembed=["fastembed"]
 torch=["sentence-transformers","torch","hf_transfer"]

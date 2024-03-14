@@ -1,13 +1,16 @@
-from typing import Any, Dict, Iterable, List, Optional, Union
+from __future__ import annotations
 
-from infinity_emb.primitives import EmbeddingReturnType
+from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Union
+
+if TYPE_CHECKING:
+    from infinity_emb.primitives import EmbeddingReturnType
 
 
 def list_embeddings_to_response(
-    embeddings: Union[EmbeddingReturnType, Iterable[EmbeddingReturnType]],
+    embeddings: Iterable[EmbeddingReturnType],
     model: str,
     usage: int,
-) -> Dict[str, Any]:
+) -> Dict[str, Union[str, List[dict], dict]]:
     return dict(
         model=model,
         data=[
