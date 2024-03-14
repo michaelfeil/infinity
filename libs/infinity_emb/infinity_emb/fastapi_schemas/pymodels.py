@@ -18,10 +18,19 @@ if CHECK_PYDANTIC.is_available:
         # issues on the client side
         #      and is not a hard limit on the server side.
         INPUT_STRING = StringConstraints(max_length=8192 * 15, strip_whitespace=True)
+        ITEMS_LIMIT = {
+            "min_length": 1,
+            "max_length": 2048,
+        }
     except ImportError:
         from pydantic import constr
 
         INPUT_STRING = constr(max_length=8192 * 15, strip_whitespace=True)  # type: ignore
+        ITEMS_LIMIT = {
+            "min_items": 1,
+            "max_items": 2048,
+        }
+
 
 else:
 
@@ -33,12 +42,6 @@ else:
 
     def conlist():  # type: ignore
         pass
-
-
-ITEMS_LIMIT = {
-    "min_items": 1,
-    "max_items": 2048,
-}
 
 
 class OpenAIEmbeddingInput(BaseModel):
