@@ -4,32 +4,23 @@ import time
 from typing import Annotated, Any, Dict, List, Literal, Optional, Union
 from uuid import uuid4
 
-from infinity_emb._optional_imports import CHECK_PYDANTIC, CHECK_PYDANTIC_V2
+from infinity_emb._optional_imports import CHECK_PYDANTIC
 
 # potential backwards compatibility to pydantic 1.X
 # pydantic 2.x is preferred by not strictly needed
-if CHECK_PYDANTIC_V2.is_available or CHECK_PYDANTIC.is_available:
+if CHECK_PYDANTIC.is_available:
     from pydantic import BaseModel, Field, conlist
 
-    if CHECK_PYDANTIC_V2.is_available:
+    try:
         from pydantic import StringConstraints
-
         # Note: adding artificial limit, this might reveal splitting
         # issues on the client side
         #      and is not a hard limit on the server side.
         INPUT_STRING = StringConstraints(max_length=8192 * 15, strip_whitespace=True)
-        ITEMS_LIMIT = {
-            "min_length": 1,
-            "max_length": 2048,
-        }
-    elif CHECK_PYDANTIC.is_available:
+    except ImportError:
         from pydantic import constr
-
         INPUT_STRING = constr(max_length=8192 * 15, strip_whitespace=True)  # type: ignore
-        ITEMS_LIMIT = {
-            "min_items": 1,
-            "max_items": 2048,
-        }
+    
 else:
 
     class BaseModel:  # type: ignore
@@ -41,7 +32,10 @@ else:
     def conlist():  # type: ignore
         pass
 
-
+ITEMS_LIMIT = {
+        "min_items": 1,
+        "max_items": 2048,
+    }
 class OpenAIEmbeddingInput(BaseModel):
     input: Union[  # type: ignore
         conlist(  # type: ignore

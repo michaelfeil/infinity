@@ -2,17 +2,31 @@
 
 import importlib.util
 from functools import cached_property
-from typing import Optional
+from typing import Optional, Tuple
 
 
 class OptionalImports:
-    def __init__(self, lib: str, extra_install: str) -> None:
+    def __init__(self, lib: str, extra_install: str, dependencies: Tuple[str] = tuple()) -> None:
         self.lib = lib
         self.extra_install = extra_install
         self._marked_as_dirty: Optional[Exception] = None
+        self.dependencies = dependencies
 
     @cached_property
     def is_available(self) -> bool:
+        if self.dependencies:
+            for dep in self.dependencies:
+                if importlib.util.find_spec(dep) is None:
+                    return False
+        if "." in self.lib:
+            # check module recursively
+            lib = self.lib.split(".")
+            for i in range(len(lib)):
+                module = ".".join(lib[: i + 1])
+                print("ckecking", module)
+                if importlib.util.find_spec(module) is None:
+                    return False
+            
         return importlib.util.find_spec(self.lib) is not None
 
     def mark_dirty(self, exception: Exception) -> None:
@@ -38,9 +52,9 @@ CHECK_DISKCACHE = OptionalImports("diskcache", "cache")
 CHECK_CTRANSLATE2 = OptionalImports("ctranslate2", "ctranslate2")
 CHECK_FASTAPI = OptionalImports("fastapi", "server")
 CHECK_HF_TRANSFER = OptionalImports("hf_transfer", "hf_transfer")
-CHECK_ONNXRUNTIME = OptionalImports("optimum.onnxruntime", "optimum")
+CHECK_ONNXRUNTIME = OptionalImports("optimum.onnxruntime", "optimum", dependencies="optimum")
 CHECK_OPTIMUM = OptionalImports("optimum", "optimum")
 CHECK_SENTENCE_TRANSFORMERS = OptionalImports("sentence_transformers", "torch")
-CHECK_TORCH = OptionalImports("torch", "torch")
-CHECK_PYDANTIC_V2 = OptionalImports("pydantic.v1", "server")
+CHECK_TRANSFORMERS = OptionalImports("transformers", "torch")
+CHECK_TORCH = OptionalImports("torch.nn", "torch")
 CHECK_PYDANTIC = OptionalImports("pydantic", "server")

@@ -11,7 +11,7 @@
 import abc
 import time
 from pathlib import Path
-from typing import Union, Tuple
+from typing import Union, Tuple, TYPE_CHECKING
 
 from infinity_emb._optional_imports import CHECK_TORCH
 from infinity_emb.log_handler import logger
@@ -20,8 +20,15 @@ if CHECK_TORCH.is_available:
     import torch
     import torch.nn as nn
     import torch.nn.functional as F
+    from torch.nn import Module
+else:
+    class Module: # type: ignore
+        pass
 
-
+if TYPE_CHECKING:
+    from torch import Tensor
+else:
+    Tensor = None
 try:
     from sentencepiece import SentencePieceProcessor
 except ImportError:
@@ -296,7 +303,7 @@ class GPTQQuantHandler(QuantHandler):
         logger.info(f"Obtained {len(inputs[0].values)} calibration samples")
         return inputs
 
-    @torch.no_grad()
+    
     def create_quantized_state_dict(
         self,
         tokenizer,
@@ -308,33 +315,34 @@ class GPTQQuantHandler(QuantHandler):
         calibration_seq_length,
         pad_calibration_inputs,
     ) -> "StateDict":
-        inputs = GPTQQuantHandler.get_inputs(
-            self.mod,
-            tokenizer,
-            calibration_tasks,
-            calibration_limit,
-            calibration_seq_length,
-            pad_calibration_inputs,
-        )
-        logger.info("Tracing model for GPTQ")
-        GPTQ_runner = GenericGPTQRunner(
-            self.mod,
-            inputs,
-            blocksize,
-            percdamp,
-            groupsize,
-        ).configure_quantization_mode(
-            self.get_qparams_func,
-            self.quantize_func,
-            self.dequantize_func,
-            self.combine_qparams_list_func,
-            self.make_names_and_values_dict_func,
-            self.skip_layer_func,
-        )
+        with torch.no_grad():
+            inputs = GPTQQuantHandler.get_inputs(
+                self.mod,
+                tokenizer,
+                calibration_tasks,
+                calibration_limit,
+                calibration_seq_length,
+                pad_calibration_inputs,
+            )
+            logger.info("Tracing model for GPTQ")
+            GPTQ_runner = GenericGPTQRunner(
+                self.mod,
+                inputs,
+                blocksize,
+                percdamp,
+                groupsize,
+            ).configure_quantization_mode(
+                self.get_qparams_func,
+                self.quantize_func,
+                self.dequantize_func,
+                self.combine_qparams_list_func,
+                self.make_names_and_values_dict_func,
+                self.skip_layer_func,
+            )
 
-        logger.info("Applying GPTQ to weights")
-        GPTQ_runner.run()
-        return GPTQ_runner.get_quantized_state_dict()
+            logger.info("Applying GPTQ to weights")
+            GPTQ_runner.run()
+            return GPTQ_runner.get_quantized_state_dict()
 
     def convert_for_runtime(self) -> "nn.Module":
         pass
@@ -359,29 +367,29 @@ class WeightOnlyInt8QuantHandler:
     def __init__(self, mod):
         self.mod = mod
 
-    @torch.no_grad()
     def create_quantized_state_dict(self):
-        cur_state_dict = self.mod.state_dict()
-        for fqn, mod in self.mod.named_modules():
-            if isinstance(mod, torch.nn.Linear):
-                int8_weight, scales, _ = dynamically_quantize_per_channel(
-                    mod.weight.float(), -128, 127, torch.int8
-                )
-                cur_state_dict[f"{fqn}.weight"] = int8_weight.to("cpu")
-                cur_state_dict[f"{fqn}.scales"] = scales.to(mod.weight.dtype).to("cpu")
+        with torch.no_grad():
+            cur_state_dict = self.mod.state_dict()
+            for fqn, mod in self.mod.named_modules():
+                if isinstance(mod, torch.nn.Linear):
+                    int8_weight, scales, _ = dynamically_quantize_per_channel(
+                        mod.weight.float(), -128, 127, torch.int8
+                    )
+                    cur_state_dict[f"{fqn}.weight"] = int8_weight.to("cpu")
+                    cur_state_dict[f"{fqn}.scales"] = scales.to(mod.weight.dtype).to("cpu")
 
-        return cur_state_dict
+            return cur_state_dict
 
     def convert_for_runtime(self):
         replace_linear_weight_only_int8_per_channel(self.mod)
         return self.mod
 
 
-class WeightOnlyInt8Linear(torch.nn.Module):
+class WeightOnlyInt8Linear(Module):
     __constants__ = ["in_features", "out_features"]
     in_features: int
     out_features: int
-    weight: torch.Tensor
+    weight: Tensor
 
     def __init__(
         self,
@@ -400,7 +408,7 @@ class WeightOnlyInt8Linear(torch.nn.Module):
         )
         self.register_buffer("scales", torch.ones(out_features, dtype=torch.bfloat16))
 
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
+    def forward(self, input: Tensor) -> Tensor:
         return F.linear(input, self.weight.to(dtype=input.dtype)) * self.scales
 
 
@@ -476,48 +484,48 @@ class WeightOnlyInt4QuantHandler:
         assert groupsize in [32, 64, 128, 256]
         assert inner_k_tiles in [2, 4, 8]
 
-    @torch.no_grad()
     def create_quantized_state_dict(self):
-        cur_state_dict = self.mod.state_dict()
-        for fqn, mod in self.mod.named_modules():
-            if isinstance(mod, torch.nn.Linear):
-                assert not mod.bias
-                out_features = mod.out_features
-                in_features = mod.in_features
-                assert out_features % 8 == 0, "require out_features % 8 == 0"
-                logger.info(f"linear: {fqn}, in={in_features}, out={out_features}")
+        with torch.no_grad():
+            cur_state_dict = self.mod.state_dict()
+            for fqn, mod in self.mod.named_modules():
+                if isinstance(mod, torch.nn.Linear):
+                    assert not mod.bias
+                    out_features = mod.out_features
+                    in_features = mod.in_features
+                    assert out_features % 8 == 0, "require out_features % 8 == 0"
+                    logger.info(f"linear: {fqn}, in={in_features}, out={out_features}")
 
-                weight = mod.weight.data
-                if not _check_linear_int4_k(
-                    in_features, self.groupsize, self.inner_k_tiles
-                ):
-                    if self.padding:
-                        from model import find_multiple
-                        import torch.nn.functional as F
+                    weight = mod.weight.data
+                    if not _check_linear_int4_k(
+                        in_features, self.groupsize, self.inner_k_tiles
+                    ):
+                        if self.padding:
+                            from model import find_multiple
+                            import torch.nn.functional as F
 
-                        logger.info(
-                            f"warning: {fqn} is padded to satisfy in_features % 1024 == 0"
-                        )
-                        padded_in_features = find_multiple(in_features, 1024)
-                        weight = F.pad(
-                            weight, pad=(0, padded_in_features - in_features)
-                        )
-                    else:
-                        logger.info(
-                            f"warning: {fqn} is skipped, int4 requires that in_features is 32, 64, or is divisible by 1024, "
-                            + "and that groupsize and inner_k_tiles*16 evenly divide into it"
-                        )
-                        continue
-                (
-                    weight_int4pack,
-                    scales_and_zeros,
-                ) = prepare_int4_weight_and_scales_and_zeros(
-                    weight.to(torch.bfloat16), self.groupsize, self.inner_k_tiles
-                )
-                cur_state_dict[f"{fqn}.weight"] = weight_int4pack.to("cpu")
-                cur_state_dict[f"{fqn}.scales_and_zeros"] = scales_and_zeros.to("cpu")
+                            logger.info(
+                                f"warning: {fqn} is padded to satisfy in_features % 1024 == 0"
+                            )
+                            padded_in_features = find_multiple(in_features, 1024)
+                            weight = F.pad(
+                                weight, pad=(0, padded_in_features - in_features)
+                            )
+                        else:
+                            logger.info(
+                                f"warning: {fqn} is skipped, int4 requires that in_features is 32, 64, or is divisible by 1024, "
+                                + "and that groupsize and inner_k_tiles*16 evenly divide into it"
+                            )
+                            continue
+                    (
+                        weight_int4pack,
+                        scales_and_zeros,
+                    ) = prepare_int4_weight_and_scales_and_zeros(
+                        weight.to(torch.bfloat16), self.groupsize, self.inner_k_tiles
+                    )
+                    cur_state_dict[f"{fqn}.weight"] = weight_int4pack.to("cpu")
+                    cur_state_dict[f"{fqn}.scales_and_zeros"] = scales_and_zeros.to("cpu")
 
-        return cur_state_dict
+            return cur_state_dict
 
     def convert_for_runtime(self, use_cuda):
         replace_linear_int4(
@@ -577,11 +585,11 @@ class WeightOnlyInt4GPTQQuantHandler(GPTQQuantHandler):
         return self.mod
 
 
-class WeightOnlyInt4Linear(torch.nn.Module):
+class WeightOnlyInt4Linear(Module):
     __constants__ = ["in_features", "out_features"]
     in_features: int
     out_features: int
-    weight: torch.Tensor
+    weight: Tensor
 
     def __init__(
         self,
@@ -638,7 +646,7 @@ class WeightOnlyInt4Linear(torch.nn.Module):
             ),
         )
 
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
+    def forward(self, input: Tensor) -> Tensor:
         input = input.to(torch.bfloat16)
         if self.padding:
             import torch.nn.functional as F

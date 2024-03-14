@@ -11,6 +11,7 @@ packages = [{include = "infinity_emb"}]
 python = ">=3.9,<3.13"
 # basics
 numpy = ">=1.20.0"
+huggingface_hub="*"
 # logging
 rich = {version = "^13", optional=true}
 # webserver-only

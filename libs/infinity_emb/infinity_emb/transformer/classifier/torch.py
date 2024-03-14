@@ -1,13 +1,13 @@
 from typing import Dict, List
 
-from infinity_emb._optional_imports import CHECK_TORCH
+from infinity_emb._optional_imports import CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device
 from infinity_emb.transformer.abstract import BaseClassifer
 from infinity_emb.transformer.acceleration import to_bettertransformer
 
-if CHECK_TORCH.is_available:
+if CHECK_TRANSFORMERS.is_available:
     from transformers import AutoTokenizer, pipeline  # type: ignore
 
 
@@ -17,6 +17,7 @@ class SentenceClassifier(BaseClassifer):
         *,
         engine_args: EngineArgs,
     ) -> None:
+        CHECK_TRANSFORMERS.mark_required()
         self._pipe = pipeline(
             task="text-classification",
             model=engine_args.model_name_or_path,
