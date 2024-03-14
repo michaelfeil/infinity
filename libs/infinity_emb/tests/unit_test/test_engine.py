@@ -8,7 +8,8 @@ from sentence_transformers import CrossEncoder  # type: ignore
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
 from infinity_emb.primitives import InferenceEngine, ModelNotDeployedError
 
-IS_LINUX = sys.platform == "linux"
+# Only compile on Linux 3.9-3.11 with torch
+SHOULD_TORCH_COMPILE = sys.platform == "linux" and sys.version_info != (3, 12)
 
 
 @pytest.mark.anyio
@@ -126,7 +127,7 @@ async def test_async_api_optimum_crossencoder():
             revision=None,
             device="cpu",
             model_warmup=False,
-            compile=IS_LINUX,
+            compile=SHOULD_TORCH_COMPILE,
         )
     )
 
@@ -175,7 +176,7 @@ async def test_async_api_torch_usage():
             device=device,
             lengths_via_tokenize=True,
             model_warmup=False,
-            compile=IS_LINUX,
+            compile=SHOULD_TORCH_COMPILE,
         )
     )
     async with engine:
