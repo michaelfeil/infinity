@@ -1,18 +1,14 @@
 from typing import Dict, List
 
-try:
-    # autotokenizer
-    from transformers import AutoTokenizer, pipeline  # type: ignore
-
-    TORCH_AVAILABLE = True
-except ImportError:
-    TORCH_AVAILABLE = False
-
+from infinity_emb._optional_imports import CHECK_TORCH
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device
 from infinity_emb.transformer.abstract import BaseClassifer
 from infinity_emb.transformer.acceleration import to_bettertransformer
+
+if CHECK_TORCH.is_available:
+    from transformers import AutoTokenizer, pipeline  # type: ignore
 
 
 class SentenceClassifier(BaseClassifer):
@@ -21,13 +17,6 @@ class SentenceClassifier(BaseClassifer):
         *,
         engine_args: EngineArgs,
     ) -> None:
-        if not TORCH_AVAILABLE:
-            raise ImportError(
-                "torch is not installed."
-                " `pip install infinity-emb[torch]` "
-                "or pip install infinity-emb[torch,optimum]`"
-            )
-
         self._pipe = pipeline(
             task="text-classification",
             model=engine_args.model_name_or_path,
@@ -42,7 +31,7 @@ class SentenceClassifier(BaseClassifer):
         self._pipe.model = to_bettertransformer(
             self._pipe.model,
             logger,
-            disable=(
+            force_usage=(
                 engine_args.device == Device.mps and not engine_args.bettertransformer
             ),
         )

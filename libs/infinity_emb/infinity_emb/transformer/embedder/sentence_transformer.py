@@ -1,36 +1,47 @@
+from __future__ import annotations
+
 import copy
 import os
 from pathlib import Path
-from typing import Dict, List, Union
+from typing import TYPE_CHECKING, List, Mapping, Union
 
 import numpy as np
+from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
 
+from infinity_emb._optional_imports import (
+    CHECK_CTRANSLATE2,
+    CHECK_SENTENCE_TRANSFORMERS,
+    CHECK_TORCH,
+)
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import Dtype, EmbeddingReturnType
+from infinity_emb.primitives import Device, Dtype, EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.acceleration import to_bettertransformer
 from infinity_emb.transformer.quantization.quant import quantize
 
-try:
-    import torch
-    from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
-    from sentence_transformers import SentenceTransformer, util  # type: ignore
+if TYPE_CHECKING:
     from torch import Tensor
+
+if CHECK_TORCH.is_available:
+    import torch
     from torch.nn import Module
-
-    TORCH_AVAILABLE = True
-except ImportError:
-    torch, Tensor = None, None  # type: ignore
-
-    class SentenceTransformer:  # type: ignore
-        pass
+else:
 
     class Module:  # type: ignore
         pass
 
-    TORCH_AVAILABLE = False
 
+if CHECK_SENTENCE_TRANSFORMERS.is_available:
+    from sentence_transformers import SentenceTransformer, util  # type: ignore
+else:
+
+    class SentenceTransformer:  # type: ignore
+        pass
+
+
+if CHECK_CTRANSLATE2.is_available:
+    import ctranslate2  # type: ignore
 
 __all__ = [
     "SentenceTransformerPatched",
@@ -42,12 +53,8 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
     """SentenceTransformer with .encode_core() and no microbatching"""
 
     def __init__(self, *, engine_args=EngineArgs):
-        if not TORCH_AVAILABLE:
-            raise ImportError(
-                "torch is not installed."
-                " `pip install infinity-emb[torch]` "
-                "or pip install infinity-emb[torch,optimum]`"
-            )
+        CHECK_TORCH.mark_required()
+        CHECK_SENTENCE_TRANSFORMERS.mark_required()
         super().__init__(
             engine_args.model_name_or_path,
             revision=engine_args.revision,
@@ -65,7 +72,9 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         fm.auto_model = to_bettertransformer(
             fm.auto_model,
             logger,
-            disable=(engine_args.device == "mps" and not engine_args.bettertransformer),
+            force_usage=(
+                engine_args.device == "mps" and not engine_args.bettertransformer
+            ),
         )
 
         if self.device.type == "cuda" and engine_args.dtype in [
@@ -76,23 +85,38 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             self.half()
 
         if engine_args.dtype in (Dtype.int8,):
-            quant_handler, _ = quantize(fm.auto_model, mode=engine_args.dtype.value)
-            model = quant_handler.convert_for_runtime()
-            model.to(self.device)
-            # features1 = self.tokenize(["hello world"])
-            # features1 = util.batch_to_device(features1, self.device)
-            # model.forward(**features1)
-            fm.auto_model = model
+            if engine_args.device == Device.cpu:
+                logger.info("using torch.quantization.quantize_dynamic()")
+                fm.auto_model = torch.quantization.quantize_dynamic(
+                    fm.auto_model.to("cpu"),  # the original model
+                    {torch.nn.Linear},  # a set of layers to dynamically quantize
+                    dtype=torch.qint8,
+                )
+            elif engine_args.device == Device.cuda:
+                logger.warning("Quantization is only supported on device=cpu,"
+                               f" but you are using device={engine_args.device} with dtype={engine_args.dtype}.")
+                quant_handler, _ = quantize(fm.auto_model, mode=engine_args.dtype.value)
+                model = quant_handler.convert_for_runtime()
+                model.to(self.device)
+                # features1 = self.tokenize(["hello world"])
+                # features1 = util.batch_to_device(features1, self.device)
+                # model.forward(**features1)
+                fm.auto_model = model
+            else:
+                raise ValueError(
+                    f"Quantization is not supported on {engine_args.device} with dtype {engine_args.dtype}."
+                )
+
         if engine_args.compile:
             logger.info("using torch.compile()")
             fm.auto_model = torch.compile(fm.auto_model, dynamic=True, fullgraph=True)
 
-    def encode_pre(self, sentences) -> Dict[str, Tensor]:
+    def encode_pre(self, sentences) -> Mapping[str, Tensor]:
         features = self.tokenize(sentences)
 
         return features
 
-    def encode_core(self, features: Dict[str, Tensor]) -> Tensor:
+    def encode_core(self, features: Mapping[str, Tensor]) -> Tensor:
         """
         Computes sentence embeddings
         """
@@ -202,15 +226,8 @@ class CT2Transformer(Module):
         force=False,
         vmap: Union[str, None] = None,
     ):
+        CHECK_CTRANSLATE2.mark_required()
         super().__init__()
-        try:
-            import ctranslate2  # type: ignore
-        except ImportError:
-            logger.exception(
-                "for running the CT2SentenceTransformer,"
-                " it is required to install CTranslate2 by running "
-                " `pip install ctranslate2>=3.16.0`"
-            )
 
         logger.warning(
             "deprecated: ct2 inference is deprecated and will be removed in the future."

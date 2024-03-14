@@ -1,38 +1,28 @@
 import os
 
-try:
+from infinity_emb._optional_imports import CHECK_OPTIMUM
+
+if CHECK_OPTIMUM.is_available:
     from optimum.bettertransformer import BetterTransformer  # type: ignore
 
-    OPTIMUM_AVAILABLE = True
-except ImportError:
-    OPTIMUM_AVAILABLE = False
 
-
-def to_bettertransformer(model, logger, disable=False):
-    if disable:
-        logger.info(
-            "No optimizations via Huggingface optimum, "
-            "e.g. it is disabled via device mps"
-        )
+def to_bettertransformer(model, logger, force_usage=False):
+    if not force_usage:
+        logger.info("No optimizations via Huggingface optimum. ")
         return model
-
-    if OPTIMUM_AVAILABLE and not os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
-        logger.info(
-            "Adding optimizations via Huggingface optimum. "
-            "Disable by setting the env var `INFINITY_DISABLE_OPTIMUM`"
-        )
-        try:
-            model = BetterTransformer.transform(model)
-        except Exception as ex:
-            logger.exception(f"BetterTransformer failed with {ex}")
-    elif os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
+    if os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
         logger.info(
             "No optimizations via Huggingface optimum,"
             " it is disabled via env INFINITY_DISABLE_OPTIMUM "
         )
-    else:
-        logger.info(
-            "No optimizations via Huggingface optimum, "
-            "install `pip install infinity-emb[optimum]`"
-        )
+        return model
+    if CHECK_OPTIMUM.mark_required():
+        logger.info("Adding optimizations via Huggingface optimum. ")
+        try:
+            model = BetterTransformer.transform(model)
+        except Exception as ex:
+            logger.exception(
+                f"BetterTransformer is not available for model. {ex}."
+                " Continue without bettertransformer modeling code."
+            )
     return model

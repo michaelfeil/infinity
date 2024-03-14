@@ -5,29 +5,23 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, List, Union
 
+from infinity_emb._optional_imports import CHECK_DISKCACHE
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import EmbeddingReturnType, QueueItemInner
 
-try:
+if CHECK_DISKCACHE.is_available:
     import diskcache as dc  # type: ignore
 
-    DISKCACHE_AVAILABLE = True
-except ImportError:
-    DISKCACHE_AVAILABLE = False
-
 INFINITY_CACHE_VECTORS = (
-    bool(os.environ.get("INFINITY_CACHE_VECTORS", False)) and DISKCACHE_AVAILABLE
+    bool(os.environ.get("INFINITY_CACHE_VECTORS", False))
+    and CHECK_DISKCACHE.is_available
 )
 
 
 class Cache:
     def __init__(self, cache_name: str, shutdown: threading.Event) -> None:
-        if not DISKCACHE_AVAILABLE:
-            raise ImportError(
-                "diskcache is not available. "
-                "install via `pip install infinity-emb[cache]`"
-            )
+        CHECK_DISKCACHE.mark_required()
         from infinity_emb.transformer.utils import infinity_cache_dir
 
         self._shutdown = shutdown
