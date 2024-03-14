@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from infinity_emb._optional_imports import CHECK_TORCH
 from infinity_emb.log_handler import logger
@@ -9,8 +9,9 @@ if CHECK_TORCH.is_available:
     import torch
 
 
+
 def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Device.cpu):
-    if device == Device.cpu and dtype == [Dtype.int8, Dtype.auto]:
+    if device == Device.cpu and dtype in [Dtype.int8, Dtype.auto]:
         logger.info("using torch.quantization.quantize_dynamic()")
         model = torch.quantization.quantize_dynamic(
             model.to("cpu"),  # the original model
@@ -32,3 +33,4 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
         raise ValueError(
             f"Quantization is not supported on {device} with dtype {dtype}."
         )
+    return model

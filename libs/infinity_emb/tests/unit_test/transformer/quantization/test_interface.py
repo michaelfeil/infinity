@@ -1,19 +1,27 @@
-import numpy as np
+
 import torch
-from transformers import AutoModel, AutoTokenizer  # type: ignore
+from transformers import BertModel, AutoTokenizer  # type: ignore
 
 from infinity_emb.primitives import Device, Dtype
 from infinity_emb.transformer.quantization.interface import quant_interface
+import pytest
 
+devices = [Device.cpu]
+# TODO: add support for cuda
+# if torch.cuda.is_available():
+#     devices.append(Device.cuda)
 
-def get_model(device="cpu"):
+def get_model(device: str ="cpu"):
     name = "michaelfeil/bge-small-en-v1.5"
-    return AutoModel.from_pretrained(
-        name, device=device
-    ), AutoTokenizer.from_pretrained(name)
+    model = BertModel.from_pretrained(
+        name, 
+    )
+    model.to(device)
+    tokenizer = AutoTokenizer.from_pretrained(name)
+    return model, tokenizer
 
-
-def test_quantize_bert(device: Device = Device.cpu):
+@pytest.mark.parametrize("device", devices)
+def test_quantize_bert(device: Device):
     model, tokenizer = get_model(device.value)
     model_unquantized, _ = get_model(device.value)
     model = quant_interface(model=model, device=device, dtype=Dtype.int8)
@@ -25,10 +33,7 @@ def test_quantize_bert(device: Device = Device.cpu):
     )
     tokens_encoded = {k: v.to(device.value) for k, v in tokens_encoded.items()}
     with torch.no_grad():
-        out_default = model_unquantized.forward(**tokens_encoded)
-        out_quant = model.forward(**tokens_encoded)
+        out_default = model_unquantized.forward(**tokens_encoded)["last_hidden_state"].mean(dim=1)
+        out_quant = model.forward(**tokens_encoded)["last_hidden_state"].mean(dim=1)
 
-    # TODO: distance between the two outputs is to big - need to add bias to quant
-    assert np.dot(
-        out_default["last_hidden_state"], out_quant["last_hidden_state"].float()
-    )
+    assert torch.cosine_similarity(out_default, out_quant) > 0.95
