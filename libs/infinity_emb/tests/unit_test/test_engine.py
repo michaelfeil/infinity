@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import pytest
 import torch
@@ -5,6 +7,8 @@ from sentence_transformers import CrossEncoder  # type: ignore
 
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
 from infinity_emb.primitives import InferenceEngine, ModelNotDeployedError
+
+IS_LINUX = sys.platform == "linux"
 
 
 @pytest.mark.anyio
@@ -122,7 +126,7 @@ async def test_async_api_optimum_crossencoder():
             revision=None,
             device="cpu",
             model_warmup=False,
-            compile=True,
+            compile=IS_LINUX,
         )
     )
 
@@ -171,7 +175,7 @@ async def test_async_api_torch_usage():
             device=device,
             lengths_via_tokenize=True,
             model_warmup=False,
-            compile=True,
+            compile=IS_LINUX,
         )
     )
     async with engine:
