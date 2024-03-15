@@ -243,32 +243,31 @@
 <li><strong>Easy to use</strong>: The API is built on top of <a href="https://fastapi.tiangolo.com/">FastAPI</a>, <a href="https://swagger.io/">Swagger</a> makes it fully documented. API are aligned to <a href="https://platform.openai.com/docs/guides/embeddings/what-are-embeddings">OpenAI's Embedding specs</a>. See below on how to get started.</li>
 </ul>
 <h1 id="getting-started">Getting started</h1>
-<p>Install <code>infinity_emb</code> via pip</p>
-<pre><code class="language-bash">pip install infinity-emb[all]
-</code></pre>
+<p>Install <code>infinity_emb</code> via pip
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>infinity-emb<span class="o">[</span>all<span class="o">]</span>
+</span></code></pre></div></p>
 <details>
 <summary>Install from source with Poetry</summary>
 
   Advanced:
   To install via Poetry use Poetry 1.7.1, Python 3.11 on Ubuntu 22.04
-  ```bash
-  git clone https://github.com/michaelfeil/infinity
-  cd infinity
-  cd libs/infinity_emb
-  poetry install --extras all
-  ```
+  <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/michaelfeil/infinity
+</span><span id="__span-1-2"><a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a><span class="nb">cd</span><span class="w"> </span>infinity
+</span><span id="__span-1-3"><a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a><span class="nb">cd</span><span class="w"> </span>libs/infinity_emb
+</span><span id="__span-1-4"><a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a>poetry<span class="w"> </span>install<span class="w"> </span>--extras<span class="w"> </span>all
+</span></code></pre></div>
 </details>
 <h3 id="launch-the-cli-using-a-pre-built-docker-container-recommended">Launch the CLI using a pre-built docker container (recommended)</h3>
-<pre><code class="language-bash">model=BAAI/bge-small-en-v1.5
-port=7997
-docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
-</code></pre>
-<p>The download path at runtime, can be controlled via the environment variable <code>HF_HOME</code>.</p>
+<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="nv">model</span><span class="o">=</span>BAAI/bge-small-en-v1.5
+</span><span id="__span-2-2"><a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a><span class="nv">port</span><span class="o">=</span><span class="m">7997</span>
+</span><span id="__span-2-3"><a href="#__codelineno-2-3" id="__codelineno-2-3" name="__codelineno-2-3"></a>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="nv">$port</span>:<span class="nv">$port</span><span class="w"> </span>michaelf34/infinity:latest<span class="w"> </span>--model-name-or-path<span class="w"> </span><span class="nv">$model</span><span class="w"> </span>--port<span class="w"> </span><span class="nv">$port</span>
+</span></code></pre></div>
+The download path at runtime, can be controlled via the environment variable <code>HF_HOME</code>.</p>
 <h3 id="or-launch-the-cli-after-the-pip-install">or launch the cli after the pip install</h3>
 <p>After your pip install, with your venv activate, you can run the CLI directly.
 Check the <code>--help</code> command to get a description for all parameters.</p>
-<pre><code class="language-bash">infinity_emb --help
-</code></pre>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a href="#__codelineno-3-1" id="__codelineno-3-1" name="__codelineno-3-1"></a>infinity_emb<span class="w"> </span>--help
+</span></code></pre></div>
 <h3 id="launch-faq">Launch FAQ:</h3>
 <details>
 <summary>What are embedding models?</summary>
@@ -298,18 +297,16 @@ Check the <code>--help</code> command to get a description for all parameters.</
 <summary>Launching multiple models in one dockerfile</summary>
 
   Multiple models on one GPU is in experimental mode. You can use the following temporary solution:
-  ```Dockerfile
-  FROM michaelf34/infinity:latest
-  # Dockerfile-ENTRYPOINT for multiple models via multiple ports
-  ENTRYPOINT ["/bin/sh", "-c", \
-   "(. /app/.venv/bin/activate &amp;&amp; infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &amp;);\
-   (. /app/.venv/bin/activate &amp;&amp; infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
-  ```
+  <div class="language-Dockerfile highlight"><pre><span></span><code><span id="__span-4-1"><a href="#__codelineno-4-1" id="__codelineno-4-1" name="__codelineno-4-1"></a><span class="k">FROM</span><span class="w"> </span><span class="s">michaelf34/infinity:latest</span>
+</span><span id="__span-4-2"><a href="#__codelineno-4-2" id="__codelineno-4-2" name="__codelineno-4-2"></a><span class="c"># Dockerfile-ENTRYPOINT for multiple models via multiple ports</span>
+</span><span id="__span-4-3"><a href="#__codelineno-4-3" id="__codelineno-4-3" name="__codelineno-4-3"></a><span class="k">ENTRYPOINT</span><span class="w"> </span><span class="o">[</span><span class="s2">"/bin/sh"</span>,<span class="w"> </span><span class="s2">"-c"</span>,<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-4"><a href="#__codelineno-4-4" id="__codelineno-4-4" name="__codelineno-4-4"></a><span class="w"> </span><span class="s2">"(. /app/.venv/bin/activate &amp;&amp; infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &amp;);\</span>
+</span><span id="__span-4-5"><a href="#__codelineno-4-5" id="__codelineno-4-5" name="__codelineno-4-5"></a><span class="s2"> (. /app/.venv/bin/activate &amp;&amp; infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"</span><span class="o">]</span>
+</span></code></pre></div>
 
   You can build and run it via:  
-  ```bash
-  docker build -t custominfinity . &amp;&amp; docker run -it --gpus all -p 8080:8080 -p 8081:8081 custominfinity
-  ```
+  <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a href="#__codelineno-5-1" id="__codelineno-5-1" name="__codelineno-5-1"></a>docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>custominfinity<span class="w"> </span>.<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="m">8080</span>:8080<span class="w"> </span>-p<span class="w"> </span><span class="m">8081</span>:8081<span class="w"> </span>custominfinity
+</span></code></pre></div>
 
   Both models now run on two instances in one dockerfile servers. Otherwise, you could build your own FastAPI/flask instance, which wraps around the Async API.
 

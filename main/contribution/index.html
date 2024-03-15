@@ -185,22 +185,22 @@
 <article class="md-content__inner md-typeset">
 <h1 id="contribute-and-develop">Contribute and Develop</h1>
 <h2 id="developer-setup">Developer setup</h2>
-<p>Install via Poetry 1.7.1 and Python3.11 on Ubuntu 22.04</p>
-<pre><code class="language-bash">git clone https://github.com/michaelfeil/infinity
-cd infinity
-cd libs/infinity_emb
-poetry install --extras all --with test
-</code></pre>
-<p>To pass the CI:</p>
-<pre><code class="language-bash">cd libs/infinity_emb
-make format
-make lint
-poetry run pytest ./tests
-</code></pre>
-<p>as alternative, you may also use:</p>
-<pre><code class="language-bash">cd libs/infinity_emb
-make precommit
-</code></pre>
+<p>Install via Poetry 1.7.1 and Python3.11 on Ubuntu 22.04
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/michaelfeil/infinity
+</span><span id="__span-0-2"><a href="#__codelineno-0-2" id="__codelineno-0-2" name="__codelineno-0-2"></a><span class="nb">cd</span><span class="w"> </span>infinity
+</span><span id="__span-0-3"><a href="#__codelineno-0-3" id="__codelineno-0-3" name="__codelineno-0-3"></a><span class="nb">cd</span><span class="w"> </span>libs/infinity_emb
+</span><span id="__span-0-4"><a href="#__codelineno-0-4" id="__codelineno-0-4" name="__codelineno-0-4"></a>poetry<span class="w"> </span>install<span class="w"> </span>--extras<span class="w"> </span>all<span class="w"> </span>--with<span class="w"> </span><span class="nb">test</span>
+</span></code></pre></div></p>
+<p>To pass the CI:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a><span class="nb">cd</span><span class="w"> </span>libs/infinity_emb
+</span><span id="__span-1-2"><a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a>make<span class="w"> </span>format
+</span><span id="__span-1-3"><a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a>make<span class="w"> </span>lint
+</span><span id="__span-1-4"><a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a>poetry<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>./tests
+</span></code></pre></div>
+as alternative, you may also use:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="nb">cd</span><span class="w"> </span>libs/infinity_emb
+</span><span id="__span-2-2"><a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a>make<span class="w"> </span>precommit
+</span></code></pre></div></p>
 <h2 id="cla">CLA</h2>
 <p>All contributions must be made in a way to be compatible with the MIT License of this repo. </p>
 </article>
