@@ -1,4 +1,4 @@
-# Integrations
+# Python Integrations
 
 ## Langchain (from runnig server)
 Infinity has a official integration into `pip install langchain>=0.342`. 
