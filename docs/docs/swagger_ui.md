@@ -2,4 +2,4 @@
 Disclaimer: This is the current Swagger UI based on the main branch - which may differ from the Swagger UI of this release.
 The Swagger UI and `openapi.json` will be available under `{url}:{port}/docs`, in this case `http://localhost:7997/docs`.
 
-<swagger-ui src="https://github.com/michaelfeil/infinity/blob/main/docs/assets/openapi.json"/>
+<swagger-ui src="https://raw.githubusercontent.com/michaelfeil/infinity/main/docs/assets/openapi.json"/>
