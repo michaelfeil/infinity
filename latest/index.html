@@ -118,35 +118,6 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#or-launch-it-via-python">
-<span class="md-ellipsis">
-      or launch it via Python
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#or-launch-on-the-cloud-via-dstack">
-<span class="md-ellipsis">
-      or launch on the cloud via dstack
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#non-embedding-features">
-<span class="md-ellipsis">
-      Non-embedding features
-    </span>
-</a>
-<nav aria-label="Non-embedding features" class="md-nav">
-<ul class="md-nav__list">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#reranking">
-<span class="md-ellipsis">
-      Reranking
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
 <a class="md-nav__link" href="#launch-faq">
 <span class="md-ellipsis">
       Launch FAQ:
@@ -155,16 +126,6 @@
 </li>
 </ul>
 </nav>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#documentation">
-<span class="md-ellipsis">
-      Documentation
-    </span>
-</a>
 </li>
 </ul>
 </nav>
@@ -184,9 +145,30 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="deploy/">
+<span class="md-ellipsis">
+    Deployment
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="integrations/">
+<span class="md-ellipsis">
+    Python Integrations
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="python_engine/">
+<span class="md-ellipsis">
+    Python Engine
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="swagger_ui/">
 <span class="md-ellipsis">
-    Swagger ui
+    Swagger UI
   </span>
 </a>
 </li>
@@ -234,35 +216,6 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#or-launch-it-via-python">
-<span class="md-ellipsis">
-      or launch it via Python
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#or-launch-on-the-cloud-via-dstack">
-<span class="md-ellipsis">
-      or launch on the cloud via dstack
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#non-embedding-features">
-<span class="md-ellipsis">
-      Non-embedding features
-    </span>
-</a>
-<nav aria-label="Non-embedding features" class="md-nav">
-<ul class="md-nav__list">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#reranking">
-<span class="md-ellipsis">
-      Reranking
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
 <a class="md-nav__link" href="#launch-faq">
 <span class="md-ellipsis">
       Launch FAQ:
@@ -271,16 +224,6 @@
 </li>
 </ul>
 </nav>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#documentation">
-<span class="md-ellipsis">
-      Documentation
-    </span>
-</a>
 </li>
 </ul>
 </nav>
@@ -320,81 +263,12 @@
 port=7997
 docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
 </code></pre>
-<p>The download path at runtime, can be controlled via the environment variable <code>SENTENCE_TRANSFORMERS_HOME</code>.</p>
+<p>The download path at runtime, can be controlled via the environment variable <code>HF_HOME</code>.</p>
 <h3 id="or-launch-the-cli-after-the-pip-install">or launch the cli after the pip install</h3>
 <p>After your pip install, with your venv activate, you can run the CLI directly.
 Check the <code>--help</code> command to get a description for all parameters.</p>
 <pre><code class="language-bash">infinity_emb --help
 </code></pre>
-<h3 id="or-launch-it-via-python">or launch it via Python</h3>
-<p>You can use in a async context with asyncio. 
-This gives you most flexibility, but is a bit more advanced.</p>
-<pre><code class="language-python">import asyncio
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
-
-sentences = ["Embed this is sentence via Infinity.", "Paris is in France."]
-engine = AsyncEmbeddingEngine.from_args(EngineArgs(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch"))
-
-async def main(): 
-    async with engine: # engine starts with engine.astart()
-        embeddings, usage = await engine.embed(sentences=sentences)
-    # engine stops with engine.astop()
-asyncio.run(main())
-</code></pre>
-<h3 id="or-launch-on-the-cloud-via-dstack">or launch on the cloud via dstack</h3>
-<p>dstack allows you to provision a VM instance on the cloud of your choice. Write a service configuration file as below for the deployment of <code>BAAI/bge-small-en-v1.5</code> model wrapped in Infinity.</p>
-<pre><code class="language-yaml">type: service
-
-image: michaelf34/infinity:latest
-env:
-  - MODEL_ID=BAAI/bge-small-en-v1.5
-commands:
-  - infinity_emb --model-name-or-path $MODEL_ID --port 80
-port: 80
-</code></pre>
-<p>Then, simply run the following dstack command. After this, a prompt will appear to let you choose which VM instance to deploy the Infinity.</p>
-<pre><code class="language-shell">dstack run . -f infinity/serve.dstack.yml --gpu 16GB
-</code></pre>
-<p>For more detailed tutorial and general information about dstack, visit the <a href="https://dstack.ai/examples/infinity/#run-the-configuration">official doc</a>.</p>
-<h2 id="non-embedding-features">Non-embedding features</h2>
-<h3 id="reranking">Reranking</h3>
-<p>Reranking gives you a score for similarity between a query and multiple documents. 
-Use it in conjunction with a VectorDB+Embeddings, or as standalone for small amount of documents.
-Please select a model from huggingface that is a AutoModelForSequenceClassification with one class classification.</p>
-<pre><code class="language-python">import asyncio
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
-query = "What is the python package infinity_emb?"
-docs = ["This is a document not related to the python package infinity_emb, hence...", 
-    "Paris is in France!",
-    "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
-engine_args = EngineArgs(model_name_or_path = "BAAI/bge-reranker-base", engine="torch")
-
-engine = AsyncEmbeddingEngine.from_args(engine_args)
-async def main(): 
-    async with engine:
-        ranking, usage = await engine.rerank(query=query, docs=docs)
-        print(list(zip(ranking, docs)))
-asyncio.run(main())
-</code></pre>
-<details>
-<summary>You can also use text-classification (beta):</summary>
-
-  Note: PR's to speed this section up are welcome, a 40% speedup is propable, currently the backend uses huggingface pipelines + dynamic batching.
-  ```python
-  import asyncio
-  from infinity_emb import AsyncEmbeddingEngine, EngineArgs
-
-  sentences = ["This is awesome.", "I am bored."]
-  engine_args = EngineArgs(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
-      engine="torch", model_warmup=True)
-  engine = AsyncEmbeddingEngine.from_args(engine_args)
-  async def main(): 
-      async with engine:
-          predictions, usage = await engine.classify(sentences=sentences)
-          return predictions, usage
-  asyncio.run(main())
-  ```
-</details>
 <h3 id="launch-faq">Launch FAQ:</h3>
 <details>
 <summary>What are embedding models?</summary>
@@ -442,23 +316,9 @@ asyncio.run(main())
 </details>
 <details>
 <summary>Using Langchain with Infinity</summary>
-
-  Infinity has a official integration into `pip install langchain&gt;=0.342`. 
-  You can find more documentation on that here:
-  https://python.langchain.com/docs/integrations/text_embedding/infinity
-
-  ```python
-  from langchain.embeddings.infinity import InfinityEmbeddings
-  from langchain.docstore.document import Document
-
-  documents = [Document(page_content="Hello world!", metadata={"source": "unknown"})]
-
-  emb_model = InfinityEmbeddings(model="BAAI/bge-small", infinity_api_url="http://localhost:7997/v1")
-  print(emb_model.embed_documents([doc.page_content for doc in docs]))
+  Now available under # Integrations in the side panel.  
   ```
 </details>
-<h1 id="documentation">Documentation</h1>
-<p>After startup, the Swagger Ui will be available under <code>{url}:{port}/docs</code>, in this case <code>http://localhost:7997/docs</code>.</p>
 </article>
 </div>
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>

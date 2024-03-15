@@ -5,11 +5,11 @@
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width,initial-scale=1" name="viewport"/>
-<link href=".." rel="prev"/>
-<link href="../contribution/" rel="next"/>
+<link href="../deploy/" rel="prev"/>
+<link href="../python_engine/" rel="next"/>
 <link href="../assets/images/favicon.png" rel="icon"/>
 <meta content="mkdocs-1.5.3, mkdocs-material-9.5.13" name="generator"/>
-<title>Benchmarking details - Infinity</title>
+<title>Python Integrations - Infinity</title>
 <link href="../assets/stylesheets/main.7e359304.min.css" rel="stylesheet"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
@@ -21,7 +21,7 @@
 <input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
 <label class="md-overlay" for="__drawer"></label>
 <div data-md-component="skip">
-<a class="md-skip" href="#benchmarking-details">
+<a class="md-skip" href="#python-integrations">
           Skip to content
         </a>
 </div>
@@ -47,7 +47,7 @@
 <div class="md-header__topic" data-md-component="header-topic">
 <span class="md-ellipsis">
             
-              Benchmarking details
+              Python Integrations
             
           </span>
 </div>
@@ -77,105 +77,12 @@
   </span>
 </a>
 </li>
-<li class="md-nav__item md-nav__item--active">
-<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
-<label class="md-nav__link md-nav__link--active" for="__toc">
-<span class="md-ellipsis">
-    Benchmarking details
-  </span>
-<span class="md-nav__icon md-icon"></span>
-</label>
-<a class="md-nav__link md-nav__link--active" href="./">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../benchmarking/">
 <span class="md-ellipsis">
     Benchmarking details
   </span>
 </a>
-<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
-<label class="md-nav__title" for="__toc">
-<span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#benchmarking-machines">
-<span class="md-ellipsis">
-      Benchmarking machines:
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#reproduction-steps">
-<span class="md-ellipsis">
-      Reproduction steps:
-    </span>
-</a>
-<nav aria-label="Reproduction steps:" class="md-nav">
-<ul class="md-nav__list">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#sentence-transformers-fastembed-infinity">
-<span class="md-ellipsis">
-      sentence-transformers, fastembed, infinity
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#huggingfacetext-embeddings-inference">
-<span class="md-ellipsis">
-      huggingface/text-embeddings-inference
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#tensorrt-onnx-gpu">
-<span class="md-ellipsis">
-      tensorrt, onnx-gpu:
-    </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results">
-<span class="md-ellipsis">
-      Results
-    </span>
-</a>
-<nav aria-label="Results" class="md-nav">
-<ul class="md-nav__list">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-cpu-only-baaibge-small-en-v15-bert-small">
-<span class="md-ellipsis">
-      Results: CPU-only (BAAI/bge-small-en-v1.5 | bert-small)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-nvidia-l4-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: NVIDIA L4 (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-amd-mi210-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: AMD MI210 (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-aws-inf2-xlarge-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: AWS INF2 xlarge (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-</ul>
-</nav>
 </li>
 <li class="md-nav__item">
 <a class="md-nav__link" href="../contribution/">
@@ -191,12 +98,59 @@
   </span>
 </a>
 </li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../integrations/">
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    Python Integrations
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
 <span class="md-ellipsis">
     Python Integrations
   </span>
 </a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#langchain-from-runnig-server">
+<span class="md-ellipsis">
+      Langchain (from runnig server)
+    </span>
+</a>
+<nav aria-label="Langchain (from runnig server)" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#server-client">
+<span class="md-ellipsis">
+      Server-Client
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#from-python-engine">
+<span class="md-ellipsis">
+      from Python Engine
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#llama-index">
+<span class="md-ellipsis">
+      LLama-Index
+    </span>
+</a>
+</li>
+</ul>
+</nav>
 </li>
 <li class="md-nav__item">
 <a class="md-nav__link" href="../python_engine/">
@@ -227,38 +181,24 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
-<a class="md-nav__link" href="#benchmarking-machines">
+<a class="md-nav__link" href="#langchain-from-runnig-server">
 <span class="md-ellipsis">
-      Benchmarking machines:
+      Langchain (from runnig server)
     </span>
 </a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#reproduction-steps">
-<span class="md-ellipsis">
-      Reproduction steps:
-    </span>
-</a>
-<nav aria-label="Reproduction steps:" class="md-nav">
+<nav aria-label="Langchain (from runnig server)" class="md-nav">
 <ul class="md-nav__list">
 <li class="md-nav__item">
-<a class="md-nav__link" href="#sentence-transformers-fastembed-infinity">
+<a class="md-nav__link" href="#server-client">
 <span class="md-ellipsis">
-      sentence-transformers, fastembed, infinity
+      Server-Client
     </span>
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#huggingfacetext-embeddings-inference">
+<a class="md-nav__link" href="#from-python-engine">
 <span class="md-ellipsis">
-      huggingface/text-embeddings-inference
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#tensorrt-onnx-gpu">
-<span class="md-ellipsis">
-      tensorrt, onnx-gpu:
+      from Python Engine
     </span>
 </a>
 </li>
@@ -266,43 +206,11 @@
 </nav>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#results">
+<a class="md-nav__link" href="#llama-index">
 <span class="md-ellipsis">
-      Results
+      LLama-Index
     </span>
 </a>
-<nav aria-label="Results" class="md-nav">
-<ul class="md-nav__list">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-cpu-only-baaibge-small-en-v15-bert-small">
-<span class="md-ellipsis">
-      Results: CPU-only (BAAI/bge-small-en-v1.5 | bert-small)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-nvidia-l4-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: NVIDIA L4 (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-amd-mi210-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: AMD MI210 (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-aws-inf2-xlarge-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: AWS INF2 xlarge (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-</ul>
-</nav>
 </li>
 </ul>
 </nav>
@@ -311,175 +219,50 @@
 </div>
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
-<h1 id="benchmarking-details">Benchmarking details</h1>
-<p>Benchmarks are always optionated. The goal of this benchmark is to find the best possible self-hosted backend for $/token:</p>
-<ol>
-<li>end-to-end, including the RestAPI server</li>
-<li>multi-tenant: multiple clients will try to query your server</li>
-<li>fair batch size: You want to limit request size (sentences per requests) to something low, such that you can load balance requests, scale</li>
-<li>measured over throughput per token: Idle servers are bad for buissness (especially since ). This benchmark is NOT about the latency for a single request against an IDLE server. It partially evaluates the latency under a typical load scenario</li>
-<li>Bert Small / large - the most typical semantic search tasks require a small model (&lt; 1B params)</li>
-<li>accuracy: each backend must have a ~1e-4 prevision over the torch fp32 embeddings.</li>
-</ol>
-<h2 id="benchmarking-machines">Benchmarking machines:</h2>
-<p>CPU and NVIDIA:</p>
-<ul>
-<li>GCP g2-standard-16</li>
-<li>Intel Cascade Lake</li>
-<li>1 x NVIDIA L4, cu122</li>
-</ul>
-<p>AMD:</p>
-<ul>
-<li>16 core CPU</li>
-<li>AMD MI210, rocm5.7 without flash-attn</li>
-</ul>
-<p>AWS Inferentia</p>
-<ul>
-<li>Huggingface AMI (torch-neuronx 1.13, optimum 1.17)</li>
-<li>inf2.xlarge instance (2 Neuron Cores  with 1 used)</li>
-</ul>
-<h2 id="reproduction-steps">Reproduction steps:</h2>
-<p>Install the environment</p>
-<pre><code class="language-bash">pip install "infinity_emb[all]==0.0.25"
+<h1 id="python-integrations">Python Integrations</h1>
+<h2 id="langchain-from-runnig-server">Langchain (from runnig server)</h2>
+<p>Infinity has a official integration into <code>pip install langchain&gt;=0.342</code>. 
+You can find more documentation on that here:
+https://python.langchain.com/docs/integrations/text_embedding/infinity</p>
+<h3 id="server-client">Server-Client</h3>
+<p>This code snippet assumes you have a server running at <code>http://localhost:7997/v1</code></p>
+<pre><code class="language-python">from langchain.embeddings.infinity import InfinityEmbeddings
+from langchain.docstore.document import Document
+
+documents = [Document(page_content="Hello world!", metadata={"source": "unknown"})]
+
+emb_model = InfinityEmbeddings(model="BAAI/bge-small", infinity_api_url="http://localhost:7997/v1")
+print(emb_model.embed_documents([doc.page_content for doc in docs]))
 </code></pre>
-<h3 id="sentence-transformers-fastembed-infinity">sentence-transformers, fastembed, infinity</h3>
-<pre><code class="language-bash">git clone https://github.com/michaelfeil/infinity.git
-cd infinity
-git checkout tags/0.0.25
-python ./docs/benchmarks/simple_app.py
+<h3 id="from-python-engine">from Python Engine</h3>
+<pre><code class="language-python">from langchain.embeddings.infinity import InfinityEmbeddings
+from langchain.docstore.document import Document
+
+embeddings = InfinityEmbeddingsLocal(
+    model="sentence-transformers/all-MiniLM-L6-v2",
+    # revision
+    revision=None,
+    # best to keep at 32
+    batch_size=32,
+    # for AMD/Nvidia GPUs via torch
+    device="cuda",
+    # warm up model before execution
+)
+documents = [Document(page_content="Hello world!", metadata={"source": "unknown"})]
+
+# important: use engine inside of `async with` statement to start/stop the batching engine.
+async with embeddings:
+    # avoid closing and starting the engine often.
+    # rather keep it running.
+    # you may call `await embeddings.__aenter__()` and `__aexit__()
+    # if you are sure when to manually start/stop execution` in a more granular way
+    documents_embedded = await embeddings.aembed_documents(documents)
+    query_result = await embeddings.aembed_query(query)
+    print("embeddings created successful")
+print(documents_embedded, query_result)
 </code></pre>
-<h3 id="huggingfacetext-embeddings-inference">huggingface/text-embeddings-inference</h3>
-<p>using the <em>cpu</em> and <em>89-cuda</em> container (note that cc-89 matches to Nvidia L4)</p>
-<pre><code class="language-bash">docker run -it -p 7997:80 --pull always ghcr.io/huggingface/text-embeddings-inference:cpu-0.6 
---model-id BAAI/bge-small-en-v1.5 --max-client-batch-size 256
-</code></pre>
-<pre><code class="language-bash">docker run -it -p "7997:80" --gpus all --pull always ghcr.io/huggingface/text-embeddings-inference:89-0.6 
---model-id BAAI/bge-large-en-v1.5 --max-client-batch-size 256
-</code></pre>
-<h3 id="tensorrt-onnx-gpu">tensorrt, onnx-gpu:</h3>
-<pre><code class="language-bash">docker buildx build --target production-tensorrt -t inf-trt . &amp;&amp; docker run -it -p "7997:7997" --gpus all inf-trt --model-name-or-path BAAI/bge-large-
-en-v1.5 --engine optimum --device "cuda OR tensorrt"
-</code></pre>
-<h2 id="results">Results</h2>
-<p>To launch the benchmarks</p>
-<pre><code class="language-bash">make benchmark_embed
-</code></pre>
-<p>Below are the following metrics:
-- Requests # / sec (1 request = 256 sentences / 115_000 tokens)
-- time to run benchmark (10 requests / 1_150_000)</p>
-<h3 id="results-cpu-only-baaibge-small-en-v15-bert-small">Results: CPU-only (<em>BAAI/bge-small-en-v1.5</em> | <em>bert-small</em>)</h3>
-<table>
-<thead>
-<tr>
-<th>Model</th>
-<th>Time (seconds)</th>
-<th>Requests # / sec (mean)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>infinity-optimum-int8</td>
-<td>100.490</td>
-<td>0.10</td>
-</tr>
-<tr>
-<td>infinity-optimum (onnx)</td>
-<td>125.342</td>
-<td>0.08</td>
-</tr>
-<tr>
-<td>fastembed (onnx)</td>
-<td>125.770</td>
-<td>0.08</td>
-</tr>
-<tr>
-<td>sentence-transformers (torch)</td>
-<td>256.884</td>
-<td>0.04</td>
-</tr>
-<tr>
-<td>infinity (torch / compile)</td>
-<td>353.065??</td>
-<td>0.03???</td>
-</tr>
-<tr>
-<td>huggingface/TEI (candle)</td>
-<td>1104.357</td>
-<td>0.009</td>
-</tr>
-</tbody>
-</table>
-<h3 id="results-nvidia-l4-baaibge-large-en-v15-bert-large">Results: NVIDIA L4 (<em>BAAI/bge-large-en-v1.5</em> | <em>bert-large</em>)</h3>
-<table>
-<thead>
-<tr>
-<th>Model</th>
-<th>Requests # / sec (mean)</th>
-<th>Time (seconds)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>huggingface/TEI (candle, flashbert)</td>
-<td>0.54</td>
-<td>18.491</td>
-</tr>
-<tr>
-<td>infinity (torch + compile + fa2)</td>
-<td>0.51</td>
-<td>19.562</td>
-</tr>
-<tr>
-<td>tensorrt (via infinity)</td>
-<td>0.43</td>
-<td>23.367</td>
-</tr>
-<tr>
-<td>infinity (onnx-gpu fp16, fused layers)</td>
-<td>0.41</td>
-<td>24.448</td>
-</tr>
-<tr>
-<td>sentence-transformers (fp16)</td>
-<td>0.17</td>
-<td>59.107</td>
-</tr>
-</tbody>
-</table>
-<h3 id="results-amd-mi210-baaibge-large-en-v15-bert-large">Results: AMD MI210 (<em>BAAI/bge-large-en-v1.5</em> | <em>bert-large</em>)</h3>
-<table>
-<thead>
-<tr>
-<th>Model</th>
-<th>Requests # / sec (mean)</th>
-<th>Time (seconds)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>infinity (torch + no compile + fa2 disabled)</td>
-<td>0.75</td>
-<td>13.400</td>
-</tr>
-</tbody>
-</table>
-<h3 id="results-aws-inf2-xlarge-baaibge-large-en-v15-bert-large">Results: AWS INF2 xlarge (<em>BAAI/bge-large-en-v1.5</em> | <em>bert-large</em>)</h3>
-<table>
-<thead>
-<tr>
-<th>Model</th>
-<th>Requests # / sec (mean)</th>
-<th>Time (seconds)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>infinity (neuron, fp16, constant batch_size 4 / 512 seq)</td>
-<td>0.11</td>
-<td>90.564</td>
-</tr>
-</tbody>
-</table>
+<h2 id="llama-index">LLama-Index</h2>
+<p>To be announced</p>
 </article>
 </div>
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>

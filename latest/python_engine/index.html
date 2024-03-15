@@ -5,10 +5,11 @@
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width,initial-scale=1" name="viewport"/>
-<link href="../python_engine/" rel="prev"/>
+<link href="../integrations/" rel="prev"/>
+<link href="../swagger_ui/" rel="next"/>
 <link href="../assets/images/favicon.png" rel="icon"/>
 <meta content="mkdocs-1.5.3, mkdocs-material-9.5.13" name="generator"/>
-<title>Swagger UI - Infinity</title>
+<title>Python Engine - Infinity</title>
 <link href="../assets/stylesheets/main.7e359304.min.css" rel="stylesheet"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
@@ -20,7 +21,7 @@
 <input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
 <label class="md-overlay" for="__drawer"></label>
 <div data-md-component="skip">
-<a class="md-skip" href="#swagger-ui">
+<a class="md-skip" href="#python-engine">
           Skip to content
         </a>
 </div>
@@ -46,7 +47,7 @@
 <div class="md-header__topic" data-md-component="header-topic">
 <span class="md-ellipsis">
             
-              Swagger UI
+              Python Engine
             
           </span>
 </div>
@@ -104,16 +105,37 @@
   </span>
 </a>
 </li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../python_engine/">
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    Python Engine
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
 <span class="md-ellipsis">
     Python Engine
   </span>
 </a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#launch-via-python">
+<span class="md-ellipsis">
+      Launch via Python
+    </span>
+</a>
 </li>
-<li class="md-nav__item md-nav__item--active">
-<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
-<a class="md-nav__link md-nav__link--active" href="./">
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../swagger_ui/">
 <span class="md-ellipsis">
     Swagger UI
   </span>
@@ -128,16 +150,74 @@
 <div class="md-sidebar__scrollwrap">
 <div class="md-sidebar__inner">
 <nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#launch-via-python">
+<span class="md-ellipsis">
+      Launch via Python
+    </span>
+</a>
+</li>
+</ul>
 </nav>
 </div>
 </div>
 </div>
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
-<h1 id="swagger-ui">Swagger UI</h1>
-<p>Disclaimer: This is the current Swagger UI based on the main branch - which may differ from the Swagger UI of this release.
-The Swagger UI and <code>openapi.json</code> will be available under <code>{url}:{port}/docs</code>, in this case <code>http://localhost:7997/docs</code>.</p>
-<p><iframe class="swagger-ui-iframe" frameborder="0" id="dbc59352" src="swagger-dbc59352.html" style="overflow:hidden;width:100%;" width="100%"></iframe></p>
+<h1 id="python-engine">Python Engine</h1>
+<h2 id="launch-via-python">Launch via Python</h2>
+<p>You can use in a async context with asyncio. 
+This gives you most flexibility, but is a bit more advanced.</p>
+<pre><code class="language-python">import asyncio
+from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+
+sentences = ["Embed this is sentence via Infinity.", "Paris is in France."]
+engine = AsyncEmbeddingEngine.from_args(EngineArgs(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch"))
+
+async def main(): 
+    async with engine: # engine starts with engine.astart()
+        embeddings, usage = await engine.embed(sentences=sentences)
+    # engine stops with engine.astop()
+asyncio.run(main())
+</code></pre>
+<h1 id="reranker">ReRanker</h1>
+<p>Reranking gives you a score for similarity between a query and multiple documents. 
+Use it in conjunction with a VectorDB+Embeddings, or as standalone for small amount of documents.
+Please select a model from huggingface that is a AutoModelForSequenceClassification with one class classification.</p>
+<pre><code class="language-python">import asyncio
+from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+query = "What is the python package infinity_emb?"
+docs = ["This is a document not related to the python package infinity_emb, hence...", 
+    "Paris is in France!",
+    "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
+engine_args = EngineArgs(model_name_or_path = "BAAI/bge-reranker-base", engine="torch")
+
+engine = AsyncEmbeddingEngine.from_args(engine_args)
+async def main(): 
+    async with engine:
+        ranking, usage = await engine.rerank(query=query, docs=docs)
+        print(list(zip(ranking, docs)))
+asyncio.run(main())
+</code></pre>
+<h1 id="text-classification-beta">Text-Classification (Beta)</h1>
+<pre><code class="language-python">import asyncio
+from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+
+sentences = ["This is awesome.", "I am bored."]
+engine_args = EngineArgs(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
+    engine="torch", model_warmup=True)
+engine = AsyncEmbeddingEngine.from_args(engine_args)
+async def main(): 
+    async with engine:
+        predictions, usage = await engine.classify(sentences=sentences)
+        return predictions, usage
+asyncio.run(main())
+</code></pre>
 </article>
 </div>
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
@@ -179,7 +259,7 @@ The Swagger UI and <code>openapi.json</code> will be available under <code>{url}
                 iframe_id_list.push(iframes[i].getAttribute("id"))
             }
         
-            let ticking = false;
+            let ticking = true;
             
             document.addEventListener('scroll', function(e) {
                 if (!ticking) {
