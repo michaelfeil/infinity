@@ -6,7 +6,6 @@ on:
   push:
     branches:
     - main
-    - dev
 permissions:
   contents: write
 jobs:
@@ -36,8 +35,15 @@ jobs:
       - name: get version
         run: |
           echo "INFINITY_VERSION=$(python -c 'import infinity_emb; print(infinity_emb.__version__)')" >> $GITHUB_ENV
-      - name: Build and Deploy
+      - name: Build and Deploy Release
+        # only if the release is published
+        if: github.event_name == 'release' && github.event.action == 'published'
         run: |
           cd docs
-          # python -m mkdocs gh-deploy --force -m "updating to version $INFINITY_VERSION" 
           mike deploy --push --update-aliases latest $INFINITY_VERSION
+      - name: Build and Deploy Dev/main
+        # only if dev/main branch is pushed
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          cd docs
+          mike deploy --push --update-aliases main
