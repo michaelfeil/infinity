@@ -37,5 +37,5 @@ jobs:
       - run: 
           cd libs/infinity_emb && poetry shell && \
           cd ../.. && \
-          INFINITY_VERSION=$(poetry run python -c 'import infinity_emb; print(infinity_emb.__version__)')" 
-          cd docs && mkdocs gh-deploy --force --push --update-aliases latest 0.0.27 # $INFINITY_VERSION
+          INFINITY_VERSION="$(python -c 'import infinity_emb; print(infinity_emb.__version__)')" 
+          cd docs && mkdocs gh-deploy --force --push --update-aliases latest $INFINITY_VERSION
