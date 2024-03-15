@@ -38,5 +38,5 @@ jobs:
           echo "INFINITY_VERSION=$(python -c 'import infinity_emb; print(infinity_emb.__version__)')" >> $GITHUB_ENV
       - name: Build and Deploy
         run: |
-          cd docs && \
+          cd docs && 
           python -m mkdocs gh-deploy --force --push --update-aliases latest $INFINITY_VERSION
