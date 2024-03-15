@@ -39,7 +39,7 @@ query = "What is the python package infinity_emb?"
 docs = [
     "This is a document not related to the python package infinity_emb, hence...", 
     "Paris is in France!",
-    "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"
+    "infinity_emb is a package for sentence embeddings"
 ]
 engine_args = EngineArgs(
     model_name_or_path = "BAAI/bge-reranker-base", 

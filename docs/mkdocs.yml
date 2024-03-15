@@ -1,9 +1,13 @@
 site_name: Infinity
 theme:
   name: material
+  features:
+    - content.code.copy
+    - content.code.select
 extra:
   version:
     provider: mike
+
 plugins:
    - swagger-ui-tag:
         background: White
