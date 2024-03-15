@@ -39,4 +39,4 @@ jobs:
       - name: Build and Deploy
         run: |
           cd docs && 
-          python -m mkdocs gh-deploy --force -m "updating to version $INFINITY_VERSION" --update-aliases latest $INFINITY_VERSION
+          python -m mkdocs gh-deploy --force -m "updating to version $INFINITY_VERSION" # --update-aliases latest $INFINITY_VERSION
