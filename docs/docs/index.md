@@ -10,7 +10,7 @@ Infinity provides the following features:
 
 # Getting started
 
-Install via pip
+Install `infinity_emb` via pip
 ```bash
 pip install infinity-emb[all]
 ```

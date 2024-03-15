@@ -99,7 +99,7 @@ Below are the following metrics:
 |---------------------------------------------|-------------------------|----------------|
 | infinity (torch + no compile + fa2 disabled)| 0.75                    | 13.400         |
 
-### Results: AWS INF2 xlarge (_BAAI/bge-large-en-v1.5_ | _bert-large_
+### Results: AWS INF2 xlarge (_BAAI/bge-large-en-v1.5_ | _bert-large_)
 
 | Model                                       | Requests # / sec (mean) | Time (seconds) |
 |---------------------------------------------|-------------------------|----------------|
