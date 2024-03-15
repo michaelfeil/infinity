@@ -22,10 +22,17 @@ def get_model(device: str = "cpu"):
 
 
 @pytest.mark.parametrize("device", devices)
-def test_quantize_bert(device: Device):
+@pytest.mark.parametrize("dtype", [Dtype.int8])
+def test_quantize_bert(device: Device, dtype: Dtype):
+    """Test if the quantized model is close to the unquantized model.
+
+    Args:
+        device (Device): device to use for inference.
+        dtype (Dtype): data type for quantization
+    """
     model, tokenizer = get_model(device.value)
     model_unquantized, _ = get_model(device.value)
-    model = quant_interface(model=model, device=device, dtype=Dtype.int8)
+    model = quant_interface(model=model, device=device, dtype=dtype)
 
     model.to(device.value)
     model_unquantized.to(device.value)
