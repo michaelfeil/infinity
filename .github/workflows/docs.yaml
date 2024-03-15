@@ -30,12 +30,9 @@ jobs:
             mkdocs-material-
       - run: pip install poetry 
       - run: cd libs/infinity_emb && poetry install --extras "server" --with mkdocs
-      # - run: 
-      #     cd libs/infinity_emb && poetry install --extras "server" --with mkdocs && \ 
-      #     >> $GITHUB_ENV
-      # push under latest and version tag
       - run: 
           cd libs/infinity_emb && poetry shell && \
-          cd ../.. && \
-          INFINITY_VERSION="$(python -c 'import infinity_emb; print(infinity_emb.__version__)')" 
-          cd docs && mkdocs gh-deploy --force --push --update-aliases latest $INFINITY_VERSION
+          echo "INFINITY_VERSION=$(python -c 'import infinity_emb; print(infinity_emb.__version__)')" >> $GITHUB_ENV
+      - run:
+          cd libs/infinity_emb && poetry shell && cd ../../docs && \
+          mkdocs gh-deploy --force --push --update-aliases latest $INFINITY_VERSION
