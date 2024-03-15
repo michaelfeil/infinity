@@ -28,11 +28,10 @@ jobs:
           path: .cache
           restore-keys: |
             mkdocs-material-
-      - run: pip install poetry 
+      - run: pip install poetry && poetry config virtualenvs.create false
       - run: cd libs/infinity_emb && poetry install --extras "server" --with mkdocs
       - run: 
-          cd libs/infinity_emb && poetry shell && \
           echo "INFINITY_VERSION=$(python -c 'import infinity_emb; print(infinity_emb.__version__)')" >> $GITHUB_ENV
       - run:
-          cd libs/infinity_emb && poetry shell && cd ../../docs && \
+          cd docs && \
           mkdocs gh-deploy --force --push --update-aliases latest $INFINITY_VERSION
