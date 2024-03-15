@@ -36,7 +36,7 @@ model=BAAI/bge-small-en-v1.5
 port=7997
 docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
 ```
-The download path at runtime, can be controlled via the environment variable `SENTENCE_TRANSFORMERS_HOME`.
+The download path at runtime, can be controlled via the environment variable `HF_HOME`.
 
 ### or launch the cli after the pip install
 After your pip install, with your venv activate, you can run the CLI directly.
@@ -45,93 +45,6 @@ Check the `--help` command to get a description for all parameters.
 ```bash
 infinity_emb --help
 ```
-
-### or launch it via Python
-
-You can use in a async context with asyncio. 
-This gives you most flexibility, but is a bit more advanced.
-```python
-import asyncio
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
-
-sentences = ["Embed this is sentence via Infinity.", "Paris is in France."]
-engine = AsyncEmbeddingEngine.from_args(EngineArgs(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch"))
-
-async def main(): 
-    async with engine: # engine starts with engine.astart()
-        embeddings, usage = await engine.embed(sentences=sentences)
-    # engine stops with engine.astop()
-asyncio.run(main())
-```
-
-### or launch on the cloud via dstack
-
-dstack allows you to provision a VM instance on the cloud of your choice. Write a service configuration file as below for the deployment of `BAAI/bge-small-en-v1.5` model wrapped in Infinity.
-
-```yaml
-type: service
-
-image: michaelf34/infinity:latest
-env:
-  - MODEL_ID=BAAI/bge-small-en-v1.5
-commands:
-  - infinity_emb --model-name-or-path $MODEL_ID --port 80
-port: 80
-```
-
-Then, simply run the following dstack command. After this, a prompt will appear to let you choose which VM instance to deploy the Infinity.
-
-```shell
-dstack run . -f infinity/serve.dstack.yml --gpu 16GB
-```
-
-For more detailed tutorial and general information about dstack, visit the [official doc](https://dstack.ai/examples/infinity/#run-the-configuration).
-
-
-## Non-embedding features
-### Reranking
-
-Reranking gives you a score for similarity between a query and multiple documents. 
-Use it in conjunction with a VectorDB+Embeddings, or as standalone for small amount of documents.
-Please select a model from huggingface that is a AutoModelForSequenceClassification with one class classification.
-
-```python
-import asyncio
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
-query = "What is the python package infinity_emb?"
-docs = ["This is a document not related to the python package infinity_emb, hence...", 
-    "Paris is in France!",
-    "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
-engine_args = EngineArgs(model_name_or_path = "BAAI/bge-reranker-base", engine="torch")
-
-engine = AsyncEmbeddingEngine.from_args(engine_args)
-async def main(): 
-    async with engine:
-        ranking, usage = await engine.rerank(query=query, docs=docs)
-        print(list(zip(ranking, docs)))
-asyncio.run(main())
-```
-
-<details>
-  <summary>You can also use text-classification (beta):</summary>
-  
-  Note: PR's to speed this section up are welcome, a 40% speedup is propable, currently the backend uses huggingface pipelines + dynamic batching.
-  ```python
-  import asyncio
-  from infinity_emb import AsyncEmbeddingEngine, EngineArgs
-
-  sentences = ["This is awesome.", "I am bored."]
-  engine_args = EngineArgs(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
-      engine="torch", model_warmup=True)
-  engine = AsyncEmbeddingEngine.from_args(engine_args)
-  async def main(): 
-      async with engine:
-          predictions, usage = await engine.classify(sentences=sentences)
-          return predictions, usage
-  asyncio.run(main())
-  ```
-</details>
-
 
 ### Launch FAQ:
 <details>
@@ -183,21 +96,7 @@ asyncio.run(main())
 
 <details>
   <summary>Using Langchain with Infinity</summary>
-  
-  Infinity has a official integration into `pip install langchain>=0.342`. 
-  You can find more documentation on that here:
-  https://python.langchain.com/docs/integrations/text_embedding/infinity
-
-  ```python
-  from langchain.embeddings.infinity import InfinityEmbeddings
-  from langchain.docstore.document import Document
-  
-  documents = [Document(page_content="Hello world!", metadata={"source": "unknown"})]
-
-  emb_model = InfinityEmbeddings(model="BAAI/bge-small", infinity_api_url="http://localhost:7997/v1")
-  print(emb_model.embed_documents([doc.page_content for doc in docs]))
+  Now available under # Integrations in the side panel.  
   ```
 </details>
 
-# Documentation
-After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:7997/docs`.

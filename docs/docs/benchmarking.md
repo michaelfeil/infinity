@@ -35,6 +35,9 @@ pip install "infinity_emb[all]==0.0.25"
 ### sentence-transformers, fastembed, infinity
 
 ```bash
+git clone https://github.com/michaelfeil/infinity.git
+cd infinity
+git checkout tags/0.0.25
 python ./docs/benchmarks/simple_app.py
 ```
 
@@ -47,7 +50,7 @@ docker run -it -p 7997:80 --pull always ghcr.io/huggingface/text-embeddings-infe
 ```
 
 ```bash
-docker run -it -p 797:80 --gpus all --pull always ghcr.io/huggingface/text-embeddings-inference:89-0.6 
+docker run -it -p "7997:80" --gpus all --pull always ghcr.io/huggingface/text-embeddings-inference:89-0.6 
 --model-id BAAI/bge-large-en-v1.5 --max-client-batch-size 256
 ```
 
@@ -61,7 +64,7 @@ en-v1.5 --engine optimum --device "cuda OR tensorrt"
 ## Results
 
 To launch the benchmarks
-```
+```bash
 make benchmark_embed
 ```
 
