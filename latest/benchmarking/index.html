@@ -339,31 +339,31 @@
 <li>inf2.xlarge instance (2 Neuron Cores  with 1 used)</li>
 </ul>
 <h2 id="reproduction-steps">Reproduction steps:</h2>
-<p>Install the environment</p>
-<pre><code class="language-bash">pip install "infinity_emb[all]==0.0.25"
-</code></pre>
+<p>Install the environment
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"infinity_emb[all]==0.0.25"</span>
+</span></code></pre></div></p>
 <h3 id="sentence-transformers-fastembed-infinity">sentence-transformers, fastembed, infinity</h3>
-<pre><code class="language-bash">git clone https://github.com/michaelfeil/infinity.git
-cd infinity
-git checkout tags/0.0.25
-python ./docs/benchmarks/simple_app.py
-</code></pre>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/michaelfeil/infinity.git
+</span><span id="__span-1-2"><a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a><span class="nb">cd</span><span class="w"> </span>infinity
+</span><span id="__span-1-3"><a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a>git<span class="w"> </span>checkout<span class="w"> </span>tags/0.0.25
+</span><span id="__span-1-4"><a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a>python<span class="w"> </span>./docs/benchmarks/simple_app.py
+</span></code></pre></div>
 <h3 id="huggingfacetext-embeddings-inference">huggingface/text-embeddings-inference</h3>
-<p>using the <em>cpu</em> and <em>89-cuda</em> container (note that cc-89 matches to Nvidia L4)</p>
-<pre><code class="language-bash">docker run -it -p 7997:80 --pull always ghcr.io/huggingface/text-embeddings-inference:cpu-0.6 
---model-id BAAI/bge-small-en-v1.5 --max-client-batch-size 256
-</code></pre>
-<pre><code class="language-bash">docker run -it -p "7997:80" --gpus all --pull always ghcr.io/huggingface/text-embeddings-inference:89-0.6 
---model-id BAAI/bge-large-en-v1.5 --max-client-batch-size 256
-</code></pre>
+<p>using the <em>cpu</em> and <em>89-cuda</em> container (note that cc-89 matches to Nvidia L4)
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>-p<span class="w"> </span><span class="m">7997</span>:80<span class="w"> </span>--pull<span class="w"> </span>always<span class="w"> </span>ghcr.io/huggingface/text-embeddings-inference:cpu-0.6<span class="w"> </span>
+</span><span id="__span-2-2"><a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a>--model-id<span class="w"> </span>BAAI/bge-small-en-v1.5<span class="w"> </span>--max-client-batch-size<span class="w"> </span><span class="m">256</span>
+</span></code></pre></div></p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a href="#__codelineno-3-1" id="__codelineno-3-1" name="__codelineno-3-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>-p<span class="w"> </span><span class="s2">"7997:80"</span><span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>--pull<span class="w"> </span>always<span class="w"> </span>ghcr.io/huggingface/text-embeddings-inference:89-0.6<span class="w"> </span>
+</span><span id="__span-3-2"><a href="#__codelineno-3-2" id="__codelineno-3-2" name="__codelineno-3-2"></a>--model-id<span class="w"> </span>BAAI/bge-large-en-v1.5<span class="w"> </span>--max-client-batch-size<span class="w"> </span><span class="m">256</span>
+</span></code></pre></div>
 <h3 id="tensorrt-onnx-gpu">tensorrt, onnx-gpu:</h3>
-<pre><code class="language-bash">docker buildx build --target production-tensorrt -t inf-trt . &amp;&amp; docker run -it -p "7997:7997" --gpus all inf-trt --model-name-or-path BAAI/bge-large-
-en-v1.5 --engine optimum --device "cuda OR tensorrt"
-</code></pre>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a href="#__codelineno-4-1" id="__codelineno-4-1" name="__codelineno-4-1"></a>docker<span class="w"> </span>buildx<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>production-tensorrt<span class="w"> </span>-t<span class="w"> </span>inf-trt<span class="w"> </span>.<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>-p<span class="w"> </span><span class="s2">"7997:7997"</span><span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>inf-trt<span class="w"> </span>--model-name-or-path<span class="w"> </span>BAAI/bge-large-
+</span><span id="__span-4-2"><a href="#__codelineno-4-2" id="__codelineno-4-2" name="__codelineno-4-2"></a>en-v1.5<span class="w"> </span>--engine<span class="w"> </span>optimum<span class="w"> </span>--device<span class="w"> </span><span class="s2">"cuda OR tensorrt"</span>
+</span></code></pre></div>
 <h2 id="results">Results</h2>
-<p>To launch the benchmarks</p>
-<pre><code class="language-bash">make benchmark_embed
-</code></pre>
+<p>To launch the benchmarks
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a href="#__codelineno-5-1" id="__codelineno-5-1" name="__codelineno-5-1"></a>make<span class="w"> </span>benchmark_embed
+</span></code></pre></div></p>
 <p>Below are the following metrics:
 - Requests # / sec (1 request = 256 sentences / 115_000 tokens)
 - time to run benchmark (10 requests / 1_150_000)</p>
