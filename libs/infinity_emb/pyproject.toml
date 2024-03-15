@@ -53,6 +53,8 @@ codespell = "^2.2.0"
 
 [tool.poetry.group.mkdocs.dependencies]
 mkdocs-material = "*"
+mike = "*"
+mkdocs-swagger-ui-tag = "*"
 
 [tool.poetry.group.lint.dependencies]
 ruff = "^0.2.0"

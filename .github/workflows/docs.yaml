@@ -3,7 +3,10 @@ name: docs-gh-pages
 on:
   release:
     types: [published]
-
+  push:
+    branches:
+    - main
+    - dev
 permissions:
   contents: write
 jobs:
@@ -25,5 +28,9 @@ jobs:
           path: .cache
           restore-keys: |
             mkdocs-material-
-      - run: pip install mkdocs-material 
-      - run: cd docs && mkdocs gh-deploy --force
+      - run: pip install poetry 
+      - run: 
+          cd libs/infinity_emb && poetry install --extras "cli && \
+          echo "INFINITY_VERSION=$(poetry run python -c 'import infinity_emb; print(infinity_emb.__version__)')" >> $GITHUB_ENV
+      # push under latest and version tag
+      - run: cd docs && mkdocs gh-deploy --force --push --update-aliases latest $INFINITY_VERSION
