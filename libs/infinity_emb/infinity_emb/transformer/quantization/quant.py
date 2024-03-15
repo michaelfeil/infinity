@@ -44,6 +44,12 @@ default_device = "cuda"
 ##### Quantization Primitives ######
 
 
+def find_multiple(n: int, k: int) -> int:
+    if n % k == 0:
+        return n
+    return n + k - (n % k)
+
+
 def dynamically_quantize_per_channel(x, quant_min, quant_max, target_dtype):
     # assumes symmetric quantization
     # assumes axis == 0
@@ -510,9 +516,6 @@ class WeightOnlyInt4QuantHandler:
                         in_features, self.groupsize, self.inner_k_tiles
                     ):
                         if self.padding:
-                            from model import find_multiple
-                            import torch.nn.functional as F
-
                             logger.info(
                                 f"warning: {fqn} is padded to satisfy in_features % 1024 == 0"
                             )
@@ -548,8 +551,6 @@ class WeightOnlyInt4QuantHandler:
 
 class WeightOnlyInt4GPTQQuantHandler(GPTQQuantHandler):
     def __init__(self, mod, groupsize=128, inner_k_tiles=8, padding=True):
-        from model import find_multiple
-
         self.mod = mod
         self.groupsize = groupsize
         self.inner_k_tiles = inner_k_tiles
@@ -618,8 +619,6 @@ class WeightOnlyInt4Linear(Module):
         super().__init__()
         self.padding = padding
         if padding:
-            from model import find_multiple
-
             self.origin_in_features = in_features
             in_features = find_multiple(in_features, 1024)
 

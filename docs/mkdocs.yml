@@ -1,0 +1,9 @@
+site_name: Infinity
+theme:
+  name: material
+extra:
+  version:
+    provider: mike
+plugins:
+   - swagger-ui-tag:
+        background: White

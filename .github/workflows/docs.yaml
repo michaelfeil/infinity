@@ -1,0 +1,36 @@
+name: docs-gh-pages 
+
+on:
+  release:
+    types: [published]
+  push:
+    branches:
+    - main
+    - dev
+permissions:
+  contents: write
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure Git Credentials
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+      - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV 
+      - uses: actions/cache@v4
+        with:
+          key: mkdocs-material-${{ env.cache_id }}
+          path: .cache
+          restore-keys: |
+            mkdocs-material-
+      - run: pip install poetry 
+      - run: 
+          cd libs/infinity_emb && poetry install --extras "cli && \
+          echo "INFINITY_VERSION=$(poetry run python -c 'import infinity_emb; print(infinity_emb.__version__)')" >> $GITHUB_ENV
+      # push under latest and version tag
+      - run: cd docs && mkdocs gh-deploy --force --push --update-aliases latest $INFINITY_VERSION
