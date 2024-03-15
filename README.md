@@ -12,7 +12,6 @@
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 [![MIT License][license-shield]][license-url]
-[![LinkedIn][linkedin-shield]][linkedin-url]
 
 # Infinity ♾️
 [![codecov][codecov-shield]][codecov-url]
@@ -255,8 +254,6 @@ All contributions must be made in a way to be compatible with the MIT License of
 [issues-url]: https://github.com/michaelfeil/infinity/issues
 [license-shield]: https://img.shields.io/github/license/michaelfeil/infinity.svg?style=for-the-badge
 [license-url]: https://github.com/michaelfeil/infinity/blob/master/LICENSE.txt
-[linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
-[linkedin-url]: https://linkedin.com/in/michael-feil
 [pepa-shield]: https://static.pepy.tech/badge/infinity-emb
 [pepa-url]: https://www.pepy.tech/projects/infinity-emb
 [codecov-shield]: https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ
