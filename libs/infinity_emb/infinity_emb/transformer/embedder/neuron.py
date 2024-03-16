@@ -6,7 +6,9 @@ from typing import Dict, List, Union
 
 import numpy as np
 
-from infinity_emb.primitives import EmbeddingReturnType
+
+from infinity_emb.args import EngineArgs
+from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.utils_optimum import (
     cls_token_pooling,
@@ -75,7 +77,7 @@ def pad_up_to_size(desired_max_bs, input_ids):
 
 
 class NeuronOptimumEmbedder(BaseEmbedder):
-    def __init__(self, model_name_or_path, **kwargs):
+    def __init__(self, *, engine_args: EngineArgs):
         if not OPTIMUM_AVAILABLE:
             raise ImportError(
                 "optimum.neuron is not installed." "run this somewhere with neuron"
@@ -83,12 +85,12 @@ class NeuronOptimumEmbedder(BaseEmbedder):
 
         self.pooling = (
             mean_pooling
-            if os.environ.get("INFINITY_MEAN_POOLING", "") == "mean"
+            if engine_args.pooling_method == PoolingMethod.mean
             else cls_token_pooling
         )
 
-        self.tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
-        self.config = AutoConfig.from_pretrained(model_name_or_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(engine_args.model_name_or_path)
+        self.config = AutoConfig.from_pretrained(engine_args.model_name_or_path)
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
 
         compiler_args = {"num_cores": get_nc_count(), "auto_cast_type": "fp16"}
@@ -101,7 +103,7 @@ class NeuronOptimumEmbedder(BaseEmbedder):
             ),
         }
         self.model = NeuronModelForFeatureExtraction.from_pretrained(
-            model_id=model_name_or_path, export=True, **compiler_args, **input_shapes
+            model_id=engine_args.model_name_or_path, export=True, **compiler_args, **input_shapes
         )
         self.batch_size = self.model.neuron_config.input_shapes["batch_size"]
 
