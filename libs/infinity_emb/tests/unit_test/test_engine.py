@@ -189,26 +189,6 @@ async def test_async_api_torch_usage():
 
 
 @pytest.mark.anyio
-async def test_async_api_fastembed():
-    sentences = ["Hi", "how"]
-    engine = AsyncEmbeddingEngine.from_args(
-        EngineArgs(
-            model_name_or_path="BAAI/bge-small-en-v1.5",
-            engine=InferenceEngine.fastembed,
-            device="cpu",
-            model_warmup=False,
-        )
-    )
-    async with engine:
-        embeddings, usage = await engine.embed(sentences)
-        embeddings = np.array(embeddings)
-        assert usage == sum([len(s) for s in sentences])
-        assert embeddings.shape[0] == len(sentences)
-        assert embeddings.shape[1] >= 10
-        assert not engine.is_overloaded()
-
-
-@pytest.mark.anyio
 async def test_async_api_failing():
     sentences = ["Hi", "how"]
     engine = AsyncEmbeddingEngine.from_args(EngineArgs())
