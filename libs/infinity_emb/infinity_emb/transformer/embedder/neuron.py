@@ -1,6 +1,5 @@
 import copy
 import json
-import os
 import subprocess
 from typing import Dict, List, Union
 
@@ -103,7 +102,10 @@ class NeuronOptimumEmbedder(BaseEmbedder):
             ),
         }
         self.model = NeuronModelForFeatureExtraction.from_pretrained(
-            model_id=engine_args.model_name_or_path, export=True, **compiler_args, **input_shapes
+            model_id=engine_args.model_name_or_path,
+            export=True,
+            **compiler_args,
+            **input_shapes,
         )
         self.batch_size = self.model.neuron_config.input_shapes["batch_size"]
 
