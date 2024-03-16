@@ -5,7 +5,7 @@ name = "aiohttp"
 version = "3.9.3"
 description = "Async http client/server framework (asyncio)"
 optional = true
-python-versions = ">=3.8"
+python-versions = ">=3.8" 
 files = [
     {file = "aiohttp-3.9.3-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:939677b61f9d72a4fa2a042a5eee2a99a24001a67c13da113b2e30396567db54"},
     {file = "aiohttp-3.9.3-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:1f5cd333fcf7590a18334c90f8c9147c837a6ec8a178e88d90a9b96ea03194cc"},
