@@ -1,6 +1,8 @@
-Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting all sentence-transformer models and frameworks. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE). Infinity powers inference behind [Gradient.ai](https://gradient.ai).
+# [Infinity](https://github.com/michaelfeil/infinity)
 
-## Why Infinity:
+Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting all sentence-transformer models and frameworks. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE). Infinity powers inference behind [Gradient.ai](https://gradient.ai) and other Embedding API providers.
+
+## Why Infinity
 
 Infinity provides the following features:
 
@@ -10,7 +12,7 @@ Infinity provides the following features:
 * **Correct and tested implementation**: Unit and end-to-end tested. Embeddings via infinity are identical to [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/) (up to numerical precision). Lets API users create embeddings till infinity and beyond.
 * **Easy to use**: The API is built on top of [FastAPI](https://fastapi.tiangolo.com/), [Swagger](https://swagger.io/) makes it fully documented. API are aligned to [OpenAI's Embedding specs](https://platform.openai.com/docs/guides/embeddings/what-are-embeddings). See below on how to get started.
 
-# Getting started
+## Getting started
 
 Install `infinity_emb` via pip
 ```bash
@@ -46,7 +48,7 @@ Check the `--help` command to get a description for all parameters.
 infinity_emb --help
 ```
 
-### Launch FAQ:
+## Launch FAQ
 <details>
   <summary>What are embedding models?</summary>
   Embedding models can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. 
@@ -73,26 +75,6 @@ infinity_emb --help
     
 </details>
 
-<details>
-  <summary>Launching multiple models in one dockerfile</summary>
-  
-  Multiple models on one GPU is in experimental mode. You can use the following temporary solution:
-  ```Dockerfile
-  FROM michaelf34/infinity:latest
-  # Dockerfile-ENTRYPOINT for multiple models via multiple ports
-  ENTRYPOINT ["/bin/sh", "-c", \
-   "(. /app/.venv/bin/activate && infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &);\
-   (. /app/.venv/bin/activate && infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
-  ```
-  
-  You can build and run it via:  
-  ```bash
-  docker build -t custominfinity . && docker run -it --gpus all -p 8080:8080 -p 8081:8081 custominfinity
-  ```
-
-  Both models now run on two instances in one dockerfile servers. Otherwise, you could build your own FastAPI/flask instance, which wraps around the Async API.
-     
-</details>
 
 <details>
   <summary>Using Langchain with Infinity</summary>
@@ -100,3 +82,12 @@ infinity_emb --help
   ```
 </details>
 
+
+<details>
+  <summary>Question not answered here?</summary>
+
+  There is a Discussion section on the Github of Infinity:
+  https://github.com/michaelfeil/infinity/discussions
+
+</details>
+  

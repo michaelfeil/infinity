@@ -12,6 +12,26 @@ docker run \
   --model-name-or-path $model --port $port
 ```
 
+### Extending the Dockerfile
+
+Launching multiple models in one dockerfile
+  
+Multiple models on one GPU is in experimental mode. You can use the following temporary solution:
+```Dockerfile
+FROM michaelf34/infinity:latest
+# Dockerfile-ENTRYPOINT for multiple models via multiple ports
+ENTRYPOINT ["/bin/sh", "-c", \
+  "(. /app/.venv/bin/activate && infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &);\
+  (. /app/.venv/bin/activate && infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
+```
+
+You can build and run it via:  
+```bash
+docker build -t custominfinity . && docker run -it --gpus all -p 8080:8080 -p 8081:8081 custominfinity
+```
+
+Both models now run on two instances in one dockerfile servers. Otherwise, you could build your own FastAPI/flask instance, which wraps around the Async API.
+
 
 ### dstack
 dstack allows you to provision a VM instance on the cloud of your choice.
