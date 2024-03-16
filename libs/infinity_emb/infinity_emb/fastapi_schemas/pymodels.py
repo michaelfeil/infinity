@@ -110,5 +110,5 @@ class ModelInfo(BaseModel):
 
 
 class OpenAIModelInfo(BaseModel):
-    data: ModelInfo
+    data: list[ModelInfo]
     object: str = "list"

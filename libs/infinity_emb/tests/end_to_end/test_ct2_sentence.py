@@ -62,8 +62,8 @@ async def test_model_route(client):
     assert response.status_code == 200
     rdata = response.json()
     assert "data" in rdata
-    assert rdata["data"].get("id", "") == MODEL
-    assert isinstance(rdata["data"].get("stats"), dict)
+    assert rdata["data"][0].get("id", "") == MODEL
+    assert isinstance(rdata["data"][0].get("stats"), dict)
 
 
 @pytest.mark.anyio

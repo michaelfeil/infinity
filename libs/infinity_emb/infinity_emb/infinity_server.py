@@ -93,16 +93,18 @@ def create_server(
         """get models endpoint"""
         s = app.model.overload_status()  # type: ignore
         return dict(
-            data=dict(
-                id=engine_args.model_name_or_path,
-                stats=dict(
-                    queue_fraction=s.queue_fraction,
-                    queue_absolute=s.queue_absolute,
-                    results_pending=s.results_absolute,
-                    batch_size=engine_args.batch_size,
-                ),
-                backend=engine_args.engine.name,
-            )
+            data=[
+                dict(
+                    id=engine_args.model_name_or_path,
+                    stats=dict(
+                        queue_fraction=s.queue_fraction,
+                        queue_absolute=s.queue_absolute,
+                        results_pending=s.results_absolute,
+                        batch_size=engine_args.batch_size,
+                    ),
+                    backend=engine_args.engine.name,
+                )
+            ]
         )
 
     @app.post(

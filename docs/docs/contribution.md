@@ -10,14 +10,14 @@ cd libs/infinity_emb
 poetry install --extras all --with test
 ```
 
-To pass the CI:
+To ensure your contributions pass the Continuous Integration (CI) checks:
 ```bash
 cd libs/infinity_emb
 make format
 make lint
 poetry run pytest ./tests
 ```
-as alternative, you may also use:
+As an alternative, you can also use the following command:
 ```bash
 cd libs/infinity_emb
 make precommit

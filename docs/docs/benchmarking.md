@@ -1,12 +1,12 @@
 # Benchmarking details
 
-Benchmarks are always optionated. The goal of this benchmark is to find the best possible self-hosted backend for $/token:
+Benchmarks are always opinionated. The goal of this benchmark is to find the best possible self-hosted backend for $/token:
 
 1. end-to-end, including the RestAPI server
 2. multi-tenant: multiple clients will try to query your server
 3. fair batch size: You want to limit request size (sentences per requests) to something low, such that you can load balance requests, scale
-4. measured over throughput per token: Idle servers are bad for buissness (especially since ). This benchmark is NOT about the latency for a single request against an IDLE server. It partially evaluates the latency under a typical load scenario
-5. Bert Small / large - the most typical semantic search tasks require a small model (< 1B params)
+4. measured over throughput per token: Idle servers are bad for business. This benchmark is NOT about the latency for a single request against an IDLE server. It partially evaluates the latency under a typical load scenario
+5. Bert small / large - the most typical semantic search tasks require a small model (< 1B params)
 6. accuracy: each backend must have a ~1e-4 prevision over the torch fp32 embeddings.
 
 ## Benchmarking machines:
@@ -43,7 +43,7 @@ python ./docs/benchmarks/simple_app.py
 
 ### huggingface/text-embeddings-inference
 
-using the _cpu_ and _89-cuda_ container (note that cc-89 matches to Nvidia L4)
+using the _cpu_ and _cuda-89_ container (note that cc-89 matches to Nvidia L4)
 ```bash
 docker run -it -p 7997:80 --pull always ghcr.io/huggingface/text-embeddings-inference:cpu-0.6 
 --model-id BAAI/bge-small-en-v1.5 --max-client-batch-size 256
@@ -69,8 +69,8 @@ make benchmark_embed
 ```
 
 Below are the following metrics:
-- Requests # / sec (1 request = 256 sentences / 115_000 tokens)
-- time to run benchmark (10 requests / 1_150_000)
+*  Requests # / sec (1 request = 256 sentences / 115_000 tokens)
+*  time to run benchmark (10 requests = 1_150_000 tokens)
 
 ### Results: CPU-only (_BAAI/bge-small-en-v1.5_ | _bert-small_)
 
@@ -80,7 +80,7 @@ Below are the following metrics:
 | infinity-optimum (onnx)           | 125.342        | 0.08                    |
 | fastembed (onnx)                  | 125.770        | 0.08                    |
 | sentence-transformers (torch)     | 256.884        | 0.04                    |
-| infinity (torch / compile)        | 353.065??      | 0.03???                 |
+| infinity (torch)                  | 353.065??      | 0.03 (needs revision)   |
 | huggingface/TEI (candle)          | 1104.357       | 0.009                   |
 
 
