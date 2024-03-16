@@ -18,7 +18,7 @@ from infinity_emb.transformer.utils import (
 def get_engine_type_from_config(
     engine_args: EngineArgs,
 ) -> Union[EmbedderEngine, RerankEngine]:
-    if engine_args.engine in [InferenceEngine.debugengine, InferenceEngine.fastembed]:
+    if engine_args.engine in [InferenceEngine.debugengine]:
         return EmbedderEngine.from_inference_engine(engine_args.engine)
 
     if Path(engine_args.model_name_or_path).is_dir():

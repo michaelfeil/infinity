@@ -23,7 +23,6 @@ class InferenceEngine(enum.Enum):
     torch = "torch"
     ctranslate2 = "ctranslate2"
     optimum = "optimum"
-    fastembed = "fastembed"
     debugengine = "dummytransformer"
 
 
@@ -35,9 +34,18 @@ class Device(enum.Enum):
     auto = None
 
 
+_devices: Dict[str, str] = {e.name: e.name for e in Device}
+DeviceTypeHint = enum.Enum("DeviceTypeHint", _devices)  # type: ignore
+
+
 class Dtype(enum.Enum):
     float16: str = "float16"
+    int8: str = "int8"
     auto: str = "auto"
+
+
+_dtypes: Dict[str, str] = {e.name: e.name for e in Dtype}
+DtypeTypeHint = enum.Enum("DtypeTypeHint", _dtypes)  # type: ignore
 
 
 class PoolingMethod(enum.Enum):
@@ -46,8 +54,8 @@ class PoolingMethod(enum.Enum):
     auto: str = "auto"
 
 
-_devices: Dict[str, str] = {e.name: e.name for e in Device}
-DeviceTypeHint = enum.Enum("DeviceTypeHint", _devices)  # type: ignore
+_pm: Dict[str, str] = {e.name: e.name for e in PoolingMethod}
+PoolingMethodTypeHint = enum.Enum("PoolingMethodTypeHint", _pm)  # type: ignore
 
 
 @dataclass

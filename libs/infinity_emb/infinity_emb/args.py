@@ -1,3 +1,4 @@
+import os
 import sys
 from dataclasses import dataclass
 from typing import Optional
@@ -14,7 +15,7 @@ class EngineArgs:
 
     Args:
         model_name_or_path, str:  Defaults to "michaelfeil/bge-small-en-v1.5".
-        batch_size, int: Defaults to 64.
+        batch_size, int: Defaults to 32.
         revision, str: Defaults to None.
         trust_remote_code, bool: Defaults to True.
         engine, InferenceEngine or str: backend for inference.
@@ -22,19 +23,23 @@ class EngineArgs:
         model_warmup, bool: decide if warmup with max batch size . Defaults to True.
         vector_disk_cache_path, str: file path to folder of cache.
             Defaults to "" - default no caching.
-        device, Device or str: device to use for inference. Defaults to Device.auto,
-        lengths_via_tokenize, bool: schedule by token usage. Defaults to False
+        device, Device or str: device to use for inference. Defaults to Device.auto.
+        compile, bool: compile model for better performance. Defaults to False.
+        bettertransformer, bool: use bettertransformer. Defaults to True.
+        dtype, Dtype or str: data type to use for inference. Defaults to Dtype.auto.
+        pooling_method, PoolingMethod or str: pooling method to use. Defaults to PoolingMethod.auto.
+        lengths_via_tokenize, bool: schedule by token usage. Defaults to False.
     """
 
     model_name_or_path: str = "michaelfeil/bge-small-en-v1.5"
-    batch_size: int = 64
+    batch_size: int = 32
     revision: Optional[str] = None
     trust_remote_code: bool = True
     engine: InferenceEngine = InferenceEngine.torch
     model_warmup: bool = False
     vector_disk_cache_path: str = ""
     device: Device = Device.auto
-    compile: bool = False
+    compile: bool = not os.environ.get("INFINITY_DISABLE_COMPILE", "Disable")
     bettertransformer: bool = True
     dtype: Dtype = Dtype.auto
     pooling_method: PoolingMethod = PoolingMethod.auto

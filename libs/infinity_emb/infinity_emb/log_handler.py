@@ -1,17 +1,18 @@
 import logging
+import sys
 from enum import Enum
-from typing import Dict
+from typing import Any, Dict, List
 
 logging.getLogger().handlers.clear()
 
-handlers = []
+handlers: List[Any] = []
 try:
     from rich.console import Console
     from rich.logging import RichHandler
 
     handlers.append(RichHandler(console=Console(stderr=True), show_time=False))
 except ImportError:
-    pass
+    handlers.append(logging.StreamHandler(sys.stderr))
 
 LOG_LEVELS: Dict[str, int] = {
     "critical": logging.CRITICAL,

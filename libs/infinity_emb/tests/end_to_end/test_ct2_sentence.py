@@ -10,7 +10,7 @@ from sentence_transformers import SentenceTransformer  # type: ignore
 from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device, InferenceEngine
-from infinity_emb.transformer.embedder.sentence_transformer import (
+from infinity_emb.transformer.embedder.ct2 import (
     CT2SentenceTransformer,
 )
 
@@ -62,8 +62,8 @@ async def test_model_route(client):
     assert response.status_code == 200
     rdata = response.json()
     assert "data" in rdata
-    assert rdata["data"].get("id", "") == MODEL
-    assert isinstance(rdata["data"].get("stats"), dict)
+    assert rdata["data"][0].get("id", "") == MODEL
+    assert isinstance(rdata["data"][0].get("stats"), dict)
 
 
 @pytest.mark.anyio

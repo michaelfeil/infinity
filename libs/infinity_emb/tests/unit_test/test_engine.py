@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import pytest
 import torch
@@ -5,6 +7,9 @@ from sentence_transformers import CrossEncoder  # type: ignore
 
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
 from infinity_emb.primitives import InferenceEngine, ModelNotDeployedError
+
+# Only compile on Linux 3.9-3.11 with torch
+SHOULD_TORCH_COMPILE = sys.platform == "linux" and sys.version_info < (3, 12)
 
 
 @pytest.mark.anyio
@@ -122,6 +127,7 @@ async def test_async_api_optimum_crossencoder():
             revision=None,
             device="cpu",
             model_warmup=False,
+            compile=SHOULD_TORCH_COMPILE,
         )
     )
 
@@ -170,6 +176,7 @@ async def test_async_api_torch_usage():
             device=device,
             lengths_via_tokenize=True,
             model_warmup=False,
+            compile=SHOULD_TORCH_COMPILE,
         )
     )
     async with engine:
@@ -179,26 +186,6 @@ async def test_async_api_torch_usage():
         assert usage == 5
         assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
-
-
-@pytest.mark.anyio
-async def test_async_api_fastembed():
-    sentences = ["Hi", "how"]
-    engine = AsyncEmbeddingEngine.from_args(
-        EngineArgs(
-            model_name_or_path="BAAI/bge-small-en-v1.5",
-            engine=InferenceEngine.fastembed,
-            device="cpu",
-            model_warmup=False,
-        )
-    )
-    async with engine:
-        embeddings, usage = await engine.embed(sentences)
-        embeddings = np.array(embeddings)
-        assert usage == sum([len(s) for s in sentences])
-        assert embeddings.shape[0] == len(sentences)
-        assert embeddings.shape[1] >= 10
-        assert not engine.is_overloaded()
 
 
 @pytest.mark.anyio

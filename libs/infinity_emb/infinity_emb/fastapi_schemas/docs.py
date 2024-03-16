@@ -1,4 +1,4 @@
-# from infinity_emb import __version__
+from __future__ import annotations
 
 FASTAPI_TITLE = "♾️ Infinity - Embedding Inference Server"
 FASTAPI_SUMMARY = (

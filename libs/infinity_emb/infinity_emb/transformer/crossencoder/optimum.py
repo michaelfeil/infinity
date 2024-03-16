@@ -4,6 +4,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 
+from infinity_emb._optional_imports import CHECK_ONNXRUNTIME
 from infinity_emb.args import EngineArgs
 from infinity_emb.transformer.abstract import BaseCrossEncoder
 from infinity_emb.transformer.utils_optimum import (
@@ -12,22 +13,19 @@ from infinity_emb.transformer.utils_optimum import (
     optimize_model,
 )
 
-try:
-    from optimum.onnxruntime import ORTModelForSequenceClassification  # type: ignore
-    from transformers import AutoConfig, AutoTokenizer  # type: ignore
-
-    OPTIMUM_AVAILABLE = True
-except (ImportError, RuntimeError):
-    OPTIMUM_AVAILABLE = False
+if CHECK_ONNXRUNTIME.is_available:
+    try:
+        from optimum.onnxruntime import (  # type: ignore
+            ORTModelForSequenceClassification,
+        )
+        from transformers import AutoConfig, AutoTokenizer  # type: ignore
+    except (ImportError, RuntimeError) as ex:
+        CHECK_ONNXRUNTIME.mark_dirty(ex)
 
 
 class OptimumCrossEncoder(BaseCrossEncoder):
     def __init__(self, *, engine_args: EngineArgs):
-        if not OPTIMUM_AVAILABLE:
-            raise ImportError(
-                "optimum.onnxruntime is not installed."
-                "`pip install optimum[onnxruntime]`"
-            )
+        CHECK_ONNXRUNTIME.mark_required()
         provider = device_to_onnx(engine_args.device)
 
         onnx_file = get_onnx_files(

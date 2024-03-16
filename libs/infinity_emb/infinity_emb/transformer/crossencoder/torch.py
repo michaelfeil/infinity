@@ -1,26 +1,21 @@
 import copy
 from typing import List
 
+from infinity_emb._optional_imports import CHECK_SENTENCE_TRANSFORMERS, CHECK_TORCH
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Dtype
 from infinity_emb.transformer.abstract import BaseCrossEncoder
 
-try:
+if CHECK_TORCH.is_available and CHECK_SENTENCE_TRANSFORMERS.is_available:
     import torch
     from sentence_transformers import CrossEncoder  # type: ignore
 
-    TORCH_AVAILABLE = True
-except ImportError:
-    torch = None  # type: ignore
+else:
 
     class CrossEncoder:  # type: ignore
         pass
 
-    class Module:  # type: ignore
-        pass
-
-    TORCH_AVAILABLE = False
 
 from infinity_emb.transformer.acceleration import to_bettertransformer
 
@@ -33,12 +28,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
     """CrossEncoder with .encode_core() and no microbatching"""
 
     def __init__(self, *, engine_args: EngineArgs):
-        if not TORCH_AVAILABLE:
-            raise ImportError(
-                "torch is not installed."
-                " `pip install infinity-emb[torch]` "
-                "or pip install infinity-emb[torch,optimum]`"
-            )
+        CHECK_SENTENCE_TRANSFORMERS.mark_required()
 
         super().__init__(
             engine_args.model_name_or_path,
@@ -55,11 +45,11 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
         self.model.eval()  # type: ignore
 
-        self.model = to_bettertransformer(
-            self.model,  # type: ignore
-            logger,
-            disable=self._target_device.type == "mps",
-        )
+        if not (self._target_device.type == "mps" or not engine_args.bettertransformer):
+            self.model = to_bettertransformer(
+                self.model,  # type: ignore
+                logger,
+            )
 
         if self._target_device.type == "cuda" and engine_args.dtype in [
             Dtype.auto,

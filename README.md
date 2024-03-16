@@ -12,22 +12,21 @@
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
 [![MIT License][license-shield]][license-url]
-[![LinkedIn][linkedin-shield]][linkedin-url]
 
 # Infinity ♾️
 [![codecov][codecov-shield]][codecov-url]
 [![ci][ci-shield]][ci-url]
 [![Downloads][pepa-shield]][pepa-url]
 
-Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks. Infinity is developed under [MIT Licence](https://github.com/michaelfeil/infinity/blob/main/LICENSE) and supported by [Gradient.ai](https://gradient.ai).
+Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting all sentence-transformer models and frameworks. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE). Infinity powers inference behind [Gradient.ai](https://gradient.ai).
 
 ## Why Infinity:
 Infinity provides the following features:
-- **Deploy virtually any SentenceTransformer** - deploy the model you know from [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/)
-- **Fast inference backends**: The inference server is built on top of [torch](https://github.com/pytorch/pytorch), [fastembed(onnx-cpu)](https://github.com/qdrant/fastembed) and [CTranslate2](https://github.com/OpenNMT/CTranslate2), using FlashAttention to get the most out of your **CUDA**, **CPU** or **MPS** hardware.
-- **Dynamic batching**: New embedding requests are queued while GPU is busy with the previous ones. New requests are squeezed intro your GPU/CPU as soon as ready. Similar max throughput on GPU as text-embeddings-inference.
-- **Correct and tested implementation**: Unit and end-to-end tested. Embeddings via infinity are identical to [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/) (up to numerical precision). Lets API users create embeddings till infinity and beyond.
-- **Easy to use**: The API is built on top of [FastAPI](https://fastapi.tiangolo.com/), [Swagger](https://swagger.io/) makes it fully documented. API are aligned to [OpenAI's Embedding specs](https://platform.openai.com/docs/guides/embeddings/what-are-embeddings). See below on how to get started.
+* **Deploy any model from MTEB**: deploy the model you know from [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/)
+* **Fast inference backends**: The inference server is built on top of [torch](https://github.com/pytorch/pytorch), [optimum(onnx/tensorrt)](https://huggingface.co/docs/optimum/index) and [CTranslate2](https://github.com/OpenNMT/CTranslate2), using FlashAttention to get the most out of **CUDA**, **ROCM**, **CPU** or **MPS** device.
+* **Dynamic batching**: New embedding requests are queued while GPU is busy with the previous ones. New requests are squeezed intro your device as soon as ready. Similar max throughput on GPU as text-embeddings-inference.
+* **Correct and tested implementation**: Unit and end-to-end tested. Embeddings via infinity are identical to [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/) (up to numerical precision). Lets API users create embeddings till infinity and beyond.
+* **Easy to use**: The API is built on top of [FastAPI](https://fastapi.tiangolo.com/), [Swagger](https://swagger.io/) makes it fully documented. API are aligned to [OpenAI's Embedding specs](https://platform.openai.com/docs/guides/embeddings/what-are-embeddings). See below on how to get started.
 
 # Infinity demo:
 In this gif below, we use [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), deployed at batch-size=2. After initialization, from a second terminal 3 requests  (payload 1,1,and 5 sentences) are sent via cURL.
@@ -85,14 +84,6 @@ async def main():
         embeddings, usage = await engine.embed(sentences=sentences)
     # engine stops with engine.astop()
 asyncio.run(main())
-```
-
-### or launch the `create_server()` command from Python
-This executes the same command as the cli.
-If you really don't enjoy to use the CLI, you can get the same options from python.
-```Python
-from infinity_emb import create_server
-fastapi_app = create_server(**cli_kwargs)
 ```
 
 ### or launch on the cloud via dstack
@@ -249,7 +240,7 @@ make lint
 poetry run pytest ./tests
 ```
 
-All contributions must be made in a way to be compatible with the Apache 2 OSS License. 
+All contributions must be made in a way to be compatible with the MIT License of this repo. 
 
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
@@ -263,8 +254,6 @@ All contributions must be made in a way to be compatible with the Apache 2 OSS L
 [issues-url]: https://github.com/michaelfeil/infinity/issues
 [license-shield]: https://img.shields.io/github/license/michaelfeil/infinity.svg?style=for-the-badge
 [license-url]: https://github.com/michaelfeil/infinity/blob/master/LICENSE.txt
-[linkedin-shield]: https://img.shields.io/badge/-LinkedIn-black.svg?style=for-the-badge&logo=linkedin&colorB=555
-[linkedin-url]: https://linkedin.com/in/michael-feil
 [pepa-shield]: https://static.pepy.tech/badge/infinity-emb
 [pepa-url]: https://www.pepy.tech/projects/infinity-emb
 [codecov-shield]: https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "infinity_emb"
-version = "0.0.27"
+version = "0.0.29"
 description = "Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks."
 authors = ["michaelfeil <me@michaelfeil.eu>"]
 license = "MIT"
@@ -11,7 +11,7 @@ packages = [{include = "infinity_emb"}]
 python = ">=3.9,<3.13"
 # basics
 numpy = ">=1.20.0"
-pydantic = ">=2.4.0,<3"
+huggingface_hub="*"
 # logging
 rich = {version = "^13", optional=true}
 # webserver-only
@@ -20,12 +20,13 @@ orjson = {version = ">=3.9.8,<4", optional=true}
 prometheus-fastapi-instrumentator = {version = "^6.1.0", optional=true}
 uvicorn = {extras = ["standard"], version = "^0.23.2", optional=true}
 typer = {extras = ["all"], version = "^0.9.0", optional=true}
+pydantic = {version = ">=2.4.0,<3", optional=true}  
 # backend
 torch = {version = "2.2.1", source = "pypi", optional=true}
-sentence-transformers = {version = "^2.4.0", optional=true} 
+sentence-transformers = {version = "^2.5.0", optional=true} 
+transformers = {version = ">4.8.0", optional=true} 
 ctranslate2 = {version = "^4.0.0", optional=true}
 optimum = {version = ">=1.16.2", optional=true, extras=["onnxruntime"]}
-fastembed = {version = ">=0.2.1", optional=true} 
 hf_transfer = {version=">=0.1.5", optional=true}
 # cache
 diskcache = {version = "*", optional=true}
@@ -45,9 +46,15 @@ anyio = "*"
 trio = "*"
 coverage = {extras = ["toml"], version = "^7.3.2"}
 mypy = "^1.5.1"
+fastembed = ">=0.2.1"
 
 [tool.poetry.group.codespell.dependencies]
 codespell = "^2.2.0"
+
+[tool.poetry.group.mkdocs.dependencies]
+mkdocs-material = "*"
+mike = "*"
+mkdocs-swagger-ui-tag = "*"
 
 [tool.poetry.group.lint.dependencies]
 ruff = "^0.2.0"
@@ -59,14 +66,13 @@ types-chardet = "^5.0.4.6"
 mypy-protobuf = "^3.0.0"
 
 [tool.poetry.extras]
-ct2=["ctranslate2","sentence-transformers","torch"]
+ct2=["ctranslate2","sentence-transformers","torch","transformers"]
 optimum=["optimum"]
-fastembed=["fastembed"]
 torch=["sentence-transformers","torch","hf_transfer"]
 logging=["rich"]
 cache=["diskcache"]
 server=["fastapi", "pydantic", "orjson", "prometheus-fastapi-instrumentator", "uvicorn", "typer","rich"]
-all=["ctranslate2", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn","diskcache"]
+all=["ctranslate2", "fastapi", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn","diskcache"]
 # non-default gpu
 tensorrt=["tensorrt"]
 onnxruntime-gpu=["onnxruntime-gpu"]
