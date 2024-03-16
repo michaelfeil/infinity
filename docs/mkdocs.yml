@@ -1,4 +1,6 @@
 site_name: Infinity
+site_url: https://michaelfeil.eu/infinity/
+repo_url: https://github.com/michaelfeil/infinity/
 theme:
   name: material
   features:
