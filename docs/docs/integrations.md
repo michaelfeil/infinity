@@ -1,11 +1,11 @@
 # Python Integrations
 
-## Langchain (from runnig server)
-Infinity has a official integration into `pip install langchain>=0.342`. 
+## Langchain (from running server)
+Infinity has an official integration into `pip install langchain>=0.342`. 
 You can find more documentation on that here:
 https://python.langchain.com/docs/integrations/text_embedding/infinity
 
-### Server-Client
+### Langchain integration with running infinity API server
 This code snippet assumes you have a server running at `http://localhost:7997/v1`
 ```python
 from langchain.embeddings.infinity import InfinityEmbeddings
@@ -14,10 +14,10 @@ from langchain.docstore.document import Document
 documents = [Document(page_content="Hello world!", metadata={"source": "unknown"})]
 
 emb_model = InfinityEmbeddings(model="BAAI/bge-small", infinity_api_url="http://localhost:7997/v1")
-print(emb_model.embed_documents([doc.page_content for doc in docs]))
+print(emb_model.embed_documents([doc.page_content for doc in documents]))
 ```
 
-### from Python Engine
+### Langchain integration without running infinity API server and Python Inference.
 ```python
 from langchain.embeddings.infinity import InfinityEmbeddings
 from langchain.docstore.document import Document
@@ -47,4 +47,4 @@ print(documents_embedded, query_result)
 ```
 
 ## LLama-Index
-To be announced
+Details regarding LLama-Index integration will be announced soon - Contributions welcome.
