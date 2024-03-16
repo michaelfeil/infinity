@@ -23,7 +23,6 @@ class InferenceEngine(enum.Enum):
     torch = "torch"
     ctranslate2 = "ctranslate2"
     optimum = "optimum"
-    fastembed = "fastembed"
     debugengine = "dummytransformer"
 
 

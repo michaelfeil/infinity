@@ -11,13 +11,11 @@ from infinity_emb.transformer.crossencoder.torch import (
 )
 from infinity_emb.transformer.embedder.ct2 import CT2SentenceTransformer
 from infinity_emb.transformer.embedder.dummytransformer import DummyTransformer
-from infinity_emb.transformer.embedder.fastembed import Fastembed
 from infinity_emb.transformer.embedder.optimum import OptimumEmbedder
 from infinity_emb.transformer.embedder.sentence_transformer import (
     SentenceTransformerPatched,
 )
 
-# from infinity_emb.transformer.fastembed import FastEmbed
 __all__ = [
     "length_tokenizer",
     "get_lengths_with_tokenize",
@@ -28,7 +26,6 @@ __all__ = [
 class EmbedderEngine(Enum):
     torch = SentenceTransformerPatched
     ctranslate2 = CT2SentenceTransformer
-    fastembed = Fastembed
     debugengine = DummyTransformer
     optimum = OptimumEmbedder
 
@@ -38,8 +35,6 @@ class EmbedderEngine(Enum):
             return EmbedderEngine.torch
         elif engine == InferenceEngine.ctranslate2:
             return EmbedderEngine.ctranslate2
-        elif engine == InferenceEngine.fastembed:
-            return EmbedderEngine.fastembed
         elif engine == InferenceEngine.debugengine:
             return EmbedderEngine.debugengine
         elif engine == InferenceEngine.optimum:

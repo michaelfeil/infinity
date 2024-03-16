@@ -10,11 +10,7 @@ def test_engine(engine):
     select_model(
         EngineArgs(
             engine=engine,
-            model_name_or_path=(
-                "BAAI/bge-small-en-v1.5"
-                if engine == InferenceEngine.fastembed
-                else pytest.DEFAULT_BERT_MODEL
-            ),
+            model_name_or_path=(pytest.DEFAULT_BERT_MODEL),
             batch_size=4,
             device=Device.cpu,
         )

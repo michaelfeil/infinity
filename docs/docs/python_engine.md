@@ -1,30 +1,40 @@
-Enhancing the document involves improving clarity, structure, and adding helpful context where necessary. Here's an enhanced version:
-
 # Python Engine Integration
 
 ## Launching Embedding generation with Python
 
-Use asynchronous programming in Python using `asyncio` for flexible and efficient embedding processing with Infinity. This advanced method allows for concurrent execution, making it ideal for high-throughput embedding generation.
+Use asynchronous programming in Python using `asyncio` for flexible and efficient embedding processing with Infinity. This advanced method allows for concurrent execution of different requests, making it ideal for high-throughput embedding generation.
 
 ```python
 import asyncio
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+from infinity_emb.log_handler import logger
+logger.setLevel(5) # Debug
 
 # Define sentences for embedding
 sentences = ["Embed this sentence via Infinity.", "Paris is in France."]
 # Initialize the embedding engine with model specifications
 engine = AsyncEmbeddingEngine.from_args(
-    EngineArgs(model_name_or_path="BAAI/bge-small-en-v1.5", engine="torch", 
-    lengths_via_tokenize=True
+    EngineArgs(
+        model_name_or_path="BAAI/bge-small-en-v1.5",
+        engine="torch", 
+        lengths_via_tokenize=True
     )
 )
 
 async def main(): 
     async with engine:  # Context manager initializes and terminates the engine
+        
+        job1 = asyncio.create_task(engine.embed(sentences=sentences))
+        # submit a second job in parallel
+        job2 = asyncio.create_task(engine.embed(sentences=["Hello world"]))
         # usage is total token count according to tokenizer.
-        embeddings, usage = await engine.embed(sentences=sentences)
-        # Embeddings are now available for use
-asyncio.run(main())
+        embeddings, usage = await job1
+        embeddings2, usage2 = await job2
+        # Embeddings are now available for use - they ran in the same batch.
+    print(f"for {sentences}, generated embeddings {len(embeddings)} with tot_tokens={usage}")
+asyncio.run(
+    main()
+)
 ```
 
 ## Reranker

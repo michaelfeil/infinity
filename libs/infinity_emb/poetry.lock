@@ -487,7 +487,7 @@ files = [
 name = "coloredlogs"
 version = "15.0.1"
 description = "Colored terminal output for Python's logging module"
-optional = true
+optional = false
 python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*"
 files = [
     {file = "coloredlogs-15.0.1-py2.py3-none-any.whl", hash = "sha256:612ee75c546f53e92e70049c9dbfcc18c935a2b9a53b66085ce9ef6a6e5c0934"},
@@ -801,7 +801,7 @@ all = ["email-validator (>=2.0.0)", "httpx (>=0.23.0)", "itsdangerous (>=1.1.0)"
 name = "fastembed"
 version = "0.2.1"
 description = "Fast, light, accurate library built for retrieval embedding generation"
-optional = true
+optional = false
 python-versions = ">=3.8.0,<3.13"
 files = [
     {file = "fastembed-0.2.1-py3-none-any.whl", hash = "sha256:7e3d71e449a54e1c47bd502246ee9367259002691caba5d3c25b9ebb47d1f621"},
@@ -841,7 +841,7 @@ typing = ["typing-extensions (>=4.8)"]
 name = "flatbuffers"
 version = "23.5.26"
 description = "The FlatBuffers serialization format for Python"
-optional = true
+optional = false
 python-versions = "*"
 files = [
     {file = "flatbuffers-23.5.26-py2.py3-none-any.whl", hash = "sha256:c0ff356da363087b915fde4b8b45bdda73432fc17cddb3c8157472eab1422ad1"},
@@ -1221,7 +1221,7 @@ typing = ["types-PyYAML", "types-requests", "types-simplejson", "types-toml", "t
 name = "humanfriendly"
 version = "10.0"
 description = "Human friendly output for text interfaces using Python"
-optional = true
+optional = false
 python-versions = ">=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*"
 files = [
     {file = "humanfriendly-10.0-py2.py3-none-any.whl", hash = "sha256:1697e1a8a8f550fd43c2865cd84542fc175a61dcb779b6fee18cf6b6ccba1477"},
@@ -1322,7 +1322,7 @@ files = [
 name = "loguru"
 version = "0.7.2"
 description = "Python logging made (stupidly) simple"
-optional = true
+optional = false
 python-versions = ">=3.5"
 files = [
     {file = "loguru-0.7.2-py3-none-any.whl", hash = "sha256:003d71e3d3ed35f0f8984898359d65b79e5b21943f78af86aa5491210429b8eb"},
@@ -1582,7 +1582,7 @@ beautifulsoup4 = ">=4.11.1"
 name = "mpmath"
 version = "1.3.0"
 description = "Python library for arbitrary-precision floating-point arithmetic"
-optional = true
+optional = false
 python-versions = "*"
 files = [
     {file = "mpmath-1.3.0-py3-none-any.whl", hash = "sha256:a0b2b9fe80bbcd81a6647ff13108738cfb482d481d826cc0e02f5b35e5c88d2c"},
@@ -2003,7 +2003,7 @@ files = [
 name = "onnx"
 version = "1.15.0"
 description = "Open Neural Network Exchange"
-optional = true
+optional = false
 python-versions = ">=3.8"
 files = [
     {file = "onnx-1.15.0-cp310-cp310-macosx_10_12_universal2.whl", hash = "sha256:51cacb6aafba308aaf462252ced562111f6991cdc7bc57a6c554c3519453a8ff"},
@@ -2044,7 +2044,7 @@ reference = ["Pillow", "google-re2"]
 name = "onnxruntime"
 version = "1.17.0"
 description = "ONNX Runtime is a runtime accelerator for Machine Learning models"
-optional = true
+optional = false
 python-versions = "*"
 files = [
     {file = "onnxruntime-1.17.0-cp310-cp310-macosx_11_0_universal2.whl", hash = "sha256:d2b22a25a94109cc983443116da8d9805ced0256eb215c5e6bc6dcbabefeab96"},
@@ -2721,7 +2721,7 @@ diagrams = ["jinja2", "railroad-diagrams"]
 name = "pyreadline3"
 version = "3.4.1"
 description = "A python implementation of GNU readline."
-optional = true
+optional = false
 python-versions = "*"
 files = [
     {file = "pyreadline3-3.4.1-py3-none-any.whl", hash = "sha256:b0efb6516fd4fb07b45949053826a62fa4cb353db5be2bbb4a7aa1fdd1e345fb"},
@@ -3449,7 +3449,7 @@ full = ["httpx (>=0.22.0)", "itsdangerous", "jinja2", "python-multipart", "pyyam
 name = "sympy"
 version = "1.12"
 description = "Computer algebra system (CAS) in Python"
-optional = true
+optional = false
 python-versions = ">=3.8"
 files = [
     {file = "sympy-1.12-py3-none-any.whl", hash = "sha256:c3588cd4295d0c0f603d0f2ae780587e64e2efeedb3521e46b9bb1d08d184fa5"},
@@ -3487,7 +3487,7 @@ files = [
 name = "tokenizers"
 version = "0.15.2"
 description = ""
-optional = true
+optional = false
 python-versions = ">=3.7"
 files = [
     {file = "tokenizers-0.15.2-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:52f6130c9cbf70544287575a985bf44ae1bda2da7e8c24e97716080593638012"},
@@ -4245,7 +4245,7 @@ files = [
 name = "win32-setctime"
 version = "1.1.0"
 description = "A small Python utility to set file creation time on Windows"
-optional = true
+optional = false
 python-versions = ">=3.5"
 files = [
     {file = "win32_setctime-1.1.0-py3-none-any.whl", hash = "sha256:231db239e959c2fe7eb1d7dc129f11172354f98361c4fa2d6d2d7e278baa8aad"},
@@ -4491,10 +4491,9 @@ docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.link
 testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "pytest (>=6)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-ignore-flaky", "pytest-mypy", "pytest-ruff (>=0.2.1)"]
 
 [extras]
-all = ["ctranslate2", "diskcache", "fastapi", "fastembed", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn"]
+all = ["ctranslate2", "diskcache", "fastapi", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn"]
 cache = ["diskcache"]
 ct2 = ["ctranslate2", "sentence-transformers", "torch", "transformers"]
-fastembed = ["fastembed"]
 logging = ["rich"]
 onnxruntime-gpu = ["onnxruntime-gpu"]
 optimum = ["optimum"]
@@ -4505,4 +4504,4 @@ torch = ["hf_transfer", "sentence-transformers", "torch"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "5c6c808163e5b2a6f835cd00d859c506b9a023be90f6c928a6fe903fc534aaf6"
+content-hash = "144b7d01f541181d84159f3daa4881feffa59f51a1be94e18c5e3993a4403724"
