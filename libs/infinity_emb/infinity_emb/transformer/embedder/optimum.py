@@ -8,8 +8,10 @@ from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.utils_optimum import (
+    cls_token_pooling,
     device_to_onnx,
     get_onnx_files,
+    mean_pooling,
     normalize,
     optimize_model,
 )
@@ -21,21 +23,6 @@ try:
     OPTIMUM_AVAILABLE = True
 except (ImportError, RuntimeError):
     OPTIMUM_AVAILABLE = False
-
-
-def mean_pooling(last_hidden_states: np.ndarray, attention_mask: np.ndarray):
-    input_mask_expanded = (np.expand_dims(attention_mask, axis=-1)).astype(float)
-
-    sum_embeddings = np.sum(
-        last_hidden_states.astype(float) * input_mask_expanded, axis=1
-    )
-    mask_sum = np.maximum(np.sum(input_mask_expanded, axis=1), 1e-9)
-
-    return sum_embeddings / mask_sum
-
-
-def cls_token_pooling(model_output, *args):
-    return model_output[:, 0]
 
 
 class OptimumEmbedder(BaseEmbedder):

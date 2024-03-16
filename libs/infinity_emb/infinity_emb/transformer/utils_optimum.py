@@ -22,6 +22,21 @@ except ImportError:
     torch = None  # type: ignore
 
 
+def mean_pooling(last_hidden_states: np.ndarray, attention_mask: np.ndarray):
+    input_mask_expanded = (np.expand_dims(attention_mask, axis=-1)).astype(float)
+
+    sum_embeddings = np.sum(
+        last_hidden_states.astype(float) * input_mask_expanded, axis=1
+    )
+    mask_sum = np.maximum(np.sum(input_mask_expanded, axis=1), 1e-9)
+
+    return sum_embeddings / mask_sum
+
+
+def cls_token_pooling(model_output, *args):
+    return model_output[:, 0]
+
+
 def normalize(input_array, p=2, dim=1, eps=1e-12):
     # Calculate the Lp norm along the specified dimension
     norm = np.linalg.norm(input_array, ord=p, axis=dim, keepdims=True)

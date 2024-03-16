@@ -91,7 +91,7 @@ class BatchHandler:
 
     async def embed(
         self, sentences: List[str]
-    ) -> tuple[List[EmbeddingReturnType], int]:
+    ) -> Tuple[List[EmbeddingReturnType], int]:
         """Schedule a sentence to be embedded. Awaits until embedded.
 
         Args:
@@ -113,7 +113,7 @@ class BatchHandler:
 
     async def rerank(
         self, query: str, docs: List[str], raw_scores: bool = False
-    ) -> tuple[List[float], int]:
+    ) -> Tuple[List[float], int]:
         """Schedule a query to be reranked with documents. Awaits until reranked.
 
         Args:
