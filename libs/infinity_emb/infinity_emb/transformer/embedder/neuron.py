@@ -5,7 +5,6 @@ from typing import Dict, List, Union
 
 import numpy as np
 
-
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
@@ -133,7 +132,7 @@ class NeuronOptimumEmbedder(BaseEmbedder):
         }
 
     def encode_post(self, embedding: dict) -> EmbeddingReturnType:
-        embedding = self.pooling(
+        embedding = self.pooling(  # type: ignore
             embedding["token_embeddings"].numpy(), embedding["attention_mask"].numpy()
         )
 
