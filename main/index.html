@@ -21,7 +21,7 @@
 <input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
 <label class="md-overlay" for="__drawer"></label>
 <div data-md-component="skip">
-<a class="md-skip" href="#why-infinity">
+<a class="md-skip" href="#infinity">
           Skip to content
         </a>
 </div>
@@ -112,7 +112,7 @@
 <li class="md-nav__item">
 <a class="md-nav__link" href="#why-infinity">
 <span class="md-ellipsis">
-      Why Infinity:
+      Why Infinity
     </span>
 </a>
 </li>
@@ -138,15 +138,15 @@
     </span>
 </a>
 </li>
+</ul>
+</nav>
+</li>
 <li class="md-nav__item">
 <a class="md-nav__link" href="#launch-faq">
 <span class="md-ellipsis">
-      Launch FAQ:
+      Launch FAQ
     </span>
 </a>
-</li>
-</ul>
-</nav>
 </li>
 </ul>
 </nav>
@@ -210,7 +210,7 @@
 <li class="md-nav__item">
 <a class="md-nav__link" href="#why-infinity">
 <span class="md-ellipsis">
-      Why Infinity:
+      Why Infinity
     </span>
 </a>
 </li>
@@ -236,15 +236,15 @@
     </span>
 </a>
 </li>
+</ul>
+</nav>
+</li>
 <li class="md-nav__item">
 <a class="md-nav__link" href="#launch-faq">
 <span class="md-ellipsis">
-      Launch FAQ:
+      Launch FAQ
     </span>
 </a>
-</li>
-</ul>
-</nav>
 </li>
 </ul>
 </nav>
@@ -253,8 +253,9 @@
 </div>
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
-<p>Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting all sentence-transformer models and frameworks. Infinity is developed under <a href="https://github.com/michaelfeil/infinity/blob/main/LICENSE">MIT License</a>. Infinity powers inference behind <a href="https://gradient.ai">Gradient.ai</a>.</p>
-<h2 id="why-infinity">Why Infinity:</h2>
+<h1 id="infinity"><a href="https://github.com/michaelfeil/infinity">Infinity</a></h1>
+<p>Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting all sentence-transformer models and frameworks. Infinity is developed under <a href="https://github.com/michaelfeil/infinity/blob/main/LICENSE">MIT License</a>. Infinity powers inference behind <a href="https://gradient.ai">Gradient.ai</a> and other Embedding API providers.</p>
+<h2 id="why-infinity">Why Infinity</h2>
 <p>Infinity provides the following features:</p>
 <ul>
 <li><strong>Deploy any model from MTEB</strong>: deploy the model you know from <a href="https://github.com/UKPLab/sentence-transformers/">SentenceTransformers</a></li>
@@ -263,7 +264,7 @@
 <li><strong>Correct and tested implementation</strong>: Unit and end-to-end tested. Embeddings via infinity are identical to <a href="https://github.com/UKPLab/sentence-transformers/">SentenceTransformers</a> (up to numerical precision). Lets API users create embeddings till infinity and beyond.</li>
 <li><strong>Easy to use</strong>: The API is built on top of <a href="https://fastapi.tiangolo.com/">FastAPI</a>, <a href="https://swagger.io/">Swagger</a> makes it fully documented. API are aligned to <a href="https://platform.openai.com/docs/guides/embeddings/what-are-embeddings">OpenAI's Embedding specs</a>. See below on how to get started.</li>
 </ul>
-<h1 id="getting-started">Getting started</h1>
+<h2 id="getting-started">Getting started</h2>
 <p>Install <code>infinity_emb</code> via pip
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>infinity-emb<span class="o">[</span>all<span class="o">]</span>
 </span></code></pre></div></p>
@@ -289,7 +290,7 @@ The download path at runtime, can be controlled via the environment variable <co
 Check the <code>--help</code> command to get a description for all parameters.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a href="#__codelineno-3-1" id="__codelineno-3-1" name="__codelineno-3-1"></a>infinity_emb<span class="w"> </span>--help
 </span></code></pre></div>
-<h3 id="launch-faq">Launch FAQ:</h3>
+<h2 id="launch-faq">Launch FAQ</h2>
 <details>
 <summary>What are embedding models?</summary>
   Embedding models can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. 
@@ -315,27 +316,16 @@ Check the <code>--help</code> command to get a description for all parameters.</
 
 </details>
 <details>
-<summary>Launching multiple models in one dockerfile</summary>
-
-  Multiple models on one GPU is in experimental mode. You can use the following temporary solution:
-  <div class="language-Dockerfile highlight"><pre><span></span><code><span id="__span-4-1"><a href="#__codelineno-4-1" id="__codelineno-4-1" name="__codelineno-4-1"></a><span class="k">FROM</span><span class="w"> </span><span class="s">michaelf34/infinity:latest</span>
-</span><span id="__span-4-2"><a href="#__codelineno-4-2" id="__codelineno-4-2" name="__codelineno-4-2"></a><span class="c"># Dockerfile-ENTRYPOINT for multiple models via multiple ports</span>
-</span><span id="__span-4-3"><a href="#__codelineno-4-3" id="__codelineno-4-3" name="__codelineno-4-3"></a><span class="k">ENTRYPOINT</span><span class="w"> </span><span class="o">[</span><span class="s2">"/bin/sh"</span>,<span class="w"> </span><span class="s2">"-c"</span>,<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-4-4"><a href="#__codelineno-4-4" id="__codelineno-4-4" name="__codelineno-4-4"></a><span class="w"> </span><span class="s2">"(. /app/.venv/bin/activate &amp;&amp; infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &amp;);\</span>
-</span><span id="__span-4-5"><a href="#__codelineno-4-5" id="__codelineno-4-5" name="__codelineno-4-5"></a><span class="s2"> (. /app/.venv/bin/activate &amp;&amp; infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"</span><span class="o">]</span>
-</span></code></pre></div>
-
-  You can build and run it via:  
-  <div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a href="#__codelineno-5-1" id="__codelineno-5-1" name="__codelineno-5-1"></a>docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>custominfinity<span class="w"> </span>.<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="m">8080</span>:8080<span class="w"> </span>-p<span class="w"> </span><span class="m">8081</span>:8081<span class="w"> </span>custominfinity
-</span></code></pre></div>
-
-  Both models now run on two instances in one dockerfile servers. Otherwise, you could build your own FastAPI/flask instance, which wraps around the Async API.
-
-</details>
-<details>
 <summary>Using Langchain with Infinity</summary>
   Now available under # Integrations in the side panel.  
   ```
+</details>
+<details>
+<summary>Question not answered here?</summary>
+
+  There is a Discussion section on the Github of Infinity:
+  https://github.com/michaelfeil/infinity/discussions
+
 </details>
 </article>
 </div>
