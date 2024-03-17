@@ -218,6 +218,7 @@ def _start_uvicorn(
     dtype: DtypeTypeHint = DtypeTypeHint.auto.name,  # type: ignore
     pooling_method: PoolingMethodTypeHint = PoolingMethodTypeHint.auto.name,  # type: ignore
     compile: bool = False,
+    bettertransformer: bool = True,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
     MIT License; Copyright (c) 2023-now Michael Feil
@@ -243,6 +244,7 @@ def _start_uvicorn(
         dtype, Dtype: data type to use for inference. Defaults to Dtype.auto or "auto"
         pooling_method, PoolingMethod: pooling method to use. Defaults to PoolingMethod.auto or "auto"
         compile, bool: compile model for faster inference. Defaults to False.
+        use_bettertransformer, bool: use bettertransformer. Defaults to True.
     """
     import uvicorn
 
@@ -265,6 +267,7 @@ def _start_uvicorn(
         dtype=Dtype[dtype.value],  # type: ignore
         pooling_method=PoolingMethod[pooling_method.value],  # type: ignore
         compile=compile,
+        bettertransformer=bettertransformer
     )
 
     app = create_server(
