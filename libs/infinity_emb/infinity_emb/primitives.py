@@ -41,6 +41,7 @@ DeviceTypeHint = enum.Enum("DeviceTypeHint", _devices)  # type: ignore
 class Dtype(enum.Enum):
     float16: str = "float16"
     int8: str = "int8"
+    fp8: str = "fp8"
     auto: str = "auto"
 
 

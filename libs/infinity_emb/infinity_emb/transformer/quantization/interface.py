@@ -34,6 +34,18 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
         # features1 = self.tokenize(["hello world"])
         # features1 = util.batch_to_device(features1, self.device)
         # model.forward(**features1)
+    elif device == Device.cuda and dtype == Dtype.fp8:
+        try:
+            from float8_experimental.float8_dynamic_linear import Float8DynamicLinear
+            from float8_experimental.float8_linear_utils import (
+                swap_linear_with_float8_linear,
+            )
+        except:
+            raise ImportError(
+                "float8_experimental is not installed."
+                "https://github.com/pytorch-labs/float8_experimental"
+            )
+        swap_linear_with_float8_linear(model, Float8DynamicLinear)
     else:
         raise ValueError(
             f"Quantization is not supported on {device} with dtype {dtype}."
