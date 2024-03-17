@@ -90,7 +90,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         Computes sentence embeddings
         """
 
-        with torch.inference_mode():
+        with torch.no_grad():
             features = util.batch_to_device(features, self.device)
             out_features = self.forward(features)["sentence_embedding"]
 
