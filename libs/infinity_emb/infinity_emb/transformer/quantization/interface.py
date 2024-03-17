@@ -18,6 +18,7 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
         device (Device, optional): The device of the model. Do not use Device.auto, needs to be a resolved device.
             Defaults to Device.cpu.
     """
+    device_orig = model.device
     if device == Device.cpu and dtype in [Dtype.int8, Dtype.auto]:
         logger.info("using torch.quantization.quantize_dynamic()")
         # TODO: verify if cpu requires quantization with torch.quantization.quantize_dynamic()
@@ -30,10 +31,26 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
         quant_handler, state_dict = quantize(model, mode=dtype.value)
         model = quant_handler.convert_for_runtime()
         model.load_state_dict(state_dict)
-        model.to(device.value)
+        model.to(device_orig)
         # features1 = self.tokenize(["hello world"])
         # features1 = util.batch_to_device(features1, self.device)
         # model.forward(**features1)
+    elif device == Device.cuda and dtype == Dtype.fp8:
+        try:
+            from float8_experimental.float8_dynamic_linear import (  # type: ignore
+                Float8DynamicLinear,
+            )
+            from float8_experimental.float8_linear_utils import (  # type: ignore
+                swap_linear_with_float8_linear,
+            )
+        except ImportError:
+            raise ImportError(
+                "float8_experimental is not installed."
+                "https://github.com/pytorch-labs/float8_experimental "
+                "with commit `88e9e507c56e59c5f17edf513ecbf621b46fc67d`"
+            )
+        logger.info("using dtype=fp8")
+        swap_linear_with_float8_linear(model, Float8DynamicLinear)
     else:
         raise ValueError(
             f"Quantization is not supported on {device} with dtype {dtype}."
