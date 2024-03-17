@@ -267,7 +267,7 @@ def _start_uvicorn(
         dtype=Dtype[dtype.value],  # type: ignore
         pooling_method=PoolingMethod[pooling_method.value],  # type: ignore
         compile=compile,
-        bettertransformer=bettertransformer
+        bettertransformer=bettertransformer,
     )
 
     app = create_server(
