@@ -36,14 +36,17 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
         # model.forward(**features1)
     elif device == Device.cuda and dtype == Dtype.fp8:
         try:
-            from float8_experimental.float8_dynamic_linear import Float8DynamicLinear
-            from float8_experimental.float8_linear_utils import (
+            from float8_experimental.float8_dynamic_linear import (  # type: ignore
+                Float8DynamicLinear,
+            )
+            from float8_experimental.float8_linear_utils import (  # type: ignore
                 swap_linear_with_float8_linear,
             )
-        except:
+        except ImportError:
             raise ImportError(
                 "float8_experimental is not installed."
                 "https://github.com/pytorch-labs/float8_experimental"
+                "with commit `88e9e507c56e59c5f17edf513ecbf621b46fc67d`"
             )
         swap_linear_with_float8_linear(model, Float8DynamicLinear)
     else:
