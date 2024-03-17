@@ -53,6 +53,7 @@ infinity_emb --help
   <summary>What are embedding models?</summary>
   Embedding models can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. 
   And it also can be used in vector databases for LLMs. 
+
   
   The most know architecture are encoder-only transformers such as BERT, and most popular implementation include [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/).
 </details>
@@ -63,12 +64,15 @@ infinity_emb --help
   All models of the sentence transformers org are supported https://huggingface.co/sentence-transformers / sbert.net. 
   LLM's like LLAMA2-7B are not intended for deployment.
 
+
   With the command `--engine torch` the model must be compatible with https://github.com/UKPLab/sentence-transformers/.
     - only models from Huggingface are supported.
+
   
   With the command `--engine ctranslate2`
     - only `BERT` models are supported.
     - only models from Huggingface are supported.
+    
   
   For the latest trends, you might want to check out one of the following models.
     https://huggingface.co/spaces/mteb/leaderboard
@@ -78,7 +82,7 @@ infinity_emb --help
 
 <details>
   <summary>Using Langchain with Infinity</summary>
-  Now available under # Integrations in the side panel.  
+  Now available under # Python Integrations in the side panel.  
   ```
 </details>
 
