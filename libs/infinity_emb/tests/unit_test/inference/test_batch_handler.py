@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import random
+import sys
 import time
 from typing import Tuple
 
@@ -21,6 +22,10 @@ LIMIT_SLOWDOWN = 1.25 if torch.cuda.is_available() else 1.35
 
 @pytest.fixture
 @pytest.mark.anyio
+@pytest.mark.skipif(
+    sys.version_info >= (3, 12) and sys.platform in ["win32", "darwin"],
+    reason="windows and macos are not stable with python3.12",
+)
 async def load_patched_bh() -> Tuple[SentenceTransformerPatched, BatchHandler]:
     model = SentenceTransformerPatched(
         engine_args=EngineArgs(model_name_or_path=pytest.DEFAULT_BERT_MODEL, bettertransformer=not torch.backends.mps.is_available())  # type: ignore
