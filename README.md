@@ -33,44 +33,34 @@ In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sen
 
 # Getting started
 
-Install via pip
+### Install via pip and launch the cli
 ```bash
 pip install infinity-emb[all]
 ```
 
-<details>
-  <summary>Install from source with Poetry</summary>
-  
-  Advanced:
-  To install via Poetry use Poetry 1.7.1, Python 3.11 on Ubuntu 22.04
-  ```bash
-  git clone https://github.com/michaelfeil/infinity
-  cd infinity
-  cd libs/infinity_emb
-  poetry install --extras all
-  ```
-</details>
-
-### Launch the CLI using a pre-built docker container (recommended)
-```bash
-model=BAAI/bge-small-en-v1.5
-port=7997
-docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
-```
-The download path at runtime, can be controlled via the environment variable `SENTENCE_TRANSFORMERS_HOME`.
-
-### or launch the cli after the pip install
-After your pip install, with your venv activate, you can run the CLI directly.
+After your pip install, with your venv active, you can run the CLI directly.
 Check the `--help` command to get a description for all parameters.
 
 ```bash
 infinity_emb --help
 ```
 
+### Launch the CLI using a pre-built docker container (recommended)
+Instead of installing the CLI via pip, you may also use docker to run infinity. 
+Make sure you mount your accelerator, e.g. nvidia-docker with `--gpus all`.
+
+```bash
+model=BAAI/bge-small-en-v1.5
+port=7997
+docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
+```
+The download path at runtime, can be controlled via the environment variable `HF_HOME`.
+
 ### or launch it via Python
 
-You can use in a async context with asyncio. 
-This gives you most flexibility, but is a bit more advanced.
+Instead of the cli & RestAPI you can directly interface with the Python API. 
+This gives you most flexibility. The Python API builds on `asyncio` with its `await/async` features, to allow concurrent processing of requests.
+
 ```python
 import asyncio
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
@@ -85,7 +75,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### or launch on the cloud via dstack
+### Launch on the cloud via dstack
 
 dstack allows you to provision a VM instance on the cloud of your choice. Write a service configuration file as below for the deployment of `BAAI/bge-small-en-v1.5` model wrapped in Infinity.
 
