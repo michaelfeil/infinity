@@ -1,5 +1,5 @@
 import copy
-from typing import List
+from typing import Dict, List, Tuple
 
 from infinity_emb._optional_imports import CHECK_SENTENCE_TRANSFORMERS, CHECK_TORCH
 from infinity_emb.args import EngineArgs
@@ -10,7 +10,7 @@ from infinity_emb.transformer.abstract import BaseCrossEncoder
 if CHECK_TORCH.is_available and CHECK_SENTENCE_TRANSFORMERS.is_available:
     import torch
     from sentence_transformers import CrossEncoder  # type: ignore
-
+    from torch import Tensor
 else:
 
     class CrossEncoder:  # type: ignore
@@ -37,6 +37,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
             automodel_args={"trust_remote_code": engine_args.trust_remote_code},
             device=engine_args.device.value,
         )
+        self.model.to(self._target_device)  # type: ignore
 
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
@@ -61,26 +62,42 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
             )
             self.model.to(dtype=torch.float16)
 
-    def encode_pre(self, input_tuples):
-        # TODO: improve
-        return input_tuples
+    def encode_pre(self, input_tuples: List[Tuple[str, str]]):
+        # return input_tuples
+        texts = [[t[0].strip(), t[1].strip()] for t in input_tuples]
 
-    def encode_core(self, features):
+        tokenized = self.tokenizer(
+            texts, padding=True, truncation="longest_first", return_tensors="pt"
+        )
+        return tokenized
+
+    def encode_core(self, features: Dict[str, Tensor]):
         """
         Computes sentence embeddings
         """
-        with torch.inference_mode():
-            out_features = self.predict(
-                features,
-                batch_size=32,
-                activation_fct=lambda x: x,
-                show_progress_bar=False,
-            )
+
+        # from torch.utils.data import DataLoader
+        # next_s = next(iter(DataLoader(
+        #     features,
+        #     batch_size=32,
+        #     collate_fn=self.smart_batching_collate_text_only,
+        #     num_workers=0,
+        #     shuffle=False,
+        # )))
+        with torch.no_grad():
+            # out_features2 = self.predict(
+            #     features,
+            #     batch_size=32,
+            #     activation_fct=lambda x: x,
+            #     show_progress_bar=False,
+            # )
+            features = {k: v.to(self.model.device) for k, v in features.items()}
+            out_features = self.model(**features, return_dict=True)["logits"]
 
         return out_features
 
     def encode_post(self, out_features) -> List[float]:
-        return out_features
+        return out_features.detach().cpu().flatten().tolist()
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
         tks = self._infinity_tokenizer.batch_encode_plus(
