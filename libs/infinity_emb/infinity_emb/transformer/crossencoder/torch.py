@@ -97,7 +97,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
         return out_features
 
     def encode_post(self, out_features) -> List[float]:
-        return out_features.detach().cpu().flatten().tolist()
+        return out_features.detach().cpu().flatten()
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
         tks = self._infinity_tokenizer.batch_encode_plus(
