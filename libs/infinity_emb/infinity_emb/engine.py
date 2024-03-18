@@ -9,7 +9,11 @@ from infinity_emb.inference import (
     select_model,
 )
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import EmbeddingReturnType, ModelCapabilites
+from infinity_emb.primitives import (
+    ClassifyReturnType,
+    EmbeddingReturnType,
+    ModelCapabilites,
+)
 
 
 class AsyncEmbeddingEngine:
@@ -105,12 +109,14 @@ class AsyncEmbeddingEngine:
             sentences (List[str]): sentences to be embedded
 
         Raises:
-            ValueError: raised if engine is not started yet"
+            ValueError: raised if engine is not started yet
+            ModelNotDeployedError: If loaded model does not expose `embed`
+                capabilities
 
         Returns:
-            List[numpy.ndarray]: embeddings
+            List[EmbeddingReturnType]: embeddings
                 2D list-array of shape( len(sentences),embed_dim )
-            Usage:
+            int: token usage
         """
 
         self._check_running()
@@ -126,6 +132,15 @@ class AsyncEmbeddingEngine:
             query (str): query to be reranked
             docs (List[str]): docs to be reranked
             raw_scores (bool): return raw scores instead of sigmoid
+
+        Raises:
+            ValueError: raised if engine is not started yet
+            ModelNotDeployedError: If loaded model does not expose `embed`
+                capabilities
+
+        Returns:
+            List[float]: list of scores
+            int: token usage
         """
         self._check_running()
         scores, usage = await self._batch_handler.rerank(
@@ -136,13 +151,21 @@ class AsyncEmbeddingEngine:
 
     async def classify(
         self, *, sentences: List[str], raw_scores: bool = False
-    ) -> Tuple[List[Dict[str, float]], int]:
-        """rerank multiple sentences
+    ) -> Tuple[List[ClassifyReturnType], int]:
+        """classify multiple sentences
 
         Args:
-            query (str): query to be reranked
-            docs (List[str]): docs to be reranked
-            raw_scores (bool): return raw scores instead of sigmoid
+            sentences (List[str]): sentences to be classified
+            raw_scores (bool): if True, return raw scores, else softmax
+
+        Raises:
+            ValueError: raised if engine is not started yet
+            ModelNotDeployedError: If loaded model does not expose `embed`
+                capabilities
+
+        Returns:
+            List[ClassifyReturnType]: list of class encodings
+            int: token usage
         """
         self._check_running()
         scores, usage = await self._batch_handler.classify(sentences=sentences)
