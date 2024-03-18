@@ -33,30 +33,31 @@ In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sen
 
 # Getting started
 
-### Install via pip and launch the cli
+### Launch the cli via pip install
 ```bash
 pip install infinity-emb[all]
 ```
-
 After your pip install, with your venv active, you can run the CLI directly.
-Check the `--help` command to get a description for all parameters.
 
+```bash
+infinity_emb --model-name-or-path BAAI/bge-small-en-v1.5
+```
+Check the `--help` command to get a description for all parameters.
 ```bash
 infinity_emb --help
 ```
 
 ### Launch the CLI using a pre-built docker container (recommended)
 Instead of installing the CLI via pip, you may also use docker to run infinity. 
-Make sure you mount your accelerator, e.g. nvidia-docker with `--gpus all`.
+Make sure you mount your accelerator, i.e. install nvidia-docker and activate with `--gpus all`.
 
 ```bash
-model=BAAI/bge-small-en-v1.5
 port=7997
-docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
+docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path BAAI/bge-small-en-v1.5 --port $port
 ```
 The download path at runtime, can be controlled via the environment variable `HF_HOME`.
 
-### or launch it via Python
+### Launch it via the Python API
 
 Instead of the cli & RestAPI you can directly interface with the Python API. 
 This gives you most flexibility. The Python API builds on `asyncio` with its `await/async` features, to allow concurrent processing of requests.
