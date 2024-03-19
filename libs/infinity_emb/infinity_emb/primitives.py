@@ -9,7 +9,7 @@ import enum
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, Literal, Optional, Tuple, Union
+from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -17,6 +17,14 @@ import numpy.typing as npt
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
 
 EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
+
+
+class ClassifyReturnElement(TypedDict):
+    label: str
+    score: float
+
+
+ClassifyReturnType = List[ClassifyReturnElement]
 
 
 class InferenceEngine(enum.Enum):
@@ -163,9 +171,9 @@ class ReRankInner(AbstractInner):
 @dataclass(order=True)
 class PredictInner(AbstractInner):
     content: PredictSingle
-    class_encoding: Optional[EmbeddingReturnType] = None
+    class_encoding: Optional[ClassifyReturnType] = None
 
-    async def complete(self, result: EmbeddingReturnType) -> None:
+    async def complete(self, result: ClassifyReturnType) -> None:
         """marks the future for completion.
         only call from the same thread as created future."""
         self.class_encoding = result
@@ -177,7 +185,7 @@ class PredictInner(AbstractInner):
         except asyncio.exceptions.InvalidStateError:
             pass
 
-    async def get_result(self) -> EmbeddingReturnType:
+    async def get_result(self) -> ClassifyReturnType:
         """waits for future to complete and returns result"""
         await self.future
         return self.class_encoding  # type: ignore

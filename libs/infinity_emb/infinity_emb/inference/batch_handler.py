@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, Dict, List, Sequence, Set, Tuple
+from typing import Any, List, Sequence, Set, Tuple
 
 import numpy as np
 
@@ -14,6 +14,7 @@ from infinity_emb.inference.queue import CustomFIFOQueue, ResultKVStoreFuture
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
+    ClassifyReturnType,
     EmbeddingInner,
     EmbeddingReturnType,
     EmbeddingSingle,
@@ -45,16 +46,17 @@ class BatchHandler:
         """
         performs batching around the model.
 
-        model: BaseTransformer, implements fn (core|pre|post)_encode
-        max_batch_size: max batch size of the models
-        max_queue_wait: max items to queue in the batch, default 32_000 sentences
-        batch_delay: sleep in seconds, wait time for pre/post methods.
-            Best result: setting to 1/2 the minimal expected
-            time for core_encode method / "gpu inference".
-            Dont set it above 1x minimal expected time of interence.
-            Should not be 0 to not block Python's GIL.
-        vector_disk_cache_path: path to cache vectors on disk.
-        lengths_via_tokenize: if True, use the tokenizer to get the lengths else len()
+        Args:
+            model: BaseTransformer, implements fn (core|pre|post)_encode
+            max_batch_size: max batch size of the models
+            max_queue_wait: max items to queue in the batch, default 32_000 sentences
+            batch_delay: sleep in seconds, wait time for pre/post methods.
+                Best result: setting to 1/2 the minimal expected
+                time for core_encode method / "gpu inference".
+                Dont set it above 1x minimal expected time of interence.
+                Should not be 0 to not block Python's GIL.
+            vector_disk_cache_path: path to cache vectors on disk.
+            lengths_via_tokenize: if True, use the tokenizer to get the lengths else len()
         """
         self.model = model
         self.max_batch_size = max_batch_size
@@ -97,8 +99,13 @@ class BatchHandler:
         Args:
             sentences (List[str]): Sentences to be embedded
 
+        Raises:
+            ModelNotDeployedError: If loaded model does not expose `embed`
+                capabilities
+
         Returns:
-            EmbeddingReturnType: list of embedding as 1darray
+            List[EmbeddingReturnType]: list of embedding as 1darray
+            int: token usage
         """
         if "embed" not in self.model.capabilities:
             raise ModelNotDeployedError(
@@ -118,7 +125,12 @@ class BatchHandler:
 
         Args:
             query (str): query for reranking
-            documents (List[str]): documents to be reranked
+            docs (List[str]): documents to be reranked
+            raw_scores (bool): return raw scores instead of sigmoid
+
+        Raises:
+            ModelNotDeployedError: If loaded model does not expose `embed`
+                capabilities
 
         Returns:
             List[float]: list of scores
@@ -141,15 +153,20 @@ class BatchHandler:
 
     async def classify(
         self, *, sentences: List[str], raw_scores: bool = True
-    ) -> Tuple[List[Dict[str, float]], int]:
+    ) -> Tuple[List[ClassifyReturnType], int]:
         """Schedule a query to be classified with documents. Awaits until classified.
 
         Args:
             sentences (List[str]): sentences to be classified
             raw_scores (bool): if True, return raw scores, else softmax
 
+        Raises:
+            ModelNotDeployedError: If loaded model does not expose `embed`
+                capabilities
+
         Returns:
-            EmbeddingReturnType: embedding as 1darray
+            List[ClassifyReturnType]: list of class encodings
+            int: token usage
         """
         if "classify" not in self.model.capabilities:
             raise ModelNotDeployedError(
