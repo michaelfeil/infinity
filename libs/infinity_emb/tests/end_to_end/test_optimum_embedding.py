@@ -9,7 +9,7 @@ from infinity_emb.primitives import Device, InferenceEngine
 
 PREFIX = "/v1_optimum"
 MODEL: str = (
-    "vectoriseai/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
+    "michaelfeil/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
 )
 
 batch_size = 8
