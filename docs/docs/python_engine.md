@@ -39,7 +39,9 @@ asyncio.run(
 
 ## Reranker
 
-Enhance search results by reranking based on the similarity between a query and a set of documents. This feature is particularly useful in conjunction with vector databases and embeddings, or as a standalone solution for small datasets. Ensure you choose a Hugging Face model designed for sequence classification with a single output class, e.g. "BAAI/bge-reranker-base". Further models are usually listed as `rerank` models on HuggingFace https://huggingface.co/models?pipeline_tag=text-classification&sort=trending&search=rerank. 
+Reranking gives you a score for similarity between a query and multiple documents. 
+Use it in conjunction with a VectorDB+Embeddings, or as standalone for small amount of documents.
+Please select a model from HuggingFace that can be loaded with AutoModelForSequenceClassification & has exactly one class for classification. E.g. "BAAI/bge-reranker-base". Further models are usually listed as `rerank` models on HuggingFace https://huggingface.co/models?pipeline_tag=text-classification&sort=trending&search=rerank. 
 
 ```python
 import asyncio
@@ -65,27 +67,29 @@ async def main():
 asyncio.run(main())
 ```
 
+You can launch the 
+```bash
+infinity_emb --model-name-or-path BAAI/bge-reranker-base
+```
+
 ## Text Classification (Beta)
 
-Explore text classification with Infinity's `classify` feature, which allows for sentiment analysis, emotion detection, and more classification tasks. Utilize pre-trained classification models on your text data.
+Use text classification with Infinity's `classify` feature, which allows for sentiment analysis, emotion detection, and more classification tasks.
 
+Note: PR's to speed this section up are welcome. Currently the backend uses huggingface pipelines + dynamic batching. On top of that, a ~40% speedup should be possible.
 ```python
 import asyncio
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
 
-# Example sentences for classification
 sentences = ["This is awesome.", "I am bored."]
-# Setup engine with text classification model
-engine_args = EngineArgs(
-    model_name_or_path="SamLowe/roberta-base-go_emotions", 
+engine_args = EngineArgs(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
     engine="torch", model_warmup=True)
 engine = AsyncEmbeddingEngine.from_args(engine_args)
-
 async def main(): 
     async with engine:
         predictions, usage = await engine.classify(sentences=sentences)
-        # Access classification predictions
         return predictions, usage
 asyncio.run(main())
 ```
 
+Running via CLI requires a new FastAPI schema and server integration - PR's are also welcome there.

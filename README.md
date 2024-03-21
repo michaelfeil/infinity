@@ -130,10 +130,17 @@ async def main():
 asyncio.run(main())
 ```
 
+When using the CLI, use this command to launch rerankers:
+```bash
+infinity_emb --model-name-or-path BAAI/bge-reranker-base
+```
+
 <details>
   <summary>You can also use text-classification (beta):</summary>
   
-  Note: PR's to speed this section up are welcome, a 40% speedup is propable, currently the backend uses huggingface pipelines + dynamic batching.
+  Use text classification with Infinity's `classify` feature, which allows for sentiment analysis, emotion detection, and more classification tasks.
+
+  Note: PR's to speed this section up are welcome. Currently the backend uses huggingface pipelines + dynamic batching. On top of that, a ~40% speedup should be possible.
   ```python
   import asyncio
   from infinity_emb import AsyncEmbeddingEngine, EngineArgs
@@ -148,6 +155,9 @@ asyncio.run(main())
           return predictions, usage
   asyncio.run(main())
   ```
+
+  Running via CLI requires a new FastAPI schema and server integration - PR's are also welcome there.
+  
 </details>
 
 
@@ -218,7 +228,8 @@ asyncio.run(main())
 </details>
 
 ## Documentation
-After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:7997/docs`.
+View the docs at [https://michaelfeil.eu/infinity](https://michaelfeil.eu/infinity) on how to get started.
+After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:7997/docs`. You can also find a interactive preview here: https://michaelfeil-infinity.hf.space/docs
 
 ## Contribute and Develop
 
