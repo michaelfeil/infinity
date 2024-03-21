@@ -167,7 +167,7 @@ infinity_emb --model-name-or-path BAAI/bge-reranker-base
   Embedding models can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. 
   And it also can be used in vector databases for LLMs. 
   
-  The most know architecture are encoder-only transformers such as BERT, and most popular implementation include [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/).
+  The most known architecture are encoder-only transformers such as BERT, and most popular implementation include [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/).
 </details>
 
 <details>
