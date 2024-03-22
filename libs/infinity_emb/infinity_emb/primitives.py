@@ -56,6 +56,13 @@ class Dtype(enum.Enum):
 _dtypes: Dict[str, str] = {e.name: e.name for e in Dtype}
 DtypeTypeHint = enum.Enum("DtypeTypeHint", _dtypes)  # type: ignore
 
+class EmbeddingDtype(enum.Enum):
+    float32: str = "float32"
+    int8: str = "int8"
+    binary: str = "binary"
+
+_dtypes: Dict[str, str] = {e.name: e.name for e in EmbeddingDtype}
+EmbeddingDtypeTypeHint = enum.Enum("DtypeTypeHint", _dtypes)  # type: ignore
 
 class PoolingMethod(enum.Enum):
     mean: str = "mean"

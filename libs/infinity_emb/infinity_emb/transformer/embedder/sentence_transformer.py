@@ -58,6 +58,8 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         self.eval()
 
+        self.embedding_dtype = engine_args.embedding_dtype
+
         if not (self.device.type == "mps" or not engine_args.bettertransformer):
             fm.auto_model = to_bettertransformer(
                 fm.auto_model,
@@ -105,6 +107,11 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
                 embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
 
             embeddings: np.ndarray = embeddings.numpy()  # type: ignore
+
+            if self.embedding_dtype.value != "float32":
+                raise NotImplementedError(
+                    f"EmbeddingDtype for {self.embedding_dtype} not implemented"
+                )
 
         return embeddings  # type: ignore
 
