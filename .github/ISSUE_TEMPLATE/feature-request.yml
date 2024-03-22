@@ -1,5 +1,5 @@
 name: "\U0001F680 Feature request"
-description: Submit a proposal/request for a new text-generation-inference feature
+description: Submit a proposal/request for a new infinity feature
 labels: [ "feature" ]
 body:
   - type: textarea
@@ -9,7 +9,7 @@ body:
     attributes:
       label: Feature request
       description: |
-        A clear and concise description of the feature proposal. Please provide a link to the paper and code in case they exist.
+        A clear and concise description of the feature proposal. 
 
   - type: textarea
     id: motivation
