@@ -3,7 +3,13 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
-from infinity_emb.primitives import Device, Dtype, InferenceEngine, PoolingMethod, EmbeddingDtype
+from infinity_emb.primitives import (
+    Device,
+    Dtype,
+    EmbeddingDtype,
+    InferenceEngine,
+    PoolingMethod,
+)
 
 # if python>=3.10 use kw_only
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
@@ -56,6 +62,10 @@ class EngineArgs:
         if isinstance(self.dtype, str):
             object.__setattr__(self, "dtype", Dtype[self.dtype])
         if isinstance(self.pooling_method, str):
-            object.__setattr__(self, "pooling_method", PoolingMethod[self.pooling_method])
+            object.__setattr__(
+                self, "pooling_method", PoolingMethod[self.pooling_method]
+            )
         if isinstance(self.embedding_dtype, str):
-            object.__setattr__(self, "embedding_dtype", EmbeddingDtype[self.embedding_dtype])
+            object.__setattr__(
+                self, "embedding_dtype", EmbeddingDtype[self.embedding_dtype]
+            )
