@@ -63,8 +63,8 @@ class EmbeddingDtype(enum.Enum):
     binary: str = "binary"
 
 
-_dtypes: Dict[str, str] = {e.name: e.name for e in EmbeddingDtype}
-EmbeddingDtypeTypeHint = enum.Enum("DtypeTypeHint", _dtypes)  # type: ignore
+_dtypes_emb: Dict[str, str] = {e.name: e.name for e in EmbeddingDtype}
+EmbeddingDtypeTypeHint = enum.Enum("DtypeTypeHint", _dtypes_emb)  # type: ignore
 
 
 class PoolingMethod(enum.Enum):
