@@ -67,7 +67,7 @@ async def main():
 asyncio.run(main())
 ```
 
-You can launch the 
+When using the CLI, use this command to launch rerankers:
 ```bash
 infinity_emb --model-name-or-path BAAI/bge-reranker-base
 ```
