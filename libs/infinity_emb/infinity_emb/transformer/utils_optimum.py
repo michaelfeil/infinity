@@ -2,24 +2,24 @@ from pathlib import Path
 from typing import Optional, Union
 
 import numpy as np
+from huggingface_hub import HfApi, HfFolder  # type: ignore
+from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
 
+from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TORCH
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device
 
-try:
-    from huggingface_hub import HfApi, HfFolder  # type: ignore
-    from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
-    from optimum.onnxruntime import ORTOptimizer  # type: ignore
-    from optimum.onnxruntime.configuration import OptimizationConfig  # type: ignore
-except ImportError:
-    pass
-except RuntimeError:
-    pass
+if CHECK_ONNXRUNTIME.is_available:
+    try:
+        from optimum.onnxruntime import ORTOptimizer  # type: ignore
+        from optimum.onnxruntime.configuration import OptimizationConfig  # type: ignore
+    except ImportError:
+        pass
+    except RuntimeError:
+        pass
 
-try:
+if CHECK_TORCH.is_available:
     import torch
-except ImportError:
-    torch = None  # type: ignore
 
 
 def mean_pooling(last_hidden_states: np.ndarray, attention_mask: np.ndarray):
@@ -55,7 +55,7 @@ def device_to_onnx(device: Device) -> str:
     elif device == Device.tensorrt:
         return "TensorrtExecutionProvider"
     elif device is None or device == Device.auto:
-        if torch is not None and torch.cuda.is_available():
+        if CHECK_TORCH.is_available and torch.cuda.is_available():
             return "CUDAExecutionProvider"
         else:
             return "CPUExecutionProvider"
@@ -71,6 +71,7 @@ def optimize_model(
     optimize_model=False,
     revision: Optional[str] = None,
 ):
+    CHECK_ONNXRUNTIME.mark_required()
     path_folder = (
         Path(model_name_or_path)
         if Path(model_name_or_path).exists()

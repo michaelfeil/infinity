@@ -5,6 +5,7 @@ from typing import Dict, List, Union
 
 import numpy as np
 
+from infinity_emb._optional_imports import CHECK_OPTIMUM, CHECK_TORCH
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
@@ -14,14 +15,11 @@ from infinity_emb.transformer.utils_optimum import (
     normalize,
 )
 
-try:
+if CHECK_OPTIMUM.is_available and CHECK_TORCH.is_available:
     import torch
     from optimum.neuron import NeuronModelForFeatureExtraction  # type: ignore
     from transformers import AutoConfig, AutoTokenizer  # type: ignore
 
-    OPTIMUM_AVAILABLE = True
-except (ImportError, RuntimeError):
-    OPTIMUM_AVAILABLE = False
 
 __all__ = [
     "NeuronOptimumEmbedder",
@@ -76,10 +74,7 @@ def pad_up_to_size(desired_max_bs, input_ids):
 
 class NeuronOptimumEmbedder(BaseEmbedder):
     def __init__(self, *, engine_args: EngineArgs):
-        if not OPTIMUM_AVAILABLE:
-            raise ImportError(
-                "optimum.neuron is not installed." "run this somewhere with neuron"
-            )
+        CHECK_OPTIMUM.mark_required()
 
         self.pooling = (
             mean_pooling

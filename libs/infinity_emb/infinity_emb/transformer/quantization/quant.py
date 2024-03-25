@@ -31,10 +31,6 @@ if TYPE_CHECKING:
     from torch import Tensor
 else:
     Tensor = None
-try:
-    from sentencepiece import SentencePieceProcessor
-except ImportError:
-    pass
 
 # from infinity_emb.transformer.quantization.GPTQ import GenericGPTQRunner, InputRecorder
 # from infinity_emb.transformer.quantization.eval import get_task_dict, evaluate, lm_eval
@@ -725,6 +721,8 @@ def quantize(
         )
 
     elif mode == "int4-gptq":
+        from sentencepiece import SentencePieceProcessor  # type: ignore
+
         logger.info(
             "Quantizing model weights for int4 weight-only affine per-channel groupwise quantization using GPTQ..."
         )
