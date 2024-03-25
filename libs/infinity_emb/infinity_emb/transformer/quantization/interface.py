@@ -28,13 +28,11 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
             dtype=torch.qint8,
         )
     elif device == Device.cuda and dtype in [Dtype.int8, Dtype.auto]:
+        logger.info(f"using quantize() for {dtype.value}")
         quant_handler, state_dict = quantize(model, mode=dtype.value)
         model = quant_handler.convert_for_runtime()
         model.load_state_dict(state_dict)
         model.to(device_orig)
-        # features1 = self.tokenize(["hello world"])
-        # features1 = util.batch_to_device(features1, self.device)
-        # model.forward(**features1)
     elif device == Device.cuda and dtype == Dtype.fp8:
         try:
             from float8_experimental.float8_dynamic_linear import (  # type: ignore
