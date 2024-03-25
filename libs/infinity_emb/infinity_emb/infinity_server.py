@@ -19,13 +19,9 @@ from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.primitives import (
     Device,
-    DeviceTypeHint,
     Dtype,
-    DtypeTypeHint,
     InferenceEngine,
-    InferenceEngineTypeHint,
     PoolingMethod,
-    PoolingMethodTypeHint,
 )
 
 
@@ -210,13 +206,13 @@ def _start_uvicorn(
     host: str = "0.0.0.0",
     port: int = 7997,
     log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
-    engine: InferenceEngineTypeHint = InferenceEngineTypeHint.torch.name,  # type: ignore # noqa
+    engine: InferenceEngine.names_enum() = InferenceEngine.names_enum().torch.name,  # type: ignore # noqa
     model_warmup: bool = True,
     vector_disk_cache: bool = INFINITY_CACHE_VECTORS,
-    device: DeviceTypeHint = DeviceTypeHint.auto.name,  # type: ignore
+    device: Device.names_enum() = Device.names_enum().auto.name,  # type: ignore
     lengths_via_tokenize: bool = False,
-    dtype: DtypeTypeHint = DtypeTypeHint.auto.name,  # type: ignore
-    pooling_method: PoolingMethodTypeHint = PoolingMethodTypeHint.auto.name,  # type: ignore
+    dtype: Dtype.names_enum() = Dtype.names_enum().auto.name,  # type: ignore
+    pooling_method: PoolingMethod.names_enum() = PoolingMethod.names_enum().auto.name,  # type: ignore
     compile: bool = False,
     bettertransformer: bool = True,
 ):
