@@ -9,7 +9,10 @@ import enum
 import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Literal, Optional, Tuple, TypedDict, Union
+
+# cached_porperty
+from functools import lru_cache
+from typing import Any, List, Literal, Optional, Tuple, TypedDict, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -17,6 +20,19 @@ import numpy.typing as npt
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
 
 EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
+
+
+class EnumType(enum.Enum):
+    @classmethod
+    @lru_cache
+    def names_enum(cls) -> enum.Enum:
+        """returns an enum with the same names as the class.
+
+        Allows for type hinting of the enum names.
+        """
+        return enum.Enum(
+            cls.__name__ + "__names", {k: k for k in cls.__members__.keys()}
+        )
 
 
 class ClassifyReturnElement(TypedDict):
@@ -27,14 +43,17 @@ class ClassifyReturnElement(TypedDict):
 ClassifyReturnType = List[ClassifyReturnElement]
 
 
-class InferenceEngine(enum.Enum):
+class InferenceEngine(EnumType):
     torch = "torch"
     ctranslate2 = "ctranslate2"
     optimum = "optimum"
     debugengine = "dummytransformer"
 
 
-class Device(enum.Enum):
+# InferenceEngineTypeHint = InferenceEngine.names_enum()
+
+
+class Device(EnumType):
     cpu = "cpu"
     cuda = "cuda"
     mps = "mps"
@@ -42,39 +61,35 @@ class Device(enum.Enum):
     auto = None
 
 
-_devices: Dict[str, str] = {e.name: e.name for e in Device}
-DeviceTypeHint = enum.Enum("DeviceTypeHint", _devices)  # type: ignore
+# DeviceTypeHint = Device.names_enum()
 
 
-class Dtype(enum.Enum):
+class Dtype(EnumType):
     float16: str = "float16"
     int8: str = "int8"
     fp8: str = "fp8"
     auto: str = "auto"
 
 
-_dtypes: Dict[str, str] = {e.name: e.name for e in Dtype}
-DtypeTypeHint = enum.Enum("DtypeTypeHint", _dtypes)  # type: ignore
+# DtypeTypeHint = Dtype.names_enum()
 
 
-class EmbeddingDtype(enum.Enum):
+class EmbeddingDtype(EnumType):
     float32: str = "float32"
     int8: str = "int8"
     binary: str = "binary"
 
 
-_dtypes_emb: Dict[str, str] = {e.name: e.name for e in EmbeddingDtype}
-EmbeddingDtypeTypeHint = enum.Enum("DtypeTypeHint", _dtypes_emb)  # type: ignore
+# EmbeddingDtypeTypeHint = EmbeddingDtype.names_enum()
 
 
-class PoolingMethod(enum.Enum):
+class PoolingMethod(EnumType):
     mean: str = "mean"
     cls: str = "cls"
     auto: str = "auto"
 
 
-_pm: Dict[str, str] = {e.name: e.name for e in PoolingMethod}
-PoolingMethodTypeHint = enum.Enum("PoolingMethodTypeHint", _pm)  # type: ignore
+# PoolingMethodTypeHint = PoolingMethod.names_enum()
 
 
 @dataclass
@@ -116,6 +131,7 @@ class PredictSingle(EmbeddingSingle):
     pass
 
 
+# TODO: make PipleineItem with Register hook
 PipelineItem = Union[EmbeddingSingle, ReRankSingle, PredictSingle]
 
 
@@ -222,6 +238,3 @@ class ModelNotDeployedError(Exception):
 
 
 ModelCapabilites = Literal["embed", "rerank", "classify"]
-
-_types: Dict[str, str] = {e.name: e.name for e in InferenceEngine}
-InferenceEngineTypeHint = enum.Enum("InferenceEngineTypeHint", _types)  # type: ignore

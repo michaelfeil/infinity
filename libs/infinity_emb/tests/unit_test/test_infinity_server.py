@@ -9,10 +9,10 @@ from fastapi import FastAPI
 from infinity_emb.args import EngineArgs
 from infinity_emb.infinity_server import (
     UVICORN_LOG_LEVELS,
-    DeviceTypeHint,
-    DtypeTypeHint,
-    InferenceEngineTypeHint,
-    PoolingMethodTypeHint,
+    Device,
+    Dtype,
+    InferenceEngine,
+    PoolingMethod,
     _start_uvicorn,
     cli,
     create_server,
@@ -47,9 +47,9 @@ def test_patched_create_uvicorn(mocker):
     mocker.patch("uvicorn.run")
     _start_uvicorn(
         log_level=UVICORN_LOG_LEVELS.debug,  # type: ignore
-        engine=InferenceEngineTypeHint.torch,
-        device=DeviceTypeHint.auto,
-        dtype=DtypeTypeHint.auto,
-        pooling_method=PoolingMethodTypeHint.auto,
+        engine=InferenceEngine.names_enum().torch,
+        device=Device.names_enum().auto,
+        dtype=Dtype.names_enum().auto,
+        pooling_method=PoolingMethod.names_enum().auto,
     )
     assert uvicorn.run.call_count == 1
