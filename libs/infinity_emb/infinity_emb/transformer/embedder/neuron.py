@@ -5,7 +5,7 @@ from typing import Dict, List, Union
 
 import numpy as np
 
-from infinity_emb._optional_imports import CHECK_TORCH, CHECK_OPTIMUM_NEURON
+from infinity_emb._optional_imports import CHECK_OPTIMUM_NEURON, CHECK_TORCH
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder

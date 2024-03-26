@@ -2,6 +2,7 @@ import time
 from typing import Optional
 
 import infinity_emb
+from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
 from infinity_emb.args import EngineArgs
 from infinity_emb.engine import AsyncEmbeddingEngine
 from infinity_emb.fastapi_schemas import docs, errors
@@ -29,6 +30,7 @@ def create_server(
     engine_args: EngineArgs,
     url_prefix: str = "",
     doc_extra: dict = {},
+    redirect_slash: str = "/docs",
 ):
     """
     creates the FastAPI App
@@ -79,6 +81,16 @@ def create_server(
         returns always the current time
         """
         return time.time()
+
+    if redirect_slash:
+        from fastapi.responses import RedirectResponse
+
+        assert redirect_slash.startswith("/"), "redirect_slash must start with /"
+
+        @app.get("/")
+        async def redirect():
+            response = RedirectResponse(url=redirect_slash)
+            return response
 
     @app.get(
         f"{url_prefix}/models",
@@ -205,6 +217,7 @@ def _start_uvicorn(
     url_prefix: str = "",
     host: str = "0.0.0.0",
     port: int = 7997,
+    redirect_slash: str = "/docs",
     log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
     engine: InferenceEngine.names_enum() = InferenceEngine.names_enum().torch.name,  # type: ignore # noqa
     model_warmup: bool = True,
@@ -228,6 +241,7 @@ def _start_uvicorn(
         url_prefix, str: prefix for api. typically "".
         host, str: host-url, typically either "0.0.0.0" or "127.0.0.1".
         port, int: port that you want to expose.
+        redirect_slash, str: redirect to of GET "/". Defaults to "/docs". Empty string to disable.
         log_level: logging level.
             For high performance, use "info" or higher levels. Defaults to "info".
         engine, str: framework that should perform inference.
@@ -241,7 +255,9 @@ def _start_uvicorn(
         pooling_method, PoolingMethod: pooling method to use. Defaults to PoolingMethod.auto or "auto"
         compile, bool: compile model for faster inference. Defaults to False.
         use_bettertransformer, bool: use bettertransformer. Defaults to True.
+
     """
+    CHECK_UVICORN.mark_required()
     import uvicorn
 
     logger.setLevel(log_level.to_int())
@@ -276,6 +292,7 @@ def _start_uvicorn(
 
 def cli():
     """fires the command line using Python `typer.run()`"""
+    CHECK_TYPER.mark_required()
     import typer
 
     typer.run(_start_uvicorn)
