@@ -831,3 +831,19 @@ font, html { color: #bfbfbf; }
         linear-gradient(270deg, #696969 30%, rgba(0, 0, 0, 0) 31%);
     background-color: #b6b6b6;
 }
+
+.json-schema-2020-12__title {
+    color: #e9ebfc !important;
+}
+
+.json-schema-2020-12__attribute {
+    color: #c2c2e0 !important;
+}
+
+.swagger-ui .opblock-control-arrow svg {
+    fill: #c2c2e0;
+}
+
+.json-schema-2020-12-accordion__icon svg {
+    fill: #c2c2e0;
+}
