@@ -24,7 +24,7 @@ if CHECK_SENTENCE_TRANSFORMERS.is_available:
     from sentence_transformers import SentenceTransformer, util  # type: ignore
 else:
 
-    class SentenceTransformer:  # type: ignore
+    class SentenceTransformer:  # type: ignore[no-redef]
         pass
 
 
@@ -102,18 +102,18 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self, out_features: Tensor, normalize_embeddings: bool = True
     ) -> EmbeddingReturnType:
         with torch.inference_mode():
-            embeddings = out_features.detach().cpu().to(torch.float32)
+            embeddings: Tensor = out_features.detach().cpu().to(torch.float32)
             if normalize_embeddings:
                 embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
 
-            embeddings: np.ndarray = embeddings.numpy()  # type: ignore
+            embeddings_np: np.ndarray = embeddings.numpy()
 
             if self.embedding_dtype.value != "float32":
                 raise NotImplementedError(
                     f"EmbeddingDtype for {self.embedding_dtype} not implemented"
                 )
 
-        return embeddings  # type: ignore
+        return embeddings_np
 
     def tokenize_lengths(self, sentences: List[str]) -> List[int]:
         tks = self._infinity_tokenizer.batch_encode_plus(

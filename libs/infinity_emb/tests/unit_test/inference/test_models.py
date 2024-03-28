@@ -8,9 +8,9 @@ from typing import List
 
 import pytest
 import torch
-from sentence_transformers import InputExample  # type: ignore
-from sentence_transformers.evaluation import (  # type: ignore
-    EmbeddingSimilarityEvaluator,  # type: ignore
+from sentence_transformers import InputExample  # type: ignore[import-untyped]
+from sentence_transformers.evaluation import (  # type: ignore[import-untyped]
+    EmbeddingSimilarityEvaluator,
 )
 
 from infinity_emb.args import EngineArgs

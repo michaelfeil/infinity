@@ -2,14 +2,14 @@ import pytest
 import torch
 from asgi_lifespan import LifespanManager
 from httpx import AsyncClient
-from transformers import pipeline  # type: ignore
+from transformers import pipeline  # type: ignore[import-untyped]
 
 from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device, InferenceEngine
 
 PREFIX = "/v1_ct2"
-MODEL: str = pytest.DEFAULT_RERANKER_MODEL  # type: ignore
+MODEL: str = pytest.DEFAULT_RERANKER_MODEL  # type: ignore[assignment]
 batch_size = 32 if torch.cuda.is_available() else 8
 
 app = create_server(

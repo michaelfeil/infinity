@@ -5,7 +5,9 @@ from pathlib import Path
 from typing import Union
 
 import numpy as np
-from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
+from huggingface_hub.constants import (  # type: ignore[import-untyped]
+    HUGGINGFACE_HUB_CACHE,
+)
 
 from infinity_emb._optional_imports import (
     CHECK_CTRANSLATE2,
@@ -22,7 +24,7 @@ if CHECK_TORCH.is_available:
     from torch.nn import Module
 else:
 
-    class Module:  # type: ignore
+    class Module:  # type: ignore[no-redef]
         pass
 
 

@@ -14,19 +14,17 @@ from infinity_emb.inference.queue import CustomFIFOQueue, ResultKVStoreFuture
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
+    AbstractSingle,
     ClassifyReturnType,
-    EmbeddingInner,
     EmbeddingReturnType,
     EmbeddingSingle,
     ModelCapabilites,
     ModelNotDeployedError,
     OverloadStatus,
-    PipelineItem,
-    PredictInner,
     PredictSingle,
     PrioritizedQueueItem,
-    ReRankInner,
     ReRankSingle,
+    get_inner_item,
 )
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
@@ -113,7 +111,7 @@ class BatchHandler:
                 f"options are {self.model.capabilities} inherited "
                 f"from model_class={self.model.__class__}"
             )
-        input_sentences = [EmbeddingSingle(s) for s in sentences]
+        input_sentences = [EmbeddingSingle(sentence=s) for s in sentences]
 
         embeddings, usage = await self._schedule(input_sentences)
         return embeddings, usage
@@ -184,26 +182,18 @@ class BatchHandler:
         return classifications, usage
 
     async def _schedule(
-        self, list_queueitem: Sequence[PipelineItem]
+        self, list_queueitem: Sequence[AbstractSingle]
     ) -> Tuple[List[Any], int]:
         prios, usage = await self._get_prios_usage(list_queueitem)
         new_prioqueue: List[PrioritizedQueueItem] = []
 
-        if isinstance(list_queueitem[0], EmbeddingSingle):
-            inner_item = EmbeddingInner  # type: ignore
-        elif isinstance(list_queueitem[0], ReRankSingle):
-            inner_item = ReRankInner  # type: ignore
-        elif isinstance(list_queueitem[0], PredictSingle):
-            inner_item = PredictInner  # type: ignore
-        else:
-            raise ValueError(f"Unknown type of list_queueitem, {list_queueitem[0]}")
+        inner_item = get_inner_item(type(list_queueitem[0]))
 
         for re, p in zip(list_queueitem, prios):
+            inner = inner_item(content=re, future=self.loop.create_future())  # type: ignore
             item = PrioritizedQueueItem(
                 priority=p,
-                item=inner_item(
-                    content=re, future=self.loop.create_future()  # type: ignore
-                ),
+                item=inner,
             )
             new_prioqueue.append(item)
         await self._queue_prio.extend(new_prioqueue)
@@ -232,12 +222,12 @@ class BatchHandler:
         )
 
     async def _get_prios_usage(
-        self, items: Sequence[PipelineItem]
+        self, items: Sequence[AbstractSingle]
     ) -> Tuple[List[int], int]:
         """get priorities and usage
 
         Args:
-            items (List[PipelineItem]): List of items that support a fn with signature
+            items (List[AbstractSingle]): List of items that support a fn with signature
                 `.str_repr() -> str` to get the string representation of the item.
 
         Returns:

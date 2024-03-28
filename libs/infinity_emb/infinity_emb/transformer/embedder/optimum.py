@@ -17,8 +17,10 @@ from infinity_emb.transformer.utils_optimum import (
 )
 
 try:
-    from optimum.onnxruntime import ORTModelForFeatureExtraction  # type: ignore
-    from transformers import AutoConfig, AutoTokenizer  # type: ignore
+    from optimum.onnxruntime import (  # type: ignore[import-untyped]
+        ORTModelForFeatureExtraction,
+    )
+    from transformers import AutoConfig, AutoTokenizer  # type: ignore[import-untyped]
 
     OPTIMUM_AVAILABLE = True
 except (ImportError, RuntimeError):

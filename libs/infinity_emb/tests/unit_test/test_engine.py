@@ -3,7 +3,7 @@ import sys
 import numpy as np
 import pytest
 import torch
-from sentence_transformers import CrossEncoder  # type: ignore
+from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
 
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
 from infinity_emb.primitives import InferenceEngine, ModelNotDeployedError
