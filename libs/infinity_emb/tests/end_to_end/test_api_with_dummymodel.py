@@ -43,8 +43,9 @@ async def test_model_route(client):
     assert isinstance(rdata["data"][0].get("stats"), dict)
 
     # ready test
-    response = await client.get("/ready")
-    assert response.status_code == 200
+    respnse_health = await client.get("/health")
+    assert respnse_health.status_code == 200
+    assert "unix" in respnse_health.json()
 
 
 @pytest.mark.anyio
