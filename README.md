@@ -61,7 +61,7 @@ Make sure you mount your accelerator, i.e. install nvidia-docker and activate wi
 port=7997
 docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path BAAI/bge-small-en-v1.5 --port $port
 ```
-The download path at runtime, can be controlled via the environment variable `HF_HOME`.
+The download path at runtime can be controlled via the environment variable `HF_HOME`.
 
 ### Launch it via the Python API
 

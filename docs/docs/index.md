@@ -38,7 +38,7 @@ model=BAAI/bge-small-en-v1.5
 port=7997
 docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
 ```
-The download path at runtime, can be controlled via the environment variable `HF_HOME`.
+The download path at runtime can be controlled via the environment variable `HF_HOME`.
 
 ### or launch the cli after the pip install
 After your pip install, with your venv activate, you can run the CLI directly.
