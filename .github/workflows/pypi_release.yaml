@@ -66,9 +66,8 @@ jobs:
           - "3.11"
           - "3.12"
         os:
+          # get tag only works on Linux
           - ubuntu-latest
-          - windows-latest
-          - macos-latest
     runs-on: ${{ matrix.os }}
     name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
     steps:
