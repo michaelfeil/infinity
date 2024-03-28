@@ -35,10 +35,10 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
         model.to(device_orig)
     elif device == Device.cuda and dtype == Dtype.fp8:
         try:
-            from float8_experimental.float8_dynamic_linear import (  # type: ignore[import-untyped]
+            from float8_experimental.float8_dynamic_linear import (  # type: ignore
                 Float8DynamicLinear,
             )
-            from float8_experimental.float8_linear_utils import (  # type: ignore[import-untyped]
+            from float8_experimental.float8_linear_utils import (  # type: ignore
                 swap_linear_with_float8_linear,
             )
         except ImportError:
