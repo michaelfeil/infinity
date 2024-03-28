@@ -1,5 +1,5 @@
 import time
-from typing import Optional
+from typing import Dict, Optional
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
@@ -75,12 +75,15 @@ def create_server(
     async def _shutdown():
         await app.model.astop()
 
-    @app.get("/ready")
-    async def _ready() -> float:
+    @app.get("/health")
+    async def _health() -> Dict[str, float]:
         """
-        returns always the current time
+        health check endpoint
+
+        Returns:
+            dict(unix=float): dict with unix time stamp
         """
-        return time.time()
+        return {"unix": time.time()}
 
     if redirect_slash:
         from fastapi.responses import RedirectResponse
