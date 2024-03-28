@@ -284,7 +284,7 @@
 </span><span id="__span-2-2"><a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a><span class="nv">port</span><span class="o">=</span><span class="m">7997</span>
 </span><span id="__span-2-3"><a href="#__codelineno-2-3" id="__codelineno-2-3" name="__codelineno-2-3"></a>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="nv">$port</span>:<span class="nv">$port</span><span class="w"> </span>michaelf34/infinity:latest<span class="w"> </span>--model-name-or-path<span class="w"> </span><span class="nv">$model</span><span class="w"> </span>--port<span class="w"> </span><span class="nv">$port</span>
 </span></code></pre></div>
-The download path at runtime, can be controlled via the environment variable <code>HF_HOME</code>.</p>
+The download path at runtime can be controlled via the environment variable <code>HF_HOME</code>.</p>
 <h3 id="or-launch-the-cli-after-the-pip-install">or launch the cli after the pip install</h3>
 <p>After your pip install, with your venv activate, you can run the CLI directly.
 Check the <code>--help</code> command to get a description for all parameters.</p>
