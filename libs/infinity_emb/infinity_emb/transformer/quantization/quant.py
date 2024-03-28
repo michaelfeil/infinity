@@ -23,7 +23,7 @@ if CHECK_TORCH.is_available:
     from torch.nn import Module
 else:
 
-    class Module:  # type: ignore
+    class Module:  # type: ignore[no-redef]
         pass
 
 
@@ -721,7 +721,7 @@ def quantize(
         )
 
     elif mode == "int4-gptq":
-        from sentencepiece import SentencePieceProcessor  # type: ignore
+        from sentencepiece import SentencePieceProcessor  # type: ignore[import-untyped]
 
         logger.info(
             "Quantizing model weights for int4 weight-only affine per-channel groupwise quantization using GPTQ..."

@@ -34,7 +34,7 @@ if CHECK_PYDANTIC.is_available:
 
 else:
 
-    class BaseModel:  # type: ignore
+    class BaseModel:  # type: ignore[no-redef]
         pass
 
     def Field(*args, **kwargs):  # type: ignore

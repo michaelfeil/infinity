@@ -5,8 +5,8 @@ import timeit
 from functools import partial
 
 import numpy as np
-import requests  # type: ignore
-from sentence_transformers import SentenceTransformer  # type: ignore
+import requests  # type: ignore[import-untyped]
+from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
 
 LIVE_URL = "http://localhost:7997"
 

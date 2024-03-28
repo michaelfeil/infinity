@@ -102,7 +102,8 @@ def create_server(
     )
     async def _models():
         """get models endpoint"""
-        s = app.model.overload_status()  # type: ignore
+        model: AsyncEmbeddingEngine = app.model  # type: ignore
+        s = model.overload_status()
         return dict(
             data=[
                 dict(
@@ -289,6 +290,7 @@ def _start_uvicorn(
         engine_args,
         url_prefix=url_prefix,
         doc_extra=dict(host=host, port=port),
+        redirect_slash=redirect_slash,
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 

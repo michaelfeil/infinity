@@ -49,7 +49,7 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm " * n_tokens] * batch_size
         inp = [
-            EmbeddingInner(content=EmbeddingSingle(s), future=None)  # type: ignore
+            EmbeddingInner(content=EmbeddingSingle(sentence=s), future=None)  # type: ignore
             for s in sample
         ]
         return run_warmup(self, inp)
@@ -69,7 +69,7 @@ class BaseClassifer(BaseTransformer):  # Inherit from ABC(Abstract base class)
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:
         sample = ["warm " * n_tokens] * batch_size
         inp = [
-            PredictInner(content=PredictSingle(s), future=None)  # type: ignore
+            PredictInner(content=PredictSingle(sentence=s), future=None)  # type: ignore
             for s in sample
         ]
         return run_warmup(self, inp)

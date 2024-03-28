@@ -5,7 +5,7 @@ import pytest
 import torch
 from asgi_lifespan import LifespanManager
 from httpx import AsyncClient
-from sentence_transformers import SentenceTransformer  # type: ignore
+from sentence_transformers import SentenceTransformer  # type: ignore[import-untyped]
 
 from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
@@ -15,7 +15,7 @@ from infinity_emb.transformer.embedder.ct2 import (
 )
 
 PREFIX = "/v1_torch"
-MODEL: str = pytest.DEFAULT_BERT_MODEL  # type: ignore
+MODEL: str = pytest.DEFAULT_BERT_MODEL  # type: ignore[assignment]
 
 batch_size = 64 if torch.cuda.is_available() else 8
 

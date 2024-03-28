@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 # cached_porperty
 from functools import lru_cache
-from typing import Any, List, Literal, Optional, Tuple, TypedDict, Union
+from typing import Generic, Literal, Optional, Tuple, Type, TypedDict, TypeVar, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -20,6 +20,16 @@ import numpy.typing as npt
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
 
 EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
+
+
+class ClassifyReturnType(TypedDict):
+    label: str
+    score: float
+
+
+ReRankReturnType = float
+
+UnionReturnType = Union[EmbeddingReturnType, ReRankReturnType, ClassifyReturnType]
 
 
 class EnumType(enum.Enum):
@@ -35,22 +45,11 @@ class EnumType(enum.Enum):
         )
 
 
-class ClassifyReturnElement(TypedDict):
-    label: str
-    score: float
-
-
-ClassifyReturnType = List[ClassifyReturnElement]
-
-
 class InferenceEngine(EnumType):
     torch = "torch"
     ctranslate2 = "ctranslate2"
     optimum = "optimum"
     debugengine = "dummytransformer"
-
-
-# InferenceEngineTypeHint = InferenceEngine.names_enum()
 
 
 class Device(EnumType):
@@ -61,9 +60,6 @@ class Device(EnumType):
     auto = None
 
 
-# DeviceTypeHint = Device.names_enum()
-
-
 class Dtype(EnumType):
     float16: str = "float16"
     int8: str = "int8"
@@ -71,16 +67,10 @@ class Dtype(EnumType):
     auto: str = "auto"
 
 
-# DtypeTypeHint = Dtype.names_enum()
-
-
 class EmbeddingDtype(EnumType):
     float32: str = "float32"
-    int8: str = "int8"
-    binary: str = "binary"
-
-
-# EmbeddingDtypeTypeHint = EmbeddingDtype.names_enum()
+    # int8: str = "int8"
+    # binary: str = "binary"
 
 
 class PoolingMethod(EnumType):
@@ -89,10 +79,7 @@ class PoolingMethod(EnumType):
     auto: str = "auto"
 
 
-# PoolingMethodTypeHint = PoolingMethod.names_enum()
-
-
-@dataclass
+@dataclass(**dataclass_args)
 class AbstractSingle(ABC):
     @abstractmethod
     def str_repr(self) -> str:
@@ -103,7 +90,7 @@ class AbstractSingle(ABC):
         pass
 
 
-@dataclass
+@dataclass(**dataclass_args)
 class EmbeddingSingle(AbstractSingle):
     sentence: str
 
@@ -114,7 +101,7 @@ class EmbeddingSingle(AbstractSingle):
         return self.sentence
 
 
-@dataclass
+@dataclass(**dataclass_args)
 class ReRankSingle(AbstractSingle):
     query: str
     document: str
@@ -126,29 +113,29 @@ class ReRankSingle(AbstractSingle):
         return self.query, self.document
 
 
-@dataclass
+@dataclass(**dataclass_args)
 class PredictSingle(EmbeddingSingle):
     pass
 
 
-# TODO: make PipleineItem with Register hook
-PipelineItem = Union[EmbeddingSingle, ReRankSingle, PredictSingle]
+AbstractInnerType = TypeVar("AbstractInnerType")
 
 
-@dataclass(order=True)
-class AbstractInner(ABC):
+@dataclass(order=True, **dataclass_args)
+class AbstractInner(ABC, Generic[AbstractInnerType]):
+    content: AbstractSingle
     future: asyncio.Future
 
     @abstractmethod
-    async def complete(self, result: Any) -> None:
+    async def complete(self, result: AbstractInnerType) -> None:
         pass
 
     @abstractmethod
-    async def get_result(self) -> Any:
+    async def get_result(self) -> AbstractInnerType:
         pass
 
 
-@dataclass(order=True)
+@dataclass(order=True, **dataclass_args)
 class EmbeddingInner(AbstractInner):
     content: EmbeddingSingle
     embedding: Optional[EmbeddingReturnType] = None
@@ -168,7 +155,8 @@ class EmbeddingInner(AbstractInner):
     async def get_result(self) -> EmbeddingReturnType:
         """waits for future to complete and returns result"""
         await self.future
-        return self.embedding  # type: ignore
+        assert self.embedding is not None
+        return self.embedding
 
 
 @dataclass(order=True)
@@ -191,7 +179,8 @@ class ReRankInner(AbstractInner):
     async def get_result(self) -> float:
         """waits for future to complete and returns result"""
         await self.future
-        return self.score  # type: ignore
+        assert self.score is not None
+        return self.score
 
 
 @dataclass(order=True)
@@ -214,10 +203,24 @@ class PredictInner(AbstractInner):
     async def get_result(self) -> ClassifyReturnType:
         """waits for future to complete and returns result"""
         await self.future
-        return self.class_encoding  # type: ignore
+        assert self.class_encoding is not None
+        return self.class_encoding
 
 
 QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner]
+
+_type_to_inner_item_map = {
+    EmbeddingSingle: EmbeddingInner,
+    ReRankSingle: ReRankInner,
+    PredictSingle: PredictInner,
+}
+
+
+def get_inner_item(single_type: Type[AbstractSingle]) -> Type[QueueItemInner]:
+    if single_type not in _type_to_inner_item_map:
+        raise ValueError(f"Unknown type of input_single_item, {single_type}")
+
+    return _type_to_inner_item_map[single_type]  # type: ignore
 
 
 @dataclass(order=True)

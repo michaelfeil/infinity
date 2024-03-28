@@ -9,11 +9,11 @@ from infinity_emb.transformer.abstract import BaseCrossEncoder
 
 if CHECK_TORCH.is_available and CHECK_SENTENCE_TRANSFORMERS.is_available:
     import torch
-    from sentence_transformers import CrossEncoder  # type: ignore
+    from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
     from torch import Tensor
 else:
 
-    class CrossEncoder:  # type: ignore
+    class CrossEncoder:  # type: ignore[no-redef]
         pass
 
 

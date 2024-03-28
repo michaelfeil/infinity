@@ -11,7 +11,7 @@ from infinity_emb.log_handler import logger
 from infinity_emb.primitives import EmbeddingReturnType, QueueItemInner
 
 if CHECK_DISKCACHE.is_available:
-    import diskcache as dc  # type: ignore
+    import diskcache as dc  # type: ignore[import-untyped]
 
 INFINITY_CACHE_VECTORS = (
     bool(os.environ.get("INFINITY_CACHE_VECTORS", False))

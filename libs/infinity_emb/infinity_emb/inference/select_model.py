@@ -25,7 +25,7 @@ def get_engine_type_from_config(
         logger.debug("model is a directory, opening config.json")
         config_path = Path(engine_args.model_name_or_path) / "config.json"
     else:
-        from huggingface_hub import hf_hub_download  # type: ignore
+        from huggingface_hub import hf_hub_download  # type: ignore[import-untyped]
 
         config_path = hf_hub_download(
             engine_args.model_name_or_path,

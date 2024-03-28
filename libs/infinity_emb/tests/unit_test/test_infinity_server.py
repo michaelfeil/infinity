@@ -46,7 +46,7 @@ def test_create_server():
 def test_patched_create_uvicorn(mocker):
     mocker.patch("uvicorn.run")
     _start_uvicorn(
-        log_level=UVICORN_LOG_LEVELS.debug,  # type: ignore
+        log_level=UVICORN_LOG_LEVELS.debug,  # type: ignore[arg-type]
         engine=InferenceEngine.names_enum().torch,
         device=Device.names_enum().auto,
         dtype=Dtype.names_enum().auto,

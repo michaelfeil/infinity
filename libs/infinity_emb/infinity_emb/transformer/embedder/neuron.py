@@ -18,7 +18,7 @@ from infinity_emb.transformer.utils_optimum import (
 if CHECK_OPTIMUM_NEURON.is_available and CHECK_TORCH.is_available:
     import torch
     from optimum.neuron import NeuronModelForFeatureExtraction  # type: ignore
-    from transformers import AutoConfig, AutoTokenizer  # type: ignore
+    from transformers import AutoConfig, AutoTokenizer  # type: ignore[import-untyped]
 
 
 __all__ = [
