@@ -53,7 +53,7 @@ def create_server(
     instrumentator = Instrumentator().instrument(app)
     app.add_exception_handler(errors.OpenAIException, errors.openai_exception_handler)
 
-    model_name_response_name = "".join(engine_args.model_name_or_path.split("/")[-2:])
+    MODEL_RESPONSE_NAME = "/".join(engine_args.model_name_or_path.split("/")[-2:])
 
     @app.on_event("startup")
     async def _startup():
@@ -107,7 +107,7 @@ def create_server(
         return dict(
             data=[
                 dict(
-                    id=engine_args.model_name_or_path,
+                    id=MODEL_RESPONSE_NAME,
                     stats=dict(
                         queue_fraction=s.queue_fraction,
                         queue_absolute=s.queue_absolute,
@@ -115,6 +115,7 @@ def create_server(
                         batch_size=engine_args.batch_size,
                     ),
                     backend=engine_args.engine.name,
+                    device=engine_args.device.name,
                 )
             ]
         )
@@ -151,7 +152,7 @@ def create_server(
             logger.debug("[✅] Done in %s ms", duration)
 
             res = list_embeddings_to_response(
-                embeddings=embedding, model=model_name_response_name, usage=usage
+                embeddings=embedding, model=MODEL_RESPONSE_NAME, usage=usage
             )
 
             return res
@@ -199,7 +200,7 @@ def create_server(
             res = to_rerank_response(
                 scores=scores,
                 documents=docs,
-                model=model_name_response_name,
+                model=MODEL_RESPONSE_NAME,
                 usage=usage,
             )
 
