@@ -2,37 +2,37 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://michaelfeil.eu/infinity/latest/</loc>
-         <lastmod>2024-03-22</lastmod>
+         <lastmod>2024-03-28</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/latest/benchmarking/</loc>
-         <lastmod>2024-03-22</lastmod>
+         <lastmod>2024-03-28</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/latest/contribution/</loc>
-         <lastmod>2024-03-22</lastmod>
+         <lastmod>2024-03-28</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/latest/deploy/</loc>
-         <lastmod>2024-03-22</lastmod>
+         <lastmod>2024-03-28</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/latest/integrations/</loc>
-         <lastmod>2024-03-22</lastmod>
+         <lastmod>2024-03-28</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/latest/python_engine/</loc>
-         <lastmod>2024-03-22</lastmod>
+         <lastmod>2024-03-28</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/latest/swagger_ui/</loc>
-         <lastmod>2024-03-22</lastmod>
+         <lastmod>2024-03-28</lastmod>
          <changefreq>daily</changefreq>
     </url>
 </urlset>
