@@ -42,7 +42,6 @@ class EngineArgs:
     """
 
     model_name_or_path: str = "michaelfeil/bge-small-en-v1.5"
-    served_model_name: str = None
     batch_size: int = 32
     revision: Optional[str] = None
     trust_remote_code: bool = True
@@ -56,6 +55,7 @@ class EngineArgs:
     pooling_method: PoolingMethod = PoolingMethod.auto
     lengths_via_tokenize: bool = False
     embedding_dtype: EmbeddingDtype = EmbeddingDtype.float32
+    served_model_name: str = None  # type: ignore
 
     def __post_init__(self):
         # convert the following strings to enums

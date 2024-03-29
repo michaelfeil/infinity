@@ -273,7 +273,6 @@ def _start_uvicorn(
 
     engine_args = EngineArgs(
         model_name_or_path=model_name_or_path,
-        served_model_name=served_model_name,
         batch_size=batch_size,
         revision=revision,
         trust_remote_code=trust_remote_code,
@@ -286,6 +285,7 @@ def _start_uvicorn(
         pooling_method=PoolingMethod[pooling_method.value],  # type: ignore
         compile=compile,
         bettertransformer=bettertransformer,
+        served_model_name=served_model_name,  # type: ignore
     )
 
     app = create_server(
