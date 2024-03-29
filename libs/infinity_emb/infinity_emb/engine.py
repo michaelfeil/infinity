@@ -1,5 +1,5 @@
 from dataclasses import asdict
-from typing import Optional, Set, Tuple
+from typing import Optional, Set
 
 from infinity_emb.args import EngineArgs
 
@@ -102,7 +102,7 @@ class AsyncEmbeddingEngine:
 
     async def embed(
         self, sentences: list[str]
-    ) -> Tuple[list[EmbeddingReturnType], int]:
+    ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple sentences
 
         Args:
@@ -125,7 +125,7 @@ class AsyncEmbeddingEngine:
 
     async def rerank(
         self, *, query: str, docs: list[str], raw_scores: bool = False
-    ) -> Tuple[list[float], int]:
+    ) -> tuple[list[float], int]:
         """rerank multiple sentences
 
         Args:
@@ -151,7 +151,7 @@ class AsyncEmbeddingEngine:
 
     async def classify(
         self, *, sentences: list[str], raw_scores: bool = False
-    ) -> Tuple[list[ClassifyReturnType], int]:
+    ) -> tuple[list[ClassifyReturnType], int]:
         """classify multiple sentences
 
         Args:

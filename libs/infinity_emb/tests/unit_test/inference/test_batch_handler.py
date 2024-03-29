@@ -3,7 +3,6 @@ import copy
 import random
 import sys
 import time
-from typing import Tuple
 
 import numpy as np
 import pytest
@@ -27,7 +26,7 @@ MODEL_NAME: str = pytest.DEFAULT_BERT_MODEL  # type: ignore[assignment]
     sys.version_info >= (3, 12) and sys.platform in ["win32", "darwin"],
     reason="windows and macos are not stable with python3.12",
 )
-async def load_patched_bh() -> Tuple[SentenceTransformerPatched, BatchHandler]:
+async def load_patched_bh() -> tuple[SentenceTransformerPatched, BatchHandler]:
     model = SentenceTransformerPatched(
         engine_args=EngineArgs(
             model_name_or_path=MODEL_NAME,

@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 
 # cached_porperty
 from functools import lru_cache
-from typing import Generic, Literal, Optional, Tuple, Type, TypedDict, TypeVar, Union
+from typing import Generic, Literal, Optional, Type, TypedDict, TypeVar, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -86,7 +86,7 @@ class AbstractSingle(ABC):
         pass
 
     @abstractmethod
-    def to_input(self) -> Union[str, Tuple[str, str]]:
+    def to_input(self) -> Union[str, tuple[str, str]]:
         pass
 
 
@@ -109,7 +109,7 @@ class ReRankSingle(AbstractSingle):
     def str_repr(self) -> str:
         return self.query + self.document
 
-    def to_input(self) -> Tuple[str, str]:
+    def to_input(self) -> tuple[str, str]:
         return self.query, self.document
 
 

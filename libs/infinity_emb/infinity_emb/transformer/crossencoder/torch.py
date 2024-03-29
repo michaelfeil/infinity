@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import copy
-from typing import Tuple
 
 from infinity_emb._optional_imports import CHECK_SENTENCE_TRANSFORMERS, CHECK_TORCH
 from infinity_emb.args import EngineArgs
@@ -66,7 +65,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
             )
             self.model.to(dtype=torch.float16)
 
-    def encode_pre(self, input_tuples: list[Tuple[str, str]]):
+    def encode_pre(self, input_tuples: list[tuple[str, str]]):
         # return input_tuples
         texts = [[t[0].strip(), t[1].strip()] for t in input_tuples]
 

@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, Sequence, Set, Tuple
+from typing import Any, Sequence, Set
 
 import numpy as np
 
@@ -91,7 +91,7 @@ class BatchHandler:
 
     async def embed(
         self, sentences: list[str]
-    ) -> Tuple[list[EmbeddingReturnType], int]:
+    ) -> tuple[list[EmbeddingReturnType], int]:
         """Schedule a sentence to be embedded. Awaits until embedded.
 
         Args:
@@ -118,7 +118,7 @@ class BatchHandler:
 
     async def rerank(
         self, query: str, docs: list[str], raw_scores: bool = False
-    ) -> Tuple[list[float], int]:
+    ) -> tuple[list[float], int]:
         """Schedule a query to be reranked with documents. Awaits until reranked.
 
         Args:
@@ -151,7 +151,7 @@ class BatchHandler:
 
     async def classify(
         self, *, sentences: list[str], raw_scores: bool = True
-    ) -> Tuple[list[ClassifyReturnType], int]:
+    ) -> tuple[list[ClassifyReturnType], int]:
         """Schedule a query to be classified with documents. Awaits until classified.
 
         Args:
@@ -183,7 +183,7 @@ class BatchHandler:
 
     async def _schedule(
         self, list_queueitem: Sequence[AbstractSingle]
-    ) -> Tuple[list[Any], int]:
+    ) -> tuple[list[Any], int]:
         prios, usage = await self._get_prios_usage(list_queueitem)
         new_prioqueue: list[PrioritizedQueueItem] = []
 
@@ -223,7 +223,7 @@ class BatchHandler:
 
     async def _get_prios_usage(
         self, items: Sequence[AbstractSingle]
-    ) -> Tuple[list[int], int]:
+    ) -> tuple[list[int], int]:
         """get priorities and usage
 
         Args:
@@ -231,7 +231,7 @@ class BatchHandler:
                 `.str_repr() -> str` to get the string representation of the item.
 
         Returns:
-            Tuple[list[int], int]: prios, length
+            tuple[list[int], int]: prios, length
         """
         if not self._lengths_via_tokenize:
             return get_lengths_with_tokenize([it.str_repr() for it in items])

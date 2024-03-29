@@ -11,7 +11,7 @@
 import abc
 import time
 from pathlib import Path
-from typing import Union, Tuple, TYPE_CHECKING
+from typing import Union, TYPE_CHECKING
 
 from infinity_emb._optional_imports import CHECK_TORCH
 from infinity_emb.log_handler import logger
@@ -679,7 +679,7 @@ def quantize(
     blocksize: int = 128,
     label: str = "",
     device: str = default_device,
-) -> Tuple[QuantHandler, dict]:
+) -> tuple[QuantHandler, dict]:
     CHECK_TORCH.mark_required()
     logger.warn(
         f"quantization to {mode} mode currently yields incorrect results. Do not use for production."
