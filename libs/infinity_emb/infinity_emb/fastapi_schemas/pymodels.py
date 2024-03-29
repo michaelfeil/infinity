@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Annotated, Any, Dict, Literal, Optional, Union
+from typing import Annotated, Any, Literal, Optional, Union
 from uuid import uuid4
 
 from infinity_emb._optional_imports import CHECK_PYDANTIC
@@ -102,7 +102,7 @@ class ReRankResult(BaseModel):
 
 class ModelInfo(BaseModel):
     id: str
-    stats: Dict[str, Any]
+    stats: dict[str, Any]
     object: Literal["model"] = "model"
     owned_by: Literal["infinity"] = "infinity"
     created: int = int(time.time())  # no default factory

@@ -4,7 +4,6 @@ Tests that the pretrained models produce the correct scores on the STSbenchmark 
 
 import copy
 import sys
-from typing import list
 
 import pytest
 import torch

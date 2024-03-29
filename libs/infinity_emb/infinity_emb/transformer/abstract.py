@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from time import perf_counter
-from typing import Any, Dict, Set, Tuple
+from typing import Any, Set, Tuple
 
 from infinity_emb.primitives import (
     EmbeddingInner,
@@ -63,7 +63,7 @@ class BaseClassifer(BaseTransformer):  # Inherit from ABC(Abstract base class)
         """takes care of the tokenization and feature preparation"""
 
     @abstractmethod
-    def encode_post(self, embedding: OUT_FEATURES) -> Dict[str, float]:
+    def encode_post(self, embedding: OUT_FEATURES) -> dict[str, float]:
         """runs post encoding such as normalization"""
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:

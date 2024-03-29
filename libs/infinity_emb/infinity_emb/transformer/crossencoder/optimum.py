@@ -1,6 +1,6 @@
 import copy
 import os
-from typing import Dict, Tuple
+from typing import Tuple
 
 import numpy as np
 
@@ -53,7 +53,7 @@ class OptimumCrossEncoder(BaseCrossEncoder):
         )
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
 
-    def encode_pre(self, queries_docs: list[Tuple[str, str]]) -> Dict[str, np.ndarray]:
+    def encode_pre(self, queries_docs: list[Tuple[str, str]]) -> dict[str, np.ndarray]:
         encoded = self.tokenizer(
             queries_docs,
             max_length=self.config.max_position_embeddings,
@@ -65,7 +65,7 @@ class OptimumCrossEncoder(BaseCrossEncoder):
         encoded = {k: v.astype(np.int64) for k, v in encoded.items()}
         return encoded
 
-    def encode_core(self, features: Dict[str, np.ndarray]) -> np.ndarray:
+    def encode_core(self, features: dict[str, np.ndarray]) -> np.ndarray:
         outputs = self.model(**features, return_dict=True)
 
         return outputs.logits

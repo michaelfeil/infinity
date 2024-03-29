@@ -1,7 +1,7 @@
 import csv
 import gzip
 import os
-from typing import Tuple, list
+from typing import Tuple
 
 import pytest
 from sentence_transformers import InputExample, util  # type: ignore

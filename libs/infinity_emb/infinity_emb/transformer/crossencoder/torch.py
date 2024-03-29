@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Dict, List, Tuple
+from typing import Tuple
 
 from infinity_emb._optional_imports import CHECK_SENTENCE_TRANSFORMERS, CHECK_TORCH
 from infinity_emb.args import EngineArgs
@@ -66,7 +66,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
             )
             self.model.to(dtype=torch.float16)
 
-    def encode_pre(self, input_tuples: List[Tuple[str, str]]):
+    def encode_pre(self, input_tuples: list[Tuple[str, str]]):
         # return input_tuples
         texts = [[t[0].strip(), t[1].strip()] for t in input_tuples]
 
@@ -75,7 +75,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
         )
         return tokenized
 
-    def encode_core(self, features: Dict[str, Tensor]):
+    def encode_core(self, features: dict[str, Tensor]):
         """
         Computes sentence embeddings
         """
@@ -85,10 +85,10 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
 
         return out_features
 
-    def encode_post(self, out_features) -> List[float]:
+    def encode_post(self, out_features) -> list[float]:
         return out_features.detach().cpu().flatten()
 
-    def tokenize_lengths(self, sentences: List[str]) -> List[int]:
+    def tokenize_lengths(self, sentences: list[str]) -> list[int]:
         tks = self._infinity_tokenizer.batch_encode_plus(
             sentences,
             add_special_tokens=False,

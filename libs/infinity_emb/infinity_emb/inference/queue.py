@@ -1,6 +1,6 @@
 import asyncio
 import threading
-from typing import Dict, Optional, Union
+from typing import Optional, Union
 
 from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.primitives import (
@@ -79,7 +79,7 @@ class CustomFIFOQueue:
 
 class ResultKVStoreFuture:
     def __init__(self, cache: Optional[Cache] = None) -> None:
-        self._kv: Dict[str, EmbeddingReturnType] = {}
+        self._kv: dict[str, EmbeddingReturnType] = {}
         self._cache = cache
 
     def __len__(self):
