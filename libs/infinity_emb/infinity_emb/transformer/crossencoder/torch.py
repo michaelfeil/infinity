@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import copy
 from typing import Dict, List, Tuple
 
@@ -15,6 +17,8 @@ else:
 
     class CrossEncoder:  # type: ignore[no-redef]
         pass
+
+    Tensor = None  # type: ignore
 
 
 from infinity_emb.transformer.acceleration import to_bettertransformer
@@ -75,22 +79,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
         """
         Computes sentence embeddings
         """
-
-        # from torch.utils.data import DataLoader
-        # next_s = next(iter(DataLoader(
-        #     features,
-        #     batch_size=32,
-        #     collate_fn=self.smart_batching_collate_text_only,
-        #     num_workers=0,
-        #     shuffle=False,
-        # )))
         with torch.no_grad():
-            # out_features2 = self.predict(
-            #     features,
-            #     batch_size=32,
-            #     activation_fct=lambda x: x,
-            #     show_progress_bar=False,
-            # )
             features = {k: v.to(self.model.device) for k, v in features.items()}
             out_features = self.model(**features, return_dict=True)["logits"]
 
