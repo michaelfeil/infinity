@@ -1,5 +1,7 @@
 # files just imports external dependencies. Do not import any infinity_emb modules here.
 
+from __future__ import annotations
+
 import importlib.util
 from functools import cached_property
 from typing import Iterable, Optional

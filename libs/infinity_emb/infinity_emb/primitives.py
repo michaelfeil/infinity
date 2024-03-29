@@ -3,7 +3,8 @@ Definition of enums and dataclasses used in the library.
 
 Do not import infinity_emb from this file, as it will cause a circular import.
 """
-# if python>=3.10 use kw_only
+from __future__ import annotations
+
 import asyncio
 import enum
 import sys
@@ -16,6 +17,8 @@ from typing import Generic, Literal, Optional, Type, TypedDict, TypeVar, Union
 
 import numpy as np
 import numpy.typing as npt
+
+# if python>=3.10 use kw_only
 
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
 
