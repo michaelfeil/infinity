@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from time import perf_counter
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Dict, Set, Tuple
 
 from infinity_emb.primitives import (
     EmbeddingInner,
@@ -25,7 +25,7 @@ class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
         """runs plain inference, on cpu/gpu"""
 
     @abstractmethod
-    def tokenize_lengths(self, sentences: List[str]) -> List[int]:
+    def tokenize_lengths(self, sentences: list[str]) -> list[int]:
         """gets the lengths of each sentences according to tokenize/len etc."""
 
     @abstractmethod
@@ -39,7 +39,7 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
     capabilities = {"embed"}
 
     @abstractmethod  # Decorator to define an abstract method
-    def encode_pre(self, sentences: List[str]) -> INPUT_FEATURE:
+    def encode_pre(self, sentences: list[str]) -> INPUT_FEATURE:
         """takes care of the tokenization and feature preparation"""
 
     @abstractmethod
@@ -59,7 +59,7 @@ class BaseClassifer(BaseTransformer):  # Inherit from ABC(Abstract base class)
     capabilities = {"classify"}
 
     @abstractmethod  # Decorator to define an abstract method
-    def encode_pre(self, sentences: List[str]) -> INPUT_FEATURE:
+    def encode_pre(self, sentences: list[str]) -> INPUT_FEATURE:
         """takes care of the tokenization and feature preparation"""
 
     @abstractmethod
@@ -79,11 +79,11 @@ class BaseCrossEncoder(BaseTransformer):  # Inherit from ABC(Abstract base class
     capabilities = {"rerank"}
 
     @abstractmethod  # Decorator to define an abstract method
-    def encode_pre(self, queries_docs: List[Tuple[str, str]]) -> INPUT_FEATURE:
+    def encode_pre(self, queries_docs: list[Tuple[str, str]]) -> INPUT_FEATURE:
         """takes care of the tokenization and feature preparation"""
 
     @abstractmethod
-    def encode_post(self, embedding: OUT_FEATURES) -> List[float]:
+    def encode_post(self, embedding: OUT_FEATURES) -> list[float]:
         """runs post encoding such as normalization"""
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> Tuple[float, float, str]:

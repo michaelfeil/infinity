@@ -1,11 +1,11 @@
 import logging
 import sys
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 logging.getLogger().handlers.clear()
 
-handlers: List[Any] = []
+handlers: list[Any] = []
 try:
     from rich.console import Console
     from rich.logging import RichHandler

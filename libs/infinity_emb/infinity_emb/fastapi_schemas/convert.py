@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Dict, Iterable, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterable, Optional, Union
 
 if TYPE_CHECKING:
     from infinity_emb.primitives import EmbeddingReturnType
@@ -10,7 +10,7 @@ def list_embeddings_to_response(
     embeddings: Iterable[EmbeddingReturnType],
     model: str,
     usage: int,
-) -> Dict[str, Union[str, List[dict], dict]]:
+) -> Dict[str, Union[str, list[dict], dict]]:
     return dict(
         model=model,
         data=[
@@ -26,10 +26,10 @@ def list_embeddings_to_response(
 
 
 def to_rerank_response(
-    scores: List[float],
+    scores: list[float],
     model=str,
     usage=int,
-    documents: Optional[List[str]] = None,
+    documents: Optional[list[str]] = None,
 ) -> Dict[str, Any]:
     if documents is None:
         return dict(

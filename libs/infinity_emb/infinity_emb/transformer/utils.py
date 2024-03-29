@@ -1,7 +1,7 @@
 import os
 from enum import Enum
 from pathlib import Path
-from typing import Callable, List, Tuple
+from typing import Callable, Tuple
 
 from infinity_emb.primitives import InferenceEngine
 from infinity_emb.transformer.classifier.torch import SentenceClassifier
@@ -73,14 +73,14 @@ class PredictEngine(Enum):
 
 
 def length_tokenizer(
-    _sentences: List[str],
-) -> List[int]:
+    _sentences: list[str],
+) -> list[int]:
     return [len(i) for i in _sentences]
 
 
 def get_lengths_with_tokenize(
-    _sentences: List[str], tokenize: Callable = length_tokenizer
-) -> Tuple[List[int], int]:
+    _sentences: list[str], tokenize: Callable = length_tokenizer
+) -> Tuple[list[int], int]:
     _lengths = tokenize(_sentences)
     return _lengths, sum(_lengths)
 

@@ -1,6 +1,6 @@
 import asyncio
 import threading
-from typing import Dict, List, Optional, Union
+from typing import Dict, Optional, Union
 
 from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.primitives import (
@@ -14,21 +14,21 @@ class CustomFIFOQueue:
     def __init__(self) -> None:
         """"""
         self._lock_queue_event = threading.Lock()
-        self._queue: List[PrioritizedQueueItem] = []
+        self._queue: list[PrioritizedQueueItem] = []
         # event that indicates items in queue.
         self._sync_event = threading.Event()
 
     def __len__(self):
         return len(self._queue)
 
-    async def extend(self, items: List[PrioritizedQueueItem]):
+    async def extend(self, items: list[PrioritizedQueueItem]):
         with self._lock_queue_event:
             self._queue.extend(items)
         self._sync_event.set()
 
     def pop_optimal_batches(
         self, size: int, max_n_batches: int = 4, timeout=0.2, **kwargs
-    ) -> Union[List[List[QueueItemInner]], None]:
+    ) -> Union[list[list[QueueItemInner]], None]:
         """
         pop batch `up to size` + `continuous (sorted)` from queue
 
@@ -42,7 +42,7 @@ class CustomFIFOQueue:
 
         returns:
             None: if there is not a single item in self._queue after timeout
-            else: List[EmbeddingInner] with len(1<=size)
+            else: list[EmbeddingInner] with len(1<=size)
         """
         if not self._queue:
             if not self._sync_event.wait(timeout):
@@ -63,10 +63,10 @@ class CustomFIFOQueue:
             # optimal padding per batch
             new_items_l.sort()
 
-        new_items: List[List[QueueItemInner]] = []
+        new_items: list[list[QueueItemInner]] = []
         for i in range(n_batches):
             mini_batch = new_items_l[size * i : size * (i + 1)]
-            mini_batch_e: List[QueueItemInner] = [
+            mini_batch_e: list[QueueItemInner] = [
                 mi.item for mi in mini_batch if not mi.item.future.done()
             ]
             if mini_batch_e:

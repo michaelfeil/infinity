@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Annotated, Any, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, Dict, Literal, Optional, Union
 from uuid import uuid4
 
 from infinity_emb._optional_imports import CHECK_PYDANTIC
@@ -58,7 +58,7 @@ class OpenAIEmbeddingInput(BaseModel):
 
 class _EmbeddingObject(BaseModel):
     object: Literal["embedding"] = "embedding"
-    embedding: List[float]
+    embedding: list[float]
     index: int
 
 
@@ -69,7 +69,7 @@ class _Usage(BaseModel):
 
 class OpenAIEmbeddingResult(BaseModel):
     object: Literal["embedding"] = "embedding"
-    data: List[_EmbeddingObject]
+    data: list[_EmbeddingObject]
     model: str
     usage: _Usage
     id: str = Field(default_factory=lambda: f"infinity-{uuid4()}")
@@ -93,7 +93,7 @@ class _ReRankObject(BaseModel):
 
 class ReRankResult(BaseModel):
     object: Literal["rerank"] = "rerank"
-    data: List[_ReRankObject]
+    data: list[_ReRankObject]
     model: str
     usage: _Usage
     id: str = Field(default_factory=lambda: f"infinity-{uuid4()}")

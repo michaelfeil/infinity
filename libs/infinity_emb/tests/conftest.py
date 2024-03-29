@@ -1,7 +1,7 @@
 import csv
 import gzip
 import os
-from typing import List, Tuple
+from typing import Tuple, list
 
 import pytest
 from sentence_transformers import InputExample, util  # type: ignore
@@ -17,7 +17,7 @@ def anyio_backend():
 
 @pytest.fixture(scope="session")
 def get_sts_bechmark_dataset() -> (
-    Tuple[List[InputExample], List[InputExample], List[InputExample]]
+    Tuple[list[InputExample], list[InputExample], list[InputExample]]
 ):
     sts_dataset_path = os.path.join(
         os.path.dirname(__file__), "data", "datasets", "stsbenchmark.tsv.gz"
