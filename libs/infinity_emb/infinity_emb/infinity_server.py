@@ -53,7 +53,9 @@ def create_server(
     instrumentator = Instrumentator().instrument(app)
     app.add_exception_handler(errors.OpenAIException, errors.openai_exception_handler)
 
-    MODEL_RESPONSE_NAME = "/".join(engine_args.model_name_or_path.split("/")[-2:])
+    MODEL_RESPONSE_NAME = engine_args.served_model_name or "/".join(
+        engine_args.model_name_or_path.split("/")[-2:]
+    )
 
     @app.on_event("startup")
     async def _startup():
@@ -216,6 +218,7 @@ def create_server(
 
 def _start_uvicorn(
     model_name_or_path: str = "michaelfeil/bge-small-en-v1.5",
+    served_model_name: Optional[str] = None,
     batch_size: int = 32,
     revision: Optional[str] = None,
     trust_remote_code: bool = True,
@@ -240,6 +243,7 @@ def _start_uvicorn(
     Args:
         model_name_or_path, str: Huggingface model, e.g.
             "michaelfeil/bge-small-en-v1.5".
+        served_model_name, str: "", e.g. "bge-small-en-v1.5"
         batch_size, int: batch size for forward pass.
         revision: str: revision of the model.
         trust_remote_code, bool: trust remote code.
@@ -273,6 +277,7 @@ def _start_uvicorn(
 
     engine_args = EngineArgs(
         model_name_or_path=model_name_or_path,
+        served_model_name=served_model_name,
         batch_size=batch_size,
         revision=revision,
         trust_remote_code=trust_remote_code,
