@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Tuple, Union
+from typing import Union
 
 from infinity_emb.args import (
     EngineArgs,
@@ -50,7 +50,7 @@ def get_engine_type_from_config(
 
 def select_model(
     engine_args: EngineArgs,
-) -> Tuple[Union[BaseCrossEncoder, BaseEmbedder], float, float]:
+) -> tuple[Union[BaseCrossEncoder, BaseEmbedder], float, float]:
     logger.info(
         f"model=`{engine_args.model_name_or_path}` selected, "
         f"using engine=`{engine_args.engine.value}`"

@@ -1,5 +1,3 @@
-from typing import Dict, List
-
 from infinity_emb._optional_imports import CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
@@ -40,7 +38,7 @@ class SentenceClassifier(BaseClassifer):
             trust_remote_code=engine_args.trust_remote_code,
         )
 
-    def encode_pre(self, sentences: List[str]):
+    def encode_pre(self, sentences: list[str]):
         """takes care of the tokenization and feature preparation"""
         return sentences
 
@@ -48,11 +46,11 @@ class SentenceClassifier(BaseClassifer):
         """runs plain inference, on cpu/gpu"""
         return self._pipe(features, batch_size=256, truncation=True, padding=True)
 
-    def encode_post(self, classes) -> Dict[str, float]:
+    def encode_post(self, classes) -> dict[str, float]:
         """runs post encoding such as normalization"""
         return classes
 
-    def tokenize_lengths(self, sentences: List[str]) -> List[int]:
+    def tokenize_lengths(self, sentences: list[str]) -> list[int]:
         """gets the lengths of each sentences according to tokenize/len etc."""
         tks = self._infinity_tokenizer.batch_encode_plus(
             sentences,

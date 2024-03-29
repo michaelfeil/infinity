@@ -4,7 +4,6 @@ Tests that the pretrained models produce the correct scores on the STSbenchmark 
 
 import copy
 import sys
-from typing import List
 
 import pytest
 import torch
@@ -21,7 +20,7 @@ from infinity_emb.transformer.embedder.sentence_transformer import (
 
 
 def _pretrained_model_score(
-    dataset: List[InputExample],
+    dataset: list[InputExample],
     model_name,
     expected_score,
     ct2_compute_type: str = "",

@@ -1,5 +1,5 @@
 from dataclasses import asdict
-from typing import List, Optional, Set, Tuple
+from typing import Optional, Set
 
 from infinity_emb.args import EngineArgs
 
@@ -101,12 +101,12 @@ class AsyncEmbeddingEngine:
         return self._model.capabilities
 
     async def embed(
-        self, sentences: List[str]
-    ) -> Tuple[List[EmbeddingReturnType], int]:
+        self, sentences: list[str]
+    ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple sentences
 
         Args:
-            sentences (List[str]): sentences to be embedded
+            sentences (list[str]): sentences to be embedded
 
         Raises:
             ValueError: raised if engine is not started yet
@@ -114,7 +114,7 @@ class AsyncEmbeddingEngine:
                 capabilities
 
         Returns:
-            List[EmbeddingReturnType]: embeddings
+            list[EmbeddingReturnType]: embeddings
                 2D list-array of shape( len(sentences),embed_dim )
             int: token usage
         """
@@ -124,13 +124,13 @@ class AsyncEmbeddingEngine:
         return embeddings, usage
 
     async def rerank(
-        self, *, query: str, docs: List[str], raw_scores: bool = False
-    ) -> Tuple[List[float], int]:
+        self, *, query: str, docs: list[str], raw_scores: bool = False
+    ) -> tuple[list[float], int]:
         """rerank multiple sentences
 
         Args:
             query (str): query to be reranked
-            docs (List[str]): docs to be reranked
+            docs (list[str]): docs to be reranked
             raw_scores (bool): return raw scores instead of sigmoid
 
         Raises:
@@ -139,7 +139,7 @@ class AsyncEmbeddingEngine:
                 capabilities
 
         Returns:
-            List[float]: list of scores
+            list[float]: list of scores
             int: token usage
         """
         self._check_running()
@@ -150,12 +150,12 @@ class AsyncEmbeddingEngine:
         return scores, usage
 
     async def classify(
-        self, *, sentences: List[str], raw_scores: bool = False
-    ) -> Tuple[List[ClassifyReturnType], int]:
+        self, *, sentences: list[str], raw_scores: bool = False
+    ) -> tuple[list[ClassifyReturnType], int]:
         """classify multiple sentences
 
         Args:
-            sentences (List[str]): sentences to be classified
+            sentences (list[str]): sentences to be classified
             raw_scores (bool): if True, return raw scores, else softmax
 
         Raises:
@@ -164,7 +164,7 @@ class AsyncEmbeddingEngine:
                 capabilities
 
         Returns:
-            List[ClassifyReturnType]: list of class encodings
+            list[ClassifyReturnType]: list of class encodings
             int: token usage
         """
         self._check_running()

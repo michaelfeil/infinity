@@ -3,7 +3,7 @@ import os
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, List, Union
+from typing import Any, Union
 
 from infinity_emb._optional_imports import CHECK_DISKCACHE
 from infinity_emb.inference.threading_asyncio import to_thread
@@ -53,7 +53,7 @@ class Cache:
             self._add_q.task_done()
         self._threadpool.shutdown(wait=True)
 
-    def _get(self, sentence: str) -> Union[None, EmbeddingReturnType, List[float]]:
+    def _get(self, sentence: str) -> Union[None, EmbeddingReturnType, list[float]]:
         """sets the item.complete() and sets embedding, if in cache."""
         return self._cache.get(key=self._hash(sentence))
 

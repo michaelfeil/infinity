@@ -1,5 +1,5 @@
 import time
-from typing import Dict, Optional
+from typing import Optional
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
@@ -78,7 +78,7 @@ def create_server(
         await app.model.astop()
 
     @app.get("/health")
-    async def _health() -> Dict[str, float]:
+    async def _health() -> dict[str, float]:
         """
         health check endpoint
 

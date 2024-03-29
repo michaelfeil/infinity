@@ -5,7 +5,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, List, Sequence, Set, Tuple
+from typing import Any, Sequence, Set
 
 import numpy as np
 
@@ -90,19 +90,19 @@ class BatchHandler:
             )
 
     async def embed(
-        self, sentences: List[str]
-    ) -> Tuple[List[EmbeddingReturnType], int]:
+        self, sentences: list[str]
+    ) -> tuple[list[EmbeddingReturnType], int]:
         """Schedule a sentence to be embedded. Awaits until embedded.
 
         Args:
-            sentences (List[str]): Sentences to be embedded
+            sentences (list[str]): Sentences to be embedded
 
         Raises:
             ModelNotDeployedError: If loaded model does not expose `embed`
                 capabilities
 
         Returns:
-            List[EmbeddingReturnType]: list of embedding as 1darray
+            list[EmbeddingReturnType]: list of embedding as 1darray
             int: token usage
         """
         if "embed" not in self.model.capabilities:
@@ -117,13 +117,13 @@ class BatchHandler:
         return embeddings, usage
 
     async def rerank(
-        self, query: str, docs: List[str], raw_scores: bool = False
-    ) -> Tuple[List[float], int]:
+        self, query: str, docs: list[str], raw_scores: bool = False
+    ) -> tuple[list[float], int]:
         """Schedule a query to be reranked with documents. Awaits until reranked.
 
         Args:
             query (str): query for reranking
-            docs (List[str]): documents to be reranked
+            docs (list[str]): documents to be reranked
             raw_scores (bool): return raw scores instead of sigmoid
 
         Raises:
@@ -131,7 +131,7 @@ class BatchHandler:
                 capabilities
 
         Returns:
-            List[float]: list of scores
+            list[float]: list of scores
             int: token usage
         """
         if "rerank" not in self.model.capabilities:
@@ -150,12 +150,12 @@ class BatchHandler:
         return scores, usage
 
     async def classify(
-        self, *, sentences: List[str], raw_scores: bool = True
-    ) -> Tuple[List[ClassifyReturnType], int]:
+        self, *, sentences: list[str], raw_scores: bool = True
+    ) -> tuple[list[ClassifyReturnType], int]:
         """Schedule a query to be classified with documents. Awaits until classified.
 
         Args:
-            sentences (List[str]): sentences to be classified
+            sentences (list[str]): sentences to be classified
             raw_scores (bool): if True, return raw scores, else softmax
 
         Raises:
@@ -163,7 +163,7 @@ class BatchHandler:
                 capabilities
 
         Returns:
-            List[ClassifyReturnType]: list of class encodings
+            list[ClassifyReturnType]: list of class encodings
             int: token usage
         """
         if "classify" not in self.model.capabilities:
@@ -183,9 +183,9 @@ class BatchHandler:
 
     async def _schedule(
         self, list_queueitem: Sequence[AbstractSingle]
-    ) -> Tuple[List[Any], int]:
+    ) -> tuple[list[Any], int]:
         prios, usage = await self._get_prios_usage(list_queueitem)
-        new_prioqueue: List[PrioritizedQueueItem] = []
+        new_prioqueue: list[PrioritizedQueueItem] = []
 
         inner_item = get_inner_item(type(list_queueitem[0]))
 
@@ -223,15 +223,15 @@ class BatchHandler:
 
     async def _get_prios_usage(
         self, items: Sequence[AbstractSingle]
-    ) -> Tuple[List[int], int]:
+    ) -> tuple[list[int], int]:
         """get priorities and usage
 
         Args:
-            items (List[AbstractSingle]): List of items that support a fn with signature
+            items (list[AbstractSingle]): list of items that support a fn with signature
                 `.str_repr() -> str` to get the string representation of the item.
 
         Returns:
-            Tuple[List[int], int]: prios, length
+            tuple[list[int], int]: prios, length
         """
         if not self._lengths_via_tokenize:
             return get_lengths_with_tokenize([it.str_repr() for it in items])

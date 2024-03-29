@@ -1,6 +1,5 @@
 import copy
 import os
-from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -53,7 +52,7 @@ class OptimumCrossEncoder(BaseCrossEncoder):
         )
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
 
-    def encode_pre(self, queries_docs: List[Tuple[str, str]]) -> Dict[str, np.ndarray]:
+    def encode_pre(self, queries_docs: list[tuple[str, str]]) -> dict[str, np.ndarray]:
         encoded = self.tokenizer(
             queries_docs,
             max_length=self.config.max_position_embeddings,
@@ -65,15 +64,15 @@ class OptimumCrossEncoder(BaseCrossEncoder):
         encoded = {k: v.astype(np.int64) for k, v in encoded.items()}
         return encoded
 
-    def encode_core(self, features: Dict[str, np.ndarray]) -> np.ndarray:
+    def encode_core(self, features: dict[str, np.ndarray]) -> np.ndarray:
         outputs = self.model(**features, return_dict=True)
 
         return outputs.logits
 
-    def encode_post(self, out_features: np.ndarray) -> List[float]:
+    def encode_post(self, out_features: np.ndarray) -> list[float]:
         return out_features.flatten().astype(np.float32).tolist()
 
-    def tokenize_lengths(self, sentences: List[str]) -> List[int]:
+    def tokenize_lengths(self, sentences: list[str]) -> list[int]:
         if hasattr(self._infinity_tokenizer, "encode_batch"):
             tks = self._infinity_tokenizer.encode_batch(
                 sentences, padding=False, truncation=True

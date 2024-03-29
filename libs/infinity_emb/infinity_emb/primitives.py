@@ -3,7 +3,8 @@ Definition of enums and dataclasses used in the library.
 
 Do not import infinity_emb from this file, as it will cause a circular import.
 """
-# if python>=3.10 use kw_only
+from __future__ import annotations
+
 import asyncio
 import enum
 import sys
@@ -12,10 +13,12 @@ from dataclasses import dataclass, field
 
 # cached_porperty
 from functools import lru_cache
-from typing import Generic, Literal, Optional, Tuple, Type, TypedDict, TypeVar, Union
+from typing import Generic, Literal, Optional, Type, TypedDict, TypeVar, Union
 
 import numpy as np
 import numpy.typing as npt
+
+# if python>=3.10 use kw_only
 
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
 
@@ -86,7 +89,7 @@ class AbstractSingle(ABC):
         pass
 
     @abstractmethod
-    def to_input(self) -> Union[str, Tuple[str, str]]:
+    def to_input(self) -> Union[str, tuple[str, str]]:
         pass
 
 
@@ -109,7 +112,7 @@ class ReRankSingle(AbstractSingle):
     def str_repr(self) -> str:
         return self.query + self.document
 
-    def to_input(self) -> Tuple[str, str]:
+    def to_input(self) -> tuple[str, str]:
         return self.query, self.document
 
 

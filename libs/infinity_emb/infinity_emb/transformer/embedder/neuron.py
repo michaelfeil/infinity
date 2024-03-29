@@ -1,7 +1,7 @@
 import copy
 import json
 import subprocess
-from typing import Dict, List, Union
+from typing import Union
 
 import numpy as np
 
@@ -103,7 +103,7 @@ class NeuronOptimumEmbedder(BaseEmbedder):
         )
         self.batch_size = self.model.neuron_config.input_shapes["batch_size"]
 
-    def encode_pre(self, sentences: List[str]) -> Dict[str, np.ndarray]:
+    def encode_pre(self, sentences: list[str]) -> dict[str, np.ndarray]:
         input_dict = self.tokenizer(
             sentences,
             max_length=self.config.max_position_embeddings,
@@ -114,7 +114,7 @@ class NeuronOptimumEmbedder(BaseEmbedder):
         input_dict.pop("token_type_ids", None)
         return input_dict
 
-    def encode_core(self, input_dict: Dict[str, np.ndarray]) -> dict:
+    def encode_core(self, input_dict: dict[str, np.ndarray]) -> dict:
         """requires constant batch size, which is a bit of extra work"""
         for key, tensor in input_dict.items():
             actual_bsize = tensor.shape[0]
@@ -133,7 +133,7 @@ class NeuronOptimumEmbedder(BaseEmbedder):
 
         return normalize(embedding).astype(np.float32)
 
-    def tokenize_lengths(self, sentences: List[str]) -> List[int]:
+    def tokenize_lengths(self, sentences: list[str]) -> list[int]:
         if hasattr(self._infinity_tokenizer, "encode_batch"):
             tks = self._infinity_tokenizer.encode_batch(
                 sentences,

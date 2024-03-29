@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, List, Mapping
+from typing import TYPE_CHECKING, Mapping
 
 import numpy as np
 
@@ -115,7 +115,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
 
         return embeddings_np
 
-    def tokenize_lengths(self, sentences: List[str]) -> List[int]:
+    def tokenize_lengths(self, sentences: list[str]) -> list[int]:
         tks = self._infinity_tokenizer.batch_encode_plus(
             sentences,
             add_special_tokens=False,
