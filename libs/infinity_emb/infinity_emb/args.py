@@ -3,6 +3,7 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
+from infinity_emb._optional_imports import CHECK_PYDANTIC
 from infinity_emb.primitives import (
     Device,
     Dtype,
@@ -11,6 +12,8 @@ from infinity_emb.primitives import (
     PoolingMethod,
 )
 
+if CHECK_PYDANTIC.is_available:
+    from pydantic.dataclasses import dataclass as dataclass_pydantic
 # if python>=3.10 use kw_only
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
 
@@ -71,3 +74,17 @@ class EngineArgs:
             object.__setattr__(
                 self, "embedding_dtype", EmbeddingDtype[self.embedding_dtype]
             )
+
+        # after all done -> check if the dataclass is valid
+        if CHECK_PYDANTIC.is_available:
+            # convert to pydantic dataclass
+            # and check if the dataclass is valid
+            @dataclass_pydantic(frozen=True, **dataclass_args)
+            class EngineArgsPydantic(EngineArgs):
+                def __post_init__(self):
+                    # overwrite the __post_init__ method
+                    # to avoid infinite recursion
+                    pass
+
+            # validate
+            EngineArgsPydantic(**self.__dict__)
