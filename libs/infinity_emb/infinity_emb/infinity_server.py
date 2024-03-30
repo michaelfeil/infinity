@@ -53,10 +53,6 @@ def create_server(
     instrumentator = Instrumentator().instrument(app)
     app.add_exception_handler(errors.OpenAIException, errors.openai_exception_handler)
 
-    MODEL_RESPONSE_NAME = engine_args.served_model_name or "/".join(
-        engine_args.model_name_or_path.split("/")[-2:]
-    )
-
     @app.on_event("startup")
     async def _startup():
         instrumentator.expose(app)
@@ -109,7 +105,7 @@ def create_server(
         return dict(
             data=[
                 dict(
-                    id=MODEL_RESPONSE_NAME,
+                    id=engine_args.served_model_name,
                     stats=dict(
                         queue_fraction=s.queue_fraction,
                         queue_absolute=s.queue_absolute,
@@ -154,7 +150,7 @@ def create_server(
             logger.debug("[✅] Done in %s ms", duration)
 
             res = list_embeddings_to_response(
-                embeddings=embedding, model=MODEL_RESPONSE_NAME, usage=usage
+                embeddings=embedding, model=engine_args.served_model_name, usage=usage
             )
 
             return res
@@ -202,7 +198,7 @@ def create_server(
             res = to_rerank_response(
                 scores=scores,
                 documents=docs,
-                model=MODEL_RESPONSE_NAME,
+                model=engine_args.served_model_name,
                 usage=usage,
             )
 
@@ -277,7 +273,6 @@ def _start_uvicorn(
 
     engine_args = EngineArgs(
         model_name_or_path=model_name_or_path,
-        served_model_name=served_model_name,
         batch_size=batch_size,
         revision=revision,
         trust_remote_code=trust_remote_code,
@@ -290,6 +285,7 @@ def _start_uvicorn(
         pooling_method=PoolingMethod[pooling_method.value],  # type: ignore
         compile=compile,
         bettertransformer=bettertransformer,
+        served_model_name=served_model_name,  # type: ignore
     )
 
     app = create_server(

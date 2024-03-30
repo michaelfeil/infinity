@@ -37,7 +37,7 @@ class OptionalImports:
         self._marked_as_dirty = exception
 
     def mark_required(self) -> bool:
-        if self.is_available or self._marked_as_dirty:
+        if not self.is_available or self._marked_as_dirty:
             self._raise_error()
         return True
 
@@ -49,6 +49,7 @@ class OptionalImports:
         )
         if self._marked_as_dirty:
             raise ImportError(msg) from self._marked_as_dirty
+        raise ImportError(msg)
 
 
 CHECK_DISKCACHE = OptionalImports("diskcache", "cache")

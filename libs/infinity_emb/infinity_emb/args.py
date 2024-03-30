@@ -3,6 +3,7 @@ import sys
 from dataclasses import dataclass
 from typing import Optional
 
+from infinity_emb._optional_imports import CHECK_PYDANTIC
 from infinity_emb.primitives import (
     Device,
     Dtype,
@@ -11,6 +12,8 @@ from infinity_emb.primitives import (
     PoolingMethod,
 )
 
+if CHECK_PYDANTIC.is_available:
+    from pydantic.dataclasses import dataclass as dataclass_pydantic
 # if python>=3.10 use kw_only
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
 
@@ -21,7 +24,6 @@ class EngineArgs:
 
     Args:
         model_name_or_path, str:  Defaults to "michaelfeil/bge-small-en-v1.5".
-        served_model_name, str: Defaults to bge-small-en-v1.5
         batch_size, int: Defaults to 32.
         revision, str: Defaults to None.
         trust_remote_code, bool: Defaults to True.
@@ -36,10 +38,10 @@ class EngineArgs:
         dtype, Dtype or str: data type to use for inference. Defaults to Dtype.auto.
         pooling_method, PoolingMethod or str: pooling method to use. Defaults to PoolingMethod.auto.
         lengths_via_tokenize, bool: schedule by token usage. Defaults to False.
+        served_model_name, str: Defaults to readable name of model_name_or_path.
     """
 
     model_name_or_path: str = "michaelfeil/bge-small-en-v1.5"
-    served_model_name: Optional[str] = None
     batch_size: int = 32
     revision: Optional[str] = None
     trust_remote_code: bool = True
@@ -53,6 +55,7 @@ class EngineArgs:
     pooling_method: PoolingMethod = PoolingMethod.auto
     lengths_via_tokenize: bool = False
     embedding_dtype: EmbeddingDtype = EmbeddingDtype.float32
+    served_model_name: str = None  # type: ignore
 
     def __post_init__(self):
         # convert the following strings to enums
@@ -71,3 +74,23 @@ class EngineArgs:
             object.__setattr__(
                 self, "embedding_dtype", EmbeddingDtype[self.embedding_dtype]
             )
+        if self.served_model_name is None:
+            object.__setattr__(
+                self,
+                "served_model_name",
+                "/".join(self.model_name_or_path.split("/")[-2:]),
+            )
+
+        # after all done -> check if the dataclass is valid
+        if CHECK_PYDANTIC.is_available:
+            # convert to pydantic dataclass
+            # and check if the dataclass is valid
+            @dataclass_pydantic(frozen=True, **dataclass_args)
+            class EngineArgsPydantic(EngineArgs):
+                def __post_init__(self):
+                    # overwrite the __post_init__ method
+                    # to avoid infinite recursion
+                    pass
+
+            # validate
+            EngineArgsPydantic(**self.__dict__)
