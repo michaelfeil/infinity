@@ -1,5 +1,3 @@
-# MODEL_NAME should be filepath friendly
-ARG MODEL_NAME
 # Use the Python base image
 FROM nvidia/cuda:12.1.0-base-ubuntu22.04 AS base
 
@@ -53,10 +51,10 @@ RUN poetry cache clear pypi --all
 FROM base AS production
 
 COPY --from=builder /app /app
-COPY /models "/${MODEL_NAME}"
+COPY /models /models
+COPY environment_config.sh ./environment_config.sh
 
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
 ENV PATH=/app/.venv/bin:$PATH
 
-#ENTRYPOINT ["infinity_emb", "--model-name-or-path", "/${MODEL_NAME}"]
-ENTRYPOINT infinity_emb --model-name-or-path "/${MODEL_NAME}"
+ENTRYPOINT ["/bin/bash" , "-c", "source ./environment_config.sh "]
