@@ -1,4 +1,3 @@
-ARG MODEL_NAME="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 # Use the Python base image
 FROM nvidia/cuda:12.1.0-base-ubuntu22.04 AS base
 
@@ -48,6 +47,8 @@ RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"  --without li
 # remove cache
 RUN poetry cache clear pypi --all
 
+COPY /models /models
+
 
 FROM builder as testing
 # install lint and test dependencies
@@ -73,11 +74,11 @@ RUN echo "all tests passed" > "test_results.txt"
 FROM base AS production
 
 COPY --from=builder /app /app
-COPY /tmp/model "/${MODEL_NAME}"
+COPY --from=builder /models /models
 # force testing stage to run
 COPY --from=testing /app/test_results.txt /app/test_results.txt
 
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
 ENV PATH=/app/.venv/bin:$PATH
 
-ENTRYPOINT ["infinity_emb"]
+ENTRYPOINT ["infinity_emb", "--model-name-or-path", "/models"]
