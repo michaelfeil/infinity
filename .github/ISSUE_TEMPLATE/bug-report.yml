@@ -6,7 +6,7 @@ body:
     attributes:
       label: System Info
       description: | 
-        Please share your system info with us (`text-generation-launcher --env` if installed locally).
+        Please share your system info with us (`infinity_emb --help` if installed locally).
         The full command line used that causes issues: 
         OS version: (linux/win/macos)
         Model being used (BAAI/..)
