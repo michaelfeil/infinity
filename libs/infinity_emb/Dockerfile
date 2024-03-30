@@ -48,16 +48,6 @@ RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"  --without li
 # remove cache
 RUN poetry cache clear pypi --all
 
-FROM builder as model
-
-#Install AWS CLI
-RUN apt-get install zip unzip
-RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-RUN unzip awscliv2.zip
-RUN ./aws/install
-#Copy model
-RUN aws s3 cp s3://freddy-staging-us/base_models/sentence-transformers/paraphrase-multilingual-mpnet-base-v2/  /tmp/model --recursive
-
 
 FROM builder as testing
 # install lint and test dependencies
@@ -83,7 +73,7 @@ RUN echo "all tests passed" > "test_results.txt"
 FROM base AS production
 
 COPY --from=builder /app /app
-COPY --from=model /tmp/model "/${MODEL_NAME}"
+COPY /tmp/model "/${MODEL_NAME}"
 # force testing stage to run
 COPY --from=testing /app/test_results.txt /app/test_results.txt
 
