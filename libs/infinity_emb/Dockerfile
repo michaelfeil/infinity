@@ -47,8 +47,6 @@ RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"  --without li
 # remove cache
 RUN poetry cache clear pypi --all
 
-COPY /models /models
-
 
 FROM builder as testing
 # install lint and test dependencies
@@ -74,7 +72,7 @@ RUN echo "all tests passed" > "test_results.txt"
 FROM base AS production
 
 COPY --from=builder /app /app
-COPY --from=builder /models /models
+COPY /models /models
 # force testing stage to run
 COPY --from=testing /app/test_results.txt /app/test_results.txt
 
