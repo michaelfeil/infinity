@@ -1,3 +1,4 @@
+ARG MODEL_NAME="sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
 # Use the Python base image
 FROM nvidia/cuda:12.1.0-base-ubuntu22.04 AS base
 
@@ -47,6 +48,17 @@ RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"  --without li
 # remove cache
 RUN poetry cache clear pypi --all
 
+FROM builder as model
+
+#Install AWS CLI
+RUN apt-get install zip unzip
+RUN curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+RUN unzip awscliv2.zip
+RUN ./aws/install
+#Copy model
+RUN aws s3 cp s3://freddy-staging-us/base_models/sentence-transformers/paraphrase-multilingual-mpnet-base-v2/  /tmp/model --recursive
+
+
 FROM builder as testing
 # install lint and test dependencies
 RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"
@@ -67,27 +79,11 @@ poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
 fi
 RUN echo "all tests passed" > "test_results.txt"
 
-# Export with tensorrt, not recommended.
-# docker buildx build --target=production-tensorrt -f Dockerfile .
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=off \
-    PYTHON="python3.11"
-RUN apt-get update && apt-get install python3-dev python3-pip $PYTHON build-essential curl -y 
-COPY --from=builder /app /app
-# force testing stage to run
-COPY --from=testing /app/test_results.txt /app/test_results.txt
-ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
-ENV PATH=/app/.venv/bin:$PATH
-RUN pip install --no-cache-dir "onnxruntime-gpu==1.17.0" "tensorrt==8.6.*"
-ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
-ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
-ENTRYPOINT ["infinity_emb"]
-
 # Use a multi-stage build -> production version
 FROM base AS production
 
 COPY --from=builder /app /app
+COPY --from=model /tmp/model "/${MODEL_NAME}"
 # force testing stage to run
 COPY --from=testing /app/test_results.txt /app/test_results.txt
 
