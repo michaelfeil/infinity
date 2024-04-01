@@ -82,27 +82,27 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             logger.info("using torch.compile()")
             fm.auto_model = torch.compile(fm.auto_model, dynamic=True)
 
-    def encode_pre(self, sentences) -> Mapping[str, Tensor]:
+    def encode_pre(self, sentences) -> Mapping[str, "Tensor"]:
         features = self.tokenize(sentences)
 
         return features
 
-    def encode_core(self, features: Mapping[str, Tensor]) -> Tensor:
+    def encode_core(self, features: Mapping[str, "Tensor"]) -> "Tensor":
         """
         Computes sentence embeddings
         """
 
         with torch.no_grad():
             features = util.batch_to_device(features, self.device)
-            out_features = self.forward(features)["sentence_embedding"]
+            out_features: "Tensor" = self.forward(features)["sentence_embedding"]
 
-        return out_features
+        return out_features.detach().cpu()
 
     def encode_post(
-        self, out_features: Tensor, normalize_embeddings: bool = True
+        self, out_features: "Tensor", normalize_embeddings: bool = True
     ) -> EmbeddingReturnType:
         with torch.inference_mode():
-            embeddings: Tensor = out_features.detach().cpu().to(torch.float32)
+            embeddings: "Tensor" = out_features.to(torch.float32)
             if normalize_embeddings:
                 embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
 

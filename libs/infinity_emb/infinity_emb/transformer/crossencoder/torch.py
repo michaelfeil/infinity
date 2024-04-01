@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from typing import TYPE_CHECKING
 
 from infinity_emb._optional_imports import CHECK_SENTENCE_TRANSFORMERS, CHECK_TORCH
 from infinity_emb.args import EngineArgs
@@ -11,13 +12,14 @@ from infinity_emb.transformer.abstract import BaseCrossEncoder
 if CHECK_TORCH.is_available and CHECK_SENTENCE_TRANSFORMERS.is_available:
     import torch
     from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
-    from torch import Tensor
 else:
 
     class CrossEncoder:  # type: ignore[no-redef]
         pass
 
-    Tensor = None  # type: ignore
+
+if TYPE_CHECKING:
+    from torch import Tensor
 
 
 from infinity_emb.transformer.acceleration import to_bettertransformer
@@ -74,7 +76,7 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
         )
         return tokenized
 
-    def encode_core(self, features: dict[str, Tensor]):
+    def encode_core(self, features: dict[str, "Tensor"]):
         """
         Computes sentence embeddings
         """
@@ -82,10 +84,10 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
             features = {k: v.to(self.model.device) for k, v in features.items()}
             out_features = self.model(**features, return_dict=True)["logits"]
 
-        return out_features
+        return out_features.detach().cpu()
 
     def encode_post(self, out_features) -> list[float]:
-        return out_features.detach().cpu().flatten()
+        return out_features.flatten()
 
     def tokenize_lengths(self, sentences: list[str]) -> list[int]:
         tks = self._infinity_tokenizer.batch_encode_plus(
