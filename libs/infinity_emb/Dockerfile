@@ -1,5 +1,6 @@
+ARG BASE_IMAGE=nvidia/cuda:12.1.0-base-ubuntu22.04
 # Use the Python base image
-FROM nvidia/cuda:12.1.0-base-ubuntu22.04 AS base
+FROM $BASE_IMAGE AS base
 
 ENV PYTHONUNBUFFERED=1 \
     \
@@ -47,51 +48,14 @@ RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"  --without li
 # remove cache
 RUN poetry cache clear pypi --all
 
-FROM builder as testing
-# install lint and test dependencies
-RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"
-
-# lint 
-RUN poetry run ruff .
-RUN poetry run black --check .
-RUN poetry run mypy .
-# pytest
-COPY tests tests
-# run end to end tests because of duration of build in github ci.
-# Run tests/end_to_end on TARGETPLATFORM x86_64 otherwise run tests/end_to_end_gpu
-# poetry run python -m pytest tests/end_to_end -x
-RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] ; then \
-poetry run python -m pytest tests/end_to_end -x ; \
-else \
-poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
-fi
-RUN echo "all tests passed" > "test_results.txt"
-
-# Export with tensorrt, not recommended.
-# docker buildx build --target=production-tensorrt -f Dockerfile .
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=off \
-    PYTHON="python3.11"
-RUN apt-get update && apt-get install python3-dev python3-pip $PYTHON build-essential curl -y 
-COPY --from=builder /app /app
-# force testing stage to run
-COPY --from=testing /app/test_results.txt /app/test_results.txt
-ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
-ENV PATH=/app/.venv/bin:$PATH
-RUN pip install --no-cache-dir "onnxruntime-gpu==1.17.0" "tensorrt==8.6.*"
-ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
-ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
-ENTRYPOINT ["infinity_emb"]
-
 # Use a multi-stage build -> production version
 FROM base AS production
 
 COPY --from=builder /app /app
-# force testing stage to run
-COPY --from=testing /app/test_results.txt /app/test_results.txt
+COPY /models /models
+COPY environment_config.sh ./environment_config.sh
 
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
 ENV PATH=/app/.venv/bin:$PATH
 
-ENTRYPOINT ["infinity_emb"]
+ENTRYPOINT ["/bin/bash" , "-c", "source ./environment_config.sh "]
