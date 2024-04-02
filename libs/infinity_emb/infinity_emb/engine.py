@@ -77,16 +77,23 @@ class AsyncEmbeddingEngine:
         await self._batch_handler.spawn()
 
     async def astop(self):
-        """stop engine"""
+        """stop engine - deprecated use `.stop()` instead"""
         self._check_running()
         self.running = False
-        await self._batch_handler.shutdown()
+        self._batch_handler.shutdown()
+
+    def stop(self):
+        """stop engine"""
+        self.astop()
 
     async def __aenter__(self):
         await self.astart()
 
     async def __aexit__(self, *args):
-        await self.astop()
+        self.stop()
+
+    def __exit__(self, *args):
+        self.stop()
 
     def overload_status(self):
         self._check_running()

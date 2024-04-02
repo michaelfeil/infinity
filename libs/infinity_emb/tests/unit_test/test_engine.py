@@ -201,7 +201,7 @@ async def test_async_api_failing():
 
     with pytest.raises(ValueError):
         await engine.astart()
-    await engine.astop()
+    engine.stop()
 
 
 @pytest.mark.anyio

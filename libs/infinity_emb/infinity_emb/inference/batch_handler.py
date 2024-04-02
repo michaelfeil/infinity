@@ -396,11 +396,10 @@ class BatchHandler:
         asyncio.create_task(self._postprocess_batch())
         asyncio.create_task(self._delayed_warmup())
 
-    async def shutdown(self):
+    def shutdown(self):
         """
         set the shutdown event and close threadpool.
         Blocking event, until shutdown complete.
         """
         self._shutdown.set()
-        with ThreadPoolExecutor() as tp_temp:
-            await to_thread(self._threadpool.shutdown, tp_temp)
+        self._threadpool.shutdown()
