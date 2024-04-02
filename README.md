@@ -249,6 +249,12 @@ poetry run pytest ./tests
 
 All contributions must be made in a way to be compatible with the MIT License of this repo. 
 
+### 💚 Current contributors <a name="Current contributors"></a>
+
+<a href="https://github.com/michaelfeil/infinity=y/graphs/contributors">
+  <img src="https://contributors-img.web.app/image?repo=michaelfeil/infinity" />
+</a>
+
 <!-- MARKDOWN LINKS & IMAGES -->
 <!-- https://www.markdownguide.org/basic-syntax/#reference-style-links -->
 [contributors-shield]: https://img.shields.io/github/contributors/michaelfeil/infinity.svg?style=for-the-badge
