@@ -67,6 +67,19 @@ poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
 fi
 RUN echo "all tests passed" > "test_results.txt"
 
+# Use a multi-stage build -> production version, with download
+FROM base AS tested-builder
+
+COPY --from=builder /app /app
+# force testing stage to run
+COPY --from=testing /app/test_results.txt /app/test_results.txt
+
+ENV HF_HOME=/app/.cache/huggingface
+ENV PATH=/app/.venv/bin:$PATH
+
+# do nothing
+RUN echo "copied all files"
+
 # Export with tensorrt, not recommended.
 # docker buildx build --target=production-tensorrt -f Dockerfile .
 FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
@@ -77,21 +90,26 @@ RUN apt-get update && apt-get install python3-dev python3-pip $PYTHON build-esse
 COPY --from=builder /app /app
 # force testing stage to run
 COPY --from=testing /app/test_results.txt /app/test_results.txt
-ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
+ENV HF_HOME=/app/.cache/torch
 ENV PATH=/app/.venv/bin:$PATH
 RUN pip install --no-cache-dir "onnxruntime-gpu==1.17.0" "tensorrt==8.6.*"
 ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
 ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
 ENTRYPOINT ["infinity_emb"]
 
+# Use a multi-stage build -> production version, with download
+# docker buildx build --target=production-with-download \
+# --build-arg MODEL_NAME=BAAI/bge-small-en-v1.5 --build-arg ENGINE=torch -f Dockerfile -t infinity-BAAI-small .
+FROM tested-builder AS production-with-download
+# collect model name and engine from build args
+ARG MODEL_NAME 
+RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
+ARG ENGINE
+RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
+
+RUN infinity_emb --model-name-or-path $MODEL_NAME --engine $ENGINE --preload_only || true
+ENTRYPOINT ["infinity_emb"]
+
 # Use a multi-stage build -> production version
-FROM base AS production
-
-COPY --from=builder /app /app
-# force testing stage to run
-COPY --from=testing /app/test_results.txt /app/test_results.txt
-
-ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
-ENV PATH=/app/.venv/bin:$PATH
-
+FROM tested-builder AS production
 ENTRYPOINT ["infinity_emb"]
