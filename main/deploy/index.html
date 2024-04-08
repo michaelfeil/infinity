@@ -139,9 +139,9 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#docker-with-offline-mode">
+<a class="md-nav__link" href="#docker-with-offline-mode-and-models-with-custom-pip-packages">
 <span class="md-ellipsis">
-      Docker with offline mode
+      Docker with offline mode and models with custom pip packages
     </span>
 </a>
 </li>
@@ -205,9 +205,9 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#docker-with-offline-mode">
+<a class="md-nav__link" href="#docker-with-offline-mode-and-models-with-custom-pip-packages">
 <span class="md-ellipsis">
-      Docker with offline mode
+      Docker with offline mode and models with custom pip packages
     </span>
 </a>
 </li>
@@ -241,8 +241,10 @@
 </span><span id="__span-0-4"><a href="#__codelineno-0-4" id="__codelineno-0-4" name="__codelineno-0-4"></a><span class="w">  </span>-it<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="nv">$port</span>:<span class="nv">$port</span><span class="w"> </span>michaelf34/infinity:latest<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-5"><a href="#__codelineno-0-5" id="__codelineno-0-5" name="__codelineno-0-5"></a><span class="w">  </span>--model-name-or-path<span class="w"> </span><span class="nv">$model</span><span class="w"> </span>--port<span class="w"> </span><span class="nv">$port</span>
 </span></code></pre></div>
-<h3 id="docker-with-offline-mode">Docker with offline mode</h3>
-<p>If you want to run infinity in a location without internet access, you can pre-download the model into the dockerfile.</p>
+<h3 id="docker-with-offline-mode-and-models-with-custom-pip-packages">Docker with offline mode and models with custom pip packages</h3>
+<p>If you want to run infinity in a location without internet access, you can pre-download the model into the dockerfile.
+This is also the advised route to go, if you want to use infinity with models that require additional packages such as 
+<code>nomic-ai/nomic-embed-text-v1.5</code>.</p>
 <p><div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a><span class="c1"># clone the repo</span>
 </span><span id="__span-1-2"><a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/michaelfeil/infinity
 </span><span id="__span-1-3"><a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a>git<span class="w"> </span>checkout<span class="w"> </span>tags/0.0.32
@@ -252,7 +254,7 @@
 </span><span id="__span-1-7"><a href="#__codelineno-1-7" id="__codelineno-1-7" name="__codelineno-1-7"></a>--build-arg<span class="w"> </span><span class="nv">MODEL_NAME</span><span class="o">=</span>michaelfeil/bge-small-en-v1.5<span class="w"> </span>--build-arg<span class="w"> </span><span class="nv">ENGINE</span><span class="o">=</span>torch<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-8"><a href="#__codelineno-1-8" id="__codelineno-1-8" name="__codelineno-1-8"></a>-f<span class="w"> </span>Dockerfile<span class="w"> </span>-t<span class="w"> </span>infinity-model-small<span class="w"> </span>.
 </span></code></pre></div>
-You can also set an argument <code>EXTRA_PACKAGES</code> if you require to  <code>--build-arg EXTRA_PACKAGES="einsum torch_geometric"</code> </p>
+You can also set an argument <code>EXTRA_PACKAGES</code> if you require to install any extra packages.  <code>--build-arg EXTRA_PACKAGES="einsum torch_geometric"</code> </p>
 <p>Rename and push it to your internal docker registry. </p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a>docker<span class="w"> </span>tag<span class="w"> </span>infinity-model-small<span class="w">  </span>myregistryhost:5000/myinfinity/infinity:0.0.32-small
 </span><span id="__span-2-2"><a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a>docker<span class="w"> </span>push<span class="w"> </span>myregistryhost:5000/myinfinity/infinity:small-0.0.32
