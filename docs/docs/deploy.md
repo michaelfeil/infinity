@@ -12,9 +12,11 @@ docker run \
   --model-name-or-path $model --port $port
 ```
 
-### Docker with offline mode
+### Docker with offline mode and models with custom pip packages
 
 If you want to run infinity in a location without internet access, you can pre-download the model into the dockerfile.
+This is also the advised route to go, if you want to use infinity with models that require additional packages such as 
+`nomic-ai/nomic-embed-text-v1.5`.
 
 ```bash
 # clone the repo
@@ -26,7 +28,7 @@ docker buildx build --target=production-with-download \
 --build-arg MODEL_NAME=michaelfeil/bge-small-en-v1.5 --build-arg ENGINE=torch \
 -f Dockerfile -t infinity-model-small .
 ```
-You can also set an argument `EXTRA_PACKAGES` if you require to  `--build-arg EXTRA_PACKAGES="einsum torch_geometric"` 
+You can also set an argument `EXTRA_PACKAGES` if you require to install any extra packages.  `--build-arg EXTRA_PACKAGES="einsum torch_geometric"` 
 
 Rename and push it to your internal docker registry. 
 
