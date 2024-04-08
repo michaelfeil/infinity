@@ -12,6 +12,33 @@ docker run \
   --model-name-or-path $model --port $port
 ```
 
+### Docker with offline mode
+
+If you want to run infinity in a location without internet access, you can pre-download the model into the dockerfile.
+
+```bash
+# clone the repo
+git clone https://github.com/michaelfeil/infinity
+git checkout tags/0.0.32
+cd libs/infinity_emb
+# build download stage using docker buildx buildkit.
+docker buildx build --target=production-with-download \
+--build-arg MODEL_NAME=michaelfeil/bge-small-en-v1.5 --build-arg ENGINE=torch \
+-f Dockerfile -t infinity-model-small .
+```
+You can also set an argument `EXTRA_PACKAGES` if you require to  `--build-arg EXTRA_PACKAGES="einsum torch_geometric"` 
+
+Rename and push it to your internal docker registry. 
+
+```bash
+docker tag infinity-model-small  myregistryhost:5000/myinfinity/infinity:0.0.32-small
+docker push myregistryhost:5000/myinfinity/infinity:small-0.0.32
+```
+
+Note: You can also save a dockerfile direclty as `.tar`.
+This might come in handy if you do not have a shared internal docker registry in your nuclear facility, but still want to leverage the latest semantic search.
+https://docs.docker.com/reference/cli/docker/image/save/.
+
 ### Extending the Dockerfile
 
 Launching multiple models in one dockerfile
