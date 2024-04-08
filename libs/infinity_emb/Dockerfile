@@ -106,6 +106,8 @@ ARG MODEL_NAME
 RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
 ARG ENGINE
 RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
+ARG EXTRA_PACKAGES
+RUN if [ -z "${EXTRA_PACKAGES}" ]; ; then python -m pip install --no-cache-dir $EXTRA_PACKAGES; fi
 
 RUN infinity_emb --model-name-or-path $MODEL_NAME --engine $ENGINE --preload_only || true
 ENTRYPOINT ["infinity_emb"]
