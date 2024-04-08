@@ -102,14 +102,15 @@ ENTRYPOINT ["infinity_emb"]
 # --build-arg MODEL_NAME=BAAI/bge-small-en-v1.5 --build-arg ENGINE=torch -f Dockerfile -t infinity-BAAI-small .
 FROM tested-builder AS production-with-download
 # collect model name and engine from build args
-ARG MODEL_NAME 
+ARG MODEL_NAME
 RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
 ARG ENGINE
 RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
 ARG EXTRA_PACKAGES
-RUN if [ -z "${EXTRA_PACKAGES}" ]; ; then python -m pip install --no-cache-dir $EXTRA_PACKAGES; fi
+RUN if [ -n "${EXTRA_PACKAGES}" ]; then python -m pip install --no-cache-dir ${EXTRA_PACKAGES} ; fi
 
-RUN infinity_emb --model-name-or-path $MODEL_NAME --engine $ENGINE --preload_only || true
+# will exit with 3 if model is downloaded # TODO: better exit code
+RUN infinity_emb --model-name-or-path $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
 ENTRYPOINT ["infinity_emb"]
 
 # Use a multi-stage build -> production version

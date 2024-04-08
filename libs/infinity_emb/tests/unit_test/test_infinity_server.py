@@ -38,6 +38,12 @@ def test_cli_wrong_batch_size():
     assert log.returncode == 2
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="does not run on windows")
+def test_cli_preload():
+    log = subprocess.run(["infinity_emb", "--preload-only"])
+    assert log.returncode == 3
+
+
 def test_create_server():
     app = create_server(EngineArgs(engine="debugengine"))
     assert isinstance(app, FastAPI)
