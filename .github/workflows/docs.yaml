@@ -43,7 +43,7 @@ jobs:
         if: github.event_name == 'release' && github.event.action == 'published'
         run: |
           cd docs
-          mike deploy --push --update-aliases latest $INFINITY_VERSION 
+          mike deploy --push --update-aliases $INFINITY_VERSION latest --alias-type=redirect
       - name: Build and Deploy Dev/main
         # only if dev/main branch is pushed
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
