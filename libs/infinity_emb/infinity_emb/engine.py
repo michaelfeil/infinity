@@ -225,7 +225,8 @@ class AsyncEngineArray:
         )
 
     @property
-    def engines(self):
+    def engines(self) -> list["AsyncEmbeddingEngine"]:
+        assert len(self.engines_dict)
         return list(self.engines_dict.values())
 
     async def astart(self):

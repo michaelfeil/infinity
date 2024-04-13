@@ -16,12 +16,14 @@ batch_size = 8
 
 app = create_server(
     url_prefix=PREFIX,
-    engine_args=EngineArgs(
-        model_name_or_path=MODEL,
-        batch_size=batch_size,
-        engine=InferenceEngine.optimum,
-        device=Device.cpu,
-    ),
+    engine_args_list=[
+        EngineArgs(
+            model_name_or_path=MODEL,
+            batch_size=batch_size,
+            engine=InferenceEngine.optimum,
+            device=Device.cpu,
+        )
+    ],
 )
 
 

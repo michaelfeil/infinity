@@ -28,7 +28,8 @@ from infinity_emb.primitives import (
 
 
 def create_server(
-    engine_args: EngineArgs,
+    *,
+    engine_args_list: list[EngineArgs],
     url_prefix: str = "",
     doc_extra: dict = {},
     redirect_slash: str = "/docs",
@@ -43,7 +44,7 @@ def create_server(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         instrumentator.expose(app)  # type: ignore
-        app.engine_array = AsyncEngineArray.from_args([engine_args])  # type: ignore
+        app.engine_array = AsyncEngineArray.from_args(engine_args_list)  # type: ignore
         # start in a threadpool
         await app.engine_array.astart()  # type: ignore
 
@@ -57,7 +58,7 @@ def create_server(
 
         if preload_only:
             logger.info(
-                f"Preloaded configuration successfully. {engine_args} "
+                f"Preloaded configuration successfully. {engine_args_list} "
                 " -> Non-graceful exit ."
             )
             # skip the blocking part
@@ -116,15 +117,15 @@ def create_server(
         for engine in engine_array.engines:
             data.append(
                 dict(
-                    id=engine_args.served_model_name,
+                    id=engine.engine_args.served_model_name,
                     stats=dict(
                         queue_fraction=engine.overload_status().queue_fraction,
                         queue_absolute=engine.overload_status().queue_absolute,
                         results_pending=engine.overload_status().results_absolute,
-                        batch_size=engine_args.batch_size,
+                        batch_size=engine.engine_args.batch_size,
                     ),
-                    backend=engine_args.engine.name,
-                    device=engine_args.device.name,
+                    backend=engine.engine_args.engine.name,
+                    device=engine.engine_args.device.name,
                 )
             )
 
@@ -173,7 +174,9 @@ def create_server(
             logger.debug("[✅] Done in %s ms", duration)
 
             res = list_embeddings_to_response(
-                embeddings=embedding, model=engine_args.served_model_name, usage=usage
+                embeddings=embedding,
+                model=engine.engine_args.served_model_name,
+                usage=usage,
             )
 
             return res
@@ -216,7 +219,7 @@ def create_server(
             res = to_rerank_response(
                 scores=scores,
                 documents=docs,
-                model=engine_args.served_model_name,
+                model=engine.engine_args.served_model_name,
                 usage=usage,
             )
 
@@ -308,7 +311,7 @@ def _start_uvicorn(
     )
 
     app = create_server(
-        engine_args,
+        engine_args_list=[engine_args],
         url_prefix=url_prefix,
         doc_extra=dict(host=host, port=port),
         redirect_slash=redirect_slash,

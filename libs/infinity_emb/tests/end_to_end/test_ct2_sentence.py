@@ -21,12 +21,14 @@ batch_size = 64 if torch.cuda.is_available() else 8
 
 app = create_server(
     url_prefix=PREFIX,
-    engine_args=EngineArgs(
-        model_name_or_path=MODEL,
-        batch_size=batch_size,
-        engine=InferenceEngine.ctranslate2,
-        device=Device.cpu,
-    ),
+    engine_args_list=[
+        EngineArgs(
+            model_name_or_path=MODEL,
+            batch_size=batch_size,
+            engine=InferenceEngine.ctranslate2,
+            device=Device.cpu,
+        )
+    ],
 )
 
 
