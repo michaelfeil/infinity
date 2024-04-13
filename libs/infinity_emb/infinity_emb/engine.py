@@ -14,6 +14,7 @@ from infinity_emb.primitives import (
     EmbeddingReturnType,
     ModelCapabilites,
 )
+import asyncio
 
 
 class AsyncEmbeddingEngine:
@@ -79,6 +80,7 @@ class AsyncEmbeddingEngine:
     async def astop(self):
         """stop engine - deprecated use `.stop()` instead"""
         self.stop()
+        await asyncio.sleep(0.5)
 
     def stop(self):
         """stop engine"""
@@ -90,7 +92,7 @@ class AsyncEmbeddingEngine:
         await self.astart()
 
     async def __aexit__(self, *args):
-        self.stop()
+        await self.astop()
 
     def __exit__(self, *args):
         self.stop()

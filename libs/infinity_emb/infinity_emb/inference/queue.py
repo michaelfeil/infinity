@@ -21,10 +21,13 @@ class CustomFIFOQueue:
     def __len__(self):
         return len(self._queue)
 
-    async def extend(self, items: list[PrioritizedQueueItem]):
-        with self._lock_queue_event:
-            self._queue.extend(items)
+    def extend(self, items: list[PrioritizedQueueItem]):
+        self._queue.extend(items)
         self._sync_event.set()
+        
+    def remove_later(self, number):
+        for _ in range(number):
+            self._queue.pop()
 
     def pop_optimal_batches(
         self, size: int, max_n_batches: int = 4, timeout=0.2, **kwargs
@@ -54,7 +57,7 @@ class CustomFIFOQueue:
 
         with self._lock_queue_event:
             new_items_l = self._queue[:size_batches]
-            self._queue = self._queue[size_batches:]
+            self.remove_later(size_batches)
             if not self._queue:
                 self._sync_event.clear()
 

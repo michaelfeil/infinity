@@ -71,7 +71,7 @@ def create_server(
 
     @app.on_event("shutdown")
     async def _shutdown():
-        app.model.stop()
+        await app.model.astop()
 
     @app.get("/health")
     async def _health() -> dict[str, float]:
