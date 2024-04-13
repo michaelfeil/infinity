@@ -114,18 +114,19 @@ def create_server(
         """get models endpoint"""
         engine_array: "AsyncEngineArray" = app.engine_array  # type: ignore
         data = []
-        for engine in engine_array.engines:
+        for engine in engine_array:
+            engine_args = engine.engine_args
             data.append(
                 dict(
-                    id=engine.engine_args.served_model_name,
+                    id=engine_args.served_model_name,
                     stats=dict(
                         queue_fraction=engine.overload_status().queue_fraction,
                         queue_absolute=engine.overload_status().queue_absolute,
                         results_pending=engine.overload_status().results_absolute,
-                        batch_size=engine.engine_args.batch_size,
+                        batch_size=engine_args.batch_size,
                     ),
-                    backend=engine.engine_args.engine.name,
-                    device=engine.engine_args.device.name,
+                    backend=engine_args.engine.name,
+                    device=engine_args.device.name,
                 )
             )
 
@@ -133,8 +134,8 @@ def create_server(
 
     def _resolve_engine(model: str) -> "AsyncEmbeddingEngine":
         try:
-            engine: "AsyncEmbeddingEngine" = app.engine_array.resolve_engine(model)  # type: ignore
-        except ValueError as ex:
+            engine: "AsyncEmbeddingEngine" = app.engine_array[model]  # type: ignore
+        except IndexError as ex:
             raise errors.OpenAIException(
                 f"Invalid model: {ex}",
                 code=status.HTTP_400_BAD_REQUEST,

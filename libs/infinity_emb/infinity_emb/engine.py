@@ -1,4 +1,4 @@
-from typing import Iterable, Optional, Set
+from typing import Iterable, Iterator, Optional, Set, Union
 
 from infinity_emb.args import EngineArgs
 
@@ -42,11 +42,11 @@ class AsyncEmbeddingEngine:
             )
         if model_name_or_path is not None:
             kwargs["model_name_or_path"] = model_name_or_path
-        self.engine_args = EngineArgs(**kwargs)
+        self._engine_args = EngineArgs(**kwargs)
 
         self.running = False
         self._model, self._min_inference_t, self._max_inference_t = select_model(
-            self.engine_args
+            self._engine_args
         )
 
     @classmethod
@@ -67,7 +67,7 @@ class AsyncEmbeddingEngine:
         return (
             f"AsyncEmbeddingEngine(running={self.running}, "
             f"inference_time={[self._min_inference_t, self._max_inference_t]}, "
-            f"{self.engine_args})"
+            f"{self._engine_args})"
         )
 
     async def astart(self):
@@ -80,12 +80,12 @@ class AsyncEmbeddingEngine:
             )
         self.running = True
         self._batch_handler = BatchHandler(
-            max_batch_size=self.engine_args.batch_size,
+            max_batch_size=self._engine_args.batch_size,
             model=self._model,
             batch_delay=self._min_inference_t / 2,
-            vector_disk_cache_path=self.engine_args.vector_disk_cache_path,
+            vector_disk_cache_path=self._engine_args.vector_disk_cache_path,
             verbose=logger.level <= 10,
-            lengths_via_tokenize=self.engine_args.lengths_via_tokenize,
+            lengths_via_tokenize=self._engine_args.lengths_via_tokenize,
         )
         await self._batch_handler.spawn()
 
@@ -112,6 +112,10 @@ class AsyncEmbeddingEngine:
     @property
     def capabilities(self) -> Set[ModelCapabilites]:
         return self._model.capabilities
+
+    @property
+    def engine_args(self) -> EngineArgs:
+        return self._engine_args
 
     async def embed(
         self, sentences: list[str]
@@ -224,10 +228,8 @@ class AsyncEngineArray:
             )
         )
 
-    @property
-    def engines(self) -> list["AsyncEmbeddingEngine"]:
-        assert len(self.engines_dict)
-        return list(self.engines_dict.values())
+    def __iter__(self) -> Iterator["AsyncEmbeddingEngine"]:
+        return iter(self.engines_dict.values())
 
     async def astart(self):
         """startup engines"""
@@ -239,7 +241,7 @@ class AsyncEngineArray:
         for engine in self.engines_dict.values():
             await engine.astop()
 
-    def resolve_engine(self, model_name: Optional[str]) -> "AsyncEmbeddingEngine":
+    def __getitem__(self, index_or_name: Union[str, int]) -> "AsyncEmbeddingEngine":
         """resolve engine by model name -> Auto resolve if only one engine is present
 
         Args:
@@ -247,6 +249,11 @@ class AsyncEngineArray:
         """
         if len(self.engines_dict) == 1:
             return list(self.engines_dict.values())[0]
-        if model_name not in self.engines_dict:
-            raise ValueError(f"Engine for model name {model_name} not found")
-        return self.engines_dict[model_name]
+        if isinstance(index_or_name, int):
+            return list(self.engines_dict.values())[index_or_name]
+        if isinstance(index_or_name, str) and index_or_name in self.engines_dict:
+            return self.engines_dict[index_or_name]
+        raise IndexError(
+            f"Engine for model name {index_or_name} not found. "
+            "Available model names are {list(self.engines_dict.keys())}"
+        )
