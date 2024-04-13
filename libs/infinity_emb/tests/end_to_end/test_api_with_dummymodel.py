@@ -1,8 +1,8 @@
 import asyncio
+import json
 import pathlib
 import random
 import time
-import json
 from unittest import TestCase
 from uuid import uuid4
 
@@ -132,14 +132,14 @@ async def test_openapi_same_as_docs_file(client):
             for i in d:
                 recursive_remove_entry(i, entry_name)
 
-    path_to_openapi = pathlib.Path(__file__).parent.parent.parent.parent.parent.joinpath(
-        "docs", "assets", "openapi.json"
-    )
+    path_to_openapi = pathlib.Path(
+        __file__
+    ).parent.parent.parent.parent.parent.joinpath("docs", "assets", "openapi.json")
     assert (
         path_to_openapi.exists()
     ), f"openapi.json file does not exist, it should be in {path_to_openapi.resolve()}"
 
-    openapi_req = await client.get(f"/openapi.json")
+    openapi_req = await client.get("/openapi.json")
     assert openapi_req.status_code == 200
     openapi_json = openapi_req.json()
     openapi_json_expected = json.loads(path_to_openapi.read_text())
