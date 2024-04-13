@@ -5,7 +5,7 @@ from typing import Optional
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
 from infinity_emb.args import EngineArgs
-from infinity_emb.engine import AsyncEngine, AsyncEngineArray
+from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray
 from infinity_emb.fastapi_schemas import docs, errors
 from infinity_emb.fastapi_schemas.convert import (
     list_embeddings_to_response,
@@ -111,7 +111,7 @@ def create_server(
     )
     async def _models():
         """get models endpoint"""
-        engine_array: AsyncEngineArray = app.engine_array  # type: ignore
+        engine_array: "AsyncEngineArray" = app.engine_array  # type: ignore
         data = []
         for engine in engine_array.engines:
             data.append(
@@ -130,9 +130,9 @@ def create_server(
 
         return dict(data=data)
 
-    def _resolve_engine(model: str) -> "AsyncEngine":
+    def _resolve_engine(model: str) -> "AsyncEmbeddingEngine":
         try:
-            engine: AsyncEngine = app.engine_array.resolve_engine(model)  # type: ignore
+            engine: "AsyncEmbeddingEngine" = app.engine_array.resolve_engine(model)  # type: ignore
         except ValueError as ex:
             raise errors.OpenAIException(
                 f"Invalid model: {ex}",

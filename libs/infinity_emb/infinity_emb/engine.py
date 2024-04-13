@@ -15,7 +15,7 @@ from infinity_emb.primitives import (
 )
 
 
-class AsyncEngine:
+class AsyncEmbeddingEngine:
     """
     An LLM engine that receives requests and embeds them asynchronously.
 
@@ -53,7 +53,7 @@ class AsyncEngine:
     def from_args(
         cls,
         engine_args: EngineArgs,
-    ) -> "AsyncEngine":
+    ) -> "AsyncEmbeddingEngine":
         """create an engine from EngineArgs
 
         Args:
@@ -65,7 +65,7 @@ class AsyncEngine:
 
     def __str__(self) -> str:
         return (
-            f"AsyncEngine(running={self.running}, "
+            f"AsyncEmbeddingEngine(running={self.running}, "
             f"inference_time={[self._min_inference_t, self._max_inference_t]}, "
             f"{self.engine_args})"
         )
@@ -74,7 +74,7 @@ class AsyncEngine:
         """startup engine"""
         if self.running:
             raise ValueError(
-                "DoubleSpawn: already started `AsyncEngine`. "
+                "DoubleSpawn: already started `AsyncEmbeddingEngine`. "
                 " recommended use is via AsyncContextManager"
                 " `async with engine: ..`"
             )
@@ -190,22 +190,16 @@ class AsyncEngine:
     def _check_running(self):
         if not self.running:
             raise ValueError(
-                "didn't start `AsyncEngine` "
+                "didn't start `AsyncEmbeddingEngine` "
                 " recommended use is via AsyncContextManager"
                 " `async with engine: ..`"
             )
 
 
-class AsyncEmbeddingEngine(AsyncEngine):
-    """alias for AsyncEngine"""
-
-    pass
-
-
 class AsyncEngineArray:
-    """EngineArray is a collection of AsyncEngine objects."""
+    """EngineArray is a collection of AsyncEmbeddingEngine objects."""
 
-    def __init__(self, engines: Iterable[AsyncEngine]):
+    def __init__(self, engines: Iterable["AsyncEmbeddingEngine"]):
         if not engines:
             raise ValueError("Engines cannot be empty")
         if len(list(engines)) != len(
@@ -225,7 +219,8 @@ class AsyncEngineArray:
         """
         return cls(
             engines=tuple(
-                AsyncEngine.from_args(engine_args) for engine_args in engine_args_array
+                AsyncEmbeddingEngine.from_args(engine_args)
+                for engine_args in engine_args_array
             )
         )
 
@@ -243,7 +238,7 @@ class AsyncEngineArray:
         for engine in self.engines_dict.values():
             await engine.astop()
 
-    def resolve_engine(self, model_name: Optional[str]) -> "AsyncEngine":
+    def resolve_engine(self, model_name: Optional[str]) -> "AsyncEmbeddingEngine":
         """resolve engine by model name -> Auto resolve if only one engine is present
 
         Args:
