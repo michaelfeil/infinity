@@ -1,5 +1,4 @@
-from dataclasses import asdict
-from typing import Optional, Set
+from typing import Iterable, Optional, Set
 
 from infinity_emb.args import EngineArgs
 
@@ -16,7 +15,16 @@ from infinity_emb.primitives import (
 )
 
 
-class AsyncEmbeddingEngine:
+class AsyncEngine:
+    """
+    An LLM engine that receives requests and embeds them asynchronously.
+
+    This is the main worker of the infinity-emb library. It is responsible for
+    handling the requests and embedding them asynchronously.
+
+    Initialize via `from_args` method.
+    """
+
     def __init__(
         self,
         model_name_or_path: Optional[str] = None,
@@ -45,14 +53,19 @@ class AsyncEmbeddingEngine:
     def from_args(
         cls,
         engine_args: EngineArgs,
-    ) -> "AsyncEmbeddingEngine":
-        engine = cls(**asdict(engine_args), _show_deprecation_warning=False)
+    ) -> "AsyncEngine":
+        """create an engine from EngineArgs
+
+        Args:
+            engine_args (EngineArgs): EngineArgs object
+        """
+        engine = cls(**engine_args.to_dict(), _show_deprecation_warning=False)
 
         return engine
 
     def __str__(self) -> str:
         return (
-            f"AsyncEmbeddingEngine(running={self.running}, "
+            f"AsyncEngine(running={self.running}, "
             f"inference_time={[self._min_inference_t, self._max_inference_t]}, "
             f"{self.engine_args})"
         )
@@ -61,7 +74,7 @@ class AsyncEmbeddingEngine:
         """startup engine"""
         if self.running:
             raise ValueError(
-                "DoubleSpawn: already started `AsyncEmbeddingEngine`. "
+                "DoubleSpawn: already started `AsyncEngine`. "
                 " recommended use is via AsyncContextManager"
                 " `async with engine: ..`"
             )
@@ -168,14 +181,76 @@ class AsyncEmbeddingEngine:
             int: token usage
         """
         self._check_running()
-        scores, usage = await self._batch_handler.classify(sentences=sentences)
+        scores, usage = await self._batch_handler.classify(
+            sentences=sentences, raw_scores=raw_scores
+        )
 
         return scores, usage
 
     def _check_running(self):
         if not self.running:
             raise ValueError(
-                "didn't start `AsyncEmbeddingEngine` "
+                "didn't start `AsyncEngine` "
                 " recommended use is via AsyncContextManager"
                 " `async with engine: ..`"
             )
+
+
+class AsyncEmbeddingEngine(AsyncEngine):
+    """alias for AsyncEngine"""
+
+    pass
+
+
+class AsyncEngineArray:
+    """EngineArray is a collection of AsyncEngine objects."""
+
+    def __init__(self, engines: Iterable[AsyncEngine]):
+        if not engines:
+            raise ValueError("Engines cannot be empty")
+        if len(list(engines)) != len(
+            set(engine.engine_args.served_model_name for engine in engines)
+        ):
+            raise ValueError("Engines must have unique model names")
+        self.engines_dict = {
+            engine.engine_args.served_model_name: engine for engine in engines
+        }
+
+    @classmethod
+    def from_args(cls, engine_args_array: Iterable[EngineArgs]) -> "AsyncEngineArray":
+        """create an engine from EngineArgs
+
+        Args:
+            engine_args_array (list[EngineArgs]): EngineArgs object
+        """
+        return cls(
+            engines=tuple(
+                AsyncEngine.from_args(engine_args) for engine_args in engine_args_array
+            )
+        )
+
+    @property
+    def engines(self):
+        return list(self.engines_dict.values())
+
+    async def astart(self):
+        """startup engines"""
+        for engine in self.engines_dict.values():
+            await engine.astart()
+
+    async def astop(self):
+        """stop engines"""
+        for engine in self.engines_dict.values():
+            await engine.astop()
+
+    def resolve_engine(self, model_name: Optional[str]) -> "AsyncEngine":
+        """resolve engine by model name -> Auto resolve if only one engine is present
+
+        Args:
+            model_name (str): model name to be used
+        """
+        if len(self.engines_dict) == 1:
+            return list(self.engines_dict.values())[0]
+        if model_name not in self.engines_dict:
+            raise ValueError(f"Engine for model name {model_name} not found")
+        return self.engines_dict[model_name]

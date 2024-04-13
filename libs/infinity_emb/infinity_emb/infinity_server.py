@@ -5,7 +5,7 @@ from typing import Optional
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
 from infinity_emb.args import EngineArgs
-from infinity_emb.engine import AsyncEmbeddingEngine
+from infinity_emb.engine import AsyncEngine, AsyncEngineArray
 from infinity_emb.fastapi_schemas import docs, errors
 from infinity_emb.fastapi_schemas.convert import (
     list_embeddings_to_response,
@@ -43,9 +43,9 @@ def create_server(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         instrumentator.expose(app)  # type: ignore
-        app.model = AsyncEmbeddingEngine.from_args(engine_args)  # type: ignore
+        app.engine_array = AsyncEngineArray.from_args([engine_args])  # type: ignore
         # start in a threadpool
-        await app.model.astart()  # type: ignore
+        await app.engine_array.astart()  # type: ignore
 
         logger.info(
             docs.startup_message(
@@ -64,7 +64,7 @@ def create_server(
         else:
             # application is blocking here!
             yield
-        await app.model.astop()  # type: ignore
+        await app.engine_array.astop()  # type: ignore
         # shutdown!
 
     app = FastAPI(
@@ -111,23 +111,39 @@ def create_server(
     )
     async def _models():
         """get models endpoint"""
-        model: AsyncEmbeddingEngine = app.model  # type: ignore
-        s = model.overload_status()
-        return dict(
-            data=[
+        engine_array: AsyncEngineArray = app.engine_array  # type: ignore
+        data = []
+        for engine in engine_array.engines:
+            data.append(
                 dict(
                     id=engine_args.served_model_name,
                     stats=dict(
-                        queue_fraction=s.queue_fraction,
-                        queue_absolute=s.queue_absolute,
-                        results_pending=s.results_absolute,
+                        queue_fraction=engine.overload_status().queue_fraction,
+                        queue_absolute=engine.overload_status().queue_absolute,
+                        results_pending=engine.overload_status().results_absolute,
                         batch_size=engine_args.batch_size,
                     ),
                     backend=engine_args.engine.name,
                     device=engine_args.device.name,
                 )
-            ]
-        )
+            )
+
+        return dict(data=data)
+
+    def _resolve_engine(model: str) -> "AsyncEngine":
+        try:
+            engine: AsyncEngine = app.engine_array.resolve_engine(model)  # type: ignore
+        except ValueError as ex:
+            raise errors.OpenAIException(
+                f"Invalid model: {ex}",
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        if engine.is_overloaded():
+            raise errors.OpenAIException(
+                f"model {model} is currently overloaded",
+                code=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        return engine
 
     @app.post(
         f"{url_prefix}/embeddings",
@@ -142,11 +158,7 @@ def create_server(
         requests.post("http://..:7997/embeddings",
             json={"model":"bge-small-en-v1.5","input":["A sentence to encode."]})
         """
-        model: AsyncEmbeddingEngine = app.model  # type: ignore
-        if model.is_overloaded():
-            raise errors.OpenAIException(
-                "model overloaded", code=status.HTTP_429_TOO_MANY_REQUESTS
-            )
+        engine = _resolve_engine(data.model)
 
         try:
             if isinstance(data.input, str):
@@ -155,7 +167,7 @@ def create_server(
             logger.debug("[📝] Received request with %s inputs ", len(data.input))
             start = time.perf_counter()
 
-            embedding, usage = await model.embed(data.input)
+            embedding, usage = await engine.embed(data.input)
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
@@ -184,17 +196,12 @@ def create_server(
         requests.post("http://..:7997/rerank",
             json={"query":"Where is Munich?","texts":["Munich is in Germany."]})
         """
-        model: AsyncEmbeddingEngine = app.model  # type: ignore
-        if model.is_overloaded():
-            raise errors.OpenAIException(
-                "model overloaded", code=status.HTTP_429_TOO_MANY_REQUESTS
-            )
-
+        engine = _resolve_engine(data.model)
         try:
             logger.debug("[📝] Received request with %s docs ", len(data.documents))
             start = time.perf_counter()
 
-            scores, usage = await model.rerank(
+            scores, usage = await engine.rerank(
                 query=data.query, docs=data.documents, raw_scores=False
             )
 
