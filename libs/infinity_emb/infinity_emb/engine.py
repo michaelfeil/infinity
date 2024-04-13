@@ -78,13 +78,13 @@ class AsyncEmbeddingEngine:
 
     async def astop(self):
         """stop engine - deprecated use `.stop()` instead"""
-        self._check_running()
-        self.running = False
-        self._batch_handler.shutdown()
+        self.stop()
 
     def stop(self):
         """stop engine"""
-        self.astop()
+        self._check_running()
+        self.running = False
+        self._batch_handler.shutdown()
 
     async def __aenter__(self):
         await self.astart()
