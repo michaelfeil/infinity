@@ -21,8 +21,9 @@ jobs:
       run:
         working-directory: ${{ inputs.working-directory }}
     strategy:
+      fail-fast: true
       matrix:
-        experimental: [true]
+        continue-on-error: [true]
         python-version:
           - "3.9"
           - "3.10"
@@ -33,10 +34,9 @@ jobs:
           - windows-latest
           - macos-latest 
         include:
-          # experimental: false -> this run can stop the pipeline early if it fails
           - python-version: "3.11"
             os: ubuntu-latest
-            experimental: false
+            continue-on-error: false
 
 
 
