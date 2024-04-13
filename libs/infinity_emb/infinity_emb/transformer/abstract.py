@@ -20,9 +20,17 @@ OUT_FEATURES = Any
 class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
     capabilities: Set[ModelCapabilites] = set()
 
+    @abstractmethod  # Decorator to define an abstract method
+    def encode_pre(self, *args, **kwargs) -> Any:
+        """takes care of the tokenization and feature preparation"""
+
     @abstractmethod
     def encode_core(self, features: INPUT_FEATURE) -> OUT_FEATURES:
         """runs plain inference, on cpu/gpu"""
+
+    @abstractmethod
+    def encode_post(self, *args, **kwargs) -> Any:
+        """postprocessing of the inference"""
 
     @abstractmethod
     def tokenize_lengths(self, sentences: list[str]) -> list[int]:
