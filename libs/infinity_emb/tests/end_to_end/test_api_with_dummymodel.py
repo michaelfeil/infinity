@@ -143,8 +143,11 @@ async def test_openapi_same_as_docs_file(client):
     assert openapi_req.status_code == 200
     openapi_json = openapi_req.json()
     openapi_json_expected = json.loads(path_to_openapi.read_text())
-    openapi_json.pop("info")
-    openapi_json_expected.pop("info")
+    openapi_json["info"].pop("version")
+    openapi_json_expected["info"].pop("version")
     tc = TestCase()
     tc.maxDiff = 100000
-    tc.assertDictEqual(openapi_json, openapi_json_expected)
+    assert openapi_json["openapi"] == openapi_json_expected["openapi"]
+    tc.assertDictEqual(openapi_json["info"], openapi_json_expected["info"])
+    tc.assertDictEqual(openapi_json["paths"], openapi_json_expected["paths"])
+    tc.assertDictEqual(openapi_json["components"], openapi_json_expected["components"])
