@@ -681,7 +681,7 @@ def quantize(
     device: str = default_device,
 ) -> tuple[QuantHandler, dict]:
     CHECK_TORCH.mark_required()
-    logger.warn(
+    logger.warning(
         f"quantization to {mode} mode currently yields incorrect results. Do not use for production."
     )
     precision = torch.bfloat16

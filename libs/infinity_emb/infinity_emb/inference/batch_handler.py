@@ -81,9 +81,9 @@ class BatchHandler:
         self._last_inference = time.perf_counter()
 
         if batch_delay > 0.1:
-            logger.warn(f"high batch delay of {self._batch_delay}")
+            logger.warning(f"high batch delay of {self._batch_delay}")
         if max_batch_size > max_queue_wait * 10:
-            logger.warn(
+            logger.warning(
                 f"queue_size={self.max_queue_wait} to small "
                 f"over batch_size={self.max_batch_size}."
                 " Consider increasing queue size"

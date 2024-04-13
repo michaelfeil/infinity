@@ -1,4 +1,5 @@
 import time
+from contextlib import asynccontextmanager
 from typing import Optional
 
 import infinity_emb
@@ -31,12 +32,40 @@ def create_server(
     url_prefix: str = "",
     doc_extra: dict = {},
     redirect_slash: str = "/docs",
+    preload_only: bool = False,
 ):
     """
     creates the FastAPI App
     """
     from fastapi import FastAPI, responses, status
     from prometheus_fastapi_instrumentator import Instrumentator
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI):
+        instrumentator.expose(app)  # type: ignore
+        app.model = AsyncEmbeddingEngine.from_args(engine_args)  # type: ignore
+        # start in a threadpool
+        await app.model.astart()  # type: ignore
+
+        logger.info(
+            docs.startup_message(
+                host=doc_extra.pop("host", "localhost"),
+                port=doc_extra.pop("port", "PORT"),
+                prefix=url_prefix,
+            )
+        )
+
+        if preload_only:
+            logger.info(
+                f"Preloaded configuration successfully. {engine_args} "
+                " -> Non-graceful exit ."
+            )
+            # skip the blocking part
+        else:
+            # application is blocking here!
+            yield
+        await app.model.astop()  # type: ignore
+        # shutdown!
 
     app = FastAPI(
         title=docs.FASTAPI_TITLE,
@@ -49,29 +78,11 @@ def create_server(
             "name": "MIT License",
             "identifier": "MIT",
         },
+        lifespan=lifespan,
     )
+
     instrumentator = Instrumentator().instrument(app)
     app.add_exception_handler(errors.OpenAIException, errors.openai_exception_handler)
-
-    @app.on_event("startup")
-    async def _startup():
-        instrumentator.expose(app)
-
-        app.model = AsyncEmbeddingEngine.from_args(engine_args)
-        # start in a threadpool
-        await app.model.astart()
-
-        logger.info(
-            docs.startup_message(
-                host=doc_extra.pop("host", "localhost"),
-                port=doc_extra.pop("port", "PORT"),
-                prefix=url_prefix,
-            )
-        )
-
-    @app.on_event("shutdown")
-    async def _shutdown():
-        await app.model.astop()
 
     @app.get("/health")
     async def _health() -> dict[str, float]:
@@ -232,6 +243,7 @@ def _start_uvicorn(
     pooling_method: PoolingMethod.names_enum() = PoolingMethod.names_enum().auto.name,  # type: ignore
     compile: bool = False,
     bettertransformer: bool = True,
+    preload_only: bool = False,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
     MIT License; Copyright (c) 2023-now Michael Feil
@@ -260,7 +272,7 @@ def _start_uvicorn(
         pooling_method, PoolingMethod: pooling method to use. Defaults to PoolingMethod.auto or "auto"
         compile, bool: compile model for faster inference. Defaults to False.
         use_bettertransformer, bool: use bettertransformer. Defaults to True.
-
+        preload_only, bool: only preload the model and exit. Defaults to False.
     """
     CHECK_UVICORN.mark_required()
     import uvicorn
@@ -293,6 +305,7 @@ def _start_uvicorn(
         url_prefix=url_prefix,
         doc_extra=dict(host=host, port=port),
         redirect_slash=redirect_slash,
+        preload_only=preload_only,
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
