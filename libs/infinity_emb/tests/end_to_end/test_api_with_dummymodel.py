@@ -1,6 +1,9 @@
 import asyncio
+import pathlib
 import random
 import time
+import json
+from unittest import TestCase
 from uuid import uuid4
 
 import pytest
@@ -11,7 +14,7 @@ from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import InferenceEngine
 
-PREFIX = "/v2"
+PREFIX = ""
 MODEL_NAME = str(uuid4())
 BATCH_SIZE = 16
 
@@ -115,3 +118,33 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset):
         responses[i] = responses[i]["embedding"]
 
     print(time_api)
+
+
+@pytest.mark.anyio
+async def test_openapi_same_as_docs_file(client):
+    def recursive_remove_entry(d, entry_name: str = "default"):
+        if isinstance(d, dict):
+            for k, v in d.items():
+                if k == entry_name:
+                    d[entry_name] = "REMOVED"
+                recursive_remove_entry(v, entry_name)
+        elif isinstance(d, list):
+            for i in d:
+                recursive_remove_entry(i, entry_name)
+
+    path_to_openapi = pathlib.Path(__file__).parent.parent.parent.parent.parent.joinpath(
+        "docs", "assets", "openapi.json"
+    )
+    assert (
+        path_to_openapi.exists()
+    ), f"openapi.json file does not exist, it should be in {path_to_openapi.resolve()}"
+
+    openapi_req = await client.get(f"/openapi.json")
+    assert openapi_req.status_code == 200
+    openapi_json = openapi_req.json()
+    openapi_json_expected = json.loads(path_to_openapi.read_text())
+    openapi_json.pop("info")
+    openapi_json_expected.pop("info")
+    tc = TestCase()
+    tc.maxDiff = 100000
+    tc.assertDictEqual(openapi_json, openapi_json_expected)
