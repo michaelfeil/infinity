@@ -37,7 +37,10 @@ jobs:
           - python-version: "3.11"
             os: ubuntu-latest
             continue-on-error: false
-
+        exclude:
+          - python-version: "3.11"
+            os: ubuntu-latest
+            continue-on-error: true
 
 
     runs-on: ${{ matrix.os }}
