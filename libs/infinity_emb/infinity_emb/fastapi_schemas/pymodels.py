@@ -52,7 +52,7 @@ class OpenAIEmbeddingInput(BaseModel):
         ),
         Annotated[str, INPUT_STRING],
     ]
-    model: Optional[str] = None
+    model: str = "default/not-specified"
     user: Optional[str] = None
 
 
@@ -83,6 +83,7 @@ class RerankInput(BaseModel):
         **ITEMS_LIMIT,
     )
     return_documents: bool = False
+    model: str = "default/not-specified"
 
 
 class _ReRankObject(BaseModel):
@@ -105,7 +106,7 @@ class ModelInfo(BaseModel):
     stats: dict[str, Any]
     object: Literal["model"] = "model"
     owned_by: Literal["infinity"] = "infinity"
-    created: int = int(time.time())  # no default factory
+    created: int = Field(default_factory=lambda: int(time.time()))
     backend: str = ""
 
 
