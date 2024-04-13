@@ -13,15 +13,23 @@ from infinity_emb.primitives import InferenceEngine
 
 PREFIX = "/v2"
 MODEL_NAME = str(uuid4())
+MODEL_NAME_2 = str(uuid4())
 BATCH_SIZE = 16
 
 app = create_server(
     url_prefix=PREFIX,
-    engine_args=EngineArgs(
-        model_name_or_path=MODEL_NAME,
-        batch_size=BATCH_SIZE,
-        engine=InferenceEngine.debugengine,
-    ),
+    engine_args_list=[
+        EngineArgs(
+            model_name_or_path=MODEL_NAME,
+            batch_size=BATCH_SIZE,
+            engine=InferenceEngine.debugengine,
+        ),
+        EngineArgs(
+            model_name_or_path=MODEL_NAME_2,
+            batch_size=BATCH_SIZE,
+            engine=InferenceEngine.debugengine,
+        ),
+    ],
 )
 
 
@@ -40,6 +48,7 @@ async def test_model_route(client):
     rdata = response.json()
     assert "data" in rdata
     assert rdata["data"][0].get("id", "") == MODEL_NAME
+    assert rdata["data"][1].get("id", "") == MODEL_NAME_2
     assert isinstance(rdata["data"][0].get("stats"), dict)
 
     # ready test
@@ -48,21 +57,22 @@ async def test_model_route(client):
     assert "unix" in respnse_health.json()
 
 
+@pytest.mark.parametrize("model_name", [MODEL_NAME, MODEL_NAME_2])
 @pytest.mark.anyio
-async def test_embedding_max_length(client):
+async def test_embedding_max_length(client, model_name):
     # TOO long
     input = "%_" * 4097 * 15
     response = await client.post(
-        f"{PREFIX}/embeddings", json=dict(input=input, model=MODEL_NAME)
+        f"{PREFIX}/embeddings", json=dict(input=input, model=model_name)
     )
     assert response.status_code == 422, f"{response.status_code}, {response.text}"
     # works
     input = "%_" * 4096 * 15
     response = await client.post(
-        f"{PREFIX}/embeddings", json=dict(input=input, model=MODEL_NAME)
+        f"{PREFIX}/embeddings", json=dict(input=input, model=model_name)
     )
     assert response.status_code == 200, f"{response.status_code}, {response.text}"
-    assert response.json()["model"] == MODEL_NAME
+    assert response.json()["model"] == model_name
 
 
 @pytest.mark.anyio

@@ -21,7 +21,9 @@ jobs:
       run:
         working-directory: ${{ inputs.working-directory }}
     strategy:
+      fail-fast: true
       matrix:
+        continue-on-error: [true]
         python-version:
           - "3.9"
           - "3.10"
@@ -31,6 +33,15 @@ jobs:
           - ubuntu-latest
           - windows-latest
           - macos-latest 
+        include:
+          - python-version: "3.11"
+            os: ubuntu-latest
+            continue-on-error: false
+        exclude:
+          - python-version: "3.11"
+            os: ubuntu-latest
+            continue-on-error: true
+
 
     runs-on: ${{ matrix.os }}
     name: Python ${{ matrix.python-version }} on ${{ matrix.os }}

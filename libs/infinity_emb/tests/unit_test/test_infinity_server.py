@@ -45,7 +45,7 @@ def test_cli_preload():
 
 
 def test_create_server():
-    app = create_server(EngineArgs(engine="debugengine"))
+    app = create_server(engine_args_list=[EngineArgs(engine="debugengine")])
     assert isinstance(app, FastAPI)
 
 

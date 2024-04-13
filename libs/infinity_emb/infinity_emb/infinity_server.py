@@ -5,7 +5,7 @@ from typing import Optional
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
 from infinity_emb.args import EngineArgs
-from infinity_emb.engine import AsyncEmbeddingEngine
+from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray
 from infinity_emb.fastapi_schemas import docs, errors
 from infinity_emb.fastapi_schemas.convert import (
     list_embeddings_to_response,
@@ -28,7 +28,8 @@ from infinity_emb.primitives import (
 
 
 def create_server(
-    engine_args: EngineArgs,
+    *,
+    engine_args_list: list[EngineArgs],
     url_prefix: str = "",
     doc_extra: dict = {},
     redirect_slash: str = "/docs",
@@ -43,9 +44,9 @@ def create_server(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         instrumentator.expose(app)  # type: ignore
-        app.model = AsyncEmbeddingEngine.from_args(engine_args)  # type: ignore
+        app.engine_array = AsyncEngineArray.from_args(engine_args_list)  # type: ignore
         # start in a threadpool
-        await app.model.astart()  # type: ignore
+        await app.engine_array.astart()  # type: ignore
 
         logger.info(
             docs.startup_message(
@@ -57,14 +58,14 @@ def create_server(
 
         if preload_only:
             logger.info(
-                f"Preloaded configuration successfully. {engine_args} "
+                f"Preloaded configuration successfully. {engine_args_list} "
                 " -> Non-graceful exit ."
             )
             # skip the blocking part
         else:
             # application is blocking here!
             yield
-        await app.model.astop()  # type: ignore
+        await app.engine_array.astop()  # type: ignore
         # shutdown!
 
     app = FastAPI(
@@ -111,23 +112,40 @@ def create_server(
     )
     async def _models():
         """get models endpoint"""
-        model: AsyncEmbeddingEngine = app.model  # type: ignore
-        s = model.overload_status()
-        return dict(
-            data=[
+        engine_array: "AsyncEngineArray" = app.engine_array  # type: ignore
+        data = []
+        for engine in engine_array:
+            engine_args = engine.engine_args
+            data.append(
                 dict(
                     id=engine_args.served_model_name,
                     stats=dict(
-                        queue_fraction=s.queue_fraction,
-                        queue_absolute=s.queue_absolute,
-                        results_pending=s.results_absolute,
+                        queue_fraction=engine.overload_status().queue_fraction,
+                        queue_absolute=engine.overload_status().queue_absolute,
+                        results_pending=engine.overload_status().results_absolute,
                         batch_size=engine_args.batch_size,
                     ),
                     backend=engine_args.engine.name,
                     device=engine_args.device.name,
                 )
-            ]
-        )
+            )
+
+        return dict(data=data)
+
+    def _resolve_engine(model: str) -> "AsyncEmbeddingEngine":
+        try:
+            engine: "AsyncEmbeddingEngine" = app.engine_array[model]  # type: ignore
+        except IndexError as ex:
+            raise errors.OpenAIException(
+                f"Invalid model: {ex}",
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        if engine.is_overloaded():
+            raise errors.OpenAIException(
+                f"model {model} is currently overloaded",
+                code=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+        return engine
 
     @app.post(
         f"{url_prefix}/embeddings",
@@ -142,11 +160,7 @@ def create_server(
         requests.post("http://..:7997/embeddings",
             json={"model":"bge-small-en-v1.5","input":["A sentence to encode."]})
         """
-        model: AsyncEmbeddingEngine = app.model  # type: ignore
-        if model.is_overloaded():
-            raise errors.OpenAIException(
-                "model overloaded", code=status.HTTP_429_TOO_MANY_REQUESTS
-            )
+        engine = _resolve_engine(data.model)
 
         try:
             if isinstance(data.input, str):
@@ -155,13 +169,15 @@ def create_server(
             logger.debug("[📝] Received request with %s inputs ", len(data.input))
             start = time.perf_counter()
 
-            embedding, usage = await model.embed(data.input)
+            embedding, usage = await engine.embed(data.input)
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
 
             res = list_embeddings_to_response(
-                embeddings=embedding, model=engine_args.served_model_name, usage=usage
+                embeddings=embedding,
+                model=engine.engine_args.served_model_name,
+                usage=usage,
             )
 
             return res
@@ -184,17 +200,12 @@ def create_server(
         requests.post("http://..:7997/rerank",
             json={"query":"Where is Munich?","texts":["Munich is in Germany."]})
         """
-        model: AsyncEmbeddingEngine = app.model  # type: ignore
-        if model.is_overloaded():
-            raise errors.OpenAIException(
-                "model overloaded", code=status.HTTP_429_TOO_MANY_REQUESTS
-            )
-
+        engine = _resolve_engine(data.model)
         try:
             logger.debug("[📝] Received request with %s docs ", len(data.documents))
             start = time.perf_counter()
 
-            scores, usage = await model.rerank(
+            scores, usage = await engine.rerank(
                 query=data.query, docs=data.documents, raw_scores=False
             )
 
@@ -209,7 +220,7 @@ def create_server(
             res = to_rerank_response(
                 scores=scores,
                 documents=docs,
-                model=engine_args.served_model_name,
+                model=engine.engine_args.served_model_name,
                 usage=usage,
             )
 
@@ -301,7 +312,7 @@ def _start_uvicorn(
     )
 
     app = create_server(
-        engine_args,
+        engine_args_list=[engine_args],
         url_prefix=url_prefix,
         doc_extra=dict(host=host, port=port),
         redirect_slash=redirect_slash,

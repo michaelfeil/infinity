@@ -1,6 +1,6 @@
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Optional
 
 from infinity_emb._optional_imports import CHECK_PYDANTIC
@@ -94,3 +94,6 @@ class EngineArgs:
 
             # validate
             EngineArgsPydantic(**self.__dict__)
+
+    def to_dict(self):
+        return asdict(self)
