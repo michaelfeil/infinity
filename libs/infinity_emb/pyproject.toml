@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "infinity_emb"
-version = "0.0.32"
+version = "0.0.33"
 description = "Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks."
 authors = ["michaelfeil <me@michaelfeil.eu>"]
 license = "MIT"
@@ -22,8 +22,8 @@ uvicorn = {extras = ["standard"], version = "^0.23.2", optional=true}
 typer = {extras = ["all"], version = "^0.9.0", optional=true}
 pydantic = {version = ">=2.4.0,<3", optional=true}  
 # backend
-torch = {version = "2.2.1", source = "pypi", optional=true}
-sentence-transformers = {version = "^2.6.0", optional=true} 
+torch = {version = "2.3.0", source = "pypi", optional=true}
+sentence-transformers = {version = "^2.7.0", optional=true} 
 transformers = {version = ">4.8.0", optional=true} 
 ctranslate2 = {version = "^4.0.0", optional=true}
 optimum = {version = ">=1.16.2", optional=true, extras=["onnxruntime"]}
