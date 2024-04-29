@@ -2,6 +2,7 @@ import asyncio
 import json
 import pathlib
 import random
+import sys
 import time
 from unittest import TestCase
 from uuid import uuid4
@@ -130,6 +131,7 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset):
     print(time_api)
 
 
+@pytest.mark.skipif(sys.platform != "linux", reason="Only check on linux")
 @pytest.mark.anyio
 async def test_openapi_same_as_docs_file(client):
     path_to_openapi = pathlib.Path(
