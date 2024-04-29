@@ -823,13 +823,13 @@ tqdm = ">=4.66,<5.0"
 
 [[package]]
 name = "filelock"
-version = "3.13.4"
+version = "3.14.0"
 description = "A platform independent file lock."
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "filelock-3.13.4-py3-none-any.whl", hash = "sha256:404e5e9253aa60ad457cae1be07c0f0ca90a63931200a47d9b6a6af84fd7b45f"},
-    {file = "filelock-3.13.4.tar.gz", hash = "sha256:d13f466618bfde72bd2c18255e269f72542c6e70e7bac83a0232d6b1cc5c8cf4"},
+    {file = "filelock-3.14.0-py3-none-any.whl", hash = "sha256:43339835842f110ca7ae60f1e1c160714c5a6afd15a2873419ab185334975c0f"},
+    {file = "filelock-3.14.0.tar.gz", hash = "sha256:6ea72da3be9b8c82afd3edcf99f2fffbb5076335a5ae4d03248bb5b6c3eae78a"},
 ]
 
 [package.extras]
@@ -1004,7 +1004,7 @@ files = [
 name = "hf-transfer"
 version = "0.1.6"
 description = ""
-optional = true
+optional = false
 python-versions = ">=3.7"
 files = [
     {file = "hf_transfer-0.1.6-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:6fd3d61f9229d27def007e53540412507b74ac2fdb1a29985ae0b6a5137749a2"},
@@ -4559,9 +4559,9 @@ onnxruntime-gpu = ["onnxruntime-gpu"]
 optimum = ["optimum"]
 server = ["fastapi", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "typer", "uvicorn"]
 tensorrt = ["tensorrt"]
-torch = ["hf_transfer", "sentence-transformers", "torch"]
+torch = ["sentence-transformers", "torch"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "6a9c4d2d7f4f38ecf6cfc7b1f2d1185e1b43b7edb276a2cab257bf30dd7c3946"
+content-hash = "949bb5011d2341a1c1b2ba8d1fca08d2cd9d8e408cf61efa8939db9e56d1170c"
