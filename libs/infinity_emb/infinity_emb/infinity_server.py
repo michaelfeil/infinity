@@ -1,6 +1,7 @@
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
+from fastapi.middleware.cors import CORSMiddleware
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
@@ -34,6 +35,7 @@ def create_server(
     doc_extra: dict = {},
     redirect_slash: str = "/docs",
     preload_only: bool = False,
+    permissive_cors: bool = False,
 ):
     """
     creates the FastAPI App
@@ -81,6 +83,15 @@ def create_server(
         },
         lifespan=lifespan,
     )
+
+    if permissive_cors:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     instrumentator = Instrumentator().instrument(app)
     app.add_exception_handler(errors.OpenAIException, errors.openai_exception_handler)
@@ -255,6 +266,7 @@ def _start_uvicorn(
     compile: bool = False,
     bettertransformer: bool = True,
     preload_only: bool = False,
+    permissive_cors: bool = False,
 ):
     """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
     MIT License; Copyright (c) 2023-now Michael Feil
@@ -284,6 +296,7 @@ def _start_uvicorn(
         compile, bool: compile model for faster inference. Defaults to False.
         use_bettertransformer, bool: use bettertransformer. Defaults to True.
         preload_only, bool: only preload the model and exit. Defaults to False.
+        permissive_cors, bool: add permissive CORS headers to enable consumption from a browser. Defaults to False.
     """
     CHECK_UVICORN.mark_required()
     import uvicorn
@@ -309,6 +322,7 @@ def _start_uvicorn(
         compile=compile,
         bettertransformer=bettertransformer,
         served_model_name=served_model_name,  # type: ignore
+        permissive_cors=permissive_cors,
     )
 
     app = create_server(
@@ -317,6 +331,7 @@ def _start_uvicorn(
         doc_extra=dict(host=host, port=port),
         redirect_slash=redirect_slash,
         preload_only=preload_only,
+        permissive_cors=permissive_cors,
     )
     uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
