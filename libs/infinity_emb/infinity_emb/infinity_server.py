@@ -1,7 +1,6 @@
 import time
 from contextlib import asynccontextmanager
 from typing import Optional
-from fastapi.middleware.cors import CORSMiddleware
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
@@ -41,6 +40,7 @@ def create_server(
     creates the FastAPI App
     """
     from fastapi import FastAPI, responses, status
+    from fastapi.middleware.cors import CORSMiddleware
     from prometheus_fastapi_instrumentator import Instrumentator
 
     @asynccontextmanager
@@ -86,7 +86,7 @@ def create_server(
 
     if permissive_cors:
         app.add_middleware(
-            CORSMiddleware,
+            ,
             allow_origins=["*"],
             allow_credentials=True,
             allow_methods=["*"],
