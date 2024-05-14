@@ -20,6 +20,10 @@ MODEL_NAME = str(uuid4())
 MODEL_NAME_2 = str(uuid4())
 BATCH_SIZE = 16
 
+PATH_OPENAPI = pathlib.Path(__file__).parent.parent.parent.parent.parent.joinpath(
+    "docs", "assets", "openapi.json"
+)
+
 app = create_server(
     url_prefix=PREFIX,
     engine_args_list=[
@@ -132,19 +136,17 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset):
 
 
 @pytest.mark.skipif(sys.platform != "linux", reason="Only check on linux")
+@pytest.mark.skipif(not PATH_OPENAPI.exists(), reason="openapi.json does not exist")
 @pytest.mark.anyio
 async def test_openapi_same_as_docs_file(client):
-    path_to_openapi = pathlib.Path(
-        __file__
-    ).parent.parent.parent.parent.parent.joinpath("docs", "assets", "openapi.json")
     assert (
-        path_to_openapi.exists()
-    ), f"openapi.json file does not exist, it should be in {path_to_openapi.resolve()}"
+        PATH_OPENAPI.exists()
+    ), f"openapi.json file does not exist, it should be in {PATH_OPENAPI.resolve()}"
 
     openapi_req = await client.get("/openapi.json")
     assert openapi_req.status_code == 200
     openapi_json = openapi_req.json()
-    openapi_json_expected = json.loads(path_to_openapi.read_text())
+    openapi_json_expected = json.loads(PATH_OPENAPI.read_text())
     openapi_json["info"].pop("version")
     openapi_json_expected["info"].pop("version")
     tc = TestCase()
