@@ -57,7 +57,6 @@ RUN poetry run black --check .
 RUN poetry run mypy .
 # pytest
 COPY tests tests
-COPY docs docs
 # run end to end tests because of duration of build in github ci.
 # Run tests/end_to_end on TARGETPLATFORM x86_64 otherwise run tests/end_to_end_gpu
 # poetry run python -m pytest tests/end_to_end -x
