@@ -56,6 +56,7 @@ class EngineArgs:
     lengths_via_tokenize: bool = False
     embedding_dtype: EmbeddingDtype = EmbeddingDtype.float32
     served_model_name: str = None  # type: ignore
+    permissive_cors: bool = False
 
     def __post_init__(self):
         # convert the following strings to enums
