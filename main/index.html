@@ -280,11 +280,13 @@
 </span></code></pre></div>
 </details>
 <h3 id="launch-the-cli-using-a-pre-built-docker-container-recommended">Launch the CLI using a pre-built docker container (recommended)</h3>
-<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="nv">model</span><span class="o">=</span>BAAI/bge-small-en-v1.5
-</span><span id="__span-2-2"><a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a><span class="nv">port</span><span class="o">=</span><span class="m">7997</span>
-</span><span id="__span-2-3"><a href="#__codelineno-2-3" id="__codelineno-2-3" name="__codelineno-2-3"></a>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="nv">$port</span>:<span class="nv">$port</span><span class="w"> </span>michaelf34/infinity:latest<span class="w"> </span>--model-name-or-path<span class="w"> </span><span class="nv">$model</span><span class="w"> </span>--port<span class="w"> </span><span class="nv">$port</span>
+<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="nv">port</span><span class="o">=</span><span class="m">7997</span>
+</span><span id="__span-2-2"><a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a><span class="nv">model</span><span class="o">=</span>BAAI/bge-small-en-v1.5
+</span><span id="__span-2-3"><a href="#__codelineno-2-3" id="__codelineno-2-3" name="__codelineno-2-3"></a><span class="nv">volume</span><span class="o">=</span><span class="nv">$PWD</span>/data
+</span><span id="__span-2-4"><a href="#__codelineno-2-4" id="__codelineno-2-4" name="__codelineno-2-4"></a>
+</span><span id="__span-2-5"><a href="#__codelineno-2-5" id="__codelineno-2-5" name="__codelineno-2-5"></a>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-v<span class="w"> </span><span class="nv">$volume</span>:/app/.cache<span class="w"> </span>-p<span class="w"> </span><span class="nv">$port</span>:<span class="nv">$port</span><span class="w"> </span>michaelf34/infinity:latest<span class="w"> </span>--model-name-or-path<span class="w"> </span><span class="nv">$model</span><span class="w"> </span>--port<span class="w"> </span><span class="nv">$port</span>
 </span></code></pre></div>
-The download path at runtime can be controlled via the environment variable <code>HF_HOME</code>.</p>
+The cache path at inside the docker container is set by the environment variable <code>HF_HOME</code>.</p>
 <h3 id="or-launch-the-cli-after-the-pip-install">or launch the cli after the pip install</h3>
 <p>After your pip install, with your venv activate, you can run the CLI directly.
 Check the <code>--help</code> command to get a description for all parameters.</p>
