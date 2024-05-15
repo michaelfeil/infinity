@@ -34,11 +34,13 @@ pip install infinity-emb[all]
 
 ### Launch the CLI using a pre-built docker container (recommended)
 ```bash
-model=BAAI/bge-small-en-v1.5
 port=7997
-docker run -it --gpus all -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
+model=BAAI/bge-small-en-v1.5
+volume=$PWD/data
+
+docker run -it --gpus all -v $volume:/app/.cache -p $port:$port michaelf34/infinity:latest --model-name-or-path $model --port $port
 ```
-The download path at runtime can be controlled via the environment variable `HF_HOME`.
+The cache path at inside the docker container is set by the environment variable `HF_HOME`.
 
 ### or launch the cli after the pip install
 After your pip install, with your venv activate, you can run the CLI directly.
