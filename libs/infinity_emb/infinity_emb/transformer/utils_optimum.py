@@ -141,7 +141,7 @@ def optimize_model(
 
         model = model_class.from_pretrained(
             optimized_model_path,
-            revision=engine_args.revision,
+            revision=revision,
             trust_remote_code=trust_remote_code,
             provider=execution_provider,
             file_name=Path(file_name).name.replace(".onnx", "_optimized.onnx"),
