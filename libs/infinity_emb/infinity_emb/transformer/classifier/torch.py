@@ -20,7 +20,7 @@ class SentenceClassifier(BaseClassifer):
             task="text-classification",
             model=engine_args.model_name_or_path,
             trust_remote_code=engine_args.trust_remote_code,
-            device=engine_args.device.value,
+            device=engine_args.device.resolve(),
             top_k=None,
             revision=engine_args.revision,
         )

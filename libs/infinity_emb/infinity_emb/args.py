@@ -55,31 +55,43 @@ class EngineArgs:
     pooling_method: PoolingMethod = PoolingMethod.auto
     lengths_via_tokenize: bool = False
     embedding_dtype: EmbeddingDtype = EmbeddingDtype.float32
-    served_model_name: str = None  # type: ignore
-    permissive_cors: bool = False
+    served_model_name: str = ""
 
     def __post_init__(self):
         # convert the following strings to enums
         # so they don't need to be exported to the external interface
-        if isinstance(self.engine, str):
+        if not isinstance(self.engine, InferenceEngine):
             object.__setattr__(self, "engine", InferenceEngine[self.engine])
-        if isinstance(self.device, str):
-            object.__setattr__(self, "device", Device[self.device])
-        if isinstance(self.dtype, str):
+        if not isinstance(self.device, Device):
+            if self.device is None:
+                object.__setattr__(self, "device", Device.auto)
+            else:
+                object.__setattr__(self, "device", Device[self.device])
+        if not isinstance(self.dtype, Dtype):
             object.__setattr__(self, "dtype", Dtype[self.dtype])
-        if isinstance(self.pooling_method, str):
+        if not isinstance(self.pooling_method, PoolingMethod):
             object.__setattr__(
                 self, "pooling_method", PoolingMethod[self.pooling_method]
             )
-        if isinstance(self.embedding_dtype, str):
+        if not isinstance(self.embedding_dtype, EmbeddingDtype):
             object.__setattr__(
                 self, "embedding_dtype", EmbeddingDtype[self.embedding_dtype]
             )
-        if self.served_model_name is None:
+        if not self.served_model_name:
             object.__setattr__(
                 self,
                 "served_model_name",
                 "/".join(self.model_name_or_path.split("/")[-2:]),
+            )
+        if self.revision is not None and self.revision == "":
+            object.__setattr__(self, "revision", None)
+        if isinstance(self.vector_disk_cache_path, bool):
+            object.__setattr__(
+                self,
+                "vector_disk_cache_path",
+                f"{self.engine}_{self.model_name_or_path.replace('/','_')}"
+                if self.vector_disk_cache_path
+                else "",
             )
 
         # after all done -> check if the dataclass is valid

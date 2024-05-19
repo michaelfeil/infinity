@@ -1,3 +1,5 @@
+from typing import Optional
+
 import pytest
 import torch
 from transformers import AutoTokenizer, BertModel  # type: ignore
@@ -11,12 +13,12 @@ if torch.cuda.is_available():
     devices.append(Device.cuda)
 
 
-def get_model(device: str = "cpu"):
+def get_model(device: Optional[str] = "cpu"):
     name = "michaelfeil/bge-small-en-v1.5"
     model = BertModel.from_pretrained(
         name,
     )
-    model.to(device)
+    model.to(device=device)
     tokenizer = AutoTokenizer.from_pretrained(name)
     return model, tokenizer
 
@@ -30,16 +32,16 @@ def test_quantize_bert(device: Device, dtype: Dtype):
         device (Device): device to use for inference.
         dtype (Dtype): data type for quantization
     """
-    model, tokenizer = get_model(device.value)
-    model_unquantized, _ = get_model(device.value)
+    model, tokenizer = get_model(device.resolve())
+    model_unquantized, _ = get_model(device.resolve())
     model = quant_interface(model=model, device=device, dtype=dtype)
 
-    model.to(device.value)
-    model_unquantized.to(device.value)
+    model.to(device.resolve())
+    model_unquantized.to(device.resolve())
     tokens_encoded = tokenizer.batch_encode_plus(
         ["This is an english text to be encoded."], return_tensors="pt"
     )
-    tokens_encoded = {k: v.to(device.value) for k, v in tokens_encoded.items()}
+    tokens_encoded = {k: v.to(device.resolve()) for k, v in tokens_encoded.items()}
     with torch.no_grad():
         out_default = model_unquantized.forward(**tokens_encoded)[
             "last_hidden_state"

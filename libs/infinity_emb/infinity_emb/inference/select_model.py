@@ -54,7 +54,7 @@ def select_model(
     logger.info(
         f"model=`{engine_args.model_name_or_path}` selected, "
         f"using engine=`{engine_args.engine.value}`"
-        f" and device=`{engine_args.device.value}`"
+        f" and device=`{engine_args.device.resolve()}`"
     )
     # TODO: add EncoderEngine
     unloaded_engine = get_engine_type_from_config(engine_args)
