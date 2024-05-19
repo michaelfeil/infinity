@@ -50,6 +50,8 @@ class OptimumEmbedder(BaseEmbedder):
 
         self.model = optimize_model(
             model_name_or_path=engine_args.model_name_or_path,
+            revision=engine_args.revision,
+            trust_remote_code=engine_args.trust_remote_code,
             execution_provider=provider,
             file_name=onnx_file.as_posix(),
             optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False),
@@ -59,10 +61,12 @@ class OptimumEmbedder(BaseEmbedder):
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,
+            revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
         self.config = AutoConfig.from_pretrained(
             engine_args.model_name_or_path,
+            revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)

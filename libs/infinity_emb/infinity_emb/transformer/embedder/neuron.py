@@ -82,8 +82,16 @@ class NeuronOptimumEmbedder(BaseEmbedder):
             else cls_token_pooling
         )
 
-        self.tokenizer = AutoTokenizer.from_pretrained(engine_args.model_name_or_path)
-        self.config = AutoConfig.from_pretrained(engine_args.model_name_or_path)
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            engine_args.model_name_or_path,
+            revision=engine_args.revision,
+            trust_remote_code=engine_args.trust_remote_code,
+        )
+        self.config = AutoConfig.from_pretrained(
+            engine_args.model_name_or_path,
+            revision=engine_args.revision,
+            trust_remote_code=engine_args.trust_remote_code,
+        )
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
 
         compiler_args = {"num_cores": get_nc_count(), "auto_cast_type": "fp16"}
@@ -97,6 +105,8 @@ class NeuronOptimumEmbedder(BaseEmbedder):
         }
         self.model = NeuronModelForFeatureExtraction.from_pretrained(
             model_id=engine_args.model_name_or_path,
+            revision=engine_args.revision,
+            trust_remote_code=engine_args.trust_remote_code,
             export=True,
             **compiler_args,
             **input_shapes,

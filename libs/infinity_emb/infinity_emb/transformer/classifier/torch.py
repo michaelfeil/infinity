@@ -35,6 +35,7 @@ class SentenceClassifier(BaseClassifer):
 
         self._infinity_tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,
+            revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
 

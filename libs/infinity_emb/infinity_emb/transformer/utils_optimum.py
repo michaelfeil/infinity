@@ -70,6 +70,7 @@ def optimize_model(
     file_name: str,
     optimize_model=False,
     revision: Optional[str] = None,
+    trust_remote_code: bool = True,
 ):
     CHECK_ONNXRUNTIME.mark_required()
     path_folder = (
@@ -82,6 +83,7 @@ def optimize_model(
         return model_class.from_pretrained(
             model_name_or_path,
             revision=revision,
+            trust_remote_code=trust_remote_code,
             provider=execution_provider,
             file_name=file_name,
             provider_options={
@@ -100,15 +102,17 @@ def optimize_model(
         return model_class.from_pretrained(
             file_optimized.parent.as_posix(),
             revision=revision,
+            trust_remote_code=trust_remote_code,
             provider=execution_provider,
             file_name=file_optimized.name,
         )
 
     unoptimized_model_path = model_class.from_pretrained(
         model_name_or_path,
+        revision=revision,
+        trust_remote_code=trust_remote_code,
         provider=execution_provider,
         file_name=file_name,
-        revision=revision,
     )
     if not optimize_model or execution_provider == "TensorrtExecutionProvider":
         return unoptimized_model_path
@@ -137,6 +141,8 @@ def optimize_model(
 
         model = model_class.from_pretrained(
             optimized_model_path,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
             provider=execution_provider,
             file_name=Path(file_name).name.replace(".onnx", "_optimized.onnx"),
         )
