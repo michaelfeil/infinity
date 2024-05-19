@@ -1,6 +1,6 @@
+import sys
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
@@ -245,105 +245,220 @@ def create_server(
     return app
 
 
-def _start_uvicorn(
-    model_name_or_path: str = "michaelfeil/bge-small-en-v1.5",
-    served_model_name: Optional[str] = None,
-    batch_size: int = 32,
-    revision: Optional[str] = None,
-    trust_remote_code: bool = True,
-    url_prefix: str = "",
-    host: str = "0.0.0.0",
-    port: int = 7997,
-    redirect_slash: str = "/docs",
-    log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
-    engine: InferenceEngine.names_enum() = InferenceEngine.names_enum().torch.name,  # type: ignore # noqa
-    model_warmup: bool = True,
-    vector_disk_cache: bool = INFINITY_CACHE_VECTORS,
-    device: Device.names_enum() = Device.names_enum().auto.name,  # type: ignore
-    lengths_via_tokenize: bool = False,
-    dtype: Dtype.names_enum() = Dtype.names_enum().auto.name,  # type: ignore
-    pooling_method: PoolingMethod.names_enum() = PoolingMethod.names_enum().auto.name,  # type: ignore
-    compile: bool = False,
-    bettertransformer: bool = True,
-    preload_only: bool = False,
-    permissive_cors: bool = False,
-):
-    """Infinity Embedding API ♾️  cli to start a uvicorn-server instance;
-    MIT License; Copyright (c) 2023-now Michael Feil
+class AutoPadding:
+    """itertools.cycle with custom behaviour"""
 
-    Args:
-        model_name_or_path, str: Huggingface model, e.g.
-            "michaelfeil/bge-small-en-v1.5".
-        served_model_name, str: "", e.g. "bge-small-en-v1.5"
-        batch_size, int: batch size for forward pass.
-        revision: str: revision of the model.
-        trust_remote_code, bool: trust remote code.
-        url_prefix, str: prefix for api. typically "".
-        host, str: host-url, typically either "0.0.0.0" or "127.0.0.1".
-        port, int: port that you want to expose.
-        redirect_slash, str: redirect to of GET "/". Defaults to "/docs". Empty string to disable.
-        log_level: logging level.
-            For high performance, use "info" or higher levels. Defaults to "info".
-        engine, str: framework that should perform inference.
-        model_warmup, bool: perform model warmup before starting the server.
-            Defaults to True.
-        vector_disk_cache, bool: cache past embeddings in SQL.
-            Defaults to False or env-INFINITY_CACHE_VECTORS if set
-        device, Device: device to use for inference. Defaults to Device.auto or "auto"
-        lengths_via_tokenize: bool: schedule by token usage. Defaults to False.
-        dtype, Dtype: data type to use for inference. Defaults to Dtype.auto or "auto"
-        pooling_method, PoolingMethod: pooling method to use. Defaults to PoolingMethod.auto or "auto"
-        compile, bool: compile model for faster inference. Defaults to False.
-        use_bettertransformer, bool: use bettertransformer. Defaults to True.
-        preload_only, bool: only preload the model and exit. Defaults to False.
-        permissive_cors, bool: add permissive CORS headers to enable consumption from a browser. Defaults to False.
-    """
+    def __init__(self, length: int, **kwargs):
+        self.length = length
+        self.kwargs = kwargs
+
+    def __call__(self, x):
+        """pad x to length of self.length"""
+        if not isinstance(x, (list, tuple)):
+            return [x] * self.length
+        elif len(x) == 1:
+            return x * self.length
+        elif len(x) == self.length:
+            return x
+        else:
+            raise ValueError(f"Expected length {self.length} but got {len(x)}")
+
+    def __iter__(self):
+        """iterate over kwargs and pad them to length of self.length"""
+        for iteration in range(self.length):
+            kwargs = {}
+            for key, value in self.kwargs.items():
+                kwargs[key] = self.__call__(value)[iteration]
+            yield kwargs
+
+
+if CHECK_TYPER.is_available:
+    CHECK_TYPER.mark_required()
     CHECK_UVICORN.mark_required()
+    import typer
     import uvicorn
 
-    logger.setLevel(log_level.to_int())
+    tp = typer.Typer()
 
-    vector_disk_cache_path = (
-        f"{engine}_{model_name_or_path.replace('/','_')}" if vector_disk_cache else ""
-    )
+    @tp.command("v1")
+    def v1(
+        model_name_or_path: str = "michaelfeil/bge-small-en-v1.5",
+        served_model_name: str = "",
+        batch_size: int = 32,
+        revision: str = "",
+        trust_remote_code: bool = True,
+        url_prefix: str = "",
+        host: str = "0.0.0.0",
+        port: int = 7997,
+        redirect_slash: str = "/docs",
+        log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
+        engine: InferenceEngine = InferenceEngine.default_value(),  # type: ignore # noqa
+        model_warmup: bool = True,
+        vector_disk_cache: bool = INFINITY_CACHE_VECTORS,
+        device: Device = Device.default_value(),  # type: ignore
+        lengths_via_tokenize: bool = False,
+        dtype: Dtype = Dtype.default_value(),  # type: ignore
+        pooling_method: PoolingMethod = PoolingMethod.default_value(),  # type: ignore
+        compile: bool = False,
+        bettertransformer: bool = True,
+        preload_only: bool = False,
+        permissive_cors: bool = False,
+    ):
+        """Infinity Embedding API ♾️  cli v1 to start a uvicorn-server instance;
+        MIT License; Copyright (c) 2023-now Michael Feil
 
-    engine_args = EngineArgs(
-        model_name_or_path=model_name_or_path,
-        batch_size=batch_size,
-        revision=revision,
-        trust_remote_code=trust_remote_code,
-        engine=InferenceEngine[engine.value],  # type: ignore
-        model_warmup=model_warmup,
-        vector_disk_cache_path=vector_disk_cache_path,
-        device=Device[device.value],  # type: ignore
-        lengths_via_tokenize=lengths_via_tokenize,
-        dtype=Dtype[dtype.value],  # type: ignore
-        pooling_method=PoolingMethod[pooling_method.value],  # type: ignore
-        compile=compile,
-        bettertransformer=bettertransformer,
-        served_model_name=served_model_name,  # type: ignore
-        permissive_cors=permissive_cors,
-    )
+        Args:
+            model_name_or_path, str: Huggingface model, e.g.
+                "michaelfeil/bge-small-en-v1.5".
+            served_model_name, str: "", e.g. "bge-small-en-v1.5"
+            batch_size, int: batch size for forward pass.
+            revision: str: revision of the model.
+            trust_remote_code, bool: trust remote code.
+            url_prefix, str: prefix for api. typically "".
+            host, str: host-url, typically either "0.0.0.0" or "127.0.0.1".
+            port, int: port that you want to expose.
+            redirect_slash, str: redirect to of GET "/". Defaults to "/docs". Empty string to disable.
+            log_level: logging level.
+                For high performance, use "info" or higher levels. Defaults to "info".
+            engine, str: framework that should perform inference.
+            model_warmup, bool: perform model warmup before starting the server.
+                Defaults to True.
+            vector_disk_cache, bool: cache past embeddings in SQL.
+                Defaults to False or env-INFINITY_CACHE_VECTORS if set
+            device, Device: device to use for inference. Defaults to Device.auto or "auto"
+            lengths_via_tokenize: bool: schedule by token usage. Defaults to False.
+            dtype, Dtype: data type to use for inference. Defaults to Dtype.auto or "auto"
+            pooling_method, PoolingMethod: pooling method to use. Defaults to PoolingMethod.auto or "auto"
+            compile, bool: compile model for faster inference. Defaults to False.
+            use_bettertransformer, bool: use bettertransformer. Defaults to True.
+            preload_only, bool: only preload the model and exit. Defaults to False.
+            permissive_cors, bool: add permissive CORS headers to enable consumption from a browser. Defaults to False.
+        """
+        v2(
+            model_id=[model_name_or_path],
+            served_model_name=[served_model_name],  # type: ignore
+            batch_size=[batch_size],
+            revision=[revision],  # type: ignore
+            trust_remote_code=[trust_remote_code],
+            engine=engine,
+            dtype=dtype,
+            pooling_method=pooling_method,
+            device=device,
+            model_warmup=[model_warmup],
+            vector_disk_cache=[vector_disk_cache],
+            lengths_via_tokenize=[lengths_via_tokenize],
+            compile=[compile],
+            bettertransformer=[bettertransformer],
+            # unique kwargs
+            preload_only=preload_only,
+            url_prefix=url_prefix,
+            host=host,
+            port=port,
+            redirect_slash=redirect_slash,
+            log_level=log_level,
+            permissive_cors=permissive_cors,
+        )
 
-    app = create_server(
-        engine_args_list=[engine_args],
-        url_prefix=url_prefix,
-        doc_extra=dict(host=host, port=port),
-        redirect_slash=redirect_slash,
-        preload_only=preload_only,
-        permissive_cors=permissive_cors,
-    )
-    uvicorn.run(app, host=host, port=port, log_level=log_level.name)
+    @tp.command("v2")
+    def v2(
+        # arguments for engine
+        model_id: list[str] = [
+            "michaelfeil/bge-small-en-v1.5",
+        ],
+        served_model_name: list[str] = [""],
+        batch_size: list[int] = [32],
+        revision: list[str] = [""],
+        trust_remote_code: list[bool] = [True],
+        engine: InferenceEngine = InferenceEngine.default_value(),  # type: ignore # noqa
+        model_warmup: list[bool] = [True],
+        vector_disk_cache: list[bool] = [INFINITY_CACHE_VECTORS],
+        device: Device = Device.default_value(),  # type: ignore
+        lengths_via_tokenize: list[bool] = [False],
+        dtype: Dtype = Dtype.default_value(),  # type: ignore
+        pooling_method: PoolingMethod = PoolingMethod.default_value(),  # type: ignore
+        compile: list[bool] = [False],
+        bettertransformer: list[bool] = [True],
+        # arguments for uvicorn / server
+        preload_only: bool = False,
+        host: str = "0.0.0.0",
+        port: int = 7997,
+        url_prefix: str = "",
+        redirect_slash: str = "/docs",
+        log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
+        permissive_cors: bool = False,
+    ):
+        """Infinity Embedding API ♾️  cli v2 to start a uvicorn-server instance;
+        MIT License; Copyright (c) 2023-now Michael Feil
 
+        kwargs:
+            model_id, list[str]: Huggingface model, e.g.
+                ["michaelfeil/bge-small-en-v1.5", "mixedbread-ai/mxbai-embed-large-v1"]
+            served_model_name, list[str]: "", e.g. ["bge-small-en-v1.5"]
+            batch_size, list[int]: batch size for forward pass.
+            revision: list[str]: revision of the model.
+            trust_remote_code, list[bool]: trust remote code.
+            url_prefix, str: prefix for api. typically "".
+            host, str: host-url, typically either "0.0.0.0" or "127.0.0.1".
+            port, int: port that you want to expose.
+            redirect_slash, str: redirect to of GET "/". Defaults to "/docs". Empty string to disable.
+            log_level: logging level.
+                For high performance, use "info" or higher levels. Defaults to "info".
+            engine, str: framework that should perform inference.
+            model_warmup, bool: perform model warmup before starting the server.
+                Defaults to True.
+            vector_disk_cache, bool: cache past embeddings in SQL.
+                Defaults to False or env-INFINITY_CACHE_VECTORS if set
+            device, Device: device to use for inference. Defaults to Device.auto or "auto"
+            lengths_via_tokenize: bool: schedule by token usage. Defaults to False.
+            dtype, Dtype: data type to use for inference. Defaults to Dtype.auto or "auto"
+            pooling_method, PoolingMethod: pooling method to use. Defaults to PoolingMethod.auto or "auto"
+            compile, bool: compile model for faster inference. Defaults to False.
+            use_bettertransformer, bool: use bettertransformer. Defaults to True.
+            preload_only, bool: only preload the model and exit. Defaults to False.
+            permissive_cors, bool: add permissive CORS headers to enable consumption from a browser. Defaults to False.
+        """
+        logger.setLevel(log_level.to_int())
+        padder = AutoPadding(
+            length=len(model_id),
+            model_name_or_path=model_id,
+            batch_size=batch_size,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+            engine=engine,
+            model_warmup=model_warmup,
+            vector_disk_cache_path=vector_disk_cache,
+            device=device,
+            lengths_via_tokenize=lengths_via_tokenize,
+            dtype=dtype,
+            pooling_method=pooling_method,
+            compile=compile,
+            bettertransformer=bettertransformer,
+            served_model_name=served_model_name,
+        )
 
-def cli():
-    """fires the command line using Python `typer.run()`"""
-    CHECK_TYPER.mark_required()
-    import typer
+        engine_args = []
+        for kwargs in padder:
+            engine_args.append(EngineArgs(**kwargs))
 
-    typer.run(_start_uvicorn)
+        app = create_server(
+            engine_args_list=engine_args,
+            url_prefix=url_prefix,
+            doc_extra=dict(host=host, port=port),
+            redirect_slash=redirect_slash,
+            preload_only=preload_only,
+            permissive_cors=permissive_cors,
+        )
+        uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
+    def cli():
+        if len(sys.argv) == 1 or sys.argv[1] not in ["v1", "v2", "help", "--help"]:
+            print(
+                "WARNING: No command given. Defaulting to `v1`."
+                "Make sure to upgrade to the latest version of `typer`."
+            )
+            sys.argv.insert(1, "v1")
+        print(sys.argv)
+        tp()
 
-if __name__ == "__main__":
-    # for debugging
-    cli()
+    if __name__ == "__main__":
+        cli()

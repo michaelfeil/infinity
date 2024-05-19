@@ -47,12 +47,20 @@ class EnumType(enum.Enum):
             cls.__name__ + "__names", {k: k for k in cls.__members__.keys()}
         )
 
+    @abstractmethod
+    def default_value(self) -> str:
+        ...
+
 
 class InferenceEngine(EnumType):
     torch = "torch"
     ctranslate2 = "ctranslate2"
     optimum = "optimum"
-    debugengine = "dummytransformer"
+    debugengine = "debugengine"
+
+    @classmethod
+    def default_value(self):
+        return InferenceEngine.torch.value
 
 
 class Device(EnumType):
@@ -60,7 +68,16 @@ class Device(EnumType):
     cuda = "cuda"
     mps = "mps"
     tensorrt = "tensorrt"
-    auto = None
+    auto = "auto"
+
+    @classmethod
+    def default_value(self):
+        return Device.auto.value
+
+    def resolve(self) -> Optional[str]:
+        if self == Device.auto:
+            return None
+        return self.value
 
 
 class Dtype(EnumType):
@@ -70,17 +87,29 @@ class Dtype(EnumType):
     fp8: str = "fp8"
     auto: str = "auto"
 
+    @classmethod
+    def default_value(self):
+        return Dtype.auto.value
+
 
 class EmbeddingDtype(EnumType):
     float32: str = "float32"
     # int8: str = "int8"
     # binary: str = "binary"
 
+    @classmethod
+    def default_value(self):
+        return EmbeddingDtype.float32.value
+
 
 class PoolingMethod(EnumType):
     mean: str = "mean"
     cls: str = "cls"
     auto: str = "auto"
+
+    @classmethod
+    def default_value(self):
+        return PoolingMethod.auto.value
 
 
 @dataclass(**dataclass_args)

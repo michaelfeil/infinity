@@ -255,5 +255,5 @@ class AsyncEngineArray:
             return self.engines_dict[index_or_name]
         raise IndexError(
             f"Engine for model name {index_or_name} not found. "
-            "Available model names are {list(self.engines_dict.keys())}"
+            f"Available model names are {list(self.engines_dict.keys())}"
         )
