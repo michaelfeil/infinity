@@ -46,11 +46,11 @@ pip install infinity-emb[all]
 After your pip install, with your venv active, you can run the CLI directly.
 
 ```bash
-infinity_emb --model-name-or-path BAAI/bge-small-en-v1.5
+infinity_emb v2 --model-id BAAI/bge-small-en-v1.5
 ```
-Check the `--help` command to get a description for all parameters.
+Check the `v2 --help` command to get a description for all parameters.
 ```bash
-infinity_emb --help
+infinity_emb v2 --help
 ```
 
 ### Launch the CLI using a pre-built docker container (recommended)
@@ -59,14 +59,16 @@ Make sure you mount your accelerator, i.e. install nvidia-docker and activate wi
 
 ```bash
 port=7997
-model=BAAI/bge-small-en-v1.5
+model1=michaelfeil/bge-small-en-v1.5
+model2=BAAI/bge-reranker-v2-m3
 volume=$PWD/data
 
 docker run -it --gpus all \
  -v $volume:/app/.cache \
  -p $port:$port \
  michaelf34/infinity:latest \
- --model-name-or-path $model \
+ --model-id $model1 \
+ --model-id $model2 \
  --port $port
 ```
 The cache path at inside the docker container is set by the environment variable `HF_HOME`.
@@ -84,9 +86,12 @@ sentences = ["Embed this is sentence via Infinity.", "Paris is in France."]
 engine = AsyncEmbeddingEngine.from_args(EngineArgs(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch"))
 
 async def main(): 
-    async with engine: # engine starts with engine.astart()
+    async with engine: 
         embeddings, usage = await engine.embed(sentences=sentences)
-    # engine stops with engine.astop()
+    # or handle the async start / stop yourself.
+    await engine.astart()
+    embeddings, usage = await engine.embed(sentences=sentences)
+    await engine.astop()
 asyncio.run(main())
 ```
 
@@ -101,7 +106,7 @@ image: michaelf34/infinity:latest
 env:
   - MODEL_ID=BAAI/bge-small-en-v1.5
 commands:
-  - infinity_emb --model-name-or-path $MODEL_ID --port 80
+  - infinity_emb v2 --model-id $MODEL_ID --port 80
 port: 80
 ```
 
@@ -135,38 +140,43 @@ async def main():
     async with engine:
         ranking, usage = await engine.rerank(query=query, docs=docs)
         print(list(zip(ranking, docs)))
+    # or handle the async start / stop yourself.
+    await engine.astart()
+    ranking, usage = await engine.rerank(query=query, docs=docs)
+    await engine.astop()
+
 asyncio.run(main())
 ```
 
 When using the CLI, use this command to launch rerankers:
 ```bash
-infinity_emb --model-name-or-path BAAI/bge-reranker-base
+infinity_emb v2 --model-id BAAI/bge-reranker-base
 ```
 
-<details>
-  <summary>You can also use text-classification (beta):</summary>
-  
-  Use text classification with Infinity's `classify` feature, which allows for sentiment analysis, emotion detection, and more classification tasks.
+### Text Classification 
 
-  Note: PR's to speed this section up are welcome. Currently the backend uses huggingface pipelines + dynamic batching. On top of that, a ~40% speedup should be possible.
-  ```python
-  import asyncio
-  from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+Use text classification with Infinity's `classify` feature, which allows for sentiment analysis, emotion detection, and more classification tasks.
 
-  sentences = ["This is awesome.", "I am bored."]
-  engine_args = EngineArgs(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
-      engine="torch", model_warmup=True)
-  engine = AsyncEmbeddingEngine.from_args(engine_args)
-  async def main(): 
-      async with engine:
-          predictions, usage = await engine.classify(sentences=sentences)
-          return predictions, usage
-  asyncio.run(main())
-  ```
+```python
+import asyncio
+from infinity_emb import AsyncEmbeddingEngine, EngineArgs
 
-  Running via CLI requires a new FastAPI schema and server integration - PR's are also welcome there.
-  
-</details>
+sentences = ["This is awesome.", "I am bored."]
+engine_args = EngineArgs(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
+    engine="torch", model_warmup=True)
+engine = AsyncEmbeddingEngine.from_args(engine_args)
+async def main(): 
+    async with engine:
+        predictions, usage = await engine.classify(sentences=sentences)
+        return predictions, usage
+    # or handle the async start / stop yourself.
+    await engine.astart()
+    predictions, usage = await engine.classify(sentences=sentences)
+    await engine.astop()
+asyncio.run(main())
+```
+
+Running via CLI requires a new FastAPI schema and server integration - PR's are also welcome there.
 
 
 ## Launch FAQ:
@@ -197,23 +207,9 @@ infinity_emb --model-name-or-path BAAI/bge-reranker-base
 </details>
 
 <details>
-  <summary>Launching multiple models in one dockerfile</summary>
+  <summary>Launching multiple models/summary>
   
-  Multiple models on one GPU is in experimental mode. You can use the following temporary solution:
-  ```Dockerfile
-  FROM michaelf34/infinity:latest
-  # Dockerfile-ENTRYPOINT for multiple models via multiple ports
-  ENTRYPOINT ["/bin/sh", "-c", \
-   "(. /app/.venv/bin/activate && infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &);\
-   (. /app/.venv/bin/activate && infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
-  ```
-  
-  You can build and run it via:  
-  ```bash
-  docker build -t custominfinity . && docker run -it --gpus all -p 8080:8080 -p 8081:8081 custominfinity
-  ```
-
-  Both models now run on two instances in one dockerfile servers. Otherwise, you could build your own FastAPI/flask instance, which wraps around the Async API.
+  Since infinity_emb>=0.0.34, you can use cli `v2` method to launch multiple models at the same time.
      
 </details>
 

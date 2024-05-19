@@ -43,7 +43,7 @@ docker run -it --gpus all \
  -v $volume:/app/.cache \
  -p $port:$port \
  michaelf34/infinity:latest \
- --model-name-or-path $model \
+ --model-id $model \
  --port $port
 ```
 The cache path at inside the docker container is set by the environment variable `HF_HOME`.

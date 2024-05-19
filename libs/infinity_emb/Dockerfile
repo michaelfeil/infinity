@@ -110,7 +110,7 @@ ARG EXTRA_PACKAGES
 RUN if [ -n "${EXTRA_PACKAGES}" ]; then python -m pip install --no-cache-dir ${EXTRA_PACKAGES} ; fi
 
 # will exit with 3 if model is downloaded # TODO: better exit code
-RUN infinity_emb --model-name-or-path $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
+RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
 ENTRYPOINT ["infinity_emb"]
 
 # Use a multi-stage build -> production version

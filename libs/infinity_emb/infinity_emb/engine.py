@@ -13,6 +13,7 @@ from infinity_emb.primitives import (
     EmbeddingReturnType,
     ModelCapabilites,
 )
+from asyncio import Semaphore
 
 
 class AsyncEmbeddingEngine:
@@ -45,6 +46,7 @@ class AsyncEmbeddingEngine:
         self._engine_args = EngineArgs(**kwargs)
 
         self.running = False
+        self._running_sepamore = Semaphore(1)
         self._model, self._min_inference_t, self._max_inference_t = select_model(
             self._engine_args
         )
@@ -72,28 +74,25 @@ class AsyncEmbeddingEngine:
 
     async def astart(self):
         """startup engine"""
-        if self.running:
-            raise ValueError(
-                "DoubleSpawn: already started `AsyncEmbeddingEngine`. "
-                " recommended use is via AsyncContextManager"
-                " `async with engine: ..`"
-            )
-        self.running = True
-        self._batch_handler = BatchHandler(
-            max_batch_size=self._engine_args.batch_size,
-            model=self._model,
-            batch_delay=self._min_inference_t / 2,
-            vector_disk_cache_path=self._engine_args.vector_disk_cache_path,
-            verbose=logger.level <= 10,
-            lengths_via_tokenize=self._engine_args.lengths_via_tokenize,
-        )
-        await self._batch_handler.spawn()
+        async with self._running_sepamore:
+            if not self.running:
+                self.running = True
+                self._batch_handler = BatchHandler(
+                    max_batch_size=self._engine_args.batch_size,
+                    model=self._model,
+                    batch_delay=self._min_inference_t / 2,
+                    vector_disk_cache_path=self._engine_args.vector_disk_cache_path,
+                    verbose=logger.level <= 10,
+                    lengths_via_tokenize=self._engine_args.lengths_via_tokenize,
+                )
+                await self._batch_handler.spawn()
 
     async def astop(self):
         """stop engine"""
-        self._check_running()
-        self.running = False
-        await self._batch_handler.shutdown()
+        async with self._running_sepamore:
+            if self.running:
+                self.running = False
+                await self._batch_handler.shutdown()
 
     async def __aenter__(self):
         await self.astart()
@@ -102,12 +101,14 @@ class AsyncEmbeddingEngine:
         await self.astop()
 
     def overload_status(self):
-        self._check_running()
         return self._batch_handler.overload_status()
-
+    
     def is_overloaded(self) -> bool:
-        self._check_running()
         return self._batch_handler.is_overloaded()
+    
+    @property
+    def is_running(self) -> bool:
+        return self.running
 
     @property
     def capabilities(self) -> Set[ModelCapabilites]:
@@ -136,7 +137,7 @@ class AsyncEmbeddingEngine:
             int: token usage
         """
 
-        self._check_running()
+        self._assert_running()
         embeddings, usage = await self._batch_handler.embed(sentences)
         return embeddings, usage
 
@@ -159,7 +160,7 @@ class AsyncEmbeddingEngine:
             list[float]: list of scores
             int: token usage
         """
-        self._check_running()
+        self._assert_running()
         scores, usage = await self._batch_handler.rerank(
             query=query, docs=docs, raw_scores=raw_scores
         )
@@ -184,14 +185,14 @@ class AsyncEmbeddingEngine:
             list[ClassifyReturnType]: list of class encodings
             int: token usage
         """
-        self._check_running()
+        self._assert_running()
         scores, usage = await self._batch_handler.classify(
             sentences=sentences, raw_scores=raw_scores
         )
 
         return scores, usage
 
-    def _check_running(self):
+    def _assert_running(self):
         if not self.running:
             raise ValueError(
                 "didn't start `AsyncEmbeddingEngine` "

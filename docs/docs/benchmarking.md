@@ -57,8 +57,7 @@ docker run -it -p "7997:80" --gpus all --pull always ghcr.io/huggingface/text-em
 ### tensorrt, onnx-gpu:
 
 ```bash
-docker buildx build --target production-tensorrt -t inf-trt . && docker run -it -p "7997:7997" --gpus all inf-trt --model-name-or-path BAAI/bge-large-
-en-v1.5 --engine optimum --device "cuda OR tensorrt"
+docker buildx build --target production-tensorrt -t inf-trt . && docker run -it -p "7997:7997" --gpus all inf-trt v2 --model-id BAAI/bge-large-en-v1.5 --engine optimum --device "cuda OR tensorrt"
 ```
 
 ## Results
