@@ -195,8 +195,10 @@ async def test_async_api_failing():
     with pytest.raises(ValueError):
         await engine.embed(sentences)
 
+    await engine.astart()
     assert not engine.is_overloaded()
     assert engine.overload_status()
+    await engine.astop()
 
 
 @pytest.mark.anyio

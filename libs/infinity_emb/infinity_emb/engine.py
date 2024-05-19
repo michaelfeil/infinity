@@ -101,9 +101,11 @@ class AsyncEmbeddingEngine:
         await self.astop()
 
     def overload_status(self):
+        self._assert_running()
         return self._batch_handler.overload_status()
 
     def is_overloaded(self) -> bool:
+        self._assert_running()
         return self._batch_handler.is_overloaded()
 
     @property
@@ -255,6 +257,6 @@ class AsyncEngineArray:
         if isinstance(index_or_name, str) and index_or_name in self.engines_dict:
             return self.engines_dict[index_or_name]
         raise IndexError(
-            f"Engine for model name {index_or_name} not found. "
+            f"Engine for model name `{index_or_name}` not found. "
             f"Available model names are {list(self.engines_dict.keys())}"
         )
