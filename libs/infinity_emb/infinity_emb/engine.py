@@ -1,3 +1,4 @@
+from asyncio import Semaphore
 from typing import Iterable, Iterator, Optional, Set, Union
 
 from infinity_emb.args import EngineArgs
@@ -13,7 +14,6 @@ from infinity_emb.primitives import (
     EmbeddingReturnType,
     ModelCapabilites,
 )
-from asyncio import Semaphore
 
 
 class AsyncEmbeddingEngine:
@@ -102,10 +102,10 @@ class AsyncEmbeddingEngine:
 
     def overload_status(self):
         return self._batch_handler.overload_status()
-    
+
     def is_overloaded(self) -> bool:
         return self._batch_handler.is_overloaded()
-    
+
     @property
     def is_running(self) -> bool:
         return self.running
