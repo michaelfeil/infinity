@@ -67,6 +67,7 @@ docker run -it --gpus all \
  -v $volume:/app/.cache \
  -p $port:$port \
  michaelf34/infinity:latest \
+ v2 \
  --model-id $model1 \
  --model-id $model2 \
  --port $port
