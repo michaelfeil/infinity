@@ -132,9 +132,9 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
-<a class="md-nav__link" href="#docker-launch-the-cli-using-a-pre-built-docker-container">
+<a class="md-nav__link" href="#docker-launch-the-cli-using-a-pre-built-docker-container-recommended">
 <span class="md-ellipsis">
-      Docker: Launch the CLI using a pre-built docker container
+      Docker: Launch the CLI using a pre-built docker container (recommended)
     </span>
 </a>
 </li>
@@ -146,9 +146,9 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#extending-the-dockerfile">
+<a class="md-nav__link" href="#runpodio-serverless">
 <span class="md-ellipsis">
-      Extending the Dockerfile
+      Runpod.io - Serverless
     </span>
 </a>
 </li>
@@ -198,9 +198,9 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
-<a class="md-nav__link" href="#docker-launch-the-cli-using-a-pre-built-docker-container">
+<a class="md-nav__link" href="#docker-launch-the-cli-using-a-pre-built-docker-container-recommended">
 <span class="md-ellipsis">
-      Docker: Launch the CLI using a pre-built docker container
+      Docker: Launch the CLI using a pre-built docker container (recommended)
     </span>
 </a>
 </li>
@@ -212,9 +212,9 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#extending-the-dockerfile">
+<a class="md-nav__link" href="#runpodio-serverless">
 <span class="md-ellipsis">
-      Extending the Dockerfile
+      Runpod.io - Serverless
     </span>
 </a>
 </li>
@@ -233,14 +233,24 @@
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
 <h1 id="deployment">Deployment</h1>
-<h3 id="docker-launch-the-cli-using-a-pre-built-docker-container">Docker: Launch the CLI using a pre-built docker container</h3>
-<p>Launch the Infinity model using a pre-built Docker container by running the following command. This command uses Docker to run the Infinity CLI with the specified model and port. The optional <code>HF_HOME</code> environment variable allows you to control the download path at runtime. </p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a><span class="nv">model</span><span class="o">=</span>BAAI/bge-small-en-v1.5
-</span><span id="__span-0-2"><a href="#__codelineno-0-2" id="__codelineno-0-2" name="__codelineno-0-2"></a><span class="nv">port</span><span class="o">=</span><span class="m">7997</span>
-</span><span id="__span-0-3"><a href="#__codelineno-0-3" id="__codelineno-0-3" name="__codelineno-0-3"></a>docker<span class="w"> </span>run<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-4"><a href="#__codelineno-0-4" id="__codelineno-0-4" name="__codelineno-0-4"></a><span class="w">  </span>-it<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="nv">$port</span>:<span class="nv">$port</span><span class="w"> </span>michaelf34/infinity:latest<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-5"><a href="#__codelineno-0-5" id="__codelineno-0-5" name="__codelineno-0-5"></a><span class="w">  </span>--model-name-or-path<span class="w"> </span><span class="nv">$model</span><span class="w"> </span>--port<span class="w"> </span><span class="nv">$port</span>
+<h3 id="docker-launch-the-cli-using-a-pre-built-docker-container-recommended">Docker: Launch the CLI using a pre-built docker container (recommended)</h3>
+<p>Instead of installing the CLI via pip, you may also use docker to run <code>michaelf34/infinity</code>. 
+Make sure you mount your accelerator, i.e. install nvidia-docker and activate with <code>--gpus all</code>.</p>
+<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a><span class="nv">port</span><span class="o">=</span><span class="m">7997</span>
+</span><span id="__span-0-2"><a href="#__codelineno-0-2" id="__codelineno-0-2" name="__codelineno-0-2"></a><span class="nv">model1</span><span class="o">=</span>michaelfeil/bge-small-en-v1.5
+</span><span id="__span-0-3"><a href="#__codelineno-0-3" id="__codelineno-0-3" name="__codelineno-0-3"></a><span class="nv">model2</span><span class="o">=</span>BAAI/bge-reranker-base
+</span><span id="__span-0-4"><a href="#__codelineno-0-4" id="__codelineno-0-4" name="__codelineno-0-4"></a><span class="nv">volume</span><span class="o">=</span><span class="nv">$PWD</span>/data
+</span><span id="__span-0-5"><a href="#__codelineno-0-5" id="__codelineno-0-5" name="__codelineno-0-5"></a>
+</span><span id="__span-0-6"><a href="#__codelineno-0-6" id="__codelineno-0-6" name="__codelineno-0-6"></a>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-7"><a href="#__codelineno-0-7" id="__codelineno-0-7" name="__codelineno-0-7"></a><span class="w"> </span>-v<span class="w"> </span><span class="nv">$volume</span>:/app/.cache<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-8"><a href="#__codelineno-0-8" id="__codelineno-0-8" name="__codelineno-0-8"></a><span class="w"> </span>-p<span class="w"> </span><span class="nv">$port</span>:<span class="nv">$port</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-9"><a href="#__codelineno-0-9" id="__codelineno-0-9" name="__codelineno-0-9"></a><span class="w"> </span>michaelf34/infinity:latest<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-10"><a href="#__codelineno-0-10" id="__codelineno-0-10" name="__codelineno-0-10"></a><span class="w"> </span>v2<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-11"><a href="#__codelineno-0-11" id="__codelineno-0-11" name="__codelineno-0-11"></a><span class="w"> </span>--model-id<span class="w"> </span><span class="nv">$model1</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-12"><a href="#__codelineno-0-12" id="__codelineno-0-12" name="__codelineno-0-12"></a><span class="w"> </span>--model-id<span class="w"> </span><span class="nv">$model2</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-13"><a href="#__codelineno-0-13" id="__codelineno-0-13" name="__codelineno-0-13"></a><span class="w"> </span>--port<span class="w"> </span><span class="nv">$port</span>
 </span></code></pre></div>
+The cache path at inside the docker container is set by the environment variable <code>HF_HOME</code>.</p>
 <h3 id="docker-with-offline-mode-and-models-with-custom-pip-packages">Docker with offline mode and models with custom pip packages</h3>
 <p>If you want to run infinity in a location without internet access, you can pre-download the model into the dockerfile.
 This is also the advised route to go, if you want to use infinity with models that require additional packages such as 
@@ -262,33 +272,23 @@ You can also set an argument <code>EXTRA_PACKAGES</code> if you require to insta
 <p>Note: You can also save a dockerfile direclty as <code>.tar</code>.
 This might come in handy if you do not have a shared internal docker registry in your nuclear facility, but still want to leverage the latest semantic search.
 https://docs.docker.com/reference/cli/docker/image/save/.</p>
-<h3 id="extending-the-dockerfile">Extending the Dockerfile</h3>
-<p>Launching multiple models in one dockerfile</p>
-<p>Multiple models on one GPU is in experimental mode. You can use the following temporary solution:
-<div class="language-Dockerfile highlight"><pre><span></span><code><span id="__span-3-1"><a href="#__codelineno-3-1" id="__codelineno-3-1" name="__codelineno-3-1"></a><span class="k">FROM</span><span class="w"> </span><span class="s">michaelf34/infinity:latest</span>
-</span><span id="__span-3-2"><a href="#__codelineno-3-2" id="__codelineno-3-2" name="__codelineno-3-2"></a><span class="c"># Dockerfile-ENTRYPOINT for multiple models via multiple ports</span>
-</span><span id="__span-3-3"><a href="#__codelineno-3-3" id="__codelineno-3-3" name="__codelineno-3-3"></a><span class="k">ENTRYPOINT</span><span class="w"> </span><span class="o">[</span><span class="s2">"/bin/sh"</span>,<span class="w"> </span><span class="s2">"-c"</span>,<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-4"><a href="#__codelineno-3-4" id="__codelineno-3-4" name="__codelineno-3-4"></a><span class="w">  </span><span class="s2">"(. /app/.venv/bin/activate &amp;&amp; infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &amp;);\</span>
-</span><span id="__span-3-5"><a href="#__codelineno-3-5" id="__codelineno-3-5" name="__codelineno-3-5"></a><span class="s2">  (. /app/.venv/bin/activate &amp;&amp; infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"</span><span class="o">]</span>
-</span></code></pre></div></p>
-<p>You can build and run it via:<br/>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a href="#__codelineno-4-1" id="__codelineno-4-1" name="__codelineno-4-1"></a>docker<span class="w"> </span>build<span class="w"> </span>-t<span class="w"> </span>custominfinity<span class="w"> </span>.<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="m">8080</span>:8080<span class="w"> </span>-p<span class="w"> </span><span class="m">8081</span>:8081<span class="w"> </span>custominfinity
-</span></code></pre></div></p>
-<p>Both models now run on two instances in one dockerfile servers. Otherwise, you could build your own FastAPI/flask instance, which wraps around the Async API.</p>
+<h3 id="runpodio-serverless">Runpod.io - Serverless</h3>
+<p>Integration (TBA):
+https://github.com/runpod-workers/worker-infinity-text-embeddings/pull/4</p>
 <h3 id="dstack">dstack</h3>
 <p>dstack allows you to provision a VM instance on the cloud of your choice.
 Write a service configuration file as below for the deployment of <code>BAAI/bge-small-en-v1.5</code> model wrapped in Infinity.</p>
-<div class="language-yaml highlight"><pre><span></span><code><span id="__span-5-1"><a href="#__codelineno-5-1" id="__codelineno-5-1" name="__codelineno-5-1"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">service</span>
-</span><span id="__span-5-2"><a href="#__codelineno-5-2" id="__codelineno-5-2" name="__codelineno-5-2"></a>
-</span><span id="__span-5-3"><a href="#__codelineno-5-3" id="__codelineno-5-3" name="__codelineno-5-3"></a><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">michaelf34/infinity:latest</span>
-</span><span id="__span-5-4"><a href="#__codelineno-5-4" id="__codelineno-5-4" name="__codelineno-5-4"></a><span class="nt">env</span><span class="p">:</span>
-</span><span id="__span-5-5"><a href="#__codelineno-5-5" id="__codelineno-5-5" name="__codelineno-5-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">MODEL_ID=BAAI/bge-small-en-v1.5</span>
-</span><span id="__span-5-6"><a href="#__codelineno-5-6" id="__codelineno-5-6" name="__codelineno-5-6"></a><span class="nt">commands</span><span class="p">:</span>
-</span><span id="__span-5-7"><a href="#__codelineno-5-7" id="__codelineno-5-7" name="__codelineno-5-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">infinity_emb --model-name-or-path $MODEL_ID --port 80</span>
-</span><span id="__span-5-8"><a href="#__codelineno-5-8" id="__codelineno-5-8" name="__codelineno-5-8"></a><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-3-1"><a href="#__codelineno-3-1" id="__codelineno-3-1" name="__codelineno-3-1"></a><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">service</span>
+</span><span id="__span-3-2"><a href="#__codelineno-3-2" id="__codelineno-3-2" name="__codelineno-3-2"></a>
+</span><span id="__span-3-3"><a href="#__codelineno-3-3" id="__codelineno-3-3" name="__codelineno-3-3"></a><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">michaelf34/infinity:latest</span>
+</span><span id="__span-3-4"><a href="#__codelineno-3-4" id="__codelineno-3-4" name="__codelineno-3-4"></a><span class="nt">env</span><span class="p">:</span>
+</span><span id="__span-3-5"><a href="#__codelineno-3-5" id="__codelineno-3-5" name="__codelineno-3-5"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">MODEL_ID=BAAI/bge-small-en-v1.5</span>
+</span><span id="__span-3-6"><a href="#__codelineno-3-6" id="__codelineno-3-6" name="__codelineno-3-6"></a><span class="nt">commands</span><span class="p">:</span>
+</span><span id="__span-3-7"><a href="#__codelineno-3-7" id="__codelineno-3-7" name="__codelineno-3-7"></a><span class="w">  </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">infinity_emb v2 --model-id $MODEL_ID --port 80</span>
+</span><span id="__span-3-8"><a href="#__codelineno-3-8" id="__codelineno-3-8" name="__codelineno-3-8"></a><span class="nt">port</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">80</span>
 </span></code></pre></div>
 <p>To deploy the service, execute the following dstack command. A prompt will guide you through selecting the desired VM instance for deploying Infinity.</p>
-<div class="language-shell highlight"><pre><span></span><code><span id="__span-6-1"><a href="#__codelineno-6-1" id="__codelineno-6-1" name="__codelineno-6-1"></a>dstack<span class="w"> </span>run<span class="w"> </span>.<span class="w"> </span>-f<span class="w"> </span>infinity/serve.dstack.yml<span class="w"> </span>--gpu<span class="w"> </span>16GB
+<div class="language-shell highlight"><pre><span></span><code><span id="__span-4-1"><a href="#__codelineno-4-1" id="__codelineno-4-1" name="__codelineno-4-1"></a>dstack<span class="w"> </span>run<span class="w"> </span>.<span class="w"> </span>-f<span class="w"> </span>infinity/serve.dstack.yml<span class="w"> </span>--gpu<span class="w"> </span>16GB
 </span></code></pre></div>
 </article>
 </div>
