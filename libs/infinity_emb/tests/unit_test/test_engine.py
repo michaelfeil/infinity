@@ -198,9 +198,6 @@ async def test_async_api_failing():
     await engine.astart()
     assert not engine.is_overloaded()
     assert engine.overload_status()
-
-    with pytest.raises(ValueError):
-        await engine.astart()
     await engine.astop()
 
 

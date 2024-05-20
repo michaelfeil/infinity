@@ -1,16 +1,25 @@
 # Deployment
 
-### Docker: Launch the CLI using a pre-built docker container
-
-Launch the Infinity model using a pre-built Docker container by running the following command. This command uses Docker to run the Infinity CLI with the specified model and port. The optional `HF_HOME` environment variable allows you to control the download path at runtime. 
+### Docker: Launch the CLI using a pre-built docker container (recommended)
+Instead of installing the CLI via pip, you may also use docker to run `michaelf34/infinity`. 
+Make sure you mount your accelerator, i.e. install nvidia-docker and activate with `--gpus all`.
 
 ```bash
-model=BAAI/bge-small-en-v1.5
 port=7997
-docker run \
-  -it --gpus all -p $port:$port michaelf34/infinity:latest \
-  --model-name-or-path $model --port $port
+model1=michaelfeil/bge-small-en-v1.5
+model2=BAAI/bge-reranker-base
+volume=$PWD/data
+
+docker run -it --gpus all \
+ -v $volume:/app/.cache \
+ -p $port:$port \
+ michaelf34/infinity:latest \
+ v2 \
+ --model-id $model1 \
+ --model-id $model2 \
+ --port $port
 ```
+The cache path at inside the docker container is set by the environment variable `HF_HOME`.
 
 ### Docker with offline mode and models with custom pip packages
 
@@ -41,26 +50,9 @@ Note: You can also save a dockerfile direclty as `.tar`.
 This might come in handy if you do not have a shared internal docker registry in your nuclear facility, but still want to leverage the latest semantic search.
 https://docs.docker.com/reference/cli/docker/image/save/.
 
-### Extending the Dockerfile
-
-Launching multiple models in one dockerfile
-  
-Multiple models on one GPU is in experimental mode. You can use the following temporary solution:
-```Dockerfile
-FROM michaelf34/infinity:latest
-# Dockerfile-ENTRYPOINT for multiple models via multiple ports
-ENTRYPOINT ["/bin/sh", "-c", \
-  "(. /app/.venv/bin/activate && infinity_emb --port 8080 --model-name-or-path sentence-transformers/all-MiniLM-L6-v2 &);\
-  (. /app/.venv/bin/activate && infinity_emb --port 8081 --model-name-or-path intfloat/e5-large-v2 )"]
-```
-
-You can build and run it via:  
-```bash
-docker build -t custominfinity . && docker run -it --gpus all -p 8080:8080 -p 8081:8081 custominfinity
-```
-
-Both models now run on two instances in one dockerfile servers. Otherwise, you could build your own FastAPI/flask instance, which wraps around the Async API.
-
+### Runpod.io - Serverless
+Integration (TBA):
+https://github.com/runpod-workers/worker-infinity-text-embeddings/pull/4
 
 ### dstack
 dstack allows you to provision a VM instance on the cloud of your choice.
@@ -73,7 +65,7 @@ image: michaelf34/infinity:latest
 env:
   - MODEL_ID=BAAI/bge-small-en-v1.5
 commands:
-  - infinity_emb --model-name-or-path $MODEL_ID --port 80
+  - infinity_emb v2 --model-id $MODEL_ID --port 80
 port: 80
 ```
 

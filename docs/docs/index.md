@@ -36,14 +36,17 @@ pip install infinity-emb[all]
 
 ```bash
 port=7997
-model=BAAI/bge-small-en-v1.5
+model1=michaelfeil/bge-small-en-v1.5
+model2=BAAI/bge-reranker-base
 volume=$PWD/data
 
 docker run -it --gpus all \
  -v $volume:/app/.cache \
  -p $port:$port \
  michaelf34/infinity:latest \
- --model-name-or-path $model \
+ v2 \
+ --model-id $model1 \
+ --model-id $model2 \
  --port $port
 ```
 The cache path at inside the docker container is set by the environment variable `HF_HOME`.
