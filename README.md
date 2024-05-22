@@ -32,6 +32,7 @@ In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sen
 ![](docs/demo_v0_0_1.gif)
 
 ### Latest News 🔥
+- [2024/05] launch multiple models using the `v2` cli
 - [2024/03] infinity supports now experimental int8 (cpu/cuda) and fp8 (H100/MI300) support
 - [2024/03] Docs are online: https://michaelfeil.eu/infinity/latest/
 - [2024/02] Community meetup at the [Run:AI Infra Club](https://discord.gg/7D4fbEgWjv)
