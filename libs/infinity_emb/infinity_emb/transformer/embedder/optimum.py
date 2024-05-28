@@ -31,7 +31,7 @@ class OptimumEmbedder(BaseEmbedder):
         if not OPTIMUM_AVAILABLE:
             raise ImportError(
                 "optimum.onnxruntime is not installed."
-                "`pip install optimum[onnxruntime]`"
+                "`pip install infinity_emb[optimum]`"
             )
         provider = device_to_onnx(engine_args.device)
 
