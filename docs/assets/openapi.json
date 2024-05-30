@@ -10,7 +10,7 @@
             "name": "MIT License",
             "identifier": "MIT"
         },
-        "version": "0.0.31"
+        "version": "0.0.37"
     },
     "paths": {
         "/health": {
@@ -74,7 +74,7 @@
         "/embeddings": {
             "post": {
                 "summary": " Embeddings",
-                "description": "Encode Embeddings\n\n```python\nimport requests\nrequests.post(\"http://..:7997/embeddings\",\n    json={\"model\":\"bge-small-en-v1.5\",\"input\":[\"A sentence to encode.\"]})",
+                "description": "Encode Embeddings\n\n```python\nimport requests\nrequests.post(\"http://..:7997/embeddings\",\n    json={\"model\":\"BAAI/bge-small-en-v1.5\",\"input\":[\"A sentence to encode.\"]})",
                 "operationId": "_embeddings_embeddings_post",
                 "requestBody": {
                     "content": {
@@ -113,7 +113,7 @@
         "/rerank": {
             "post": {
                 "summary": " Rerank",
-                "description": "Encode Embeddings\n\n```python\nimport requests\nrequests.post(\"http://..:7997/rerank\",\n    json={\"query\":\"Where is Munich?\",\"texts\":[\"Munich is in Germany.\"]})",
+                "description": "Rerank documents\n\n```python\nimport requests\nrequests.post(\"http://..:7997/rerank\",\n    json={\n        \"model\":\"BAAI/bge-reranker-base\",\n        \"query\":\"Where is Munich?\",\n        \"documents\":[\"Munich is in Germany.\", \"The sky is blue.\"]\n    })",
                 "operationId": "_rerank_rerank_post",
                 "requestBody": {
                     "content": {
@@ -130,7 +130,48 @@
                         "description": "Successful Response",
                         "content": {
                             "application/json": {
-                                "schema": {}
+                                "schema": {
+                                    "$ref": "#/components/schemas/ReRankResult"
+                                }
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Validation Error",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/HTTPValidationError"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/classify": {
+            "post": {
+                "summary": " Classify",
+                "description": "Score or Classify Sentiments\n\n```python\nimport requests\nrequests.post(\"http://..:7997/classify\",\n    json={\"model\":\"SamLowe/roberta-base-go_emotions\",\"input\":[\"I am not having a great day.\"]})",
+                "operationId": "_classify_classify_post",
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/ClassifyInput"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "responses": {
+                    "200": {
+                        "description": "Successful Response",
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/ClassifyResult"
+                                }
                             }
                         }
                     },
@@ -167,6 +208,80 @@
     },
     "components": {
         "schemas": {
+            "ClassifyInput": {
+                "properties": {
+                    "input": {
+                        "items": {
+                            "type": "string",
+                            "maxLength": 122880
+                        },
+                        "type": "array",
+                        "maxItems": 2048,
+                        "minItems": 1,
+                        "title": "Input"
+                    },
+                    "model": {
+                        "type": "string",
+                        "title": "Model",
+                        "default": "default/not-specified"
+                    },
+                    "raw_scores": {
+                        "type": "boolean",
+                        "title": "Raw Scores",
+                        "default": false
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "input"
+                ],
+                "title": "ClassifyInput"
+            },
+            "ClassifyResult": {
+                "properties": {
+                    "object": {
+                        "type": "string",
+                        "enum": [
+                            "classify"
+                        ],
+                        "const": "classify",
+                        "title": "Object",
+                        "default": "classify"
+                    },
+                    "data": {
+                        "items": {
+                            "items": {
+                                "$ref": "#/components/schemas/_ClassifyObject"
+                            },
+                            "type": "array"
+                        },
+                        "type": "array",
+                        "title": "Data"
+                    },
+                    "model": {
+                        "type": "string",
+                        "title": "Model"
+                    },
+                    "usage": {
+                        "$ref": "#/components/schemas/_Usage"
+                    },
+                    "id": {
+                        "type": "string",
+                        "title": "Id"
+                    },
+                    "created": {
+                        "type": "integer",
+                        "title": "Created"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "data",
+                    "model",
+                    "usage"
+                ],
+                "title": "ClassifyResult"
+            },
             "HTTPValidationError": {
                 "properties": {
                     "detail": {
@@ -191,11 +306,19 @@
                         "title": "Stats"
                     },
                     "object": {
+                        "type": "string",
+                        "enum": [
+                            "model"
+                        ],
                         "const": "model",
                         "title": "Object",
                         "default": "model"
                     },
                     "owned_by": {
+                        "type": "string",
+                        "enum": [
+                            "infinity"
+                        ],
                         "const": "infinity",
                         "title": "Owned By",
                         "default": "infinity"
@@ -208,6 +331,15 @@
                         "type": "string",
                         "title": "Backend",
                         "default": ""
+                    },
+                    "capabilities": {
+                        "items": {
+                            "type": "string"
+                        },
+                        "type": "array",
+                        "uniqueItems": true,
+                        "title": "Capabilities",
+                        "default": []
                     }
                 },
                 "type": "object",
@@ -263,6 +395,10 @@
             "OpenAIEmbeddingResult": {
                 "properties": {
                     "object": {
+                        "type": "string",
+                        "enum": [
+                            "embedding"
+                        ],
                         "const": "embedding",
                         "title": "Object",
                         "default": "embedding"
@@ -318,6 +454,48 @@
                     "data"
                 ],
                 "title": "OpenAIModelInfo"
+            },
+            "ReRankResult": {
+                "properties": {
+                    "object": {
+                        "type": "string",
+                        "enum": [
+                            "rerank"
+                        ],
+                        "const": "rerank",
+                        "title": "Object",
+                        "default": "rerank"
+                    },
+                    "results": {
+                        "items": {
+                            "$ref": "#/components/schemas/_ReRankObject"
+                        },
+                        "type": "array",
+                        "title": "Results"
+                    },
+                    "model": {
+                        "type": "string",
+                        "title": "Model"
+                    },
+                    "usage": {
+                        "$ref": "#/components/schemas/_Usage"
+                    },
+                    "id": {
+                        "type": "string",
+                        "title": "Id"
+                    },
+                    "created": {
+                        "type": "integer",
+                        "title": "Created"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "results",
+                    "model",
+                    "usage"
+                ],
+                "title": "ReRankResult"
             },
             "RerankInput": {
                 "properties": {
@@ -387,9 +565,31 @@
                 ],
                 "title": "ValidationError"
             },
+            "_ClassifyObject": {
+                "properties": {
+                    "score": {
+                        "type": "number",
+                        "title": "Score"
+                    },
+                    "label": {
+                        "type": "string",
+                        "title": "Label"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "score",
+                    "label"
+                ],
+                "title": "_ClassifyObject"
+            },
             "_EmbeddingObject": {
                 "properties": {
                     "object": {
+                        "type": "string",
+                        "enum": [
+                            "embedding"
+                        ],
                         "const": "embedding",
                         "title": "Object",
                         "default": "embedding"
@@ -412,6 +612,35 @@
                     "index"
                 ],
                 "title": "_EmbeddingObject"
+            },
+            "_ReRankObject": {
+                "properties": {
+                    "relevance_score": {
+                        "type": "number",
+                        "title": "Relevance Score"
+                    },
+                    "index": {
+                        "type": "integer",
+                        "title": "Index"
+                    },
+                    "document": {
+                        "anyOf": [
+                            {
+                                "type": "string"
+                            },
+                            {
+                                "type": "null"
+                            }
+                        ],
+                        "title": "Document"
+                    }
+                },
+                "type": "object",
+                "required": [
+                    "relevance_score",
+                    "index"
+                ],
+                "title": "_ReRankObject"
             },
             "_Usage": {
                 "properties": {

@@ -1,21 +1,21 @@
 import sys
 import time
 from contextlib import asynccontextmanager
+from typing import Optional
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
 from infinity_emb.args import EngineArgs
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray
 from infinity_emb.fastapi_schemas import docs, errors
-from infinity_emb.fastapi_schemas.convert import (
-    list_embeddings_to_response,
-    to_rerank_response,
-)
 from infinity_emb.fastapi_schemas.pymodels import (
+    ClassifyInput,
+    ClassifyResult,
     OpenAIEmbeddingInput,
     OpenAIEmbeddingResult,
     OpenAIModelInfo,
     RerankInput,
+    ReRankResult,
 )
 from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
@@ -23,6 +23,7 @@ from infinity_emb.primitives import (
     Device,
     Dtype,
     InferenceEngine,
+    ModelNotDeployedError,
     PoolingMethod,
 )
 
@@ -35,12 +36,16 @@ def create_server(
     redirect_slash: str = "/docs",
     preload_only: bool = False,
     permissive_cors: bool = False,
+    auth_token: Optional[str] = None,
 ):
     """
     creates the FastAPI App
     """
-    from fastapi import FastAPI, responses, status
+    import os
+
+    from fastapi import Depends, FastAPI, HTTPException, responses, status
     from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from prometheus_fastapi_instrumentator import Instrumentator
 
     @asynccontextmanager
@@ -83,6 +88,7 @@ def create_server(
         },
         lifespan=lifespan,
     )
+    route_dependencies = []
 
     if permissive_cors:
         app.add_middleware(
@@ -92,6 +98,21 @@ def create_server(
             allow_methods=["*"],
             allow_headers=["*"],
         )
+    token = auth_token or os.environ.get("INFINITY_API_KEY")
+    if token:
+        oauth2_scheme = HTTPBearer(auto_error=False)
+
+        async def validate_token(
+            credential: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
+        ):
+            if credential and credential.credentials != token:
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Unauthorized",
+                    headers={"WWW-Authenticate": "Bearer"},
+                )
+
+        route_dependencies.append(Depends(validate_token))
 
     instrumentator = Instrumentator().instrument(app)
     app.add_exception_handler(errors.OpenAIException, errors.openai_exception_handler)
@@ -136,6 +157,7 @@ def create_server(
                         results_pending=engine.overload_status().results_absolute,
                         batch_size=engine_args.batch_size,
                     ),
+                    capabilities=engine.capabilities,
                     backend=engine_args.engine.name,
                     device=engine_args.device.name,
                 )
@@ -162,6 +184,7 @@ def create_server(
         f"{url_prefix}/embeddings",
         response_model=OpenAIEmbeddingResult,
         response_class=responses.ORJSONResponse,
+        dependencies=route_dependencies,
     )
     async def _embeddings(data: OpenAIEmbeddingInput):
         """Encode Embeddings
@@ -169,7 +192,7 @@ def create_server(
         ```python
         import requests
         requests.post("http://..:7997/embeddings",
-            json={"model":"bge-small-en-v1.5","input":["A sentence to encode."]})
+            json={"model":"BAAI/bge-small-en-v1.5","input":["A sentence to encode."]})
         """
         engine = _resolve_engine(data.model)
 
@@ -185,13 +208,16 @@ def create_server(
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
 
-            res = list_embeddings_to_response(
+            return OpenAIEmbeddingResult.to_embeddings_response(
                 embeddings=embedding,
                 model=engine.engine_args.served_model_name,
                 usage=usage,
             )
-
-            return res
+        except ModelNotDeployedError as ex:
+            raise errors.OpenAIException(
+                f"ModelNotDeployedError: model=`{data.model}` does not support `embed`. Reason: {ex}",
+                code=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as ex:
             raise errors.OpenAIException(
                 f"InternalServerError: {ex}",
@@ -200,16 +226,21 @@ def create_server(
 
     @app.post(
         f"{url_prefix}/rerank",
-        # response_model=RerankResult,
+        response_model=ReRankResult,
         response_class=responses.ORJSONResponse,
+        dependencies=route_dependencies,
     )
     async def _rerank(data: RerankInput):
-        """Encode Embeddings
+        """Rerank documents
 
         ```python
         import requests
         requests.post("http://..:7997/rerank",
-            json={"query":"Where is Munich?","texts":["Munich is in Germany."]})
+            json={
+                "model":"BAAI/bge-reranker-base",
+                "query":"Where is Munich?",
+                "documents":["Munich is in Germany.", "The sky is blue."]
+            })
         """
         engine = _resolve_engine(data.model)
         try:
@@ -228,14 +259,59 @@ def create_server(
             else:
                 docs = None
 
-            res = to_rerank_response(
+            return ReRankResult.to_rerank_response(
                 scores=scores,
                 documents=docs,
                 model=engine.engine_args.served_model_name,
                 usage=usage,
             )
+        except ModelNotDeployedError as ex:
+            raise errors.OpenAIException(
+                f"ModelNotDeployedError: model=`{data.model}` does not support `rerank`. Reason: {ex}",
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as ex:
+            raise errors.OpenAIException(
+                f"InternalServerError: {ex}",
+                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
-            return res
+    @app.post(
+        f"{url_prefix}/classify",
+        response_class=responses.ORJSONResponse,
+        dependencies=route_dependencies,
+        response_model=ClassifyResult,
+    )
+    async def _classify(data: ClassifyInput):
+        """Score or Classify Sentiments
+
+        ```python
+        import requests
+        requests.post("http://..:7997/classify",
+            json={"model":"SamLowe/roberta-base-go_emotions","input":["I am not having a great day."]})
+        """
+        engine = _resolve_engine(data.model)
+        try:
+            logger.debug("[📝] Received request with %s docs ", len(data.input))
+            start = time.perf_counter()
+
+            scores_labels, usage = await engine.classify(
+                sentences=data.input, raw_scores=data.raw_scores
+            )
+
+            duration = (time.perf_counter() - start) * 1000
+            logger.debug("[✅] Done in %s ms", duration)
+
+            return ClassifyResult.to_classify_response(
+                scores_labels=scores_labels,
+                model=engine.engine_args.served_model_name,
+                usage=usage,
+            )
+        except ModelNotDeployedError as ex:
+            raise errors.OpenAIException(
+                f"ModelNotDeployedError: model=`{data.model}` does not support `classify`. Reason: {ex}",
+                code=status.HTTP_400_BAD_REQUEST,
+            )
         except Exception as ex:
             raise errors.OpenAIException(
                 f"InternalServerError: {ex}",

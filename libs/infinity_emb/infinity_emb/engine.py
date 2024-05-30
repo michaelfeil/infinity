@@ -155,7 +155,7 @@ class AsyncEmbeddingEngine:
 
         Raises:
             ValueError: raised if engine is not started yet
-            ModelNotDeployedError: If loaded model does not expose `embed`
+            ModelNotDeployedError: If loaded model does not expose `rerank`
                 capabilities
 
         Returns:

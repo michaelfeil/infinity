@@ -73,7 +73,7 @@ async def test_reranker(client, model_base, helpers):
     ]
     response = await client.post(
         f"{PREFIX}/rerank",
-        json={"query": query, "documents": documents},
+        json={"model": MODEL, "query": query, "documents": documents},
     )
     assert response.status_code == 200
     rdata = response.json()

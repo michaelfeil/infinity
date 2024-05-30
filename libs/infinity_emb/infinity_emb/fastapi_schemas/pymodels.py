@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import time
-from typing import Annotated, Any, Literal, Optional, Union
+from typing import TYPE_CHECKING, Annotated, Any, Iterable, Literal, Optional, Union
 from uuid import uuid4
+
+if TYPE_CHECKING:
+    from infinity_emb.primitives import ClassifyReturnType, EmbeddingReturnType
+
 
 from infinity_emb._optional_imports import CHECK_PYDANTIC
 
@@ -44,6 +48,11 @@ else:
         pass
 
 
+class _Usage(BaseModel):
+    prompt_tokens: int
+    total_tokens: int
+
+
 class OpenAIEmbeddingInput(BaseModel):
     input: Union[  # type: ignore
         conlist(  # type: ignore
@@ -62,11 +71,6 @@ class _EmbeddingObject(BaseModel):
     index: int
 
 
-class _Usage(BaseModel):
-    prompt_tokens: int
-    total_tokens: int
-
-
 class OpenAIEmbeddingResult(BaseModel):
     object: Literal["embedding"] = "embedding"
     data: list[_EmbeddingObject]
@@ -74,6 +78,60 @@ class OpenAIEmbeddingResult(BaseModel):
     usage: _Usage
     id: str = Field(default_factory=lambda: f"infinity-{uuid4()}")
     created: int = Field(default_factory=lambda: int(time.time()))
+
+    @staticmethod
+    def to_embeddings_response(
+        embeddings: Iterable[EmbeddingReturnType],
+        model: str,
+        usage: int,
+    ) -> dict[str, Union[str, list[dict], dict]]:
+        return dict(
+            model=model,
+            data=[
+                dict(
+                    object="embedding",
+                    embedding=emb,
+                    index=count,
+                )
+                for count, emb in enumerate(embeddings)
+            ],
+            usage=dict(prompt_tokens=usage, total_tokens=usage),
+        )
+
+
+class ClassifyInput(BaseModel):
+    input: conlist(  # type: ignore
+        Annotated[str, INPUT_STRING],
+        **ITEMS_LIMIT,
+    )
+    model: str = "default/not-specified"
+    raw_scores: bool = False
+
+
+class _ClassifyObject(BaseModel):
+    score: float
+    label: str
+
+
+class ClassifyResult(BaseModel):
+    object: Literal["classify"] = "classify"
+    data: list[list[_ClassifyObject]]
+    model: str
+    usage: _Usage
+    id: str = Field(default_factory=lambda: f"infinity-{uuid4()}")
+    created: int = Field(default_factory=lambda: int(time.time()))
+
+    @staticmethod
+    def to_classify_response(
+        scores_labels: list[ClassifyReturnType],
+        model: str,
+        usage: int,
+    ) -> dict[str, Union[str, list[ClassifyReturnType], dict]]:
+        return dict(
+            model=model,
+            data=scores_labels,
+            usage=dict(prompt_tokens=usage, total_tokens=usage),
+        )
 
 
 class RerankInput(BaseModel):
@@ -94,11 +152,37 @@ class _ReRankObject(BaseModel):
 
 class ReRankResult(BaseModel):
     object: Literal["rerank"] = "rerank"
-    data: list[_ReRankObject]
+    results: list[_ReRankObject]
     model: str
     usage: _Usage
     id: str = Field(default_factory=lambda: f"infinity-{uuid4()}")
     created: int = Field(default_factory=lambda: int(time.time()))
+
+    @staticmethod
+    def to_rerank_response(
+        scores: list[float],
+        model=str,
+        usage=int,
+        documents: Optional[list[str]] = None,
+    ) -> dict:
+        if documents is None:
+            return dict(
+                model=model,
+                results=[
+                    dict(relevance_score=score, index=count)
+                    for count, score in enumerate(scores)
+                ],
+                usage=dict(prompt_tokens=usage, total_tokens=usage),
+            )
+        else:
+            return dict(
+                model=model,
+                results=[
+                    dict(relevance_score=score, index=count, document=doc)
+                    for count, (score, doc) in enumerate(zip(scores, documents))
+                ],
+                usage=dict(prompt_tokens=usage, total_tokens=usage),
+            )
 
 
 class ModelInfo(BaseModel):
@@ -108,6 +192,7 @@ class ModelInfo(BaseModel):
     owned_by: Literal["infinity"] = "infinity"
     created: int = Field(default_factory=lambda: int(time.time()))
     backend: str = ""
+    capabilities: set[str] = set()
 
 
 class OpenAIModelInfo(BaseModel):
