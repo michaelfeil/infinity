@@ -45,9 +45,9 @@ class __Infinity_EnvManager:
             return default
         if value.endswith(";"):
             value = value[:-1]
-        value = value.split(";")
-        self._debug(f"{name}=`{';'.join(value)}`")
-        return value
+        value_list = value.split(";")
+        self._debug(f"{name}=`{';'.join(value_list)}`")
+        return value_list
 
     @staticmethod
     def _to_bool(value: str) -> bool:
