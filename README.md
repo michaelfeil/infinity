@@ -32,6 +32,7 @@ In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sen
 ![](docs/demo_v0_0_1.gif)
 
 ### Latest News 🔥
+- [2024/06] add `classify` endpoint, `API_KEY` and launch all arguments from env variables
 - [2024/05] launch multiple models using the `v2` cli
 - [2024/03] infinity supports now experimental int8 (cpu/cuda) and fp8 (H100/MI300) support
 - [2024/03] Docs are online: https://michaelfeil.eu/infinity/latest/
