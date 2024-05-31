@@ -22,13 +22,15 @@ class __Infinity_EnvManager:
         self._debug(f"{'-'*10}\nENV variables loaded.")
 
     def _debug(self, message: str):
-        if "API_KEY" in message:
-            print("INFINITY_API_KEY=not_shown")
-            print(f"INFINITY_LOG_LEVEL={self.log_level}")
-        elif "LOG_LEVEL" in message:
+        """print as debug without having to import logging."""
+        if "LOG_LEVEL" in message:
             return  # recursion
         elif self.log_level in {"debug", "trace"}:
-            print(message)
+            if "API_KEY" in message:
+                print("INFINITY_API_KEY=not_shown")
+                print(f"INFINITY_LOG_LEVEL={self.log_level}")
+            else:
+                print(message)
 
     @staticmethod
     def _to_name(name: str) -> str:
