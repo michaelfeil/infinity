@@ -42,10 +42,10 @@ def test_load_model(model_base):
     # this makes sure that the error below is not based on a slow download
     # or internal pytorch errors
     model_base.predict(
-            {
-                "text": "I love fries!",
-            }
-        )
+        {
+            "text": "I love fries!",
+        }
+    )
 
 
 @pytest.mark.anyio
