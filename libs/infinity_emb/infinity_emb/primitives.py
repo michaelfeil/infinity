@@ -47,9 +47,9 @@ class EnumType(enum.Enum):
             cls.__name__ + "__names", {k: k for k in cls.__members__.keys()}
         )
 
-    @abstractmethod
-    def default_value(self) -> str:
-        ...
+    @staticmethod
+    def default_value() -> str:
+        raise NotImplementedError
 
 
 class InferenceEngine(EnumType):
@@ -58,8 +58,8 @@ class InferenceEngine(EnumType):
     optimum = "optimum"
     debugengine = "debugengine"
 
-    @classmethod
-    def default_value(self):
+    @staticmethod
+    def default_value():
         return InferenceEngine.torch.value
 
 
@@ -70,8 +70,8 @@ class Device(EnumType):
     tensorrt = "tensorrt"
     auto = "auto"
 
-    @classmethod
-    def default_value(self):
+    @staticmethod
+    def default_value():
         return Device.auto.value
 
     def resolve(self) -> Optional[str]:
@@ -87,8 +87,8 @@ class Dtype(EnumType):
     fp8: str = "fp8"
     auto: str = "auto"
 
-    @classmethod
-    def default_value(self):
+    @staticmethod
+    def default_value():
         return Dtype.auto.value
 
 
@@ -97,8 +97,8 @@ class EmbeddingDtype(EnumType):
     # int8: str = "int8"
     # binary: str = "binary"
 
-    @classmethod
-    def default_value(self):
+    @staticmethod
+    def default_value():
         return EmbeddingDtype.float32.value
 
 
@@ -107,8 +107,8 @@ class PoolingMethod(EnumType):
     cls: str = "cls"
     auto: str = "auto"
 
-    @classmethod
-    def default_value(self):
+    @staticmethod
+    def default_value():
         return PoolingMethod.auto.value
 
 

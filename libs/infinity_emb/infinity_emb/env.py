@@ -3,14 +3,18 @@ from __future__ import annotations
 
 import os
 from functools import cached_property
+from typing import TypeVar
 
 from infinity_emb.primitives import (
     Device,
     Dtype,
     EmbeddingDtype,
+    EnumType,
     InferenceEngine,
     PoolingMethod,
 )
+
+EnumTypeLike = TypeVar("EnumTypeLike", bound=EnumType)
 
 
 class __Infinity_EnvManager:
@@ -171,50 +175,32 @@ class __Infinity_EnvManager:
     def log_level(self):
         return self._optional_infinity_var("log_level", default="info")
 
-    @cached_property
-    def dtype(self) -> list[Dtype]:
-        return [
-            Dtype(v)
-            for v in self._optional_infinity_var_multiple(
-                "dtype", default=[Dtype.default_value()]
-            )
-        ]
+    def _typed_multiple(self, name: str, cls: type["EnumTypeLike"]) -> list["str"]:
+        result = self._optional_infinity_var_multiple(
+            name, default=[cls.default_value()]
+        )
+        assert all(cls(v) for v in result)
+        return result
 
     @cached_property
-    def engine(self) -> list[InferenceEngine]:
-        return [
-            InferenceEngine(v)
-            for v in self._optional_infinity_var_multiple(
-                "engine", default=[InferenceEngine.default_value()]
-            )
-        ]
+    def dtype(self) -> list[str]:
+        return self._typed_multiple("dtype", cls=Dtype)
 
     @cached_property
-    def pooling_method(self) -> list[PoolingMethod]:
-        return [
-            PoolingMethod(v)
-            for v in self._optional_infinity_var_multiple(
-                "pooling_method", default=[PoolingMethod.default_value()]
-            )
-        ]
+    def engine(self) -> list[str]:
+        return self._typed_multiple("engine", InferenceEngine)
 
     @cached_property
-    def device(self) -> list[Device]:
-        return [
-            Device(v)
-            for v in self._optional_infinity_var_multiple(
-                "device", default=[Device.default_value()]
-            )
-        ]
+    def pooling_method(self) -> list[str]:
+        return self._typed_multiple("pooling_method", PoolingMethod)
 
     @cached_property
-    def embedding_dtype(self) -> list[EmbeddingDtype]:
-        return [
-            EmbeddingDtype(v)
-            for v in self._optional_infinity_var_multiple(
-                "embedding_dtype", default=[EmbeddingDtype.default_value()]
-            )
-        ]
+    def device(self) -> list[str]:
+        return self._typed_multiple("device", Device)
+
+    @cached_property
+    def embedding_dtype(self) -> list[str]:
+        return self._typed_multiple("embedding_dtype", EmbeddingDtype)
 
 
 MANAGER = __Infinity_EnvManager()
