@@ -88,3 +88,23 @@ async def test_reranker(client, model_base, helpers):
     assert len(rdata_results) == len(predictions)
     for i, pred in enumerate(predictions):
         assert abs(rdata_results[i]["relevance_score"] - pred["score"]) < 0.01
+
+
+@pytest.mark.anyio
+async def test_reranker_cant_embed_or_classify(client):
+    documents = [
+        "The Eiffel Tower is located in Paris, France",
+        "The Eiffel Tower is located in the United States.",
+        "The Eiffel Tower is located in the United Kingdom.",
+    ]
+    response = await client.post(
+        f"{PREFIX}/embeddings",
+        json={"model": MODEL, "input": documents},
+    )
+    assert response.status_code == 400
+
+    response = await client.post(
+        f"{PREFIX}/classify",
+        json={"model": MODEL, "input": documents},
+    )
+    assert response.status_code == 400
