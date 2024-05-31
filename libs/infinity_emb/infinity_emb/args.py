@@ -45,16 +45,16 @@ class EngineArgs:
     batch_size: int = MANAGER.batch_size[0]
     revision: Optional[str] = MANAGER.revision[0]
     trust_remote_code: bool = MANAGER.trust_remote_code[0]
-    engine: InferenceEngine = InferenceEngine.torch
+    engine: InferenceEngine = MANAGER.engine[0]
     model_warmup: bool = MANAGER.model_warmup[0]
     vector_disk_cache_path: str = ""
-    device: Device = Device.auto
+    device: Device = MANAGER.device[0]
     compile: bool = MANAGER.compile[0]
     bettertransformer: bool = MANAGER.bettertransformer[0]
-    dtype: Dtype = Dtype.auto
-    pooling_method: PoolingMethod = PoolingMethod.auto
+    dtype: Dtype = MANAGER.dtype[0]
+    pooling_method: PoolingMethod = MANAGER.pooling_method[0]
     lengths_via_tokenize: bool = MANAGER.lengths_via_tokenize[0]
-    embedding_dtype: EmbeddingDtype = EmbeddingDtype.float32
+    embedding_dtype: EmbeddingDtype = MANAGER.embedding_dtype[0]
     served_model_name: str = MANAGER.served_model_name[0]
 
     def __post_init__(self):

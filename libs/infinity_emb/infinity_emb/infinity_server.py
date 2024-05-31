@@ -361,13 +361,13 @@ if CHECK_TYPER.is_available:
         revision: str = MANAGER.revision[0],
         trust_remote_code: bool = MANAGER.trust_remote_code[0],
         redirect_slash: str = MANAGER.redirect_slash,
-        engine: InferenceEngine = InferenceEngine.default_value(),  # type: ignore # noqa
+        engine: InferenceEngine = MANAGER.engine[0],  # type: ignore # noqa
         model_warmup: bool = MANAGER.model_warmup[0],
         vector_disk_cache: bool = MANAGER.vector_disk_cache[0],
-        device: Device = Device.default_value(),  # type: ignore
+        device: Device = MANAGER.device[0],  # type: ignore
         lengths_via_tokenize: bool = MANAGER.lengths_via_tokenize[0],
-        dtype: Dtype = Dtype.default_value(),  # type: ignore
-        pooling_method: PoolingMethod = PoolingMethod.default_value(),  # type: ignore
+        dtype: Dtype = MANAGER.dtype[0],  # type: ignore
+        pooling_method: PoolingMethod = MANAGER.pooling_method[0],  # type: ignore
         compile: bool = MANAGER.compile[0],
         bettertransformer: bool = MANAGER.bettertransformer[0],
         preload_only: bool = MANAGER.preload_only,
@@ -449,13 +449,13 @@ if CHECK_TYPER.is_available:
         batch_size: list[int] = MANAGER.batch_size,
         revision: list[str] = MANAGER.revision,
         trust_remote_code: list[bool] = MANAGER.trust_remote_code,
-        engine: list[InferenceEngine] = [InferenceEngine.default_value()],  # type: ignore # noqa
+        engine: list[InferenceEngine] = MANAGER.engine,  # type: ignore # noqa
         model_warmup: list[bool] = MANAGER.model_warmup,
         vector_disk_cache: list[bool] = MANAGER.vector_disk_cache,
-        device: list[Device] = [Device.default_value()],  # type: ignore
+        device: list[Device] = MANAGER.device,  # type: ignore
         lengths_via_tokenize: list[bool] = MANAGER.lengths_via_tokenize,
-        dtype: list[Dtype] = [Dtype.default_value()],  # type: ignore
-        pooling_method: list[PoolingMethod] = [PoolingMethod.default_value()],  # type: ignore
+        dtype: list[Dtype] = MANAGER.dtype,  # type: ignore
+        pooling_method: list[PoolingMethod] = MANAGER.pooling_method,  # type: ignore
         compile: list[bool] = MANAGER.compile,
         bettertransformer: list[bool] = MANAGER.bettertransformer,
         # arguments for uvicorn / server
