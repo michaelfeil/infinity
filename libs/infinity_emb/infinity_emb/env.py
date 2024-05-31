@@ -4,26 +4,47 @@ from __future__ import annotations
 import os
 from functools import cached_property
 
-
 class __Infinity_EnvManager:
     def __init__(self):
+        self._debug(f"Loading Infinity ENV variables.\nCONFIG:\n{'-'*10}")
         for f_name in dir(self):
             if isinstance(getattr(type(self), f_name, None), cached_property):
                 getattr(self, f_name)  # pre-cache
-
+        self._debug(f"{'-'*10}\nENV variables loaded.")
+        
+    def _debug(self, message: str):
+        if "API_KEY" in message:
+            print("INFINITY_API_KEY=not_shown")
+            print(f"INFINITY_LOG_LEVEL={self.log_level}")
+        elif "LOG_LEVEL" in message:
+            return # recursion
+        elif self.log_level in {"debug", "trace"}:
+            print(message)
+            
     @staticmethod
-    def _optional_infinity_var(name: str, default: str = ""):
-        name = name.upper().replace("-", "_")
-        return os.getenv(f"INFINITY_{name}", default)
-
-    @staticmethod
-    def _optional_infinity_var_multiple(name: str, default: list[str]) -> list[str]:
+    def _to_name(name: str) -> str:
+        return "INFINITY_" + name.upper().replace("-", "_")
+    
+    def _optional_infinity_var(self, name: str, default: str = ""):
+        name = self._to_name(name)
         value = os.getenv(name)
-        if not value:
+        if value is None:
+            self._debug(f"{name}=`{default}`(default)")
+            return default
+        self._debug(f"{name}=`{value}`")
+        return value
+
+    def _optional_infinity_var_multiple(self, name: str, default: list[str]) -> list[str]:
+        name = self._to_name(name)
+        value = os.getenv(name)
+        if value is None:
+            self._debug(f"{name}=`{';'.join(default)}`(default)")
             return default
         if value.endswith(";"):
             value = value[:-1]
-        return value.split(";")
+        value = value.split(";")
+        self._debug(f"{name}=`{';'.join(value)}`")
+        return value
 
     @staticmethod
     def _to_bool(value: str) -> bool:
