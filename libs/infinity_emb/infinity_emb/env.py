@@ -4,6 +4,14 @@ from __future__ import annotations
 import os
 from functools import cached_property
 
+from infinity_emb.primitives import (
+    Device,
+    Dtype,
+    EmbeddingDtype,
+    InferenceEngine,
+    PoolingMethod,
+)
+
 
 class __Infinity_EnvManager:
     def __init__(self):
@@ -160,6 +168,51 @@ class __Infinity_EnvManager:
     @cached_property
     def log_level(self):
         return self._optional_infinity_var("log_level", default="info")
+
+    @cached_property
+    def dtype(self) -> list[Dtype]:
+        return [
+            Dtype(v)
+            for v in self._optional_infinity_var_multiple(
+                "dtype", default=[Dtype.default_value()]
+            )
+        ]
+
+    @cached_property
+    def engine(self) -> list[InferenceEngine]:
+        return [
+            InferenceEngine(v)
+            for v in self._optional_infinity_var_multiple(
+                "engine", default=[InferenceEngine.default_value()]
+            )
+        ]
+
+    @cached_property
+    def pooling_method(self) -> list[PoolingMethod]:
+        return [
+            PoolingMethod(v)
+            for v in self._optional_infinity_var_multiple(
+                "pooling_method", default=[PoolingMethod.default_value()]
+            )
+        ]
+
+    @cached_property
+    def device(self) -> list[Device]:
+        return [
+            Device(v)
+            for v in self._optional_infinity_var_multiple(
+                "device", default=[Device.default_value()]
+            )
+        ]
+
+    @cached_property
+    def embedding_dtype(self) -> list[EmbeddingDtype]:
+        return [
+            EmbeddingDtype(v)
+            for v in self._optional_infinity_var_multiple(
+                "embedding_dtype", default=[EmbeddingDtype.default_value()]
+            )
+        ]
 
 
 MANAGER = __Infinity_EnvManager()
