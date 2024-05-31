@@ -10,7 +10,7 @@ PREFIX = ""
 MODEL_NAME = "dummy/model1"
 MODEL_NAME_2 = "dummy/model2"
 BATCH_SIZE = 16
-AUTH_TOKEN = "dummy-password"
+API_KEY = "dummy-password"
 
 app = create_server(
     url_prefix=PREFIX,
@@ -26,7 +26,7 @@ app = create_server(
             engine=InferenceEngine.debugengine,
         ),
     ],
-    auth_token=AUTH_TOKEN,
+    api_key=API_KEY,
 )
 
 
@@ -54,7 +54,7 @@ async def test_authentication(client):
         ],
     ]:
         for authenticated in [False, True]:
-            headers = {"Authorization": f"Bearer {AUTH_TOKEN}"} if authenticated else {}
+            headers = {"Authorization": f"Bearer {API_KEY}"} if authenticated else {}
         response = await client.post(
             route,
             headers=headers,

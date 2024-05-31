@@ -224,12 +224,9 @@ class AsyncEngineArray:
         Args:
             engine_args_array (list[EngineArgs]): EngineArgs object
         """
-        return cls(
-            engines=tuple(
-                AsyncEmbeddingEngine.from_args(engine_args)
-                for engine_args in engine_args_array
-            )
-        )
+        engines = map(AsyncEmbeddingEngine.from_args, engine_args_array)
+
+        return cls(engines=tuple(engines))
 
     def __iter__(self) -> Iterator["AsyncEmbeddingEngine"]:
         return iter(self.engines_dict.values())
