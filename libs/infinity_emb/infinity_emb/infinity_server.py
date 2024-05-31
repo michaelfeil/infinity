@@ -1,12 +1,13 @@
 import sys
 import time
 from contextlib import asynccontextmanager
-from typing import Optional
+from typing import Any, Optional
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
 from infinity_emb.args import EngineArgs
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray
+from infinity_emb.env import MANAGER
 from infinity_emb.fastapi_schemas import docs, errors
 from infinity_emb.fastapi_schemas.pymodels import (
     ClassifyInput,
@@ -17,7 +18,6 @@ from infinity_emb.fastapi_schemas.pymodels import (
     RerankInput,
     ReRankResult,
 )
-from infinity_emb.inference.caching_layer import INFINITY_CACHE_VECTORS
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.primitives import (
     Device,
@@ -31,18 +31,16 @@ from infinity_emb.primitives import (
 def create_server(
     *,
     engine_args_list: list[EngineArgs],
-    url_prefix: str = "",
-    doc_extra: dict = {},
-    redirect_slash: str = "/docs",
-    preload_only: bool = False,
-    permissive_cors: bool = False,
-    auth_token: Optional[str] = None,
+    url_prefix: str = MANAGER.url_prefix,
+    doc_extra: dict[str, Any] = {},
+    redirect_slash: str = MANAGER.redirect_slash,
+    preload_only: bool = MANAGER.preload_only,
+    permissive_cors: bool = MANAGER.permissive_cors,
+    api_key: str = MANAGER.api_key,
 ):
     """
     creates the FastAPI App
     """
-    import os
-
     from fastapi import Depends, FastAPI, HTTPException, responses, status
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -57,8 +55,8 @@ def create_server(
 
         logger.info(
             docs.startup_message(
-                host=doc_extra.pop("host", "localhost"),
-                port=doc_extra.pop("port", "PORT"),
+                host=doc_extra.pop("host", None),
+                port=doc_extra.pop("port", None),
                 prefix=url_prefix,
             )
         )
@@ -98,14 +96,13 @@ def create_server(
             allow_methods=["*"],
             allow_headers=["*"],
         )
-    token = auth_token or os.environ.get("INFINITY_API_KEY")
-    if token:
+    if api_key:
         oauth2_scheme = HTTPBearer(auto_error=False)
 
         async def validate_token(
             credential: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
         ):
-            if credential and credential.credentials != token:
+            if credential and credential.credentials != api_key:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Unauthorized",
@@ -358,27 +355,28 @@ if CHECK_TYPER.is_available:
 
     @tp.command("v1")
     def v1(
-        model_name_or_path: str = "michaelfeil/bge-small-en-v1.5",
-        served_model_name: str = "",
-        batch_size: int = 32,
-        revision: str = "",
-        trust_remote_code: bool = True,
-        url_prefix: str = "",
-        host: str = "0.0.0.0",
-        port: int = 7997,
-        redirect_slash: str = "/docs",
-        log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
+        model_name_or_path: str = MANAGER.model_id[0],
+        served_model_name: str = MANAGER.served_model_name[0],
+        batch_size: int = MANAGER.batch_size[0],
+        revision: str = MANAGER.revision[0],
+        trust_remote_code: bool = MANAGER.trust_remote_code[0],
+        redirect_slash: str = MANAGER.redirect_slash,
         engine: InferenceEngine = InferenceEngine.default_value(),  # type: ignore # noqa
-        model_warmup: bool = True,
-        vector_disk_cache: bool = INFINITY_CACHE_VECTORS,
+        model_warmup: bool = MANAGER.model_warmup[0],
+        vector_disk_cache: bool = MANAGER.vector_disk_cache[0],
         device: Device = Device.default_value(),  # type: ignore
-        lengths_via_tokenize: bool = False,
+        lengths_via_tokenize: bool = MANAGER.lengths_via_tokenize[0],
         dtype: Dtype = Dtype.default_value(),  # type: ignore
         pooling_method: PoolingMethod = PoolingMethod.default_value(),  # type: ignore
-        compile: bool = False,
-        bettertransformer: bool = True,
-        preload_only: bool = False,
-        permissive_cors: bool = False,
+        compile: bool = MANAGER.compile[0],
+        bettertransformer: bool = MANAGER.bettertransformer[0],
+        preload_only: bool = MANAGER.preload_only,
+        permissive_cors: bool = MANAGER.permissive_cors,
+        api_key: str = MANAGER.api_key,
+        url_prefix: str = MANAGER.url_prefix,
+        host: str = MANAGER.host,
+        port: int = MANAGER.port,
+        log_level: UVICORN_LOG_LEVELS = MANAGER.log_level,  # type: ignore
     ):
         """Infinity Embedding API ♾️  cli v1 to start a uvicorn-server instance;
         MIT License; Copyright (c) 2023-now Michael Feil
@@ -390,9 +388,6 @@ if CHECK_TYPER.is_available:
             batch_size, int: batch size for forward pass.
             revision: str: revision of the model.
             trust_remote_code, bool: trust remote code.
-            url_prefix, str: prefix for api. typically "".
-            host, str: host-url, typically either "0.0.0.0" or "127.0.0.1".
-            port, int: port that you want to expose.
             redirect_slash, str: redirect to of GET "/". Defaults to "/docs". Empty string to disable.
             log_level: logging level.
                 For high performance, use "info" or higher levels. Defaults to "info".
@@ -400,7 +395,7 @@ if CHECK_TYPER.is_available:
             model_warmup, bool: perform model warmup before starting the server.
                 Defaults to True.
             vector_disk_cache, bool: cache past embeddings in SQL.
-                Defaults to False or env-INFINITY_CACHE_VECTORS if set
+                Defaults to False
             device, Device: device to use for inference. Defaults to Device.auto or "auto"
             lengths_via_tokenize: bool: schedule by token usage. Defaults to False.
             dtype, Dtype: data type to use for inference. Defaults to Dtype.auto or "auto"
@@ -409,7 +404,17 @@ if CHECK_TYPER.is_available:
             use_bettertransformer, bool: use bettertransformer. Defaults to True.
             preload_only, bool: only preload the model and exit. Defaults to False.
             permissive_cors, bool: add permissive CORS headers to enable consumption from a browser. Defaults to False.
+            api_key, str: optional Bearer token for authentication. Defaults to "", which disables authentication.
+            url_prefix, str: prefix for api. typically "".
+            host, str: host-url, typically either "0.0.0.0" or "127.0.0.1".
+            port, int: port that you want to expose.
         """
+        if api_key:
+            raise ValueError("api_key is not supported in v1")
+        logger.warning(
+            "CLI v1 is deprecated and might be removed in the future. Please use CLI v2, by specifying `v2` as the command."
+        )
+        time.sleep(5)
         v2(
             model_id=[model_name_or_path],
             served_model_name=[served_model_name],  # type: ignore
@@ -433,35 +438,35 @@ if CHECK_TYPER.is_available:
             redirect_slash=redirect_slash,
             log_level=log_level,
             permissive_cors=permissive_cors,
+            api_key=api_key,
         )
 
     @tp.command("v2")
     def v2(
         # arguments for engine
-        model_id: list[str] = [
-            "michaelfeil/bge-small-en-v1.5",
-        ],
-        served_model_name: list[str] = [""],
-        batch_size: list[int] = [32],
-        revision: list[str] = [""],
-        trust_remote_code: list[bool] = [True],
+        model_id: list[str] = MANAGER.model_id,
+        served_model_name: list[str] = MANAGER.served_model_name,
+        batch_size: list[int] = MANAGER.batch_size,
+        revision: list[str] = MANAGER.revision,
+        trust_remote_code: list[bool] = MANAGER.trust_remote_code,
         engine: list[InferenceEngine] = [InferenceEngine.default_value()],  # type: ignore # noqa
-        model_warmup: list[bool] = [True],
-        vector_disk_cache: list[bool] = [INFINITY_CACHE_VECTORS],
+        model_warmup: list[bool] = MANAGER.model_warmup,
+        vector_disk_cache: list[bool] = MANAGER.vector_disk_cache,
         device: list[Device] = [Device.default_value()],  # type: ignore
-        lengths_via_tokenize: list[bool] = [False],
+        lengths_via_tokenize: list[bool] = MANAGER.lengths_via_tokenize,
         dtype: list[Dtype] = [Dtype.default_value()],  # type: ignore
         pooling_method: list[PoolingMethod] = [PoolingMethod.default_value()],  # type: ignore
-        compile: list[bool] = [False],
-        bettertransformer: list[bool] = [True],
+        compile: list[bool] = MANAGER.compile,
+        bettertransformer: list[bool] = MANAGER.bettertransformer,
         # arguments for uvicorn / server
-        preload_only: bool = False,
-        host: str = "0.0.0.0",
-        port: int = 7997,
-        url_prefix: str = "",
-        redirect_slash: str = "/docs",
-        log_level: UVICORN_LOG_LEVELS = UVICORN_LOG_LEVELS.info.name,  # type: ignore
+        preload_only: bool = MANAGER.preload_only,
+        host: str = MANAGER.host,
+        port: int = MANAGER.port,
+        url_prefix: str = MANAGER.url_prefix,
+        redirect_slash: str = MANAGER.redirect_slash,
+        log_level: UVICORN_LOG_LEVELS = MANAGER.log_level,  # type: ignore
         permissive_cors: bool = False,
+        api_key: str = "",
     ):
         """Infinity Embedding API ♾️  cli v2 to start a uvicorn-server instance;
         MIT License; Copyright (c) 2023-now Michael Feil
@@ -492,6 +497,7 @@ if CHECK_TYPER.is_available:
             use_bettertransformer, bool: use bettertransformer. Defaults to True.
             preload_only, bool: only preload the model and exit. Defaults to False.
             permissive_cors, bool: add permissive CORS headers to enable consumption from a browser. Defaults to False.
+            api_key, str: optional Bearer token for authentication. Defaults to "", which disables authentication.
         """
         logger.setLevel(log_level.to_int())
         padder = AutoPadding(
@@ -523,6 +529,7 @@ if CHECK_TYPER.is_available:
             redirect_slash=redirect_slash,
             preload_only=preload_only,
             permissive_cors=permissive_cors,
+            api_key=api_key,
         )
         uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
@@ -530,13 +537,12 @@ if CHECK_TYPER.is_available:
         if len(sys.argv) == 1 or sys.argv[1] not in ["v1", "v2", "help", "--help"]:
             for _ in range(3):
                 logger.error(
-                    "WARNING: No command given. Defaulting to `v1`."
-                    "This will be deprecated in the future, and will require usage of a `v1` or `v2`"
-                    "Specify the version of the CLI you want to use."
+                    "WARNING: No command given. Defaulting to `v1`. "
+                    "This will be deprecated in the future, and will require usage of a `v1` or `v2`. "
+                    "Specify the version of the CLI you want to use. "
                 )
                 time.sleep(1)
             sys.argv.insert(1, "v1")
-        print(sys.argv)
         tp()
 
     if __name__ == "__main__":

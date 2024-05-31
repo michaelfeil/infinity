@@ -1,9 +1,9 @@
-import os
 import sys
 from dataclasses import asdict, dataclass
 from typing import Optional
 
 from infinity_emb._optional_imports import CHECK_PYDANTIC
+from infinity_emb.env import MANAGER
 from infinity_emb.primitives import (
     Device,
     Dtype,
@@ -41,21 +41,21 @@ class EngineArgs:
         served_model_name, str: Defaults to readable name of model_name_or_path.
     """
 
-    model_name_or_path: str = "michaelfeil/bge-small-en-v1.5"
-    batch_size: int = 32
-    revision: Optional[str] = None
-    trust_remote_code: bool = True
+    model_name_or_path: str = MANAGER.model_id[0]
+    batch_size: int = MANAGER.batch_size[0]
+    revision: Optional[str] = MANAGER.revision[0]
+    trust_remote_code: bool = MANAGER.trust_remote_code[0]
     engine: InferenceEngine = InferenceEngine.torch
-    model_warmup: bool = False
+    model_warmup: bool = MANAGER.model_warmup[0]
     vector_disk_cache_path: str = ""
     device: Device = Device.auto
-    compile: bool = not os.environ.get("INFINITY_DISABLE_COMPILE", "Disable")
-    bettertransformer: bool = True
+    compile: bool = MANAGER.compile[0]
+    bettertransformer: bool = MANAGER.bettertransformer[0]
     dtype: Dtype = Dtype.auto
     pooling_method: PoolingMethod = PoolingMethod.auto
-    lengths_via_tokenize: bool = False
+    lengths_via_tokenize: bool = MANAGER.lengths_via_tokenize[0]
     embedding_dtype: EmbeddingDtype = EmbeddingDtype.float32
-    served_model_name: str = ""
+    served_model_name: str = MANAGER.served_model_name[0]
 
     def __post_init__(self):
         # convert the following strings to enums

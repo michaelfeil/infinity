@@ -8,8 +8,8 @@ from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device, InferenceEngine
 
-PREFIX = "/v1_ct2"
-MODEL: str = pytest.DEFAULT_RERANKER_MODEL  # type: ignore[assignment]
+PREFIX = "/v1_classify"
+MODEL: str = pytest.DEFAULT_CLASSIFIER_MODEL  # type: ignore[assignment]
 batch_size = 32 if torch.cuda.is_available() else 8
 
 app = create_server(
@@ -41,15 +41,10 @@ async def client():
 def test_load_model(model_base):
     # this makes sure that the error below is not based on a slow download
     # or internal pytorch errors
-    assert (
-        1.0
-        > model_base.predict(
-            {
-                "text": "Where is New York?",
-                "text_pair": "New York is in the united states",
-            }
-        )["score"]
-        > 0.9
+    model_base.predict(
+        {
+            "text": "I love fries!",
+        }
     )
 
 
@@ -64,47 +59,26 @@ async def test_model_route(client):
 
 
 @pytest.mark.anyio
-async def test_reranker(client, model_base, helpers):
-    query = "Where is the Eiffel Tower located?"
+async def test_classifier(client, model_base):
     documents = [
-        "The Eiffel Tower is located in Paris, France",
-        "The Eiffel Tower is located in the United States.",
-        "The Eiffel Tower is located in the United Kingdom.",
+        "I love fries!",
+        "I hate fries!",
+        "I am jealous of fries!",
     ]
     response = await client.post(
-        f"{PREFIX}/rerank",
-        json={"model": MODEL, "query": query, "documents": documents},
+        f"{PREFIX}/classify",
+        json={"model": MODEL, "input": documents},
     )
     assert response.status_code == 200
     rdata = response.json()
     assert "model" in rdata
     assert "usage" in rdata
-    rdata_results = rdata["results"]
+    # rdata_results = rdata["results"]
 
-    predictions = [
-        model_base.predict({"text": query, "text_pair": doc}) for doc in documents
-    ]
+    # predictions = [
+    #     model_base.predict({"text": query, "text_pair": doc}) for doc in documents
+    # ]
 
-    assert len(rdata_results) == len(predictions)
-    for i, pred in enumerate(predictions):
-        assert abs(rdata_results[i]["relevance_score"] - pred["score"]) < 0.01
-
-
-@pytest.mark.anyio
-async def test_reranker_cant_embed_or_classify(client):
-    documents = [
-        "The Eiffel Tower is located in Paris, France",
-        "The Eiffel Tower is located in the United States.",
-        "The Eiffel Tower is located in the United Kingdom.",
-    ]
-    response = await client.post(
-        f"{PREFIX}/embeddings",
-        json={"model": MODEL, "input": documents},
-    )
-    assert response.status_code == 400
-
-    response = await client.post(
-        f"{PREFIX}/classify",
-        json={"model": MODEL, "input": documents},
-    )
-    assert response.status_code == 400
+    # assert len(rdata_results) == len(predictions)
+    # for i, pred in enumerate(predictions):
+    #     assert abs(rdata_results[i]["relevance_score"] - pred["score"]) < 0.01

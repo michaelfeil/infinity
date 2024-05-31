@@ -86,7 +86,6 @@ engine = AsyncEmbeddingEngine.from_args(engine_args)
 async def main(): 
     async with engine:
         predictions, usage = await engine.classify(sentences=sentences)
-        return predictions, usage
     # or handle the async start / stop yourself.
     await engine.astart()
     predictions, usage = await engine.classify(sentences=sentences)

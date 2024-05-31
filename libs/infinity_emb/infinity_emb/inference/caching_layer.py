@@ -13,11 +13,6 @@ from infinity_emb.primitives import EmbeddingReturnType, QueueItemInner
 if CHECK_DISKCACHE.is_available:
     import diskcache as dc  # type: ignore[import-untyped]
 
-INFINITY_CACHE_VECTORS = (
-    bool(os.environ.get("INFINITY_CACHE_VECTORS", False))
-    and CHECK_DISKCACHE.is_available
-)
-
 
 class Cache:
     def __init__(self, cache_name: str, shutdown: threading.Event) -> None:

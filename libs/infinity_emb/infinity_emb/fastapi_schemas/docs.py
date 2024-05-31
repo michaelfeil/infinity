@@ -9,7 +9,7 @@ FASTAPI_SUMMARY = (
 FASTAPI_DESCRIPTION = ""
 
 
-def startup_message(host: str, port: str, prefix: str) -> str:
+def startup_message(host: str, port: int, prefix: str) -> str:
     from infinity_emb import __version__
 
     return f"""

@@ -55,7 +55,6 @@ class OptionalImports:
 CHECK_DISKCACHE = OptionalImports("diskcache", "cache")
 CHECK_CTRANSLATE2 = OptionalImports("ctranslate2", "ctranslate2")
 CHECK_FASTAPI = OptionalImports("fastapi", "server")
-CHECK_HF_TRANSFER = OptionalImports("hf_transfer", "hf_transfer")
 CHECK_ONNXRUNTIME = OptionalImports("optimum.onnxruntime", "optimum")
 CHECK_OPTIMUM = OptionalImports("optimum", "optimum")
 CHECK_OPTIMUM_NEURON = OptionalImports("optimum.neuron", "neuronx")
