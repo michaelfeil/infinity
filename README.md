@@ -17,6 +17,9 @@
 [![codecov][codecov-shield]][codecov-url]
 [![ci][ci-shield]][ci-url]
 [![Downloads][pepa-shield]][pepa-url]
+[![DOI](https://zenodo.org/badge/703686617.svg)](https://zenodo.org/doi/10.5281/zenodo.11406462)
+
+
 
 Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting all sentence-transformer models and frameworks. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE). Infinity powers inference behind [Gradient.ai](https://gradient.ai).
 

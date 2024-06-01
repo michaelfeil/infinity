@@ -378,7 +378,7 @@ if CHECK_TYPER.is_available:
         port: int = MANAGER.port,
         log_level: UVICORN_LOG_LEVELS = MANAGER.log_level,  # type: ignore
     ):
-        """Infinity Embedding API ♾️  cli v1 to start a uvicorn-server instance;
+        """Infinity API ♾️ cli v1
         MIT License; Copyright (c) 2023-now Michael Feil
 
         Args:
@@ -468,7 +468,7 @@ if CHECK_TYPER.is_available:
         permissive_cors: bool = False,
         api_key: str = "",
     ):
-        """Infinity Embedding API ♾️  cli v2 to start a uvicorn-server instance;
+        """Infinity API ♾️ cli v2
         MIT License; Copyright (c) 2023-now Michael Feil
 
         kwargs:

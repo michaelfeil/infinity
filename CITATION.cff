@@ -6,3 +6,6 @@ authors:
 title: "Infinity - To Embeddings and Beyond"
 date-released: 2023-10-17
 url: "https://github.com/michaelfeil/infinity"
+identifiers:
+- type: doi
+  value: 10.5281/zenodo.11406462
