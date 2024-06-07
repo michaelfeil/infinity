@@ -6,6 +6,7 @@ import numpy as np
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
+from infinity_emb.transformer.quantization.interface import quant_embedding_decorator
 from infinity_emb.transformer.utils_optimum import (
     cls_token_pooling,
     device_to_onnx,
@@ -70,6 +71,7 @@ class OptimumEmbedder(BaseEmbedder):
             trust_remote_code=engine_args.trust_remote_code,
         )
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
+        self.engine_args = engine_args
 
     def encode_pre(self, sentences: list[str]) -> dict[str, np.ndarray]:
         encoded = self.tokenizer(
@@ -90,6 +92,7 @@ class OptimumEmbedder(BaseEmbedder):
             "attention_mask": onnx_input["attention_mask"],
         }
 
+    @quant_embedding_decorator()
     def encode_post(self, embedding: dict) -> EmbeddingReturnType:
         embedding = self.pooling(  # type: ignore
             embedding["token_embeddings"], embedding["attention_mask"]

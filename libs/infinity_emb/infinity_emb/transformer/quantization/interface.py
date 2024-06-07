@@ -1,12 +1,20 @@
-from typing import Any
+from functools import cache, wraps
+from typing import TYPE_CHECKING, Any
+
+import numpy as np
+import requests  # type: ignore
 
 from infinity_emb._optional_imports import CHECK_TORCH
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import Device, Dtype
+from infinity_emb.primitives import Device, Dtype, EmbeddingDtype
 from infinity_emb.transformer.quantization.quant import quantize
+
+if TYPE_CHECKING:
+    from infinity_emb.transformer.abstract import BaseEmbedder
 
 if CHECK_TORCH.is_available:
     import torch
+    from sentence_transformers.quantization import quantize_embeddings  # type: ignore
 
 
 def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Device.cpu):
@@ -54,3 +62,61 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
             f"Quantization is not supported on {device} with dtype {dtype}."
         )
     return model
+
+
+@cache
+def _get_text_calibration_dataset() -> list[str]:
+    url = "https://raw.githubusercontent.com/turboderp/exllamav2/master/conversion/standard_cal_data/multilingual.utf8"
+    response = requests.get(url)  # TODO: add local file caching
+    response.raise_for_status()  # This will raise an exception if the request failed
+    return [line.strip() for line in response.text.splitlines()]
+
+
+@cache
+def _create_statistics_embedding(model: "BaseEmbedder", percentile=100) -> np.ndarray:
+    """returns `ranges`, the min and max values of the embeddings for quantization."""
+
+    def _encode(model, dataset, batch_size=8):
+        """batched encoding of the dataset"""
+        for i in range(0, len(dataset), batch_size):
+            yield model.encode_post(
+                model.encode_core(model.encode_pre(dataset[i : i + batch_size])),
+                # _internal_skip_quanitzation is a hack to skip quantization
+                # and avoid infinite recursion
+                _internal_skip_quanitzation=True,
+            )
+
+    dataset = _get_text_calibration_dataset()
+
+    calibration_embeddings = np.concatenate(list(_encode(model, dataset)))
+    assert (
+        percentile > 50 and percentile <= 100
+    ), "percentile should be between 50 and 100"
+    return np.percentile(calibration_embeddings, [100 - percentile, percentile], axis=0)
+
+
+def quant_embedding_decorator():
+    def decorator(func):
+        @wraps(func)
+        def wrapper(self: "BaseEmbedder", *args, **kwargs):
+            # Assume the first argument is the instance of BaseEmbedder or similar
+            skip_quanitzation = kwargs.pop("_internal_skip_quanitzation", False)
+            embeddings = func(self, *args, **kwargs)
+            if self.embedding_dtype == EmbeddingDtype.float32 or skip_quanitzation:
+                return embeddings
+            elif (
+                self.embedding_dtype == EmbeddingDtype.int8
+                or self.embedding_dtype == EmbeddingDtype.uint8
+            ):
+                calibration_ranges = _create_statistics_embedding(self)
+            else:
+                calibration_ranges = None
+            return quantize_embeddings(
+                embeddings,
+                precision=self.embedding_dtype.value,
+                ranges=calibration_ranges,
+            )
+
+        return wrapper
+
+    return decorator

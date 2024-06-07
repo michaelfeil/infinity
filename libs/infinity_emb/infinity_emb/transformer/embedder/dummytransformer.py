@@ -3,6 +3,7 @@ import numpy as np
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
+from infinity_emb.transformer.quantization.interface import quant_embedding_decorator
 
 
 class DummyTransformer(BaseEmbedder):
@@ -10,6 +11,7 @@ class DummyTransformer(BaseEmbedder):
 
     def __init__(self, *, engine_args: EngineArgs) -> None:
         print(f"running DummyTransformer.__init__ with engine_args={engine_args}")
+        self.engine_args = engine_args
 
     def encode_pre(self, sentences: list[str]) -> np.ndarray:
         return np.asarray(sentences)
@@ -19,6 +21,7 @@ class DummyTransformer(BaseEmbedder):
         # embedding of size 13
         return np.ones([len(features), 13]) * lengths.T
 
+    @quant_embedding_decorator()
     def encode_post(self, embedding: EmbeddingReturnType):
         return embedding
 

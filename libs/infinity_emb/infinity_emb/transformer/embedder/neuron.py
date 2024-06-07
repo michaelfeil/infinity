@@ -9,6 +9,7 @@ from infinity_emb._optional_imports import CHECK_OPTIMUM_NEURON, CHECK_TORCH
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
+from infinity_emb.transformer.quantization.interface import quant_embedding_decorator
 from infinity_emb.transformer.utils_optimum import (
     cls_token_pooling,
     mean_pooling,
@@ -103,6 +104,7 @@ class NeuronOptimumEmbedder(BaseEmbedder):
                 else 512
             ),
         }
+        self.engine_args = engine_args
         self.model = NeuronModelForFeatureExtraction.from_pretrained(
             model_id=engine_args.model_name_or_path,
             revision=engine_args.revision,
@@ -136,6 +138,7 @@ class NeuronOptimumEmbedder(BaseEmbedder):
             "attention_mask": input_dict["attention_mask"][:actual_bsize],
         }
 
+    @quant_embedding_decorator()
     def encode_post(self, embedding: dict) -> EmbeddingReturnType:
         embedding = self.pooling(  # type: ignore
             embedding["token_embeddings"].numpy(), embedding["attention_mask"].numpy()
