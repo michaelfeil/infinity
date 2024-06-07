@@ -22,6 +22,7 @@ from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.primitives import (
     Device,
     Dtype,
+    EmbeddingDtype,
     InferenceEngine,
     ModelNotDeployedError,
     PoolingMethod,
@@ -455,6 +456,7 @@ if CHECK_TYPER.is_available:
         device: list[Device] = MANAGER.device,  # type: ignore
         lengths_via_tokenize: list[bool] = MANAGER.lengths_via_tokenize,
         dtype: list[Dtype] = MANAGER.dtype,  # type: ignore
+        embedding_dtype: list[EmbeddingDtype] = MANAGER.embedding_dtype,  # type: ignore
         pooling_method: list[PoolingMethod] = MANAGER.pooling_method,  # type: ignore
         compile: list[bool] = MANAGER.compile,
         bettertransformer: list[bool] = MANAGER.bettertransformer,
@@ -492,6 +494,7 @@ if CHECK_TYPER.is_available:
             device, Device: device to use for inference. Defaults to Device.auto or "auto"
             lengths_via_tokenize: bool: schedule by token usage. Defaults to False.
             dtype, Dtype: data type to use for inference. Defaults to Dtype.auto or "auto"
+            embedding_dtype, EmbeddingDtype: data type to use for embeddings. Defaults to EmbeddingDtype.float32 or "float32"
             pooling_method, PoolingMethod: pooling method to use. Defaults to PoolingMethod.auto or "auto"
             compile, bool: compile model for faster inference. Defaults to False.
             use_bettertransformer, bool: use bettertransformer. Defaults to True.
@@ -512,6 +515,7 @@ if CHECK_TYPER.is_available:
             device=device,
             lengths_via_tokenize=lengths_via_tokenize,
             dtype=dtype,
+            embedding_dtype=embedding_dtype,
             pooling_method=pooling_method,
             compile=compile,
             bettertransformer=bettertransformer,

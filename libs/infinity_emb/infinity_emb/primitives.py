@@ -94,8 +94,10 @@ class Dtype(EnumType):
 
 class EmbeddingDtype(EnumType):
     float32: str = "float32"
-    # int8: str = "int8"
-    # binary: str = "binary"
+    int8: str = "int8"
+    uint8: str = "uint8"
+    binary: str = "binary"
+    ubinary: str = "ubinary"
 
     @staticmethod
     def default_value():

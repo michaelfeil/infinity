@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 from functools import cached_property
+from pathlib import Path
 from typing import TypeVar
 
 from infinity_emb.primitives import (
@@ -142,6 +143,24 @@ class __Infinity_EnvManager:
         return self._to_bool(
             self._optional_infinity_var("preload_only", default="false")
         )
+
+    @cached_property
+    def infinity_cache_dir(self) -> Path:
+        """gets the cache directory for infinity_emb."""
+        cache_dir = None
+        hf_home = os.environ.get("HF_HOME")
+        inf_home = os.environ.get("INFINITY_HOME")
+        if inf_home:
+            cache_dir = Path(inf_home) / ".infinity_cache"
+        elif hf_home:
+            cache_dir = Path(hf_home) / ".infinity_cache"
+        else:
+            cache_dir = Path(".").resolve() / ".infinity_cache"
+
+        if not cache_dir.exists():
+            cache_dir.mkdir(parents=True, exist_ok=True)
+
+        return cache_dir
 
     @cached_property
     def permissive_cors(self):

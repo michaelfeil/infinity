@@ -3,6 +3,7 @@ from time import perf_counter
 from typing import Any, Set
 
 from infinity_emb.primitives import (
+    EmbeddingDtype,
     EmbeddingInner,
     EmbeddingReturnType,
     EmbeddingSingle,
@@ -12,6 +13,7 @@ from infinity_emb.primitives import (
     ReRankInner,
     ReRankSingle,
 )
+from infinity_emb.transformer.quantization.interface import quant_embedding_decorator
 
 INPUT_FEATURE = Any
 OUT_FEATURES = Any
@@ -46,12 +48,19 @@ class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
 class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
     capabilities = {"embed"}
 
+    @property
+    def embedding_dtype(self) -> EmbeddingDtype:
+        """returns the dtype of the embeddings"""
+        return self.engine_args.embedding_dtype  # type: ignore
+
     @abstractmethod  # Decorator to define an abstract method
     def encode_pre(self, sentences: list[str]) -> INPUT_FEATURE:
         """takes care of the tokenization and feature preparation"""
 
     @abstractmethod
-    def encode_post(self, embedding: OUT_FEATURES) -> EmbeddingReturnType:
+    def encode_post(
+        self, embedding: OUT_FEATURES, skip_quanitzation=True
+    ) -> EmbeddingReturnType:
         """runs post encoding such as normalization"""
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> tuple[float, float, str]:
@@ -91,6 +100,7 @@ class BaseCrossEncoder(BaseTransformer):  # Inherit from ABC(Abstract base class
         """takes care of the tokenization and feature preparation"""
 
     @abstractmethod
+    @quant_embedding_decorator()
     def encode_post(self, embedding: OUT_FEATURES) -> list[float]:
         """runs post encoding such as normalization"""
 

@@ -14,7 +14,10 @@ from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device, Dtype, EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.acceleration import to_bettertransformer
-from infinity_emb.transformer.quantization.interface import quant_interface
+from infinity_emb.transformer.quantization.interface import (
+    quant_embedding_decorator,
+    quant_interface,
+)
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -57,8 +60,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         fm = self._first_module()
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         self.eval()
-
-        self.embedding_dtype = engine_args.embedding_dtype
+        self.engine_args = engine_args
 
         if not (self.device.type == "mps" or not engine_args.bettertransformer):
             fm.auto_model = to_bettertransformer(
@@ -98,6 +100,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
 
         return out_features.detach().cpu()
 
+    @quant_embedding_decorator()
     def encode_post(
         self, out_features: "Tensor", normalize_embeddings: bool = True
     ) -> EmbeddingReturnType:
@@ -107,11 +110,6 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
                 embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
 
             embeddings_np: np.ndarray = embeddings.numpy()
-
-            if self.embedding_dtype.value != "float32":
-                raise NotImplementedError(
-                    f"EmbeddingDtype for {self.embedding_dtype} not implemented"
-                )
 
         return embeddings_np
 

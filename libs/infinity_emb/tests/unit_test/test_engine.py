@@ -6,7 +6,12 @@ import torch
 from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
 
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
-from infinity_emb.primitives import InferenceEngine, ModelNotDeployedError
+from infinity_emb.primitives import (
+    Device,
+    EmbeddingDtype,
+    InferenceEngine,
+    ModelNotDeployedError,
+)
 
 # Only compile on Linux 3.9-3.11 with torch
 SHOULD_TORCH_COMPILE = sys.platform == "linux" and sys.version_info < (3, 12)
@@ -183,6 +188,49 @@ async def test_async_api_torch_usage():
         embeddings, usage = await engine.embed(sentences)
         embeddings = np.array(embeddings)
         # usage should be similar to
+        assert usage == 5
+        assert embeddings.shape[0] == len(sentences)
+        assert embeddings.shape[1] >= 10
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "embedding_dtype",
+    [
+        EmbeddingDtype.float32,
+        EmbeddingDtype.int8,
+        EmbeddingDtype.uint8,
+        EmbeddingDtype.ubinary,
+    ],
+)
+async def test_async_api_torch_embedding_quant(embedding_dtype: EmbeddingDtype):
+    sentences = ["Hi", "how", "school", "Pizza Hi"]
+    device = "auto"
+    if torch.backends.mps.is_available():
+        device = "cpu"
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            engine=InferenceEngine.torch,
+            device=Device[device],
+            lengths_via_tokenize=True,
+            model_warmup=False,
+            compile=SHOULD_TORCH_COMPILE,
+            embedding_dtype=embedding_dtype,
+        )
+    )
+    async with engine:
+        emb, usage = await engine.embed(sentences)
+        embeddings = np.array(emb)  # type: ignore
+        # usage should be similar to
+        if embedding_dtype == EmbeddingDtype.int8:
+            assert embeddings.dtype == np.int8
+        elif embedding_dtype == EmbeddingDtype.uint8:
+            assert embeddings.dtype == np.uint8
+        elif embedding_dtype == EmbeddingDtype.ubinary:
+            embeddings_up = np.unpackbits(embeddings, axis=-1).astype(int)  # type: ignore
+            assert embeddings_up.max() == 1
+            assert embeddings_up.min() == 0
+
         assert usage == 5
         assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
