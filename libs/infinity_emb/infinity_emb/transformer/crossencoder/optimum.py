@@ -63,6 +63,7 @@ class OptimumCrossEncoder(BaseCrossEncoder):
             padding=True,
             truncation="longest_first",
             return_tensors="np",
+            return_token_type_ids=False,
         )
         # Windows requires int64
         encoded = {k: v.astype(np.int64) for k, v in encoded.items()}
