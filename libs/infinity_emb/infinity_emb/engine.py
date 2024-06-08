@@ -194,6 +194,29 @@ class AsyncEmbeddingEngine:
 
         return scores, usage
 
+    async def image_embed(
+        self, *, images: list[str]
+    ) -> tuple[list[EmbeddingReturnType], int]:
+        """embed multiple images
+
+        Args:
+            images (list[str]): list of image urls, to be embedded
+
+        Raises:
+            ValueError: raised if engine is not started yet
+            ModelNotDeployedError: If loaded model does not expose `image_embed`
+                capabilities
+
+        Returns:
+            list[EmbeddingReturnType]: embeddings
+                2D list-array of shape( len(sentences),embed_dim )
+            int: token usage
+        """
+
+        self._assert_running()
+        embeddings, usage = await self._batch_handler.image_embed(images=images)
+        return embeddings, usage
+
     def _assert_running(self):
         if not self.running:
             raise ValueError(

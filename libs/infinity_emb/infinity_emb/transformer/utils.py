@@ -14,6 +14,7 @@ from infinity_emb.transformer.embedder.optimum import OptimumEmbedder
 from infinity_emb.transformer.embedder.sentence_transformer import (
     SentenceTransformerPatched,
 )
+from infinity_emb.transformer.vision.torch_vision import ClipLikeModel
 
 __all__ = [
     "length_tokenizer",
@@ -56,6 +57,17 @@ class RerankEngine(Enum):
             return RerankEngine.optimum
         else:
             raise NotImplementedError(f"RerankEngine for {engine} not implemented")
+
+
+class ClipLikeEngine(Enum):
+    torch = ClipLikeModel
+
+    @staticmethod
+    def from_inference_engine(engine: InferenceEngine):
+        if engine == InferenceEngine.torch:
+            return ClipLikeEngine.torch
+        else:
+            raise NotImplementedError(f"ClipLikeEngine for {engine} not implemented")
 
 
 class PredictEngine(Enum):

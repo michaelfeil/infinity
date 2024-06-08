@@ -1,3 +1,4 @@
+import asyncio
 import sys
 
 import numpy as np
@@ -139,6 +140,47 @@ async def test_async_api_torch_lengths_via_tokenize_usage():
         assert usage == 5
         assert embeddings.shape[0] == len(sentences)
         assert embeddings.shape[1] >= 10
+
+
+@pytest.mark.anyio
+async def test_torch_clip_embed():
+    image_urls = [
+        "http://images.cocodataset.org/val2017/000000039769.jpg"
+    ]  # a photo of two cats
+    sentences = [
+        "a photo of two cats",
+        "a photo of a cat",
+        "a photo of a dog",
+        "a photo of a car",
+    ]
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M",
+            engine=InferenceEngine.torch,
+            model_warmup=False,
+        )
+    )
+    async with engine:
+        t1, t2 = asyncio.create_task(engine.embed(sentences)), asyncio.create_task(
+            engine.image_embed(images=image_urls)
+        )
+        emb_text, usage_text = await t1
+        emb_image, usage_image = await t2
+        emb_text_np = np.array(emb_text)  # type: ignore
+        emb_image_np = np.array(emb_image)  # type: ignore
+
+    assert emb_text_np.shape[0] == len(sentences)
+    assert emb_image_np.shape[0] == len(image_urls)
+    assert emb_text_np.shape[1] >= 10
+    assert emb_image_np.shape == emb_image_np[: len(image_urls)].shape
+
+    assert usage_text == sum([len(s) for s in sentences])
+
+    # check if cat image and two cats are most similar
+    for i in range(1, len(sentences)):
+        assert np.dot(emb_text_np[0], emb_image_np[0]) > np.dot(
+            emb_text_np[i], emb_image_np[0]
+        )
 
 
 @pytest.mark.anyio

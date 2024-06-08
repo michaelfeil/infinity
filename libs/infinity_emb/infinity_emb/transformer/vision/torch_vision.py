@@ -1,0 +1,122 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Union, Optional
+
+from infinity_emb._optional_imports import CHECK_TORCH, CHECK_TRANSFORMERS
+from infinity_emb.args import EngineArgs
+from infinity_emb.primitives import Dtype
+from infinity_emb.transformer.abstract import BaseClipVisionModel
+
+from infinity_emb.transformer.quantization.interface import quant_embedding_decorator
+
+if TYPE_CHECKING:
+    from PIL.Image import Image as ImageClass
+    from torch import Tensor
+
+if CHECK_TORCH.is_available:
+    import torch
+
+
+class ClipLikeModel(BaseClipVisionModel):
+    """CrossEncoder with .encode_core() and no microbatching"""
+
+    def __init__(self, *, engine_args: EngineArgs):
+        CHECK_TORCH.mark_required()
+        CHECK_TRANSFORMERS.mark_required()
+        from transformers import AutoModel, AutoProcessor
+
+        self.model = AutoModel.from_pretrained(
+            engine_args.model_name_or_path,
+            revision=engine_args.revision,
+        )
+        if torch.cuda.is_available():
+            self.model = self.model.cuda()
+            if engine_args.dtype in (Dtype.float16, Dtype.auto):
+                self.model = self.model.half()
+        self.processor = AutoProcessor.from_pretrained(
+            engine_args.model_name_or_path,
+            revision=engine_args.revision,
+        )
+        self.engine_args = engine_args
+
+        if engine_args.compile:
+            self.model.vision_model = torch.compile(self.model.vision_model)
+            self.model.text_model = torch.compile(self.model.text_model)
+
+        assert hasattr(
+            self.model, "get_text_features"
+        ), f"AutoModel of {engine_args.model_name_or_path} does not have get_text_features method"
+        assert hasattr(
+            self.model, "get_image_features"
+        ), f"AutoModel of {engine_args.model_name_or_path} does not have get_image_features method"
+
+    def encode_pre(self, input_tuples: list[Union[str, ImageClass]]):
+        # return input_tuples
+        text_list: list[str] = []
+        image_list = []
+        type_is_img: list[bool] = []
+
+        for im_or_text in input_tuples:
+            if isinstance(im_or_text, str):
+                text_list.append(im_or_text)
+                type_is_img.append(False)
+            else:
+                image_list.append(im_or_text)
+                type_is_img.append(True)
+        if not image_list:
+            image_list = None
+        if not text_list:
+            text_list = None
+
+        preprocessed = self.processor(
+            images=image_list,
+            text=text_list,
+            return_tensors="pt",
+            padding=True,
+            truncation=True,
+        )
+        preprocessed = {k: v.to(self.model.device) for k, v in preprocessed.items()}
+
+        return (preprocessed, type_is_img)
+
+    def _normalize_cpu(self, tensor: Optional["Tensor"]) -> iter["Tensor"]:
+        if tensor is None:
+            return iter([])
+        return iter((tensor / tensor.norm(p=2, dim=-1, keepdim=True)).cpu())
+
+    def encode_core(self, features_and_types: tuple[dict[str, "Tensor"], list[bool]]) -> list["Tensor"]:
+        """
+        Computes sentence embeddings
+        """
+        features, type_is_img = features_and_types
+        with torch.no_grad():
+            # TODO: torch.cuda.stream()
+            if "input_ids" in features:
+                text_embeds = self.model.get_text_features(
+                    input_ids=features.get("input_ids"),
+                    attention_mask=features.get("attention_mask"),
+                )
+            else:
+                text_embeds = None  # type: ignore
+            if "pixel_values" in features:
+                image_embeds = self.model.get_image_features(
+                    pixel_values=features.get("pixel_values"),
+                )
+            else:
+                image_embeds = None
+
+        return text_embeds, image_embeds, type_is_img
+
+    @quant_embedding_decorator()
+    def encode_post(self, out_features) -> list[float]:
+        text_embeds, image_embeds, type_is_img = out_features
+        text_embeds = self._normalize_cpu(text_embeds)
+        image_embeds = self._normalize_cpu(image_embeds)
+        embeddings = list(
+            next(image_embeds if is_img else text_embeds) for is_img in type_is_img
+        )        
+        return embeddings
+
+    def tokenize_lengths(self, text_list: list[str]) -> list[int]:
+        preprocessed = self.processor(text=text_list, truncation=True)
+        return [len(t) for t in preprocessed["input_ids"]]

@@ -1,12 +1,15 @@
+import random
 from abc import ABC, abstractmethod
 from time import perf_counter
-from typing import Any, Set
+from typing import Any, Set, Union
 
 from infinity_emb.primitives import (
     EmbeddingDtype,
     EmbeddingInner,
     EmbeddingReturnType,
     EmbeddingSingle,
+    ImageInner,
+    ImageSingle,
     ModelCapabilites,
     PredictInner,
     PredictSingle,
@@ -69,6 +72,45 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
             EmbeddingInner(content=EmbeddingSingle(sentence=s), future=None)  # type: ignore
             for s in sample
         ]
+        return run_warmup(self, inp)
+
+
+class BaseClipVisionModel(BaseTransformer):  # Inherit from ABC(Abstract base class)
+    capabilities = {"embed", "image_embed"}
+
+    @property
+    def embedding_dtype(self) -> EmbeddingDtype:
+        """returns the dtype of the embeddings"""
+        return self.engine_args.embedding_dtype  # type: ignore
+
+    @abstractmethod  # Decorator to define an abstract method
+    def encode_pre(self, sentences_or_images: Union[list[str], Any]) -> INPUT_FEATURE:
+        """
+        takes a list of sentences, or a list of images.
+        Images could be url or numpy arrays/pil
+        """
+
+    @abstractmethod
+    def encode_post(
+        self, embedding: OUT_FEATURES, skip_quanitzation=True
+    ) -> EmbeddingReturnType:
+        """runs post encoding such as normalization"""
+
+    def warmup(self, *, batch_size: int = 64, n_tokens=1) -> tuple[float, float, str]:
+        sample_text = ["warm " * n_tokens] * max(1, batch_size // 2)
+        sample_image = [] * max(1, batch_size // 2)
+        inp = [
+            # TODO: warmup for images
+            ImageInner(content=ImageSingle(image=img), future=None)  # type: ignore
+            for img in sample_image
+        ] + [
+            EmbeddingInner(
+                content=EmbeddingSingle(sentence=s), future=None  # type: ignore
+            )
+            for s in sample_text
+        ]
+        random.shuffle(inp)
+
         return run_warmup(self, inp)
 
 
