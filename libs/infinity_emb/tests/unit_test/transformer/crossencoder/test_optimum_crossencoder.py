@@ -33,7 +33,7 @@ def test_crossencoder():
 def test_patched_crossencoder_vs_sentence_transformers():
     model = OptimumCrossEncoder(
         engine_args=EngineArgs(
-            model_name_or_path="Xenova/bge-reranker-base",
+            model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
             device="cpu",
         )
     )
