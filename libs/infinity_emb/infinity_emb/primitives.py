@@ -133,7 +133,7 @@ class AbstractSingle(ABC):
         pass
 
     @abstractmethod
-    def to_input(self) -> Union[str, tuple[str, str]]:
+    def to_input(self) -> Union[str, tuple[str, str], "ImageClass"]:
         pass
 
 
@@ -324,4 +324,4 @@ class ModelNotDeployedError(Exception):
     pass
 
 
-ModelCapabilites = Literal["embed", "rerank", "classify"]
+ModelCapabilites = Literal["embed", "rerank", "classify", "image_embed"]

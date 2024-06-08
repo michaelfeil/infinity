@@ -18,7 +18,6 @@ from infinity_emb.primitives import (
     ClassifyReturnType,
     EmbeddingReturnType,
     EmbeddingSingle,
-    ImageSingle,
     ModelCapabilites,
     ModelNotDeployedError,
     OverloadStatus,

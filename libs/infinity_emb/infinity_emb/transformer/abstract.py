@@ -1,7 +1,7 @@
 import random
 from abc import ABC, abstractmethod
 from time import perf_counter
-from typing import Any, Set, Union
+from typing import TYPE_CHECKING, Any, Set, Union
 
 from infinity_emb.primitives import (
     EmbeddingDtype,
@@ -20,6 +20,9 @@ from infinity_emb.transformer.quantization.interface import quant_embedding_deco
 
 INPUT_FEATURE = Any
 OUT_FEATURES = Any
+
+if TYPE_CHECKING:
+    from PIL.Image import Image as ImageClass
 
 
 class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
@@ -57,7 +60,7 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
         return self.engine_args.embedding_dtype  # type: ignore
 
     @abstractmethod  # Decorator to define an abstract method
-    def encode_pre(self, sentences: list[str]) -> INPUT_FEATURE:
+    def encode_pre(self, sentences: list[Union[str, Any]]) -> INPUT_FEATURE:
         """takes care of the tokenization and feature preparation"""
 
     @abstractmethod
@@ -75,7 +78,7 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
         return run_warmup(self, inp)
 
 
-class BaseClipVisionModel(BaseTransformer):  # Inherit from ABC(Abstract base class)
+class BaseClipVisionModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
     capabilities = {"embed", "image_embed"}
 
     @property
@@ -84,7 +87,9 @@ class BaseClipVisionModel(BaseTransformer):  # Inherit from ABC(Abstract base cl
         return self.engine_args.embedding_dtype  # type: ignore
 
     @abstractmethod  # Decorator to define an abstract method
-    def encode_pre(self, sentences_or_images: Union[list[str], Any]) -> INPUT_FEATURE:
+    def encode_pre(
+        self, sentences_or_images: list[Union[str, "ImageClass"]]
+    ) -> INPUT_FEATURE:
         """
         takes a list of sentences, or a list of images.
         Images could be url or numpy arrays/pil
@@ -98,7 +103,7 @@ class BaseClipVisionModel(BaseTransformer):  # Inherit from ABC(Abstract base cl
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> tuple[float, float, str]:
         sample_text = ["warm " * n_tokens] * max(1, batch_size // 2)
-        sample_image = [] * max(1, batch_size // 2)
+        sample_image = [] * max(1, batch_size // 2)  # type: ignore
         inp = [
             # TODO: warmup for images
             ImageInner(content=ImageSingle(image=img), future=None)  # type: ignore
