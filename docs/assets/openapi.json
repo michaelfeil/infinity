@@ -113,7 +113,7 @@
         "/rerank": {
             "post": {
                 "summary": " Rerank",
-                "description": "Rerank documents\n\n```python\nimport requests\nrequests.post(\"http://..:7997/rerank\",\n    json={\n        \"model\":\"BAAI/bge-reranker-base\",\n        \"query\":\"Where is Munich?\",\n        \"documents\":[\"Munich is in Germany.\", \"The sky is blue.\"]\n    })",
+                "description": "Rerank documents\n\n```python\nimport requests\nrequests.post(\"http://..:7997/rerank\",\n    json={\n        \"model\":\"mixedbread-ai/mxbai-rerank-xsmall-v1\",\n        \"query\":\"Where is Munich?\",\n        \"documents\":[\"Munich is in Germany.\", \"The sky is blue.\"]\n    })",
                 "operationId": "_rerank_rerank_post",
                 "requestBody": {
                     "content": {

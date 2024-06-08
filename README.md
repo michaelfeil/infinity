@@ -65,7 +65,7 @@ Make sure you mount your accelerator, i.e. install nvidia-docker and activate wi
 ```bash
 port=7997
 model1=michaelfeil/bge-small-en-v1.5
-model2=BAAI/bge-reranker-base
+model2=mixedbread-ai/mxbai-rerank-xsmall-v1
 volume=$PWD/data
 
 docker run -it --gpus all \
@@ -101,6 +101,15 @@ async def main():
 asyncio.run(main())
 ```
 
+#### Embedding Model Guide:
+
+- mixedbread-ai/mxbai-embed-large-v1
+- WhereIsAI/UAE-Large-V1
+- BAAI/bge-base-en-v1.5
+- Alibaba-NLP/gte-large-en-v1.5
+- jinaai/jina-embeddings-v2-base-code
+- intfloat/multilingual-e5-large-instruct
+
 ### Launch on the cloud via dstack
 
 dstack allows you to provision a VM instance on the cloud of your choice. Write a service configuration file as below for the deployment of `BAAI/bge-small-en-v1.5` model wrapped in Infinity.
@@ -125,7 +134,6 @@ dstack run . -f infinity/serve.dstack.yml --gpu 16GB
 For more detailed tutorial and general information about dstack, visit the [official doc](https://dstack.ai/examples/infinity/#run-the-configuration).
 
 
-## Non-embedding features
 ### Reranking
 
 Reranking gives you a score for similarity between a query and multiple documents. 
@@ -139,7 +147,7 @@ query = "What is the python package infinity_emb?"
 docs = ["This is a document not related to the python package infinity_emb, hence...", 
     "Paris is in France!",
     "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
-engine_args = EngineArgs(model_name_or_path = "BAAI/bge-reranker-base", engine="torch")
+engine_args = EngineArgs(model_name_or_path = "mixedbread-ai/mxbai-rerank-xsmall-v1", engine="torch")
 
 engine = AsyncEmbeddingEngine.from_args(engine_args)
 async def main(): 
@@ -156,8 +164,13 @@ asyncio.run(main())
 
 When using the CLI, use this command to launch rerankers:
 ```bash
-infinity_emb v2 --model-id BAAI/bge-reranker-base
+infinity_emb v2 --model-id mixedbread-ai/mxbai-rerank-xsmall-v1
 ```
+
+#### Model Guide:
+- mixedbread-ai/mxbai-rerank-xsmall-v1
+- BAAI/bge-reranker-base
+- jinaai/jina-reranker-v1-turbo-en
 
 ### Text Classification 
 
@@ -181,7 +194,10 @@ async def main():
 asyncio.run(main())
 ```
 
-Running via CLI requires a new FastAPI schema and server integration - PR's are also welcome there.
+#### Text-Classification Model Guide:
+- ProsusAI/finbert
+- SamLowe/roberta-base-go_emotions
+
 
 
 ## Launch FAQ:

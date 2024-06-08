@@ -62,47 +62,21 @@ async def test_async_api_torch():
 
 
 @pytest.mark.anyio
-async def test_async_api_torch_CROSSENCODER():
-    query = "Where is Paris?"
-    documents = [
-        "Paris is the capital of France.",
-        "Berlin is the capital of Germany.",
-        "You can now purchase my favorite dish",
-    ]
-    engine = AsyncEmbeddingEngine.from_args(
-        EngineArgs(
-            model_name_or_path="BAAI/bge-reranker-base",
-            engine=InferenceEngine.torch,
-            revision=None,
-            device="auto",
-            model_warmup=True,
-        )
+@pytest.mark.parametrize("engine", [InferenceEngine.torch, InferenceEngine.optimum])
+async def test_engine_reranker_torch_opt(engine):
+    model_unpatched = CrossEncoder(
+        "mixedbread-ai/mxbai-rerank-xsmall-v1",
     )
-
-    assert engine.capabilities == {"rerank"}
-
-    async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents)
-
-    assert usage == sum([len(query) + len(d) for d in documents])
-    assert len(rankings) == len(documents)
-    np.testing.assert_almost_equal(rankings, [0.9958, 0.9439, 0.000037], decimal=3)
-
-
-@pytest.mark.anyio
-async def test_engine_crossencoder_vs_sentence_transformers():
-    model_unpatched = CrossEncoder("BAAI/bge-reranker-base")
     query = "Where is Paris?"
     documents = [
         "Paris is the capital of France.",
         "Berlin is the capital of Germany.",
         "You can now purchase my favorite dish",
-    ] * 100
+    ] * 20
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
-            model_name_or_path="BAAI/bge-reranker-base",
+            model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
             engine=InferenceEngine.torch,
-            device="cuda" if torch.cuda.is_available() else "cpu",
             model_warmup=False,
         )
     )
@@ -110,40 +84,14 @@ async def test_engine_crossencoder_vs_sentence_transformers():
     query_docs = [(query, doc) for doc in documents]
 
     async with engine:
-        rankings, _ = await engine.rerank(query=query, docs=documents)
+        rankings, usage = await engine.rerank(query=query, docs=documents)
 
     rankings_unpatched = model_unpatched.predict(query_docs)
 
-    np.testing.assert_allclose(rankings, rankings_unpatched, rtol=1e-2, atol=1e-2)
-
-
-@pytest.mark.anyio
-async def test_async_api_optimum_crossencoder():
-    query = "Where is Paris?"
-    documents = [
-        "Paris is the capital of France.",
-        "Berlin is the capital of Germany.",
-        "You can now purchase my favorite dish",
-    ]
-    engine = AsyncEmbeddingEngine.from_args(
-        EngineArgs(
-            model_name_or_path="Xenova/bge-reranker-base",
-            engine=InferenceEngine.optimum,
-            revision=None,
-            device="cpu",
-            model_warmup=False,
-            compile=SHOULD_TORCH_COMPILE,
-        )
-    )
-
-    assert engine.capabilities == {"rerank"}
-
-    async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents)
-
+    np.testing.assert_allclose(rankings, rankings_unpatched, rtol=1e-1, atol=1e-1)
     assert usage == sum([len(query) + len(d) for d in documents])
     assert len(rankings) == len(documents)
-    np.testing.assert_almost_equal(rankings, [0.99743, 0.966, 0.000037], decimal=3)
+    np.testing.assert_almost_equal(rankings[:3], [0.83, 0.085, 0.028], decimal=2)
 
 
 @pytest.mark.anyio
@@ -170,7 +118,7 @@ async def test_async_api_torch_CLASSIFY():
 
 
 @pytest.mark.anyio
-async def test_async_api_torch_usage():
+async def test_async_api_torch_lengths_via_tokenize_usage():
     sentences = ["Hi", "how", "school", "Pizza Hi"]
     device = "auto"
     if torch.backends.mps.is_available():

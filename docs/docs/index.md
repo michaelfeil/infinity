@@ -37,7 +37,7 @@ pip install infinity-emb[all]
 ```bash
 port=7997
 model1=michaelfeil/bge-small-en-v1.5
-model2=BAAI/bge-reranker-base
+model2=mixedbread-ai/mxbai-rerank-xsmall-v1
 volume=$PWD/data
 
 docker run -it --gpus all \

@@ -37,7 +37,7 @@ def test_patched_crossencoder_vs_sentence_transformers():
             device="cpu",
         )
     )
-    model_unpatched = CrossEncoder("BAAI/bge-reranker-base")
+    model_unpatched = CrossEncoder("mixedbread-ai/mxbai-rerank-xsmall-v1")
 
     query = "Where is Paris?"
     documents = [

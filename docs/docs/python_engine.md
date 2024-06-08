@@ -51,7 +51,7 @@ query = "What is the python package infinity_emb?"
 docs = ["This is a document not related to the python package infinity_emb, hence...", 
     "Paris is in France!",
     "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
-engine_args = EngineArgs(model_name_or_path = "BAAI/bge-reranker-base", engine="torch")
+engine_args = EngineArgs(model_name_or_path = "mixedbread-ai/mxbai-rerank-xsmall-v1", engine="torch")
 
 engine = AsyncEmbeddingEngine.from_args(engine_args)
 async def main(): 
@@ -68,7 +68,7 @@ asyncio.run(main())
 
 When using the CLI, use this command to launch rerankers:
 ```bash
-infinity_emb v2 --model-id BAAI/bge-reranker-base
+infinity_emb v2 --model-id mixedbread-ai/mxbai-rerank-xsmall-v1
 ```
 
 ## Text Classification 

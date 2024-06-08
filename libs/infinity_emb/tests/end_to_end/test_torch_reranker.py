@@ -41,15 +41,15 @@ async def client():
 def test_load_model(model_base):
     # this makes sure that the error below is not based on a slow download
     # or internal pytorch errors
+    def predict(a, b):
+        return model_base.predict({"text": a, "text_pair": b})["score"]
+
     assert (
         1.0
-        > model_base.predict(
-            {
-                "text": "Where is New York?",
-                "text_pair": "New York is in the united states",
-            }
-        )["score"]
-        > 0.9
+        > predict("Where is Paris?", "Paris is the capital of France.")
+        > predict("Where is Paris?", "Berlin is the capital of Germany.")
+        > predict("Where is Paris?", "You can now purchase my favorite dish")
+        > 0.001
     )
 
 
