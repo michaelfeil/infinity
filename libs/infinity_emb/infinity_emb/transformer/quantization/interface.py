@@ -103,7 +103,9 @@ def _create_statistics_embedding(model: "BaseEmbedder", percentile=100) -> np.nd
             )
 
     dataset = _get_text_calibration_dataset()
-    logger.info(f"Creating calibration dataset for model using {len(dataset)} sentences.")
+    logger.info(
+        f"Creating calibration dataset for model using {len(dataset)} sentences."
+    )
 
     calibration_embeddings = np.concatenate(list(_encode(model, dataset)))
     assert (

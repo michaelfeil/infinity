@@ -148,7 +148,7 @@ class __Infinity_EnvManager:
     def calibration_dataset_url(self):
         return self._optional_infinity_var(
             "calibration_dataset_url",
-            default="https://raw.githubusercontent.com/michaelfeil/infinity/2da1f32d610b8edbe4ce58d0c44fc27c963abca6/docs/assets/multilingual_calibration.utf8"
+            default="https://raw.githubusercontent.com/michaelfeil/infinity/2da1f32d610b8edbe4ce58d0c44fc27c963abca6/docs/assets/multilingual_calibration.utf8",
         )
 
     @cached_property
