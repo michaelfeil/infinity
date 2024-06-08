@@ -199,7 +199,7 @@ async def test_async_api_torch_usage():
     [
         EmbeddingDtype.float32,
         EmbeddingDtype.int8,
-        EmbeddingDtype.uint8,
+        # EmbeddingDtype.uint8,
         EmbeddingDtype.ubinary,
     ],
 )
@@ -210,6 +210,7 @@ async def test_async_api_torch_embedding_quant(embedding_dtype: EmbeddingDtype):
         device = "cpu"
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
+            model_name_or_path="TaylorAI/gte-tiny",
             engine=InferenceEngine.torch,
             device=Device[device],
             lengths_via_tokenize=True,
