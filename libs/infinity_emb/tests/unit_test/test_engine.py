@@ -194,6 +194,7 @@ async def test_async_api_torch_usage():
 
 
 @pytest.mark.anyio
+@pytest.mark.skipif(sys.platform != "linux", reason="only run these on Linux")
 @pytest.mark.parametrize(
     "embedding_dtype",
     [

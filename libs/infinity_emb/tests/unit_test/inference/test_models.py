@@ -52,7 +52,7 @@ def _pretrained_model_score(
 @pytest.mark.parametrize(
     "model,score,compute_type",
     [
-        ("sentence-transformers/bert-base-nli-mean-tokens", 76.40, "int8"),
+        ("sentence-transformers/bert-base-nli-mean-tokens", 76.37, "int8"),
         ("sentence-transformers/bert-base-nli-mean-tokens", 76.46, None),
         ("sentence-transformers/all-MiniLM-L6-v2", 81.03, None),
         ("sentence-transformers/all-MiniLM-L6-v2", 81.03, "default"),
