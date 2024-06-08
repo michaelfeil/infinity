@@ -1,10 +1,12 @@
 from functools import cache, wraps
+from hashlib import md5
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import requests  # type: ignore
 
 from infinity_emb._optional_imports import CHECK_TORCH
+from infinity_emb.env import MANAGER
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device, Dtype, EmbeddingDtype
 from infinity_emb.transformer.quantization.quant import quantize
@@ -66,10 +68,24 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
 
 @cache
 def _get_text_calibration_dataset() -> list[str]:
-    url = "https://raw.githubusercontent.com/turboderp/exllamav2/master/conversion/standard_cal_data/multilingual.utf8"
-    response = requests.get(url)  # TODO: add local file caching
-    response.raise_for_status()  # This will raise an exception if the request failed
-    return [line.strip() for line in response.text.splitlines()]
+    url = MANAGER.calibration_dataset_url
+
+    cache_file = (
+        MANAGER.infinity_cache_dir
+        / "calibration_dataset"
+        / md5(url.encode()).hexdigest()
+        / "calibration_dataset.txt"
+    )
+    if cache_file.exists():
+        text = cache_file.read_text()
+    else:
+        response = requests.get(url)
+        response.raise_for_status()
+        text = response.text
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(text)
+
+    return [line.strip() for line in text.splitlines()]
 
 
 @cache
@@ -87,6 +103,7 @@ def _create_statistics_embedding(model: "BaseEmbedder", percentile=100) -> np.nd
             )
 
     dataset = _get_text_calibration_dataset()
+    logger.info(f"Creating calibration dataset for model using {len(dataset)} sentences.")
 
     calibration_embeddings = np.concatenate(list(_encode(model, dataset)))
     assert (
