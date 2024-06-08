@@ -122,8 +122,8 @@ class NeuronOptimumEmbedder(BaseEmbedder):
             padding=True,
             truncation="longest_first",
             return_tensors="pt",
+            return_token_type_ids=False,
         )
-        input_dict.pop("token_type_ids", None)
         return input_dict
 
     def encode_core(self, input_dict: dict[str, np.ndarray]) -> dict:

@@ -235,7 +235,7 @@ def create_server(
         import requests
         requests.post("http://..:7997/rerank",
             json={
-                "model":"BAAI/bge-reranker-base",
+                "model":"mixedbread-ai/mxbai-rerank-xsmall-v1",
                 "query":"Where is Munich?",
                 "documents":["Munich is in Germany.", "The sky is blue."]
             })

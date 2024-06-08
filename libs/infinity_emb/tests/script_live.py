@@ -20,8 +20,8 @@ def embedding_live_performance():
     req = session.get(f"{LIVE_URL}/models")
     assert req.status_code == 200
 
-    batch_size = req.json()["data"]["stats"]["batch_size"]
-    model_name = req.json()["data"]["id"]
+    batch_size = req.json()["data"][0]["stats"]["batch_size"]
+    model_name = req.json()["data"][0]["id"]
     print(f"batch_size is {batch_size}, model={model_name}")
     model = SentenceTransformer(model_name_or_path=model_name)
 
