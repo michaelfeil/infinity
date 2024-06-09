@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 
 def to_bettertransformer(model: "PreTrainedModel", logger: "Logger"):
-    if os.environ.get("INFINITY_DISABLE_OPTIMUM", False): # OLD VAR
+    if os.environ.get("INFINITY_DISABLE_OPTIMUM", False):  # OLD VAR
         logger.warning(
             "No optimizations via BetterTransformer,"
             " it is disabled via env `INFINITY_DISABLE_OPTIMUM` "
