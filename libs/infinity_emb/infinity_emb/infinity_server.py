@@ -12,6 +12,7 @@ from infinity_emb.fastapi_schemas import docs, errors
 from infinity_emb.fastapi_schemas.pymodels import (
     ClassifyInput,
     ClassifyResult,
+    ImageEmbeddingInput,
     OpenAIEmbeddingInput,
     OpenAIEmbeddingResult,
     OpenAIModelInfo,
@@ -23,6 +24,7 @@ from infinity_emb.primitives import (
     Device,
     Dtype,
     EmbeddingDtype,
+    ImageCorruption,
     InferenceEngine,
     ModelNotDeployedError,
     PoolingMethod,
@@ -308,6 +310,56 @@ def create_server(
         except ModelNotDeployedError as ex:
             raise errors.OpenAIException(
                 f"ModelNotDeployedError: model=`{data.model}` does not support `classify`. Reason: {ex}",
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as ex:
+            raise errors.OpenAIException(
+                f"InternalServerError: {ex}",
+                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @app.post(
+        f"{url_prefix}/embeddings_image",
+        response_model=OpenAIEmbeddingResult,
+        response_class=responses.ORJSONResponse,
+        dependencies=route_dependencies,
+    )
+    async def _embeddings_image(data: ImageEmbeddingInput):
+        """Encode Embeddings
+
+        ```python
+        import requests
+        requests.post("http://..:7997/embeddings_image",
+            json={"model":"openai/clip-vit-base-patch32","input":["http://images.cocodataset.org/val2017/000000039769.jpg"]})
+        """
+        engine = _resolve_engine(data.model)
+        if hasattr(data.input, "host"):
+            # if it is a single url
+            urls = [str(data.input)]
+        else:
+            urls = [str(d) for d in data.input]  # type: ignore
+        try:
+            logger.debug("[📝] Received request with %s Urls ", len(urls))
+            start = time.perf_counter()
+
+            embedding, usage = await engine.image_embed(images=urls)
+
+            duration = (time.perf_counter() - start) * 1000
+            logger.debug("[✅] Done in %s ms", duration)
+
+            return OpenAIEmbeddingResult.to_embeddings_response(
+                embeddings=embedding,
+                model=engine.engine_args.served_model_name,
+                usage=usage,
+            )
+        except ImageCorruption as ex:
+            raise errors.OpenAIException(
+                f"ImageCorruption, could not open {urls} -> {ex}",
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        except ModelNotDeployedError as ex:
+            raise errors.OpenAIException(
+                f"ModelNotDeployedError: model=`{data.model}` does not support `embed`. Reason: {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as ex:

@@ -3,6 +3,7 @@ from abc import ABC, abstractmethod
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Set, Union
 
+from infinity_emb._optional_imports import CHECK_PIL
 from infinity_emb.primitives import (
     EmbeddingDtype,
     EmbeddingInner,
@@ -21,8 +22,12 @@ from infinity_emb.transformer.quantization.interface import quant_embedding_deco
 INPUT_FEATURE = Any
 OUT_FEATURES = Any
 
+
 if TYPE_CHECKING:
     from PIL.Image import Image as ImageClass
+
+if CHECK_PIL.is_available:
+    from PIL import Image
 
 
 class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
@@ -103,7 +108,7 @@ class BaseClipVisionModel(BaseEmbedder):  # Inherit from ABC(Abstract base class
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> tuple[float, float, str]:
         sample_text = ["warm " * n_tokens] * max(1, batch_size // 2)
-        sample_image = [] * max(1, batch_size // 2)  # type: ignore
+        sample_image = [Image.new("RGB", (100, 1000), (255, 255, 255))] * max(1, batch_size // 2)  # type: ignore
         inp = [
             # TODO: warmup for images
             ImageInner(content=ImageSingle(image=img), future=None)  # type: ignore

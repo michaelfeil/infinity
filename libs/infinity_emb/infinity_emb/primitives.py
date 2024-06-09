@@ -324,4 +324,8 @@ class ModelNotDeployedError(Exception):
     pass
 
 
+class ImageCorruption(Exception):
+    pass
+
+
 ModelCapabilites = Literal["embed", "rerank", "classify", "image_embed"]

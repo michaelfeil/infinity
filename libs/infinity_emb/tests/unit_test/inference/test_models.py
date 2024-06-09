@@ -27,7 +27,8 @@ def _pretrained_model_score(
     ct2_compute_type: str = "",
 ):
     test_samples = dataset[::3]
-    model: Union[SentenceTransformerPatched, CT2SentenceTransformer]
+    model: Union[CT2SentenceTransformer, SentenceTransformerPatched]
+
     if ct2_compute_type:
         model = CT2SentenceTransformer(
             engine_args=EngineArgs(model_name_or_path=model_name),
@@ -59,8 +60,8 @@ def _pretrained_model_score(
         ("sentence-transformers/all-MiniLM-L6-v2", 81.03, "default"),
         ("sentence-transformers/all-MiniLM-L6-v2", 80.73, "int8"),
         ("sentence-transformers/all-MiniLM-L6-v2", 81.03, "default"),
-        ("BAAI/bge-small-en-v1.5", 84.90, None),
-        ("BAAI/bge-small-en-v1.5", 84.90, "int8"),
+        ("michaelfeil/bge-small-en-v1.5", 84.90, None),
+        ("michaelfeil/bge-small-en-v1.5", 84.90, "int8"),
     ],
 )
 @pytest.mark.skipif(sys.platform == "darwin", reason="does not run on mac")
