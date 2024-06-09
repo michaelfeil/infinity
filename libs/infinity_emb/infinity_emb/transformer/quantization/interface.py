@@ -102,7 +102,14 @@ def _create_statistics_embedding(model: "BaseEmbedder", percentile=100) -> np.nd
                 _internal_skip_quanitzation=True,
             )
 
+    if "image_embed" in model.capabilities:
+        # TODO: implement calibration for vision models
+        logger.error(
+            "quantization requires a calibrating dataset, "
+            f"which is implemented for Text models only. You are using {model.__class__.__name__}"
+        )
     dataset = _get_text_calibration_dataset()
+
     logger.info(
         f"Creating calibration dataset for model using {len(dataset)} sentences."
     )
