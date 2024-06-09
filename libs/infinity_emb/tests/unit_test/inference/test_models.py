@@ -27,8 +27,10 @@ def _pretrained_model_score(
     ct2_compute_type: str = "",
 ):
     test_samples = dataset[::3]
-
     model: Union[CT2SentenceTransformer, SentenceTransformerPatched]
+
+    model: Union[SentenceTransformerPatched, CT2SentenceTransformer]
+
     if ct2_compute_type:
         model = CT2SentenceTransformer(
             engine_args=EngineArgs(model_name_or_path=model_name),

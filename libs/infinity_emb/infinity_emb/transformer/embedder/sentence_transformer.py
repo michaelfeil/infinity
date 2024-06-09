@@ -95,7 +95,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         """
 
         with torch.no_grad():
-            features = util.batch_to_device(features, self.device)
+            features = util.batch_to_device(features, self.device)  # type: ignore
             out_features: "Tensor" = self.forward(features)["sentence_embedding"]
 
         return out_features.detach().cpu()
