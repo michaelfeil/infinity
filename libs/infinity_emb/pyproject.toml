@@ -29,6 +29,7 @@ ctranslate2 = {version = "^4.0.0", optional=true}
 optimum = {version = ">=1.16.2", optional=true, extras=["onnxruntime"]}
 hf_transfer = {version=">=0.1.5"}
 einops = {version = "*", optional=true}
+pillow = {version = "*", optional=true}
 # cache
 diskcache = {version = "*", optional=true}
 # gpu
@@ -74,8 +75,31 @@ einops=["einops"]
 logging=["rich"]
 cache=["diskcache"]
 vision=["pillow"]
-server=["fastapi", "pydantic", "orjson", "prometheus-fastapi-instrumentator", "uvicorn", "typer","rich"]
-all=["ctranslate2", "fastapi", "optimum", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn","diskcache", "einops", "vision"]
+server=[
+    "fastapi",
+    "orjson",
+    "prometheus-fastapi-instrumentator",
+    "pydantic",
+    "rich"
+    "typer",
+    "uvicorn",
+]
+all=[
+    "ctranslate2",
+    "diskcache",
+    "einops",
+    "fastapi", 
+    "optimum",
+    "orjson", 
+    "pillow",
+    "prometheus-fastapi-instrumentator", 
+    "pydantic", 
+    "rich", 
+    "sentence-transformers",
+    "torch", 
+    "typer", 
+    "uvicorn",
+]
 # non-default gpu
 tensorrt=["tensorrt"]
 onnxruntime-gpu=["onnxruntime-gpu"]
