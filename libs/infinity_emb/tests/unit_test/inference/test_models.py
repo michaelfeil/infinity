@@ -4,6 +4,7 @@ Tests that the pretrained models produce the correct scores on the STSbenchmark 
 
 import copy
 import sys
+from typing import Union
 
 import pytest
 import torch
@@ -27,6 +28,7 @@ def _pretrained_model_score(
 ):
     test_samples = dataset[::3]
 
+    model: Union[CT2SentenceTransformer, SentenceTransformerPatched]
     if ct2_compute_type:
         model = CT2SentenceTransformer(
             engine_args=EngineArgs(model_name_or_path=model_name),
@@ -44,7 +46,7 @@ def _pretrained_model_score(
         test_samples, name="sts-test"
     )
 
-    score = model.evaluate(evaluator)["sts-test_spearman_cosine"] * 100
+    score = model.evaluate(evaluator)["sts-test_spearman_cosine"] * 100  # type: ignore
     print(model_name, "{:.2f} vs. exp: {:.2f}".format(score, expected_score))
     assert score > expected_score or abs(score - expected_score) < 0.01
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -84,12 +84,12 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             logger.info("using torch.compile()")
             fm.auto_model = torch.compile(fm.auto_model, dynamic=True)
 
-    def encode_pre(self, sentences) -> Mapping[str, "Tensor"]:
+    def encode_pre(self, sentences) -> dict[str, "Tensor"]:
         features = self.tokenize(sentences)
 
         return features
 
-    def encode_core(self, features: Mapping[str, "Tensor"]) -> "Tensor":
+    def encode_core(self, features: dict[str, "Tensor"]) -> "Tensor":
         """
         Computes sentence embeddings
         """
