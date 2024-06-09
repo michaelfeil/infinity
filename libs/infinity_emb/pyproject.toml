@@ -80,7 +80,7 @@ server=[
     "orjson",
     "prometheus-fastapi-instrumentator",
     "pydantic",
-    "rich"
+    "rich",
     "typer",
     "uvicorn",
 ]
