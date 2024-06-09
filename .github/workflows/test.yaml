@@ -23,28 +23,32 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        continue-on-error: [true]
+        os: [ubuntu-latest, windows-latest, ] # macos-latest
         python-version:
           - "3.9"
           - "3.10"
           - "3.11"
           - "3.12"
-        os:
-          - ubuntu-latest
-          - windows-latest
-          # - macos-latest 
-        include:
-          - python-version: "3.11"
-            os: ubuntu-latest
-            continue-on-error: false
+        coverage_tests: ["unit_test", "end_to_end"]
         exclude:
+          # Exclude unit tests on macOS due to compatibility issues
+          - python-version: "3.9"
+            os: macos-latest
+            coverage_tests: "unit_test"
+          - python-version: "3.10"
+            os: macos-latest
+            coverage_tests: "unit_test"
           - python-version: "3.11"
-            os: ubuntu-latest
-            continue-on-error: true
+            os: macos-latest
+            coverage_tests: "unit_test"
+          - python-version: "3.12"
+            os: macos-latest
+            coverage_tests: "unit_test"
+        # continue-on-error: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
 
-
+          
     runs-on: ${{ matrix.os }}
-    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    name: Py${{ matrix.python-version }}-${{ matrix.os }}-${{ matrix.coverage_tests }}
     steps:
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@v1.3.0
@@ -74,7 +78,7 @@ jobs:
 
       - name: Run Pytest Coverage
         run: |
-          poetry run coverage run -m --source ./infinity_emb pytest tests 
+          poetry run coverage run -m --source ./infinity_emb pytest tests/${{ matrix.coverage_tests }} 
           poetry run coverage xml
 
       - name: Upload coverage Report to Codecov for python 3.11
