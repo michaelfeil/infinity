@@ -36,11 +36,11 @@ jobs:
             coverage_tests: "unit_test"
           - python-version: "3.11"
             os: macos-latest
-            coverage_tests: "unit_gest"
+            coverage_tests: "unit_test"
           - python-version: "3.12"
             os: macos-latest
             coverage_tests: "unit_test"
-        continue-on-error: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
+        # continue-on-error: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
 
           
     runs-on: ${{ matrix.os }}
