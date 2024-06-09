@@ -48,7 +48,7 @@ anyio = "*"
 trio = "*"
 coverage = {extras = ["toml"], version = "^7.3.2"}
 mypy = "^1.5.1"
-fastembed = ">=0.2.1"
+fastembed = ">=0.2.1,<0.3.0"
 
 [tool.poetry.group.codespell.dependencies]
 codespell = "^2.2.0"
