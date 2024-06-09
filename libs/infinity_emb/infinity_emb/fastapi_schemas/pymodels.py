@@ -16,7 +16,7 @@ if CHECK_PYDANTIC.is_available:
     from pydantic import BaseModel, Field, conlist
 
     try:
-        from pydantic import StringConstraints
+        from pydantic import AnyUrl, HttpUrl, StringConstraints
 
         # Note: adding artificial limit, this might reveal splitting
         # issues on the client side
@@ -34,6 +34,7 @@ if CHECK_PYDANTIC.is_available:
             "min_items": 1,
             "max_items": 2048,
         }
+        HttpUrl, AnyUrl = str, str  # type: ignore
 
 
 else:
@@ -60,6 +61,18 @@ class OpenAIEmbeddingInput(BaseModel):
             **ITEMS_LIMIT,
         ),
         Annotated[str, INPUT_STRING],
+    ]
+    model: str = "default/not-specified"
+    user: Optional[str] = None
+
+
+class ImageEmbeddingInput(BaseModel):
+    input: Union[  # type: ignore
+        conlist(  # type: ignore
+            Annotated[AnyUrl, HttpUrl],
+            **ITEMS_LIMIT,
+        ),
+        Annotated[AnyUrl, HttpUrl],
     ]
     model: str = "default/not-specified"
     user: Optional[str] = None
