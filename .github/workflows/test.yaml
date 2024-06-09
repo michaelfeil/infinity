@@ -70,7 +70,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           poetry-version: ${{ env.POETRY_VERSION }}
           working-directory: ${{ inputs.working-directory }}
-          cache-key: infinity-emb-test
+          cache-key: infinity-emb-test-${{ matrix.coverage_tests }}
 
       - name: Install dependencies
         shell: bash
