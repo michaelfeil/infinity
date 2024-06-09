@@ -333,15 +333,16 @@ def create_server(
             json={"model":"openai/clip-vit-base-patch32","input":["http://images.cocodataset.org/val2017/000000039769.jpg"]})
         """
         engine = _resolve_engine(data.model)
-
+        if hasattr(data.input, "host"):
+            # if it is a single url
+            urls = [str(data.input)]
+        else:
+            urls = [str(d) for d in data.input]  # type: ignore
         try:
-            if isinstance(data.input, str):
-                data.input = [data.input]
-
-            logger.debug("[📝] Received request with %s inputs ", len(data.input))
+            logger.debug("[📝] Received request with %s Urls ", len(urls))
             start = time.perf_counter()
 
-            embedding, usage = await engine.image_embed(images=data.input)
+            embedding, usage = await engine.image_embed(images=urls)
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
@@ -353,7 +354,7 @@ def create_server(
             )
         except ImageCorruption as ex:
             raise errors.OpenAIException(
-                f"ImageCorruption, could not open {data.input} -> {ex}",
+                f"ImageCorruption, could not open {urls} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except ModelNotDeployedError as ex:
