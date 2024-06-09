@@ -13,10 +13,22 @@ from dataclasses import dataclass, field
 
 # cached_porperty
 from functools import lru_cache
-from typing import Generic, Literal, Optional, Type, TypedDict, TypeVar, Union
+from typing import (
+    TYPE_CHECKING,
+    Generic,
+    Literal,
+    Optional,
+    Type,
+    TypedDict,
+    TypeVar,
+    Union,
+)
 
 import numpy as np
 import numpy.typing as npt
+
+if TYPE_CHECKING:
+    from PIL.Image import Image as ImageClass
 
 # if python>=3.10 use kw_only
 
@@ -121,7 +133,7 @@ class AbstractSingle(ABC):
         pass
 
     @abstractmethod
-    def to_input(self) -> Union[str, tuple[str, str]]:
+    def to_input(self) -> Union[str, tuple[str, str], "ImageClass"]:
         pass
 
 
@@ -151,6 +163,18 @@ class ReRankSingle(AbstractSingle):
 @dataclass(**dataclass_args)
 class PredictSingle(EmbeddingSingle):
     pass
+
+
+@dataclass(**dataclass_args)
+class ImageSingle(AbstractSingle):
+    image: "ImageClass"
+
+    def str_repr(self) -> str:
+        """creates a dummy representation of the image to count tokens relative to shape"""
+        return f"an image is worth a repeated {'token' * self.image.height}"
+
+    def to_input(self) -> "ImageClass":
+        return self.image
 
 
 AbstractInnerType = TypeVar("AbstractInnerType")
@@ -242,12 +266,37 @@ class PredictInner(AbstractInner):
         return self.class_encoding
 
 
-QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner]
+@dataclass(order=True, **dataclass_args)
+class ImageInner(AbstractInner):
+    content: ImageSingle
+    embedding: Optional[EmbeddingReturnType] = None
+
+    async def complete(self, result: EmbeddingReturnType) -> None:
+        """marks the future for completion.
+        only call from the same thread as created future."""
+        self.embedding = result
+
+        if self.embedding is None:
+            raise ValueError("embedding is None")
+        try:
+            self.future.set_result(self.embedding)
+        except asyncio.exceptions.InvalidStateError:
+            pass
+
+    async def get_result(self) -> EmbeddingReturnType:
+        """waits for future to complete and returns result"""
+        await self.future
+        assert self.embedding is not None
+        return self.embedding
+
+
+QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner, ImageInner]
 
 _type_to_inner_item_map = {
     EmbeddingSingle: EmbeddingInner,
     ReRankSingle: ReRankInner,
     PredictSingle: PredictInner,
+    ImageSingle: ImageInner,
 }
 
 
@@ -275,4 +324,4 @@ class ModelNotDeployedError(Exception):
     pass
 
 
-ModelCapabilites = Literal["embed", "rerank", "classify"]
+ModelCapabilites = Literal["embed", "rerank", "classify", "image_embed"]

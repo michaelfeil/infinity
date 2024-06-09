@@ -28,6 +28,7 @@ from infinity_emb.primitives import (
 )
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
+from infinity_emb.transformer.vision.utils import resolve_images
 
 
 class ShutdownReadOnly:
@@ -199,6 +200,35 @@ class BatchHandler:
             pass
 
         return classifications, usage
+
+    async def image_embed(
+        self,
+        *,
+        images: list[str],
+    ) -> tuple[list[EmbeddingReturnType], int]:
+        """Schedule a images and sentences to be embedded. Awaits until embedded.
+
+        Args:
+            images (list[str]): list of pre-signed urls
+
+        Raises:
+            ModelNotDeployedError: If loaded model does not expose `embed`
+                capabilities
+
+        Returns:
+            list[EmbeddingReturnType]: list of embedding as 1darray
+            int: token usage
+        """
+
+        if "image_embed" not in self.model_worker.capabilities:
+            raise ModelNotDeployedError(
+                "the loaded moded cannot fullyfill `image_embed`."
+                f"options are {self.model_worker.capabilities}."
+            )
+
+        items = await asyncio.to_thread(resolve_images, images)
+        embeddings, usage = await self._schedule(items)
+        return embeddings, usage
 
     async def _schedule(
         self, list_queueitem: Sequence[AbstractSingle]

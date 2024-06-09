@@ -1,12 +1,15 @@
+import random
 from abc import ABC, abstractmethod
 from time import perf_counter
-from typing import Any, Set
+from typing import TYPE_CHECKING, Any, Set, Union
 
 from infinity_emb.primitives import (
     EmbeddingDtype,
     EmbeddingInner,
     EmbeddingReturnType,
     EmbeddingSingle,
+    ImageInner,
+    ImageSingle,
     ModelCapabilites,
     PredictInner,
     PredictSingle,
@@ -17,6 +20,9 @@ from infinity_emb.transformer.quantization.interface import quant_embedding_deco
 
 INPUT_FEATURE = Any
 OUT_FEATURES = Any
+
+if TYPE_CHECKING:
+    from PIL.Image import Image as ImageClass
 
 
 class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
@@ -54,7 +60,7 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
         return self.engine_args.embedding_dtype  # type: ignore
 
     @abstractmethod  # Decorator to define an abstract method
-    def encode_pre(self, sentences: list[str]) -> INPUT_FEATURE:
+    def encode_pre(self, sentences: list[Union[str, Any]]) -> INPUT_FEATURE:
         """takes care of the tokenization and feature preparation"""
 
     @abstractmethod
@@ -69,6 +75,47 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
             EmbeddingInner(content=EmbeddingSingle(sentence=s), future=None)  # type: ignore
             for s in sample
         ]
+        return run_warmup(self, inp)
+
+
+class BaseClipVisionModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
+    capabilities = {"embed", "image_embed"}
+
+    @property
+    def embedding_dtype(self) -> EmbeddingDtype:
+        """returns the dtype of the embeddings"""
+        return self.engine_args.embedding_dtype  # type: ignore
+
+    @abstractmethod  # Decorator to define an abstract method
+    def encode_pre(
+        self, sentences_or_images: list[Union[str, "ImageClass"]]
+    ) -> INPUT_FEATURE:
+        """
+        takes a list of sentences, or a list of images.
+        Images could be url or numpy arrays/pil
+        """
+
+    @abstractmethod
+    def encode_post(
+        self, embedding: OUT_FEATURES, skip_quanitzation=True
+    ) -> EmbeddingReturnType:
+        """runs post encoding such as normalization"""
+
+    def warmup(self, *, batch_size: int = 64, n_tokens=1) -> tuple[float, float, str]:
+        sample_text = ["warm " * n_tokens] * max(1, batch_size // 2)
+        sample_image = [] * max(1, batch_size // 2)  # type: ignore
+        inp = [
+            # TODO: warmup for images
+            ImageInner(content=ImageSingle(image=img), future=None)  # type: ignore
+            for img in sample_image
+        ] + [
+            EmbeddingInner(
+                content=EmbeddingSingle(sentence=s), future=None  # type: ignore
+            )
+            for s in sample_text
+        ]
+        random.shuffle(inp)
+
         return run_warmup(self, inp)
 
 
