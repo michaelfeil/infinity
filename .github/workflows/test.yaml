@@ -78,7 +78,7 @@ jobs:
 
       - name: Run Pytest Coverage
         run: |
-          poetry run coverage run -m --source ./infinity_emb pytest ${{ matrix.coverage_tests }} 
+          poetry run coverage run -m --source ./infinity_emb pytest tests/${{ matrix.coverage_tests }} 
           poetry run coverage xml
 
       - name: Upload coverage Report to Codecov for python 3.11
