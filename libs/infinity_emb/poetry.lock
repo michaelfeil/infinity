@@ -3187,7 +3187,7 @@ files = [
 name = "safetensors"
 version = "0.4.3"
 description = ""
-optional = false
+optional = true
 python-versions = ">=3.7"
 files = [
     {file = "safetensors-0.4.3-cp310-cp310-macosx_10_12_x86_64.whl", hash = "sha256:dcf5705cab159ce0130cd56057f5f3425023c407e170bca60b4868048bae64fd"},
@@ -3845,7 +3845,7 @@ telegram = ["requests"]
 name = "transformers"
 version = "4.39.1"
 description = "State-of-the-art Machine Learning for JAX, PyTorch and TensorFlow"
-optional = false
+optional = true
 python-versions = ">=3.8.0"
 files = [
     {file = "transformers-4.39.1-py3-none-any.whl", hash = "sha256:df167e08b27ab254044a38bb7c439461cd3916332205416e9b6b1592b517a1a5"},
@@ -4677,4 +4677,4 @@ vision = ["pillow"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "2b81474f48cd9d739da83b5e6a0e547013e73dbbff766d71137cca4affa547fc"
+content-hash = "d372a37b5f055c1ad5052394ad0591aae6af764fc751ab9601ec64672bcc17db"
