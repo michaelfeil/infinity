@@ -81,7 +81,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             )
 
         if engine_args.compile:
-            logger.info("using torch.compile()")
+            logger.info("using torch.compile(dynamic=True)")
             fm.auto_model = torch.compile(fm.auto_model, dynamic=True)
 
     def encode_pre(self, sentences) -> dict[str, "Tensor"]:
