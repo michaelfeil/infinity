@@ -40,7 +40,9 @@ class ClipLikeModel(BaseClipVisionModel):
         self.engine_args = engine_args
 
         if engine_args.compile:
-            self.model.vision_model = torch.compile(self.model.vision_model, dynamic=True)
+            self.model.vision_model = torch.compile(
+                self.model.vision_model, dynamic=True
+            )
             self.model.text_model = torch.compile(self.model.text_model, dynamic=True)
 
         assert hasattr(
