@@ -21,7 +21,7 @@ jobs:
       run:
         working-directory: ${{ inputs.working-directory }}
     strategy:
-      fail-fast: true
+      # fail-fast: true
       matrix:
         os: [ubuntu-latest, windows-latest, ] # macos-latest
         python-version:
