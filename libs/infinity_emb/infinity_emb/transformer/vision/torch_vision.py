@@ -24,16 +24,21 @@ class ClipLikeModel(BaseClipVisionModel):
     def __init__(self, *, engine_args: EngineArgs):
         CHECK_TORCH.mark_required()
         CHECK_TRANSFORMERS.mark_required()
-
         self.model = AutoModel.from_pretrained(
             engine_args.model_name_or_path,
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
+            # attn_implementation="eager" if engine_args.bettertransformer else None,
         )
         if torch.cuda.is_available():
             self.model = self.model.cuda()
             if engine_args.dtype in (Dtype.float16, Dtype.auto):
                 self.model = self.model.half()
+        # self.model = to_bettertransformer(
+        #     self.model,
+        #     engine_args,
+        #     logger,
+        # )
         self.processor = AutoProcessor.from_pretrained(
             engine_args.model_name_or_path,
             revision=engine_args.revision,

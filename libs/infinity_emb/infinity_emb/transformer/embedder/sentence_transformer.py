@@ -68,11 +68,11 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self.eval()
         self.engine_args = engine_args
 
-        if not (self.device.type == "mps" or not engine_args.bettertransformer):
-            fm.auto_model = to_bettertransformer(
-                fm.auto_model,
-                logger,
-            )
+        fm.auto_model = to_bettertransformer(
+            fm.auto_model,
+            engine_args,
+            logger,
+        )
 
         if self.device.type == "cuda" and engine_args.dtype in [
             Dtype.auto,
