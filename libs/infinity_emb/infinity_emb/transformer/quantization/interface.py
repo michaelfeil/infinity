@@ -125,7 +125,13 @@ def quant_embedding_decorator():
     def decorator(func):
         @wraps(func)
         def wrapper(self: "BaseEmbedder", *args, **kwargs):
-            # Assume the first argument is the instance of BaseEmbedder or similar
+            """
+            wraps a func called via func(self, *args, **kwargs) -> EmbeddingDtype(similar)
+
+            Special:
+                self has embedding_dtype: EmbeddingDtype
+                _internal_skip_quanitzation=True skips quantization
+            """
             skip_quanitzation = kwargs.pop("_internal_skip_quanitzation", False)
             embeddings = func(self, *args, **kwargs)
             if self.embedding_dtype == EmbeddingDtype.float32 or skip_quanitzation:

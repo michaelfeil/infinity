@@ -47,11 +47,17 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
     def __init__(self, *, engine_args=EngineArgs):
         CHECK_TORCH.mark_required()
         CHECK_SENTENCE_TRANSFORMERS.mark_required()
+
+        model_kwargs = {}
+        if engine_args.bettertransformer:
+            model_kwargs["attn_implementation"] = "eager"
+
         super().__init__(
             engine_args.model_name_or_path,
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
             device=engine_args.device.resolve(),
+            model_kwargs=model_kwargs,
         )
         self.to(self.device)
         # make a copy of the tokenizer,
