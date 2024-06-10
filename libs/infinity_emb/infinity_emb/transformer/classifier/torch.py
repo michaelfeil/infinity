@@ -16,6 +16,9 @@ class SentenceClassifier(BaseClassifer):
         engine_args: EngineArgs,
     ) -> None:
         CHECK_TRANSFORMERS.mark_required()
+        model_kwargs = {}
+        if engine_args.bettertransformer:
+            model_kwargs["attn_implementation"] = "eager"
         self._pipe = pipeline(
             task="text-classification",
             model=engine_args.model_name_or_path,
@@ -23,6 +26,7 @@ class SentenceClassifier(BaseClassifer):
             device=engine_args.device.resolve(),
             top_k=None,
             revision=engine_args.revision,
+            model_kwargs=model_kwargs,
         )
         if self._pipe.device.type != "cpu":  # and engine_args.dtype == "float16":
             self._pipe.model = self._pipe.model.half()

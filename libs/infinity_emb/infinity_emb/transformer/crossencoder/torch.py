@@ -35,11 +35,16 @@ class CrossEncoderPatched(CrossEncoder, BaseCrossEncoder):
     def __init__(self, *, engine_args: EngineArgs):
         CHECK_SENTENCE_TRANSFORMERS.mark_required()
 
+        model_kwargs = {}
+        if engine_args.bettertransformer:
+            model_kwargs["attn_implementation"] = "eager"
+
         super().__init__(
             engine_args.model_name_or_path,
             revision=engine_args.revision,
             device=engine_args.device.resolve(),  # type: ignore
             trust_remote_code=engine_args.trust_remote_code,
+            automodel_args=model_kwargs,
         )
         self.model.to(self._target_device)  # type: ignore
 

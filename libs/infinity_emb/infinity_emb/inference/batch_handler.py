@@ -1,5 +1,4 @@
 import asyncio
-import os
 import queue
 import threading
 import time
@@ -9,6 +8,7 @@ from typing import Any, Sequence, Set
 
 import numpy as np
 
+from infinity_emb.env import MANAGER
 from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.inference.queue import CustomFIFOQueue, ResultKVStoreFuture
 from infinity_emb.inference.threading_asyncio import to_thread
@@ -52,7 +52,7 @@ class BatchHandler:
         self,
         model: BaseTransformer,
         max_batch_size: int,
-        max_queue_wait: int = int(os.environ.get("INFINITY_QUEUE_SIZE", 32_000)),
+        max_queue_wait: int = MANAGER.queue_size,
         batch_delay: float = 5e-3,
         vector_disk_cache_path: str = "",
         verbose=False,

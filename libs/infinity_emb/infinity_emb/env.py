@@ -170,6 +170,10 @@ class __Infinity_EnvManager:
         return cache_dir
 
     @cached_property
+    def queue_size(self) -> int:
+        return int(self._optional_infinity_var("queue_size", default="32000"))
+
+    @cached_property
     def permissive_cors(self):
         return self._to_bool(
             self._optional_infinity_var("permissive_cors", default="false")
