@@ -201,7 +201,7 @@ async def test_async_api_torch_embedding_quant(embedding_dtype: EmbeddingDtype):
         device = "cpu"
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
-            model_name_or_path="TaylorAI/gte-tiny",
+            model_name_or_path="michaelfeil/bge-small-en-v1.5",
             engine=InferenceEngine.torch,
             device=Device[device],
             lengths_via_tokenize=True,
@@ -213,19 +213,19 @@ async def test_async_api_torch_embedding_quant(embedding_dtype: EmbeddingDtype):
     async with engine:
         emb, usage = await engine.embed(sentences)
         embeddings = np.array(emb)  # type: ignore
-        # usage should be similar to
-        if embedding_dtype == EmbeddingDtype.int8:
-            assert embeddings.dtype == np.int8
-        elif embedding_dtype == EmbeddingDtype.uint8:
-            assert embeddings.dtype == np.uint8
-        elif embedding_dtype == EmbeddingDtype.ubinary:
-            embeddings_up = np.unpackbits(embeddings, axis=-1).astype(int)  # type: ignore
-            assert embeddings_up.max() == 1
-            assert embeddings_up.min() == 0
 
-        assert usage == 5
-        assert embeddings.shape[0] == len(sentences)
-        assert embeddings.shape[1] >= 10
+    if embedding_dtype == EmbeddingDtype.int8:
+        assert embeddings.dtype == np.int8
+    elif embedding_dtype == EmbeddingDtype.uint8:
+        assert embeddings.dtype == np.uint8
+    elif embedding_dtype == EmbeddingDtype.ubinary:
+        embeddings_up = np.unpackbits(embeddings, axis=-1).astype(int)  # type: ignore
+        assert embeddings_up.max() == 1
+        assert embeddings_up.min() == 0
+    # usage should be similar to
+    assert usage == 5
+    assert embeddings.shape[0] == len(sentences)
+    assert embeddings.shape[1] >= 10
 
 
 @pytest.mark.anyio
