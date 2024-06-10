@@ -2,6 +2,7 @@ import os
 from typing import TYPE_CHECKING
 
 from infinity_emb._optional_imports import CHECK_OPTIMUM
+from infinity_emb.primitives import Device
 
 if CHECK_OPTIMUM.is_available:
     from optimum.bettertransformer import (  # type: ignore[import-untyped]
@@ -13,8 +14,23 @@ if TYPE_CHECKING:
 
     from transformers import PreTrainedModel  # type: ignore[import-untyped]
 
+    from infinity_emb.args import EngineArgs
 
-def to_bettertransformer(model: "PreTrainedModel", logger: "Logger"):
+
+def to_bettertransformer(
+    model: "PreTrainedModel", engine_args: "EngineArgs", logger: "Logger"
+):
+    if not engine_args.bettertransformer:
+        return model
+
+    if engine_args.device == Device.mps or (
+        hasattr(model, "device") and model.device.type == "mps"
+    ):
+        logger.warning(
+            "BetterTransformer is not available for MPS device. Continue without bettertransformer modeling code."
+        )
+        return model
+
     if os.environ.get("INFINITY_DISABLE_OPTIMUM", False):  # OLD VAR
         logger.warning(
             "DEPRECATED `INFINITY_DISABLE_OPTIMUM` - setting optimizations via BetterTransformer,"

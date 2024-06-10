@@ -159,6 +159,10 @@ def create_server(
                     ),
                     capabilities=engine.capabilities,
                     backend=engine_args.engine.name,
+                    embedding_dtype=engine_args.embedding_dtype.name,
+                    dtype=engine_args.dtype.name,
+                    revision=engine_args.revision,
+                    lengths_via_tokenize=engine_args.lengths_via_tokenize,
                     device=engine_args.device.name,
                 )
             )

@@ -1,7 +1,6 @@
 from infinity_emb._optional_imports import CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import Device
 from infinity_emb.transformer.abstract import BaseClassifer
 from infinity_emb.transformer.acceleration import to_bettertransformer
 
@@ -31,11 +30,11 @@ class SentenceClassifier(BaseClassifer):
         if self._pipe.device.type != "cpu":  # and engine_args.dtype == "float16":
             self._pipe.model = self._pipe.model.half()
 
-        if not (engine_args.device == Device.mps or not engine_args.bettertransformer):
-            self._pipe.model = to_bettertransformer(
-                self._pipe.model,
-                logger,
-            )
+        self._pipe.model = to_bettertransformer(
+            self._pipe.model,
+            engine_args,
+            logger,
+        )
 
         self._infinity_tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,
