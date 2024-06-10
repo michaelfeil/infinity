@@ -157,7 +157,7 @@ async def test_torch_clip_embed():
         EngineArgs(
             model_name_or_path="wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M",
             engine=InferenceEngine.torch,
-            model_warmup=False,
+            model_warmup=True,
         )
     )
     async with engine:
