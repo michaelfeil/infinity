@@ -6,6 +6,6 @@
 version: 2
 updates:
   - package-ecosystem: "poetry" # See documentation for possible values
-    directory: "/libs/infinity_emb/" # Location of package manifests
+    directory: "/" # Location of package manifests
     schedule:
       interval: "monthly"
