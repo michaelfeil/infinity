@@ -28,3 +28,7 @@ def test_engine_args():
     assert args.vector_disk_cache_path == ""
     assert args.device == Device.cpu
     assert not args.lengths_via_tokenize
+
+
+def test_multiargs():
+    EngineArgs.from_env()

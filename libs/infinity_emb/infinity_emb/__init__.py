@@ -16,9 +16,9 @@ if "HF_HUB_ENABLE_HF_TRANSFER" not in os.environ:
 huggingface_hub.constants.HF_HUB_DISABLE_PROGRESS_BARS = True
 
 
-from infinity_emb import fastapi_schemas, inference, transformer  # noqa: E402
 from infinity_emb.args import EngineArgs  # noqa: E402
-from infinity_emb.engine import AsyncEmbeddingEngine  # noqa: E402
+from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray  # noqa: E402
+from infinity_emb.env import MANAGER  # noqa: E402
 
 # reexports
 from infinity_emb.infinity_server import create_server  # noqa: E402
@@ -27,12 +27,11 @@ from infinity_emb.log_handler import logger  # noqa: E402
 __version__ = importlib.metadata.version("infinity_emb")
 
 __all__ = [
-    "transformer",
-    "inference",
-    "fastapi_schemas",
     "logger",
     "create_server",
     "AsyncEmbeddingEngine",
+    "AsyncEngineArray",
+    "MANAGER",
     "EngineArgs",
     "__version__",
 ]

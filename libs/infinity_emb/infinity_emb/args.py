@@ -1,5 +1,6 @@
 import sys
 from dataclasses import asdict, dataclass
+from itertools import zip_longest
 from typing import Optional
 
 from infinity_emb._optional_imports import CHECK_PYDANTIC
@@ -110,3 +111,41 @@ class EngineArgs:
 
     def to_dict(self):
         return asdict(self)
+
+    @classmethod
+    def from_env(cls) -> list["EngineArgs"]:
+        """Create a list of EngineArgs from environment variables."""
+        return [
+            EngineArgs(
+                model_name_or_path=model_name_or_path,
+                batch_size=batch_size,
+                revision=revision,
+                trust_remote_code=trust_remote_code,
+                engine=engine,
+                model_warmup=model_warmup,
+                device=device,
+                compile=compile,
+                bettertransformer=bettertransformer,
+                dtype=dtype,
+                pooling_method=pooling_method,
+                lengths_via_tokenize=lengths_via_tokenize,
+                embedding_dtype=embedding_dtype,
+                served_model_name=served_model_name,
+            )
+            for model_name_or_path, batch_size, revision, trust_remote_code, engine, model_warmup, device, compile, bettertransformer, dtype, pooling_method, lengths_via_tokenize, embedding_dtype, served_model_name in zip_longest(
+                MANAGER.model_id,
+                MANAGER.batch_size,
+                MANAGER.revision,
+                MANAGER.trust_remote_code,
+                MANAGER.engine,
+                MANAGER.model_warmup,
+                MANAGER.device,
+                MANAGER.compile,
+                MANAGER.bettertransformer,
+                MANAGER.dtype,
+                MANAGER.pooling_method,
+                MANAGER.lengths_via_tokenize,
+                MANAGER.embedding_dtype,
+                MANAGER.served_model_name,
+            )
+        ]
