@@ -4,10 +4,8 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
 
 from infinity_emb._optional_imports import CHECK_TORCH, CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
-from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Dtype
 from infinity_emb.transformer.abstract import BaseClipVisionModel
-from infinity_emb.transformer.acceleration import to_bettertransformer
 from infinity_emb.transformer.quantization.interface import quant_embedding_decorator
 
 if TYPE_CHECKING:
@@ -26,24 +24,21 @@ class ClipLikeModel(BaseClipVisionModel):
     def __init__(self, *, engine_args: EngineArgs):
         CHECK_TORCH.mark_required()
         CHECK_TRANSFORMERS.mark_required()
-        model_kwargs = {}
-        if engine_args.bettertransformer:
-            model_kwargs["attn_implementation"] = "eager"
         self.model = AutoModel.from_pretrained(
             engine_args.model_name_or_path,
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
-            **model_kwargs,
+            # attn_implementation="eager" if engine_args.bettertransformer else None,
         )
         if torch.cuda.is_available():
             self.model = self.model.cuda()
             if engine_args.dtype in (Dtype.float16, Dtype.auto):
                 self.model = self.model.half()
-        self.model = to_bettertransformer(
-            self.model,
-            engine_args,
-            logger,
-        )
+        # self.model = to_bettertransformer(
+        #     self.model,
+        #     engine_args,
+        #     logger,
+        # )
         self.processor = AutoProcessor.from_pretrained(
             engine_args.model_name_or_path,
             revision=engine_args.revision,
