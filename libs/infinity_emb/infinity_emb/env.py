@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 from functools import cached_property
 from pathlib import Path
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from infinity_emb.primitives import (
     Device,
@@ -41,7 +41,7 @@ class __Infinity_EnvManager:
     def _to_name(name: str) -> str:
         return "INFINITY_" + name.upper().replace("-", "_")
 
-    def _optional_infinity_var(self, name: str, default: str = ""):
+    def _optional_infinity_var(self, name: str, default: Any = ""):
         name = self._to_name(name)
         value = os.getenv(name)
         if value is None:
@@ -182,6 +182,10 @@ class __Infinity_EnvManager:
     @cached_property
     def url_prefix(self):
         return self._optional_infinity_var("url_prefix", default="")
+
+    @cached_property
+    def root_path(self):
+        return self._optional_infinity_var("root_path", default=None)
 
     @cached_property
     def port(self):

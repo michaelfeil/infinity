@@ -40,6 +40,7 @@ def create_server(
     preload_only: bool = MANAGER.preload_only,
     permissive_cors: bool = MANAGER.permissive_cors,
     api_key: str = MANAGER.api_key,
+    root_path: Optional[str] = None,
 ):
     """
     creates the FastAPI App
@@ -88,6 +89,7 @@ def create_server(
             "identifier": "MIT",
         },
         lifespan=lifespan,
+        root_path=root_path,
     )
     route_dependencies = []
 
@@ -525,6 +527,7 @@ if CHECK_TYPER.is_available:
         log_level: UVICORN_LOG_LEVELS = MANAGER.log_level,  # type: ignore
         permissive_cors: bool = False,
         api_key: str = "",
+        root_path: Optional[str] = MANAGER.root_path,
     ):
         """Infinity API ♾️ cli v2
         MIT License; Copyright (c) 2023-now Michael Feil
@@ -557,6 +560,7 @@ if CHECK_TYPER.is_available:
             preload_only, bool: only preload the model and exit. Defaults to False.
             permissive_cors, bool: add permissive CORS headers to enable consumption from a browser. Defaults to False.
             api_key, str: optional Bearer token for authentication. Defaults to "", which disables authentication.
+            root_path, str: optional Proxy prefix for the application. See: https://fastapi.tiangolo.com/advanced/behind-a-proxy/
         """
         logger.setLevel(log_level.to_int())
         padder = AutoPadding(
@@ -590,6 +594,7 @@ if CHECK_TYPER.is_available:
             preload_only=preload_only,
             permissive_cors=permissive_cors,
             api_key=api_key,
+            root_path=root_path,
         )
         uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
