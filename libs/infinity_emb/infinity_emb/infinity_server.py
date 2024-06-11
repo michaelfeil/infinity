@@ -40,7 +40,7 @@ def create_server(
     preload_only: bool = MANAGER.preload_only,
     permissive_cors: bool = MANAGER.permissive_cors,
     api_key: str = MANAGER.api_key,
-    root_path: Optional[str] = None,
+    root_path: str = MANAGER.root_path,
 ):
     """
     creates the FastAPI App
@@ -527,7 +527,7 @@ if CHECK_TYPER.is_available:
         log_level: UVICORN_LOG_LEVELS = MANAGER.log_level,  # type: ignore
         permissive_cors: bool = False,
         api_key: str = "",
-        root_path: Optional[str] = MANAGER.root_path,
+        root_path: str = MANAGER.root_path,
     ):
         """Infinity API ♾️ cli v2
         MIT License; Copyright (c) 2023-now Michael Feil
