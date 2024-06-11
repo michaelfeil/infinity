@@ -234,7 +234,7 @@ asyncio.run(main())
 </details>
 
 <details>
-  <summary>Launching multiple models/summary>
+  <summary>Launching multiple models</summary>
   
   Since infinity_emb>=0.0.34, you can use cli `v2` method to launch multiple models at the same time.
      
