@@ -119,9 +119,10 @@ type: service
 
 image: michaelf34/infinity:latest
 env:
-  - MODEL_ID=BAAI/bge-small-en-v1.5
+  - INFINITY_MODEL_ID=BAAI/bge-small-en-v1.5;BAAI/bge-reranker-base;
+  - INFINITY_PORT=80
 commands:
-  - infinity_emb v2 --model-id $MODEL_ID --port 80
+  - infinity_emb v2
 port: 80
 ```
 
