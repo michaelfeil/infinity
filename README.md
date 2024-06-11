@@ -198,7 +198,12 @@ asyncio.run(main())
 - ProsusAI/finbert
 - SamLowe/roberta-base-go_emotions
 
-
+## Integrations:
+- https://github.com/infiniflow/ragflow
+- https://github.com/truefoundry/cognita
+- https://github.com/runpod-workers/worker-infinity-embedding
+- https://github.com/langchain-ai/langchain
+- ...
 
 ## Launch FAQ:
 <details>
