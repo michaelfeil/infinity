@@ -469,7 +469,9 @@ if CHECK_TYPER.is_available:
             port, int: port that you want to expose.
         """
         if api_key:
-            raise ValueError("api_key is not supported in `v1`. Please migrate to `v2`.")
+            raise ValueError(
+                "api_key is not supported in `v1`. Please migrate to `v2`."
+            )
         logger.warning(
             "CLI v1 is deprecated and might be removed in the future. Please use CLI v2, by specifying `v2` as the command."
         )
