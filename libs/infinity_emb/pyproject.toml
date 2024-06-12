@@ -16,7 +16,7 @@ huggingface_hub="*"
 rich = {version = "^13", optional=true}
 # webserver-only
 fastapi = {version = ">=0.104.0", optional=true}
-orjson = {version = ">=3.9.8,!=3.10.0", optional=true} 
+orjson = {version = ">=3.10.0", optional=true} 
 prometheus-fastapi-instrumentator = {version = ">=7.0.0", optional=true}
 uvicorn = {version = "^0.23.2", optional=true, extras = ["standard"]}
 typer = {version = "^0.9.0", optional=true, extras = ["all"]}
@@ -48,7 +48,7 @@ anyio = "*"
 trio = "*"
 coverage = {extras = ["toml"], version = "^7.3.2"}
 mypy = "^1.5.1"
-# PREFERED DEPS, hack to semi-pin public deps
+# PREFERRED DEPS, hack to semi-pin public deps
 torch = "2.3.1"
 fastapi = "0.110.3"
 
