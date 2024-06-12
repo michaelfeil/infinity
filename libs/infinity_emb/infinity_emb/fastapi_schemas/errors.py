@@ -37,14 +37,8 @@ class OpenAIException(Exception):
         }
 
 
-def openai_exception_handler(request: Request, exc: Exception):
-    CHECK_FASTAPI.mark_required()
-    if isinstance(exc, OpenAIException):
-        return ORJSONResponse(
-            status_code=exc.code,
-            content=exc.json(),
-        )
-    else:
-        return ORJSONResponse(
-            status_code=500, content=OpenAIException(exc.args[0], 500).json()
-        )
+def openai_exception_handler(request: Request, exc: OpenAIException):
+    return ORJSONResponse(
+        status_code=exc.code,
+        content=exc.json(),
+    )
