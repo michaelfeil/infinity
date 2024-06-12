@@ -184,6 +184,10 @@ class __Infinity_EnvManager:
         return self._optional_infinity_var("url_prefix", default="")
 
     @cached_property
+    def proxy_root_path(self):
+        return self._optional_infinity_var("proxy_root_path", default="")
+
+    @cached_property
     def port(self):
         port = self._optional_infinity_var("port", default="7997")
         assert port.isdigit(), "INFINITY_PORT must be a number"

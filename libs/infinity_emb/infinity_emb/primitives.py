@@ -3,6 +3,7 @@ Definition of enums and dataclasses used in the library.
 
 Do not import infinity_emb from this file, as it will cause a circular import.
 """
+
 from __future__ import annotations
 
 import asyncio

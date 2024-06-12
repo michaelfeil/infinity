@@ -90,9 +90,11 @@ class EngineArgs:
             object.__setattr__(
                 self,
                 "vector_disk_cache_path",
-                f"{self.engine}_{self.model_name_or_path.replace('/','_')}"
-                if self.vector_disk_cache_path
-                else "",
+                (
+                    f"{self.engine}_{self.model_name_or_path.replace('/','_')}"
+                    if self.vector_disk_cache_path
+                    else ""
+                ),
             )
 
         # after all done -> check if the dataclass is valid
