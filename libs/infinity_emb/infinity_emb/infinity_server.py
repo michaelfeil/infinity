@@ -40,7 +40,7 @@ def create_server(
     preload_only: bool = MANAGER.preload_only,
     permissive_cors: bool = MANAGER.permissive_cors,
     api_key: str = MANAGER.api_key,
-    root_path: str = MANAGER.root_path,
+    proxy_root_path: str = MANAGER.proxy_root_path,
 ):
     """
     creates the FastAPI App
@@ -89,7 +89,7 @@ def create_server(
             "identifier": "MIT",
         },
         lifespan=lifespan,
-        root_path=root_path,
+        root_path=proxy_root_path,
     )
     route_dependencies = []
 
@@ -469,7 +469,7 @@ if CHECK_TYPER.is_available:
             port, int: port that you want to expose.
         """
         if api_key:
-            raise ValueError("api_key is not supported in v1")
+            raise ValueError("api_key is not supported in `v1`. Please migrate to `v2`.")
         logger.warning(
             "CLI v1 is deprecated and might be removed in the future. Please use CLI v2, by specifying `v2` as the command."
         )
@@ -527,7 +527,7 @@ if CHECK_TYPER.is_available:
         log_level: UVICORN_LOG_LEVELS = MANAGER.log_level,  # type: ignore
         permissive_cors: bool = False,
         api_key: str = "",
-        root_path: str = MANAGER.root_path,
+        proxy_root_path: str = MANAGER.proxy_root_path,
     ):
         """Infinity API ♾️ cli v2
         MIT License; Copyright (c) 2023-now Michael Feil
@@ -560,7 +560,7 @@ if CHECK_TYPER.is_available:
             preload_only, bool: only preload the model and exit. Defaults to False.
             permissive_cors, bool: add permissive CORS headers to enable consumption from a browser. Defaults to False.
             api_key, str: optional Bearer token for authentication. Defaults to "", which disables authentication.
-            root_path, str: optional Proxy prefix for the application. See: https://fastapi.tiangolo.com/advanced/behind-a-proxy/
+            proxy_root_path, str: optional Proxy prefix for the application. See: https://fastapi.tiangolo.com/advanced/behind-a-proxy/
         """
         logger.setLevel(log_level.to_int())
         padder = AutoPadding(
@@ -594,7 +594,7 @@ if CHECK_TYPER.is_available:
             preload_only=preload_only,
             permissive_cors=permissive_cors,
             api_key=api_key,
-            root_path=root_path,
+            proxy_root_path=proxy_root_path,
         )
         uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
