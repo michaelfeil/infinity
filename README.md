@@ -317,6 +317,19 @@ poetry run pytest ./tests
 
 All contributions must be made in a way to be compatible with the MIT License of this repo. 
 
+### Citation
+```json
+@software{feil_2023_11630143,
+  author       = {Feil, Michael},
+  title        = {Infinity - To Embeddings and Beyond},
+  month        = oct,
+  year         = 2023,
+  publisher    = {Zenodo},
+  doi          = {10.5281/zenodo.11630143},
+  url          = {https://doi.org/10.5281/zenodo.11630143}
+}
+```
+
 ### 💚 Current contributors <a name="Current contributors"></a>
 
 <a href="https://github.com/michaelfeil/infinity=y/graphs/contributors">
