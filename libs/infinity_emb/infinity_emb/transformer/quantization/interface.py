@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import requests  # type: ignore
 
-from infinity_emb._optional_imports import CHECK_TORCH
+from infinity_emb._optional_imports import CHECK_SENTENCE_TRANSFORMERS, CHECK_TORCH
 from infinity_emb.env import MANAGER
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device, Dtype, EmbeddingDtype
@@ -16,6 +16,8 @@ if TYPE_CHECKING:
 
 if CHECK_TORCH.is_available:
     import torch
+
+if CHECK_SENTENCE_TRANSFORMERS.is_available:
     from sentence_transformers.quantization import quantize_embeddings  # type: ignore
 
 
