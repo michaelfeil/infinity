@@ -24,7 +24,7 @@
 Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting all sentence-transformer models and frameworks. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE). Infinity powers inference behind [Gradient.ai](https://gradient.ai).
 
 ## Why Infinity
-* **Deploy any model from MTEB**: deploy the model you know from [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/)
+* **Deploy any model from MTEB**: deploy any embedding model from [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/)
 * **Fast inference backends**: The inference server is built on top of [torch](https://github.com/pytorch/pytorch), [optimum(onnx/tensorrt)](https://huggingface.co/docs/optimum/index) and [CTranslate2](https://github.com/OpenNMT/CTranslate2), using FlashAttention to get the most out of your **NVIDIA CUDA**, **AMD ROCM**, **CPU**, **AWS INF2** or **APPLE MPS** accelerator.
 * **Dynamic batching**: New embedding requests are queued while GPU is busy with the previous ones. New requests are squeezed intro your device as soon as ready. 
 * **Correct and tested implementation**: Unit and end-to-end tested. Embeddings via infinity are correctly embedded. Lets API users create embeddings till infinity and beyond.
@@ -35,9 +35,10 @@ In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sen
 ![](docs/demo_v0_0_1.gif)
 
 ### Latest News 🔥
-- [2024/06] add `classify` endpoint, `API_KEY` and launch all arguments from env variables
+- [2024/06] clip model inference
+- [2024/06] `classify` endpoint, `API_KEY`, launch all arguments from env variables
 - [2024/05] launch multiple models using the `v2` cli
-- [2024/03] infinity supports now experimental int8 (cpu/cuda) and fp8 (H100/MI300) support
+- [2024/03] infinity supports experimental int8 (cpu/cuda) and fp8 (H100/MI300) support
 - [2024/03] Docs are online: https://michaelfeil.eu/infinity/latest/
 - [2024/02] Community meetup at the [Run:AI Infra Club](https://discord.gg/7D4fbEgWjv)
 - [2024/01] TensorRT / ONNX inference
@@ -60,7 +61,7 @@ infinity_emb v2 --help
 
 ### Launch the CLI using a pre-built docker container (recommended)
 Instead of installing the CLI via pip, you may also use docker to run `michaelf34/infinity`. 
-Make sure you mount your accelerator, i.e. install nvidia-docker and activate with `--gpus all`.
+Make sure you mount your accelerator ( i.e. install `nvidia-docker` and activate with `--gpus all`). 
 
 ```bash
 port=7997
@@ -81,33 +82,34 @@ The cache path at inside the docker container is set by the environment variable
 
 ### Launch it via the Python API
 
-Instead of the cli & RestAPI you can directly interface with the Python API. 
-This gives you most flexibility. The Python API builds on `asyncio` with its `await/async` features, to allow concurrent processing of requests.
+Instead of the cli & RestAPI use infinity's interface via the Python API. 
+This gives you most flexibility. The Python API builds on `asyncio` with its `await/async` features, to allow concurrent processing of requests. Arguments of the CLI are also available via Python.
 
 ```python
 import asyncio
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+from infinity_emb import AsyncEngineArray, EngineArgs, AsyncEmbeddingEngine
 
 sentences = ["Embed this is sentence via Infinity.", "Paris is in France."]
-engine = AsyncEmbeddingEngine.from_args(EngineArgs(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch"))
+array = AsyncEngineArray.from_args([
+  EngineArgs(model_name_or_path = "BAAI/bge-small-en-v1.5", engine="torch", embedding_dtype="float32", dtype="auto")
+])
 
-async def main(): 
+async def embed_text(engine: AsyncEmbeddingEngine): 
     async with engine: 
         embeddings, usage = await engine.embed(sentences=sentences)
     # or handle the async start / stop yourself.
     await engine.astart()
     embeddings, usage = await engine.embed(sentences=sentences)
     await engine.astop()
-asyncio.run(main())
+asyncio.run(embed_text(array[0]))
 ```
 
-#### Embedding Model Guide:
-
-- mixedbread-ai/mxbai-embed-large-v1
-- WhereIsAI/UAE-Large-V1
-- BAAI/bge-base-en-v1.5
-- Alibaba-NLP/gte-large-en-v1.5
-- jinaai/jina-embeddings-v2-base-code
+Example embedding models:
+- [mixedbread-ai/mxbai-embed-large-v1](https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1)
+- [WhereIsAI/UAE-Large-V1](https://huggingface.co/WhereIsAI/UAE-Large-V1)
+- [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5)
+- [Alibaba-NLP/gte-large-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5)
+- [jinaai/jina-embeddings-v2-base-code](https://huggingface.co/jinaai/jina-embeddings-v2-base-code)
 - intfloat/multilingual-e5-large-instruct
 
 ### Launch on the cloud via dstack
@@ -143,15 +145,16 @@ Please select a model from huggingface that is a AutoModelForSequenceClassificat
 
 ```python
 import asyncio
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+from infinity_emb import AsyncEngineArray, EngineArgs, AsyncEmbeddingEngine
 query = "What is the python package infinity_emb?"
 docs = ["This is a document not related to the python package infinity_emb, hence...", 
     "Paris is in France!",
     "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
-engine_args = EngineArgs(model_name_or_path = "mixedbread-ai/mxbai-rerank-xsmall-v1", engine="torch")
+array = AsyncEmbeddingEngine.from_args(
+  [EngineArgs(model_name_or_path = "mixedbread-ai/mxbai-rerank-xsmall-v1", engine="torch")]
+)
 
-engine = AsyncEmbeddingEngine.from_args(engine_args)
-async def main(): 
+async def rerank(engine: AsyncEmbeddingEngine): 
     async with engine:
         ranking, usage = await engine.rerank(query=query, docs=docs)
         print(list(zip(ranking, docs)))
@@ -160,7 +163,7 @@ async def main():
     ranking, usage = await engine.rerank(query=query, docs=docs)
     await engine.astop()
 
-asyncio.run(main())
+asyncio.run(rerank(array[0]))
 ```
 
 When using the CLI, use this command to launch rerankers:
@@ -168,10 +171,41 @@ When using the CLI, use this command to launch rerankers:
 infinity_emb v2 --model-id mixedbread-ai/mxbai-rerank-xsmall-v1
 ```
 
-#### Model Guide:
-- mixedbread-ai/mxbai-rerank-xsmall-v1
-- BAAI/bge-reranker-base
-- jinaai/jina-reranker-v1-turbo-en
+Example models:
+- [mixedbread-ai/mxbai-rerank-xsmall-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-xsmall-v1)
+- [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)
+- [jinaai/jina-reranker-v1-turbo-en](https://huggingface.co/jinaai/jina-reranker-v1-turbo-en)
+
+### CLIP models
+
+CLIP models are able to encode images and text at the same time. 
+
+```python
+import asyncio
+from infinity_emb import AsyncEngineArray, EngineArgs, AsyncEmbeddingEngine
+
+sentences = ["This is awesome.", "I am bored."]
+images = ["http://images.cocodataset.org/val2017/000000039769.jpg"]
+engine_args = EngineArgs(
+    model_name_or_path = "wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M", 
+    engine="torch"
+)
+array = AsyncEngineArray.from_args([engine_args])
+
+async def embed(engine: AsyncEmbeddingEngine): 
+    await engine.astart()
+    embeddings, usage = await engine.embed(sentences=sentences)
+    embeddings_image, _ = await engine.image_embed(images=images)
+    await engine.astop()
+
+asyncio.run(embed(array["wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M"]))
+```
+
+Example models:
+- [wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M](https://huggingface.co/wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M)
+- [jinaai/jina-clip-v1](https://huggingface.co/jinaai/jina-clip-v1) (requires `pip install timm`)
+- Currently no support for pure vision models: nomic-ai/nomic-embed-vision-v1.5, ..
+
 
 ### Text Classification 
 
@@ -179,25 +213,27 @@ Use text classification with Infinity's `classify` feature, which allows for sen
 
 ```python
 import asyncio
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+from infinity_emb import AsyncEngineArray, EngineArgs, AsyncEmbeddingEngine
 
 sentences = ["This is awesome.", "I am bored."]
-engine_args = EngineArgs(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
+engine_args = EngineArgs(
+    model_name_or_path = "SamLowe/roberta-base-go_emotions", 
     engine="torch", model_warmup=True)
-engine = AsyncEmbeddingEngine.from_args(engine_args)
-async def main(): 
+array = AsyncEngineArray.from_args([engine_args])
+
+async def classifier(): 
     async with engine:
         predictions, usage = await engine.classify(sentences=sentences)
     # or handle the async start / stop yourself.
     await engine.astart()
     predictions, usage = await engine.classify(sentences=sentences)
     await engine.astop()
-asyncio.run(main())
+asyncio.run(classifier(array["SamLowe/roberta-base-go_emotions"]))
 ```
 
-#### Text-Classification Model Guide:
-- ProsusAI/finbert
-- SamLowe/roberta-base-go_emotions
+Example models:
+- [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert)
+- [SamLowe/roberta-base-go_emotions](SamLowe/roberta-base-go_emotions)
 
 ## Integrations:
 - https://github.com/infiniflow/ragflow
@@ -237,6 +273,7 @@ asyncio.run(main())
   <summary>Launching multiple models</summary>
   
   Since infinity_emb>=0.0.34, you can use cli `v2` method to launch multiple models at the same time.
+  Checkout `infinity_emb v2 --help` for all args.
      
 </details>
 
