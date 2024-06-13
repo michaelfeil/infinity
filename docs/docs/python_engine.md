@@ -6,22 +6,22 @@ Use asynchronous programming in Python using `asyncio` for flexible and efficien
 
 ```python
 import asyncio
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+from infinity_emb import AsyncEngineArray, EngineArgs, AsyncEmbeddingEngine
 from infinity_emb.log_handler import logger
 logger.setLevel(5) # Debug
 
 # Define sentences for embedding
 sentences = ["Embed this sentence via Infinity.", "Paris is in France."]
 # Initialize the embedding engine with model specifications
-engine = AsyncEmbeddingEngine.from_args(
+array = AsyncEngineArray.from_args([
     EngineArgs(
         model_name_or_path="BAAI/bge-small-en-v1.5",
         engine="torch", 
         lengths_via_tokenize=True
-    )
+    )]
 )
 
-async def main(): 
+async def embed_image(engine: AsyncEmbeddingEngine): 
     await engine.astart()  # initializes  the engine
     job1 = asyncio.create_task(engine.embed(sentences=sentences))
     # submit a second job in parallel
@@ -34,7 +34,7 @@ async def main():
     await engine.astop() 
 
 asyncio.run(
-    main()
+    embed_image(array["BAAI/bge-small-en-v1.5"])
 )
 ```
 
@@ -46,15 +46,16 @@ Please select a model from huggingface that is a AutoModelForSequenceClassificat
 
 ```python
 import asyncio
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+from infinity_emb import AsyncEngineArray, EngineArgs, AsyncEmbeddingEngine
 query = "What is the python package infinity_emb?"
 docs = ["This is a document not related to the python package infinity_emb, hence...", 
     "Paris is in France!",
     "infinity_emb is a package for sentence embeddings and rerankings using transformer models in Python!"]
-engine_args = EngineArgs(model_name_or_path = "mixedbread-ai/mxbai-rerank-xsmall-v1", engine="torch")
+array = AsyncEmbeddingEngine.from_args(
+  [EngineArgs(model_name_or_path = "mixedbread-ai/mxbai-rerank-xsmall-v1", engine="torch")]
+)
 
-engine = AsyncEmbeddingEngine.from_args(engine_args)
-async def main(): 
+async def rerank(engine: AsyncEmbeddingEngine): 
     async with engine:
         ranking, usage = await engine.rerank(query=query, docs=docs)
         print(list(zip(ranking, docs)))
@@ -63,7 +64,7 @@ async def main():
     ranking, usage = await engine.rerank(query=query, docs=docs)
     await engine.astop()
 
-asyncio.run(main())
+asyncio.run(rerank(array[0]))
 ```
 
 When using the CLI, use this command to launch rerankers:
@@ -71,26 +72,67 @@ When using the CLI, use this command to launch rerankers:
 infinity_emb v2 --model-id mixedbread-ai/mxbai-rerank-xsmall-v1
 ```
 
+Example models:
+- [mixedbread-ai/mxbai-rerank-xsmall-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-xsmall-v1)
+- [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)
+- [jinaai/jina-reranker-v1-turbo-en](https://huggingface.co/jinaai/jina-reranker-v1-turbo-en)
+
+## CLIP models
+
+CLIP models are able to encode images and text at the same time. 
+
+```python
+import asyncio
+from infinity_emb import AsyncEngineArray, EngineArgs, AsyncEmbeddingEngine
+
+sentences = ["This is awesome.", "I am bored."]
+images = ["http://images.cocodataset.org/val2017/000000039769.jpg"]
+engine_args = EngineArgs(
+    model_name_or_path = "wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M", 
+    engine="torch"
+)
+array = AsyncEngineArray.from_args([engine_args])
+
+async def embed(engine: AsyncEmbeddingEngine): 
+    await engine.astart()
+    embeddings, usage = await engine.embed(sentences=sentences)
+    embeddings_image, _ = await engine.image_embed(images=images)
+    await engine.astop()
+
+asyncio.run(embed(array["wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M"]))
+```
+
+Example models:
+- [wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M](https://huggingface.co/wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M)
+- [jinaai/jina-clip-v1](https://huggingface.co/jinaai/jina-clip-v1) (requires `pip install timm`)
+- Currently no support for pure vision models: nomic-ai/nomic-embed-vision-v1.5, ..
+
+
 ## Text Classification 
 
 Use text classification with Infinity's `classify` feature, which allows for sentiment analysis, emotion detection, and more classification tasks.
 
 ```python
 import asyncio
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+from infinity_emb import AsyncEngineArray, EngineArgs, AsyncEmbeddingEngine
 
 sentences = ["This is awesome.", "I am bored."]
-engine_args = EngineArgs(model_name_or_path = "SamLowe/roberta-base-go_emotions", 
+engine_args = EngineArgs(
+    model_name_or_path = "SamLowe/roberta-base-go_emotions", 
     engine="torch", model_warmup=True)
-engine = AsyncEmbeddingEngine.from_args(engine_args)
-async def main(): 
+array = AsyncEngineArray.from_args([engine_args])
+
+async def classifier(): 
     async with engine:
         predictions, usage = await engine.classify(sentences=sentences)
     # or handle the async start / stop yourself.
     await engine.astart()
     predictions, usage = await engine.classify(sentences=sentences)
     await engine.astop()
-asyncio.run(main())
+asyncio.run(classifier(array["SamLowe/roberta-base-go_emotions"]))
 ```
 
-Running via CLI requires a new FastAPI schema and server integration - PR's are also welcome there.
+Example models:
+- [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert)
+- [SamLowe/roberta-base-go_emotions](SamLowe/roberta-base-go_emotions)
+
