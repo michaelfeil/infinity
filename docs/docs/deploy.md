@@ -51,8 +51,7 @@ This might come in handy if you do not have a shared internal docker registry in
 https://docs.docker.com/reference/cli/docker/image/save/.
 
 ### Runpod.io - Serverless
-Integration (TBA):
-https://github.com/runpod-workers/worker-infinity-text-embeddings/pull/4
+https://github.com/runpod-workers/worker-infinity-text-embeddings/
 
 ### dstack
 dstack allows you to provision a VM instance on the cloud of your choice.
