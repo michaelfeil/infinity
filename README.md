@@ -236,10 +236,12 @@ Example models:
 - [SamLowe/roberta-base-go_emotions](SamLowe/roberta-base-go_emotions)
 
 ## Integrations:
-- https://github.com/infiniflow/ragflow
-- https://github.com/truefoundry/cognita
-- https://github.com/runpod-workers/worker-infinity-embedding
-- https://github.com/langchain-ai/langchain
+- [Serverless deployments at Runpod](https://github.com/runpod-workers/worker-infinity-embedding)
+- [https://github.com/truefoundry/cognita](https://github.com/truefoundry/cognita)
+- [Langchain example](https://github.com/langchain-ai/langchain)
+- [imitater - A unified language model server built upon vllm and infinity.](https://github.com/the-seeds/imitater)
+- [Dwarves Foundation: Deployment examples using Modal.com](https://github.com/dwarvesf/llm-hosting)
+- [infiniflow/Ragflow](https://github.com/infiniflow/ragflow)
 - ...
 
 ## Launch FAQ:
@@ -257,12 +259,12 @@ Example models:
   All models of the sentence transformers org are supported https://huggingface.co/sentence-transformers / sbert.net. 
   LLM's like LLAMA2-7B are not intended for deployment.
 
-  With the command `--engine torch` the model must be compatible with https://github.com/UKPLab/sentence-transformers/.
-    - only models from Huggingface are supported.
+  With the command `--engine torch` the model must be compatible with https://github.com/UKPLab/sentence-transformers/ and AutoModel
+
+  With the command `--engine optimum`, there must be an onnx file. Models from https://huggingface.co/Xenova are recommended.
   
   With the command `--engine ctranslate2`
     - only `BERT` models are supported.
-    - only models from Huggingface are supported.
   
   For the latest trends, you might want to check out one of the following models.
     https://huggingface.co/spaces/mteb/leaderboard
