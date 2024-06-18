@@ -18,7 +18,7 @@ if CHECK_ONNXRUNTIME.is_available:
             ORTModelForSequenceClassification,
         )
         from transformers import AutoConfig, AutoTokenizer  # type: ignore
-    except (ImportError, RuntimeError) as ex:
+    except (ImportError, RuntimeError, Exception) as ex:
         CHECK_ONNXRUNTIME.mark_dirty(ex)
 
 

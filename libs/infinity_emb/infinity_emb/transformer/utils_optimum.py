@@ -13,10 +13,8 @@ if CHECK_ONNXRUNTIME.is_available:
     try:
         from optimum.onnxruntime import ORTOptimizer  # type: ignore
         from optimum.onnxruntime.configuration import OptimizationConfig  # type: ignore
-    except ImportError:
-        pass
-    except RuntimeError:
-        pass
+    except (ImportError, RuntimeError, Exception) as ex:
+        CHECK_ONNXRUNTIME.mark_dirty(ex)
 
 if CHECK_TORCH.is_available:
     import torch

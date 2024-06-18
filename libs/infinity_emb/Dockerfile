@@ -1,5 +1,5 @@
 # Use the Python base image
-FROM nvidia/cuda:12.1.0-base-ubuntu22.04 AS base
+FROM nvidia/cuda:12.1.1-base-ubuntu22.04 AS base
 
 ENV PYTHONUNBUFFERED=1 \
     \
