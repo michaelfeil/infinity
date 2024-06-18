@@ -3,6 +3,7 @@ import os
 
 import numpy as np
 
+from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
@@ -16,24 +17,22 @@ from infinity_emb.transformer.utils_optimum import (
     optimize_model,
 )
 
-try:
-    from optimum.onnxruntime import (  # type: ignore[import-untyped]
-        ORTModelForFeatureExtraction,
-    )
-    from transformers import AutoConfig, AutoTokenizer  # type: ignore[import-untyped]
+if CHECK_ONNXRUNTIME.is_available:
+    try:
+        from optimum.onnxruntime import (  # type: ignore[import-untyped]
+            ORTModelForFeatureExtraction,
+        )
 
-    OPTIMUM_AVAILABLE = True
-except (ImportError, RuntimeError):
-    OPTIMUM_AVAILABLE = False
+    except (ImportError, RuntimeError, Exception) as ex:
+        CHECK_ONNXRUNTIME.mark_dirty(ex)
+
+if CHECK_TRANSFORMERS.is_available:
+    from transformers import AutoConfig, AutoTokenizer  # type: ignore[import-untyped]
 
 
 class OptimumEmbedder(BaseEmbedder):
     def __init__(self, *, engine_args: EngineArgs):
-        if not OPTIMUM_AVAILABLE:
-            raise ImportError(
-                "optimum.onnxruntime is not installed."
-                "`pip install infinity_emb[optimum]`"
-            )
+        CHECK_ONNXRUNTIME.mark_required()
         provider = device_to_onnx(engine_args.device)
 
         onnx_file = get_onnx_files(
