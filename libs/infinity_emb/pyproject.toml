@@ -102,6 +102,7 @@ all=[
     "pydantic", 
     "rich", 
     "sentence-transformers",
+    "timm",
     "torch", 
     "typer", 
     "uvicorn",

@@ -4532,7 +4532,7 @@ doc = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "rst.linke
 test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", "jaraco.test", "more-itertools", "pytest (>=6,!=8.1.*)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-ignore-flaky", "pytest-mypy", "pytest-ruff (>=0.2.1)"]
 
 [extras]
-all = ["ctranslate2", "diskcache", "einops", "fastapi", "optimum", "orjson", "pillow", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "torch", "typer", "uvicorn"]
+all = ["ctranslate2", "diskcache", "einops", "fastapi", "optimum", "orjson", "pillow", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "timm", "torch", "typer", "uvicorn"]
 cache = ["diskcache"]
 ct2 = ["ctranslate2", "sentence-transformers", "torch", "transformers"]
 einops = ["einops"]
@@ -4547,4 +4547,4 @@ vision = ["pillow", "timm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.13"
-content-hash = "e03f2a60e48955edd764b306b8177348451a2367ae6741ab879f2457bf86701a"
+content-hash = "6be58bf44f22c20db6e8e8200dd6f88198d518b2cfbc7f2577ddb519857fdfdf"
