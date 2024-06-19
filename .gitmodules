@@ -1,0 +1,3 @@
+[submodule "runpod-worker"]
+	path = infra/runpod
+	url = https://github.com/runpod-workers/worker-infinity-embedding
