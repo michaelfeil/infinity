@@ -1,3 +1,6 @@
+import asyncio
+import os
+import signal
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -66,14 +69,17 @@ def create_server(
         )
 
         if preload_only:
+            # this is a hack to exit the process after 3 seconds
+            async def kill_later(seconds: int):
+                await asyncio.sleep(seconds)
+                os.kill(os.getpid(), signal.SIGINT)
+
             logger.info(
                 f"Preloaded configuration successfully. {engine_args_list} "
-                " -> Non-graceful exit ."
+                " -> exit ."
             )
-            # skip the blocking part
-        else:
-            # application is blocking here!
-            yield
+            asyncio.create_task(kill_later(3))
+        yield
         await app.engine_array.astop()  # type: ignore
         # shutdown!
 
