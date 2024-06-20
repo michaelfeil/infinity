@@ -140,7 +140,7 @@ class AsyncEmbeddingEngine:
         """
 
         self._assert_running()
-        embeddings, usage = await self._batch_handler.embed(sentences)
+        embeddings, usage = await self._batch_handler.embed(sentences=sentences)
         return embeddings, usage
 
     async def rerank(

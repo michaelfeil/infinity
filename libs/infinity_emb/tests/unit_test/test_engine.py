@@ -25,7 +25,7 @@ async def test_async_api_debug():
         EngineArgs(engine=InferenceEngine.debugengine)
     )
     async with engine:
-        embeddings, usage = await engine.embed(sentences)
+        embeddings, usage = await engine.embed(sentences=sentences)
         embeddings = np.array(embeddings)
         assert usage == sum([len(s) for s in sentences])
         assert embeddings.shape[0] == len(sentences)
@@ -47,7 +47,7 @@ async def test_async_api_torch():
     )
     assert engine.capabilities == {"embed"}
     async with engine:
-        embeddings, usage = await engine.embed(sentences)
+        embeddings, usage = await engine.embed(sentences=sentences)
         assert isinstance(embeddings, list)
         assert isinstance(embeddings[0], np.ndarray)
         embeddings = np.array(embeddings)
@@ -134,7 +134,7 @@ async def test_async_api_torch_lengths_via_tokenize_usage():
         )
     )
     async with engine:
-        embeddings, usage = await engine.embed(sentences)
+        embeddings, usage = await engine.embed(sentences=sentences)
         embeddings = np.array(embeddings)
         # usage should be similar to
         assert usage == 5
@@ -161,9 +161,9 @@ async def test_torch_clip_embed():
         )
     )
     async with engine:
-        t1, t2 = asyncio.create_task(engine.embed(sentences)), asyncio.create_task(
-            engine.image_embed(images=image_urls)
-        )
+        t1, t2 = asyncio.create_task(
+            engine.embed(sentences=sentences)
+        ), asyncio.create_task(engine.image_embed(images=image_urls))
         emb_text, usage_text = await t1
         emb_image, usage_image = await t2
         emb_text_np = np.array(emb_text)  # type: ignore
@@ -211,7 +211,7 @@ async def test_async_api_torch_embedding_quant(embedding_dtype: EmbeddingDtype):
         )
     )
     async with engine:
-        emb, usage = await engine.embed(sentences)
+        emb, usage = await engine.embed(sentences=sentences)
         embeddings = np.array(emb)  # type: ignore
 
     if embedding_dtype == EmbeddingDtype.int8:
@@ -233,7 +233,7 @@ async def test_async_api_failing():
     sentences = ["Hi", "how"]
     engine = AsyncEmbeddingEngine.from_args(EngineArgs())
     with pytest.raises(ValueError):
-        await engine.embed(sentences)
+        await engine.embed(sentences=sentences)
 
     await engine.astart()
     assert not engine.is_overloaded()

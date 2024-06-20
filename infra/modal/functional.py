@@ -5,7 +5,7 @@ Example is currently not tested.
 
 from modal import App, Image, build, enter, method
 
-image = Image.from_registry("michaelf34/infinity:0.0.45").entrypoint([])
+image = Image.from_registry("michaelf34/infinity:0.0.45").entrypoint([]).pip_install("timm")
 
 app = App("infinity-functional", image=image)
 
@@ -15,8 +15,6 @@ with image.imports():
 
 class BaseInfinityModel:
     """Base class for the infinity model."""
-    model_id: tuple[str]
-
     def _get_array(self):
         return AsyncEngineArray.from_args(
             [
@@ -38,49 +36,62 @@ class BaseInfinityModel:
         print("engine array started!")
 
 
-@app.cls(gpu="any")
+@app.cls(gpu="any", allow_concurrent_inputs=500)
 class InfinityModal(BaseInfinityModel):
     """Model for embedding text (via clip or Bert) and images (via clip) ."""
-
-    model_id = (
-        "jinaai/jina-clip-v1",
-        "michaelfeil/bge-small-en-v1.5",
-    )
+    def __init__(self, model_id: tuple[str]) -> None:
+        self.model_id = model_id
+        super().__init__()
+    
 
     @method()
     async def embed(self, sentences: list[str], model: str | int = 0):
         engine = self.engine_array[model]
-        embeddings, usage = await engine.embed(sentences)
+        embeddings, usage = await engine.embed(sentences=sentences)
         return embeddings
 
     @method()
     async def image_embed(self, urls: list[str], model: str | int = 0):
         engine = self.engine_array[model]
-        embeddings, usage = await engine.image_embed(urls)
+        embeddings, usage = await engine.image_embed(images=urls)
         return embeddings
 
-
-@app.cls(gpu="any")
-class InfinityRerankModal(BaseInfinityModel):
-    """Model for re-ranking documents."""
-
-    model_id = ("mixedbread-ai/mxbai-rerank-large-v1",)
-
     @method()
-    async def rerank(self, query: str, docs: list[str], model: str | int = 2):
+    async def rerank(self, query: str, docs: list[str], model: str | int = 0):
         engine = self.engine_array[model]
         rankings, usage = await engine.rerank(query=query, docs=docs)
         return rankings
 
-
-@app.cls(gpu="any")
-class InfinityClassifyModal(BaseInfinityModel):
-    """Model for classifying text into 51 languages."""
-
-    model_id = ("qanastek/51-languages-classifier",)
-
     @method()
-    async def classify(self, texts: list[str], model: str | int = 3):
+    async def classify(self, sentences: list[str], model: str | int = 0):
         engine = self.engine_array[model]
-        classes, usage = await engine.classify(texts)
+        classes, usage = await engine.classify(sentences=sentences)
         return classes
+
+@app.local_entrypoint()
+def main():
+    model_id=(
+            "jinaai/jina-clip-v1",
+            "michaelfeil/bge-small-en-v1.5",
+            "mixedbread-ai/mxbai-rerank-xsmall-v1",
+            "philschmid/tiny-bert-sst2-distilled",
+        )
+    deployment = InfinityModal(
+        model_id=model_id
+    )
+    embeddings_1 = deployment.embed.remote(sentences=["hello world"], model=model_id[1])
+    embeddings_2 = deployment.image_embed.remote(urls=["http://images.cocodataset.org/val2017/000000039769.jpg"], model=model_id[0])
+
+    rerankings_1 =deployment.rerank.remote(query="Where is Paris?", docs=["Paris is the capital of France.", "Berlin is a city in Europe."], model=model_id[2])
+    
+    classifications_1 = deployment.classify.remote(sentences=["I feel great today!"], model=model_id[3])
+    
+    print(
+        "Success, all tasks submitted! Embeddings:",
+        embeddings_1[0].shape,
+        embeddings_2[0].shape,
+        "Rerankings:",
+        rerankings_1,
+        "Classifications:",
+        classifications_1,
+    )

@@ -215,7 +215,7 @@ def create_server(
             logger.debug("[📝] Received request with %s inputs ", len(data.input))
             start = time.perf_counter()
 
-            embedding, usage = await engine.embed(data.input)
+            embedding, usage = await engine.embed(sentences=data.input)
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
