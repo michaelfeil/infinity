@@ -9,8 +9,8 @@ packages = [{include = "infinity_emb"}]
 
 [tool.poetry.dependencies]
 python = ">=3.9,<3.13"
-# basics
-numpy = ">=1.20.0"
+# basics, pin numpy <2 for onnx
+numpy = ">=1.20.0,<2"
 huggingface_hub="*"
 # logging
 rich = {version = "^13", optional=true}
