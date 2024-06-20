@@ -72,7 +72,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
           poetry-version: ${{ env.POETRY_VERSION }}
           working-directory: ${{ inputs.working-directory }}
-          cache-key: infinity-emb-test-${{ matrix.coverage_tests }}
+          cache-key: infinity-emb-test-${{ matrix.coverage_tests }}-${{ matrix.source }}
 
       - name: Install dependencies from local
         # only if source is local

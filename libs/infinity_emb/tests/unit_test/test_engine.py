@@ -25,7 +25,7 @@ async def test_async_api_debug():
         EngineArgs(engine=InferenceEngine.debugengine)
     )
     async with engine:
-        embeddings, usage = await engine.embed(sentences=sentences)
+        embeddings, usage = await engine.embed(sentences)
         embeddings = np.array(embeddings)
         assert usage == sum([len(s) for s in sentences])
         assert embeddings.shape[0] == len(sentences)
