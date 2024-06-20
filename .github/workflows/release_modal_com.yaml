@@ -40,11 +40,10 @@ jobs:
       - name: Install modal
         run: |
           python -m pip install --upgrade pip
-          pip install modal==0.62.231 
+          pip install modal==0.62.231
           modal token set --token-id ${{ secrets.MODAL_TOKEN_ID }} --token-secret ${{ secrets.MODAL_TOKEN_SECRET }}
 
       - name: Modal Deploy
         run: |
-          cd infra/modal
           INFINITY_VERSION=$ {{ steps.get-latest-tag.outputs.tag }}
-          modal deploy --tag ${{ steps.get-latest-tag.outputs.tag }}-github-ci --env prod webserver.py
+          INFINITY_CI_DEPLOY=true modal deploy --tag ${{ steps.get-latest-tag.outputs.tag }}-github-ci --env prod modal.infra.webserver
