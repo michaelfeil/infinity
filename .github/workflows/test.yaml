@@ -11,6 +11,7 @@ on:
         type: boolean
         default: true
 
+
 env:
   POETRY_VERSION: "1.7.1"
 
@@ -23,13 +24,14 @@ jobs:
     strategy:
       # fail-fast: true
       matrix:
-        os: [ubuntu-latest, windows-latest, ] # macos-latest
+        os: [ubuntu-latest, windows-latest] # macos-latest
         python-version:
           - "3.9"
           - "3.10"
           - "3.11"
           - "3.12"
         coverage_tests: ["unit_test", "end_to_end"]
+        source: ["local", "pypi"]
         exclude:
           # Exclude unit tests on macOS due to compatibility issues
           - python-version: "3.9"
@@ -48,7 +50,7 @@ jobs:
 
           
     runs-on: ${{ matrix.os }}
-    name: Py${{ matrix.python-version }}-${{ matrix.os }}-${{ matrix.coverage_tests }}
+    name: Py${{ matrix.python-version }}-${{ matrix.os }}-${{ matrix.coverage_tests }}-${{ matrix.source }}
     steps:
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@v1.3.0
@@ -70,11 +72,20 @@ jobs:
           python-version: ${{ matrix.python-version }}
           poetry-version: ${{ env.POETRY_VERSION }}
           working-directory: ${{ inputs.working-directory }}
-          cache-key: infinity-emb-test-${{ matrix.coverage_tests }}
+          cache-key: infinity-emb-test-${{ matrix.coverage_tests }}-${{ matrix.source }}
 
-      - name: Install dependencies
+      - name: Install dependencies from local
+        # only if source is local
+        if: matrix.source == 'local'
         shell: bash
         run: poetry install --extras all --with test
+      
+      - name: Install from PyPI
+        # only if source is pypi
+        if: matrix.source == 'pypi'
+        run: |
+          poetry install --only test
+          poetry run pip install infinity-emb[all] --upgrade
 
       - name: Run Pytest Coverage
         run: |

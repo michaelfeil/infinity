@@ -61,7 +61,7 @@ def encode_sentence_transformer(text: list[str]):
 
 
 async def encode_infinity(text: list[str]):
-    return (await engine.embed(text))[0]
+    return (await engine.embed(sentences=text))[0]
 
 
 @asynccontextmanager
