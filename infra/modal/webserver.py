@@ -21,6 +21,7 @@ ENV = {
     "INFINITY_QUEUE_SIZE": str(INFINITY_QUEUE_SIZE),
     "INFINITY_PORT": str(PORT),
     "INFINITY_API_KEY": "",
+    "INFINITY_CI_DEPLOY": os.environ.get("INFINITY_CI_DEPLOY", ""),
 }
 CMD = "infinity_emb v2"
 
@@ -71,7 +72,9 @@ app = App("infinity", image=image)
 @web_server(
     PORT,
     startup_timeout=5 * MINUTES,
-    custom_domains=["infinity.modal.michaelfeil.eu"],
+    custom_domains=["infinity.modal.michaelfeil.eu"]
+    if ENV["INFINITY_CI_DEPLOY"]
+    else [],
 )
 def serve():
     subprocess.Popen(CMD, shell=True)
