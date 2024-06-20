@@ -33,16 +33,14 @@ Infinity is a high-throughput, low-latency REST API for serving vector embedding
 
 
 ### Latest News 🔥
-- [2024/07] Sponsored inference deployment by [Modal](./infra/modal/README.md)
-- [2024/06] clip model inference
-- [2024/06] `classify` endpoint, `API_KEY`, launch all arguments from env variables
-- [2024/05] launch multiple models using the `v2` cli
+- [2024/06] Sponsored inference deployment by [Modal](./infra/modal/README.md)
+- [2024/06] Support for multi-modal: clip, text-classification & launch all arguments from env variables
+- [2024/05] launch multiple models using the `v2` cli, including `--api-key`
 - [2024/03] infinity supports experimental int8 (cpu/cuda) and fp8 (H100/MI300) support
 - [2024/03] Docs are online: https://michaelfeil.eu/infinity/latest/
 - [2024/02] Community meetup at the [Run:AI Infra Club](https://discord.gg/7D4fbEgWjv)
 - [2024/01] TensorRT / ONNX inference
 - [2023/10] First release
-
 
 ### Infinity demo
 In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), deployed at batch-size=2. After initialization, from a second terminal 3 requests  (payload 1,1,and 5 sentences) are sent via cURL.
