@@ -8,7 +8,7 @@ on:
       unused:
         required: false
         type: string
-        description: "From which folder this pipeline executes"
+        description: "To be replaced."
 
 jobs:
   modal:
