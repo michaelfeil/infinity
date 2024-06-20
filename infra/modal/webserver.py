@@ -19,9 +19,9 @@ pathlib.Path(".env").write_text(
 INFINITY_MODEL_ID="jinaai/jina-clip-v1;michaelfeil/bge-small-en-v1.5;mixedbread-ai/mxbai-rerank-xsmall-v1;philschmid/tiny-bert-sst2-distilled;"
 INFINITY_REVISION="1cbe5e8b11ea3728df0b610d5453dfe739804aa9;ab7b31bd10f9bfbb915a28662ec4726b06c6552a;1d1a9dfbd0fde63df646402cf33e157e5852ead3;874eb28543ea7a7df80b6158bbf772d203efcab6;"
 INFINITY_MODEL_WARMUP="false;"
-INFINITY_BATCH_SIZE="8;"
+INFINITY_BATCH_SIZE="16;"
 # One-off args
-INFINITY_QUEUE_SIZE="1024"
+INFINITY_QUEUE_SIZE="4096"
 INFINITY_PORT={PORT}
 INFINITY_API_KEY=""
 """
@@ -63,7 +63,7 @@ GPU_CONFIG = gpu.T4(count=1)
 # Run a web server on port 7997 and expose the Infinity embedding server
 @app.function(
     # based on how many concurrent requests to be handled.
-    allow_concurrent_inputs=500,
+    allow_concurrent_inputs=200,
     container_idle_timeout=30,
     # Max 5 container instances
     concurrency_limit=5,
