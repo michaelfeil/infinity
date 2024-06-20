@@ -30,11 +30,10 @@ Infinity is a high-throughput, low-latency REST API for serving vector embedding
 * **Correct and tested implementation**: Unit and end-to-end tested. Embeddings via infinity are correctly embedded. Lets API users create embeddings till infinity and beyond.
 * **Easy to use**: The API is built on top of [FastAPI](https://fastapi.tiangolo.com/), [Swagger](https://swagger.io/) makes it fully documented. API are aligned to [OpenAI's Embedding specs](https://platform.openai.com/docs/guides/embeddings/what-are-embeddings). View the docs at [https://michaelfeil.eu/infinity](https://michaelfeil.eu/infinity) on how to get started.
 
-### Infinity demo
-In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), deployed at batch-size=2. After initialization, from a second terminal 3 requests  (payload 1,1,and 5 sentences) are sent via cURL.
-![](docs/demo_v0_0_1.gif)
+
 
 ### Latest News 🔥
+- [2024/07] Sponsored inference deployment by [Modal](./infra/modal/README.md)
 - [2024/06] clip model inference
 - [2024/06] `classify` endpoint, `API_KEY`, launch all arguments from env variables
 - [2024/05] launch multiple models using the `v2` cli
@@ -42,6 +41,12 @@ In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sen
 - [2024/03] Docs are online: https://michaelfeil.eu/infinity/latest/
 - [2024/02] Community meetup at the [Run:AI Infra Club](https://discord.gg/7D4fbEgWjv)
 - [2024/01] TensorRT / ONNX inference
+- [2023/10] First release
+
+
+### Infinity demo
+In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), deployed at batch-size=2. After initialization, from a second terminal 3 requests  (payload 1,1,and 5 sentences) are sent via cURL.
+![](docs/demo_v0_0_1.gif)
 
 ## Getting started
 
@@ -299,7 +304,7 @@ Example models:
 
 ## Documentation
 View the docs at [https://michaelfeil.eu/infinity](https://michaelfeil.eu/infinity) on how to get started.
-After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:7997/docs`. You can also find a interactive preview here: https://michaelfeil-infinity.hf.space/docs
+After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:7997/docs`. You can also find a interactive preview here: https://infinity.modal.michaelfeil.eu/docs (and https://michaelfeil-infinity.hf.space/docs)
 
 ## Contribute and Develop
 
