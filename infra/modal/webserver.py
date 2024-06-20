@@ -9,8 +9,9 @@ from modal import Image, App, gpu, web_server
 
 # Configuration
 PORT = 7997
+
 INFINITY_QUEUE_SIZE = 4096
-INFINITY_VERSION = os.environ.get("INFINITY_VERSION", "0.0.45")
+INFINITY_VERSION = os.environ.get("INFINITY_VERSION", "0.0.46")
 ENV = {
     # Per model args, padded by `;`
     "INFINITY_MODEL_ID": "jinaai/jina-clip-v1;michaelfeil/bge-small-en-v1.5;mixedbread-ai/mxbai-rerank-xsmall-v1;philschmid/tiny-bert-sst2-distilled;",
@@ -26,6 +27,7 @@ ENV = {
 CMD = "infinity_emb v2"
 
 MINUTES = 60  # in seconds
+
 
 
 def download_models():
@@ -72,9 +74,11 @@ app = App("infinity", image=image)
 @web_server(
     PORT,
     startup_timeout=5 * MINUTES,
-    custom_domains=["infinity.modal.michaelfeil.eu"]
-    if ENV["INFINITY_CI_DEPLOY"]
-    else [],
+    custom_domains=(
+      ["infinity.modal.michaelfeil.eu"]
+      if ENV["INFINITY_CI_DEPLOY"]
+      else []
+    ),
 )
 def serve():
     subprocess.Popen(CMD, shell=True)
