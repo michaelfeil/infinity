@@ -134,5 +134,5 @@ asyncio.run(classifier(array["SamLowe/roberta-base-go_emotions"]))
 
 Example models:
 - [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert)
-- [SamLowe/roberta-base-go_emotions](SamLowe/roberta-base-go_emotions)
+- [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions)
 
