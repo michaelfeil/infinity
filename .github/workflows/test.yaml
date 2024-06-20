@@ -50,7 +50,7 @@ jobs:
 
           
     runs-on: ${{ matrix.os }}
-    name: Py${{ matrix.python-version }}-${{ matrix.os }}-${{ matrix.coverage_tests }}
+    name: Py${{ matrix.python-version }}-${{ matrix.os }}-${{ matrix.coverage_tests }}-${{ matrix.source }}
     steps:
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@v1.3.0
@@ -74,7 +74,7 @@ jobs:
           working-directory: ${{ inputs.working-directory }}
           cache-key: infinity-emb-test-${{ matrix.coverage_tests }}
 
-      - name: Install dependencies
+      - name: Install dependencies from local
         # only if source is local
         if: matrix.source == 'local'
         shell: bash
@@ -83,7 +83,7 @@ jobs:
       - name: Install from PyPI
         # only if source is pypi
         if: matrix.source == 'pypi'
-        run: 
+        run: |
           poetry install --only test
           poetry run pip install infinity-emb[all]
 
