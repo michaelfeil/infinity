@@ -85,7 +85,7 @@ jobs:
         if: matrix.source == 'pypi'
         run: |
           poetry install --only test
-          poetry run pip install infinity-emb[all]
+          poetry run pip install infinity-emb[all] --upgrade
 
       - name: Run Pytest Coverage
         run: |
