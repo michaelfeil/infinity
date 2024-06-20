@@ -45,5 +45,5 @@ jobs:
 
       - name: Modal Deploy
         run: |
-          INFINITY_VERSION=$ {{ steps.get-latest-tag.outputs.tag }}
-          INFINITY_CI_DEPLOY=true modal deploy --tag ${{ steps.get-latest-tag.outputs.tag }}-github-ci --env prod modal.infra.webserver
+          VERSION_INF=$ {{ steps.get-latest-tag.outputs.tag }}
+          CI_DEPLOY_INF=true modal deploy --tag ${{ steps.get-latest-tag.outputs.tag }}-github-ci --env prod modal.infra.webserver
