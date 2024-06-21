@@ -23,15 +23,17 @@ from infinity_emb.env import MANAGER  # noqa: E402
 # reexports
 from infinity_emb.infinity_server import create_server  # noqa: E402
 from infinity_emb.log_handler import logger  # noqa: E402
+from infinity_emb.sync_engine import SyncEngineArray  # noqa: E402
 
 __version__ = importlib.metadata.version("infinity_emb")
 
 __all__ = [
-    "logger",
-    "create_server",
+    "__version__",
     "AsyncEmbeddingEngine",
     "AsyncEngineArray",
-    "MANAGER",
+    "create_server",
     "EngineArgs",
-    "__version__",
+    "logger",
+    "MANAGER",
+    "SyncEngineArray",
 ]
