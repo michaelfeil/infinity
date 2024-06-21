@@ -125,7 +125,7 @@ class AsyncEmbeddingEngine:
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple sentences
 
-        Args:
+        Kwargs:
             sentences (list[str]): sentences to be embedded
 
         Raises:
@@ -148,7 +148,7 @@ class AsyncEmbeddingEngine:
     ) -> tuple[list[float], int]:
         """rerank multiple sentences
 
-        Args:
+        Kwargs:
             query (str): query to be reranked
             docs (list[str]): docs to be reranked
             raw_scores (bool): return raw scores instead of sigmoid
@@ -174,7 +174,7 @@ class AsyncEmbeddingEngine:
     ) -> tuple[list[ClassifyReturnType], int]:
         """classify multiple sentences
 
-        Args:
+        Kwargs:
             sentences (list[str]): sentences to be classified
             raw_scores (bool): if True, return raw scores, else softmax
 
@@ -199,7 +199,7 @@ class AsyncEmbeddingEngine:
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple images
 
-        Args:
+        Kwargs:
             images (list[str]): list of image urls, to be embedded
 
         Raises:
@@ -263,6 +263,94 @@ class AsyncEngineArray:
         """stop engines"""
         for engine in self.engines_dict.values():
             await engine.astop()
+
+    async def embed(
+        self, *, model: str, sentences: list[str]
+    ) -> tuple[list[EmbeddingReturnType], int]:
+        """embed multiple sentences
+
+        Kwargs:
+            model (str): model name to be used
+            sentences (list[str]): sentences to be embedded
+
+        Raises:
+            ValueError: raised if engine is not started yet
+            ModelNotDeployedError: If loaded model does not expose `embed`
+                capabilities
+
+        Returns:
+            list[EmbeddingReturnType]: embeddings
+                2D list-array of shape( len(sentences),embed_dim )
+            int: token usage
+        """
+        return await self[model].embed(sentences)
+
+    def is_running(self) -> bool:
+        return all(engine.is_running for engine in self.engines_dict.values())
+
+    async def rerank(
+        self, *, model: str, query: str, docs: list[str], raw_scores: bool = False
+    ) -> tuple[list[float], int]:
+        """rerank multiple sentences
+
+        Kwargs:
+            model (str): model name to be used
+            query (str): query to be reranked
+            docs (list[str]): docs to be reranked
+            raw_scores (bool): return raw scores instead of sigmoid
+
+        Raises:
+            ValueError: raised if engine is not started yet
+            ModelNotDeployedError: If loaded model does not expose `rerank`
+                capabilities
+
+        Returns:
+            list[float]: list of scores
+            int: token usage
+        """
+        return await self[model].rerank(query=query, docs=docs, raw_scores=raw_scores)
+
+    async def classify(
+        self, *, model: str, sentences: list[str], raw_scores: bool = False
+    ) -> tuple[list[ClassifyReturnType], int]:
+        """classify multiple sentences
+
+        Kwargs:
+            model (str): model name to be used
+            sentences (list[str]): sentences to be classified
+            raw_scores (bool): if True, return raw scores, else softmax
+
+        Raises:
+            ValueError: raised if engine is not started yet
+            ModelNotDeployedError: If loaded model does not expose `embed`
+                capabilities
+
+        Returns:
+            list[ClassifyReturnType]: list of class encodings
+            int: token usage
+        """
+        return await self[model].classify(sentences=sentences, raw_scores=raw_scores)
+
+    async def image_embed(
+        self, model: str, images: list[str]
+    ) -> tuple[list[EmbeddingReturnType], int]:
+        """embed multiple images
+
+        Kwargs:
+            model (str): model name to be used
+            images (list[str]): list of image urls, to be embedded
+
+        Raises:
+            ValueError: raised if engine is not started yet
+            ModelNotDeployedError: If loaded model does not expose `image_embed`
+                capabilities
+
+        Returns:
+            list[EmbeddingReturnType]: embeddings
+                2D list-array of shape( len(sentences),embed_dim )
+            int: token usage
+        """
+        return await self[model].image_embed(images=images)
 
     def __getitem__(self, index_or_name: Union[str, int]) -> "AsyncEmbeddingEngine":
         """resolve engine by model name -> Auto resolve if only one engine is present
