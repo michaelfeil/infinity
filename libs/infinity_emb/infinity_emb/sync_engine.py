@@ -73,14 +73,15 @@ class SyncEngineArray:
 
     def _lifetime(self):
         """takes care of starting, stopping (engine and event loop)"""
-        self._loop = asyncio.get_event_loop()
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
 
         async def block_until_engine_stop():
             logger.info("Started SyncEngineArray Background Event Loop")
             self._start_event.set()  # signal that the event loop has started
             await self.async_engine_array.astart()
             while not self._stop_event.is_set():
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.2)
             await self.async_engine_array.astop()
 
         self._loop.run_until_complete(block_until_engine_stop())
