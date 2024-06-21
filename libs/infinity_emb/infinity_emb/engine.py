@@ -46,7 +46,7 @@ class AsyncEmbeddingEngine:
         self._engine_args = EngineArgs(**kwargs)
 
         self.running = False
-        self._running_sepamore = Semaphore(1)
+        self._running_sepamore: Optional[Semaphore] = None
         self._model, self._min_inference_t, self._max_inference_t = select_model(
             self._engine_args
         )
@@ -74,6 +74,8 @@ class AsyncEmbeddingEngine:
 
     async def astart(self):
         """startup engine"""
+        if self._running_sepamore is None:
+            self._running_sepamore = Semaphore(1)
         async with self._running_sepamore:
             if not self.running:
                 self.running = True
@@ -89,6 +91,8 @@ class AsyncEmbeddingEngine:
 
     async def astop(self):
         """stop engine"""
+        if self._running_sepamore is None:
+            return
         async with self._running_sepamore:
             if self.running:
                 self.running = False
