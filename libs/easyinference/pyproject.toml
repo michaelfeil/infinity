@@ -13,8 +13,6 @@ priority = "explicit"
 [tool.poetry.dependencies]
 python = ">=3.9,<4"
 infinity_emb = {version = "0.0.47", extras = ["optimum"]}
-torch = {version = "^2.2.0+cpu", source = "pytorch_cpu"}
-torchvision = {version = "^0.18.1+cpu", source = "pytorch_cpu"}
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.0.0"
