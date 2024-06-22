@@ -9,8 +9,6 @@ from infinity_emb.log_handler import logger
 if TYPE_CHECKING:
     from infinity_emb import AsyncEmbeddingEngine
 
-    # from infinity_emb.primitives import ClassifyReturnType, EmbeddingDtype, ReRankReturnType
-
 
 def add_start_docstrings(*docstr):
     def docstring_decorator(fn):
@@ -21,6 +19,7 @@ def add_start_docstrings(*docstr):
 
 
 T = TypeVar("T")
+
 
 class AsyncLifeMixin:
     def __init__(self) -> None:
