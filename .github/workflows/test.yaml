@@ -10,6 +10,11 @@ on:
         required: false
         type: boolean
         default: true
+      extra_poetry:
+        description: 'Extra poetry commands to run'
+        required: false
+        type: string
+        default: "--extras all --with test"
 
 
 env:
@@ -76,7 +81,7 @@ jobs:
       - name: Install dependencies from local
         # only if source is local
         shell: bash
-        run: poetry install --extras all --with test
+        run: poetry install ${{ inputs.extra_poetry }}
 
       - name: Run Pytest Coverage
         if: ${{ inputs.working-directory == 'libs/infinity_emb' }}
