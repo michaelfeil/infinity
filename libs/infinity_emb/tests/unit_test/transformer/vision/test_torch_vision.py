@@ -1,3 +1,4 @@
+import numpy as np
 import requests  # type: ignore
 import torch
 from PIL import Image  # type: ignore
@@ -22,8 +23,11 @@ def test_clip_like_model():
         image,
     ]
     embeddings = model.encode_post(model.encode_core(model.encode_pre(inputs)))
-    assert len(embeddings) == len(inputs)
 
+    assert isinstance(embeddings, list)
+    assert isinstance(embeddings[0], np.ndarray)
+    assert len(embeddings) == len(inputs)
+    embeddings = torch.tensor(embeddings)
     model = CLIPModel.from_pretrained(model_name)
     processor = CLIPProcessor.from_pretrained(model_name)
 
