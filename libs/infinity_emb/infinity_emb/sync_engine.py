@@ -24,6 +24,8 @@ def threaded_asyncio_executor():
         def wrapper(self: "SyncEngineArray", **kwargs) -> "Future":
             future: Future = Future()
 
+            assert self.is_running, "SyncEngineArray is not running"
+
             def execute():
                 async_function = getattr(self.async_engine_array, funcname)
                 try:
@@ -71,6 +73,7 @@ class SyncEngineArray:
         return iter(self.async_engine_array)
 
     def stop(self):
+        """blocks until the engine is stopped"""
         self._stop_event.set()
         while self._loop.is_running():
             time.sleep(0.05)

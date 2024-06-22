@@ -63,7 +63,7 @@ async def to_thread(func, tp: ThreadPoolExecutor, /, *args, **kwargs):
 
     Return a coroutine that can be awaited to get the eventual result of *func*.
     """
-    loop = asyncio.events.get_running_loop()
+    loop = asyncio.get_running_loop()
     ctx = contextvars.copy_context()
     func_call = functools.partial(ctx.run, func, *args, **kwargs)
     return await loop.run_in_executor(tp, func_call)
