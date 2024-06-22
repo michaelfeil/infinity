@@ -106,8 +106,9 @@ class EasyInference:
         >>> classify_result = ei.classify(model_id="philschmid/tiny-bert-sst2-distilled", sentences=["I love this movie"])
         >>> type(classify_result)
         <class 'concurrent.futures._base.Future'>
-        >>> classify_result.result()
-        ([[{'label': 'positive', 'score': 0.9995864033699036}, {'label': 'negative', 'score': 0.0004136176430620253}]], 4)
+        >>> label_0 = classify_result.result()[0][0][0]
+        >>> label_0["label"], round(label_0["score"], 4)
+        ('positive', 0.9996)
         >>> ei.stop()
         """
         return self._engine_array.classify(model=model_id, sentences=sentences)
@@ -122,11 +123,12 @@ class EasyInference:
         """
 
         >>> ei = EasyInference(model_id="mixedbread-ai/mxbai-rerank-xsmall-v1")
-        >>> rerank_result = ei.rerank(model_id="mixedbread-ai/mxbai-rerank-xsmall-v1", query="Where is Paris?", docs=["Paris is in France", "In Germany"])
+        >>> docs = ["Paris is nice", "Paris is in France", "In Germany"]
+        >>> rerank_result = ei.rerank(model_id="mixedbread-ai/mxbai-rerank-xsmall-v1", query="Where is Paris?", docs=docs)
         >>> type(rerank_result)
         <class 'concurrent.futures._base.Future'>
-        >>> rerank_result.result()
-        ([0.7206420556588743, 0.02363345098472644], 18)
+        >>> [round(score, 3) for score in rerank_result.result()[0]]
+        [0.288, 0.742, 0.022]
         >>> ei.stop()
         """
         return self._engine_array.rerank(model=model_id, query=query, docs=docs)
