@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "easyinference"
+version = "0.0.1"
+description = "A stable and easy-to-use inference library with a focus on a sync-to-async API"
+authors = ["michaelfeil <me@michaelfeil.eu>"]
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = ">=3.9,<4"
+infinity_emb = {path = "../infinity_emb", develop = true, extras = ["optimum"]}
+torch = {version = "^2.2.0+cpu", source = "pytorch_cpu"}
+torchvision = {version = "^0.18.1+cpu", source = "pytorch_cpu"}
+
+[tool.poetry.group.test.dependencies]
+pytest = "^7.0.0"
+coverage = "*"
+
+[[tool.poetry.source]]
+name = "pytorch_cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

@@ -31,17 +31,32 @@ env:
   WORKDIR: "libs/infinity_emb"
 
 jobs:
-  lint:
+  lint-infinity_emb:
     uses:
       ./.github/workflows/linting.yaml
     with:
       working-directory: libs/infinity_emb
     secrets: inherit
 
-  test:
+  lint-easyinference:
+    uses:
+      ./.github/workflows/linting.yaml
+    with:
+      working-directory: libs/easyinference
+    secrets: inherit
+
+  test-infinity_emb:
     uses:
       ./.github/workflows/test.yaml
     with:
       working-directory: libs/infinity_emb
+      upload_coverage: true
+    secrets: inherit
+  
+  test:
+    uses:
+      ./.github/workflows/test.yaml
+    with:
+      working-directory: libs/easyinference
       upload_coverage: true
     secrets: inherit
