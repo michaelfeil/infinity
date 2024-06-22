@@ -1,5 +1,5 @@
 from concurrent.futures import Future
-from typing import Iterable, Literal
+from typing import Iterable, Literal, Union
 
 from infinity_emb import EngineArgs, SyncEngineArray
 
@@ -9,16 +9,17 @@ Device = Literal["cpu", "cuda"]
 ModelID = str
 Engine = Literal["torch", "optimum"]
 EmbeddingDtype = Literal["float32", "int8", "binary"]
+ModelIndex = Union[int, str]
 
 
 class EasyInference:
     def __init__(
         self,
         *,
-        model_id: ModelID | Iterable[ModelID],
-        engine: Engine | Iterable[Engine] = "optimum",
-        device: Device | Iterable[Device] = "cpu",
-        embedding_dtype: EmbeddingDtype | Iterable[EmbeddingDtype] = "float32",
+        model_id: Union[ModelID, Iterable[ModelID]],
+        engine: Union[Engine, Iterable[Engine]] = "optimum",
+        device: Union[Device, Iterable[Device]] = "cpu",
+        embedding_dtype: Union[EmbeddingDtype, Iterable[EmbeddingDtype]] = "float32",
     ):
         """An easy interface to infer with multiple models.
         >>> ei = EasyInference(model_id="michaelfeil/bge-small-en-v1.5")
@@ -56,7 +57,10 @@ class EasyInference:
         return f"{self.__class__.__name__}({[a.model_name_or_path for a in self._engine_args]})"
 
     def embed(
-        self, *, model_id: str, sentences: list[str]
+        self,
+        *,
+        sentences: list[str],
+        model_id: ModelIndex = 0,
     ) -> Future[tuple[list[list[float]], int]]:
         """Embed sentences with a model.
 
@@ -73,7 +77,10 @@ class EasyInference:
         return self._engine_array.embed(model=model_id, sentences=sentences)
 
     def image_embed(
-        self, *, model_id: str, images: list[str]
+        self,
+        *,
+        images: list[str],
+        model_id: ModelIndex = 0,
     ) -> Future[tuple[list[list[float]], int]]:
         """Embed images with a model.
 
@@ -88,7 +95,10 @@ class EasyInference:
         return self._engine_array.image_embed(model=model_id, images=images)
 
     def classify(
-        self, *, model_id: str, sentences: list[str]
+        self,
+        *,
+        sentences: list[str],
+        model_id: ModelIndex = 0,
     ) -> Future[tuple[list[list[dict[str, float]]], int]]:
         """Classify sentences with a model.
 
@@ -103,7 +113,11 @@ class EasyInference:
         return self._engine_array.classify(model=model_id, sentences=sentences)
 
     def rerank(
-        self, *, model_id: str, query: str, docs: list[str]
+        self,
+        *,
+        query: str,
+        docs: list[str],
+        model_id: ModelIndex = 0,
     ) -> Future[list[str]]:
         """
 
