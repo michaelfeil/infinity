@@ -2,8 +2,9 @@ import asyncio
 import threading
 import time
 from concurrent.futures import Future
+from typing import Iterator
 
-from infinity_emb.engine import AsyncEngineArray, EngineArgs
+from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import ClassifyReturnType, EmbeddingDtype, ReRankReturnType
 
@@ -66,6 +67,9 @@ class SyncEngineArray:
             and self.async_engine_array.is_running
         )
 
+    def __iter__(self) -> Iterator["AsyncEmbeddingEngine"]:
+        return iter(self.async_engine_array)
+
     def stop(self):
         self._stop_event.set()
         while self._loop.is_running():
@@ -97,7 +101,7 @@ class SyncEngineArray:
     @add_start_docstrings(AsyncEngineArray.rerank.__doc__)
     @threaded_asyncio_executor()
     def rerank(
-        self, *, model: str, query: str, documents: list[str]
+        self, *, model: str, query: str, docs: list[str]
     ) -> Future[ReRankReturnType]:
         """sync interface of AsyncEngineArray"""
         return None  # type: ignore

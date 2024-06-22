@@ -4546,5 +4546,5 @@ vision = ["pillow", "timm"]
 
 [metadata]
 lock-version = "2.0"
-python-versions = ">=3.9,<3.13"
-content-hash = "e0be893cc76e403d1973f8665b0aa6ec424505b92c3386e33e928d6062c4840a"
+python-versions = ">=3.9,<4"
+content-hash = "e4148a6463ba6adc8b66d7ad522b0d638f58dc3282d09e17d76bc56a2dc17595"
