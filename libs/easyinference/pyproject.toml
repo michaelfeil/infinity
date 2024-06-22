@@ -18,7 +18,8 @@ torchvision = {version = "^0.18.1+cpu", source = "pytorch_cpu"}
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.0.0"
-coverage = "*"
+coverage = {extras = ["toml"], version = "^7.3.2"}
+mypy = "^1.5.1"
 
 [tool.poetry.group.codespell.dependencies]
 codespell = "^2.2.0"
