@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "easyinference"
+name = "simpleinference"
 version = "0.0.1-dev1"
 description = "A stable and easy-to-use inference library with a focus on a sync-to-async API"
 authors = ["michaelfeil <me@michaelfeil.eu>"]
@@ -12,7 +12,7 @@ priority = "explicit"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4"
-infinity_emb = {version = "0.0.47", extras = ["optimum"]}
+infinity_emb = {version = "0.0.47", extras = ["optimum","vision"]}
 
 [tool.poetry.group.test.dependencies]
 pytest = "^7.0.0"
