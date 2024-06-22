@@ -97,7 +97,7 @@ class ClipLikeModel(BaseClipVisionModel):
     def _normalize_cpu(self, tensor: Optional["Tensor"]) -> Iterable["Tensor"]:
         if tensor is None:
             return iter([])
-        return iter((tensor / tensor.norm(p=2, dim=-1, keepdim=True)).cpu())
+        return iter((tensor / tensor.norm(p=2, dim=-1, keepdim=True)).cpu().numpy())
 
     def encode_core(
         self, features_and_types: tuple[dict[str, "Tensor"], list[bool]]

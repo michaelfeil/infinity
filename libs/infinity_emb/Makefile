@@ -14,11 +14,9 @@ TEST_FILE ?= tests/unit_tests/
 
 # Run unit tests and generate a coverage report.
 coverage:
-	poetry run pytest --cov \
-		--cov-config=.coveragerc \
-		--cov-report xml \
-		--cov-report term-missing:skip-covered \
-		$(TEST_FILE)
+	poetry run coverage run --source ./infinity_emb -m pytest 
+	poetry run coverage report -m
+	poetry run coverage xml
 
 test tests:
 	poetry run pytest 
