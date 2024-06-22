@@ -303,7 +303,7 @@ class BatchHandler:
                 except queue.Empty:
                     # instead use async await to get
                     try:
-                        post_batch = await to_thread(result_queue.get, tp, timeout=1)
+                        post_batch = await to_thread(result_queue.get, tp, timeout=0.5)
                     except queue.Empty:
                         # in case of timeout start again
                         continue
@@ -426,7 +426,7 @@ class ModelWorker:
                     # while-loop just for shutdown
                     while not self._shutdown.is_set():
                         try:
-                            self._feature_queue.put((feat, batch), timeout=1)
+                            self._feature_queue.put((feat, batch), timeout=0.5)
                             break
                         except queue.Full:
                             continue
@@ -455,7 +455,7 @@ class ModelWorker:
                 # while-loop just for shutdown
                 while not self._shutdown.is_set():
                     try:
-                        self._postprocess_queue.put((embed, batch), timeout=1)
+                        self._postprocess_queue.put((embed, batch), timeout=0.5)
                         break
                     except queue.Full:
                         continue

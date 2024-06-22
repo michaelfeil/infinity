@@ -38,7 +38,7 @@ class Cache:
     def _consume_queue(self) -> None:
         while not self._shutdown.is_set():
             try:
-                item = self._add_q.get(timeout=1)
+                item = self._add_q.get(timeout=0.5)
             except queue.Empty:
                 continue
             if item is not None:
