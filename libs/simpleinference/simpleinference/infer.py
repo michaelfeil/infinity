@@ -3,7 +3,7 @@ from typing import Iterable, Literal, Union
 
 from infinity_emb import EngineArgs, SyncEngineArray  # type: ignore
 
-__all__ = ["EasyInference"]
+__all__ = ["SimpleInference"]
 
 Device = Literal["cpu", "cuda"]
 ModelID = str
@@ -12,7 +12,7 @@ EmbeddingDtype = Literal["float32", "int8", "binary"]
 ModelIndex = Union[int, str]
 
 
-class EasyInference:
+class SimpleInference:
     def __init__(
         self,
         *,
@@ -22,9 +22,9 @@ class EasyInference:
         embedding_dtype: Union[EmbeddingDtype, Iterable[EmbeddingDtype]] = "float32",
     ):
         """An easy interface to infer with multiple models.
-        >>> ei = EasyInference(model_id="michaelfeil/bge-small-en-v1.5")
+        >>> ei = SimpleInference(model_id="michaelfeil/bge-small-en-v1.5")
         >>> ei
-        EasyInference(['michaelfeil/bge-small-en-v1.5'])
+        SimpleInference(['michaelfeil/bge-small-en-v1.5'])
         >>> ei.stop()
         """
 
@@ -64,7 +64,7 @@ class EasyInference:
     ) -> Future[tuple[list[list[float]], int]]:
         """Embed sentences with a model.
 
-        >>> ei = EasyInference(model_id="michaelfeil/bge-small-en-v1.5")
+        >>> ei = SimpleInference(model_id="michaelfeil/bge-small-en-v1.5")
         >>> embed_result = ei.embed(model_id="michaelfeil/bge-small-en-v1.5", sentences=["Hello, world!"])
         >>> type(embed_result)
         <class 'concurrent.futures._base.Future'>
@@ -84,7 +84,7 @@ class EasyInference:
     ) -> Future[tuple[list[list[float]], int]]:
         """Embed images with a model.
 
-        >>> ei = EasyInference(model_id="wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M", engine="torch")
+        >>> ei = SimpleInference(model_id="wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M", engine="torch")
         >>> image_embed_result = ei.image_embed(model_id="wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M", images=["http://images.cocodataset.org/val2017/000000039769.jpg"])
         >>> type(image_embed_result)
         <class 'concurrent.futures._base.Future'>
@@ -102,7 +102,7 @@ class EasyInference:
     ) -> Future[tuple[list[list[dict[str, float]]], int]]:
         """Classify sentences with a model.
 
-        >>> ei = EasyInference(model_id="philschmid/tiny-bert-sst2-distilled", engine="torch")
+        >>> ei = SimpleInference(model_id="philschmid/tiny-bert-sst2-distilled", engine="torch")
         >>> classify_result = ei.classify(model_id="philschmid/tiny-bert-sst2-distilled", sentences=["I love this movie"])
         >>> type(classify_result)
         <class 'concurrent.futures._base.Future'>
@@ -122,7 +122,7 @@ class EasyInference:
     ) -> Future[list[str]]:
         """
 
-        >>> ei = EasyInference(model_id="mixedbread-ai/mxbai-rerank-xsmall-v1")
+        >>> ei = SimpleInference(model_id="mixedbread-ai/mxbai-rerank-xsmall-v1")
         >>> docs = ["Paris is nice", "Paris is in France", "In Germany"]
         >>> rerank_result = ei.rerank(model_id="mixedbread-ai/mxbai-rerank-xsmall-v1", query="Where is Paris?", docs=docs)
         >>> type(rerank_result)
