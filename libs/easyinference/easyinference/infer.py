@@ -1,7 +1,7 @@
 from concurrent.futures import Future
 from typing import Iterable, Literal, Union
 
-from infinity_emb import EngineArgs, SyncEngineArray
+from infinity_emb import EngineArgs, SyncEngineArray  # type: ignore
 
 __all__ = ["EasyInference"]
 
