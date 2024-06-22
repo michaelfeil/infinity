@@ -43,6 +43,7 @@ jobs:
       ./.github/workflows/linting.yaml
     with:
       working-directory: libs/easyinference
+      extra_poetry: "--with test,lint,codespell"
     secrets: inherit
 
   test-infinity_emb:
@@ -53,10 +54,11 @@ jobs:
       upload_coverage: true
     secrets: inherit
   
-  test:
+  test-easyinference:
     uses:
       ./.github/workflows/test.yaml
     with:
       working-directory: libs/easyinference
       upload_coverage: true
+      extra_poetry: "--with test"
     secrets: inherit

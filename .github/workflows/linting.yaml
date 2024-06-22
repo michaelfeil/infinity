@@ -7,6 +7,11 @@ on:
         required: true
         type: string
         description: "From which folder this pipeline executes"
+      extra_poetry:
+        description: 'Extra poetry commands to run'
+        required: false
+        type: string
+        default: "--extras all --with test,lint,codespell"
 
 env:
   POETRY_VERSION: "1.7.1"
@@ -76,7 +81,7 @@ jobs:
         # It doesn't matter how you change it, any change will cause a cache-bust .
         working-directory: ${{ inputs.working-directory }}
         run: |
-          poetry install --extras "all" --with test,lint,codespell
+          poetry install ${{ inputs.extra_poetry }}
 
       - name: Get .mypy_cache to speed up mypy
         uses: actions/cache@v4
