@@ -1,8 +1,9 @@
+import inspect
 from uuid import uuid4
 
 import pytest
 
-from infinity_emb import EngineArgs, SyncEngineArray
+from infinity_emb import AsyncEngineArray, EngineArgs, SyncEngineArray
 
 
 def test_sync_engine():
@@ -73,6 +74,17 @@ def test_sync_engine_on_model(model_id, method: str, payload: dict):
         assert len(embedding) > 0
     finally:
         s_eng_array.stop()
+
+
+@pytest.mark.parametrize("method_name", list(pytest.ENGINE_METHODS) + ["from_args"])  # type: ignore
+def test_args_between_sync_and_async_same(method_name: str):
+    sync_method = inspect.getfullargspec(getattr(SyncEngineArray, method_name))
+    async_method = inspect.getfullargspec(getattr(AsyncEngineArray, method_name))
+    if method_name in list(pytest.ENGINE_METHODS):  # type: ignore
+        assert "model" in sync_method.kwonlyargs
+        assert "model" in async_method.kwonlyargs
+    assert sync_method.args == async_method.args
+    assert sync_method.kwonlyargs == async_method.kwonlyargs
 
 
 if __name__ == "__main__":

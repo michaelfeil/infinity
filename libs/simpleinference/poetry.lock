@@ -933,22 +933,20 @@ files = [
 
 [[package]]
 name = "infinity-emb"
-version = "0.0.47"
+version = "0.0.49"
 description = "Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks."
 optional = false
-python-versions = "<4,>=3.9"
-files = [
-    {file = "infinity_emb-0.0.47-py3-none-any.whl", hash = "sha256:53790664be0c677d72009869d73cf9e03cc107694f2c128ed782ef24138b8ed2"},
-    {file = "infinity_emb-0.0.47.tar.gz", hash = "sha256:e9835f37301a16f73ea282cf511917d9a65547f9acb408a8d4245ca7de9d7cb7"},
-]
+python-versions = ">=3.9,<4"
+files = []
+develop = false
 
 [package.dependencies]
 hf_transfer = ">=0.1.5"
 huggingface_hub = "*"
 numpy = ">=1.20.0,<2"
-optimum = {version = ">=1.16.2", extras = ["onnxruntime"], optional = true, markers = "extra == \"optimum\" or extra == \"all\""}
-pillow = {version = "*", optional = true, markers = "extra == \"vision\" or extra == \"all\""}
-timm = {version = "*", optional = true, markers = "extra == \"vision\" or extra == \"all\""}
+optimum = {version = ">=1.16.2", extras = ["onnxruntime"], optional = true}
+pillow = {version = "*", optional = true}
+timm = {version = "*", optional = true}
 
 [package.extras]
 all = ["ctranslate2 (>=4.0.0,<5.0.0)", "diskcache", "einops", "fastapi (>=0.103.2)", "optimum[onnxruntime] (>=1.16.2)", "orjson (>=3.9.8,!=3.10.0)", "pillow", "prometheus-fastapi-instrumentator (>=6.1.0)", "pydantic (>=2.4.0,<3)", "rich (>=13,<14)", "sentence-transformers (>=3.0.1,<4.0.0)", "timm", "torch (>=2.2.1)", "typer[all] (>=0.9.0,<0.10.0)", "uvicorn[standard] (>=0.23.2,<0.24.0)"]
@@ -962,6 +960,10 @@ server = ["fastapi (>=0.103.2)", "orjson (>=3.9.8,!=3.10.0)", "prometheus-fastap
 tensorrt = ["tensorrt (>=8.6.1,<9.0.0)"]
 torch = ["sentence-transformers (>=3.0.1,<4.0.0)", "torch (>=2.2.1)"]
 vision = ["pillow", "timm"]
+
+[package.source]
+type = "directory"
+url = "../infinity_emb"
 
 [[package]]
 name = "iniconfig"
@@ -3125,4 +3127,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<4"
-content-hash = "9f8306b6bb33ee205dafb73816204996153c371d643786bbd1f7e516b34aa988"
+content-hash = "090cebaf1aba5d7cfb553d30fe32f524cc2ca990d9352ea066deca74fe510884"
