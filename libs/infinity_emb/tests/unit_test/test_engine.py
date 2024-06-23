@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import sys
 
 import numpy as np
@@ -6,7 +7,7 @@ import pytest
 import torch
 from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
 
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
+from infinity_emb import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
 from infinity_emb.primitives import (
     Device,
     EmbeddingDtype,
@@ -251,3 +252,14 @@ async def test_async_api_failing_revision():
                 revision="a32952c6d05d45f64f9f709a092c00839bcfe70a",
             )
         )
+
+
+@pytest.mark.parametrize("method_name", list(pytest.ENGINE_METHODS))  # type: ignore
+def test_args_between_array_and_engine_same(method_name: str):
+    array_method = inspect.getfullargspec(getattr(AsyncEngineArray, method_name))
+    engine_method = inspect.getfullargspec(getattr(AsyncEmbeddingEngine, method_name))
+
+    assert "model" in array_method.kwonlyargs
+    assert sorted(array_method.args + array_method.kwonlyargs) == sorted(
+        engine_method.args + engine_method.kwonlyargs + ["model"]
+    )

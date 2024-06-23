@@ -336,7 +336,7 @@ class AsyncEngineArray:
         return await self[model].classify(sentences=sentences, raw_scores=raw_scores)
 
     async def image_embed(
-        self, model: str, images: list[str]
+        self, *, model: str, images: list[str]
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple images
 

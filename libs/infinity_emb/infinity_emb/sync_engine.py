@@ -99,14 +99,14 @@ class AsyncLifeMixin:
 
 @add_start_docstrings(AsyncEngineArray.__doc__)
 class SyncEngineArray(AsyncLifeMixin):
-    def __init__(self, engine_args: list[EngineArgs]):
+    def __init__(self, _engine_args_array: list[EngineArgs]):
         super().__init__()
-        self.async_engine_array = AsyncEngineArray.from_args(engine_args)
+        self.async_engine_array = AsyncEngineArray.from_args(_engine_args_array)
         self.async_run(self.async_engine_array.astart).result()
 
     @classmethod
-    def from_args(cls, engine_args: list[EngineArgs]) -> "SyncEngineArray":
-        return cls(engine_args)
+    def from_args(cls, engine_args_array: list[EngineArgs]) -> "SyncEngineArray":
+        return cls(_engine_args_array=engine_args_array)
 
     @property
     def is_running(self):
@@ -128,17 +128,26 @@ class SyncEngineArray(AsyncLifeMixin):
         )
 
     @add_start_docstrings(AsyncEngineArray.rerank.__doc__)
-    def rerank(self, *, model: str, query: str, docs: list[str]):
+    def rerank(
+        self, *, model: str, query: str, docs: list[str], raw_scores: bool = False
+    ):
         """sync interface of AsyncEngineArray"""
         return self.async_run(
-            self.async_engine_array.rerank, model=model, query=query, docs=docs
+            self.async_engine_array.rerank,
+            model=model,
+            query=query,
+            docs=docs,
+            raw_scores=raw_scores,
         )
 
     @add_start_docstrings(AsyncEngineArray.classify.__doc__)
-    def classify(self, *, model: str, sentences: str):
+    def classify(self, *, model: str, sentences: list[str], raw_scores: bool = False):
         """sync interface of AsyncEngineArray"""
         return self.async_run(
-            self.async_engine_array.classify, model=model, sentences=sentences
+            self.async_engine_array.classify,
+            model=model,
+            sentences=sentences,
+            raw_scores=raw_scores,
         )
 
     @add_start_docstrings(AsyncEngineArray.image_embed.__doc__)
