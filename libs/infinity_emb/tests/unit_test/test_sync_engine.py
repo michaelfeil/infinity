@@ -1,5 +1,7 @@
 from uuid import uuid4
 
+import pytest
+
 from infinity_emb import EngineArgs, SyncEngineArray
 
 
@@ -29,6 +31,48 @@ def test_sync_engine():
 
     assert (embedding[0][0] == embedding2[0][0]).all()
     s_eng_array.stop()
+
+
+@pytest.mark.parametrize(
+    "model_id, method, payload",
+    [
+        ("michaelfeil/bge-small-en-v1.5", "embed", {"sentences": ["Hello world!"]}),
+        (
+            "wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M",
+            "image_embed",
+            {"images": ["http://images.cocodataset.org/val2017/000000039769.jpg"]},
+        ),
+        (
+            "philschmid/tiny-bert-sst2-distilled",
+            "classify",
+            {"sentences": ["I love this movie"]},
+        ),
+        (
+            "mixedbread-ai/mxbai-rerank-xsmall-v1",
+            "rerank",
+            {"query": "I love this movie", "docs": ["I love this movie"]},
+        ),
+    ],
+)
+def test_sync_engine_on_model(model_id, method: str, payload: dict):
+    try:
+        s_eng_array = SyncEngineArray(
+            [
+                EngineArgs(
+                    model_name_or_path=model_id,
+                    device="cpu",  # type: ignore
+                    engine="torch",  # type: ignore
+                    model_warmup=False,
+                ),
+            ]
+        )
+
+        future_result = getattr(s_eng_array, method)(model=model_id, **payload)
+        embedding = future_result.result()
+
+        assert len(embedding) > 0
+    finally:
+        s_eng_array.stop()
 
 
 if __name__ == "__main__":

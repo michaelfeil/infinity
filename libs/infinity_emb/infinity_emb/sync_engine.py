@@ -58,9 +58,9 @@ class AsyncLifeMixin:
     def async_start_loop(self):
         self.async_close_loop()
         with self.__lock:
-            start_event: Future = Future()
+            start_event = Future()
             self.__stop_signal.clear()
-            self.__is_closed: Future = Future()
+            self.__is_closed = Future()
             threading.Thread(
                 target=partial(self.__async_lifetime, start_event=start_event),
                 daemon=True,
@@ -135,9 +135,11 @@ class SyncEngineArray(AsyncLifeMixin):
         )
 
     @add_start_docstrings(AsyncEngineArray.classify.__doc__)
-    def classify(self, *, model: str, text: str):
+    def classify(self, *, model: str, sentences: str):
         """sync interface of AsyncEngineArray"""
-        return self.async_run(self.async_engine_array.classify, model=model, text=text)
+        return self.async_run(
+            self.async_engine_array.classify, model=model, sentences=sentences
+        )
 
     @add_start_docstrings(AsyncEngineArray.image_embed.__doc__)
     def image_embed(self, *, model: str, images: list[str]):
