@@ -12,8 +12,8 @@ priority = "explicit"
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4"
-infinity_emb = {path = "../infinity_emb", extras = ["optimum","vision"]}
-
+# infinity_emb = {path = "../infinity_emb", extras = ["optimum","vision"]}
+infinity_emb = {version = "0.0.49", extras = ["optimum","vision"]}
 [tool.poetry.group.test.dependencies]
 pytest = "^7.0.0"
 coverage = {extras = ["toml"], version = "^7.3.2"}
