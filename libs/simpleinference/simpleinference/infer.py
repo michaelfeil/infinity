@@ -1,7 +1,8 @@
 from concurrent.futures import Future
-from typing import Iterable, Literal, Union
+from typing import Collection, Literal, Union
 
 from infinity_emb import EngineArgs, SyncEngineArray  # type: ignore
+from infinity_emb.infinity_server import AutoPadding
 
 __all__ = ["SimpleInference"]
 
@@ -16,18 +17,17 @@ class SimpleInference:
     def __init__(
         self,
         *,
-        model_id: Union[ModelID, Iterable[ModelID]],
-        engine: Union[Engine, Iterable[Engine]] = "optimum",
-        device: Union[Device, Iterable[Device]] = "cpu",
-        embedding_dtype: Union[EmbeddingDtype, Iterable[EmbeddingDtype]] = "float32",
+        model_id: Union[ModelID, Collection[ModelID]],
+        engine: Union[Engine, Collection[Engine]] = "optimum",
+        device: Union[Device, Collection[Device]] = "cpu",
+        embedding_dtype: Union[EmbeddingDtype, Collection[EmbeddingDtype]] = "float32",
     ):
         """An easy interface to infer with multiple models.
-        >>> ei = SimpleInference(model_id="michaelfeil/bge-small-en-v1.5")
+        >>> ei = SimpleInference(model_id=['michaelfeil/bge-small-en-v1.5','mixedbread-ai/mxbai-rerank-xsmall-v1'])
         >>> ei
-        SimpleInference(['michaelfeil/bge-small-en-v1.5'])
-        >>> ei.stop()
+        SimpleInference(['michaelfeil/bge-small-en-v1.5', 'mixedbread-ai/mxbai-rerank-xsmall-v1'])
+        >>> ei.stop() # always stop when you are done
         """
-
         if isinstance(model_id, str):
             model_id = [model_id]
         if isinstance(engine, str):
@@ -36,21 +36,21 @@ class SimpleInference:
             device = [device]
         if isinstance(embedding_dtype, str):
             embedding_dtype = [embedding_dtype]
-        self._engine_args = [
-            EngineArgs(
-                model_name_or_path=m,
-                engine=e,  # type: ignore
-                device=d,  # type: ignore
-                served_model_name=m,
-                embedding_dtype=edt,  # type: ignore
-                lengths_via_tokenize=True,
-                model_warmup=False,
-            )
-            for m, e, d, edt in zip(model_id, engine, device, embedding_dtype)
-        ]
-        self._engine_array = SyncEngineArray.from_args(
-            engine_args_array=self._engine_args
+        EngineArgs()
+        pad = AutoPadding(
+            length=len(model_id),
+            # pass through arguments
+            model_name_or_path=model_id,
+            engine=engine,
+            device=device,
+            embedding_dtype=embedding_dtype,
+            # optinionated defaults
+            lengths_via_tokenize=True,
+            model_warmup=True,
+            trust_remote_code=True,
         )
+        self._engine_args = [EngineArgs(**kwargs) for kwargs in pad]
+        self._engine_array = SyncEngineArray.from_args(self._engine_args)
 
     def stop(self):
         self._engine_array.stop()
@@ -66,14 +66,14 @@ class SimpleInference:
     ) -> Future[tuple[list[list[float]], int]]:
         """Embed sentences with a model.
 
-        >>> ei = SimpleInference(model_id="michaelfeil/bge-small-en-v1.5")
+        >>> ei = SimpleInference(model_id="michaelfeil/bge-small-en-v1.5", engine="torch")
         >>> embed_result = ei.embed(model_id="michaelfeil/bge-small-en-v1.5", sentences=["Hello, world!"])
         >>> type(embed_result)
         <class 'concurrent.futures._base.Future'>
         >>> embed_result.result()[0][0].shape # embedding
         (384,)
         >>> embed_result.result()[1] # embedding and usage of 6 tokens
-        6
+        4
         >>> ei.stop()
         """
         return self._engine_array.embed(model=model_id, sentences=sentences)
