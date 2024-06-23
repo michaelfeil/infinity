@@ -107,7 +107,6 @@ class SyncEngineArray(AsyncLifeMixin):
         except Exception as e:
             self.async_close_loop()
             raise e
-        
 
     @classmethod
     def from_args(cls, engine_args_array: list[EngineArgs]) -> "SyncEngineArray":

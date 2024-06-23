@@ -76,7 +76,9 @@ def optimize_model(
         if Path(model_name_or_path).exists()
         else Path(HUGGINGFACE_HUB_CACHE) / "infinity_onnx" / model_name_or_path
     )
-    files_optimized = list(path_folder.glob(f"**/*{execution_provider}_optimized.onnx.onnx"))
+    files_optimized = list(
+        path_folder.glob(f"**/*{execution_provider}_optimized.onnx.onnx")
+    )
     if execution_provider == "TensorrtExecutionProvider":
         return model_class.from_pretrained(
             model_name_or_path,
@@ -142,7 +144,9 @@ def optimize_model(
             revision=revision,
             trust_remote_code=trust_remote_code,
             provider=execution_provider,
-            file_name=Path(file_name).name.replace(".onnx", f"{execution_provider}_optimized.onnx"),
+            file_name=Path(file_name).name.replace(
+                ".onnx", f"{execution_provider}_optimized.onnx"
+            ),
         )
     except Exception as e:
         logger.warning(
