@@ -1,6 +1,7 @@
 import asyncio
 import threading
 from concurrent.futures import Future
+from functools import partial
 from typing import TYPE_CHECKING, Awaitable, Callable, Iterator, TypeVar
 
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
@@ -23,34 +24,54 @@ T = TypeVar("T")
 
 class AsyncLifeMixin:
     def __init__(self) -> None:
-        self.__start_event: Future = Future()
-        self.__stop_event = threading.Event()
+        self.__lock = threading.Lock()
+        self.__stop_signal = threading.Event()
+        self.__loop: asyncio.AbstractEventLoop = None  # type: ignore
+        # init
         self.__is_closed: Future = Future()
-        threading.Thread(target=self.__async_lifetime, daemon=True).start()
-        self.__start_event.result()
+        self.__is_closed.set_result(None)
+        self.async_start_loop()
 
-    def __async_lifetime(self):
-        """takes care of starting, stopping event loop"""
-        self._loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(self._loop)
+    def __async_lifetime(self, start_event: Future):
+        """private function, takes care of starting, stopping event loop"""
+        self.__loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.__loop)
 
         async def block_until_engine_stop():
             logger.info("Started Background Event Loop")
-            self.__start_event.set_result(
-                None
-            )  # signal that the event loop has started
-            while not self.__stop_event.is_set():
+            start_event.set_result(None)  # signal that the event loop has started
+            while not self.__stop_signal.is_set():
                 await asyncio.sleep(0.2)
 
-        self._loop.run_until_complete(block_until_engine_stop())
-        self._loop.close()
+        self.__loop.run_until_complete(block_until_engine_stop())
+        self.__loop.close()
         self.__is_closed.set_result(None)
         logger.info("Closed Background Event Loop")
 
+    def is_async_loop_running(self):
+        return (
+            (not self.__stop_signal.is_set())
+            and self.__loop is not None
+            and self.__loop.is_running()
+        )
+
+    def async_start_loop(self):
+        self.async_close_loop()
+        with self.__lock:
+            start_event: Future = Future()
+            self.__stop_signal.clear()
+            self.__is_closed: Future = Future()
+            threading.Thread(
+                target=partial(self.__async_lifetime, start_event=start_event),
+                daemon=True,
+            ).start()
+            start_event.result()
+
     def async_close_loop(self):
-        """closes the event loop forever. This is a blocking call"""
-        self.__stop_event.set()
-        self.__is_closed.result()
+        """closes the event loop. This is a blocking call"""
+        with self.__lock:
+            self.__stop_signal.set()
+            self.__is_closed.result()
 
     def async_run(
         self,
@@ -68,10 +89,10 @@ class AsyncLifeMixin:
         Returns:
             concurrent.futures.Future returning the result of async_function.
         """
-        if not self._loop.is_running() or self.__stop_event.is_set():
-            raise RuntimeError("Loop is not running")
+        if not self.is_async_loop_running():
+            raise RuntimeError("Event loop is not running")
         future = asyncio.run_coroutine_threadsafe(
-            async_function(*funcion_args, **function_kwargs), self._loop
+            async_function(*funcion_args, **function_kwargs), self.__loop
         )
         return future
 
