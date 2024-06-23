@@ -48,7 +48,9 @@ class SimpleInference:
             )
             for m, e, d, edt in zip(model_id, engine, device, embedding_dtype)
         ]
-        self._engine_array = SyncEngineArray.from_args(engine_args=self._engine_args)
+        self._engine_array = SyncEngineArray.from_args(
+            engine_args_array=self._engine_args
+        )
 
     def stop(self):
         self._engine_array.stop()
