@@ -933,13 +933,13 @@ files = [
 
 [[package]]
 name = "infinity-emb"
-version = "0.0.47"
+version = "0.0.48"
 description = "Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks."
 optional = false
 python-versions = "<4,>=3.9"
 files = [
-    {file = "infinity_emb-0.0.47-py3-none-any.whl", hash = "sha256:53790664be0c677d72009869d73cf9e03cc107694f2c128ed782ef24138b8ed2"},
-    {file = "infinity_emb-0.0.47.tar.gz", hash = "sha256:e9835f37301a16f73ea282cf511917d9a65547f9acb408a8d4245ca7de9d7cb7"},
+    {file = "infinity_emb-0.0.48-py3-none-any.whl", hash = "sha256:82e724836ea9de4b2591e9f7f7787a8971283568fda302fe0832bc6ba60095e9"},
+    {file = "infinity_emb-0.0.48.tar.gz", hash = "sha256:a622e5cbe171a45f947caecc75a237837f1bba2434609e556807130ba10cc60f"},
 ]
 
 [package.dependencies]
@@ -3125,4 +3125,4 @@ multidict = ">=4.0"
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<4"
-content-hash = "9f8306b6bb33ee205dafb73816204996153c371d643786bbd1f7e516b34aa988"
+content-hash = "5d1514a13a415a9f7ee1dd15445f7838abb86702b7aa0c1dc024c3dbf9441f3c"
