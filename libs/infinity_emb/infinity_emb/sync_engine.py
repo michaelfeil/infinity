@@ -58,9 +58,9 @@ class AsyncLifeMixin:
     def async_start_loop(self):
         self.async_close_loop()
         with self.__lock:
-            start_event: Future = Future()
+            start_event = Future()
             self.__stop_signal.clear()
-            self.__is_closed: Future = Future()
+            self.__is_closed = Future()
             threading.Thread(
                 target=partial(self.__async_lifetime, start_event=start_event),
                 daemon=True,
