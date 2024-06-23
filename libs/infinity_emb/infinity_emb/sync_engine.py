@@ -101,8 +101,13 @@ class AsyncLifeMixin:
 class SyncEngineArray(AsyncLifeMixin):
     def __init__(self, _engine_args_array: list[EngineArgs]):
         super().__init__()
-        self.async_engine_array = AsyncEngineArray.from_args(_engine_args_array)
-        self.async_run(self.async_engine_array.astart).result()
+        try:
+            self.async_engine_array = AsyncEngineArray.from_args(_engine_args_array)
+            self.async_run(self.async_engine_array.astart).result()
+        except Exception as e:
+            self.async_close_loop()
+            raise e
+        
 
     @classmethod
     def from_args(cls, engine_args_array: list[EngineArgs]) -> "SyncEngineArray":
