@@ -27,7 +27,7 @@ resources:
 setup: |
   conda create -n infinity python=3.11 -y
   conda activate infinity
-  pip install infinity_emb[all]==0.0.44 timm --no-cache-dir
+  pip install infinity_emb[all]==0.0.48 --no-cache-dir
 run: |
   conda activate infinity
   infinity_emb v2
