@@ -135,9 +135,11 @@ class SyncEngineArray(AsyncLifeMixin):
         )
 
     @add_start_docstrings(AsyncEngineArray.classify.__doc__)
-    def classify(self, *, model: str, text: str):
+    def classify(self, *, model: str, sentences: str):
         """sync interface of AsyncEngineArray"""
-        return self.async_run(self.async_engine_array.classify, model=model, text=text)
+        return self.async_run(
+            self.async_engine_array.classify, model=model, sentences=sentences
+        )
 
     @add_start_docstrings(AsyncEngineArray.image_embed.__doc__)
     def image_embed(self, *, model: str, images: list[str]):
