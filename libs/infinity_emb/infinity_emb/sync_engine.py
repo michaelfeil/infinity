@@ -23,40 +23,55 @@ T = TypeVar("T")
 
 class AsyncLifeMixin:
     def __init__(self) -> None:
-        self._start_event: Future = Future()
-        self._stop_event = threading.Event()
-        self._is_closed: Future = Future()
-        threading.Thread(target=self._lifetime, daemon=True).start()
-        self._start_event.result()
+        self.__start_event: Future = Future()
+        self.__stop_event = threading.Event()
+        self.__is_closed: Future = Future()
+        threading.Thread(target=self.__async_lifetime, daemon=True).start()
+        self.__start_event.result()
 
-    def _lifetime(self):
+    def __async_lifetime(self):
         """takes care of starting, stopping event loop"""
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
 
         async def block_until_engine_stop():
             logger.info("Started Background Event Loop")
-            self._start_event.set_result(None)  # signal that the event loop has started
-            while not self._stop_event.is_set():
+            self.__start_event.set_result(
+                None
+            )  # signal that the event loop has started
+            while not self.__stop_event.is_set():
                 await asyncio.sleep(0.2)
 
         self._loop.run_until_complete(block_until_engine_stop())
         self._loop.close()
-        self._is_closed.set_result(None)
+        self.__is_closed.set_result(None)
         logger.info("Closed Background Event Loop")
 
     def async_close_loop(self):
-        self._stop_event.set()
-        self._is_closed.result()
+        """closes the event loop forever. This is a blocking call"""
+        self.__stop_event.set()
+        self.__is_closed.result()
 
     def async_run(
-        self, async_function: Callable[..., Awaitable[T]], *args, **kwargs
+        self,
+        async_function: Callable[..., Awaitable[T]],
+        *funcion_args,
+        **function_kwargs
     ) -> Future[T]:
-        """blocks until the engine is running"""
-        if not self._loop.is_running() or self._stop_event.is_set():
+        """run an async function in the background event loop.
+
+        Args:
+            async_function: the async function to run
+            funcion_args: args to pass to the async function
+            function_kwargs: kwargs to pass to the async function
+
+        Returns:
+            concurrent.futures.Future returning the result of async_function.
+        """
+        if not self._loop.is_running() or self.__stop_event.is_set():
             raise RuntimeError("Loop is not running")
         future = asyncio.run_coroutine_threadsafe(
-            async_function(*args, **kwargs), self._loop
+            async_function(*funcion_args, **function_kwargs), self._loop
         )
         return future
 
