@@ -113,7 +113,7 @@ def create_server(
         async def validate_token(
             credential: Optional[HTTPAuthorizationCredentials] = Depends(oauth2_scheme),
         ):
-            if credential and credential.credentials != api_key:
+            if credential is None or credential.credentials != api_key:
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Unauthorized",
@@ -149,6 +149,7 @@ def create_server(
         f"{url_prefix}/models",
         response_model=OpenAIModelInfo,
         response_class=responses.ORJSONResponse,
+        dependencies=route_dependencies,
     )
     async def _models():
         """get models endpoint"""
