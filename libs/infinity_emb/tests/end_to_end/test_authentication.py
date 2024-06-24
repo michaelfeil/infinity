@@ -40,11 +40,11 @@ async def client():
 
 @pytest.mark.anyio
 async def test_authentication(client):
-    assert (await client.get("/models")).status_code == 200
-
-    for route, payload in [
-        ["/embeddings", {"model": MODEL_NAME, "input": "sentence"}],
+    for method, route, payload in [
+        ["GET", "/models", None],
+        ["POST", "/embeddings", {"model": MODEL_NAME, "input": "sentence"}],
         [
+            "POST",
             "/rerank",
             {
                 "model": MODEL_NAME,
@@ -55,11 +55,12 @@ async def test_authentication(client):
     ]:
         for authenticated in [False, True]:
             headers = {"Authorization": f"Bearer {API_KEY}"} if authenticated else {}
-        response = await client.post(
+        response = await client.request(
+            method,
             route,
             headers=headers,
             json=payload,
         )
         assert (response).status_code in (
-            [200, 400] if authenticated else [403]
+            [200, 400] if authenticated else [401]
         ), f"route: {route}, payload: {payload}, response: {response.json()}"
