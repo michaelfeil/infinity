@@ -6,6 +6,9 @@ authors = ["michaelfeil <me@michaelfeil.eu>"]
 license = "MIT"
 readme = "README.md"
 packages = [{include = "infinity_emb"}]
+homepage = "https://github.com/michaelfeil/infinity"
+repository = "https://github.com/michaelfeil/infinity"
+keywords = ["vector", "embedding", "neural", "search", "sentence-transformers"]
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4"
