@@ -535,7 +535,7 @@ if CHECK_TYPER.is_available:
         redirect_slash: str = MANAGER.redirect_slash,
         log_level: UVICORN_LOG_LEVELS = MANAGER.log_level,  # type: ignore
         permissive_cors: bool = False,
-        api_key: str = "",
+        api_key: str = MANAGER.api_key,
         proxy_root_path: str = MANAGER.proxy_root_path,
     ):
         """Infinity API ♾️ cli v2
