@@ -21,6 +21,8 @@ coverage:
 test tests:
 	poetry run pytest 
 
+openapi:
+	wget http://0.0.0.0:7997/openapi.json -O ../../docs/assets/openapi.json
 
 ######################
 # LINTING AND FORMATTING

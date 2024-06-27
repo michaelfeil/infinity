@@ -125,7 +125,7 @@ def create_server(
     instrumentator = Instrumentator().instrument(app)
     app.add_exception_handler(errors.OpenAIException, errors.openai_exception_handler)
 
-    @app.get("/health")
+    @app.get("/health", operation_id="health", response_class=responses.ORJSONResponse)
     async def _health() -> dict[str, float]:
         """
         health check endpoint
@@ -150,6 +150,7 @@ def create_server(
         response_model=OpenAIModelInfo,
         response_class=responses.ORJSONResponse,
         dependencies=route_dependencies,
+        operation_id="models",
     )
     async def _models():
         """get models endpoint"""
@@ -198,6 +199,7 @@ def create_server(
         response_model=OpenAIEmbeddingResult,
         response_class=responses.ORJSONResponse,
         dependencies=route_dependencies,
+        operation_id="embeddings",
     )
     async def _embeddings(data: OpenAIEmbeddingInput):
         """Encode Embeddings
@@ -242,6 +244,7 @@ def create_server(
         response_model=ReRankResult,
         response_class=responses.ORJSONResponse,
         dependencies=route_dependencies,
+        operation_id="rerank",
     )
     async def _rerank(data: RerankInput):
         """Rerank documents
@@ -294,6 +297,7 @@ def create_server(
         response_class=responses.ORJSONResponse,
         dependencies=route_dependencies,
         response_model=ClassifyResult,
+        operation_id="classify",
     )
     async def _classify(data: ClassifyInput):
         """Score or Classify Sentiments
@@ -336,6 +340,7 @@ def create_server(
         response_model=OpenAIEmbeddingResult,
         response_class=responses.ORJSONResponse,
         dependencies=route_dependencies,
+        operation_id="embeddings_image",
     )
     async def _embeddings_image(data: ImageEmbeddingInput):
         """Encode Embeddings
