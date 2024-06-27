@@ -1,0 +1,3 @@
+project_name_override: infinity_client
+package_name_override: infinity_client
+use_path_prefixes_for_title_model_names: false
