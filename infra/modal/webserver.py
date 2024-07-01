@@ -56,7 +56,7 @@ app = App("infinity", image=image)
 # Run a web server on port 7997 and expose the Infinity embedding server
 @app.function(
     # allow up to 16 requests pending on a single container
-    allow_concurrent_inputs=16,
+    allow_concurrent_inputs=8,
     # boots take around 30 seconds, so keep containers alive for a few times longer
     container_idle_timeout=3 * MINUTES,
     # max 5 container instances
