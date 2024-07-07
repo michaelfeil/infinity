@@ -5,8 +5,7 @@ A client library for accessing ♾️ Infinity - Embedding Inference Server
 First, create a client:
 
 ```python
-from infinity_client import Client as Client
-
+from infinity_client import Client
 client = Client(base_url="https://infinity.modal.michaelfeil.eu")
 ```
 
