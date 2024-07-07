@@ -5,7 +5,7 @@ A client library for accessing ♾️ Infinity - Embedding Inference Server
 First, create a client:
 
 ```python
-from infinity_client import Client
+from infinity_client import Client as Client
 
 client = Client(base_url="https://infinity.modal.michaelfeil.eu")
 ```
@@ -39,7 +39,10 @@ from infinity_client.api.default import classify, embeddings, embeddings_image, 
 from infinity_client.types import Response
 
 with client as client:
-    embeddings: OpenAIEmbeddingResult = embeddings.sync(client=client, body=)
+    embeds: OpenAIEmbeddingResult = embeddings.sync(client=client, body=OpenAIEmbeddingInput.from_dict({
+        "input":["Hello, this is a sentence-to-embed", "Hello, my cat is cute"],
+        "model": "michaelfeil/bge-small-en-v1.5",
+    }))
 ```
 
 Or do the same thing with an async version:
