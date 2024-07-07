@@ -1,11 +1,11 @@
 # infinity_client
 A client library for accessing ♾️ Infinity - Embedding Inference Server
 
-## Usage For it
+## Usage
 First, create a client:
 
 ```python
-from infinity_client import Client as Client
+from infinity_client import Client
 
 client = Client(base_url="https://infinity.modal.michaelfeil.eu")
 ```
@@ -34,7 +34,7 @@ with client as client:
 Or use the POST methods:
 
 ```python
-from infinity_client.models import OpenAIEmbeddingInput
+from infinity_client.models import OpenAIEmbeddingInput, OpenAIEmbeddingResult
 from infinity_client.api.default import classify, embeddings, embeddings_image, rerank
 from infinity_client.types import Response
 
