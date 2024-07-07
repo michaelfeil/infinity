@@ -10,13 +10,13 @@ from modal import Image, App, gpu, web_server
 # Configuration
 PORT = 7997
 
-VERSION_INF = os.environ.get("VERSION_INF", "0.0.46")
+VERSION_INF = os.environ.get("VERSION_INF", "0.0.51")
 ENV = {
     # Per model args, padded by `;`
     "INFINITY_MODEL_ID": "jinaai/jina-clip-v1;michaelfeil/bge-small-en-v1.5;mixedbread-ai/mxbai-rerank-xsmall-v1;philschmid/tiny-bert-sst2-distilled;",
     "INFINITY_REVISION": "1cbe5e8b11ea3728df0b610d5453dfe739804aa9;ab7b31bd10f9bfbb915a28662ec4726b06c6552a;1d1a9dfbd0fde63df646402cf33e157e5852ead3;874eb28543ea7a7df80b6158bbf772d203efcab6;",
     "INFINITY_MODEL_WARMUP": "false;false;false;false;",
-    "INFINITY_BATCH_SIZE": "16;16;16;16;",
+    "INFINITY_BATCH_SIZE": "32;32;32;32;",
     # One-off args
     "INFINITY_QUEUE_SIZE": "4096",
     "INFINITY_PORT": str(PORT),
@@ -55,16 +55,16 @@ app = App("infinity", image=image)
 
 # Run a web server on port 7997 and expose the Infinity embedding server
 @app.function(
-    # allow up to 200 requests pending on a single container
-    allow_concurrent_inputs=200,
+    # allow up to 16 requests pending on a single container
+    allow_concurrent_inputs=8,
     # boots take around 30 seconds, so keep containers alive for a few times longer
-    container_idle_timeout=2 * MINUTES,
+    container_idle_timeout=3 * MINUTES,
     # max 5 container instances
-    concurrency_limit=5,
+    concurrency_limit=9,
     # scale to zero
     keep_warm=0,
     # use an inexpensive GPU
-    gpu=gpu.T4(),
+    gpu=gpu.L4(),
 )
 @web_server(
     PORT,
