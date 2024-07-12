@@ -89,7 +89,8 @@ def create_server(
         description=docs.FASTAPI_DESCRIPTION,
         version=infinity_emb.__version__,
         contact=dict(name="Michael Feil"),
-        docs_url="/docs",
+        docs_url=f"{url_prefix}/docs",
+        openapi_url=f"{url_prefix}/openapi.json",
         license_info={
             "name": "MIT License",
             "identifier": "MIT",
