@@ -1,37 +1,37 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
-         <loc>https://michaelfeil.eu/infinity/main/</loc>
+         <loc>https://michaelfeil.github.io/infinity/main/</loc>
          <lastmod>2024-07-17</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
-         <loc>https://michaelfeil.eu/infinity/main/benchmarking/</loc>
+         <loc>https://michaelfeil.github.io/infinity/main/benchmarking/</loc>
          <lastmod>2024-07-17</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
-         <loc>https://michaelfeil.eu/infinity/main/contribution/</loc>
+         <loc>https://michaelfeil.github.io/infinity/main/contribution/</loc>
          <lastmod>2024-07-17</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
-         <loc>https://michaelfeil.eu/infinity/main/deploy/</loc>
+         <loc>https://michaelfeil.github.io/infinity/main/deploy/</loc>
          <lastmod>2024-07-17</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
-         <loc>https://michaelfeil.eu/infinity/main/integrations/</loc>
+         <loc>https://michaelfeil.github.io/infinity/main/integrations/</loc>
          <lastmod>2024-07-17</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
-         <loc>https://michaelfeil.eu/infinity/main/python_engine/</loc>
+         <loc>https://michaelfeil.github.io/infinity/main/python_engine/</loc>
          <lastmod>2024-07-17</lastmod>
          <changefreq>daily</changefreq>
     </url>
     <url>
-         <loc>https://michaelfeil.eu/infinity/main/swagger_ui/</loc>
+         <loc>https://michaelfeil.github.io/infinity/main/swagger_ui/</loc>
          <lastmod>2024-07-17</lastmod>
          <changefreq>daily</changefreq>
     </url>
