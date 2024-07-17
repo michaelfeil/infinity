@@ -1,6 +1,11 @@
 # infinity_client
 A client library for accessing ♾️ Infinity - Embedding Inference Server
 
+## Installation 
+```bash
+pip install infinity_client
+```
+
 ## Usage
 First, create a client:
 
