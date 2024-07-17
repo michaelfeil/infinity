@@ -1,3 +1,3 @@
 This page moved here:
 
-https://michaelfeil.eu/infinity/latest/
+https://michaelfeil.github.io/infinity/latest/
