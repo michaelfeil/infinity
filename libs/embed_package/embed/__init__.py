@@ -1,3 +1,3 @@
-from embed.infer import BatchedInference
+from embed._infer import BatchedInference
 
 __all__ = ["BatchedInference"]
