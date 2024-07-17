@@ -46,7 +46,7 @@ class BatchedInference:
             embedding_dtype=embedding_dtype,
             # optinionated defaults
             lengths_via_tokenize=True,
-            model_warmup=True,
+            model_warmup=False,
             trust_remote_code=True,
         )
         self._engine_args = [EngineArgs(**kwargs) for kwargs in pad]
