@@ -1,0 +1,52 @@
+{% set poetry = meta == "poetry" %}
+{% set pdm = meta == "pdm" %}
+{% if poetry or pdm %}
+{% if poetry %}[tool.poetry]
+{% elif pdm %}[project]
+{% endif %}
+name = "{{ project_name }}"
+version = "{{ package_version }}"
+description = "{{ package_description }}"
+authors = []
+readme = "README.md"
+homepage = "https://github.com/michaelfeil/infinity"
+repository = "https://github.com/michaelfeil/infinity"
+keywords = ["vector", "embedding", "neural", "search", "sentence-transformers","client"]
+{% if pdm %}requires-python = ">=3.8,<4.0"{% endif %}
+{% if poetry %}
+packages = [
+    {include = "{{ package_name }}"},
+]
+include = ["CHANGELOG.md", "{{ package_name }}/py.typed"]
+{% endif %}
+
+{% if pdm %}
+dependencies = [
+    "httpx>=0.20.0,<0.28.0",
+    "attrs>=21.3.0",
+    "python-dateutil>=2.8.0",
+]
+
+[tool.pdm]
+distribution = true
+{% endif %}
+{% if poetry %}
+
+[tool.poetry.dependencies]
+python = "^3.8"
+httpx = ">=0.20.0,<0.28.0"
+attrs = ">=21.3.0"
+python-dateutil = "^2.8.0"
+{% endif %}
+
+[build-system]
+{% if poetry %}
+requires = ["poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+{% elif pdm %}
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+{% endif %}
+{% endif %}{# poetry or pdm #}
+
+{% include "pyproject_ruff.toml.jinja" %}
