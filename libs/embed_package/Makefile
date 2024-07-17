@@ -14,7 +14,7 @@ TEST_FILE ?=
 
 # Run unit tests and generate a coverage report.
 coverage:
-	poetry run coverage run --source ./simpleinference -m pytest --doctest-modules 
+	poetry run coverage run --source ./embed_package -m pytest --doctest-modules 
 	poetry run coverage report -m
 	poetry run coverage xml
 

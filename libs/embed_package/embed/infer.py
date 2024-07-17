@@ -4,7 +4,7 @@ from typing import Collection, Literal, Union
 from infinity_emb import EngineArgs, SyncEngineArray  # type: ignore
 from infinity_emb.infinity_server import AutoPadding
 
-__all__ = ["SimpleInference"]
+__all__ = ["BatchedInference"]
 
 Device = Literal["cpu", "cuda"]
 ModelID = str
@@ -13,7 +13,7 @@ EmbeddingDtype = Literal["float32", "int8", "binary"]
 ModelIndex = Union[int, str]
 
 
-class SimpleInference:
+class BatchedInference:
     def __init__(
         self,
         *,
@@ -23,9 +23,9 @@ class SimpleInference:
         embedding_dtype: Union[EmbeddingDtype, Collection[EmbeddingDtype]] = "float32",
     ):
         """An easy interface to infer with multiple models.
-        >>> ei = SimpleInference(model_id=['michaelfeil/bge-small-en-v1.5','mixedbread-ai/mxbai-rerank-xsmall-v1'])
+        >>> ei = BatchedInference(model_id=['michaelfeil/bge-small-en-v1.5','mixedbread-ai/mxbai-rerank-xsmall-v1'])
         >>> ei
-        SimpleInference(['michaelfeil/bge-small-en-v1.5', 'mixedbread-ai/mxbai-rerank-xsmall-v1'])
+        BatchedInference(['michaelfeil/bge-small-en-v1.5', 'mixedbread-ai/mxbai-rerank-xsmall-v1'])
         >>> ei.stop() # always stop when you are done
         """
         if isinstance(model_id, str):
@@ -66,7 +66,7 @@ class SimpleInference:
     ) -> Future[tuple[list[list[float]], int]]:
         """Embed sentences with a model.
 
-        >>> ei = SimpleInference(model_id="michaelfeil/bge-small-en-v1.5", engine="torch")
+        >>> ei = BatchedInference(model_id="michaelfeil/bge-small-en-v1.5", engine="torch")
         >>> embed_result = ei.embed(model_id="michaelfeil/bge-small-en-v1.5", sentences=["Hello, world!"])
         >>> type(embed_result)
         <class 'concurrent.futures._base.Future'>
@@ -86,7 +86,7 @@ class SimpleInference:
     ) -> Future[tuple[list[list[float]], int]]:
         """Embed images with a model.
 
-        >>> ei = SimpleInference(model_id="wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M", engine="torch")
+        >>> ei = BatchedInference(model_id="wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M", engine="torch")
         >>> image_embed_result = ei.image_embed(model_id="wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M", images=["http://images.cocodataset.org/val2017/000000039769.jpg"])
         >>> type(image_embed_result)
         <class 'concurrent.futures._base.Future'>
@@ -104,7 +104,7 @@ class SimpleInference:
     ) -> Future[tuple[list[list[dict[str, float]]], int]]:
         """Classify sentences with a model.
 
-        >>> ei = SimpleInference(model_id="philschmid/tiny-bert-sst2-distilled", engine="torch")
+        >>> ei = BatchedInference(model_id="philschmid/tiny-bert-sst2-distilled", engine="torch")
         >>> classify_result = ei.classify(model_id="philschmid/tiny-bert-sst2-distilled", sentences=["I love this movie"])
         >>> type(classify_result)
         <class 'concurrent.futures._base.Future'>
@@ -124,7 +124,7 @@ class SimpleInference:
     ) -> Future[list[str]]:
         """
 
-        >>> ei = SimpleInference(model_id="mixedbread-ai/mxbai-rerank-xsmall-v1")
+        >>> ei = BatchedInference(model_id="mixedbread-ai/mxbai-rerank-xsmall-v1")
         >>> docs = ["Paris is nice", "Paris is in France", "In Germany"]
         >>> rerank_result = ei.rerank(model_id="mixedbread-ai/mxbai-rerank-xsmall-v1", query="Where is Paris?", docs=docs)
         >>> type(rerank_result)

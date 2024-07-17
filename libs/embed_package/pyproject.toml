@@ -1,5 +1,5 @@
 [tool.poetry]
-name = "simpleinference"
+name = "embed"
 version = "0.0.1-dev5"
 description = "A stable and easy-to-use inference library with a focus on a sync-to-async API"
 authors = ["michaelfeil <me@michaelfeil.eu>"]
