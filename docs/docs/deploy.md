@@ -74,3 +74,14 @@ To deploy the service, execute the following dstack command. A prompt will guide
 dstack run . -f infinity/serve.dstack.yml --gpu 16GB
 ```
 
+### Generate Portable Executable
+
+This section describe the steps to prepare a single executable for infinity.
+It is setup using pyinstaller. The setup step has been verified on Windows 11.
+However, the compilation procedure should be the same on other platforms.
+
+## Windows (CPU)
+1. Create a Python virtual environment.
+2. `pip install infinity-emb[all] pyinstaller`.
+3. Install pyinstaller. `pip install `.
+4. Compile executable. `pyinstaller .\infinity_server.spec`
