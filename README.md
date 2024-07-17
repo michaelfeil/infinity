@@ -33,7 +33,7 @@ Infinity is a high-throughput, low-latency REST API for serving vector embedding
 
 
 ### Latest News 🔥
-- [2024/06] Sponsored inference deployment by [Modal](./infra/modal/README.md)
+- [2024/07] Sponsored inference deployment by [Modal](./infra/modal/README.md)
 - [2024/06] Support for multi-modal: clip, text-classification & launch all arguments from env variables
 - [2024/05] launch multiple models using the `v2` cli, including `--api-key`
 - [2024/03] infinity supports experimental int8 (cpu/cuda) and fp8 (H100/MI300) support
