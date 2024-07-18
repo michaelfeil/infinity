@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -14,7 +14,10 @@ from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device, Dtype, EmbeddingReturnType
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.acceleration import to_bettertransformer
-from infinity_emb.transformer.quantization.interface import quant_interface
+from infinity_emb.transformer.quantization.interface import (
+    quant_embedding_decorator,
+    quant_interface,
+)
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -44,11 +47,17 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
     def __init__(self, *, engine_args=EngineArgs):
         CHECK_TORCH.mark_required()
         CHECK_SENTENCE_TRANSFORMERS.mark_required()
+
+        model_kwargs = {}
+        if engine_args.bettertransformer:
+            model_kwargs["attn_implementation"] = "eager"
+
         super().__init__(
             engine_args.model_name_or_path,
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
-            device=engine_args.device.value,
+            device=engine_args.device.resolve(),
+            model_kwargs=model_kwargs,
         )
         self.to(self.device)
         # make a copy of the tokenizer,
@@ -57,14 +66,13 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         fm = self._first_module()
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         self.eval()
+        self.engine_args = engine_args
 
-        self.embedding_dtype = engine_args.embedding_dtype
-
-        if not (self.device.type == "mps" or not engine_args.bettertransformer):
-            fm.auto_model = to_bettertransformer(
-                fm.auto_model,
-                logger,
-            )
+        fm.auto_model = to_bettertransformer(
+            fm.auto_model,
+            engine_args,
+            logger,
+        )
 
         if self.device.type == "cuda" and engine_args.dtype in [
             Dtype.auto,
@@ -79,39 +87,35 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             )
 
         if engine_args.compile:
-            logger.info("using torch.compile()")
+            logger.info("using torch.compile(dynamic=True)")
             fm.auto_model = torch.compile(fm.auto_model, dynamic=True)
 
-    def encode_pre(self, sentences) -> Mapping[str, Tensor]:
+    def encode_pre(self, sentences) -> dict[str, "Tensor"]:
         features = self.tokenize(sentences)
 
         return features
 
-    def encode_core(self, features: Mapping[str, Tensor]) -> Tensor:
+    def encode_core(self, features: dict[str, "Tensor"]) -> "Tensor":
         """
         Computes sentence embeddings
         """
 
         with torch.no_grad():
-            features = util.batch_to_device(features, self.device)
-            out_features = self.forward(features)["sentence_embedding"]
+            features = util.batch_to_device(features, self.device)  # type: ignore
+            out_features: "Tensor" = self.forward(features)["sentence_embedding"]
 
-        return out_features
+        return out_features.detach().cpu()
 
+    @quant_embedding_decorator()
     def encode_post(
-        self, out_features: Tensor, normalize_embeddings: bool = True
+        self, out_features: "Tensor", normalize_embeddings: bool = True
     ) -> EmbeddingReturnType:
         with torch.inference_mode():
-            embeddings: Tensor = out_features.detach().cpu().to(torch.float32)
+            embeddings: "Tensor" = out_features.to(torch.float32)
             if normalize_embeddings:
                 embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
 
             embeddings_np: np.ndarray = embeddings.numpy()
-
-            if self.embedding_dtype.value != "float32":
-                raise NotImplementedError(
-                    f"EmbeddingDtype for {self.embedding_dtype} not implemented"
-                )
 
         return embeddings_np
 

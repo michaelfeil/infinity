@@ -1,5 +1,11 @@
 # Python Integrations
 
+## Cognita
+https://github.com/truefoundry/cognita
+
+## RagFlow
+https://github.com/infiniflow/ragflow
+
 ## Langchain (from running server)
 Infinity has an official integration into `pip install langchain>=0.342`. 
 You can find more documentation on that here:

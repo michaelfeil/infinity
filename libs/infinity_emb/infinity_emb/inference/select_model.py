@@ -8,6 +8,7 @@ from infinity_emb.args import (
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseCrossEncoder, BaseEmbedder
 from infinity_emb.transformer.utils import (
+    ClipLikeEngine,
     EmbedderEngine,
     InferenceEngine,
     PredictEngine,
@@ -44,6 +45,8 @@ def get_engine_type_from_config(
             return RerankEngine.from_inference_engine(engine_args.engine)
         else:
             return PredictEngine.from_inference_engine(engine_args.engine)
+    if config.get("vision_config") and "clip" in config.get("model_type", "").lower():
+        return ClipLikeEngine.from_inference_engine(engine_args.engine)
     else:
         return EmbedderEngine.from_inference_engine(engine_args.engine)
 
@@ -54,7 +57,7 @@ def select_model(
     logger.info(
         f"model=`{engine_args.model_name_or_path}` selected, "
         f"using engine=`{engine_args.engine.value}`"
-        f" and device=`{engine_args.device.value}`"
+        f" and device=`{engine_args.device.resolve()}`"
     )
     # TODO: add EncoderEngine
     unloaded_engine = get_engine_type_from_config(engine_args)

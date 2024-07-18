@@ -1,0 +1,48 @@
+# workflow to deploy infra/modal/webserver.py to modal.com
+
+name: release_modal_com
+
+on:
+  workflow_call:
+    inputs:
+      unused:
+        required: false
+        type: string
+        description: "To be replaced."
+
+jobs:
+  modal:
+    runs-on: ubuntu-latest
+    environment:
+      name: publish
+    steps:
+      - name: Free Disk Space
+        uses: jlumbroso/free-disk-space@v1.3.0
+        if: runner.os == 'Linux'
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Get git tag
+        uses: actions-ecosystem/action-get-latest-tag@v1
+        id: get-latest-tag
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
+
+      - name: Install modal
+        run: |
+          python -m pip install --upgrade pip
+          pip install modal==0.62.231
+          modal token set --token-id ${{ secrets.MODAL_TOKEN_ID }} --token-secret ${{ secrets.MODAL_TOKEN_SECRET }}
+
+      - name: Modal Deploy
+        run: |
+          VERSION_INF=${{ steps.get-latest-tag.outputs.tag }} CI_DEPLOY_INF=true modal deploy --tag ${{ steps.get-latest-tag.outputs.tag }}-github-ci --env prod infra.modal.webserver

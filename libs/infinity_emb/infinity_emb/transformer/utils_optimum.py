@@ -13,10 +13,8 @@ if CHECK_ONNXRUNTIME.is_available:
     try:
         from optimum.onnxruntime import ORTOptimizer  # type: ignore
         from optimum.onnxruntime.configuration import OptimizationConfig  # type: ignore
-    except ImportError:
-        pass
-    except RuntimeError:
-        pass
+    except (ImportError, RuntimeError, Exception) as ex:
+        CHECK_ONNXRUNTIME.mark_dirty(ex)
 
 if CHECK_TORCH.is_available:
     import torch
@@ -70,6 +68,7 @@ def optimize_model(
     file_name: str,
     optimize_model=False,
     revision: Optional[str] = None,
+    trust_remote_code: bool = True,
 ):
     CHECK_ONNXRUNTIME.mark_required()
     path_folder = (
@@ -77,11 +76,14 @@ def optimize_model(
         if Path(model_name_or_path).exists()
         else Path(HUGGINGFACE_HUB_CACHE) / "infinity_onnx" / model_name_or_path
     )
-    files_optimized = list(path_folder.glob("**/*optimized.onnx"))
+    files_optimized = list(
+        path_folder.glob(f"**/*{execution_provider}_optimized.onnx.onnx")
+    )
     if execution_provider == "TensorrtExecutionProvider":
         return model_class.from_pretrained(
             model_name_or_path,
             revision=revision,
+            trust_remote_code=trust_remote_code,
             provider=execution_provider,
             file_name=file_name,
             provider_options={
@@ -100,15 +102,17 @@ def optimize_model(
         return model_class.from_pretrained(
             file_optimized.parent.as_posix(),
             revision=revision,
+            trust_remote_code=trust_remote_code,
             provider=execution_provider,
             file_name=file_optimized.name,
         )
 
     unoptimized_model_path = model_class.from_pretrained(
         model_name_or_path,
+        revision=revision,
+        trust_remote_code=trust_remote_code,
         provider=execution_provider,
         file_name=file_name,
-        revision=revision,
     )
     if not optimize_model or execution_provider == "TensorrtExecutionProvider":
         return unoptimized_model_path
@@ -137,8 +141,12 @@ def optimize_model(
 
         model = model_class.from_pretrained(
             optimized_model_path,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
             provider=execution_provider,
-            file_name=Path(file_name).name.replace(".onnx", "_optimized.onnx"),
+            file_name=Path(file_name).name.replace(
+                ".onnx", f"{execution_provider}_optimized.onnx"
+            ),
         )
     except Exception as e:
         logger.warning(

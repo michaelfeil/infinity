@@ -1,7 +1,6 @@
 from infinity_emb._optional_imports import CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import Device
 from infinity_emb.transformer.abstract import BaseClassifer
 from infinity_emb.transformer.acceleration import to_bettertransformer
 
@@ -16,25 +15,30 @@ class SentenceClassifier(BaseClassifer):
         engine_args: EngineArgs,
     ) -> None:
         CHECK_TRANSFORMERS.mark_required()
+        model_kwargs = {}
+        if engine_args.bettertransformer:
+            model_kwargs["attn_implementation"] = "eager"
         self._pipe = pipeline(
             task="text-classification",
             model=engine_args.model_name_or_path,
             trust_remote_code=engine_args.trust_remote_code,
-            device=engine_args.device.value,
+            device=engine_args.device.resolve(),
             top_k=None,
             revision=engine_args.revision,
+            model_kwargs=model_kwargs,
         )
         if self._pipe.device.type != "cpu":  # and engine_args.dtype == "float16":
             self._pipe.model = self._pipe.model.half()
 
-        if not (engine_args.device == Device.mps or not engine_args.bettertransformer):
-            self._pipe.model = to_bettertransformer(
-                self._pipe.model,
-                logger,
-            )
+        self._pipe.model = to_bettertransformer(
+            self._pipe.model,
+            engine_args,
+            logger,
+        )
 
         self._infinity_tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,
+            revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
 

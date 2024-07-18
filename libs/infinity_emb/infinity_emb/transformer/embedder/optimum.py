@@ -3,9 +3,11 @@ import os
 
 import numpy as np
 
+from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
+from infinity_emb.transformer.quantization.interface import quant_embedding_decorator
 from infinity_emb.transformer.utils_optimum import (
     cls_token_pooling,
     device_to_onnx,
@@ -15,24 +17,22 @@ from infinity_emb.transformer.utils_optimum import (
     optimize_model,
 )
 
-try:
-    from optimum.onnxruntime import (  # type: ignore[import-untyped]
-        ORTModelForFeatureExtraction,
-    )
-    from transformers import AutoConfig, AutoTokenizer  # type: ignore[import-untyped]
+if CHECK_ONNXRUNTIME.is_available:
+    try:
+        from optimum.onnxruntime import (  # type: ignore[import-untyped]
+            ORTModelForFeatureExtraction,
+        )
 
-    OPTIMUM_AVAILABLE = True
-except (ImportError, RuntimeError):
-    OPTIMUM_AVAILABLE = False
+    except (ImportError, RuntimeError, Exception) as ex:
+        CHECK_ONNXRUNTIME.mark_dirty(ex)
+
+if CHECK_TRANSFORMERS.is_available:
+    from transformers import AutoConfig, AutoTokenizer  # type: ignore[import-untyped]
 
 
 class OptimumEmbedder(BaseEmbedder):
     def __init__(self, *, engine_args: EngineArgs):
-        if not OPTIMUM_AVAILABLE:
-            raise ImportError(
-                "optimum.onnxruntime is not installed."
-                "`pip install optimum[onnxruntime]`"
-            )
+        CHECK_ONNXRUNTIME.mark_required()
         provider = device_to_onnx(engine_args.device)
 
         onnx_file = get_onnx_files(
@@ -50,6 +50,8 @@ class OptimumEmbedder(BaseEmbedder):
 
         self.model = optimize_model(
             model_name_or_path=engine_args.model_name_or_path,
+            revision=engine_args.revision,
+            trust_remote_code=engine_args.trust_remote_code,
             execution_provider=provider,
             file_name=onnx_file.as_posix(),
             optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False),
@@ -59,13 +61,16 @@ class OptimumEmbedder(BaseEmbedder):
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,
+            revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
         self.config = AutoConfig.from_pretrained(
             engine_args.model_name_or_path,
+            revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
+        self.engine_args = engine_args
 
     def encode_pre(self, sentences: list[str]) -> dict[str, np.ndarray]:
         encoded = self.tokenizer(
@@ -86,6 +91,7 @@ class OptimumEmbedder(BaseEmbedder):
             "attention_mask": onnx_input["attention_mask"],
         }
 
+    @quant_embedding_decorator()
     def encode_post(self, embedding: dict) -> EmbeddingReturnType:
         embedding = self.pooling(  # type: ignore
             embedding["token_embeddings"], embedding["attention_mask"]

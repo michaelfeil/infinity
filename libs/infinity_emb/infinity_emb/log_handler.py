@@ -3,8 +3,6 @@ import sys
 from enum import Enum
 from typing import Any
 
-logging.getLogger().handlers.clear()
-
 handlers: list[Any] = []
 try:
     from rich.console import Console
@@ -23,7 +21,23 @@ LOG_LEVELS: dict[str, int] = {
     "trace": 5,
 }
 
-FORMAT = "%(asctime)s %(name)s %(levelname)s: %(message)s"
+FORMAT = """{
+        "ts": "%(timestamp_ms)d",
+        "type": "app",
+        "svc": "embedding-service",
+        "lvl": "%(levelname)s",
+        "act": "%(pathname)s:%(funcName)s:%(lineno)d",
+        "a_id": "%(account_id)s",
+        "r_id": "%(request_id)s",
+        "p": "freddy-freshservice",
+        "tp": "%(trace_parent)s",
+        "d": "%(time_elapsed)f",
+        "thread_id": "%(thread)s",
+        "trace_id": "%(otelTraceID)s",
+        "dur": "%(time_elapsed)f",
+        "msg": "%(message)s",
+    }"""
+
 logging.basicConfig(
     level="INFO",
     format=FORMAT,

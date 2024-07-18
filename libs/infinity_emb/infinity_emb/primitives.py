@@ -3,6 +3,7 @@ Definition of enums and dataclasses used in the library.
 
 Do not import infinity_emb from this file, as it will cause a circular import.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -13,10 +14,22 @@ from dataclasses import dataclass, field
 
 # cached_porperty
 from functools import lru_cache
-from typing import Generic, Literal, Optional, Type, TypedDict, TypeVar, Union
+from typing import (
+    TYPE_CHECKING,
+    Generic,
+    Literal,
+    Optional,
+    Type,
+    TypedDict,
+    TypeVar,
+    Union,
+)
 
 import numpy as np
 import numpy.typing as npt
+
+if TYPE_CHECKING:
+    from PIL.Image import Image as ImageClass
 
 # if python>=3.10 use kw_only
 
@@ -47,12 +60,20 @@ class EnumType(enum.Enum):
             cls.__name__ + "__names", {k: k for k in cls.__members__.keys()}
         )
 
+    @staticmethod
+    def default_value() -> str:
+        raise NotImplementedError
+
 
 class InferenceEngine(EnumType):
     torch = "torch"
     ctranslate2 = "ctranslate2"
     optimum = "optimum"
-    debugengine = "dummytransformer"
+    debugengine = "debugengine"
+
+    @staticmethod
+    def default_value():
+        return InferenceEngine.torch.value
 
 
 class Device(EnumType):
@@ -60,26 +81,50 @@ class Device(EnumType):
     cuda = "cuda"
     mps = "mps"
     tensorrt = "tensorrt"
-    auto = None
+    auto = "auto"
+
+    @staticmethod
+    def default_value():
+        return Device.auto.value
+
+    def resolve(self) -> Optional[str]:
+        if self == Device.auto:
+            return None
+        return self.value
 
 
 class Dtype(EnumType):
+    float32: str = "float32"
     float16: str = "float16"
     int8: str = "int8"
     fp8: str = "fp8"
     auto: str = "auto"
 
+    @staticmethod
+    def default_value():
+        return Dtype.auto.value
+
 
 class EmbeddingDtype(EnumType):
     float32: str = "float32"
-    # int8: str = "int8"
-    # binary: str = "binary"
+    int8: str = "int8"
+    uint8: str = "uint8"
+    binary: str = "binary"
+    ubinary: str = "ubinary"
+
+    @staticmethod
+    def default_value():
+        return EmbeddingDtype.float32.value
 
 
 class PoolingMethod(EnumType):
     mean: str = "mean"
     cls: str = "cls"
     auto: str = "auto"
+
+    @staticmethod
+    def default_value():
+        return PoolingMethod.auto.value
 
 
 @dataclass(**dataclass_args)
@@ -89,7 +134,7 @@ class AbstractSingle(ABC):
         pass
 
     @abstractmethod
-    def to_input(self) -> Union[str, tuple[str, str]]:
+    def to_input(self) -> Union[str, tuple[str, str], "ImageClass"]:
         pass
 
 
@@ -119,6 +164,18 @@ class ReRankSingle(AbstractSingle):
 @dataclass(**dataclass_args)
 class PredictSingle(EmbeddingSingle):
     pass
+
+
+@dataclass(**dataclass_args)
+class ImageSingle(AbstractSingle):
+    image: "ImageClass"
+
+    def str_repr(self) -> str:
+        """creates a dummy representation of the image to count tokens relative to shape"""
+        return f"an image is worth a repeated {'token' * self.image.height}"
+
+    def to_input(self) -> "ImageClass":
+        return self.image
 
 
 AbstractInnerType = TypeVar("AbstractInnerType")
@@ -210,12 +267,37 @@ class PredictInner(AbstractInner):
         return self.class_encoding
 
 
-QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner]
+@dataclass(order=True, **dataclass_args)
+class ImageInner(AbstractInner):
+    content: ImageSingle
+    embedding: Optional[EmbeddingReturnType] = None
+
+    async def complete(self, result: EmbeddingReturnType) -> None:
+        """marks the future for completion.
+        only call from the same thread as created future."""
+        self.embedding = result
+
+        if self.embedding is None:
+            raise ValueError("embedding is None")
+        try:
+            self.future.set_result(self.embedding)
+        except asyncio.exceptions.InvalidStateError:
+            pass
+
+    async def get_result(self) -> EmbeddingReturnType:
+        """waits for future to complete and returns result"""
+        await self.future
+        assert self.embedding is not None
+        return self.embedding
+
+
+QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner, ImageInner]
 
 _type_to_inner_item_map = {
     EmbeddingSingle: EmbeddingInner,
     ReRankSingle: ReRankInner,
     PredictSingle: PredictInner,
+    ImageSingle: ImageInner,
 }
 
 
@@ -243,4 +325,8 @@ class ModelNotDeployedError(Exception):
     pass
 
 
-ModelCapabilites = Literal["embed", "rerank", "classify"]
+class ImageCorruption(Exception):
+    pass
+
+
+ModelCapabilites = Literal["embed", "rerank", "classify", "image_embed"]

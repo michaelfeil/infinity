@@ -21,8 +21,9 @@ class CustomFIFOQueue:
     def __len__(self):
         return len(self._queue)
 
-    async def extend(self, items: list[PrioritizedQueueItem]):
+    def extend(self, items: list[PrioritizedQueueItem]):
         with self._lock_queue_event:
+            # TODO: _lock event might be conjesting the main thread.
             self._queue.extend(items)
         self._sync_event.set()
 

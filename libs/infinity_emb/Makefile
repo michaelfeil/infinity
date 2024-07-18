@@ -3,7 +3,7 @@
 # Default target executed when no arguments are given to make.
 all: help
 
-precommit : | format spell_fix spell_check lint test
+precommit : | format spell_fix spell_check lint poetry_check test
 
 ######################
 # TESTING AND COVERAGE
@@ -14,15 +14,15 @@ TEST_FILE ?= tests/unit_tests/
 
 # Run unit tests and generate a coverage report.
 coverage:
-	poetry run pytest --cov \
-		--cov-config=.coveragerc \
-		--cov-report xml \
-		--cov-report term-missing:skip-covered \
-		$(TEST_FILE)
+	poetry run coverage run --source ./infinity_emb -m pytest 
+	poetry run coverage report -m
+	poetry run coverage xml
 
 test tests:
 	poetry run pytest 
 
+openapi:
+	wget http://0.0.0.0:7997/openapi.json -O ../../docs/assets/openapi.json
 
 ######################
 # LINTING AND FORMATTING
@@ -41,6 +41,9 @@ lint lint_diff:
 format format_diff:
 	[ "$(PYTHON_FILES)" = "" ] || poetry run black $(PYTHON_FILES)
 	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff --select I --fix $(PYTHON_FILES)
+
+poetry_check:
+	poetry check
 
 spell_check:
 	poetry run codespell --toml pyproject.toml
@@ -73,6 +76,7 @@ help:
 	@echo 'lint                         - run linters'
 	@echo 'spell_check               	- run codespell on the project'
 	@echo 'spell_fix               		- run codespell on the project and fix the errors'
+	@echo 'poetry_check                 - run poetry check'
 	@echo '-- TESTS --'
 	@echo 'coverage                     - run unit tests and generate coverage report'
 	@echo 'test                         - run unit tests'

@@ -1,0 +1,39 @@
+[tool.poetry]
+name = "simpleinference"
+version = "0.0.1-dev5"
+description = "A stable and easy-to-use inference library with a focus on a sync-to-async API"
+authors = ["michaelfeil <me@michaelfeil.eu>"]
+readme = "README.md"
+homepage = "https://github.com/michaelfeil/infinity"
+repository = "https://github.com/michaelfeil/infinity"
+keywords = ["vector", "embedding", "neural", "search", "sentence-transformers"]
+
+[[tool.poetry.source]]
+name = "pytorch_cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
+
+[tool.poetry.dependencies]
+python = ">=3.9,<4"
+# infinity_emb = {path = "../infinity_emb", extras = ["optimum","vision"]}
+infinity_emb = {version = "0.0.49", extras = ["optimum","vision","torch"]}
+[tool.poetry.group.test.dependencies]
+pytest = "^7.0.0"
+coverage = {extras = ["toml"], version = "^7.3.2"}
+mypy = "^1.5.1"
+
+[tool.poetry.group.codespell.dependencies]
+codespell = "^2.2.0"
+
+[tool.poetry.group.lint.dependencies]
+ruff = "^0.2.0"
+types-toml = "^0.10.8.1"
+types-redis = "^4.3.21.6"
+types-pytz = "^2023.3.0.0"
+black = "^23.1.0"
+types-chardet = "^5.0.4.6"
+mypy-protobuf = "^3.0.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

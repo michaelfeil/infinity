@@ -10,6 +10,12 @@ on:
         required: false
         type: boolean
         default: true
+      extra_poetry:
+        description: 'Extra poetry commands to run'
+        required: false
+        type: string
+        default: "--extras all --with test"
+
 
 env:
   POETRY_VERSION: "1.7.1"
@@ -21,19 +27,34 @@ jobs:
       run:
         working-directory: ${{ inputs.working-directory }}
     strategy:
+      # fail-fast: true
       matrix:
+        os: [ubuntu-latest, windows-latest] # macos-latest
         python-version:
           - "3.9"
           - "3.10"
           - "3.11"
           - "3.12"
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest 
+        coverage_tests: ["unit_test", "end_to_end"]
+        exclude:
+          # Exclude unit tests on macOS due to compatibility issues
+          - python-version: "3.9"
+            os: macos-latest
+            coverage_tests: "unit_test"
+          - python-version: "3.10"
+            os: macos-latest
+            coverage_tests: "unit_test"
+          - python-version: "3.11"
+            os: macos-latest
+            coverage_tests: "unit_test"
+          - python-version: "3.12"
+            os: macos-latest
+            coverage_tests: "unit_test"
+        # continue-on-error: ${{ matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11' }}
 
+          
     runs-on: ${{ matrix.os }}
-    name: Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    name: Py${{ matrix.python-version }}-${{ matrix.os }}-${{ matrix.coverage_tests }}
     steps:
       - name: Free Disk Space
         uses: jlumbroso/free-disk-space@v1.3.0
@@ -55,16 +76,23 @@ jobs:
           python-version: ${{ matrix.python-version }}
           poetry-version: ${{ env.POETRY_VERSION }}
           working-directory: ${{ inputs.working-directory }}
-          cache-key: infinity-emb-test
+          cache-key: ${{ inputs.working-directory }}-test-${{ matrix.coverage_tests }}
 
-      - name: Install dependencies
+      - name: Install dependencies from local
+        # only if source is local
         shell: bash
-        run: poetry install --extras all --with test
+        run: poetry install ${{ inputs.extra_poetry }}
 
       - name: Run Pytest Coverage
+        if: ${{ inputs.working-directory == 'libs/infinity_emb' }}
         run: |
-          poetry run coverage run -m --source ./infinity_emb pytest tests 
+          poetry run coverage run -m --source ./infinity_emb pytest tests/${{ matrix.coverage_tests }} 
           poetry run coverage xml
+      
+      - name: Run Pytest Coverage w/o infinity
+        if: ${{ inputs.working-directory != 'libs/infinity_emb' }}
+        run: 
+          make coverage
 
       - name: Upload coverage Report to Codecov for python 3.11
         if: ${{ matrix.python-version == '3.11' && inputs.upload_coverage == true && matrix.os == 'ubuntu-latest'}}

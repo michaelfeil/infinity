@@ -69,7 +69,7 @@ class CT2SentenceTransformer(SentenceTransformerPatched):
         engine_args=EngineArgs,
         ct2_compute_type: str = "default",
     ):
-        self._prefered_device = engine_args.device.value
+        self._prefered_device = engine_args.device.resolve()
         super().__init__(engine_args=engine_args)
         self[0] = CT2Transformer(
             self[0],

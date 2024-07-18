@@ -6,7 +6,10 @@ import pytest
 from sentence_transformers import InputExample, util  # type: ignore
 
 pytest.DEFAULT_BERT_MODEL = "michaelfeil/bge-small-en-v1.5"
-pytest.DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-base"
+pytest.DEFAULT_RERANKER_MODEL = "mixedbread-ai/mxbai-rerank-xsmall-v1"
+pytest.DEFAULT_CLASSIFIER_MODEL = "SamLowe/roberta-base-go_emotions"
+
+pytest.ENGINE_METHODS = ["embed", "image_embed", "classify", "rerank"]
 
 
 @pytest.fixture

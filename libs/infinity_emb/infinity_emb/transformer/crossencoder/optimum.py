@@ -18,7 +18,7 @@ if CHECK_ONNXRUNTIME.is_available:
             ORTModelForSequenceClassification,
         )
         from transformers import AutoConfig, AutoTokenizer  # type: ignore
-    except (ImportError, RuntimeError) as ex:
+    except (ImportError, RuntimeError, Exception) as ex:
         CHECK_ONNXRUNTIME.mark_dirty(ex)
 
 
@@ -40,14 +40,18 @@ class OptimumCrossEncoder(BaseCrossEncoder):
             file_name=onnx_file.as_posix(),
             optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False),
             model_class=ORTModelForSequenceClassification,
+            revision=engine_args.revision,
+            trust_remote_code=engine_args.trust_remote_code,
         )
         self.model.use_io_binding = False
         self.tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,
+            revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
         self.config = AutoConfig.from_pretrained(
             engine_args.model_name_or_path,
+            revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
@@ -59,6 +63,7 @@ class OptimumCrossEncoder(BaseCrossEncoder):
             padding=True,
             truncation="longest_first",
             return_tensors="np",
+            return_token_type_ids=False,
         )
         # Windows requires int64
         encoded = {k: v.astype(np.int64) for k, v in encoded.items()}

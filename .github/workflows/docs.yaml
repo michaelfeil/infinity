@@ -12,6 +12,9 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: 3.11
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -19,9 +22,6 @@ jobs:
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-      - uses: actions/setup-python@v5
-        with:
-          python-version: 3.11
       - run: echo "cache_id=$(date --utc '+%V')" >> $GITHUB_ENV 
       - uses: actions/cache@v4
         with:
@@ -43,7 +43,7 @@ jobs:
         if: github.event_name == 'release' && github.event.action == 'published'
         run: |
           cd docs
-          mike deploy --push --update-aliases $INFINITY_VERSION latest
+          mike deploy --push --update-aliases $INFINITY_VERSION latest --alias-type=redirect
       - name: Build and Deploy Dev/main
         # only if dev/main branch is pushed
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

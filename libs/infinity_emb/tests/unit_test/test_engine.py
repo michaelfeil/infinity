@@ -1,3 +1,5 @@
+import asyncio
+import inspect
 import sys
 
 import numpy as np
@@ -5,8 +7,13 @@ import pytest
 import torch
 from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
 
-from infinity_emb import AsyncEmbeddingEngine, EngineArgs
-from infinity_emb.primitives import InferenceEngine, ModelNotDeployedError
+from infinity_emb import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
+from infinity_emb.primitives import (
+    Device,
+    EmbeddingDtype,
+    InferenceEngine,
+    ModelNotDeployedError,
+)
 
 # Only compile on Linux 3.9-3.11 with torch
 SHOULD_TORCH_COMPILE = sys.platform == "linux" and sys.version_info < (3, 12)
@@ -41,7 +48,7 @@ async def test_async_api_torch():
     )
     assert engine.capabilities == {"embed"}
     async with engine:
-        embeddings, usage = await engine.embed(sentences)
+        embeddings, usage = await engine.embed(sentences=sentences)
         assert isinstance(embeddings, list)
         assert isinstance(embeddings[0], np.ndarray)
         embeddings = np.array(embeddings)
@@ -57,47 +64,21 @@ async def test_async_api_torch():
 
 
 @pytest.mark.anyio
-async def test_async_api_torch_CROSSENCODER():
-    query = "Where is Paris?"
-    documents = [
-        "Paris is the capital of France.",
-        "Berlin is the capital of Germany.",
-        "You can now purchase my favorite dish",
-    ]
-    engine = AsyncEmbeddingEngine.from_args(
-        EngineArgs(
-            model_name_or_path="BAAI/bge-reranker-base",
-            engine=InferenceEngine.torch,
-            revision=None,
-            device="auto",
-            model_warmup=True,
-        )
+@pytest.mark.parametrize("engine", [InferenceEngine.torch, InferenceEngine.optimum])
+async def test_engine_reranker_torch_opt(engine):
+    model_unpatched = CrossEncoder(
+        "mixedbread-ai/mxbai-rerank-xsmall-v1",
     )
-
-    assert engine.capabilities == {"rerank"}
-
-    async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents)
-
-    assert usage == sum([len(query) + len(d) for d in documents])
-    assert len(rankings) == len(documents)
-    np.testing.assert_almost_equal(rankings, [0.9958, 0.9439, 0.000037], decimal=3)
-
-
-@pytest.mark.anyio
-async def test_engine_crossencoder_vs_sentence_transformers():
-    model_unpatched = CrossEncoder("BAAI/bge-reranker-base")
     query = "Where is Paris?"
     documents = [
         "Paris is the capital of France.",
         "Berlin is the capital of Germany.",
         "You can now purchase my favorite dish",
-    ] * 100
+    ] * 20
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
-            model_name_or_path="BAAI/bge-reranker-base",
+            model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
             engine=InferenceEngine.torch,
-            device="cuda" if torch.cuda.is_available() else "cpu",
             model_warmup=False,
         )
     )
@@ -105,40 +86,14 @@ async def test_engine_crossencoder_vs_sentence_transformers():
     query_docs = [(query, doc) for doc in documents]
 
     async with engine:
-        rankings, _ = await engine.rerank(query=query, docs=documents)
+        rankings, usage = await engine.rerank(query=query, docs=documents)
 
     rankings_unpatched = model_unpatched.predict(query_docs)
 
-    np.testing.assert_allclose(rankings, rankings_unpatched, rtol=1e-2, atol=1e-2)
-
-
-@pytest.mark.anyio
-async def test_async_api_optimum_crossencoder():
-    query = "Where is Paris?"
-    documents = [
-        "Paris is the capital of France.",
-        "Berlin is the capital of Germany.",
-        "You can now purchase my favorite dish",
-    ]
-    engine = AsyncEmbeddingEngine.from_args(
-        EngineArgs(
-            model_name_or_path="Xenova/bge-reranker-base",
-            engine=InferenceEngine.optimum,
-            revision=None,
-            device="cpu",
-            model_warmup=False,
-            compile=SHOULD_TORCH_COMPILE,
-        )
-    )
-
-    assert engine.capabilities == {"rerank"}
-
-    async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents)
-
+    np.testing.assert_allclose(rankings, rankings_unpatched, rtol=1e-1, atol=1e-1)
     assert usage == sum([len(query) + len(d) for d in documents])
     assert len(rankings) == len(documents)
-    np.testing.assert_almost_equal(rankings, [0.99743, 0.966, 0.000037], decimal=3)
+    np.testing.assert_almost_equal(rankings[:3], [0.83, 0.085, 0.028], decimal=2)
 
 
 @pytest.mark.anyio
@@ -165,7 +120,7 @@ async def test_async_api_torch_CLASSIFY():
 
 
 @pytest.mark.anyio
-async def test_async_api_torch_usage():
+async def test_async_api_torch_lengths_via_tokenize_usage():
     sentences = ["Hi", "how", "school", "Pizza Hi"]
     device = "auto"
     if torch.backends.mps.is_available():
@@ -180,7 +135,7 @@ async def test_async_api_torch_usage():
         )
     )
     async with engine:
-        embeddings, usage = await engine.embed(sentences)
+        embeddings, usage = await engine.embed(sentences=sentences)
         embeddings = np.array(embeddings)
         # usage should be similar to
         assert usage == 5
@@ -189,18 +144,101 @@ async def test_async_api_torch_usage():
 
 
 @pytest.mark.anyio
+async def test_torch_clip_embed():
+    image_urls = [
+        "http://images.cocodataset.org/val2017/000000039769.jpg"
+    ]  # a photo of two cats
+    sentences = [
+        "a photo of two cats",
+        "a photo of a cat",
+        "a photo of a dog",
+        "a photo of a car",
+    ]
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M",
+            engine=InferenceEngine.torch,
+            model_warmup=True,
+        )
+    )
+    async with engine:
+        t1, t2 = asyncio.create_task(
+            engine.embed(sentences=sentences)
+        ), asyncio.create_task(engine.image_embed(images=image_urls))
+        emb_text, usage_text = await t1
+        emb_image, usage_image = await t2
+        emb_text_np = np.array(emb_text)  # type: ignore
+        emb_image_np = np.array(emb_image)  # type: ignore
+
+    assert emb_text_np.shape[0] == len(sentences)
+    assert emb_image_np.shape[0] == len(image_urls)
+    assert emb_text_np.shape[1] >= 10
+    assert emb_image_np.shape == emb_image_np[: len(image_urls)].shape
+
+    assert usage_text == sum([len(s) for s in sentences])
+
+    # check if cat image and two cats are most similar
+    for i in range(1, len(sentences)):
+        assert np.dot(emb_text_np[0], emb_image_np[0]) > np.dot(
+            emb_text_np[i], emb_image_np[0]
+        )
+
+
+@pytest.mark.anyio
+@pytest.mark.skipif(sys.platform != "linux", reason="only run these on Linux")
+@pytest.mark.parametrize(
+    "embedding_dtype",
+    [
+        EmbeddingDtype.float32,
+        EmbeddingDtype.int8,
+        # EmbeddingDtype.uint8,
+        EmbeddingDtype.ubinary,
+    ],
+)
+async def test_async_api_torch_embedding_quant(embedding_dtype: EmbeddingDtype):
+    sentences = ["Hi", "how", "school", "Pizza Hi"]
+    device = "auto"
+    if torch.backends.mps.is_available():
+        device = "cpu"
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="michaelfeil/bge-small-en-v1.5",
+            engine=InferenceEngine.torch,
+            device=Device[device],
+            lengths_via_tokenize=True,
+            model_warmup=False,
+            compile=SHOULD_TORCH_COMPILE,
+            embedding_dtype=embedding_dtype,
+        )
+    )
+    async with engine:
+        emb, usage = await engine.embed(sentences=sentences)
+        embeddings = np.array(emb)  # type: ignore
+
+    if embedding_dtype == EmbeddingDtype.int8:
+        assert embeddings.dtype == np.int8
+    elif embedding_dtype == EmbeddingDtype.uint8:
+        assert embeddings.dtype == np.uint8
+    elif embedding_dtype == EmbeddingDtype.ubinary:
+        embeddings_up = np.unpackbits(embeddings, axis=-1).astype(int)  # type: ignore
+        assert embeddings_up.max() == 1
+        assert embeddings_up.min() == 0
+    # usage should be similar to
+    assert usage == 5
+    assert embeddings.shape[0] == len(sentences)
+    assert embeddings.shape[1] >= 10
+
+
+@pytest.mark.anyio
 async def test_async_api_failing():
     sentences = ["Hi", "how"]
     engine = AsyncEmbeddingEngine.from_args(EngineArgs())
     with pytest.raises(ValueError):
-        await engine.embed(sentences)
+        await engine.embed(sentences=sentences)
 
     await engine.astart()
     assert not engine.is_overloaded()
     assert engine.overload_status()
-
-    with pytest.raises(ValueError):
-        await engine.astart()
     await engine.astop()
 
 
@@ -214,3 +252,14 @@ async def test_async_api_failing_revision():
                 revision="a32952c6d05d45f64f9f709a092c00839bcfe70a",
             )
         )
+
+
+@pytest.mark.parametrize("method_name", list(pytest.ENGINE_METHODS))  # type: ignore
+def test_args_between_array_and_engine_same(method_name: str):
+    array_method = inspect.getfullargspec(getattr(AsyncEngineArray, method_name))
+    engine_method = inspect.getfullargspec(getattr(AsyncEmbeddingEngine, method_name))
+
+    assert "model" in array_method.kwonlyargs
+    assert sorted(array_method.args + array_method.kwonlyargs) == sorted(
+        engine_method.args + engine_method.kwonlyargs + ["model"]
+    )

@@ -17,11 +17,11 @@ body:
     attributes:
       label: Open source status
       description: |
-          Please note that if the model implementation isn't available in `transformers` and .
+          Please note that if the model implementation isn't available in `transformers`, the model can't be loaded.
       options:
         - label: "The model implementation is available on transformers"
         - label: "The model weights are available on huggingface-hub"
-        - label: "I verified that the model is currently not running in infinity"
+        - label: "I verified that the model is currently not running in the lastest version `pip install infinity_emb[all] --upgrade`"
 
   - type: textarea
     id: additional-info

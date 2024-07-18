@@ -23,7 +23,9 @@ USE_INFINITY = BENCHMARK_NAME == "infinity"
 DEVICE = os.environ.get("DEVICE", "cpu")
 
 # load large for cuda, small for cpu. (benchmarking large on cpu takes too long)
-MODEL_NAME = "michaelfeil/bge-small-en-v1.5" if DEVICE == "cpu" else "BAAI/bge-large-en-v1.5"
+MODEL_NAME = (
+    "michaelfeil/bge-small-en-v1.5" if DEVICE == "cpu" else "BAAI/bge-large-en-v1.5"
+)
 
 # model loading
 
@@ -59,7 +61,7 @@ def encode_sentence_transformer(text: list[str]):
 
 
 async def encode_infinity(text: list[str]):
-    return (await engine.embed(text))[0]
+    return (await engine.embed(sentences=text))[0]
 
 
 @asynccontextmanager

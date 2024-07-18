@@ -1,0 +1,33 @@
+# service.yaml
+envs:
+  INFINITY_MODEL_ID: BAAI/bge-small-en-v1.5;mixedbread-ai/mxbai-rerank-xsmall-v1;
+  HF_TOKEN: "" # TODO: Fill with your own huggingface token, or use --env to pass.
+  INFINITY_API_KEY: "" # OPTIONAL: Fill if you want to use Infinity API.
+  INFINITY_ENGINE: "torch"
+  INFINITY_PORT: 8080
+
+service:
+  readiness_probe:
+    path: /health
+    headers:
+      Authorization: Bearer $INFINITY_API_KEY
+  replica_policy:
+    min_replicas: 0
+    max_replicas: 2
+    target_qps_per_replica: 20
+    # Allows replicas to be run on on-demand instances if spot instances are not available
+    dynamic_ondemand_fallback: true
+
+# Fields below describe each replica.
+resources:
+  ports: 8080
+  accelerators: {L4, A10g, A100, A100-80GB}
+  use_spot: true
+
+setup: |
+  conda create -n infinity python=3.11 -y
+  conda activate infinity
+  pip install infinity_emb[all]==0.0.48 --no-cache-dir
+run: |
+  conda activate infinity
+  infinity_emb v2

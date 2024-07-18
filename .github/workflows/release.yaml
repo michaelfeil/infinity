@@ -18,3 +18,9 @@ jobs:
       dockerfile: libs/infinity_emb/Dockerfile
       image: michaelf34/infinity
     secrets: inherit
+
+  modal-deploy:
+    needs: docker-container-push
+    uses:
+      ./.github/workflows/release_modal_com.yaml
+    secrets: inherit

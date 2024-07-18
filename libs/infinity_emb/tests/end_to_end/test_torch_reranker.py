@@ -14,12 +14,14 @@ batch_size = 32 if torch.cuda.is_available() else 8
 
 app = create_server(
     url_prefix=PREFIX,
-    engine_args=EngineArgs(
-        model_name_or_path=MODEL,
-        batch_size=batch_size,
-        engine=InferenceEngine.torch,
-        device=Device.auto if not torch.backends.mps.is_available() else Device.cpu,
-    ),
+    engine_args_list=[
+        EngineArgs(
+            model_name_or_path=MODEL,
+            batch_size=batch_size,
+            engine=InferenceEngine.torch,
+            device=Device.auto if not torch.backends.mps.is_available() else Device.cpu,
+        )
+    ],
 )
 
 
@@ -39,15 +41,15 @@ async def client():
 def test_load_model(model_base):
     # this makes sure that the error below is not based on a slow download
     # or internal pytorch errors
+    def predict(a, b):
+        return model_base.predict({"text": a, "text_pair": b})["score"]
+
     assert (
         1.0
-        > model_base.predict(
-            {
-                "text": "Where is New York?",
-                "text_pair": "New York is in the united states",
-            }
-        )["score"]
-        > 0.9
+        > predict("Where is Paris?", "Paris is the capital of France.")
+        > predict("Where is Paris?", "Berlin is the capital of Germany.")
+        > predict("Where is Paris?", "You can now purchase my favorite dish")
+        > 0.001
     )
 
 
@@ -71,7 +73,7 @@ async def test_reranker(client, model_base, helpers):
     ]
     response = await client.post(
         f"{PREFIX}/rerank",
-        json={"query": query, "documents": documents},
+        json={"model": MODEL, "query": query, "documents": documents},
     )
     assert response.status_code == 200
     rdata = response.json()
@@ -86,3 +88,23 @@ async def test_reranker(client, model_base, helpers):
     assert len(rdata_results) == len(predictions)
     for i, pred in enumerate(predictions):
         assert abs(rdata_results[i]["relevance_score"] - pred["score"]) < 0.01
+
+
+@pytest.mark.anyio
+async def test_reranker_cant_embed_or_classify(client):
+    documents = [
+        "The Eiffel Tower is located in Paris, France",
+        "The Eiffel Tower is located in the United States.",
+        "The Eiffel Tower is located in the United Kingdom.",
+    ]
+    response = await client.post(
+        f"{PREFIX}/embeddings",
+        json={"model": MODEL, "input": documents},
+    )
+    assert response.status_code == 400
+
+    response = await client.post(
+        f"{PREFIX}/classify",
+        json={"model": MODEL, "input": documents},
+    )
+    assert response.status_code == 400
