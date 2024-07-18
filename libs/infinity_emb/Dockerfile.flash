@@ -9,8 +9,6 @@ RUN python -m venv .venv
 RUN source .venv/bin/activate
 RUN pip install flash_attn
 
-COPY test.py /app
-
 
 RUN pip install infinity-emb[all]
 
