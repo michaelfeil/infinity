@@ -21,6 +21,11 @@
          <changefreq>daily</changefreq>
     </url>
     <url>
+         <loc>https://michaelfeil.github.io/infinity/main/embed/</loc>
+         <lastmod>2024-07-21</lastmod>
+         <changefreq>daily</changefreq>
+    </url>
+    <url>
          <loc>https://michaelfeil.github.io/infinity/main/integrations/</loc>
          <lastmod>2024-07-21</lastmod>
          <changefreq>daily</changefreq>

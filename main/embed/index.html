@@ -5,12 +5,12 @@
 <head>
 <meta charset="utf-8"/>
 <meta content="width=device-width,initial-scale=1" name="viewport"/>
-<link href="https://michaelfeil.github.io/infinity/main/benchmarking/" rel="canonical"/>
-<link href=".." rel="prev"/>
-<link href="../contribution/" rel="next"/>
+<link href="https://michaelfeil.github.io/infinity/main/embed/" rel="canonical"/>
+<link href="../deploy/" rel="prev"/>
+<link href="../integrations/" rel="next"/>
 <link href="../assets/images/favicon.png" rel="icon"/>
 <meta content="mkdocs-1.6.0, mkdocs-material-9.5.29" name="generator"/>
-<title>Benchmarking details - Infinity</title>
+<title>embed - Infinity</title>
 <link href="../assets/stylesheets/main.76a95c52.min.css" rel="stylesheet"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
@@ -22,7 +22,7 @@
 <input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
 <label class="md-overlay" for="__drawer"></label>
 <div data-md-component="skip">
-<a class="md-skip" href="#benchmarking-details">
+<a class="md-skip" href="#embed">
           Skip to content
         </a>
 </div>
@@ -48,7 +48,7 @@
 <div class="md-header__topic" data-md-component="header-topic">
 <span class="md-ellipsis">
             
-              Benchmarking details
+              embed
             
           </span>
 </div>
@@ -98,105 +98,12 @@
   </span>
 </a>
 </li>
-<li class="md-nav__item md-nav__item--active">
-<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
-<label class="md-nav__link md-nav__link--active" for="__toc">
-<span class="md-ellipsis">
-    Benchmarking details
-  </span>
-<span class="md-nav__icon md-icon"></span>
-</label>
-<a class="md-nav__link md-nav__link--active" href="./">
+<li class="md-nav__item">
+<a class="md-nav__link" href="../benchmarking/">
 <span class="md-ellipsis">
     Benchmarking details
   </span>
 </a>
-<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
-<label class="md-nav__title" for="__toc">
-<span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#benchmarking-machines">
-<span class="md-ellipsis">
-      Benchmarking machines:
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#reproduction-steps">
-<span class="md-ellipsis">
-      Reproduction steps:
-    </span>
-</a>
-<nav aria-label="Reproduction steps:" class="md-nav">
-<ul class="md-nav__list">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#sentence-transformers-fastembed-infinity">
-<span class="md-ellipsis">
-      sentence-transformers, fastembed, infinity
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#huggingfacetext-embeddings-inference">
-<span class="md-ellipsis">
-      huggingface/text-embeddings-inference
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#tensorrt-onnx-gpu">
-<span class="md-ellipsis">
-      tensorrt, onnx-gpu:
-    </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results">
-<span class="md-ellipsis">
-      Results
-    </span>
-</a>
-<nav aria-label="Results" class="md-nav">
-<ul class="md-nav__list">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-cpu-only-baaibge-small-en-v15-bert-small">
-<span class="md-ellipsis">
-      Results: CPU-only (BAAI/bge-small-en-v1.5 | bert-small)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-nvidia-l4-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: NVIDIA L4 (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-amd-mi210-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: AMD MI210 (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-aws-inf2-xlarge-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: AWS INF2 xlarge (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-</ul>
-</nav>
 </li>
 <li class="md-nav__item">
 <a class="md-nav__link" href="../contribution/">
@@ -212,12 +119,41 @@
   </span>
 </a>
 </li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="../embed/">
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<label class="md-nav__link md-nav__link--active" for="__toc">
+<span class="md-ellipsis">
+    embed
+  </span>
+<span class="md-nav__icon md-icon"></span>
+</label>
+<a class="md-nav__link md-nav__link--active" href="./">
 <span class="md-ellipsis">
     embed
   </span>
 </a>
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+<label class="md-nav__title" for="__toc">
+<span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#installation">
+<span class="md-ellipsis">
+      Installation
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#why-embed">
+<span class="md-ellipsis">
+      Why embed?
+    </span>
+</a>
+</li>
+</ul>
+</nav>
 </li>
 <li class="md-nav__item">
 <a class="md-nav__link" href="../integrations/">
@@ -255,82 +191,18 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
-<a class="md-nav__link" href="#benchmarking-machines">
+<a class="md-nav__link" href="#installation">
 <span class="md-ellipsis">
-      Benchmarking machines:
+      Installation
     </span>
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#reproduction-steps">
+<a class="md-nav__link" href="#why-embed">
 <span class="md-ellipsis">
-      Reproduction steps:
+      Why embed?
     </span>
 </a>
-<nav aria-label="Reproduction steps:" class="md-nav">
-<ul class="md-nav__list">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#sentence-transformers-fastembed-infinity">
-<span class="md-ellipsis">
-      sentence-transformers, fastembed, infinity
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#huggingfacetext-embeddings-inference">
-<span class="md-ellipsis">
-      huggingface/text-embeddings-inference
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#tensorrt-onnx-gpu">
-<span class="md-ellipsis">
-      tensorrt, onnx-gpu:
-    </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results">
-<span class="md-ellipsis">
-      Results
-    </span>
-</a>
-<nav aria-label="Results" class="md-nav">
-<ul class="md-nav__list">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-cpu-only-baaibge-small-en-v15-bert-small">
-<span class="md-ellipsis">
-      Results: CPU-only (BAAI/bge-small-en-v1.5 | bert-small)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-nvidia-l4-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: NVIDIA L4 (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-amd-mi210-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: AMD MI210 (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#results-aws-inf2-xlarge-baaibge-large-en-v15-bert-large">
-<span class="md-ellipsis">
-      Results: AWS INF2 xlarge (BAAI/bge-large-en-v1.5 | bert-large)
-    </span>
-</a>
-</li>
-</ul>
-</nav>
 </li>
 </ul>
 </nav>
@@ -339,174 +211,54 @@
 </div>
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
-<h1 id="benchmarking-details">Benchmarking details</h1>
-<p>Benchmarks are always opinionated. The goal of this benchmark is to find the best possible self-hosted backend for $/token:</p>
-<ol>
-<li>end-to-end, including the RestAPI server</li>
-<li>multi-tenant: multiple clients will try to query your server</li>
-<li>fair batch size: You want to limit request size (sentences per requests) to something low, such that you can load balance requests, scale</li>
-<li>measured over throughput per token: Idle servers are bad for business. This benchmark is NOT about the latency for a single request against an IDLE server. It partially evaluates the latency under a typical load scenario</li>
-<li>Bert small / large - the most typical semantic search tasks require a small model (&lt; 1B params)</li>
-<li>accuracy: each backend must have a ~1e-4 prevision over the torch fp32 embeddings.</li>
-</ol>
-<h2 id="benchmarking-machines">Benchmarking machines:</h2>
-<p>CPU and NVIDIA:</p>
-<ul>
-<li>GCP g2-standard-16</li>
-<li>Intel Cascade Lake</li>
-<li>1 x NVIDIA L4, cu122</li>
-</ul>
-<p>AMD:</p>
-<ul>
-<li>16 core CPU</li>
-<li>AMD MI210, rocm5.7 without flash-attn</li>
-</ul>
-<p>AWS Inferentia</p>
-<ul>
-<li>Huggingface AMI (torch-neuronx 1.13, optimum 1.17)</li>
-<li>inf2.xlarge instance (2 Neuron Cores  with 1 used)</li>
-</ul>
-<h2 id="reproduction-steps">Reproduction steps:</h2>
-<p>Install the environment
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span><span class="s2">"infinity_emb[all]==0.0.25"</span>
-</span></code></pre></div></p>
-<h3 id="sentence-transformers-fastembed-infinity">sentence-transformers, fastembed, infinity</h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/michaelfeil/infinity.git
-</span><span id="__span-1-2"><a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a><span class="nb">cd</span><span class="w"> </span>infinity
-</span><span id="__span-1-3"><a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a>git<span class="w"> </span>checkout<span class="w"> </span>tags/0.0.25
-</span><span id="__span-1-4"><a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a>python<span class="w"> </span>./docs/benchmarks/simple_app.py
+<h1 id="embed">embed</h1>
+<p>A stable, blazing fast and easy-to-use inference library with a focus on a sync-to-async API</p>
+<h2 id="installation">Installation</h2>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>embed
 </span></code></pre></div>
-<h3 id="huggingfacetext-embeddings-inference">huggingface/text-embeddings-inference</h3>
-<p>using the <em>cpu</em> and <em>cuda-89</em> container (note that cc-89 matches to Nvidia L4)
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>-p<span class="w"> </span><span class="m">7997</span>:80<span class="w"> </span>--pull<span class="w"> </span>always<span class="w"> </span>ghcr.io/huggingface/text-embeddings-inference:cpu-0.6<span class="w"> </span>
-</span><span id="__span-2-2"><a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a>--model-id<span class="w"> </span>BAAI/bge-small-en-v1.5<span class="w"> </span>--max-client-batch-size<span class="w"> </span><span class="m">256</span>
-</span></code></pre></div></p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a href="#__codelineno-3-1" id="__codelineno-3-1" name="__codelineno-3-1"></a>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>-p<span class="w"> </span><span class="s2">"7997:80"</span><span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>--pull<span class="w"> </span>always<span class="w"> </span>ghcr.io/huggingface/text-embeddings-inference:89-0.6<span class="w"> </span>
-</span><span id="__span-3-2"><a href="#__codelineno-3-2" id="__codelineno-3-2" name="__codelineno-3-2"></a>--model-id<span class="w"> </span>BAAI/bge-large-en-v1.5<span class="w"> </span>--max-client-batch-size<span class="w"> </span><span class="m">256</span>
+<h2 id="why-embed">Why embed?</h2>
+<p>Embed makes it easy to load any embedding, classification and reranking models from Huggingface. 
+It's a wrapper around <code>SyncEngine</code> from <code>infinity_emb</code>, but updated less frequently and disentrangles pypy and docker releases of infinity.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a><span class="kn">from</span> <span class="nn">embed</span> <span class="kn">import</span> <span class="n">BatchedInference</span>
+</span><span id="__span-1-2"><a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a><span class="c1"># Run any model</span>
+</span><span id="__span-1-4"><a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a><span class="n">register</span> <span class="o">=</span> <span class="n">BatchedInference</span><span class="p">(</span><span class="n">model_id</span><span class="o">=</span><span class="p">[</span>
+</span><span id="__span-1-5"><a href="#__codelineno-1-5" id="__codelineno-1-5" name="__codelineno-1-5"></a>  <span class="c1"># sentence-embeddings</span>
+</span><span id="__span-1-6"><a href="#__codelineno-1-6" id="__codelineno-1-6" name="__codelineno-1-6"></a>  <span class="s2">"michaelfeil/bge-small-en-v1.5"</span><span class="p">,</span>
+</span><span id="__span-1-7"><a href="#__codelineno-1-7" id="__codelineno-1-7" name="__codelineno-1-7"></a>  <span class="c1"># sentence-embeddings and image-embeddings</span>
+</span><span id="__span-1-8"><a href="#__codelineno-1-8" id="__codelineno-1-8" name="__codelineno-1-8"></a>  <span class="s2">"wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M"</span><span class="p">,</span>
+</span><span id="__span-1-9"><a href="#__codelineno-1-9" id="__codelineno-1-9" name="__codelineno-1-9"></a>  <span class="c1"># classification models</span>
+</span><span id="__span-1-10"><a href="#__codelineno-1-10" id="__codelineno-1-10" name="__codelineno-1-10"></a>  <span class="s2">"philschmid/tiny-bert-sst2-distilled"</span><span class="p">,</span>
+</span><span id="__span-1-11"><a href="#__codelineno-1-11" id="__codelineno-1-11" name="__codelineno-1-11"></a>  <span class="c1"># rerankers</span>
+</span><span id="__span-1-12"><a href="#__codelineno-1-12" id="__codelineno-1-12" name="__codelineno-1-12"></a>  <span class="s2">"mixedbread-ai/mxbai-rerank-xsmall-v1"</span>
+</span><span id="__span-1-13"><a href="#__codelineno-1-13" id="__codelineno-1-13" name="__codelineno-1-13"></a><span class="p">],</span>
+</span><span id="__span-1-14"><a href="#__codelineno-1-14" id="__codelineno-1-14" name="__codelineno-1-14"></a><span class="c1"># engine to `torch` or `optimum`</span>
+</span><span id="__span-1-15"><a href="#__codelineno-1-15" id="__codelineno-1-15" name="__codelineno-1-15"></a><span class="n">engine</span><span class="o">=</span><span class="s2">"torch"</span><span class="p">,</span>
+</span><span id="__span-1-16"><a href="#__codelineno-1-16" id="__codelineno-1-16" name="__codelineno-1-16"></a><span class="c1"># device `cuda` (Nvidia/AMD) or `cpu`</span>
+</span><span id="__span-1-17"><a href="#__codelineno-1-17" id="__codelineno-1-17" name="__codelineno-1-17"></a><span class="n">device</span><span class="o">=</span><span class="s2">"cpu"</span>
+</span><span id="__span-1-18"><a href="#__codelineno-1-18" id="__codelineno-1-18" name="__codelineno-1-18"></a><span class="p">)</span>
+</span><span id="__span-1-19"><a href="#__codelineno-1-19" id="__codelineno-1-19" name="__codelineno-1-19"></a>
+</span><span id="__span-1-20"><a href="#__codelineno-1-20" id="__codelineno-1-20" name="__codelineno-1-20"></a><span class="n">sentences</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"Paris is in France."</span><span class="p">,</span> <span class="s2">"Berlin is in Germany."</span><span class="p">,</span> <span class="s2">"I love SF"</span><span class="p">]</span>
+</span><span id="__span-1-21"><a href="#__codelineno-1-21" id="__codelineno-1-21" name="__codelineno-1-21"></a><span class="n">images</span> <span class="o">=</span> <span class="p">[</span><span class="s2">"http://images.cocodataset.org/val2017/000000039769.jpg"</span><span class="p">]</span>
+</span><span id="__span-1-22"><a href="#__codelineno-1-22" id="__codelineno-1-22" name="__codelineno-1-22"></a><span class="n">question</span> <span class="o">=</span> <span class="s2">"Where is Paris?"</span>
+</span><span id="__span-1-23"><a href="#__codelineno-1-23" id="__codelineno-1-23" name="__codelineno-1-23"></a>
+</span><span id="__span-1-24"><a href="#__codelineno-1-24" id="__codelineno-1-24" name="__codelineno-1-24"></a><span class="n">register</span><span class="o">.</span><span class="n">embed</span><span class="p">(</span><span class="n">sentences</span><span class="o">=</span><span class="n">sentences</span><span class="p">,</span> <span class="n">model_id</span><span class="o">=</span><span class="s2">"michaelfeil/bge-small-en-v1.5"</span><span class="p">)</span>
+</span><span id="__span-1-25"><a href="#__codelineno-1-25" id="__codelineno-1-25" name="__codelineno-1-25"></a><span class="n">register</span><span class="o">.</span><span class="n">rerank</span><span class="p">(</span><span class="n">query</span><span class="o">=</span><span class="n">question</span><span class="p">,</span> <span class="n">docs</span><span class="o">=</span><span class="n">sentences</span><span class="p">,</span> <span class="n">model_id</span><span class="o">=</span><span class="s2">"mixedbread-ai/mxbai-rerank-xsmall-v1"</span><span class="p">)</span>
+</span><span id="__span-1-26"><a href="#__codelineno-1-26" id="__codelineno-1-26" name="__codelineno-1-26"></a><span class="n">register</span><span class="o">.</span><span class="n">classify</span><span class="p">(</span><span class="n">model_id</span><span class="o">=</span><span class="s2">"philschmid/tiny-bert-sst2-distilled"</span><span class="p">,</span> <span class="n">sentences</span><span class="o">=</span><span class="n">sentences</span><span class="p">)</span>
+</span><span id="__span-1-27"><a href="#__codelineno-1-27" id="__codelineno-1-27" name="__codelineno-1-27"></a><span class="n">register</span><span class="o">.</span><span class="n">image_embed</span><span class="p">(</span><span class="n">model_id</span><span class="o">=</span><span class="s2">"wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M"</span><span class="p">,</span> <span class="n">images</span><span class="o">=</span><span class="n">images</span><span class="p">)</span>
+</span><span id="__span-1-28"><a href="#__codelineno-1-28" id="__codelineno-1-28" name="__codelineno-1-28"></a>
+</span><span id="__span-1-29"><a href="#__codelineno-1-29" id="__codelineno-1-29" name="__codelineno-1-29"></a><span class="c1"># Always manually stop the register upon termination to free model memory.</span>
+</span><span id="__span-1-30"><a href="#__codelineno-1-30" id="__codelineno-1-30" name="__codelineno-1-30"></a><span class="n">register</span><span class="o">.</span><span class="n">stop</span><span class="p">()</span>
 </span></code></pre></div>
-<h3 id="tensorrt-onnx-gpu">tensorrt, onnx-gpu:</h3>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a href="#__codelineno-4-1" id="__codelineno-4-1" name="__codelineno-4-1"></a>docker<span class="w"> </span>buildx<span class="w"> </span>build<span class="w"> </span>--target<span class="w"> </span>production-tensorrt<span class="w"> </span>-t<span class="w"> </span>inf-trt<span class="w"> </span>.<span class="w"> </span><span class="o">&amp;&amp;</span><span class="w"> </span>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>-p<span class="w"> </span><span class="s2">"7997:7997"</span><span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>inf-trt<span class="w"> </span>v2<span class="w"> </span>--model-id<span class="w"> </span>BAAI/bge-large-en-v1.5<span class="w"> </span>--engine<span class="w"> </span>optimum<span class="w"> </span>--device<span class="w"> </span><span class="s2">"cuda OR tensorrt"</span>
+<p>All functions return <code>Futures(vector_embedding, token_usage)</code>, enables you to <code>wait</code> for them and removes batching logic from your code.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-2-1"><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">embedding_fut</span> <span class="o">=</span> <span class="n">register</span><span class="o">.</span><span class="n">embed</span><span class="p">(</span><span class="n">sentences</span><span class="o">=</span><span class="n">sentences</span><span class="p">,</span> <span class="n">model_id</span><span class="o">=</span><span class="s2">"michaelfeil/bge-small-en-v1.5"</span><span class="p">)</span>
+</span><span id="__span-2-2"><a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a><span class="o">&gt;&gt;&gt;</span> <span class="nb">print</span><span class="p">(</span><span class="n">embedding_fut</span><span class="p">)</span>
+</span><span id="__span-2-3"><a href="#__codelineno-2-3" id="__codelineno-2-3" name="__codelineno-2-3"></a><span class="o">&lt;</span><span class="n">Future</span> <span class="n">at</span> <span class="mh">0x7fa0e97e8a60</span> <span class="n">state</span><span class="o">=</span><span class="n">pending</span><span class="o">&gt;</span>
+</span><span id="__span-2-4"><a href="#__codelineno-2-4" id="__codelineno-2-4" name="__codelineno-2-4"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">time</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span> <span class="ow">and</span> <span class="nb">print</span><span class="p">(</span><span class="n">embedding_fut</span><span class="p">)</span>
+</span><span id="__span-2-5"><a href="#__codelineno-2-5" id="__codelineno-2-5" name="__codelineno-2-5"></a><span class="o">&lt;</span><span class="n">Future</span> <span class="n">at</span> <span class="mh">0x7fa0e97e9c30</span> <span class="n">state</span><span class="o">=</span><span class="n">finished</span> <span class="n">returned</span> <span class="nb">tuple</span><span class="o">&gt;</span>
+</span><span id="__span-2-6"><a href="#__codelineno-2-6" id="__codelineno-2-6" name="__codelineno-2-6"></a><span class="o">&gt;&gt;&gt;</span> <span class="n">embedding_fut</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+</span><span id="__span-2-7"><a href="#__codelineno-2-7" id="__codelineno-2-7" name="__codelineno-2-7"></a><span class="p">([</span><span class="n">array</span><span class="p">([</span><span class="o">-</span><span class="mf">3.35943862e-03</span><span class="p">,</span> <span class="o">...</span><span class="p">,</span> <span class="o">-</span><span class="mf">3.22808176e-02</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="n">float32</span><span class="p">)],</span> <span class="mi">19</span><span class="p">)</span>
 </span></code></pre></div>
-<h2 id="results">Results</h2>
-<p>To launch the benchmarks
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a href="#__codelineno-5-1" id="__codelineno-5-1" name="__codelineno-5-1"></a>make<span class="w"> </span>benchmark_embed
-</span></code></pre></div></p>
-<p>Below are the following metrics:
-*  Requests # / sec (1 request = 256 sentences / 115_000 tokens)
-*  time to run benchmark (10 requests = 1_150_000 tokens)</p>
-<h3 id="results-cpu-only-baaibge-small-en-v15-bert-small">Results: CPU-only (<em>BAAI/bge-small-en-v1.5</em> | <em>bert-small</em>)</h3>
-<table>
-<thead>
-<tr>
-<th>Model</th>
-<th>Time (seconds)</th>
-<th>Requests # / sec (mean)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>infinity-optimum-int8</td>
-<td>100.490</td>
-<td>0.10</td>
-</tr>
-<tr>
-<td>infinity-optimum (onnx)</td>
-<td>125.342</td>
-<td>0.08</td>
-</tr>
-<tr>
-<td>fastembed (onnx)</td>
-<td>125.770</td>
-<td>0.08</td>
-</tr>
-<tr>
-<td>sentence-transformers (torch)</td>
-<td>256.884</td>
-<td>0.04</td>
-</tr>
-<tr>
-<td>infinity (torch)</td>
-<td>353.065??</td>
-<td>0.03 (needs revision)</td>
-</tr>
-<tr>
-<td>huggingface/TEI (candle)</td>
-<td>1104.357</td>
-<td>0.009</td>
-</tr>
-</tbody>
-</table>
-<h3 id="results-nvidia-l4-baaibge-large-en-v15-bert-large">Results: NVIDIA L4 (<em>BAAI/bge-large-en-v1.5</em> | <em>bert-large</em>)</h3>
-<table>
-<thead>
-<tr>
-<th>Model</th>
-<th>Requests # / sec (mean)</th>
-<th>Time (seconds)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>huggingface/TEI (candle, flashbert)</td>
-<td>0.54</td>
-<td>18.491</td>
-</tr>
-<tr>
-<td>infinity (torch + compile + fa2)</td>
-<td>0.51</td>
-<td>19.562</td>
-</tr>
-<tr>
-<td>tensorrt (via infinity)</td>
-<td>0.43</td>
-<td>23.367</td>
-</tr>
-<tr>
-<td>infinity (onnx-gpu fp16, fused layers)</td>
-<td>0.41</td>
-<td>24.448</td>
-</tr>
-<tr>
-<td>sentence-transformers (fp16)</td>
-<td>0.17</td>
-<td>59.107</td>
-</tr>
-</tbody>
-</table>
-<h3 id="results-amd-mi210-baaibge-large-en-v15-bert-large">Results: AMD MI210 (<em>BAAI/bge-large-en-v1.5</em> | <em>bert-large</em>)</h3>
-<table>
-<thead>
-<tr>
-<th>Model</th>
-<th>Requests # / sec (mean)</th>
-<th>Time (seconds)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>infinity (torch + no compile + fa2 disabled)</td>
-<td>0.75</td>
-<td>13.400</td>
-</tr>
-</tbody>
-</table>
-<h3 id="results-aws-inf2-xlarge-baaibge-large-en-v15-bert-large">Results: AWS INF2 xlarge (<em>BAAI/bge-large-en-v1.5</em> | <em>bert-large</em>)</h3>
-<table>
-<thead>
-<tr>
-<th>Model</th>
-<th>Requests # / sec (mean)</th>
-<th>Time (seconds)</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td>infinity (neuron, fp16, constant batch_size 4 / 512 seq)</td>
-<td>0.11</td>
-<td>90.564</td>
-</tr>
-</tbody>
-</table>
 </article>
 </div>
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
