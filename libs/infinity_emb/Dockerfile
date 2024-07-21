@@ -15,28 +15,20 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_NO_INTERACTION=1 \
     EXTRAS="all" \
     PYTHON="python3.11"
-
 RUN apt-get update && apt-get install build-essential python3-dev $PYTHON-venv $PYTHON curl -y 
-
 WORKDIR /app
 
 FROM base as builder
-
 # Set the working directory for the app
-
 # Define the version of Poetry to install (default is 1.7.1)
 # Define the directory to install Poetry to (default is /opt/poetry)
 ARG POETRY_VERSION=1.7.1
 ARG POETRY_HOME=/opt/poetry
-
 # Create a Python virtual environment for Poetry and install it
 RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION $PYTHON -
-
 ENV PATH=$POETRY_HOME/bin:$PATH
-
 # Test if Poetry is installed in the expected path
 RUN echo "Poetry version:" && poetry --version
-
 # Copy the rest of the app source code (this layer will be invalidated and rebuilt whenever the source code changes)
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
@@ -50,7 +42,6 @@ RUN poetry cache clear pypi --all
 FROM builder as testing
 # install lint and test dependencies
 RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"
-
 # lint 
 RUN poetry run ruff .
 RUN poetry run black --check .
@@ -67,18 +58,17 @@ poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
 fi
 RUN echo "all tests passed" > "test_results.txt"
 
+
 # Use a multi-stage build -> production version, with download
 FROM base AS tested-builder
-
 COPY --from=builder /app /app
 # force testing stage to run
 COPY --from=testing /app/test_results.txt /app/test_results.txt
-
 ENV HF_HOME=/app/.cache/huggingface
 ENV PATH=/app/.venv/bin:$PATH
-
 # do nothing
 RUN echo "copied all files"
+
 
 # Export with tensorrt, not recommended.
 # docker buildx build --target=production-tensorrt -f Dockerfile .
@@ -97,6 +87,7 @@ ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86
 ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
 ENTRYPOINT ["infinity_emb"]
 
+
 # Use a multi-stage build -> production version, with download
 # docker buildx build --target=production-with-download \
 # --build-arg MODEL_NAME=BAAI/bge-small-en-v1.5 --build-arg ENGINE=torch -f Dockerfile -t infinity-BAAI-small .
@@ -108,7 +99,6 @@ ARG ENGINE
 RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
 ARG EXTRA_PACKAGES
 RUN if [ -n "${EXTRA_PACKAGES}" ]; then python -m pip install --no-cache-dir ${EXTRA_PACKAGES} ; fi
-
 # will exit with 3 if model is downloaded # TODO: better exit code
 RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
 ENTRYPOINT ["infinity_emb"]
