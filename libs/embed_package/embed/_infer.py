@@ -6,10 +6,11 @@ from infinity_emb.infinity_server import AutoPadding
 
 __all__ = ["BatchedInference"]
 
-Device = Literal["cpu", "cuda"]
+Device = Literal["cpu", "cuda", "mps"]
 ModelID = str
-Engine = Literal["torch", "optimum"]
+Engine = Literal["optimum", "torch"]
 EmbeddingDtype = Literal["float32", "int8", "binary"]
+DType = Literal["float32", "float16", "int8", "fp8", "auto"]
 ModelIndex = Union[int, str]
 
 
@@ -20,6 +21,7 @@ class BatchedInference:
         model_id: Union[ModelID, Collection[ModelID]],
         engine: Union[Engine, Collection[Engine]] = "optimum",
         device: Union[Device, Collection[Device]] = "cpu",
+        dtype: Union[DType, Collection[DType]] = "auto",
         embedding_dtype: Union[EmbeddingDtype, Collection[EmbeddingDtype]] = "float32",
     ):
         """An easy interface to infer with multiple models.
@@ -34,6 +36,8 @@ class BatchedInference:
             engine = [engine]
         if isinstance(device, str):
             device = [device]
+        if isinstance(dtype, str):
+            dtype = [dtype]
         if isinstance(embedding_dtype, str):
             embedding_dtype = [embedding_dtype]
         EngineArgs()
@@ -44,10 +48,12 @@ class BatchedInference:
             engine=engine,
             device=device,
             embedding_dtype=embedding_dtype,
+            dtype=dtype,
             # optinionated defaults
             lengths_via_tokenize=True,
             model_warmup=False,
             trust_remote_code=True,
+            batch_size=32,
         )
         self._engine_args = [EngineArgs(**kwargs) for kwargs in pad]
         self._engine_array = SyncEngineArray.from_args(self._engine_args)

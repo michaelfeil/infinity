@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "embed"
-version = "0.0.1-dev1"
-description = "A stable and easy-to-use inference library with a focus on a sync-to-async API"
+version = "0.2.0"
+description = "A stable, fast and easy-to-use inference library with a focus on a sync-to-async API"
 authors = ["michaelfeil <me@michaelfeil.eu>"]
 readme = "README.md"
 homepage = "https://github.com/michaelfeil/infinity"

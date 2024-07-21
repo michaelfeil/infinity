@@ -1,3 +1,3 @@
 This page moved here:
 
-https://michaelfeil.github.io/infinity/latest/
+https://michaelfeil.eu/infinity/0.0.51/benchmarking/
