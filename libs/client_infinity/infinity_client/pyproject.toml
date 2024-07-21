@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "infinity_client"
-version = "0.0.51"
+version = "0.0.52"
 description = "A client library for accessing ♾️ Infinity - Embedding Inference Server"
 authors = []
 readme = "README.md"
