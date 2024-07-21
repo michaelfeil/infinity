@@ -1,0 +1,24 @@
+FROM nvcr.io/nvidia/pytorch:24.06-py3
+
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install build-essential python3-dev python3.10-venv python3.10 curl -y 
+
+RUN python -m venv .venv
+RUN source .venv/bin/activate
+RUN pip install flash_attn
+
+
+RUN pip install infinity-emb[all]
+
+ARG MODEL_NAME
+RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
+ARG ENGINE
+RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
+ARG EXTRA_PACKAGES
+RUN if [ -n "${EXTRA_PACKAGES}" ]; then pip install --no-cache-dir ${EXTRA_PACKAGES} ; fi
+
+
+RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
+ENTRYPOINT ["infinity_emb"]
