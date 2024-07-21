@@ -103,6 +103,11 @@ RUN if [ -n "${EXTRA_PACKAGES}" ]; then python -m pip install --no-cache-dir ${E
 RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
 ENTRYPOINT ["infinity_emb"]
 
+# flash attention fa2
+FROM tested-builder AS production-with-fa2
+RUN python -m pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.1/flash_attn-2.6.1+cu123torch2.3cxx11abiFalse-cp310-cp310-linux_x86_64.whl
+ENTRYPOINT ["infinity_emb"]
+
 # Use a multi-stage build -> production version
 FROM tested-builder AS production
 ENTRYPOINT ["infinity_emb"]
