@@ -28,8 +28,8 @@ https://github.com/runpod-workers/worker-infinity-text-embeddings/
 ## Modal Labs
 
 A deployment example for usage within are located at repo, including a Github Actions Pipeline.
-[michaelfeil/infinity/tree/main/infra/modal](https://github.com/michaelfeil/infinity/tree/88f57af6ffa98b74e3e1332efe013357e465f010/infra/modal)
-Beyond, there is a sponsored endpoint at https://infinity.modal.michaelfeil.eu .
+The example is located at [michaelfeil/infinity/tree/main/infra/modal](https://github.com/michaelfeil/infinity/tree/c84b15acc35d02005e6f69080a5ed7b0e23d0019/infra/modal).
+Modal has sponsored compute credits for a free endpoint at https://infinity.modal.michaelfeil.eu - feel free to use.
 
 ## Bento - BentoInfinity
 Example repo for deployment via Bento: https://github.com/bentoml/BentoInfinity
