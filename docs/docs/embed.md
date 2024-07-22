@@ -1,4 +1,4 @@
-# embed
+# Embed (package)
 A stable, blazing fast and easy-to-use inference library with a focus on a sync-to-async API
 
 ## Installation
