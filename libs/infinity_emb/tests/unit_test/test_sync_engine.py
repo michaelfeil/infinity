@@ -15,8 +15,9 @@ def test_weaklifemixin():
 
     mixin = WeakAsyncLifeMixin()
     res = mixin.async_run(asleep)
-    del mixin
     assert res.result(timeout=10) == 1
+    del mixin
+    # TODO: CHECK that no more tasks can be scheduled
 
 
 if __name__ == "__main__":
