@@ -21,15 +21,18 @@ docker run -it --gpus all \
 ```
 The cache path at inside the docker container is set by the environment variable `HF_HOME`.
 
-## Runpod.io - Serverless
-There is a dedicated guide on how deploy via Runpod Serverless.
-https://github.com/runpod-workers/worker-infinity-text-embeddings/
-
 ## Modal Labs
 
 A deployment example for usage within are located at repo, including a Github Actions Pipeline.
+
 The example is located at [michaelfeil/infinity/tree/main/infra/modal](https://github.com/michaelfeil/infinity/tree/c84b15acc35d02005e6f69080a5ed7b0e23d0019/infra/modal).
-Modal has sponsored compute credits for a free endpoint at https://infinity.modal.michaelfeil.eu - feel free to use.
+
+Modal has sponsored compute credits for a GPU-powered endpoint at [infinity.modal.michaelfeil.eu](https://infinity.modal.michaelfeil.eu), which is freely available.
+
+## Runpod.io - Serverless
+There is a dedicated guide on how deploy via Runpod Serverless. 
+Find out how to deploy it via this Repo:
+[github.com/runpod-workers/worker-infinity-text-embeddings](https://github.com/runpod-workers/worker-infinity-text-embeddings/) 
 
 ## Bento - BentoInfinity
 Example repo for deployment via Bento: https://github.com/bentoml/BentoInfinity
