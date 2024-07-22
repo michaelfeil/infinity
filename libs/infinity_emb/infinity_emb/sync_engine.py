@@ -31,7 +31,7 @@ class _AsyncLifeMixin:
         # init
         self.__is_closed: Future = Future()
         self.__is_closed.set_result(None)
-        self.async_start_loop()
+        self.start_loop()
 
     def __async_lifetime(self, start_event: Future):
         """private function, takes care of starting, stopping event loop"""
@@ -56,8 +56,8 @@ class _AsyncLifeMixin:
             and self.__loop.is_running()
         )
 
-    def async_start_loop(self):
-        self.async_close_loop()
+    def start_loop(self):
+        self.close_loop()
         with self.__lock:
             start_event = Future()
             self.__stop_signal.clear()
@@ -68,7 +68,7 @@ class _AsyncLifeMixin:
             ).start()
             start_event.result()
 
-    def async_close_loop(self):
+    def close_loop(self):
         """closes the event loop. This is a blocking call"""
         with self.__lock:
             self.__stop_signal.set()
@@ -101,7 +101,7 @@ class _AsyncLifeMixin:
 class WeakAsyncLifeMixin:
     def __init__(self) -> None:
         self.__asynlifemixin = _AsyncLifeMixin()
-        weakref.finalize(self, self.__asynlifemixin.async_close_loop)
+        weakref.finalize(self, self.__asynlifemixin.close_loop)
 
     def async_run(
         self,
@@ -130,7 +130,10 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         super().__init__()
         self.async_engine_array = AsyncEngineArray.from_args(_engine_args_array)
         self.async_run(self.async_engine_array.astart).result()
-        weakref.finalize(self, self.async_engine_array.astop)
+
+        # finalizer
+        finalize_fn = partial(self.async_run, self.async_engine_array.astop)
+        weakref.finalize(self.async_engine_array, finalize_fn)
 
     @classmethod
     def from_args(cls, engine_args_array: list[EngineArgs]) -> "SyncEngineArray":

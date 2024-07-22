@@ -20,8 +20,41 @@ def test_weaklifemixin():
     # TODO: CHECK that no more tasks can be scheduled
 
 
-if __name__ == "__main__":
-    test_weaklifemixin()
+def test_sync_engine_double():
+    model1 = str(uuid4())
+    model2 = str(uuid4())
+    s_eng_array1 = SyncEngineArray(
+        [
+            EngineArgs(
+                model_name_or_path=model1,
+                device="cpu",
+                engine="debugengine",
+                model_warmup=False,
+            ),
+        ]
+    )
+    s_eng_array2 = SyncEngineArray(
+        [
+            EngineArgs(
+                model_name_or_path=model2,
+                device="cpu",
+                engine="debugengine",
+                model_warmup=False,
+            ),
+        ]
+    )
+
+    future_result1 = s_eng_array1.embed(model=model1, sentences=["Hello world!"])
+    future_result2 = s_eng_array2.embed(model=model2, sentences=["Hello world!"])
+    embedding = future_result1.result()
+    embedding2 = future_result2.result()
+    s_eng_array1.stop()
+    s_eng_array2.stop()
+
+    assert (embedding[0][0] == embedding2[0][0]).all()
+    # free memory
+    s_eng_array1 = None
+    s_eng_array2 = None
 
 
 def test_sync_engine():
