@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import weakref
 from concurrent.futures import Future
 from functools import partial
 from typing import TYPE_CHECKING, Awaitable, Callable, Iterator, TypeVar
@@ -22,7 +23,7 @@ def add_start_docstrings(*docstr):
 T = TypeVar("T")
 
 
-class AsyncLifeMixin:
+class _AsyncLifeMixin:
     def __init__(self) -> None:
         self.__lock = threading.Lock()
         self.__stop_signal = threading.Event()
@@ -41,7 +42,7 @@ class AsyncLifeMixin:
             logger.info("Started Background Event Loop")
             start_event.set_result(None)  # signal that the event loop has started
             while not self.__stop_signal.is_set():
-                await asyncio.sleep(0.2)
+                await asyncio.sleep(0.5)
 
         self.__loop.run_until_complete(block_until_engine_stop())
         self.__loop.close()
@@ -97,16 +98,39 @@ class AsyncLifeMixin:
         return future
 
 
+class WeakAsyncLifeMixin:
+    def __init__(self) -> None:
+        self.__asynlifemixin = _AsyncLifeMixin()
+        weakref.finalize(self, self.__asynlifemixin.async_close_loop)
+
+    def async_run(
+        self,
+        async_function: Callable[..., Awaitable[T]],
+        *funcion_args,
+        **function_kwargs
+    ) -> Future[T]:
+        """run an async function in the background event loop.
+
+        Args:
+            async_function: the async function to run
+            funcion_args: args to pass to the async function
+            function_kwargs: kwargs to pass to the async function
+
+        Returns:
+            concurrent.futures.Future returning the result of async_function.
+        """
+        return self.__asynlifemixin.async_run(
+            async_function, *funcion_args, **function_kwargs
+        )
+
+
 @add_start_docstrings(AsyncEngineArray.__doc__)
-class SyncEngineArray(AsyncLifeMixin):
+class SyncEngineArray(WeakAsyncLifeMixin):
     def __init__(self, _engine_args_array: list[EngineArgs]):
         super().__init__()
-        try:
-            self.async_engine_array = AsyncEngineArray.from_args(_engine_args_array)
-            self.async_run(self.async_engine_array.astart).result()
-        except Exception as e:
-            self.async_close_loop()
-            raise e
+        self.async_engine_array = AsyncEngineArray.from_args(_engine_args_array)
+        self.async_run(self.async_engine_array.astart).result()
+        weakref.finalize(self, self.async_engine_array.astop)
 
     @classmethod
     def from_args(cls, engine_args_array: list[EngineArgs]) -> "SyncEngineArray":
@@ -122,7 +146,6 @@ class SyncEngineArray(AsyncLifeMixin):
     def stop(self):
         """blocks until the engine is stopped"""
         self.async_run(self.async_engine_array.astop).result()
-        self.async_close_loop()
 
     @add_start_docstrings(AsyncEngineArray.embed.__doc__)
     def embed(self, *, model: str, sentences: list[str]):

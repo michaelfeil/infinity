@@ -1,9 +1,26 @@
+import asyncio
 import inspect
 from uuid import uuid4
 
 import pytest
 
 from infinity_emb import AsyncEngineArray, EngineArgs, SyncEngineArray
+from infinity_emb.sync_engine import WeakAsyncLifeMixin
+
+
+def test_weaklifemixin():
+    async def asleep():
+        await asyncio.sleep(2)
+        return 1
+
+    mixin = WeakAsyncLifeMixin()
+    res = mixin.async_run(asleep)
+    del mixin
+    assert res.result(timeout=10) == 1
+
+
+if __name__ == "__main__":
+    test_weaklifemixin()
 
 
 def test_sync_engine():
