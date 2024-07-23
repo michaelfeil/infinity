@@ -1,9 +1,60 @@
+import asyncio
 import inspect
 from uuid import uuid4
 
 import pytest
 
 from infinity_emb import AsyncEngineArray, EngineArgs, SyncEngineArray
+from infinity_emb.sync_engine import WeakAsyncLifeMixin
+
+
+def test_weaklifemixin():
+    async def asleep():
+        await asyncio.sleep(2)
+        return 1
+
+    mixin = WeakAsyncLifeMixin()
+    res = mixin.async_run(asleep)
+    assert res.result(timeout=10) == 1
+    del mixin
+    # TODO: CHECK that no more tasks can be scheduled
+
+
+def test_sync_engine_double():
+    model1 = str(uuid4())
+    model2 = str(uuid4())
+    s_eng_array1 = SyncEngineArray(
+        [
+            EngineArgs(
+                model_name_or_path=model1,
+                device="cpu",
+                engine="debugengine",
+                model_warmup=False,
+            ),
+        ]
+    )
+    s_eng_array2 = SyncEngineArray(
+        [
+            EngineArgs(
+                model_name_or_path=model2,
+                device="cpu",
+                engine="debugengine",
+                model_warmup=False,
+            ),
+        ]
+    )
+
+    future_result1 = s_eng_array1.embed(model=model1, sentences=["Hello world!"])
+    future_result2 = s_eng_array2.embed(model=model2, sentences=["Hello world!"])
+    embedding = future_result1.result()
+    embedding2 = future_result2.result()
+    s_eng_array1.stop()
+    s_eng_array2.stop()
+
+    assert (embedding[0][0] == embedding2[0][0]).all()
+    # free memory
+    s_eng_array1 = None
+    s_eng_array2 = None
 
 
 def test_sync_engine():
