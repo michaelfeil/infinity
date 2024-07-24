@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "embed"
-version = "0.2.0"
+version = "0.3.0"
 description = "A stable, fast and easy-to-use inference library with a focus on a sync-to-async API"
 authors = ["michaelfeil <me@michaelfeil.eu>"]
 readme = "README.md"
