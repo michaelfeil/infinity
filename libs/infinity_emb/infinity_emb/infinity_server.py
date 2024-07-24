@@ -22,7 +22,7 @@ from infinity_emb.fastapi_schemas.pymodels import (
     RerankInput,
     ReRankResult,
 )
-from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
+from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger, StructuredLoggingMiddleware
 from infinity_emb.primitives import (
     Device,
     Dtype,
@@ -32,8 +32,6 @@ from infinity_emb.primitives import (
     ModelNotDeployedError,
     PoolingMethod,
 )
-
-from infinity_emb.strucutred_logging import StructuredLoggingMiddleware
 
 
 def create_server(
