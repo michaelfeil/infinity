@@ -1,12 +1,8 @@
-import logging
-import sys
-from enum import Enum
-from typing import Any
-
 import json
 import logging
 import re
 from contextvars import ContextVar
+from enum import Enum
 from functools import wraps
 from time import perf_counter, time
 from traceback import format_exception
@@ -204,15 +200,6 @@ class StructuredLoggingMiddleware(BaseHTTPMiddleware):
 
 StructuredLogging.modify_logging()
 
-handlers: list[Any] = []
-try:
-    from rich.console import Console
-    from rich.logging import RichHandler
-    # handlers.append(logging.StreamHandler(sys.stderr))
-    handlers.append(RichHandler(console=Console(stderr=True), show_time=False))
-except ImportError:
-    handlers.append(logging.StreamHandler(sys.stderr))
-
 LOG_LEVELS: dict[str, int] = {
     "critical": logging.CRITICAL,
     "error": logging.ERROR,
@@ -222,27 +209,9 @@ LOG_LEVELS: dict[str, int] = {
     "trace": 5,
 }
 
-# FORMAT = """{
-#         "ts": "%(timestamp_ms)d",
-#         "type": "app",
-#         "svc": "freddy-infinity",
-#         "lvl": "%(levelname)s",
-#         "act": "%(pathname)s:%(funcName)s:%(lineno)d",
-#         "a_id": "%(account_id)s",
-#         "r_id": "%(request_id)s",
-#         "p": "freddy-freshservice",
-#         "tp": "%(trace_parent)s",
-#         "d": "%(time_elapsed)f",
-#         "thread_id": "%(thread)s",
-#         "trace_id": "%(otelTraceID)s",
-#         "dur": "%(time_elapsed)f",
-#         "msg": "%(message)s",
-#     }"""
-
 logging.basicConfig(
     level="INFO",
     format=StructuredLogging.config_string,
-    handlers=handlers,
 )
 
 logger = logging.getLogger()
