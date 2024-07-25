@@ -1,6 +1,6 @@
 Deployment via [Modal](https://modal.com).
 
-The serverless deployment is now live at https://infinity.modal.michaelfeil.eu. The free Nvidia L4/A100 deployment is sponsored by Modal.com, feel free to use as long as the endpoint is reachable.
+The serverless deployment is now live at https://infinity.modal.michaelfeil.eu. The Nvidia L4/A100 deployment is hosted via Modal.com, and can be hosted free of charge.
 
 ### Local
 Run the following sequence of commands to deploy:
