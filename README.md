@@ -241,12 +241,12 @@ Example models:
 
 ## Integrations:
 - [Serverless deployments at Runpod](https://github.com/runpod-workers/worker-infinity-embedding)
-- [https://github.com/truefoundry/cognita](https://github.com/truefoundry/cognita)
+- [Truefoundry Cognita](https://github.com/truefoundry/cognita)
 - [Langchain example](https://github.com/langchain-ai/langchain)
 - [imitater - A unified language model server built upon vllm and infinity.](https://github.com/the-seeds/imitater)
 - [Dwarves Foundation: Deployment examples using Modal.com](https://github.com/dwarvesf/llm-hosting)
 - [infiniflow/Ragflow](https://github.com/infiniflow/ragflow)
-- ...
+- [SAP Core AI](https://github.com/SAP-samples/btp-generative-ai-hub-use-cases/tree/main/10-byom-oss-llm-ai-core)
 
 ## Launch FAQ:
 <details>
