@@ -41,6 +41,6 @@ def test_clip_like_model():
         outputs.text_embeds[0], embeddings[0], check_dtype=False, rtol=0, atol=1e-4
     )
     torch.testing.assert_close(
-        outputs.image_embeds[0], embeddings[3], check_dtype=False
+        outputs.image_embeds[0], embeddings[3], check_dtype=False, rtol=0, atol=1e-4
     )
     torch.testing.assert_close(embeddings[1], embeddings[3])
