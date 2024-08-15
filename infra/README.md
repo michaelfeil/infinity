@@ -4,3 +4,4 @@ This folder contains examples for how to deploy infinity.
 - [runpod.io](runpod/README.md)
 - [dstack](dstack/README.md)
 - [skypilot](skypilot/README.md)
+- [vast.ai](vast/README.md)
