@@ -21,7 +21,7 @@
 ![Docker pulls](https://img.shields.io/docker/pulls/michaelf34/infinity)
 
 
-Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting all sentence-transformer models and frameworks. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE).
+ Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models and clip. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE).
 
 ## Why Infinity
 * **Deploy any model from HuggingFace**: deploy any embedding, reranking, clip and sentence-transformer model from [HuggingFace]( https://huggingface.co/models?other=text-embeddings-inference&sort=trending)
@@ -41,9 +41,6 @@ Infinity is a high-throughput, low-latency REST API for serving vector embedding
 - [2024/01] TensorRT / ONNX inference
 - [2023/10] First release
 
-### Infinity demo
-In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), deployed at batch-size=2. After initialization, from a second terminal 3 requests  (payload 1,1,and 5 sentences) are sent via cURL.
-![](docs/demo_v0_0_1.gif)
 
 ## Getting started
 
@@ -82,6 +79,10 @@ docker run -it --gpus all \
 ```
 The cache path at inside the docker container is set by the environment variable `HF_HOME`.
 
+### CLI demo
+In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), deployed at batch-size=2. After initialization, from a second terminal 3 requests  (payload 1,1,and 5 sentences) are sent via cURL.
+![](docs/demo_v0_0_1.gif)
+
 ### Launch it via the Python API
 
 Instead of the cli & RestAPI use infinity's interface via the Python API. 
@@ -114,30 +115,6 @@ Example embedding models:
 - [Alibaba-NLP/gte-large-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5)
 - [jinaai/jina-embeddings-v2-base-code](https://huggingface.co/jinaai/jina-embeddings-v2-base-code)
 - [intfloat/multilingual-e5-large-instruct](https://huggingface.co/intfloat/multilingual-e5-large-instruct)
-
-### Launch on the cloud via dstack
-
-dstack allows you to provision a VM instance on the cloud of your choice. Write a service configuration file as below for the deployment of `BAAI/bge-small-en-v1.5` model wrapped in Infinity.
-
-```yaml
-type: service
-
-image: michaelf34/infinity:latest
-env:
-  - INFINITY_MODEL_ID=BAAI/bge-small-en-v1.5;BAAI/bge-reranker-base;
-  - INFINITY_PORT=80
-commands:
-  - infinity_emb v2
-port: 80
-```
-
-Then, simply run the following dstack command. After this, a prompt will appear to let you choose which VM instance to deploy the Infinity.
-
-```shell
-dstack run . -f infinity/serve.dstack.yml --gpu 16GB
-```
-
-For more detailed tutorial and general information about dstack, visit the [official doc](https://dstack.ai/examples/infinity/#run-the-configuration).
 
 
 ### Reranking
