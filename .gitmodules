@@ -1,3 +1,6 @@
 [submodule "runpod-worker"]
 	path = infra/runpod
 	url = https://github.com/runpod-workers/worker-infinity-embedding
+[submodule "infra/sap/sap-core-ai"]
+	path = infra/sap/sap-core-ai
+	url = https://github.com/SAP-samples/btp-generative-ai-hub-use-cases

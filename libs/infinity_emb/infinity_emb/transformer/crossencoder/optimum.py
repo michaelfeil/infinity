@@ -41,7 +41,9 @@ class OptimumCrossEncoder(BaseCrossEncoder):
             engine_args.model_name_or_path,
             execution_provider=provider,
             file_name=onnx_file.as_posix(),
-            optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False), # TODO: make this env variable public
+            optimize_model=not os.environ.get(
+                "INFINITY_ONNX_DISABLE_OPTIMIZE", False
+            ),  # TODO: make this env variable public
             model_class=ORTModelForSequenceClassification,
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,

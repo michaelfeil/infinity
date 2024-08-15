@@ -497,7 +497,7 @@ if CHECK_TYPER.is_available:
             # gets the default value from the ENV Manager
             default=getattr(MANAGER, name),
             # envvar is a dummy that is there for documentation purposes.
-            envvar=f'`{MANAGER.to_name(name)}`',
+            envvar=f"`{MANAGER.to_name(name)}`",
         )
 
     @tp.command("v2")
@@ -505,7 +505,8 @@ if CHECK_TYPER.is_available:
         # t
         # arguments for engine
         model_id: list[str] = typer.Option(
-            **_construct("model_id"), help="Huggingface model repo id. Subset of possible models: https://huggingface.co/models?other=text-embeddings-inference&"
+            **_construct("model_id"),
+            help="Huggingface model repo id. Subset of possible models: https://huggingface.co/models?other=text-embeddings-inference&",
         ),
         served_model_name: list[str] = typer.Option(
             **_construct("served_model_name"),
@@ -595,7 +596,7 @@ if CHECK_TYPER.is_available:
         \n
         Multi-Model CLI Playbook: \n
         - 1. specific options can be combinedmodels. i.e. `v2 --model-id model/no1 --model-id/no2 --batch-size 8 --batch-size 4` \n
-        - 2. this is identical to setting ENV Variables to: INFINITY_MODEL_ID="model/no1;model/no2;" && INFINITY_BATCH_SIZE="8;4;" \n 
+        - 2. this is identical to setting ENV Variables to: INFINITY_MODEL_ID="model/no1;model/no2;" && INFINITY_BATCH_SIZE="8;4;" \n
         - 3. single items are broadcasted to model-id length!
         """
         # old
