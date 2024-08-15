@@ -3,10 +3,15 @@
 # mypy: ignore-errors
 # ruff: noqa
 
-# Copyright (c) Meta Platforms, Inc. and affiliates. 2024
+# Copyright (c) Meta Platforms, Inc. and affiliates. 2024-now michaelfeil
 # All rights reserved. BSD-3-Clause License.
 # Adapted from this commit:
 # https://github.com/pytorch-labs/gpt-fast/commit/889e78ba468a411018a1d397ecebf07976ae6951
+
+# Now
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 
 import abc
 import time

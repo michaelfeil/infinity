@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 from functools import cache, wraps
 from hashlib import md5
 from typing import TYPE_CHECKING, Any
@@ -73,7 +76,7 @@ def _get_text_calibration_dataset() -> list[str]:
     url = MANAGER.calibration_dataset_url
 
     cache_file = (
-        MANAGER.infinity_cache_dir
+        MANAGER.cache_dir
         / "calibration_dataset"
         / md5(url.encode()).hexdigest()
         / "calibration_dataset.txt"

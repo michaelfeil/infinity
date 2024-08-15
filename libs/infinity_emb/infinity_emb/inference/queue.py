@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 import asyncio
 import threading
 from typing import Optional, Union
@@ -11,6 +14,8 @@ from infinity_emb.primitives import (
 
 
 class CustomFIFOQueue:
+    """Class which defines a custom ordering"""
+
     def __init__(self) -> None:
         """"""
         self._lock_queue_event = threading.Lock()
@@ -80,11 +85,12 @@ class CustomFIFOQueue:
 
 class ResultKVStoreFuture:
     def __init__(self, cache: Optional[Cache] = None) -> None:
-        self._kv: dict[str, EmbeddingReturnType] = {}
+        """holds instance of Cache"""
         self._cache = cache
 
     def __len__(self):
-        return len(self._kv)
+        """deprecated"""
+        return 0  # len(self._kv)
 
     async def wait_for_response(self, item: QueueItemInner) -> EmbeddingReturnType:
         """wait for future to return"""

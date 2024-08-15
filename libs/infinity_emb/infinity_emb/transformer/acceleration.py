@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 import os
 from typing import TYPE_CHECKING
 
@@ -31,12 +34,13 @@ def to_bettertransformer(
         )
         return model
 
-    if os.environ.get("INFINITY_DISABLE_OPTIMUM", False):  # OLD VAR
-        logger.warning(
-            "DEPRECATED `INFINITY_DISABLE_OPTIMUM` - setting optimizations via BetterTransformer,"
+    if os.environ.get("INFINITY_DISABLE_OPTIMUM", False):  
+        # TODO: remove this code path, it just prints this warning
+        logger.error(
+            "DEPRECATED the `INFINITY_DISABLE_OPTIMUM` - setting optimizations via BetterTransformer,"
             "INFINITY_DISABLE_OPTIMUM is no longer supported, please use the CLI / ENV for that."
         )
-        return model
+        
     if (
         hasattr(model.config, "_attn_implementation")
         and model.config._attn_implementation != "eager"
