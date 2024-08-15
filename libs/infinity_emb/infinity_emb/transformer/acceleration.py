@@ -4,13 +4,21 @@
 import os
 from typing import TYPE_CHECKING
 
-from infinity_emb._optional_imports import CHECK_OPTIMUM
+from infinity_emb._optional_imports import CHECK_OPTIMUM, CHECK_TORCH
 from infinity_emb.primitives import Device
 
 if CHECK_OPTIMUM.is_available:
     from optimum.bettertransformer import (  # type: ignore[import-untyped]
         BetterTransformer,
     )
+
+if CHECK_TORCH.is_available:
+    import torch
+
+    if hasattr(torch.backends, "cuda") and hasattr(torch.backends, "cudnn"):
+        # allow TF32 for better performance
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
 if TYPE_CHECKING:
     from logging import Logger

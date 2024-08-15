@@ -71,8 +71,9 @@ def test_cli_v2_weird():
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="does not run on windows")
-def test_cli_preload():
-    log = subprocess.run(["infinity_emb", "--preload-only"])
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_cli_preload(version):
+    log = subprocess.run(["infinity_emb", f"{version}", "--preload-only"])
     assert log.returncode == 0
 
 
@@ -98,9 +99,9 @@ def test_patched_create_uvicorn_v2(mocker):
     v2(
         log_level=UVICORN_LOG_LEVELS.debug,  # type: ignore[arg-type]
         engine=[InferenceEngine.torch],
-        model_id=["michaelfeil/bge-small-en-v1.5", "michaelfeil/bge-small-en-v1.5"],
-        device=Device.auto,
-        dtype=Dtype.auto,
-        pooling_method=PoolingMethod.auto,
+        model_id=["michaelfeil/bge-small-en-v1.5", "BAAI/bge-small-en-v1.5"],
+        device=[Device.auto],
+        dtype=[Dtype.auto],
+        pooling_method=[PoolingMethod.auto],
     )
     assert uvicorn.run.call_count == 1

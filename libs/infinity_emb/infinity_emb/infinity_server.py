@@ -401,14 +401,15 @@ class AutoPadding:
         self.length = length
         self.kwargs = kwargs
 
-    def __call__(self, x):
+    def _resolve(self, x, iteration: int):
         """pad x to length of self.length"""
+        x = typer_option_resolve(x)
         if not isinstance(x, (list, tuple)):
-            return [x] * self.length
-        elif len(x) == 1:
-            return x * self.length
-        elif len(x) == self.length:
             return x
+        elif len(x) == 1:
+            return x[0]
+        elif len(x) == self.length:
+            return x[iteration]
         else:
             raise ValueError(f"Expected length {self.length} but got {len(x)}")
 
@@ -417,8 +418,22 @@ class AutoPadding:
         for iteration in range(self.length):
             kwargs = {}
             for key, value in self.kwargs.items():
-                kwargs[key] = self.__call__(value)[iteration]
+                kwargs[key] = self._resolve(value, iteration)
             yield kwargs
+
+
+def typer_option_resolve(*args):
+    """returns the value or the default value"""
+    if len(args) == 1:
+        return (
+            args[0].default
+            if hasattr(args[0], "default") and hasattr(args[0], "envvar")
+            else args[0]
+        )
+    return (
+        a.default if (hasattr(a, "default") and hasattr(a, "envvar")) else a
+        for a in args
+    )
 
 
 # CLI
@@ -445,6 +460,7 @@ if CHECK_TYPER.is_available:
         device: Device = MANAGER.device[0],  # type: ignore
         lengths_via_tokenize: bool = MANAGER.lengths_via_tokenize[0],
         dtype: Dtype = MANAGER.dtype[0],  # type: ignore
+        embedding_dtype: EmbeddingDtype = EmbeddingDtype.default_value(),  # type: ignore
         pooling_method: PoolingMethod = MANAGER.pooling_method[0],  # type: ignore
         compile: bool = MANAGER.compile[0],
         bettertransformer: bool = MANAGER.bettertransformer[0],
@@ -461,10 +477,17 @@ if CHECK_TYPER.is_available:
             raise ValueError(
                 "api_key is not supported in `v1`. Please migrate to `v2`."
             )
+        if not (
+            embedding_dtype == EmbeddingDtype.float32
+            or embedding_dtype == EmbeddingDtype.default_value()
+        ):
+            raise ValueError(
+                "selecting embedding_dtype is not supported in `v1`. Please migrate to `v2`."
+            )
         logger.warning(
-            "CLI v1 is deprecated and might be removed in the future. Please use CLI v2, by specifying `v2` as the command."
+            "CLI v1 is deprecated. Consider use CLI `v2`, by specifying `v2` as the command."
         )
-        time.sleep(5)
+        time.sleep(1)
         v2(
             model_id=[model_name_or_path],
             served_model_name=[served_model_name],  # type: ignore
@@ -480,6 +503,7 @@ if CHECK_TYPER.is_available:
             lengths_via_tokenize=[lengths_via_tokenize],
             compile=[compile],
             bettertransformer=[bettertransformer],
+            embedding_dtype=[EmbeddingDtype.float32],
             # unique kwargs
             preload_only=preload_only,
             url_prefix=url_prefix,
@@ -559,7 +583,7 @@ if CHECK_TYPER.is_available:
         ),
         bettertransformer: list[bool] = typer.Option(
             **_construct("bettertransformer"),
-            help="Attempts switching to varlen flash-attention-2 via the BetterTransformers implementation if available for this model.",
+            help="Enables varlen flash-attention-2 via the `BetterTransformer` implementation. If available for this model.",
         ),
         # arguments for uvicorn / server
         preload_only: bool = typer.Option(
@@ -654,6 +678,28 @@ if CHECK_TYPER.is_available:
         engine_args = []
         for kwargs in padder:
             engine_args.append(EngineArgs(**kwargs))
+
+        (
+            url_prefix,
+            host,
+            port,
+            redirect_slash,
+            log_level,
+            preload_only,
+            permissive_cors,
+            api_key,
+            proxy_root_path,
+        ) = typer_option_resolve(
+            url_prefix,
+            host,
+            port,
+            redirect_slash,
+            log_level,
+            preload_only,
+            permissive_cors,
+            api_key,
+            proxy_root_path,
+        )
 
         app = create_server(
             engine_args_list=engine_args,
