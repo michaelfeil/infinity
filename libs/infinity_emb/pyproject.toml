@@ -1,8 +1,8 @@
 [tool.poetry]
 name = "infinity_emb"
-version = "0.0.53"
-description = "Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting a wide range of sentence-transformer models and frameworks."
-authors = ["michaelfeil <me@michaelfeil.eu>"]
+version = "0.0.54"
+description = "Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models and clip."
+authors = ["michaelfeil <noreply@michaelfeil.eu>"]
 license = "MIT"
 readme = "README.md"
 packages = [{include = "infinity_emb"}]

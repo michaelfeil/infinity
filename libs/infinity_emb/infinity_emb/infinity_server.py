@@ -472,7 +472,7 @@ if CHECK_TYPER.is_available:
         port: int = MANAGER.port,
         log_level: UVICORN_LOG_LEVELS = MANAGER.log_level,  # type: ignore
     ):
-        """Infinity API ♾️ cli v1 - deprecated, use v2 of the cli now."""
+        """Infinity API ♾️  cli v1 - deprecated, consider use cli v2 via `infinity_emb v2`."""
         if api_key:
             raise ValueError(
                 "api_key is not supported in `v1`. Please migrate to `v2`."
@@ -615,13 +615,12 @@ if CHECK_TYPER.is_available:
             help="Proxy prefix for the application. See: https://fastapi.tiangolo.com/advanced/behind-a-proxy/",
         ),
     ):
-        """Infinity API ♾️ cli v2.
-        MIT License. Copyright (c) 2023-now Michael Feil \n
+        """Infinity API ♾️  cli v2. MIT License. Copyright (c) 2023-now Michael Feil \n
         \n
-        Multi-Model CLI Playbook: \n
-        - 1. specific options can be combinedmodels. i.e. `v2 --model-id model/no1 --model-id/no2 --batch-size 8 --batch-size 4` \n
-        - 2. this is identical to setting ENV Variables to: INFINITY_MODEL_ID="model/no1;model/no2;" && INFINITY_BATCH_SIZE="8;4;" \n
-        - 3. single items are broadcasted to model-id length!
+        Multiple Model CLI Playbook: \n
+        - 1. cli options can be overloaded i.e. `v2 --model-id model/id1 --model-id/id2 --batch-size 8 --batch-size 4` \n
+        - 2. or adapt the defaults by setting ENV Variables separated by `;`: INFINITY_MODEL_ID="model/id1;model/id2;" && INFINITY_BATCH_SIZE="8;4;" \n
+        - 3. single items are broadcasted to `--model-id` length, making `v2 --model-id model/id1 --model-id/id2 --batch-size 8` both models have batch-size 8. \n
         """
         # old
         """
@@ -717,7 +716,7 @@ if CHECK_TYPER.is_available:
         if len(sys.argv) == 1 or sys.argv[1] not in ["v1", "v2", "help", "--help"]:
             for _ in range(9):
                 logger.error(
-                    "WARNING: No command given. Defaulting to `v1`. "
+                    "Error: No command given. Defaulting to `v1`. "
                     "Relying on this side effect is considered an error and "
                     "will be deprecated in the future, which requires explicit usage of a `infinity_emb v1` or `infinity_emb v2`. "
                     "Specify the version of the CLI you want to use. "
