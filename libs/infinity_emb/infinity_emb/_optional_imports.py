@@ -1,4 +1,9 @@
-# files just imports external dependencies. Do not import any infinity_emb modules here.
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
+"""
+files just imports external dependencies. Do not import any infinity_emb modules here for sake of delayed imports.
+"""
 
 from __future__ import annotations
 

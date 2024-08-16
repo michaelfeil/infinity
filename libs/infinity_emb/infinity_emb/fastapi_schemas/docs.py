@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 from __future__ import annotations
 
 FASTAPI_TITLE = "♾️ Infinity - Embedding Inference Server"

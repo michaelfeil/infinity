@@ -1,13 +1,24 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 import os
 from typing import TYPE_CHECKING
 
-from infinity_emb._optional_imports import CHECK_OPTIMUM
+from infinity_emb._optional_imports import CHECK_OPTIMUM, CHECK_TORCH
 from infinity_emb.primitives import Device
 
 if CHECK_OPTIMUM.is_available:
     from optimum.bettertransformer import (  # type: ignore[import-untyped]
         BetterTransformer,
     )
+
+if CHECK_TORCH.is_available:
+    import torch
+
+    if hasattr(torch.backends, "cuda") and hasattr(torch.backends, "cudnn"):
+        # allow TF32 for better performance
+        torch.backends.cuda.matmul.allow_tf32 = True
+        torch.backends.cudnn.allow_tf32 = True
 
 if TYPE_CHECKING:
     from logging import Logger
@@ -31,12 +42,13 @@ def to_bettertransformer(
         )
         return model
 
-    if os.environ.get("INFINITY_DISABLE_OPTIMUM", False):  # OLD VAR
-        logger.warning(
-            "DEPRECATED `INFINITY_DISABLE_OPTIMUM` - setting optimizations via BetterTransformer,"
+    if os.environ.get("INFINITY_DISABLE_OPTIMUM", False):
+        # TODO: remove this code path, it just prints this warning
+        logger.error(
+            "DEPRECATED the `INFINITY_DISABLE_OPTIMUM` - setting optimizations via BetterTransformer,"
             "INFINITY_DISABLE_OPTIMUM is no longer supported, please use the CLI / ENV for that."
         )
-        return model
+
     if (
         hasattr(model.config, "_attn_implementation")
         and model.config._attn_implementation != "eager"
