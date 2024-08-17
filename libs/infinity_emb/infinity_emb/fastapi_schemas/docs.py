@@ -5,7 +5,7 @@ from __future__ import annotations
 
 FASTAPI_TITLE = "♾️ Infinity - Embedding Inference Server"
 FASTAPI_SUMMARY = (
-    "Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models and clip."
+    "Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models and clip. "
     "Infinity is developed under MIT License at https://github.com/michaelfeil/infinity."
 )
 FASTAPI_DESCRIPTION = ""
