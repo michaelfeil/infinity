@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 import random
 from abc import ABC, abstractmethod
 from time import perf_counter

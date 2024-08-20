@@ -1,3 +1,9 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+"""
+This file contains the experimental code for retrieving and storing result of embeddings to diskcache
+which may reduce latency.
+"""
 import asyncio
 import queue
 import threading
@@ -15,12 +21,18 @@ if CHECK_DISKCACHE.is_available:
 
 
 class Cache:
+    """wrapper around DiskCache"""
+
     def __init__(self, cache_name: str, shutdown: threading.Event) -> None:
+        """
+        cache_name: filename for diskcache
+        shutdown: the shutdown event for the model worker & cache
+        """
         CHECK_DISKCACHE.mark_required()
 
         self._shutdown = shutdown
         self._add_q: queue.Queue = queue.Queue()
-        dir = MANAGER.infinity_cache_dir / "cache_vectors" f"cache_{cache_name}"
+        dir = MANAGER.cache_dir / "cache_vectors" f"cache_{cache_name}"
         logger.info(f"caching vectors under: {dir}")
         self._cache = dc.Cache(dir, size_limit=2**28)
         self.is_running = False
@@ -32,7 +44,8 @@ class Cache:
             self._threadpool.submit(self._consume_queue)
 
     @staticmethod
-    def _hash(key: Union[str, Any]) -> str:
+    def _pre_hash(key: Union[str, Any]) -> str:
+        """create a hashable item out of key.__str__"""
         return str(key)
 
     def _consume_queue(self) -> None:
@@ -43,13 +56,13 @@ class Cache:
                 continue
             if item is not None:
                 k, v = item
-                self._cache.add(key=self._hash(k), value=v, expire=86400)
+                self._cache.add(key=self._pre_hash(k), value=v, expire=86400)
             self._add_q.task_done()
         self._threadpool.shutdown(wait=True)
 
     def _get(self, sentence: str) -> Union[None, EmbeddingReturnType, list[float]]:
         """sets the item.complete() and sets embedding, if in cache."""
-        return self._cache.get(key=self._hash(sentence))
+        return self._cache.get(key=self._pre_hash(sentence))
 
     async def aget_complete(self, item: QueueItemInner) -> None:
         """sets the item.complete() and sets embedding, if in cache."""

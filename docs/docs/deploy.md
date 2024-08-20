@@ -38,6 +38,7 @@ Find out how to deploy it via this Repo:
 Example repo for deployment via Bento: https://github.com/bentoml/BentoInfinity
 
 ## dstack
+
 dstack allows you to provision a VM instance on the cloud of your choice.
 Write a service configuration file as below for the deployment of `BAAI/bge-small-en-v1.5` model wrapped in Infinity.
 
@@ -46,17 +47,20 @@ type: service
 
 image: michaelf34/infinity:latest
 env:
-  - MODEL_ID=BAAI/bge-small-en-v1.5
+  - INFINITY_MODEL_ID=BAAI/bge-small-en-v1.5;BAAI/bge-reranker-base;
+  - INFINITY_PORT=80
 commands:
-  - infinity_emb v2 --model-id $MODEL_ID --port 80
+  - infinity_emb v2
 port: 80
 ```
 
-To deploy the service, execute the following dstack command. A prompt will guide you through selecting the desired VM instance for deploying Infinity.
+Then, simply run the following dstack command. After this, a prompt will appear to let you choose which VM instance to deploy the Infinity.
 
 ```shell
 dstack run . -f infinity/serve.dstack.yml --gpu 16GB
 ```
+
+For more detailed tutorial and general information about dstack, visit the [official doc](https://dstack.ai/examples/infinity/#run-the-configuration).
 
 
 ## Docker with offline mode / models with custom pip packages

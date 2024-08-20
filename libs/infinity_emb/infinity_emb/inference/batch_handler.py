@@ -1,3 +1,8 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
+"""This file contains the dynamic batching logic of multiple requests"""
+
 import asyncio
 import queue
 import threading
@@ -59,11 +64,12 @@ class BatchHandler:
         lengths_via_tokenize: bool = False,
     ) -> None:
         """
-        performs batching around the model.
+        performs the scheduling of the dynamic batching around the model.
+        Holds the ModelWorker
 
         Args:
-            model (BaseTransformer): model to be batched
-            max_batch_size (int): max batch size
+            model (BaseTransformer): the base class of the model to be used
+            max_batch_size (int): max batch size of dynamic batch size
             max_queue_wait (int, optional): max items to queue in the batch, default 32_000
             batch_delay (float, optional): sleep in seconds, wait time for pre/post methods.
                 Best result: setting to 1/2 the minimal expected
@@ -233,6 +239,7 @@ class BatchHandler:
     async def _schedule(
         self, list_queueitem: Sequence[AbstractSingle]
     ) -> tuple[list[Any], int]:
+        """adds list of items to the queue and awaits until these are completed."""
         prios, usage = await self._get_prios_usage(list_queueitem)
         new_prioqueue: list[PrioritizedQueueItem] = []
 
@@ -254,10 +261,14 @@ class BatchHandler:
 
     @property
     def capabilities(self) -> Set[ModelCapabilites]:
+        # TODO: try to remove inheritance here and return upon init.
         return self.model_worker.capabilities
 
     def is_overloaded(self) -> bool:
-        """checks if more items can be queued."""
+        """checks if more items can be queued.
+
+        Can be used on API level to reject requests if too many are queued and enable better autoscaling.
+        """
         return len(self._queue_prio) > self._max_queue_wait
 
     def overload_status(self) -> OverloadStatus:
@@ -296,6 +307,7 @@ class BatchHandler:
     async def _collect_from_model(
         shutdown: ShutdownReadOnly, result_queue: Queue, tp: ThreadPoolExecutor
     ):
+        """background thread for reading  exits only if shutdown.is_set()"""
         try:
             while not shutdown.is_set():
                 try:
@@ -317,7 +329,7 @@ class BatchHandler:
             raise ValueError("Postprocessor crashed")
 
     async def spawn(self):
-        """set up the resources in batch"""
+        """spawns the resources"""
         logger.info("creating batching engine")
         self.loop = asyncio.get_event_loop()
 
@@ -332,6 +344,7 @@ class BatchHandler:
         """
         set the shutdown event and close threadpool.
         Blocking event, until shutdown complete.
+        reverses .spawn()
         """
         self._shutdown.set()
         await asyncio.to_thread(self._threadpool.shutdown)
@@ -340,6 +353,8 @@ class BatchHandler:
 
 
 class ModelWorker:
+    """Model Worker. Handles pre, forward, and post-processing of any model."""
+
     def __init__(
         self,
         max_batch_size: int,
@@ -500,7 +515,11 @@ class ModelWorker:
             raise ValueError("Postprocessor crashed")
 
     # def _delayed_warmup(self):
-    #     """in case there is no warmup -> perform some warmup."""
+    #     """Idea: to improve cold-start, only warm-up after 10 seconds. This allows the initial batches to computed, and hides
+    #     first request times on cold-start, without reducing startup-times. Send only a short request to trigger CUDA Graph and torch.compile.
+    #     """
+    #     Remove warmup, as this leads to errors when the model is shutdown before the warmup happens.
+    #     The issue also occurs in the Model worker, not here, which is why this code is currently disabled.
     #     time.sleep(5)
     #     if not self._shutdown.is_set():
     #         logger.debug("Sending a warm up through embedding.")

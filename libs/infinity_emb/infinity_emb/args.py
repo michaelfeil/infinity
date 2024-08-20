@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 import sys
 from dataclasses import asdict, dataclass
 from itertools import zip_longest

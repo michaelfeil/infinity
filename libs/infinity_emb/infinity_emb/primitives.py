@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 """
 Definition of enums and dataclasses used in the library.
 
@@ -52,7 +55,8 @@ class EnumType(enum.Enum):
     @classmethod
     @lru_cache
     def names_enum(cls) -> enum.Enum:
-        """returns an enum with the same names as the class.
+        """DEPRECATED
+        returns an enum with the same names as the class.
 
         Allows for type hinting of the enum names.
         """
