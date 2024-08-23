@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 from enum import Enum
 from typing import Callable
 

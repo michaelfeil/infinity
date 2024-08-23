@@ -1,10 +1,12 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 from __future__ import annotations
 
 FASTAPI_TITLE = "♾️ Infinity - Embedding Inference Server"
 FASTAPI_SUMMARY = (
-    "Infinity is a high-throughput, low-latency REST API "
-    "for serving vector embeddings, supporting a wide "
-    "range of sentence-transformer models and frameworks."
+    "Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models and clip. "
+    "Infinity is developed under MIT License at https://github.com/michaelfeil/infinity."
 )
 FASTAPI_DESCRIPTION = ""
 

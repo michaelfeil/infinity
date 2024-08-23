@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeilfeil
+
 from asyncio import Semaphore
 from typing import Iterable, Iterator, Optional, Set, Union
 

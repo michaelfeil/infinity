@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 import logging
 import sys
 from enum import Enum
@@ -34,6 +37,8 @@ logger = logging.getLogger("infinity_emb")
 
 
 class UVICORN_LOG_LEVELS(Enum):
+    """Re-exports the uvicorn log levels for type hinting and usage."""
+
     critical = "critical"
     error = "error"
     warning = "warning"

@@ -1,4 +1,6 @@
-# cache
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 from __future__ import annotations
 
 import os
@@ -38,11 +40,11 @@ class __Infinity_EnvManager:
                 print(message)
 
     @staticmethod
-    def _to_name(name: str) -> str:
+    def to_name(name: str) -> str:
         return "INFINITY_" + name.upper().replace("-", "_")
 
     def _optional_infinity_var(self, name: str, default: str = ""):
-        name = self._to_name(name)
+        name = self.to_name(name)
         value = os.getenv(name)
         if value is None:
             self._debug(f"{name}=`{default}`(default)")
@@ -53,7 +55,7 @@ class __Infinity_EnvManager:
     def _optional_infinity_var_multiple(
         self, name: str, default: list[str]
     ) -> list[str]:
-        name = self._to_name(name)
+        name = self.to_name(name)
         value = os.getenv(name)
         if value is None:
             self._debug(f"{name}=`{';'.join(default)}`(default)")
@@ -152,7 +154,7 @@ class __Infinity_EnvManager:
         )
 
     @cached_property
-    def infinity_cache_dir(self) -> Path:
+    def cache_dir(self) -> Path:
         """gets the cache directory for infinity_emb."""
         cache_dir = None
         hf_home = os.environ.get("HF_HOME")

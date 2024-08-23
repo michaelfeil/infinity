@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2023-now michaelfeil
+
 from infinity_emb._optional_imports import CHECK_PIL, CHECK_REQUESTS
 from infinity_emb.primitives import ImageCorruption, ImageSingle
 
