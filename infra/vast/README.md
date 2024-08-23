@@ -1,12 +1,15 @@
 Deployment via (Vast.ai)[vast.ai]
 
 ## Local CLI:
-Vast offers a nice UI to deploy instances, and you can use it with the command details below
+Vast offers a nice UI to deploy instances and a command line interface. The command line interface can be installed with the python package:
+```bash 
+pip install --upgrade vastai
+```
 ```bash
 vastai search offers 'compute_cap > 800 gpu_ram > 20 num_gpus = 1 static_ip=true direct_port_count > 1' 
 # Select the instance and paste it in for <instance-id> to launch
 # Single embedding model deployment:
-vastai create instance <instance-id> --image michaelf34/infinity:latest --env '-p 8000:8000' --disk 40 --args v2 --model-id michaelfeil/bge-small-en-v1.5 --port 8000
+vastai create instance <instance-id> --image michaelf34/infinity:latest --env '-p 8000:8000' --disk 40 --args v2 --model-id michaelfeil/bge-small-en-v1.5 --port 8000 --api-key simple_key
 # Multiple models:
 vastai create instance <instance-id> --image michaelf34/infinity:latest --env '-p 8000:8000' --disk 40 --args v2 --model-id mixedbread-ai/mxbai-rerank-xsmall-v1 --model-id  SamLowe/roberta-base-go_emotions --port 8000
 ```
@@ -25,8 +28,8 @@ Now for all of our URLs for server calls, we will use these ports. So a potentia
 from openai import OpenAI
 
 # Modify OpenAI's API key and API base to use Infinity's API server.
-openai_api_key = "EMPTY"
-openai_api_base = "http://<Instance-IP-Address>:<Port>/v1"
+openai_api_key = "simple_key"
+openai_api_base = "http://<Instance-IP-Address>:<Port>"
 client = OpenAI(
     api_key=openai_api_key,
     base_url=openai_api_base,
