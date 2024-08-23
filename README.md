@@ -312,7 +312,7 @@ poetry run pytest ./tests
 All contributions must be made in a way to be compatible with the MIT License of this repo. 
 
 ### Citation
-```json
+```
 @software{feil_2023_11630143,
   author       = {Feil, Michael},
   title        = {Infinity - To Embeddings and Beyond},
