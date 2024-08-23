@@ -39,7 +39,7 @@
   <a href="https://community.sap.com/t5/artificial-intelligence-and-machine-learning-blogs/bring-open-source-llms-into-sap-ai-core/ba-p/13655167"><img src="https://github.com/user-attachments/assets/743e932b-ed5b-4a71-84cb-f28235707a84" alt="Logo SAP" width="47"/></a>
   <a href="https://x.com/StuartReid1929/status/1763434100382163333"><img src="https://github.com/user-attachments/assets/477a4c54-1113-434b-83bc-1985f10981d3" alt="Logo Nosible" width="44"/></a>
   <img src="https://github.com/user-attachments/assets/a68da78b-d958-464e-aaf6-f39132be68a0" alt="Logo FreshWorks" width="50"/>
-  <img src="https://github.com/user-attachments/assets/9cde2d6b-dc16-4f0a-81ba-535a84321467" alt="Logo Dstack" width="50"/>
+  <a href="https://github.com/dstackai/dstack/tree/master/examples/deployment/infinity"><img src="https://github.com/user-attachments/assets/9cde2d6b-dc16-4f0a-81ba-535a84321467" alt="Logo Dstack" width="50"/></a>
 </p> 
 
 ### Latest News 🔥
