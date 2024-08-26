@@ -1,4 +1,4 @@
-Deployment via (Vast.ai)[vast.ai]
+Deployment via [Vast.ai](https://vast.ai)
 
 ## Local CLI:
 Vast offers a nice UI to deploy instances and a command line interface. The command line interface can be installed with the python package:
