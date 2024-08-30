@@ -56,8 +56,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     name: Py${{ matrix.python-version }}-${{ matrix.os }}-${{ matrix.coverage_tests }}
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@v1.3.0
+        uses: "./.github/actions/disk_cleanup"
         if: runner.os == 'Linux'
         with:
           tool-cache: false
@@ -67,9 +69,6 @@ jobs:
           large-packages: false
           docker-images: false
           swap-storage: false
-        
-      - uses: actions/checkout@v4
-
       - name: Set up Python ${{ matrix.python-version }} + Poetry ${{ env.POETRY_VERSION }}
         uses: "./.github/actions/poetry_setup"
         with:

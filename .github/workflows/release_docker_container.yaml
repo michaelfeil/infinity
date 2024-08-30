@@ -27,8 +27,10 @@ jobs:
     environment:
       name: publish
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@v1.3.0
+        uses: "./.github/actions/disk_cleanup"
         if: runner.os == 'Linux'
         with:
           tool-cache: false
@@ -38,8 +40,6 @@ jobs:
           large-packages: false
           docker-images: false
           swap-storage: false
-      - name: Checkout
-        uses: actions/checkout@v4
       - name: Get git tag
         uses: actions-ecosystem/action-get-latest-tag@v1
         id: get-latest-tag
