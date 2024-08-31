@@ -37,8 +37,11 @@ jobs:
           - "3.9"
           - "3.12"
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Free Disk Space
-        uses: jlumbroso/free-disk-space@v1.3.0
+        uses: "./.github/actions/disk_cleanup"
         if: runner.os == 'Linux'
         with:
           tool-cache: false
@@ -48,7 +51,6 @@ jobs:
           large-packages: false
           docker-images: false
           swap-storage: false
-      - uses: actions/checkout@v4
 
       - name: Set up Python ${{ matrix.python-version }} + Poetry ${{ env.POETRY_VERSION }}
         uses: "./.github/actions/poetry_setup"
