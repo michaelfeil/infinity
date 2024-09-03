@@ -5,9 +5,10 @@ from __future__ import annotations
 
 import base64
 import time
-import numpy as np
 from typing import TYPE_CHECKING, Annotated, Any, Iterable, Literal, Optional, Union
 from uuid import uuid4
+
+import numpy as np
 
 if TYPE_CHECKING:
     from infinity_emb.primitives import ClassifyReturnType, EmbeddingReturnType

@@ -7,7 +7,8 @@ import sys
 import time
 from unittest import TestCase
 from uuid import uuid4
-import numpy as np  
+
+import numpy as np
 import pytest
 from asgi_lifespan import LifespanManager
 from httpx import AsyncClient
@@ -97,15 +98,14 @@ async def test_encoding_base_64(client, model_name):
         f"{PREFIX}/embeddings",
         json=dict(input=input, model=model_name, encoding_format="base64"),
     )
-    assert (
-        response_base64.status_code == 200
-    )
+    assert response_base64.status_code == 200
     embedding = response.json()["data"][0]["embedding"]
     embedding_base64 = response_base64.json()["data"][0]["embedding"]
     embedding_base64 = np.frombuffer(
-                            base64.b64decode(embedding_base64), dtype=np.float32
-                        ).tolist()
+        base64.b64decode(embedding_base64), dtype=np.float32
+    ).tolist()
     assert embedding_base64 == embedding
+
 
 @pytest.mark.anyio
 async def test_embedding(client):
