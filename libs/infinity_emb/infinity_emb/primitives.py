@@ -69,6 +69,15 @@ class EnumType(enum.Enum):
         raise NotImplementedError
 
 
+class EmbeddingEncodingFormat(EnumType):
+    float = "float"
+    base64 = "base64"
+
+    @staticmethod
+    def default_value():
+        return EmbeddingEncodingFormat.float.value
+
+
 class InferenceEngine(EnumType):
     torch = "torch"
     ctranslate2 = "ctranslate2"
@@ -115,6 +124,10 @@ class EmbeddingDtype(EnumType):
     uint8: str = "uint8"
     binary: str = "binary"
     ubinary: str = "ubinary"
+
+    @lru_cache
+    def uses_bitpacking(self) -> bool:
+        return self in [EmbeddingDtype.binary, EmbeddingDtype.ubinary]
 
     @staticmethod
     def default_value():

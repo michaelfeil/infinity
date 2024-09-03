@@ -3,15 +3,19 @@
 
 from __future__ import annotations
 
+import base64
 import time
 from typing import TYPE_CHECKING, Annotated, Any, Iterable, Literal, Optional, Union
 from uuid import uuid4
 
+import numpy as np
+
 if TYPE_CHECKING:
+    from infinity_emb.args import EngineArgs
     from infinity_emb.primitives import ClassifyReturnType, EmbeddingReturnType
 
-
 from infinity_emb._optional_imports import CHECK_PYDANTIC
+from infinity_emb.primitives import EmbeddingEncodingFormat
 
 # potential backwards compatibility to pydantic 1.X
 # pydantic 2.x is preferred by not strictly needed
@@ -38,8 +42,6 @@ if CHECK_PYDANTIC.is_available:
             "max_items": 2048,
         }
         HttpUrl, AnyUrl = str, str  # type: ignore
-
-
 else:
 
     class BaseModel:  # type: ignore[no-redef]
@@ -66,6 +68,7 @@ class OpenAIEmbeddingInput(BaseModel):
         Annotated[str, INPUT_STRING],
     ]
     model: str = "default/not-specified"
+    encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
     user: Optional[str] = None
 
 
@@ -78,12 +81,13 @@ class ImageEmbeddingInput(BaseModel):
         Annotated[AnyUrl, HttpUrl],
     ]
     model: str = "default/not-specified"
+    encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
     user: Optional[str] = None
 
 
 class _EmbeddingObject(BaseModel):
     object: Literal["embedding"] = "embedding"
-    embedding: list[float]
+    embedding: Union[list[float], bytes]
     index: int
 
 
@@ -97,12 +101,19 @@ class OpenAIEmbeddingResult(BaseModel):
 
     @staticmethod
     def to_embeddings_response(
-        embeddings: Iterable[EmbeddingReturnType],
-        model: str,
+        embeddings: Iterable["EmbeddingReturnType"],
+        engine_args: "EngineArgs",
         usage: int,
+        encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float,
     ) -> dict[str, Union[str, list[dict], dict]]:
+        if encoding_format == EmbeddingEncodingFormat.base64:
+            assert (
+                not engine_args.embedding_dtype.uses_bitpacking()
+            ), f"model {engine_args.served_model_name} does not support base64 encoding, as it uses uint8-bitpacking with {engine_args.embedding_dtype}"
+            embeddings = [base64.b64encode(np.frombuffer(emb.astype(np.float32), dtype=np.float32)) for emb in embeddings]  # type: ignore
+
         return dict(
-            model=model,
+            model=engine_args.served_model_name,
             data=[
                 dict(
                     object="embedding",
@@ -130,6 +141,8 @@ class _ClassifyObject(BaseModel):
 
 
 class ClassifyResult(BaseModel):
+    """Result of classification."""
+
     object: Literal["classify"] = "classify"
     data: list[list[_ClassifyObject]]
     model: str
@@ -151,6 +164,8 @@ class ClassifyResult(BaseModel):
 
 
 class RerankInput(BaseModel):
+    """Input for reranking"""
+
     query: Annotated[str, INPUT_STRING]
     documents: conlist(  # type: ignore
         Annotated[str, INPUT_STRING],
@@ -167,6 +182,8 @@ class _ReRankObject(BaseModel):
 
 
 class ReRankResult(BaseModel):
+    """Following the Cohere protocol for Rerankers."""
+
     object: Literal["rerank"] = "rerank"
     results: list[_ReRankObject]
     model: str
