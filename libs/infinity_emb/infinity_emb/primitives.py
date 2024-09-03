@@ -125,6 +125,10 @@ class EmbeddingDtype(EnumType):
     binary: str = "binary"
     ubinary: str = "ubinary"
 
+    @lru_cache
+    def uses_bitpacking(self) -> bool:
+        return self in [EmbeddingDtype.binary, EmbeddingDtype.ubinary]
+
     @staticmethod
     def default_value():
         return EmbeddingDtype.float32.value

@@ -11,8 +11,8 @@ from uuid import uuid4
 import numpy as np
 
 if TYPE_CHECKING:
+    from infinity_emb.args import EngineArgs
     from infinity_emb.primitives import ClassifyReturnType, EmbeddingReturnType
-
 
 from infinity_emb._optional_imports import CHECK_PYDANTIC
 from infinity_emb.primitives import EmbeddingEncodingFormat
@@ -42,8 +42,6 @@ if CHECK_PYDANTIC.is_available:
             "max_items": 2048,
         }
         HttpUrl, AnyUrl = str, str  # type: ignore
-
-
 else:
 
     class BaseModel:  # type: ignore[no-redef]
@@ -103,16 +101,19 @@ class OpenAIEmbeddingResult(BaseModel):
 
     @staticmethod
     def to_embeddings_response(
-        embeddings: Iterable[EmbeddingReturnType],
-        model: str,
+        embeddings: Iterable["EmbeddingReturnType"],
+        engine_args: "EngineArgs",
         usage: int,
         encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float,
     ) -> dict[str, Union[str, list[dict], dict]]:
         if encoding_format == EmbeddingEncodingFormat.base64:
+            assert (
+                not engine_args.embedding_dtype.uses_bitpacking()
+            ), f"model {engine_args.served_model_name} does not support base64 encoding, as it uses uint8-bitpacking with {engine_args.embedding_dtype}"
             embeddings = [base64.b64encode(np.frombuffer(emb.astype(np.float32), dtype=np.float32)) for emb in embeddings]  # type: ignore
 
         return dict(
-            model=model,
+            model=engine_args.served_model_name,
             data=[
                 dict(
                     object="embedding",
