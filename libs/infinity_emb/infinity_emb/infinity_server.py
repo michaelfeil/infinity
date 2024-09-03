@@ -231,6 +231,7 @@ def create_server(
             return OpenAIEmbeddingResult.to_embeddings_response(
                 embeddings=embedding,
                 model=engine.engine_args.served_model_name,
+                encoding_format=data.encoding_format,
                 usage=usage,
             )
         except ModelNotDeployedError as ex:
@@ -373,6 +374,7 @@ def create_server(
             return OpenAIEmbeddingResult.to_embeddings_response(
                 embeddings=embedding,
                 model=engine.engine_args.served_model_name,
+                encoding_format=data.encoding_format,
                 usage=usage,
             )
         except ImageCorruption as ex:

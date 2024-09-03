@@ -69,6 +69,15 @@ class EnumType(enum.Enum):
         raise NotImplementedError
 
 
+class EmbeddingEncodingFormat(EnumType):
+    float = "float"
+    base64 = "base64"
+
+    @staticmethod
+    def default_value():
+        return EmbeddingEncodingFormat.float.value
+
+
 class InferenceEngine(EnumType):
     torch = "torch"
     ctranslate2 = "ctranslate2"

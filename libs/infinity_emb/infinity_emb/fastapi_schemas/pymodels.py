@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import base64
 import time
+import numpy as np
 from typing import TYPE_CHECKING, Annotated, Any, Iterable, Literal, Optional, Union
 from uuid import uuid4
 
@@ -12,6 +14,7 @@ if TYPE_CHECKING:
 
 
 from infinity_emb._optional_imports import CHECK_PYDANTIC
+from infinity_emb.primitives import EmbeddingEncodingFormat
 
 # potential backwards compatibility to pydantic 1.X
 # pydantic 2.x is preferred by not strictly needed
@@ -66,6 +69,7 @@ class OpenAIEmbeddingInput(BaseModel):
         Annotated[str, INPUT_STRING],
     ]
     model: str = "default/not-specified"
+    encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
     user: Optional[str] = None
 
 
@@ -78,12 +82,13 @@ class ImageEmbeddingInput(BaseModel):
         Annotated[AnyUrl, HttpUrl],
     ]
     model: str = "default/not-specified"
+    encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
     user: Optional[str] = None
 
 
 class _EmbeddingObject(BaseModel):
     object: Literal["embedding"] = "embedding"
-    embedding: list[float]
+    embedding: Union[list[float], bytes]
     index: int
 
 
@@ -100,7 +105,11 @@ class OpenAIEmbeddingResult(BaseModel):
         embeddings: Iterable[EmbeddingReturnType],
         model: str,
         usage: int,
+        encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float,
     ) -> dict[str, Union[str, list[dict], dict]]:
+        if encoding_format == EmbeddingEncodingFormat.base64:
+            embeddings = [base64.b64encode(np.frombuffer(emb.astype(np.float32), dtype=np.float32)) for emb in embeddings]  # type: ignore
+
         return dict(
             model=model,
             data=[
@@ -130,6 +139,8 @@ class _ClassifyObject(BaseModel):
 
 
 class ClassifyResult(BaseModel):
+    """Result of classification."""
+
     object: Literal["classify"] = "classify"
     data: list[list[_ClassifyObject]]
     model: str
@@ -151,6 +162,8 @@ class ClassifyResult(BaseModel):
 
 
 class RerankInput(BaseModel):
+    """Input for reranking"""
+
     query: Annotated[str, INPUT_STRING]
     documents: conlist(  # type: ignore
         Annotated[str, INPUT_STRING],
@@ -167,6 +180,8 @@ class _ReRankObject(BaseModel):
 
 
 class ReRankResult(BaseModel):
+    """Following the Cohere protocol for Rerankers."""
+
     object: Literal["rerank"] = "rerank"
     results: list[_ReRankObject]
     model: str
