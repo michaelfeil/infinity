@@ -340,13 +340,13 @@ class AsyncEngineArray:
         return await self[model].classify(sentences=sentences, raw_scores=raw_scores)
 
     async def image_embed(
-        self, *, model: str, images: list[str]
+        self, *, model: str, images: list[Union[str, Image.Image]]
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple images
 
         Kwargs:
             model (str): model name to be used
-            images (list[str]): list of image urls, to be embedded
+            images (list[Union[str, PIL.Image.Image]]): list of image urls or PIL.Image.Image objects, to be embedded
 
         Raises:
             ValueError: raised if engine is not started yet

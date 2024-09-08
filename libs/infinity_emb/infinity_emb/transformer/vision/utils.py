@@ -11,6 +11,7 @@ if CHECK_PIL.is_available:
 if CHECK_REQUESTS.is_available:
     import requests  # type: ignore
 
+MAX_WORKERS = 10
 
 def resolve_from_img_obj(img_obj):
     """Resolve an image from a PIL.Image.Image Object."""
@@ -43,14 +44,15 @@ def resolve_image(img: Union[str, Image.Image]) -> ImageSingle:
         raise ValueError(f"Invalid image type: {img} is neither str nor PIL.Image.Image object")
 
 
-def resolve_images(images: List[Union[str, Image.Image]], max_workers: int=10) -> List[ImageSingle]:
+def resolve_images(images: List[Union[str, Image.Image]]) -> List[ImageSingle]:
     """Resolve images from URLs or PIL.Image.Image Objects using multithreading."""
+    # TODO: improve parallel requests, safety, error handling
     CHECK_REQUESTS.mark_required()
     CHECK_PIL.mark_required()
 
     resolved_imgs = []
     exceptions = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {executor.submit(resolve_image, img): img for img in images}
         for future in concurrent.futures.as_completed(futures):
             img = futures[future]
