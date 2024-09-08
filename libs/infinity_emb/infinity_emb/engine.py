@@ -3,6 +3,7 @@
 
 from asyncio import Semaphore
 from typing import Iterable, Iterator, Optional, Set, Union
+from PIL import Image
 
 from infinity_emb.args import EngineArgs
 
@@ -202,12 +203,12 @@ class AsyncEmbeddingEngine:
         return scores, usage
 
     async def image_embed(
-        self, *, images: list[str]
+        self, *, images: list[Union[str, Image.Image]]
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple images
 
         Kwargs:
-            images (list[str]): list of image urls, to be embedded
+            images (list[Union[str, PIL.Image.Image]]): list of image urls or PIL.Image.Image objects, to be embedded
 
         Raises:
             ValueError: raised if engine is not started yet

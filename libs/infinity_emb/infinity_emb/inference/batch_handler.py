@@ -10,6 +10,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from typing import Any, Sequence, Set
+from PIL import Image
+from typing import Union
 
 import numpy as np
 
@@ -210,12 +212,12 @@ class BatchHandler:
     async def image_embed(
         self,
         *,
-        images: list[str],
+        images: list[Union[str, Image.Image]],
     ) -> tuple[list[EmbeddingReturnType], int]:
         """Schedule a images and sentences to be embedded. Awaits until embedded.
 
         Args:
-            images (list[str]): list of pre-signed urls
+            images (list[Union[str, PIL.Image.Image]]): list of pre-signed urls or PIL.Image.Image objects
 
         Raises:
             ModelNotDeployedError: If loaded model does not expose `embed`
