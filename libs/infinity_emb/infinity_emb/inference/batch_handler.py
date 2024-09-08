@@ -9,9 +9,8 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, Sequence, Set
+from typing import Any, Sequence, Set, Union
 from PIL import Image
-from typing import Union
 
 import numpy as np
 
