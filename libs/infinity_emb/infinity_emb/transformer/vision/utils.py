@@ -3,7 +3,7 @@
 
 from infinity_emb._optional_imports import CHECK_PIL, CHECK_REQUESTS
 from infinity_emb.primitives import ImageCorruption, ImageSingle
-from typing import Union, List
+from typing import Union, List, Sequence
 import concurrent.futures
 
 if CHECK_PIL.is_available:
@@ -47,7 +47,7 @@ def resolve_image(img: Union[str, Image.Image]) -> ImageSingle:
         )
 
 
-def resolve_images(images: List[Union[str, Image.Image]]) -> List[ImageSingle]:
+def resolve_images(images: Sequence[Union[str, Image.Image]]) -> List[ImageSingle]:
     """Resolve images from URLs or PIL.Image.Image Objects using multithreading."""
     # TODO: improve parallel requests, safety, error handling
     CHECK_REQUESTS.mark_required()

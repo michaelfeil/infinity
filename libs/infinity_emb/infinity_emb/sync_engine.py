@@ -6,7 +6,7 @@ import threading
 import weakref
 from concurrent.futures import Future
 from functools import partial
-from typing import TYPE_CHECKING, Awaitable, Callable, Iterator, TypeVar, Union
+from typing import TYPE_CHECKING, Awaitable, Callable, Iterator, TypeVar, Union, Sequence
 from PIL import Image
 
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
@@ -185,7 +185,7 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         )
 
     @add_start_docstrings(AsyncEngineArray.image_embed.__doc__)
-    def image_embed(self, *, model: str, images: list[Union[str, Image.Image]]):
+    def image_embed(self, *, model: str, images: Sequence[Union[str, Image.Image]]):
         """sync interface of AsyncEngineArray"""
         return self.async_run(
             self.async_engine_array.image_embed, model=model, images=images

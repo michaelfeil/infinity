@@ -2,7 +2,7 @@
 # Copyright (c) 2023-now michaelfeilfeil
 
 from asyncio import Semaphore
-from typing import Iterable, Iterator, Optional, Set, Union
+from typing import Iterable, Iterator, Optional, Set, Union, Sequence
 from PIL import Image
 
 from infinity_emb.args import EngineArgs
@@ -203,7 +203,7 @@ class AsyncEmbeddingEngine:
         return scores, usage
 
     async def image_embed(
-        self, *, images: list[Union[str, Image.Image]]
+        self, *, images: Sequence[Union[str, Image.Image]]
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple images
 
@@ -340,7 +340,7 @@ class AsyncEngineArray:
         return await self[model].classify(sentences=sentences, raw_scores=raw_scores)
 
     async def image_embed(
-        self, *, model: str, images: list[Union[str, Image.Image]]
+        self, *, model: str, images: Sequence[Union[str, Image.Image]]
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple images
 
