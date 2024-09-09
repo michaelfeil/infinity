@@ -6,7 +6,15 @@ import threading
 import weakref
 from concurrent.futures import Future
 from functools import partial
-from typing import TYPE_CHECKING, Awaitable, Callable, Iterator, TypeVar, Union, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Awaitable,
+    Callable,
+    Iterator,
+    TypeVar,
+    Union,
+    Sequence,
+)
 from PIL import Image
 
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
