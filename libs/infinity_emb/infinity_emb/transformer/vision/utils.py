@@ -13,6 +13,7 @@ if CHECK_REQUESTS.is_available:
 
 MAX_WORKERS = 10
 
+
 def resolve_from_img_obj(img_obj):
     """Resolve an image from a PIL.Image.Image Object."""
     try:
@@ -27,7 +28,7 @@ def resolve_from_img_url(img_url):
         downloaded_img = requests.get(img_url, stream=True).raw
     except Exception as e:
         raise ImageCorruption(f"error downloading image from url: {e}")
-    
+
     try:
         return ImageSingle(image=Image.open(downloaded_img))
     except Exception as e:
@@ -41,7 +42,9 @@ def resolve_image(img: Union[str, Image.Image]) -> ImageSingle:
     elif isinstance(img, str):
         return resolve_from_img_url(img)
     else:
-        raise ValueError(f"Invalid image type: {img} is neither str nor PIL.Image.Image object")
+        raise ValueError(
+            f"Invalid image type: {img} is neither str nor PIL.Image.Image object"
+        )
 
 
 def resolve_images(images: List[Union[str, Image.Image]]) -> List[ImageSingle]:
@@ -64,6 +67,8 @@ def resolve_images(images: List[Union[str, Image.Image]]) -> List[ImageSingle]:
     if exceptions:
         for img, error_msg in exceptions:
             print(f"Failed to resolve image: {img}.\nError msg: {error_msg}")
-        raise ImageCorruption("One or more images failed to resolve. See details above.")
+        raise ImageCorruption(
+            "One or more images failed to resolve. See details above."
+        )
 
     return resolved_imgs
