@@ -1,5 +1,6 @@
+ARG BASE_IMAGE=nvidia/cuda:12.1.0-base-ubuntu22.04
 # Use the Python base image
-FROM nvidia/cuda:12.1.1-base-ubuntu22.04 AS base
+FROM $BASE_IMAGE AS base
 
 ENV PYTHONUNBUFFERED=1 \
     \
@@ -15,20 +16,27 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_NO_INTERACTION=1 \
     EXTRAS="all" \
     PYTHON="python3.11"
-RUN apt-get update && apt-get install build-essential python3-dev $PYTHON-venv $PYTHON curl -y 
+
+RUN apt-get update && apt-get install build-essential python3-dev $PYTHON-venv $PYTHON curl -y
+
+# Set the working directory for the app
 WORKDIR /app
 
 FROM base as builder
-# Set the working directory for the app
+
 # Define the version of Poetry to install (default is 1.7.1)
 # Define the directory to install Poetry to (default is /opt/poetry)
 ARG POETRY_VERSION=1.7.1
 ARG POETRY_HOME=/opt/poetry
+
 # Create a Python virtual environment for Poetry and install it
 RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION $PYTHON -
+
 ENV PATH=$POETRY_HOME/bin:$PATH
+
 # Test if Poetry is installed in the expected path
 RUN echo "Poetry version:" && poetry --version
+
 # Copy the rest of the app source code (this layer will be invalidated and rebuilt whenever the source code changes)
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
@@ -39,75 +47,14 @@ RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"  --without li
 # remove cache
 RUN poetry cache clear pypi --all
 
-FROM builder as testing
-# install lint and test dependencies
-RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"
-# lint 
-RUN poetry run ruff .
-RUN poetry run black --check .
-RUN poetry run mypy .
-# pytest
-COPY tests tests
-# run end to end tests because of duration of build in github ci.
-# Run tests/end_to_end on TARGETPLATFORM x86_64 otherwise run tests/end_to_end_gpu
-# poetry run python -m pytest tests/end_to_end -x
-RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] ; then \
-poetry run python -m pytest tests/end_to_end -x ; \
-else \
-poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
-fi
-RUN echo "all tests passed" > "test_results.txt"
-
-
-# Use a multi-stage build -> production version, with download
-FROM base AS tested-builder
-COPY --from=builder /app /app
-# force testing stage to run
-COPY --from=testing /app/test_results.txt /app/test_results.txt
-ENV HF_HOME=/app/.cache/huggingface
-ENV PATH=/app/.venv/bin:$PATH
-# do nothing
-RUN echo "copied all files"
-
-
-# Export with tensorrt, not recommended.
-# docker buildx build --target=production-tensorrt -f Dockerfile .
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=off \
-    PYTHON="python3.11"
-RUN apt-get update && apt-get install python3-dev python3-pip $PYTHON build-essential curl -y 
-COPY --from=builder /app /app
-# force testing stage to run
-COPY --from=testing /app/test_results.txt /app/test_results.txt
-ENV HF_HOME=/app/.cache/torch
-ENV PATH=/app/.venv/bin:$PATH
-RUN pip install --no-cache-dir "onnxruntime-gpu==1.17.0" "tensorrt==8.6.*"
-ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
-ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
-ENTRYPOINT ["infinity_emb"]
-
-
-# Use a multi-stage build -> production version, with download
-# docker buildx build --target=production-with-download \
-# --build-arg MODEL_NAME=BAAI/bge-small-en-v1.5 --build-arg ENGINE=torch -f Dockerfile -t infinity-BAAI-small .
-FROM tested-builder AS production-with-download
-# collect model name and engine from build args
-ARG MODEL_NAME
-RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
-ARG ENGINE
-RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
-ARG EXTRA_PACKAGES
-RUN if [ -n "${EXTRA_PACKAGES}" ]; then python -m pip install --no-cache-dir ${EXTRA_PACKAGES} ; fi
-# will exit with 3 if model is downloaded # TODO: better exit code
-RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
-ENTRYPOINT ["infinity_emb"]
-
-# flash attention fa2
-FROM tested-builder AS production-with-fa2
-RUN python -m pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.1/flash_attn-2.6.1+cu123torch2.3cxx11abiFalse-cp310-cp310-linux_x86_64.whl
-ENTRYPOINT ["infinity_emb"]
-
 # Use a multi-stage build -> production version
-FROM tested-builder AS production
-ENTRYPOINT ["infinity_emb"]
+FROM base AS production
+
+COPY --from=builder /app /app
+COPY /models /models
+COPY environment_config.sh ./environment_config.sh
+
+ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
+ENV PATH=/app/.venv/bin:$PATH
+
+ENTRYPOINT ["/bin/bash" , "-c", "source ./environment_config.sh "]

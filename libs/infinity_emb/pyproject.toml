@@ -40,6 +40,8 @@ diskcache = {version = "*", optional=true}
 # gpu
 onnxruntime-gpu = {version = "*", optional=true} 
 tensorrt = {version = "^8.6.1", optional=true}
+opentelemetry-instrumentation-logging = "^0.48b0"
+opentelemetry-sdk = "^1.27.0"
 
 [tool.poetry.scripts]
 infinity_emb = "infinity_emb.infinity_server:cli"
