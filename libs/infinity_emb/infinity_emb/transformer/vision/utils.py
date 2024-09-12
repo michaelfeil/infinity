@@ -4,22 +4,16 @@
 from infinity_emb._optional_imports import CHECK_PIL, CHECK_REQUESTS
 from infinity_emb.primitives import ImageCorruption, ImageSingle
 from typing import Union, List, Sequence
-import concurrent.futures
 
 if CHECK_PIL.is_available:
     from PIL import Image  # type: ignore
 if CHECK_REQUESTS.is_available:
     import requests  # type: ignore
 
-MAX_WORKERS = 10
-
 
 def resolve_from_img_obj(img_obj):
     """Resolve an image from a PIL.Image.Image Object."""
-    try:
-        return ImageSingle(image=img_obj)
-    except Exception as e:
-        raise ImageCorruption(f"error opening image from obj: {e}")
+    return ImageSingle(image=img_obj)
 
 
 def resolve_from_img_url(img_url):
@@ -54,21 +48,12 @@ def resolve_images(images: Sequence[Union[str, Image.Image]]) -> List[ImageSingl
     CHECK_PIL.mark_required()
 
     resolved_imgs = []
-    exceptions = []
-    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = {executor.submit(resolve_image, img): img for img in images}
-        for future in concurrent.futures.as_completed(futures):
-            img = futures[future]
-            try:
-                resolved_imgs.append(future.result())
-            except Exception as e:
-                exceptions.append((img, str(e)))
-
-    if exceptions:
-        for img, error_msg in exceptions:
-            print(f"Failed to resolve image: {img}.\nError msg: {error_msg}")
-        raise ImageCorruption(
-            "One or more images failed to resolve. See details above."
-        )
+    for img in images:
+        try:
+            resolved_imgs.append(resolve_image(img))
+        except Exception as e:
+            raise ImageCorruption(
+                f"Failed to resolve image: {img}.\nError msg: {str(e)}"
+            )
 
     return resolved_imgs
