@@ -187,7 +187,7 @@ async def test_torch_clip_embed():
 
 @pytest.mark.anyio
 async def test_clip_embed_pil_image_input():
-    img_obj = Image.open("../data/imgs/000000039769.jpg")
+    img_obj = Image.open("tests/data/imgs/000000039769.jpg")
     images = [img_obj]  # a photo of two cats
     sentences = [
         "a photo of two cats",
