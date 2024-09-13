@@ -31,8 +31,18 @@ from typing import (
 import numpy as np
 import numpy.typing as npt
 
+
+class ImageClassType:
+    pass
+
+
 if TYPE_CHECKING:
-    from PIL.Image import Image as ImageClass
+    try:
+        from PIL.Image import Image as ImageClass
+
+        ImageClassType = ImageClass
+    except:
+        pass
 
 # if python>=3.10 use kw_only
 

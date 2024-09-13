@@ -3,9 +3,9 @@
 
 from asyncio import Semaphore
 from typing import Iterable, Iterator, Optional, Set, Union, Sequence
-from PIL import Image
 
 from infinity_emb.args import EngineArgs
+from infinity_emb.primitives import ImageClassType
 
 # prometheus
 from infinity_emb.inference import (
@@ -203,12 +203,12 @@ class AsyncEmbeddingEngine:
         return scores, usage
 
     async def image_embed(
-        self, *, images: Sequence[Union[str, Image.Image]]
+        self, *, images: Sequence[Union[str, ImageClassType]]
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple images
 
         Kwargs:
-            images (list[Union[str, PIL.Image.Image]]): list of image urls or PIL.Image.Image objects, to be embedded
+            images (list[Union[str, ImageClassType]]): list of image urls or ImageClassType objects, to be embedded
 
         Raises:
             ValueError: raised if engine is not started yet
@@ -340,13 +340,13 @@ class AsyncEngineArray:
         return await self[model].classify(sentences=sentences, raw_scores=raw_scores)
 
     async def image_embed(
-        self, *, model: str, images: Sequence[Union[str, Image.Image]]
+        self, *, model: str, images: Sequence[Union[str, ImageClassType]]
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple images
 
         Kwargs:
             model (str): model name to be used
-            images (list[Union[str, PIL.Image.Image]]): list of image urls or PIL.Image.Image objects, to be embedded
+            images (list[Union[str, ImageClassType]]): list of image urls or ImageClassType objects, to be embedded
 
         Raises:
             ValueError: raised if engine is not started yet

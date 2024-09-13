@@ -10,7 +10,6 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from typing import Any, Sequence, Set, Union
-from PIL import Image
 
 import numpy as np
 
@@ -31,6 +30,7 @@ from infinity_emb.primitives import (
     PrioritizedQueueItem,
     ReRankSingle,
     get_inner_item,
+    ImageClassType,
 )
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
@@ -211,12 +211,12 @@ class BatchHandler:
     async def image_embed(
         self,
         *,
-        images: Sequence[Union[str, Image.Image]],
+        images: Sequence[Union[str, ImageClassType]],
     ) -> tuple[list[EmbeddingReturnType], int]:
         """Schedule a images and sentences to be embedded. Awaits until embedded.
 
         Args:
-            images (list[Union[str, PIL.Image.Image]]): list of pre-signed urls or PIL.Image.Image objects
+            images (list[Union[str, ImageClassType]]): list of pre-signed urls or ImageClassType objects
 
         Raises:
             ModelNotDeployedError: If loaded model does not expose `embed`
