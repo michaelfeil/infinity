@@ -41,7 +41,7 @@ if TYPE_CHECKING:
         from PIL.Image import Image as ImageClass
 
         ImageClassType = ImageClass
-    except:
+    except ImportError:
         pass
 
 # if python>=3.10 use kw_only
