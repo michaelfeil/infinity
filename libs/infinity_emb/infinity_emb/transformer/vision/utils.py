@@ -7,16 +7,17 @@ from typing import Union, List, Sequence
 
 if CHECK_PIL.is_available:
     from PIL import Image  # type: ignore
+    from infinity_emb.primitives import ImageClassType
 if CHECK_REQUESTS.is_available:
     import requests  # type: ignore
 
 
-def resolve_from_img_obj(img_obj):
-    """Resolve an image from a PIL.Image.Image Object."""
+def resolve_from_img_obj(img_obj: ImageClassType) -> ImageSingle:
+    """Resolve an image from a ImageClassType Object."""
     return ImageSingle(image=img_obj)
 
 
-def resolve_from_img_url(img_url):
+def resolve_from_img_url(img_url: str) -> ImageSingle:
     """Resolve an image from an URL."""
     try:
         downloaded_img = requests.get(img_url, stream=True).raw
@@ -29,20 +30,20 @@ def resolve_from_img_url(img_url):
         raise ImageCorruption(f"error opening image from url: {e}")
 
 
-def resolve_image(img: Union[str, Image.Image]) -> ImageSingle:
+def resolve_image(img: Union[str, ImageClassType]) -> ImageSingle:
     """Resolve a single image."""
-    if isinstance(img, Image.Image):
+    if isinstance(img, ImageClassType):
         return resolve_from_img_obj(img)
     elif isinstance(img, str):
         return resolve_from_img_url(img)
     else:
         raise ValueError(
-            f"Invalid image type: {img} is neither str nor PIL.Image.Image object"
+            f"Invalid image type: {img} is neither str nor ImageClassType object"
         )
 
 
-def resolve_images(images: Sequence[Union[str, Image.Image]]) -> List[ImageSingle]:
-    """Resolve images from URLs or PIL.Image.Image Objects using multithreading."""
+def resolve_images(images: Sequence[Union[str, ImageClassType]]) -> List[ImageSingle]:
+    """Resolve images from URLs or ImageClassType Objects using multithreading."""
     # TODO: improve parallel requests, safety, error handling
     CHECK_REQUESTS.mark_required()
     CHECK_PIL.mark_required()
