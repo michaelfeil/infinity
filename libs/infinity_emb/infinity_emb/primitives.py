@@ -32,15 +32,13 @@ import numpy as np
 import numpy.typing as npt
 
 
-class ImageClassType:
+class ImageClass:
     pass
 
 
 if TYPE_CHECKING:
     try:
         from PIL.Image import Image as ImageClass
-
-        ImageClassType = ImageClass
     except ImportError:
         pass
 
