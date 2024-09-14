@@ -26,21 +26,22 @@ from typing import (
     TypedDict,
     TypeVar,
     Union,
+    Any,
 )
 
 import numpy as np
 import numpy.typing as npt
 
 
-class ImageClass:
-    pass
-
-
+EmptyImageClassType: Any = Any
 if TYPE_CHECKING:
     try:
         from PIL.Image import Image as ImageClass
+
+        EmptyImageClassType = ImageClass
     except ImportError:
         pass
+ImageClassType = EmptyImageClassType
 
 # if python>=3.10 use kw_only
 

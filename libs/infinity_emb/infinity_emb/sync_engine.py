@@ -18,7 +18,7 @@ from typing import (
 
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import ImageClass
+from infinity_emb.primitives import ImageClassType
 
 if TYPE_CHECKING:
     from infinity_emb import AsyncEmbeddingEngine
@@ -193,7 +193,7 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         )
 
     @add_start_docstrings(AsyncEngineArray.image_embed.__doc__)
-    def image_embed(self, *, model: str, images: Sequence[Union[str, ImageClass]]):
+    def image_embed(self, *, model: str, images: Sequence[Union[str, ImageClassType]]):
         """sync interface of AsyncEngineArray"""
         return self.async_run(
             self.async_engine_array.image_embed, model=model, images=images

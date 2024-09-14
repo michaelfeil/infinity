@@ -30,7 +30,7 @@ from infinity_emb.primitives import (
     PrioritizedQueueItem,
     ReRankSingle,
     get_inner_item,
-    ImageClass,
+    ImageClassType,
 )
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
@@ -211,12 +211,12 @@ class BatchHandler:
     async def image_embed(
         self,
         *,
-        images: Sequence[Union[str, "ImageClass"]],
+        images: Sequence[Union[str, "ImageClassType"]],
     ) -> tuple[list[EmbeddingReturnType], int]:
         """Schedule a images and sentences to be embedded. Awaits until embedded.
 
         Args:
-            images (list[Union[str, ImageClass]]): list of pre-signed urls or ImageClass objects
+            images (list[Union[str, ImageClassType]]): list of pre-signed urls or ImageClassType objects
 
         Raises:
             ModelNotDeployedError: If loaded model does not expose `embed`
