@@ -53,6 +53,7 @@ anyio = "*"
 trio = "*"
 coverage = {extras = ["toml"], version = "^7.3.2"}
 mypy = "^1.5.1"
+requests = "*"
 
 # preferred dev dependencies
 torch = "2.4.0"
