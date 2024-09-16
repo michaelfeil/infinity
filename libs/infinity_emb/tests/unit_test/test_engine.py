@@ -1,7 +1,6 @@
 import asyncio
 import inspect
 import sys
-from io import BytesIO
 
 import numpy as np
 import pytest
