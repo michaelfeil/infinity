@@ -1,12 +1,14 @@
 import asyncio
 import inspect
 import sys
+from io import BytesIO
 
 import numpy as np
 import pytest
 import torch
 from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
 from PIL import Image
+import requests
 
 from infinity_emb import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
 from infinity_emb.primitives import (
@@ -187,7 +189,11 @@ async def test_torch_clip_embed():
 
 @pytest.mark.anyio
 async def test_clip_embed_pil_image_input():
-    img_obj = Image.open("tests/data/imgs/000000039769.jpg")
+    img_url = "https://github.com/michaelfeil/infinity/raw/65afe2b3d68fda10429bf7f215fe645be20788e4/docs/assets/cats_coco_sample.jpg"
+    response = requests.get(img_url, stream=True)
+    assert response.status_code == 200
+    img_data = response.raw
+    img_obj = Image.open(img_data)
     images = [img_obj]  # a photo of two cats
     sentences = [
         "a photo of two cats",

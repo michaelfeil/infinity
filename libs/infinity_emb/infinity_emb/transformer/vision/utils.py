@@ -2,12 +2,12 @@
 # Copyright (c) 2023-now michaelfeil
 
 from infinity_emb._optional_imports import CHECK_PIL, CHECK_REQUESTS
-from infinity_emb.primitives import ImageCorruption, ImageSingle
-from typing import Union, List, Sequence
+from infinity_emb.primitives import ImageCorruption, ImageSingle, ImageClassType
+from typing import Union, List
 
 if CHECK_PIL.is_available:
     from PIL import Image  # type: ignore
-    from infinity_emb.primitives import ImageClassType
+
 if CHECK_REQUESTS.is_available:
     import requests  # type: ignore
 
@@ -42,7 +42,7 @@ def resolve_image(img: Union[str, "ImageClassType"]) -> ImageSingle:
         )
 
 
-def resolve_images(images: Sequence[Union[str, "ImageClassType"]]) -> List[ImageSingle]:
+def resolve_images(images: List[Union[str, "ImageClassType"]]) -> List[ImageSingle]:
     """Resolve images from URLs or ImageClassType Objects using multithreading."""
     # TODO: improve parallel requests, safety, error handling
     CHECK_REQUESTS.mark_required()

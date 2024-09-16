@@ -9,7 +9,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, Sequence, Set, Union
+from typing import Any, Sequence, Set, Union, List
 
 import numpy as np
 
@@ -211,7 +211,7 @@ class BatchHandler:
     async def image_embed(
         self,
         *,
-        images: Sequence[Union[str, "ImageClassType"]],
+        images: List[Union[str, "ImageClassType"]],
     ) -> tuple[list[EmbeddingReturnType], int]:
         """Schedule a images and sentences to be embedded. Awaits until embedded.
 
