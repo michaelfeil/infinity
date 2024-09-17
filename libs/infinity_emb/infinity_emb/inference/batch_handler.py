@@ -12,6 +12,7 @@ from queue import Queue
 from typing import Any, Sequence, Set
 
 import numpy as np
+import numpy.typing as npt
 
 from infinity_emb.env import MANAGER
 from infinity_emb.inference.caching_layer import Cache
@@ -240,12 +241,12 @@ class BatchHandler:
     async def audio_embed(
         self,
         *,
-        audios: list[str],
+        audios: list[npt.NDArray],
     ) -> tuple[list[EmbeddingReturnType], int]:
         """Schedule audios and sentences to be embedded. Awaits until embedded.
 
         Args:
-            audios (list[np.NDArray]): list of raw wave data
+            audios (list[NDArray]): list of raw wave data
 
         Raises:
             ModelNotDeployedError: If loaded model does not expose `embed`
