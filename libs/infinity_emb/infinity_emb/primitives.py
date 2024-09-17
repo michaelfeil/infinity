@@ -195,6 +195,18 @@ class ImageSingle(AbstractSingle):
         return self.image
 
 
+@dataclass(**dataclass_args)
+class AudioSingle(AbstractSingle):
+    audio: npt.NDArray
+
+    def str_repr(self) -> str:
+        """creates a dummy representation of the audio to count tokens relative to shape"""
+        return f"an audio is worth a repeated {'token' * len(self.audio)}"
+
+    def to_input(self) -> npt.NDArray:
+        return self.audio
+
+
 AbstractInnerType = TypeVar("AbstractInnerType")
 
 
@@ -308,6 +320,30 @@ class ImageInner(AbstractInner):
         return self.embedding
 
 
+@dataclass(order=True, **dataclass_args)
+class AudioInner(AbstractInner):
+    content: AudioSingle
+    embedding: Optional[EmbeddingReturnType] = None
+
+    async def complete(self, result: EmbeddingReturnType) -> None:
+        """marks the future for completion.
+        only call from the same thread as created future."""
+        self.embedding = result
+
+        if self.embedding is None:
+            raise ValueError("embedding is None")
+        try:
+            self.future.set_result(self.embedding)
+        except asyncio.exceptions.InvalidStateError:
+            pass
+
+    async def get_result(self) -> EmbeddingReturnType:
+        """waits for future to complete and returns result"""
+        await self.future
+        assert self.embedding is not None
+        return self.embedding
+
+
 QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner, ImageInner]
 
 _type_to_inner_item_map = {
@@ -315,6 +351,7 @@ _type_to_inner_item_map = {
     ReRankSingle: ReRankInner,
     PredictSingle: PredictInner,
     ImageSingle: ImageInner,
+    AudioSingle: AudioInner,
 }
 
 
@@ -343,6 +380,10 @@ class ModelNotDeployedError(Exception):
 
 
 class ImageCorruption(Exception):
+    pass
+
+
+class AudioCorruption(Exception):
     pass
 
 

@@ -134,7 +134,7 @@ def quant_embedding_decorator():
             wraps a func called via func(self, *args, **kwargs) -> EmbeddingDtype(similar)
 
             Special:
-                self has embedding_dtype: EmbeddingDtype
+                self has embeddiEmbeddingDtypeng_dtype: EmbeddingDtype
                 _internal_skip_quanitzation=True skips quantization
             """
             skip_quanitzation = kwargs.pop("_internal_skip_quanitzation", False)

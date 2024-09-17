@@ -6,8 +6,12 @@ from abc import ABC, abstractmethod
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Set, Union
 
+import numpy as np
+
 from infinity_emb._optional_imports import CHECK_PIL
 from infinity_emb.primitives import (
+    AudioInner,
+    AudioSingle,
     EmbeddingDtype,
     EmbeddingInner,
     EmbeddingReturnType,
@@ -116,6 +120,47 @@ class BaseClipVisionModel(BaseEmbedder):  # Inherit from ABC(Abstract base class
             # TODO: warmup for images
             ImageInner(content=ImageSingle(image=img), future=None)  # type: ignore
             for img in sample_image
+        ] + [
+            EmbeddingInner(
+                content=EmbeddingSingle(sentence=s), future=None  # type: ignore
+            )
+            for s in sample_text
+        ]
+        random.shuffle(inp)
+
+        return run_warmup(self, inp)
+
+
+class BaseClapAudioModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
+    capabilities = {"embed", "audio_embed"}
+
+    @property
+    def embedding_dtype(self) -> EmbeddingDtype:
+        """returns the dtype of the embeddings"""
+        return self.engine_args.embedding_dtype  # type: ignore
+
+    @abstractmethod  # Decorator to define an abstract method
+    def encode_pre(
+        self, sentences_or_images: list[Union[str, "ImageClass"]]
+    ) -> INPUT_FEATURE:
+        """
+        takes a list of sentences, or a list of images.
+        Images could be url or numpy arrays/pil
+        """
+
+    @abstractmethod
+    def encode_post(
+        self, embedding: OUT_FEATURES, skip_quanitzation=True
+    ) -> EmbeddingReturnType:
+        """runs post encoding such as normalization"""
+
+    def warmup(self, *, batch_size: int = 64, n_tokens=1) -> tuple[float, float, str]:
+        sample_text = ["warm " * n_tokens] * max(1, batch_size // 2)
+        sample_audios = [np.arange(1000, dtype="float64")] * max(1, batch_size // 2)  # type: ignore
+        inp = [
+            # TODO: warmup for audio
+            AudioInner(content=AudioSingle(audio=audio), future=None)  # type: ignore
+            for audio in sample_audios
         ] + [
             EmbeddingInner(
                 content=EmbeddingSingle(sentence=s), future=None  # type: ignore

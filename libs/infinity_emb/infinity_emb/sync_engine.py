@@ -189,3 +189,10 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         return self.async_run(
             self.async_engine_array.image_embed, model=model, images=images
         )
+
+    @add_start_docstrings(AsyncEngineArray.audio_embed.__doc__)
+    def audio_embed(self, *, model: str, audios: list[str]):
+        """sync interface of AsyncEngineArray"""
+        return self.async_run(
+            self.async_engine_array.audio_embed, model=model, audios=audios
+        )

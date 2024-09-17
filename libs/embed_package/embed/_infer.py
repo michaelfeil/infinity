@@ -102,6 +102,29 @@ class BatchedInference:
         """
         return self._engine_array.image_embed(model=model_id, images=images)
 
+    def audio_embed(
+        self,
+        *,
+        audios: list[str],
+        model_id: ModelIndex = 0,
+    ) -> Future[tuple[list[list[float]], int]]:
+        """Embed audios with a model.
+
+        >>> url =  "https://bigsoundbank.com/UPLOAD/wav/2380.wav"
+        >>>  raw_bytes = requests.get(url, stream=True).content
+        >>> data, samplerate = sf.read(io.BytesIO(raw_bytes))
+        >>> ei = BatchedInference(model_id="wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M", engine="torch")
+        >>>  audio_embed_result = ei.audio_embed(model_id="laion/larger_clap_general", audios=[data])
+        >>> type(audio_embed_result)
+        <class 'concurrent.futures._base.Future'>
+        >>> audio_embed_result.result()[0][0].shape
+        (512,)
+        >>> audio_embed_result.result()[1]
+        20
+        >>> ei.stop()
+        """
+        return self._engine_array.audio_embed(model=model_id, audios=audios)
+
     def classify(
         self,
         *,

@@ -198,6 +198,46 @@ Example models:
 - Currently no support for pure vision models: nomic-ai/nomic-embed-vision-v1.5, ..
 
 
+### CLAP models
+
+CLAP models are able to encode audio and text at the same time. 
+
+```python
+import asyncio
+from infinity_emb import AsyncEngineArray, EngineArgs, AsyncEmbeddingEngine
+import requests
+import soundfile as sf
+import io
+
+sentences = ["This is awesome.", "I am bored."]
+
+url = "https://bigsoundbank.com/UPLOAD/wav/2380.wav"
+raw_bytes = requests.get(url, stream=True).content
+data, samplerate = sf.read(io.BytesIO(raw_bytes))
+
+images = [data]
+engine_args = EngineArgs(
+    model_name_or_path = "laion/clap-htsat-unfused",
+    dtype="float32", 
+    engine="torch"
+
+)
+array = AsyncEngineArray.from_args([engine_args])
+
+async def embed(engine: AsyncEmbeddingEngine): 
+    await engine.astart()
+    embeddings, usage = await engine.embed(sentences=sentences)
+    embedding_audios = await engine.audio_embed(audios=images)
+    await engine.astop()
+
+asyncio.run(embed(array["laion/clap-htsat-unfused"]))
+```
+
+Example models:
+- [Clap Models from LAION](https://huggingface.co/collections/laion/clap-contrastive-language-audio-pretraining-65415c0b18373b607262a490)
+
+
+
 ### Text Classification 
 
 Use text classification with Infinity's `classify` feature, which allows for sentiment analysis, emotion detection, and more classification tasks.

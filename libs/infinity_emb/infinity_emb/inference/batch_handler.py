@@ -20,6 +20,7 @@ from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
     AbstractSingle,
+    AudioSingle,
     ClassifyReturnType,
     EmbeddingReturnType,
     EmbeddingSingle,
@@ -233,6 +234,35 @@ class BatchHandler:
             )
 
         items = await asyncio.to_thread(resolve_images, images)
+        embeddings, usage = await self._schedule(items)
+        return embeddings, usage
+
+    async def audio_embed(
+        self,
+        *,
+        audios: list[str],
+    ) -> tuple[list[EmbeddingReturnType], int]:
+        """Schedule a images and sentences to be embedded. Awaits until embedded.
+
+        Args:
+            images (list[str]): list of pre-signed urls
+
+        Raises:
+            ModelNotDeployedError: If loaded model does not expose `embed`
+                capabilities
+
+        Returns:
+            list[EmbeddingReturnType]: list of embedding as 1darray
+            int: token usage
+        """
+
+        if "audio_embed" not in self.model_worker.capabilities:
+            raise ModelNotDeployedError(
+                "the loaded moded cannot fullyfill `image_embed`."
+                f"options are {self.model_worker.capabilities}."
+            )
+
+        items = [AudioSingle(audio=audio) for audio in audios]
         embeddings, usage = await self._schedule(items)
         return embeddings, usage
 

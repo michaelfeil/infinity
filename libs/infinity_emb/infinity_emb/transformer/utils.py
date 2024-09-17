@@ -5,6 +5,7 @@ from enum import Enum
 from typing import Callable
 
 from infinity_emb.primitives import InferenceEngine
+from infinity_emb.transformer.audio.torch import ClapLikeModel
 from infinity_emb.transformer.classifier.torch import SentenceClassifier
 from infinity_emb.transformer.crossencoder.optimum import OptimumCrossEncoder
 from infinity_emb.transformer.crossencoder.torch import (
@@ -71,6 +72,17 @@ class ClipLikeEngine(Enum):
             return ClipLikeEngine.torch
         else:
             raise NotImplementedError(f"ClipLikeEngine for {engine} not implemented")
+
+
+class ClapLikeEngine(Enum):
+    torch = ClapLikeModel
+
+    @staticmethod
+    def from_inference_engine(engine: InferenceEngine):
+        if engine == InferenceEngine.torch:
+            return ClapLikeEngine.torch
+        else:
+            raise NotImplementedError(f"ClapLikeEngine for {engine} not implemented")
 
 
 class PredictEngine(Enum):
