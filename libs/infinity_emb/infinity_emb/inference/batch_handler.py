@@ -242,10 +242,10 @@ class BatchHandler:
         *,
         audios: list[str],
     ) -> tuple[list[EmbeddingReturnType], int]:
-        """Schedule a images and sentences to be embedded. Awaits until embedded.
+        """Schedule audios and sentences to be embedded. Awaits until embedded.
 
         Args:
-            images (list[str]): list of pre-signed urls
+            audios (list[np.NDArray]): list of raw wave data
 
         Raises:
             ModelNotDeployedError: If loaded model does not expose `embed`
@@ -258,7 +258,7 @@ class BatchHandler:
 
         if "audio_embed" not in self.model_worker.capabilities:
             raise ModelNotDeployedError(
-                "the loaded moded cannot fullyfill `image_embed`."
+                "the loaded moded cannot fullyfill `audio_embed`."
                 f"options are {self.model_worker.capabilities}."
             )
 

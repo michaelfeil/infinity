@@ -44,7 +44,10 @@ def resolve_audios(audio_urls: list[str]) -> list[AudioSingle]:
     try:
         downloaded = [requests.get(url, stream=True).content for url in audio_urls]
         downloaded_audio = [
-            sf.read(io.BytesIO(raw_bytes),)[1] for raw_bytes in downloaded
+            sf.read(
+                io.BytesIO(raw_bytes),
+            )[1]
+            for raw_bytes in downloaded
         ]
     except Exception as e:
         raise AudioCorruption(f"Error downloading images: {e}")
