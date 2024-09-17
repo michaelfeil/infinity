@@ -7,6 +7,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any, Set, Union
 
 import numpy as np
+import numpy.typing as npt
 
 from infinity_emb._optional_imports import CHECK_PIL
 from infinity_emb.primitives import (
@@ -141,11 +142,11 @@ class BaseClapAudioModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
 
     @abstractmethod  # Decorator to define an abstract method
     def encode_pre(
-        self, sentences_or_images: list[Union[str, "ImageClass"]]
+        self, sentences_or_audios: list[Union[str, npt.NDArray]]
     ) -> INPUT_FEATURE:
         """
-        takes a list of sentences, or a list of images.
-        Images could be url or numpy arrays/pil
+        takes a list of sentences, or a list of audios.
+        Audios could be raw byte array of the wave file
         """
 
     @abstractmethod
