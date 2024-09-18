@@ -4,6 +4,8 @@
 from asyncio import Semaphore
 from typing import Iterable, Iterator, Optional, Set, Union
 
+import numpy.typing as npt
+
 from infinity_emb.args import EngineArgs
 
 # prometheus
@@ -225,12 +227,12 @@ class AsyncEmbeddingEngine:
         return embeddings, usage
 
     async def audio_embed(
-        self, *, audios: list[str]
+        self, *, audios: list[npt.NDArray]
     ) -> tuple[list[EmbeddingReturnType], int]:
-        """embed multiple images
+        """embed multiple audios
 
         Kwargs:
-            images (list[str]): list of image urls, to be embedded
+            audios (list[npt.NDArray]): list of audio data, to be embedded
 
         Raises:
             ValueError: raised if engine is not started yet
@@ -400,17 +402,17 @@ class AsyncEngineArray:
         )
 
     async def audio_embed(
-        self, *, model: str, audios: list[str]
+        self, *, model: str, audios: list[npt.NDArray]
     ) -> tuple[list[EmbeddingReturnType], int]:
-        """embed multiple images
+        """embed multiple audios
 
         Kwargs:
             model (str): model name to be used
-            images (list[str]): list of image urls, to be embedded
+            audios (list[npt.NDArray]): list of audio data, to be embedded
 
         Raises:
             ValueError: raised if engine is not started yet
-            ModelNotDeployedError: If loaded model does not expose `image_embed`
+            ModelNotDeployedError: If loaded model does not expose `audio_embed`
                 capabilities
 
         Returns:

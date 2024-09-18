@@ -50,8 +50,8 @@ def resolve_audios(audio_urls: list[str]) -> list[AudioSingle]:
             for raw_bytes in downloaded
         ]
     except Exception as e:
-        raise AudioCorruption(f"Error downloading images: {e}")
+        raise AudioCorruption(f"Error downloading audios: {e}")
     try:
-        return [ImageSingle(audio=audio) for audio in downloaded_audio]
+        return [AudioSingle(audio=audio) for audio in downloaded_audio]
     except Exception as e:
-        raise AudioCorruption(f"Error opening images: {e}")
+        raise AudioCorruption(f"Error opening audios: {e}")
