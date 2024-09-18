@@ -344,7 +344,9 @@ class AudioInner(AbstractInner):
         return self.embedding
 
 
-QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner, ImageInner]
+QueueItemInner = Union[
+    EmbeddingInner, ReRankInner, PredictInner, ImageInner, AudioInner
+]
 
 _type_to_inner_item_map = {
     EmbeddingSingle: EmbeddingInner,
