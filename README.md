@@ -215,7 +215,7 @@ url = "https://bigsoundbank.com/UPLOAD/wav/2380.wav"
 raw_bytes = requests.get(url, stream=True).content
 data, samplerate = sf.read(io.BytesIO(raw_bytes))
 
-images = [data]
+audios = [data]
 engine_args = EngineArgs(
     model_name_or_path = "laion/clap-htsat-unfused",
     dtype="float32", 
@@ -227,7 +227,7 @@ array = AsyncEngineArray.from_args([engine_args])
 async def embed(engine: AsyncEmbeddingEngine): 
     await engine.astart()
     embeddings, usage = await engine.embed(sentences=sentences)
-    embedding_audios = await engine.audio_embed(audios=images)
+    embedding_audios = await engine.audio_embed(audios=audios)
     await engine.astop()
 
 asyncio.run(embed(array["laion/clap-htsat-unfused"]))
