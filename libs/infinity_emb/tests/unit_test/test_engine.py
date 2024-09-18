@@ -4,10 +4,10 @@ import sys
 
 import numpy as np
 import pytest
-import torch
-from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
-from PIL import Image
 import requests
+import torch
+from PIL import Image
+from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
 
 from infinity_emb import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
 from infinity_emb.primitives import (

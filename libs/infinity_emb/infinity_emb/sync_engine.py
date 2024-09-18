@@ -11,9 +11,9 @@ from typing import (
     Awaitable,
     Callable,
     Iterator,
+    List,
     TypeVar,
     Union,
-    List,
 )
 
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs

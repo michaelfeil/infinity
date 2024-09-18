@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from functools import lru_cache
 from typing import (
     TYPE_CHECKING,
+    Any,
     Generic,
     Literal,
     Optional,
@@ -26,12 +27,10 @@ from typing import (
     TypedDict,
     TypeVar,
     Union,
-    Any,
 )
 
 import numpy as np
 import numpy.typing as npt
-
 
 EmptyImageClassType: Any = Any
 if TYPE_CHECKING:
