@@ -8,6 +8,8 @@ from concurrent.futures import Future
 from functools import partial
 from typing import TYPE_CHECKING, Awaitable, Callable, Iterator, TypeVar
 
+import numpy.typing as npt
+
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
 from infinity_emb.log_handler import logger
 
@@ -191,7 +193,7 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         )
 
     @add_start_docstrings(AsyncEngineArray.audio_embed.__doc__)
-    def audio_embed(self, *, model: str, audios: list[str]):
+    def audio_embed(self, *, model: str, audios: list[npt.NDArray]):
         """sync interface of AsyncEngineArray"""
         return self.async_run(
             self.async_engine_array.audio_embed, model=model, audios=audios
