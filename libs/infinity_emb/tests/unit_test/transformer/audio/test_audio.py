@@ -2,7 +2,7 @@ import io
 
 import numpy as np
 import requests  # type: ignore
-import soundfile as sf
+import soundfile as sf  # type: ignore
 import torch
 from transformers import ClapModel, ClapProcessor  # type: ignore
 

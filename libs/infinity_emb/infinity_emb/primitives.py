@@ -151,7 +151,7 @@ class AbstractSingle(ABC):
         pass
 
     @abstractmethod
-    def to_input(self) -> Union[str, tuple[str, str], "ImageClass"]:
+    def to_input(self) -> Union[str, tuple[str, str], "ImageClass", npt.NDArray]:
         pass
 
 
@@ -387,4 +387,4 @@ class AudioCorruption(Exception):
     pass
 
 
-ModelCapabilites = Literal["embed", "rerank", "classify", "image_embed"]
+ModelCapabilites = Literal["embed", "rerank", "classify", "image_embed", "audio_embed"]
