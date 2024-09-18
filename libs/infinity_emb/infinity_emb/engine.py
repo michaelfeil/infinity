@@ -2,10 +2,9 @@
 # Copyright (c) 2023-now michaelfeilfeil
 
 from asyncio import Semaphore
-from typing import Iterable, Iterator, Optional, Set, Union, List
+from typing import Iterable, Iterator, List, Optional, Set, Union
 
 from infinity_emb.args import EngineArgs
-from infinity_emb.primitives import ImageClassType
 
 # prometheus
 from infinity_emb.inference import (
@@ -16,6 +15,7 @@ from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
     ClassifyReturnType,
     EmbeddingReturnType,
+    ImageClassType,
     ModelCapabilites,
 )
 

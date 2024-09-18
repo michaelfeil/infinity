@@ -1,9 +1,10 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2023-now michaelfeil
 
+from typing import List, Union
+
 from infinity_emb._optional_imports import CHECK_PIL, CHECK_REQUESTS
-from infinity_emb.primitives import ImageCorruption, ImageSingle, ImageClassType
-from typing import Union, List
+from infinity_emb.primitives import ImageClassType, ImageCorruption, ImageSingle
 
 if CHECK_PIL.is_available:
     from PIL import Image  # type: ignore

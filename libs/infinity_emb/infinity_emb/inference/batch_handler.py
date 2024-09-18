@@ -9,7 +9,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, Sequence, Set, Union, List
+from typing import Any, List, Sequence, Set, Union
 
 import numpy as np
 
@@ -23,6 +23,7 @@ from infinity_emb.primitives import (
     ClassifyReturnType,
     EmbeddingReturnType,
     EmbeddingSingle,
+    ImageClassType,
     ModelCapabilites,
     ModelNotDeployedError,
     OverloadStatus,
@@ -30,7 +31,6 @@ from infinity_emb.primitives import (
     PrioritizedQueueItem,
     ReRankSingle,
     get_inner_item,
-    ImageClassType,
 )
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
