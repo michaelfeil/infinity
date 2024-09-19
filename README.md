@@ -234,6 +234,7 @@ Example models:
 - [Dwarves Foundation: Deployment examples using Modal.com](https://github.com/dwarvesf/llm-hosting)
 - [infiniflow/Ragflow](https://github.com/infiniflow/ragflow)
 - [SAP Core AI](https://github.com/SAP-samples/btp-generative-ai-hub-use-cases/tree/main/10-byom-oss-llm-ai-core)
+- [gpt_server - gpt_server is an open-source framework designed for production-level deployment of LLMs (Large Language Models) or Embeddings.](https://github.com/shell-nlp/gpt_server)
 
 ## Launch FAQ:
 <details>
