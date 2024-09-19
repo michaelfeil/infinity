@@ -6,12 +6,21 @@ import threading
 import weakref
 from concurrent.futures import Future
 from functools import partial
-from typing import TYPE_CHECKING, Awaitable, Callable, Iterator, TypeVar
+from typing import (
+    TYPE_CHECKING,
+    Awaitable,
+    Callable,
+    Iterator,
+    List,
+    TypeVar,
+    Union,
+)
 
 import numpy.typing as npt
 
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
 from infinity_emb.log_handler import logger
+from infinity_emb.primitives import ImageClassType
 
 if TYPE_CHECKING:
     from infinity_emb import AsyncEmbeddingEngine
@@ -186,7 +195,7 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         )
 
     @add_start_docstrings(AsyncEngineArray.image_embed.__doc__)
-    def image_embed(self, *, model: str, images: list[str]):
+    def image_embed(self, *, model: str, images: List[Union[str, ImageClassType]]):
         """sync interface of AsyncEngineArray"""
         return self.async_run(
             self.async_engine_array.image_embed, model=model, images=images

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "infinity_emb"
-version = "0.0.55"
+version = "0.0.56"
 description = "Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models and clip."
 authors = ["michaelfeil <noreply@michaelfeil.eu>"]
 license = "MIT"
@@ -54,6 +54,8 @@ anyio = "*"
 trio = "*"
 coverage = {extras = ["toml"], version = "^7.3.2"}
 mypy = "^1.5.1"
+requests = "2.28.1"
+types-requests = "2.28.1"
 
 # preferred dev dependencies
 torch = "2.4.0"

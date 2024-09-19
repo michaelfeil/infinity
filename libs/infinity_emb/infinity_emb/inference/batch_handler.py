@@ -9,7 +9,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, Sequence, Set
+from typing import Any, List, Sequence, Set, Union
 
 import numpy as np
 import numpy.typing as npt
@@ -25,6 +25,7 @@ from infinity_emb.primitives import (
     ClassifyReturnType,
     EmbeddingReturnType,
     EmbeddingSingle,
+    ImageClassType,
     ModelCapabilites,
     ModelNotDeployedError,
     OverloadStatus,
@@ -212,12 +213,12 @@ class BatchHandler:
     async def image_embed(
         self,
         *,
-        images: list[str],
+        images: List[Union[str, "ImageClassType"]],
     ) -> tuple[list[EmbeddingReturnType], int]:
         """Schedule a images and sentences to be embedded. Awaits until embedded.
 
         Args:
-            images (list[str]): list of pre-signed urls
+            images (list[Union[str, ImageClassType]]): list of pre-signed urls or ImageClassType objects
 
         Raises:
             ModelNotDeployedError: If loaded model does not expose `embed`
