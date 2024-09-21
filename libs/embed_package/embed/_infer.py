@@ -109,7 +109,8 @@ class BatchedInference:
         model_id: ModelIndex = 0,
     ) -> Future[tuple[list[list[float]], int]]:
         """Embed audios with a model.
-
+        >>> import requests, io
+        >>> import soundfile as sf
         >>> url =  "https://bigsoundbank.com/UPLOAD/wav/2380.wav"
         >>> raw_bytes = requests.get(url, stream=True).content
         >>> data, samplerate = sf.read(io.BytesIO(raw_bytes))
