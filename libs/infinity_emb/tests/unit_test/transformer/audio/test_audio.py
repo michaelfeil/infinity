@@ -15,7 +15,7 @@ def test_clap_like_model():
     model = ClapLikeModel(
         engine_args=EngineArgs(model_name_or_path=model_name, dtype="float32")
     )
-    url = "https://bigsoundbank.com/UPLOAD/wav/2380.wav"
+    url = "https://bigsoundbank.com/UPLOAD/wav/0098.wav"
     raw_bytes = requests.get(url, stream=True).content
     data, samplerate = sf.read(io.BytesIO(raw_bytes))
 
