@@ -15,7 +15,7 @@ def test_clap_like_model():
     model = ClapLikeModel(
         engine_args=EngineArgs(model_name_or_path=model_name, dtype="float32")
     )
-    url = "https://github.com/wirthual/infinity/raw/8c7d493ab48f8551bffca05c966f47515dcb9bc0/libs/infinity_emb/tests/data/audio/ANMLCat_Smallmewingofacat(ID0098)_BSB.wav"
+    url = "https://bigsoundbank.com/UPLOAD/wav/2380.wav"
     raw_bytes = requests.get(url, stream=True).content
     data, samplerate = sf.read(io.BytesIO(raw_bytes))
 
