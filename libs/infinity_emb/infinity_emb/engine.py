@@ -225,6 +225,29 @@ class AsyncEmbeddingEngine:
         embeddings, usage = await self._batch_handler.image_embed(images=images)
         return embeddings, usage
 
+    async def audio_embed(
+        self, *, audios: List[Union[str, bytes]]
+    ) -> tuple[list[EmbeddingReturnType], int]:
+        """embed multiple audios
+
+        Kwargs:
+            audios (list[npt.NDArray]): list of audio data, to be embedded
+
+        Raises:
+            ValueError: raised if engine is not started yet
+            ModelNotDeployedError: If loaded model does not expose `audio_embed`
+                capabilities
+
+        Returns:
+            list[EmbeddingReturnType]: embeddings
+                2D list-array of shape( len(sentences),embed_dim )
+            int: token usage
+        """
+
+        self._assert_running()
+        embeddings, usage = await self._batch_handler.audio_embed(audios=audios)
+        return embeddings, usage
+
     def _assert_running(self):
         if not self.running:
             raise ValueError(
@@ -376,3 +399,24 @@ class AsyncEngineArray:
             f"Engine for model name `{index_or_name}` not found. "
             f"Available model names are {list(self.engines_dict.keys())}"
         )
+
+    async def audio_embed(
+        self, *, model: str, audios: list[Union[str, bytes]]
+    ) -> tuple[list[EmbeddingReturnType], int]:
+        """embed multiple audios
+
+        Kwargs:
+            model (str): model name to be used
+            audios (list[Union[str, bytes]]): list of audio data, to be embedded
+
+        Raises:
+            ValueError: raised if engine is not started yet
+            ModelNotDeployedError: If loaded model does not expose `audio_embed`
+                capabilities
+
+        Returns:
+            list[EmbeddingReturnType]: embeddings
+                2D list-array of shape( len(sentences),embed_dim )
+            int: token usage
+        """
+        return await self[model].audio_embed(audios=audios)

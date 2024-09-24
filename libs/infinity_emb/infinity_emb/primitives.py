@@ -47,6 +47,7 @@ ImageClassType = EmptyImageClassType
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
 
 EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
+AudioInputType = npt.NDArray[np.float32]
 
 
 class ClassifyReturnType(TypedDict):
@@ -159,7 +160,9 @@ class AbstractSingle(ABC):
         pass
 
     @abstractmethod
-    def to_input(self) -> Union[str, tuple[str, str], "ImageClass"]:
+    def to_input(
+        self,
+    ) -> Union[str, tuple[str, str], "ImageClass", "AudioInputType"]:
         pass
 
 
@@ -201,6 +204,19 @@ class ImageSingle(AbstractSingle):
 
     def to_input(self) -> "ImageClass":
         return self.image
+
+
+@dataclass(**dataclass_args)
+class AudioSingle(AbstractSingle):
+    audio: AudioInputType
+    sampling_rate: int
+
+    def str_repr(self) -> str:
+        """creates a dummy representation of the audio to count tokens relative to shape"""
+        return f"an audio is worth a repeated {'token' * len(self.audio)}"
+
+    def to_input(self) -> AudioInputType:
+        return self.audio
 
 
 AbstractInnerType = TypeVar("AbstractInnerType")
@@ -316,13 +332,40 @@ class ImageInner(AbstractInner):
         return self.embedding
 
 
-QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner, ImageInner]
+@dataclass(order=True, **dataclass_args)
+class AudioInner(AbstractInner):
+    content: AudioSingle
+    embedding: Optional[EmbeddingReturnType] = None
+
+    async def complete(self, result: EmbeddingReturnType) -> None:
+        """marks the future for completion.
+        only call from the same thread as created future."""
+        self.embedding = result
+
+        if self.embedding is None:
+            raise ValueError("embedding is None")
+        try:
+            self.future.set_result(self.embedding)
+        except asyncio.exceptions.InvalidStateError:
+            pass
+
+    async def get_result(self) -> EmbeddingReturnType:
+        """waits for future to complete and returns result"""
+        await self.future
+        assert self.embedding is not None
+        return self.embedding
+
+
+QueueItemInner = Union[
+    EmbeddingInner, ReRankInner, PredictInner, ImageInner, AudioInner
+]
 
 _type_to_inner_item_map = {
     EmbeddingSingle: EmbeddingInner,
     ReRankSingle: ReRankInner,
     PredictSingle: PredictInner,
     ImageSingle: ImageInner,
+    AudioSingle: AudioInner,
 }
 
 
@@ -354,4 +397,8 @@ class ImageCorruption(Exception):
     pass
 
 
-ModelCapabilites = Literal["embed", "rerank", "classify", "image_embed"]
+class AudioCorruption(Exception):
+    pass
+
+
+ModelCapabilites = Literal["embed", "rerank", "classify", "image_embed", "audio_embed"]

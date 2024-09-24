@@ -34,7 +34,7 @@ from infinity_emb.primitives import (
 )
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
-from infinity_emb.transformer.vision.utils import resolve_images
+from infinity_emb.transformer.vision.utils import resolve_audios, resolve_images
 
 
 class ShutdownReadOnly:
@@ -234,6 +234,39 @@ class BatchHandler:
             )
 
         items = await asyncio.to_thread(resolve_images, images)
+        embeddings, usage = await self._schedule(items)
+        return embeddings, usage
+
+    async def audio_embed(
+        self,
+        *,
+        audios: List[Union[str, bytes]],
+    ) -> tuple[list[EmbeddingReturnType], int]:
+        """Schedule audios and sentences to be embedded. Awaits until embedded.
+
+        Args:
+            audios (list[NDArray]): list of raw wave data
+
+        Raises:
+            ModelNotDeployedError: If loaded model does not expose `embed`
+                capabilities
+
+        Returns:
+            list[EmbeddingReturnType]: list of embedding as 1darray
+            int: token usage
+        """
+
+        if "audio_embed" not in self.model_worker.capabilities:
+            raise ModelNotDeployedError(
+                "the loaded moded cannot fullyfill `audio_embed`."
+                f"options are {self.model_worker.capabilities}."
+            )
+
+        items = await asyncio.to_thread(
+            resolve_audios,
+            audios,
+            getattr(self.model_worker._model, "sampling_rate", -42),
+        )
         embeddings, usage = await self._schedule(items)
         return embeddings, usage
 

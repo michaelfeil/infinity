@@ -187,6 +187,29 @@ async def test_torch_clip_embed():
 
 
 @pytest.mark.anyio
+async def test_clap_like_model():
+    model_name = "laion/clap-htsat-unfused"
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(model_name_or_path=model_name, dtype="float32")
+    )
+    url = "https://github.com/wirthual/infinity/raw/b849258a5d60ba79f1c600cbca9c4ea77349876d/libs/infinity_emb/tests/data/audio/COMTran_Aerospacebeep1(ID2380)_BSB.wav"
+    bytes_url = requests.get(url).content
+
+    inputs = ["a sound of a cat", "a sound of a cat"]
+    audios = [url, bytes_url]
+    async with engine:
+        embeddings_text, usage_1 = await engine.embed(sentences=inputs)
+        embeddings_audio, usage_2 = await engine.audio_embed(audios=audios)
+
+    assert usage_1 == sum([len(s) for s in inputs])
+    assert len(embeddings_text) == len(inputs)
+    assert len(embeddings_audio) == len(audios)
+    assert embeddings_text[0].shape[0] == embeddings_audio[0].shape[0]
+    assert all([e.shape[0] >= 10 for e in embeddings_text])
+    assert usage_2 > 0
+
+
+@pytest.mark.anyio
 async def test_clip_embed_pil_image_input():
     img_url = "https://github.com/michaelfeil/infinity/raw/65afe2b3d68fda10429bf7f215fe645be20788e4/docs/assets/cats_coco_sample.jpg"
     response = requests.get(img_url, stream=True)

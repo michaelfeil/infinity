@@ -16,6 +16,8 @@ from typing import (
     Union,
 )
 
+import numpy.typing as npt
+
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray, EngineArgs
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import ImageClassType
@@ -197,4 +199,11 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         """sync interface of AsyncEngineArray"""
         return self.async_run(
             self.async_engine_array.image_embed, model=model, images=images
+        )
+
+    @add_start_docstrings(AsyncEngineArray.audio_embed.__doc__)
+    def audio_embed(self, *, model: str, audios: list[npt.NDArray]):
+        """sync interface of AsyncEngineArray"""
+        return self.async_run(
+            self.async_engine_array.audio_embed, model=model, audios=audios
         )

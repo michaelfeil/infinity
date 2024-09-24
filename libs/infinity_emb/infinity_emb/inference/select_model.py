@@ -11,6 +11,7 @@ from infinity_emb.args import (
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseCrossEncoder, BaseEmbedder
 from infinity_emb.transformer.utils import (
+    ClapLikeEngine,
     ClipLikeEngine,
     EmbedderEngine,
     InferenceEngine,
@@ -21,7 +22,7 @@ from infinity_emb.transformer.utils import (
 
 def get_engine_type_from_config(
     engine_args: EngineArgs,
-) -> Union[EmbedderEngine, RerankEngine, PredictEngine, ClipLikeEngine]:
+) -> Union[EmbedderEngine, RerankEngine, PredictEngine, ClipLikeEngine, ClapLikeEngine]:
     """resolved the class of inference engine path from config.json of the repo."""
     if engine_args.engine in [InferenceEngine.debugengine]:
         return EmbedderEngine.from_inference_engine(engine_args.engine)
@@ -51,6 +52,9 @@ def get_engine_type_from_config(
             return PredictEngine.from_inference_engine(engine_args.engine)
     if config.get("vision_config") and "clip" in config.get("model_type", "").lower():
         return ClipLikeEngine.from_inference_engine(engine_args.engine)
+    if config.get("audio_config") and "clap" in config.get("model_type", "").lower():
+        return ClapLikeEngine.from_inference_engine(engine_args.engine)
+
     else:
         return EmbedderEngine.from_inference_engine(engine_args.engine)
 

@@ -40,6 +40,7 @@ diskcache = {version = "*", optional=true}
 # gpu
 onnxruntime-gpu = {version = "*", optional=true} 
 tensorrt = {version = "^8.6.1", optional=true}
+soundfile = {version="^0.12.1", optional=true}
 
 [tool.poetry.scripts]
 infinity_emb = "infinity_emb.infinity_server:cli"
@@ -86,6 +87,7 @@ einops=["einops"]
 logging=["rich"]
 cache=["diskcache"]
 vision=["pillow","timm"]
+audio=["soundfile"]
 server=[
     "fastapi",
     "orjson",
@@ -111,6 +113,7 @@ all=[
     "torch", 
     "typer", 
     "uvicorn",
+    "soundfile"
 ]
 # non-default gpu
 tensorrt=["tensorrt"]
