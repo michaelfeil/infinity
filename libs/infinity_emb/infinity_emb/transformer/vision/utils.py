@@ -5,9 +5,7 @@ import asyncio
 import io
 from typing import List, Union
 
-import aiohttp
-
-from infinity_emb._optional_imports import CHECK_PIL, CHECK_REQUESTS, CHECK_SOUNDFILE
+from infinity_emb._optional_imports import CHECK_PIL, CHECK_SOUNDFILE, CHECK_AIOHTTP
 from infinity_emb.primitives import (
     AudioCorruption,
     AudioSingle,
@@ -15,6 +13,9 @@ from infinity_emb.primitives import (
     ImageCorruption,
     ImageSingle,
 )
+
+if CHECK_AIOHTTP.is_available:
+    import aiohttp 
 
 if CHECK_PIL.is_available:
     from PIL import Image  # type: ignore
@@ -73,7 +74,7 @@ async def resolve_images(
 ) -> List[ImageSingle]:
     """Resolve images from URLs or ImageClassType Objects using multithreading."""
     # TODO: improve parallel requests, safety, error handling
-    CHECK_REQUESTS.mark_required()
+    CHECK_AIOHTTP.mark_required()
     CHECK_PIL.mark_required()
 
     resolved_imgs = []
@@ -124,7 +125,7 @@ async def resolve_audios(
     audio_urls: list[Union[str, bytes]], allowed_sampling_rate: int
 ) -> list[AudioSingle]:
     """Resolve audios from URLs."""
-    CHECK_REQUESTS.mark_required()
+    CHECK_AIOHTTP.mark_required()
     CHECK_SOUNDFILE.mark_required()
 
     resolved_audios: list[AudioSingle] = []
