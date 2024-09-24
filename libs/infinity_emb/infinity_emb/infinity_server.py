@@ -408,7 +408,7 @@ def create_server(
         ```python
         import requests
         requests.post("http://..:7997/embeddings_audio",
-            json={"model":"laion/larger_clap_general","input":["url_to_audio.wav"]})
+            json={"model":"laion/larger_clap_general","input":["https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"]})
         """
         engine = _resolve_engine(data.model)
         if hasattr(data.input, "host"):
@@ -420,7 +420,7 @@ def create_server(
             logger.debug("[📝] Received request with %s Urls ", len(audio_inputs))
             start = time.perf_counter()
 
-            embedding, usage = await engine.audio_embed(audios=audio_inputs)
+            embedding, usage = await engine.audio_embed(audios=audio_inputs)  # type: ignore
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
