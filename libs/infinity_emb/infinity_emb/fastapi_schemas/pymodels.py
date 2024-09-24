@@ -33,6 +33,10 @@ if CHECK_PYDANTIC.is_available:
             "min_length": 1,
             "max_length": 2048,
         }
+        ITEMS_LIMIT_SMALL = {
+            "min_length": 1,
+            "max_length": 32,
+        }
     except ImportError:
         from pydantic import constr
 
@@ -40,6 +44,10 @@ if CHECK_PYDANTIC.is_available:
         ITEMS_LIMIT = {
             "min_items": 1,
             "max_items": 2048,
+        }
+        ITEMS_LIMIT_SMALL = {
+            "min_items": 1,
+            "max_items": 32,
         }
         HttpUrl, AnyUrl = str, str  # type: ignore
 else:
@@ -76,13 +84,17 @@ class ImageEmbeddingInput(BaseModel):
     input: Union[  # type: ignore
         conlist(  # type: ignore
             Annotated[AnyUrl, HttpUrl],
-            **ITEMS_LIMIT,
+            **ITEMS_LIMIT_SMALL,
         ),
         Annotated[AnyUrl, HttpUrl],
     ]
     model: str = "default/not-specified"
     encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
     user: Optional[str] = None
+
+
+class AudioEmbeddingInput(ImageEmbeddingInput):
+    pass
 
 
 class _EmbeddingObject(BaseModel):
