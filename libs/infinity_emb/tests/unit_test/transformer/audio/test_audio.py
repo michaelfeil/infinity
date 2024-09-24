@@ -15,7 +15,7 @@ def test_clap_like_model():
     model = ClapLikeModel(
         engine_args=EngineArgs(model_name_or_path=model_name, dtype="float16")
     )
-    url = "https://github.com/wirthual/infinity/raw/b849258a5d60ba79f1c600cbca9c4ea77349876d/libs/infinity_emb/tests/data/audio/COMTran_Aerospacebeep1(ID2380)_BSB.wav"
+    url = "https://github.com/michaelfeil/infinity/raw/refs/heads/main/libs/infinity_emb/tests/data/audio/COMTran_Aerospacebeep1(ID2380)_BSB.wav"
     raw_bytes = requests.get(url, stream=True).content
     data, samplerate = sf.read(io.BytesIO(raw_bytes))
 
