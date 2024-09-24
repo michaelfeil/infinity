@@ -351,7 +351,7 @@ def create_server(
         operation_id="embeddings_image",
     )
     async def _embeddings_image(data: ImageEmbeddingInput):
-        """Encode Embeddings
+        """Encode Embeddings from Image files
 
         ```python
         import requests
@@ -386,7 +386,7 @@ def create_server(
             )
         except ModelNotDeployedError as ex:
             raise errors.OpenAIException(
-                f"ModelNotDeployedError: model=`{data.model}` does not support `embed`. Reason: {ex}",
+                f"ModelNotDeployedError: model=`{data.model}` does not support `image_embed`. Reason: {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as ex:
@@ -403,7 +403,7 @@ def create_server(
         operation_id="embeddings_audio",
     )
     async def _embeddings_audio(data: AudioEmbeddingInput):
-        """Encode Embeddings
+        """Encode Embeddings from Audio files
 
         ```python
         import requests
@@ -438,7 +438,7 @@ def create_server(
             )
         except ModelNotDeployedError as ex:
             raise errors.OpenAIException(
-                f"ModelNotDeployedError: model=`{data.model}` does not support `embed`. Reason: {ex}",
+                f"ModelNotDeployedError: model=`{data.model}` does not support `audio_embed`. Reason: {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as ex:
