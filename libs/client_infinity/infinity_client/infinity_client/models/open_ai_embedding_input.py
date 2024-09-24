@@ -3,6 +3,7 @@ from typing import Any, Dict, List, Type, TypeVar, Union, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.embedding_encoding_format import EmbeddingEncodingFormat
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OpenAIEmbeddingInput")
@@ -14,11 +15,13 @@ class OpenAIEmbeddingInput:
     Attributes:
         input_ (Union[List[str], str]):
         model (Union[Unset, str]):  Default: 'default/not-specified'.
+        encoding_format (Union[Unset, EmbeddingEncodingFormat]):
         user (Union[None, Unset, str]):
     """
 
     input_: Union[List[str], str]
     model: Union[Unset, str] = "default/not-specified"
+    encoding_format: Union[Unset, EmbeddingEncodingFormat] = UNSET
     user: Union[None, Unset, str] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -31,6 +34,10 @@ class OpenAIEmbeddingInput:
             input_ = self.input_
 
         model = self.model
+
+        encoding_format: Union[Unset, str] = UNSET
+        if not isinstance(self.encoding_format, Unset):
+            encoding_format = self.encoding_format.value
 
         user: Union[None, Unset, str]
         if isinstance(self.user, Unset):
@@ -47,6 +54,8 @@ class OpenAIEmbeddingInput:
         )
         if model is not UNSET:
             field_dict["model"] = model
+        if encoding_format is not UNSET:
+            field_dict["encoding_format"] = encoding_format
         if user is not UNSET:
             field_dict["user"] = user
 
@@ -71,6 +80,13 @@ class OpenAIEmbeddingInput:
 
         model = d.pop("model", UNSET)
 
+        _encoding_format = d.pop("encoding_format", UNSET)
+        encoding_format: Union[Unset, EmbeddingEncodingFormat]
+        if isinstance(_encoding_format, Unset):
+            encoding_format = UNSET
+        else:
+            encoding_format = EmbeddingEncodingFormat(_encoding_format)
+
         def _parse_user(data: object) -> Union[None, Unset, str]:
             if data is None:
                 return data
@@ -83,6 +99,7 @@ class OpenAIEmbeddingInput:
         open_ai_embedding_input = cls(
             input_=input_,
             model=model,
+            encoding_format=encoding_format,
             user=user,
         )
 
