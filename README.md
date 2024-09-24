@@ -213,9 +213,8 @@ sentences = ["This is awesome.", "I am bored."]
 
 url = "https://bigsoundbank.com/UPLOAD/wav/2380.wav"
 raw_bytes = requests.get(url, stream=True).content
-data, samplerate = sf.read(io.BytesIO(raw_bytes))
 
-audios = [data]
+audios = [raw_bytes]
 engine_args = EngineArgs(
     model_name_or_path = "laion/clap-htsat-unfused",
     dtype="float32", 
@@ -232,6 +231,8 @@ async def embed(engine: AsyncEmbeddingEngine):
 
 asyncio.run(embed(array["laion/clap-htsat-unfused"]))
 ```
+
+* Note: The sampling rate of the audio data needs to match the model *
 
 Example models:
 - [Clap Models from LAION](https://huggingface.co/collections/laion/clap-contrastive-language-audio-pretraining-65415c0b18373b607262a490)
