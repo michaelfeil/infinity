@@ -15,7 +15,7 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_NO_INTERACTION=1 \
     EXTRAS="all" \
     PYTHON="python3.11"
-RUN apt-get update && apt-get install build-essential python3-dev $PYTHON-venv $PYTHON curl -y 
+RUN apt-get update && apt-get install build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl -y 
 WORKDIR /app
 
 FROM base as builder
