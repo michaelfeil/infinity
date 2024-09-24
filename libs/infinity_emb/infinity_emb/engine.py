@@ -231,7 +231,7 @@ class AsyncEmbeddingEngine:
         """embed multiple audios
 
         Kwargs:
-            audios (list[npt.NDArray]): list of audio data, to be embedded
+            audios (list[Union[str, Audiobytes]]): list of audio data, to be embedded
 
         Raises:
             ValueError: raised if engine is not started yet
@@ -240,7 +240,7 @@ class AsyncEmbeddingEngine:
 
         Returns:
             list[EmbeddingReturnType]: embeddings
-                2D list-array of shape( len(sentences),embed_dim )
+                2D list-array of shape( len(sentences), embed_dim )
             int: token usage
         """
 

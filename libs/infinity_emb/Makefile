@@ -3,7 +3,7 @@
 # Default target executed when no arguments are given to make.
 all: help
 
-precommit : | format spell_fix spell_check lint poetry_check test cli_v2_docs
+precommit : | format spell_fix spell_check lint poetry_check cli_v2_docs test 
 
 ######################
 # TESTING AND COVERAGE
