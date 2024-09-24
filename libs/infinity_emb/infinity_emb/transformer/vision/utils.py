@@ -97,7 +97,7 @@ def resolve_audio(audio: Union[str, bytes], allowed_sampling_rate: int) -> Audio
         data, rate = sf.read(audio_bytes)
         if rate != allowed_sampling_rate:
             raise AudioCorruption(
-                f"Audio sample rate is not {allowed_sampling_rate}Mhz, it is {rate}Mhz."
+                f"Audio sample rate is not {allowed_sampling_rate}Hz, it is {rate}Hz."
             )
         return AudioSingle(audio=data, sampling_rate=rate)
     except Exception as e:
@@ -118,13 +118,5 @@ def resolve_audios(
             resolved_audios.append(audio_single)
         except Exception as e:
             raise AudioCorruption(f"Failed to resolve audio: {e}")
-    if not (
-        all(
-            resolved_audios[0].sampling_rate == audio.sampling_rate
-            for audio in resolved_audios
-        )
-    ):
-        raise AudioCorruption(
-            f"Audio sample rates in one batch need to be consistent for vectorized processing, your requests holds rates of {[a.sampling_rate for a in resolved_audios]}Mhz."
-        )
+
     return resolved_audios
