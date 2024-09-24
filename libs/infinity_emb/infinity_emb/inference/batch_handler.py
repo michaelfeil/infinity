@@ -233,7 +233,7 @@ class BatchHandler:
                 f"options are {self.model_worker.capabilities}."
             )
 
-        items = await asyncio.to_thread(resolve_images, images)
+        items = await resolve_images(images)
         embeddings, usage = await self._schedule(items)
         return embeddings, usage
 
@@ -262,8 +262,7 @@ class BatchHandler:
                 f"options are {self.model_worker.capabilities}."
             )
 
-        items = await asyncio.to_thread(
-            resolve_audios,
+        items = await resolve_audios(
             audios,
             getattr(self.model_worker._model, "sampling_rate", -42),
         )
