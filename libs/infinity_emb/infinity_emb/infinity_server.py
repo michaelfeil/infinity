@@ -400,7 +400,7 @@ def create_server(
         response_model=OpenAIEmbeddingResult,
         response_class=responses.ORJSONResponse,
         dependencies=route_dependencies,
-        operation_id="embeddings_image",
+        operation_id="embeddings_audio",
     )
     async def _embeddings_audio(data: AudioEmbeddingInput):
         """Encode Embeddings
@@ -413,14 +413,14 @@ def create_server(
         engine = _resolve_engine(data.model)
         if hasattr(data.input, "host"):
             # if it is a single url
-            urls = [str(data.input)]
+            audio_inputs = [str(data.input)]
         else:
-            urls = [str(d) for d in data.input]  # type: ignore
+            audio_inputs = [str(d) for d in data.input]  # type: ignore
         try:
-            logger.debug("[📝] Received request with %s Urls ", len(urls))
+            logger.debug("[📝] Received request with %s Urls ", len(audio_inputs))
             start = time.perf_counter()
 
-            embedding, usage = await engine.image_embed(images=urls)
+            embedding, usage = await engine.audio_embed(audios=audio_inputs)
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
@@ -433,7 +433,7 @@ def create_server(
             )
         except AudioCorruption as ex:
             raise errors.OpenAIException(
-                f"AudioCorruption, could not open {urls} -> {ex}",
+                f"AudioCorruption, could not open {audio_inputs} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except ModelNotDeployedError as ex:
