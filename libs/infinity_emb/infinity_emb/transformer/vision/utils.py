@@ -32,15 +32,22 @@ def resolve_from_img_url(img_url: str) -> ImageSingle:
     try:
         downloaded_img = requests.get(img_url, stream=True).raw
     except Exception as e:
-        raise ImageCorruption(f"error opening an image in your request image from url: {e}")
+        raise ImageCorruption(
+            f"error opening an image in your request image from url: {e}"
+        )
 
     try:
         img = Image.open(downloaded_img)
         if img.size[0] < 3 or img.size[1] < 3:
-            raise ImageCorruption(f"An image in your request is too small for processing {img.size}")
+            # https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png
+            raise ImageCorruption(
+                f"An image in your request is too small for processing {img.size}"
+            )
         return ImageSingle(image=img)
     except Exception as e:
-        raise ImageCorruption(f"error opening the payload from an image in your request from url: {e}")
+        raise ImageCorruption(
+            f"error opening the payload from an image in your request from url: {e}"
+        )
 
 
 def resolve_image(img: Union[str, "ImageClassType"]) -> ImageSingle:
