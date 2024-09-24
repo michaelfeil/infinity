@@ -6,11 +6,11 @@ from attrs import field as _attrs_field
 from ..models.embedding_encoding_format import EmbeddingEncodingFormat
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="ImageEmbeddingInput")
+T = TypeVar("T", bound="AudioEmbeddingInput")
 
 
 @_attrs_define
-class ImageEmbeddingInput:
+class AudioEmbeddingInput:
     """
     Attributes:
         input_ (Union[List[str], str]):
@@ -96,15 +96,15 @@ class ImageEmbeddingInput:
 
         user = _parse_user(d.pop("user", UNSET))
 
-        image_embedding_input = cls(
+        audio_embedding_input = cls(
             input_=input_,
             model=model,
             encoding_format=encoding_format,
             user=user,
         )
 
-        image_embedding_input.additional_properties = d
-        return image_embedding_input
+        audio_embedding_input.additional_properties = d
+        return audio_embedding_input
 
     @property
     def additional_keys(self) -> List[str]:

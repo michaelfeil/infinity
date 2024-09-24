@@ -16,7 +16,8 @@ T = TypeVar("T", bound="ReRankResult")
 
 @_attrs_define
 class ReRankResult:
-    """
+    """Following the Cohere protocol for Rerankers.
+
     Attributes:
         results (List['ReRankObject']):
         model (str):

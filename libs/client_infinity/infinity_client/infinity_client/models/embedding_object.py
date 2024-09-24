@@ -1,10 +1,11 @@
+from io import BytesIO
 from typing import Any, Dict, List, Type, TypeVar, Union, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.embedding_object_object import EmbeddingObjectObject
-from ..types import UNSET, Unset
+from ..types import UNSET, File, FileJsonType, Unset
 
 T = TypeVar("T", bound="EmbeddingObject")
 
@@ -13,18 +14,23 @@ T = TypeVar("T", bound="EmbeddingObject")
 class EmbeddingObject:
     """
     Attributes:
-        embedding (List[float]):
+        embedding (Union[File, List[float]]):
         index (int):
         object_ (Union[Unset, EmbeddingObjectObject]):  Default: EmbeddingObjectObject.EMBEDDING.
     """
 
-    embedding: List[float]
+    embedding: Union[File, List[float]]
     index: int
     object_: Union[Unset, EmbeddingObjectObject] = EmbeddingObjectObject.EMBEDDING
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        embedding = self.embedding
+        embedding: Union[FileJsonType, List[float]]
+        if isinstance(self.embedding, list):
+            embedding = self.embedding
+
+        else:
+            embedding = self.embedding.to_tuple()
 
         index = self.index
 
@@ -48,7 +54,23 @@ class EmbeddingObject:
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
-        embedding = cast(List[float], d.pop("embedding"))
+
+        def _parse_embedding(data: object) -> Union[File, List[float]]:
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                embedding_type_0 = cast(List[float], data)
+
+                return embedding_type_0
+            except:  # noqa: E722
+                pass
+            if not isinstance(data, bytes):
+                raise TypeError()
+            embedding_type_1 = File(payload=BytesIO(data))
+
+            return embedding_type_1
+
+        embedding = _parse_embedding(d.pop("embedding"))
 
         index = d.pop("index")
 

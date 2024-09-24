@@ -1,9 +1,11 @@
 """ Contains all the data models used in inputs/outputs """
 
+from .audio_embedding_input import AudioEmbeddingInput
 from .classify_input import ClassifyInput
 from .classify_object import ClassifyObject
 from .classify_result import ClassifyResult
 from .classify_result_object import ClassifyResultObject
+from .embedding_encoding_format import EmbeddingEncodingFormat
 from .embedding_object import EmbeddingObject
 from .embedding_object_object import EmbeddingObjectObject
 from .http_validation_error import HTTPValidationError
@@ -25,10 +27,12 @@ from .usage import Usage
 from .validation_error import ValidationError
 
 __all__ = (
+    "AudioEmbeddingInput",
     "ClassifyInput",
     "ClassifyObject",
     "ClassifyResult",
     "ClassifyResultObject",
+    "EmbeddingEncodingFormat",
     "EmbeddingObject",
     "EmbeddingObjectObject",
     "HTTPValidationError",

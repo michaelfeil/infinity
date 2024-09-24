@@ -16,7 +16,8 @@ T = TypeVar("T", bound="ClassifyResult")
 
 @_attrs_define
 class ClassifyResult:
-    """
+    """Result of classification.
+
     Attributes:
         data (List[List['ClassifyObject']]):
         model (str):

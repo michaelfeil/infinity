@@ -10,7 +10,8 @@ T = TypeVar("T", bound="RerankInput")
 
 @_attrs_define
 class RerankInput:
-    """
+    """Input for reranking
+
     Attributes:
         query (str):
         documents (List[str]):
