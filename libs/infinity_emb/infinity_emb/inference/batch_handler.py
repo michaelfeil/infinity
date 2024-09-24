@@ -33,8 +33,9 @@ from infinity_emb.primitives import (
     get_inner_item,
 )
 from infinity_emb.transformer.abstract import BaseTransformer
+from infinity_emb.transformer.audio.utils import resolve_audios
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
-from infinity_emb.transformer.vision.utils import resolve_audios, resolve_images
+from infinity_emb.transformer.vision.utils import resolve_images
 
 
 class ShutdownReadOnly:
