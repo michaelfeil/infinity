@@ -16,6 +16,7 @@ from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray
 from infinity_emb.env import MANAGER
 from infinity_emb.fastapi_schemas import docs, errors
 from infinity_emb.fastapi_schemas.pymodels import (
+    AudioEmbeddingInput,
     ClassifyInput,
     ClassifyResult,
     ImageEmbeddingInput,
@@ -27,6 +28,7 @@ from infinity_emb.fastapi_schemas.pymodels import (
 )
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.primitives import (
+    AudioCorruption,
     Device,
     Dtype,
     EmbeddingDtype,
@@ -380,6 +382,58 @@ def create_server(
         except ImageCorruption as ex:
             raise errors.OpenAIException(
                 f"ImageCorruption, could not open {urls} -> {ex}",
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        except ModelNotDeployedError as ex:
+            raise errors.OpenAIException(
+                f"ModelNotDeployedError: model=`{data.model}` does not support `embed`. Reason: {ex}",
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as ex:
+            raise errors.OpenAIException(
+                f"InternalServerError: {ex}",
+                code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    @app.post(
+        f"{url_prefix}/embeddings_audio",
+        response_model=OpenAIEmbeddingResult,
+        response_class=responses.ORJSONResponse,
+        dependencies=route_dependencies,
+        operation_id="embeddings_image",
+    )
+    async def _embeddings_audio(data: AudioEmbeddingInput):
+        """Encode Embeddings
+
+        ```python
+        import requests
+        requests.post("http://..:7997/embeddings_audio",
+            json={"model":"laion/larger_clap_general","input":["url_to_audio.wav"]})
+        """
+        engine = _resolve_engine(data.model)
+        if hasattr(data.input, "host"):
+            # if it is a single url
+            urls = [str(data.input)]
+        else:
+            urls = [str(d) for d in data.input]  # type: ignore
+        try:
+            logger.debug("[📝] Received request with %s Urls ", len(urls))
+            start = time.perf_counter()
+
+            embedding, usage = await engine.image_embed(images=urls)
+
+            duration = (time.perf_counter() - start) * 1000
+            logger.debug("[✅] Done in %s ms", duration)
+
+            return OpenAIEmbeddingResult.to_embeddings_response(
+                embeddings=embedding,
+                engine_args=engine.engine_args,
+                encoding_format=data.encoding_format,
+                usage=usage,
+            )
+        except AudioCorruption as ex:
+            raise errors.OpenAIException(
+                f"AudioCorruption, could not open {urls} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except ModelNotDeployedError as ex:
