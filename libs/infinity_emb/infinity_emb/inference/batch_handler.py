@@ -342,6 +342,7 @@ class BatchHandler:
         shutdown: ShutdownReadOnly, result_queue: Queue, tp: ThreadPoolExecutor
     ):
         """background thread for reading  exits only if shutdown.is_set()"""
+        schedule_errors = 0
         try:
             while not shutdown.is_set():
                 try:
@@ -354,7 +355,12 @@ class BatchHandler:
                         # in case of timeout start again
                         continue
                     except Exception as e:
-                        logger.exception(e)
+                        # exception handing without loop forever.
+                        time.sleep(1)
+                        schedule_errors += 1
+                        if schedule_errors > 10:
+                            logger.error("too many schedule errors")
+                            raise e
                         continue
                 results, batch = post_batch
                 for i, item in enumerate(batch):
