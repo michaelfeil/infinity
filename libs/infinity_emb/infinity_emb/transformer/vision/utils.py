@@ -5,7 +5,7 @@ import asyncio
 import io
 from typing import List, Union
 
-from infinity_emb._optional_imports import CHECK_PIL, CHECK_SOUNDFILE, CHECK_AIOHTTP
+from infinity_emb._optional_imports import CHECK_AIOHTTP, CHECK_PIL, CHECK_SOUNDFILE
 from infinity_emb.primitives import (
     AudioCorruption,
     AudioSingle,
@@ -15,7 +15,7 @@ from infinity_emb.primitives import (
 )
 
 if CHECK_AIOHTTP.is_available:
-    import aiohttp 
+    import aiohttp
 
 if CHECK_PIL.is_available:
     from PIL import Image  # type: ignore
