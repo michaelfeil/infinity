@@ -7,11 +7,11 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
 
 from infinity_emb._optional_imports import CHECK_TORCH, CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
+from infinity_emb.primitives import AudioInputType
 from infinity_emb.transformer.abstract import BaseClapAudioModel
 from infinity_emb.transformer.quantization.interface import quant_embedding_decorator
 
 if TYPE_CHECKING:
-    import numpy as np
     from torch import Tensor
 
 if CHECK_TORCH.is_available:
@@ -21,7 +21,7 @@ if CHECK_TRANSFORMERS.is_available:
 
 
 class ClapLikeModel(BaseClapAudioModel):
-    """CrossEncoder with .encode_core() and no microbatching"""
+    """Audio model for CLAP models"""
 
     def __init__(self, *, engine_args: EngineArgs):
         CHECK_TORCH.mark_required()
@@ -66,12 +66,13 @@ class ClapLikeModel(BaseClapAudioModel):
             self.model.config.text_config, "max_length"
         ):
             self.max_length = self.model.config.text_config.max_length
+        self._sampling_rate = self.processor.feature_extractor.sampling_rate
 
-    def encode_pre(
-        self,
-        sentences_or_audios: list[Union[str, np.ndarray]],
-        sample_rate: int = 48000,
-    ):
+    @property
+    def sampling_rate(self) -> int:
+        return self._sampling_rate
+
+    def encode_pre(self, sentences_or_audios: list[Union[str, "AudioInputType"]]):
         text_list: list[str] = []
         audio_list: list[Any] = []
         type_is_audio: list[bool] = []
@@ -88,10 +89,10 @@ class ClapLikeModel(BaseClapAudioModel):
             audios=audio_list if audio_list else None,
             text=text_list if text_list else None,
             return_tensors="pt",
-            padding="max_length",
-            max_length=self.max_length,
-            sampling_rate=sample_rate,
+            padding=True,
+            sampling_rate=self.sampling_rate,
         )
+        preprocessed.pop("token_type_ids", None)
 
         preprocessed = {k: v.to(self.model.device) for k, v in preprocessed.items()}
 
@@ -113,8 +114,8 @@ class ClapLikeModel(BaseClapAudioModel):
             # TODO: torch.cuda.stream()
             if "input_ids" in features:
                 text_embeds = self.model.get_text_features(
-                    input_ids=features.get("input_ids"),
-                    attention_mask=features.get("attention_mask"),
+                    input_ids=features.get("input_ids")[:, : self.max_length],  # type: ignore
+                    attention_mask=features.get("attention_mask")[:, : self.max_length],  # type: ignore
                 )
             else:
                 text_embeds = None  # type: ignore

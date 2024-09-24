@@ -4,8 +4,6 @@
 from asyncio import Semaphore
 from typing import Iterable, Iterator, List, Optional, Set, Union
 
-import numpy.typing as npt
-
 from infinity_emb.args import EngineArgs
 
 # prometheus
@@ -228,7 +226,7 @@ class AsyncEmbeddingEngine:
         return embeddings, usage
 
     async def audio_embed(
-        self, *, audios: list[npt.NDArray]
+        self, *, audios: List[Union[str, bytes]]
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple audios
 
@@ -403,13 +401,13 @@ class AsyncEngineArray:
         )
 
     async def audio_embed(
-        self, *, model: str, audios: list[npt.NDArray]
+        self, *, model: str, audios: list[Union[str, bytes]]
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple audios
 
         Kwargs:
             model (str): model name to be used
-            audios (list[npt.NDArray]): list of audio data, to be embedded
+            audios (list[Union[str, bytes]]): list of audio data, to be embedded
 
         Raises:
             ValueError: raised if engine is not started yet

@@ -6,13 +6,11 @@ from abc import ABC, abstractmethod
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, Set, Union
 
-import numpy as np
-import numpy.typing as npt
-
-from infinity_emb._optional_imports import CHECK_PIL
+from infinity_emb._optional_imports import CHECK_PIL  # , CHECK_SOUNDFILE
 from infinity_emb.primitives import (
     AudioInner,
-    AudioSingle,
+    AudioInputType,
+    # AudioSingle,
     EmbeddingDtype,
     EmbeddingInner,
     EmbeddingReturnType,
@@ -34,12 +32,18 @@ OUT_FEATURES = Any
 if TYPE_CHECKING:
     from PIL.Image import Image as ImageClass
 
+    from infinity_emb.args import EngineArgs
+
 if CHECK_PIL.is_available:
     from PIL import Image
+
+# if CHECK_SOUNDFILE:
+#     import soundfile as sf
 
 
 class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
     capabilities: Set[ModelCapabilites] = set()
+    engine_args: "EngineArgs"
 
     @abstractmethod  # Decorator to define an abstract method
     def encode_pre(self, *args, **kwargs) -> Any:
@@ -70,7 +74,7 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
     @property
     def embedding_dtype(self) -> EmbeddingDtype:
         """returns the dtype of the embeddings"""
-        return self.engine_args.embedding_dtype  # type: ignore
+        return self.engine_args.embedding_dtype
 
     @abstractmethod  # Decorator to define an abstract method
     def encode_pre(self, sentences: list[Union[str, Any]]) -> INPUT_FEATURE:
@@ -97,7 +101,7 @@ class BaseClipVisionModel(BaseEmbedder):  # Inherit from ABC(Abstract base class
     @property
     def embedding_dtype(self) -> EmbeddingDtype:
         """returns the dtype of the embeddings"""
-        return self.engine_args.embedding_dtype  # type: ignore
+        return self.engine_args.embedding_dtype
 
     @abstractmethod  # Decorator to define an abstract method
     def encode_pre(
@@ -140,9 +144,13 @@ class BaseClapAudioModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
         """returns the dtype of the embeddings"""
         return self.engine_args.embedding_dtype  # type: ignore
 
+    @property
+    def sampling_rate(self) -> int:
+        raise NotImplementedError
+
     @abstractmethod  # Decorator to define an abstract method
     def encode_pre(
-        self, sentences_or_audios: list[Union[str, npt.NDArray]]
+        self, sentences_or_audios: list[Union[str, AudioInputType]]
     ) -> INPUT_FEATURE:
         """
         takes a list of sentences, or a list of audios.
@@ -157,11 +165,11 @@ class BaseClapAudioModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> tuple[float, float, str]:
         sample_text = ["warm " * n_tokens] * max(1, batch_size // 2)
-        sample_audios = [np.arange(1000, dtype="float64")] * max(1, batch_size // 2)  # type: ignore
-        inp = [
+        # sample_audios = [sf.SoundFile()] * max(1, batch_size // 2)  # type: ignore
+        inp: list[Union[AudioInner, EmbeddingInner]] = [
             # TODO: warmup for audio
-            AudioInner(content=AudioSingle(audio=audio), future=None)  # type: ignore
-            for audio in sample_audios
+            # AudioInner(content=AudioSingle(audio=audio), future=None)  # type: ignore
+            # for audio in sample_audios
         ] + [
             EmbeddingInner(
                 content=EmbeddingSingle(sentence=s), future=None  # type: ignore

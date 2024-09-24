@@ -11,7 +11,7 @@ from infinity_emb.transformer.vision.torch_vision import ClipLikeModel
 def test_clip_like_model():
     model_name = "openai/clip-vit-base-patch32"
     model = ClipLikeModel(
-        engine_args=EngineArgs(model_name_or_path=model_name, dtype="float32")
+        engine_args=EngineArgs(model_name_or_path=model_name, dtype="float16")
     )
     url = "http://images.cocodataset.org/val2017/000000039769.jpg"
     image = Image.open(requests.get(url, stream=True).raw)
@@ -38,9 +38,9 @@ def test_clip_like_model():
     outputs = model(**inputs_clip)
 
     torch.testing.assert_close(
-        outputs.text_embeds[0], embeddings[0], check_dtype=False, rtol=0, atol=1e-4
+        outputs.text_embeds[0], embeddings[0], check_dtype=False, rtol=0, atol=1e-3
     )
     torch.testing.assert_close(
-        outputs.image_embeds[0], embeddings[3], check_dtype=False, rtol=0, atol=1e-4
+        outputs.image_embeds[0], embeddings[3], check_dtype=False, rtol=0, atol=1e-3
     )
     torch.testing.assert_close(embeddings[1], embeddings[3])

@@ -47,6 +47,7 @@ ImageClassType = EmptyImageClassType
 dataclass_args = {"kw_only": True} if sys.version_info >= (3, 10) else {}
 
 EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
+AudioInputType = npt.NDArray[np.float32]
 
 
 class ClassifyReturnType(TypedDict):
@@ -159,7 +160,9 @@ class AbstractSingle(ABC):
         pass
 
     @abstractmethod
-    def to_input(self) -> Union[str, tuple[str, str], "ImageClass", npt.NDArray]:
+    def to_input(
+        self,
+    ) -> Union[str, tuple[str, str], "ImageClass", "AudioInputType"]:
         pass
 
 
@@ -205,13 +208,14 @@ class ImageSingle(AbstractSingle):
 
 @dataclass(**dataclass_args)
 class AudioSingle(AbstractSingle):
-    audio: npt.NDArray
+    audio: AudioInputType
+    sampling_rate: int
 
     def str_repr(self) -> str:
         """creates a dummy representation of the audio to count tokens relative to shape"""
         return f"an audio is worth a repeated {'token' * len(self.audio)}"
 
-    def to_input(self) -> npt.NDArray:
+    def to_input(self) -> AudioInputType:
         return self.audio
 
 

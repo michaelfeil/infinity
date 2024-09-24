@@ -12,7 +12,6 @@ from queue import Queue
 from typing import Any, List, Sequence, Set, Union
 
 import numpy as np
-import numpy.typing as npt
 
 from infinity_emb.env import MANAGER
 from infinity_emb.inference.caching_layer import Cache
@@ -21,7 +20,6 @@ from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
     AbstractSingle,
-    AudioSingle,
     ClassifyReturnType,
     EmbeddingReturnType,
     EmbeddingSingle,
@@ -36,7 +34,7 @@ from infinity_emb.primitives import (
 )
 from infinity_emb.transformer.abstract import BaseTransformer
 from infinity_emb.transformer.utils import get_lengths_with_tokenize
-from infinity_emb.transformer.vision.utils import resolve_images
+from infinity_emb.transformer.vision.utils import resolve_audios, resolve_images
 
 
 class ShutdownReadOnly:
@@ -242,7 +240,7 @@ class BatchHandler:
     async def audio_embed(
         self,
         *,
-        audios: list[npt.NDArray],
+        audios: List[Union[str, bytes]],
     ) -> tuple[list[EmbeddingReturnType], int]:
         """Schedule audios and sentences to be embedded. Awaits until embedded.
 
@@ -264,7 +262,11 @@ class BatchHandler:
                 f"options are {self.model_worker.capabilities}."
             )
 
-        items = [AudioSingle(audio=audio) for audio in audios]
+        items = await asyncio.to_thread(
+            resolve_audios,
+            audios,
+            getattr(self.model_worker._model, "sampling_rate", -42),
+        )
         embeddings, usage = await self._schedule(items)
         return embeddings, usage
 
