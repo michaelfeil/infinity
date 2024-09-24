@@ -5,21 +5,21 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
+from ...models.audio_embedding_input import AudioEmbeddingInput
 from ...models.http_validation_error import HTTPValidationError
-from ...models.image_embedding_input import ImageEmbeddingInput
 from ...models.open_ai_embedding_result import OpenAIEmbeddingResult
 from ...types import Response
 
 
 def _get_kwargs(
     *,
-    body: ImageEmbeddingInput,
+    body: AudioEmbeddingInput,
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
 
     _kwargs: Dict[str, Any] = {
         "method": "post",
-        "url": "/embeddings_image",
+        "url": "/embeddings_audio",
     }
 
     _body = body.to_dict()
@@ -62,20 +62,20 @@ def _build_response(
 def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: ImageEmbeddingInput,
+    body: AudioEmbeddingInput,
 ) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Image
+    r"""Embeddings Audio
 
-     Encode Embeddings from Image files
+     Encode Embeddings from Audio files
 
     ```python
     import requests
-    requests.post(\"http://..:7997/embeddings_image\",
-        json={\"model\":\"openai/clip-vit-base-
-    patch32\",\"input\":[\"http://images.cocodataset.org/val2017/000000039769.jpg\"]})
+    requests.post(\"http://..:7997/embeddings_audio\",
+        json={\"model\":\"laion/larger_clap_general\",\"input\":[\"https://github.com/michaelfeil/infini
+    ty/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav\"]})
 
     Args:
-        body (ImageEmbeddingInput):
+        body (AudioEmbeddingInput):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -99,20 +99,20 @@ def sync_detailed(
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: ImageEmbeddingInput,
+    body: AudioEmbeddingInput,
 ) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Image
+    r"""Embeddings Audio
 
-     Encode Embeddings from Image files
+     Encode Embeddings from Audio files
 
     ```python
     import requests
-    requests.post(\"http://..:7997/embeddings_image\",
-        json={\"model\":\"openai/clip-vit-base-
-    patch32\",\"input\":[\"http://images.cocodataset.org/val2017/000000039769.jpg\"]})
+    requests.post(\"http://..:7997/embeddings_audio\",
+        json={\"model\":\"laion/larger_clap_general\",\"input\":[\"https://github.com/michaelfeil/infini
+    ty/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav\"]})
 
     Args:
-        body (ImageEmbeddingInput):
+        body (AudioEmbeddingInput):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -131,20 +131,20 @@ def sync(
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: ImageEmbeddingInput,
+    body: AudioEmbeddingInput,
 ) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Image
+    r"""Embeddings Audio
 
-     Encode Embeddings from Image files
+     Encode Embeddings from Audio files
 
     ```python
     import requests
-    requests.post(\"http://..:7997/embeddings_image\",
-        json={\"model\":\"openai/clip-vit-base-
-    patch32\",\"input\":[\"http://images.cocodataset.org/val2017/000000039769.jpg\"]})
+    requests.post(\"http://..:7997/embeddings_audio\",
+        json={\"model\":\"laion/larger_clap_general\",\"input\":[\"https://github.com/michaelfeil/infini
+    ty/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav\"]})
 
     Args:
-        body (ImageEmbeddingInput):
+        body (AudioEmbeddingInput):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -166,20 +166,20 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: ImageEmbeddingInput,
+    body: AudioEmbeddingInput,
 ) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Image
+    r"""Embeddings Audio
 
-     Encode Embeddings from Image files
+     Encode Embeddings from Audio files
 
     ```python
     import requests
-    requests.post(\"http://..:7997/embeddings_image\",
-        json={\"model\":\"openai/clip-vit-base-
-    patch32\",\"input\":[\"http://images.cocodataset.org/val2017/000000039769.jpg\"]})
+    requests.post(\"http://..:7997/embeddings_audio\",
+        json={\"model\":\"laion/larger_clap_general\",\"input\":[\"https://github.com/michaelfeil/infini
+    ty/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav\"]})
 
     Args:
-        body (ImageEmbeddingInput):
+        body (AudioEmbeddingInput):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
