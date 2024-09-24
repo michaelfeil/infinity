@@ -211,7 +211,7 @@ async def test_clap_like_model():
 
 @pytest.mark.anyio
 async def test_clip_embed_pil_image_input():
-    img_url = "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
+    img_url = "https://github.com/michaelfeil/infinity/raw/06fd1f4d8f0a869f4482fc1c78b62a75ccbb66a1/docs/assets/cats_coco_sample.jpg"
     response = requests.get(img_url, stream=True)
     assert response.status_code == 200
     img_data = response.raw
