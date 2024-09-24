@@ -103,7 +103,7 @@ def resolve_audios(
             audio_single = resolve_audio(audio)
             resolved_audios.append(audio_single)
         except Exception as e:
-            raise AudioCorruption(f"Failed to resolve image: {e}")
+            raise AudioCorruption(f"Failed to resolve audio: {e}")
     if not (
         all(
             resolved_audios[0].sampling_rate == audio.sampling_rate

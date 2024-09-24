@@ -3,6 +3,7 @@
 
 import asyncio
 import threading
+import time
 import weakref
 from concurrent.futures import Future
 from functools import partial
@@ -56,7 +57,7 @@ class _AsyncLifeMixin:
             logger.info("Started Background Event Loop")
             start_event.set_result(None)  # signal that the event loop has started
             while not self.__stop_signal.is_set():
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.1)
 
         self.__loop.run_until_complete(block_until_engine_stop())
         self.__loop.close()
@@ -145,8 +146,17 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         self.async_engine_array = AsyncEngineArray.from_args(_engine_args_array)
         self.async_run(self.async_engine_array.astart).result()
 
-        # finalizer
-        finalize_fn = partial(self.async_run, self.async_engine_array.astop)
+        # finalizer to stop the engine
+        engine_ref = weakref.ref(self.async_engine_array)
+        async_run_ref = weakref.ref(self.async_run)
+
+        def finalize_fn():
+            engine = engine_ref()
+            run_ref = async_run_ref()
+            if engine is not None:
+                run_ref(engine.astop).result()
+                time.sleep(1.5)  # wait for maximum of 1.5 seconds
+
         weakref.finalize(self.async_engine_array, finalize_fn)
 
     @classmethod
@@ -207,3 +217,6 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         return self.async_run(
             self.async_engine_array.audio_embed, model=model, audios=audios
         )
+
+    def __del__(self):
+        self.stop()

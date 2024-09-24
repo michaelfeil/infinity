@@ -111,12 +111,9 @@ class BatchedInference:
         """Embed audios with a model.
 
         >>> import requests, io
-        >>> import soundfile as sf
-        >>> url =  "https://bigsoundbank.com/UPLOAD/wav/2380.wav"
-        >>> raw_bytes = requests.get(url, stream=True).content
-        >>> data, samplerate = sf.read(io.BytesIO(raw_bytes))
+        >>> url =  "https://github.com/michaelfeil/infinity/raw/refs/heads/main/libs/infinity_emb/tests/data/audio/COMTran_Aerospacebeep1(ID2380)_BSB.wav"
         >>> ei = BatchedInference(model_id="laion/larger_clap_general", engine="torch")
-        >>> audio_embed_result = ei.audio_embed(model_id="laion/larger_clap_general", audios=[data])
+        >>> audio_embed_result = ei.audio_embed(model_id="laion/larger_clap_general", audios=[url])
         >>> type(audio_embed_result)
         <class 'concurrent.futures._base.Future'>
         >>> audio_embed_result.result()[0][0].shape
