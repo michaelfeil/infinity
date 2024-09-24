@@ -353,6 +353,8 @@ class BatchHandler:
                     except queue.Empty:
                         # in case of timeout start again
                         continue
+                    except Exception as ex:
+                        continue
                 results, batch = post_batch
                 for i, item in enumerate(batch):
                     await item.complete(results[i])
