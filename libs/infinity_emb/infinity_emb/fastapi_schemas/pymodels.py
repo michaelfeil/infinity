@@ -183,7 +183,7 @@ class RerankInput(BaseModel):
         Annotated[str, INPUT_STRING],
         **ITEMS_LIMIT,
     )
-    return_documents: bool = False
+    return_documents: bool = True
     model: str = "default/not-specified"
 
 

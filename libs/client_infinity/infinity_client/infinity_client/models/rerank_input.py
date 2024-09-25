@@ -15,13 +15,13 @@ class RerankInput:
     Attributes:
         query (str):
         documents (List[str]):
-        return_documents (Union[Unset, bool]):  Default: False.
+        return_documents (Union[Unset, bool]):  Default: True.
         model (Union[Unset, str]):  Default: 'default/not-specified'.
     """
 
     query: str
     documents: List[str]
-    return_documents: Union[Unset, bool] = False
+    return_documents: Union[Unset, bool] = True
     model: Union[Unset, str] = "default/not-specified"
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
