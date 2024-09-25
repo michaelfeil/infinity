@@ -190,7 +190,7 @@ class RerankInput(BaseModel):
 class _ReRankObject(BaseModel):
     relevance_score: float
     index: int
-    document: Optional[str] = None
+    document: Optional[dict[str,str]] = None
 
 
 class ReRankResult(BaseModel):
@@ -223,7 +223,7 @@ class ReRankResult(BaseModel):
             return dict(
                 model=model,
                 results=[
-                    dict(relevance_score=score, index=count, document=doc)
+                    dict(relevance_score=score, index=count, document={'text': doc})
                     for count, (score, doc) in enumerate(zip(scores, documents))
                 ],
                 usage=dict(prompt_tokens=usage, total_tokens=usage),
