@@ -230,7 +230,7 @@ class ReRankResult(BaseModel):
                     dict(
                         relevance_score=score,
                         index=count,
-                        document=_ReRankDocument(text="doc"),
+                        document=_ReRankDocument(text=doc),
                     )
                     for count, (score, doc) in enumerate(zip(scores, documents))
                 ],
