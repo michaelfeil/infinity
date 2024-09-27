@@ -62,15 +62,15 @@ async def test_vision_single(client):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("no_of_images", [0, 1, 5, 10])
+@pytest.mark.parametrize("no_of_images", [1, 5, 10])
 async def test_vision_multiple(client, no_of_images):
-    image_url = [
+    image_urls = [
         "http://images.cocodataset.org/val2017/000000039769.jpg"
     ] * no_of_images
 
     response = await client.post(
         f"{PREFIX}/embeddings_image",
-        json={"model": MODEL, "input": image_url},
+        json={"model": MODEL, "input": image_urls},
     )
     assert response.status_code == 200
     rdata = response.json()
@@ -92,3 +92,12 @@ async def test_vision_fail(client):
         json={"model": MODEL, "input": image_url},
     )
     assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+@pytest.mark.anyio
+async def test_vision_empty(client):
+    image_url_empty = []
+    response = await client.post(
+        f"{PREFIX}/embeddings_image",
+        json={"model": MODEL, "input": image_url_empty},
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY

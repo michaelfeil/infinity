@@ -62,15 +62,15 @@ async def test_audio_single(client):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("no_of_audios", [0, 1, 5, 10])
+@pytest.mark.parametrize("no_of_audios", [1, 5, 10])
 async def test_audio_multiple(client, no_of_audios):
-    audio_url = [
+    audio_urls = [
         "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
     ] * no_of_audios
 
     response = await client.post(
-        f"{PREFIX}/embeddings_image",
-        json={"model": MODEL, "input": audio_url},
+        f"{PREFIX}/embeddings_audio",
+        json={"model": MODEL, "input": audio_urls},
     )
     assert response.status_code == 200
     rdata = response.json()
@@ -88,7 +88,18 @@ async def test_audio_fail(client):
     audio_url = "https://www.google.com/404"
 
     response = await client.post(
-        f"{PREFIX}/embeddings_image",
+        f"{PREFIX}/embeddings_audio",
         json={"model": MODEL, "input": audio_url},
     )
     assert response.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.anyio
+async def test_audio_empty(client):
+    audio_url_empty = []
+
+    response_empty = await client.post(
+        f"{PREFIX}/embeddings_audio",
+        json={"model": MODEL, "input": audio_url_empty},
+    )
+    assert response_empty.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
