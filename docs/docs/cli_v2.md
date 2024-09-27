@@ -42,3 +42,5 @@ infinity_emb v2 --help
 │ --proxy-root-path                                      TEXT                                       Proxy prefix for the application. See: https://fastapi.tiangolo.com/advanced/behind-a-proxy/ [env var: `INFINITY_PROXY_ROOT_PATH`]                                       │
 │ --help                                                                                            Show this message and exit.                                                                                                                                              │
 ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+```
