@@ -51,7 +51,7 @@ async def resolve_from_img_url(
             f"error opening the payload from an image in your request from url: {e}"
         )
 
-async def resolve_from_img_base64(uri: str) -> ImageSingle:
+def resolve_from_img_base64(uri: str) -> ImageSingle:
     """Resolve an image from a Data URI"""
     try:
         base64_image = uri.split(",")[-1]
@@ -94,7 +94,7 @@ async def resolve_image(
     if isinstance(img, Image.Image):
         return resolve_from_img_obj(img)
     elif is_base64_data_uri(img):
-        return await resolve_from_img_base64(img)
+        return resolve_from_img_base64(img)
     elif isinstance(img, str):
         return await resolve_from_img_url(img, session=session)
     else:
