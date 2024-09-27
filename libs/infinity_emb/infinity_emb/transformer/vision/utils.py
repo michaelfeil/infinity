@@ -2,7 +2,9 @@
 # Copyright (c) 2023-now michaelfeil
 
 import asyncio
+import re
 import io
+from base64 import b64decode
 from typing import List, Union
 
 from infinity_emb._optional_imports import CHECK_AIOHTTP, CHECK_PIL
@@ -49,6 +51,41 @@ async def resolve_from_img_url(
             f"error opening the payload from an image in your request from url: {e}"
         )
 
+async def resolve_from_img_base64(uri: str) -> ImageSingle:
+    """Resolve an image from a Data URI"""
+    try:
+        base64_image = uri.split(",")[-1]
+        decoded_image = b64decode(base64_image)
+        img = Image.open(io.BytesIO(decoded_image))
+        return ImageSingle(image=img)
+    except Exception as e:
+        raise ImageCorruption(
+            f"error decoding data URI: {e}"
+        )
+
+
+def is_base64_check(s: str):
+    """Regex check to quickly check if string is base64 or not."""
+    pattern = (
+        r"^[A-Za-z0-9+/]{4}([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+    )
+    return bool(re.match(pattern, s))
+
+
+async def is_base64_data_uri(uri: str) -> bool:
+    """Simply check if the uri is a Data URI or not
+
+    Ref: https://developer.mozilla.org/en-US/docs/web/http/basics_of_http/data_urls
+    """
+
+    starts_with_data = uri.startswith("data:")
+
+    b64_data_q = uri.split(",")[-1]
+    is_base64 = is_base64_check(b64_data_q)
+
+    return starts_with_data and is_base64
+
+
 
 async def resolve_image(
     img: Union[str, "ImageClassType"], session: "aiohttp.ClientSession"
@@ -56,6 +93,8 @@ async def resolve_image(
     """Resolve a single image."""
     if isinstance(img, Image.Image):
         return resolve_from_img_obj(img)
+    elif await is_base64_data_uri(img):
+        return await resolve_from_img_base64(img)
     elif isinstance(img, str):
         return await resolve_from_img_url(img, session=session)
     else:
