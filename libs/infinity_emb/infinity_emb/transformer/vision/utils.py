@@ -72,7 +72,7 @@ def is_base64_check(s: str):
     return bool(re.match(pattern, s))
 
 
-async def is_base64_data_uri(uri: str) -> bool:
+def is_base64_data_uri(uri: str) -> bool:
     """Simply check if the uri is a Data URI or not
 
     Ref: https://developer.mozilla.org/en-US/docs/web/http/basics_of_http/data_urls
@@ -93,7 +93,7 @@ async def resolve_image(
     """Resolve a single image."""
     if isinstance(img, Image.Image):
         return resolve_from_img_obj(img)
-    elif await is_base64_data_uri(img):
+    elif is_base64_data_uri(img):
         return await resolve_from_img_base64(img)
     elif isinstance(img, str):
         return await resolve_from_img_url(img, session=session)
