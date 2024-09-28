@@ -77,6 +77,7 @@ async def test_vision_single_text_only(client):
     assert rdata_results[0]["object"] == "embedding"
     assert len(rdata_results[0]["embedding"]) > 0
 
+
 @pytest.mark.anyio
 @pytest.mark.parametrize("no_of_images", [1, 5, 10])
 async def test_vision_multiple(client, no_of_images):
