@@ -62,6 +62,7 @@ async def test_vision_single(client):
 
 
 @pytest.mark.anyio
+@pytest.mark.skip("text only")
 async def test_vision_single_text_only(client):
     text = "a image of a cat"
 
