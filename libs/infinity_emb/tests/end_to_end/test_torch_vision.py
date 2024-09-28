@@ -62,6 +62,22 @@ async def test_vision_single(client):
 
 
 @pytest.mark.anyio
+async def test_vision_single_text_only(client):
+    text = "a image of a cat"
+
+    response = await client.post(
+        f"{PREFIX}/embeddings_image",
+        json={"model": MODEL, "input": text},
+    )
+    assert response.status_code == 200
+    rdata = response.json()
+    assert "model" in rdata
+    assert "usage" in rdata
+    rdata_results = rdata["data"]
+    assert rdata_results[0]["object"] == "embedding"
+    assert len(rdata_results[0]["embedding"]) > 0
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("no_of_images", [1, 5, 10])
 async def test_vision_multiple(client, no_of_images):
     image_urls = [
@@ -76,11 +92,10 @@ async def test_vision_multiple(client, no_of_images):
     rdata = response.json()
     rdata_results = rdata["data"]
     assert len(rdata_results) == no_of_images
-    if no_of_images:
-        assert "model" in rdata
-        assert "usage" in rdata
-        assert rdata_results[0]["object"] == "embedding"
-        assert len(rdata_results[0]["embedding"]) > 0
+    assert "model" in rdata
+    assert "usage" in rdata
+    assert rdata_results[0]["object"] == "embedding"
+    assert len(rdata_results[0]["embedding"]) > 0
 
 
 @pytest.mark.anyio
@@ -92,6 +107,7 @@ async def test_vision_fail(client):
         json={"model": MODEL, "input": image_url},
     )
     assert response.status_code == status.HTTP_400_BAD_REQUEST
+
 
 @pytest.mark.anyio
 async def test_vision_empty(client):

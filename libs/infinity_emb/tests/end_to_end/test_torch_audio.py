@@ -76,11 +76,10 @@ async def test_audio_multiple(client, no_of_audios):
     rdata = response.json()
     rdata_results = rdata["data"]
     assert len(rdata_results) == no_of_audios
-    if no_of_audios:
-        assert "model" in rdata
-        assert "usage" in rdata
-        assert rdata_results[0]["object"] == "embedding"
-        assert len(rdata_results[0]["embedding"]) > 0
+    assert "model" in rdata
+    assert "usage" in rdata
+    assert rdata_results[0]["object"] == "embedding"
+    assert len(rdata_results[0]["embedding"]) > 0
 
 
 @pytest.mark.anyio
