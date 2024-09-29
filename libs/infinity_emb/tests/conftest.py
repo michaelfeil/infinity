@@ -8,8 +8,10 @@ from sentence_transformers import InputExample, util  # type: ignore
 pytest.DEFAULT_BERT_MODEL = "michaelfeil/bge-small-en-v1.5"
 pytest.DEFAULT_RERANKER_MODEL = "mixedbread-ai/mxbai-rerank-xsmall-v1"
 pytest.DEFAULT_CLASSIFIER_MODEL = "SamLowe/roberta-base-go_emotions"
+pytest.DEFAULT_AUDIO_MODEL = "laion/clap-htsat-unfused"
+pytest.DEFAULT_VISION_MODEL = "wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M"
 
-pytest.ENGINE_METHODS = ["embed", "image_embed", "classify", "rerank"]
+pytest.ENGINE_METHODS = ["embed", "image_embed", "classify", "rerank", "audio_embed"]
 
 
 @pytest.fixture
