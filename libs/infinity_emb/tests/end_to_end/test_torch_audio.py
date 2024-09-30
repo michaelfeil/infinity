@@ -25,6 +25,13 @@ app = create_server(
 )
 
 
+def cosine_similarity(a, b):
+    from numpy import dot
+    from numpy.linalg import norm
+
+    return dot(a, b) / (norm(a) * norm(b))
+
+
 @pytest.fixture()
 async def client():
     async with AsyncClient(
@@ -62,7 +69,6 @@ async def test_audio_single(client):
 
 
 @pytest.mark.anyio
-@pytest.mark.skip("text only")
 async def test_audio_single_text_only(client):
     text = "a sound of a at"
 
@@ -77,6 +83,54 @@ async def test_audio_single_text_only(client):
     rdata_results = rdata["data"]
     assert rdata_results[0]["object"] == "embedding"
     assert len(rdata_results[0]["embedding"]) > 0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("no_of_input_pairs", [1, 5])
+async def test_audio_text_url_mixed(client, no_of_input_pairs):
+    text = "a sound of a at"
+    audio_url = "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
+
+    input = [text, audio_url] * no_of_input_pairs
+
+    response = await client.post(
+        f"{PREFIX}/embeddings_audio",
+        json={"model": MODEL, "input": input},
+    )
+    assert response.status_code == 200
+    rdata = response.json()
+    assert "model" in rdata
+    assert "usage" in rdata
+    rdata_results = rdata["data"]
+    assert rdata_results[0]["object"] == "embedding"
+    assert len(rdata_results[0]["embedding"]) > 0
+    assert len(rdata_results) == len(input)
+
+
+@pytest.mark.anyio
+async def test_meta(client):
+    audio_url = "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
+
+    input = [audio_url, "a beep", "a horse", "a fish"]
+
+    response = await client.post(
+        f"{PREFIX}/embeddings_audio",
+        json={"model": MODEL, "input": input},
+    )
+    assert response.status_code == 200
+    rdata = response.json()
+    rdata_results = rdata["data"]
+
+    embeddings_audio_beep = rdata_results[0]["embedding"]
+    embeddings_text_beep = rdata_results[1]["embedding"]
+    embeddings_text_horse = rdata_results[2]["embedding"]
+    embeddings_text_fish = rdata_results[3]["embedding"]
+    assert cosine_similarity(
+        embeddings_audio_beep, embeddings_text_beep
+    ) > cosine_similarity(embeddings_audio_beep, embeddings_text_fish)
+    assert cosine_similarity(
+        embeddings_audio_beep, embeddings_text_beep
+    ) > cosine_similarity(embeddings_audio_beep, embeddings_text_horse)
 
 
 @pytest.mark.anyio

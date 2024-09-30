@@ -8,6 +8,7 @@ import sys
 import time
 from contextlib import asynccontextmanager
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
@@ -411,29 +412,54 @@ def create_server(
             json={"model":"laion/larger_clap_general","input":["https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"]})
         """
         engine = _resolve_engine(data.model)
-        if hasattr(data.input, "host"):
-            # if it is a single url
-            audio_inputs = [str(data.input)]
+        input_list: list[str] = []
+        if isinstance(data.input, str):
+            input_list.append(data.input)
         else:
-            audio_inputs = [str(d) for d in data.input]  # type: ignore
+            input_list = data.input  # type: ignore
+        audio_urls = []
+        texts = []
+        is_audios = []
+        for input in input_list:
+            parsed_url = urlparse(input)
+            # Todo: Improve url check
+            if parsed_url.netloc and parsed_url.scheme:
+                # if it is a single url
+                audio_urls.append(str(input))
+                is_audios.append(True)
+            else:
+                texts.append(input)  # type: ignore
+                is_audios.append(False)
         try:
-            logger.debug("[📝] Received request with %s Urls ", len(audio_inputs))
+            logger.debug(
+                f"[📝] Received request with {len(audio_urls)} Urls and {len(texts)} sentences"
+            )
             start = time.perf_counter()
 
-            embedding, usage = await engine.audio_embed(audios=audio_inputs)  # type: ignore
+            if audio_urls:
+                audio_embeddings, usage = await engine.audio_embed(audios=audio_urls)  # type: ignore
+            if texts:
+                text_embeddings, usage = await engine.embed(sentences=texts)
+
+            embeddings_with_restored_order = []
+            for is_audio in is_audios:
+                if is_audio:
+                    embeddings_with_restored_order.append(audio_embeddings.pop(0))
+                else:
+                    embeddings_with_restored_order.append(text_embeddings.pop(0))
 
             duration = (time.perf_counter() - start) * 1000
-            logger.debug("[✅] Done in %s ms", duration)
+            logger.debug(f"[✅] Done in {duration} ms")
 
             return OpenAIEmbeddingResult.to_embeddings_response(
-                embeddings=embedding,
+                embeddings=embeddings_with_restored_order,
                 engine_args=engine.engine_args,
                 encoding_format=data.encoding_format,
                 usage=usage,
             )
         except AudioCorruption as ex:
             raise errors.OpenAIException(
-                f"AudioCorruption, could not open {audio_inputs} -> {ex}",
+                f"AudioCorruption, could not open {audio_urls} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except ModelNotDeployedError as ex:
