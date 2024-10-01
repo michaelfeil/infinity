@@ -112,7 +112,6 @@ async def test_vision_base64(client):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("no_of_images", [1, 10])
 async def test_meta(client, helpers):
     image_url = "http://images.cocodataset.org/val2017/000000039769.jpg"
 
@@ -149,25 +148,25 @@ async def test_meta(client, helpers):
     ) > helpers.cosine_similarity(embeddings_image_cat, embeddings_text_fridge)
 
 
-# @pytest.mark.anyio
-# @pytest.mark.parametrize("no_of_images", [1, 5, 10])
-# async def test_vision_multiple(client, no_of_images):
-#     image_urls = [
-#         pytest.IMAGE_SAMPLE_URL,
-#     ] * no_of_images
+@pytest.mark.anyio
+@pytest.mark.parametrize("no_of_images", [1, 5, 10])
+async def test_vision_multiple(client, no_of_images):
+    image_urls = [
+        pytest.IMAGE_SAMPLE_URL,
+    ] * no_of_images
 
-#     response = await client.post(
-#         f"{PREFIX}/embeddings_image",
-#         json={"model": MODEL, "input": image_urls},
-#     )
-#     assert response.status_code == 200
-#     rdata = response.json()
-#     rdata_results = rdata["data"]
-#     assert len(rdata_results) == no_of_images
-#     assert "model" in rdata
-#     assert "usage" in rdata
-#     assert rdata_results[0]["object"] == "embedding"
-#     assert len(rdata_results[0]["embedding"]) > 0
+    response = await client.post(
+        f"{PREFIX}/embeddings_image",
+        json={"model": MODEL, "input": image_urls},
+    )
+    assert response.status_code == 200
+    rdata = response.json()
+    rdata_results = rdata["data"]
+    assert len(rdata_results) == no_of_images
+    assert "model" in rdata
+    assert "usage" in rdata
+    assert rdata_results[0]["object"] == "embedding"
+    assert len(rdata_results[0]["embedding"]) > 0
 
 
 @pytest.mark.anyio
