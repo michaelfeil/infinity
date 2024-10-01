@@ -4,6 +4,8 @@ import time
 
 import numpy as np
 import pytest
+from numpy import dot
+from numpy.linalg import norm
 
 
 class Helpers:
@@ -97,6 +99,10 @@ class Helpers:
                 np.testing.assert_almost_equal(
                     embedding["embedding"], st_embedding, decimal=decimal
                 )
+
+    @staticmethod
+    def cosine_similarity(a, b):
+        return dot(a, b) / (norm(a) * norm(b))
 
 
 @pytest.fixture
