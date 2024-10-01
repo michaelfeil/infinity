@@ -25,13 +25,6 @@ app = create_server(
 )
 
 
-def cosine_similarity(a, b):
-    from numpy import dot
-    from numpy.linalg import norm
-
-    return dot(a, b) / (norm(a) * norm(b))
-
-
 @pytest.fixture()
 async def client():
     async with AsyncClient(
@@ -73,7 +66,7 @@ async def test_audio_single_text_only(client):
     text = "a sound of a at"
 
     response = await client.post(
-        f"{PREFIX}/embeddings_audio",
+        f"{PREFIX}/embeddings",
         json={"model": MODEL, "input": text},
     )
     assert response.status_code == 200
@@ -86,51 +79,40 @@ async def test_audio_single_text_only(client):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("no_of_input_pairs", [1, 5])
-async def test_audio_text_url_mixed(client, no_of_input_pairs):
-    text = "a sound of a at"
+async def test_meta(client, helpers):
     audio_url = "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
 
-    input = [text, audio_url] * no_of_input_pairs
-
-    response = await client.post(
-        f"{PREFIX}/embeddings_audio",
-        json={"model": MODEL, "input": input},
+    text_input = ["a beep", "a horse", "a fish"]
+    audio_input = [audio_url]
+    response_text = await client.post(
+        f"{PREFIX}/embeddings",
+        json={"model": MODEL, "input": text_input},
     )
-    assert response.status_code == 200
-    rdata = response.json()
-    assert "model" in rdata
-    assert "usage" in rdata
-    rdata_results = rdata["data"]
-    assert rdata_results[0]["object"] == "embedding"
-    assert len(rdata_results[0]["embedding"]) > 0
-    assert len(rdata_results) == len(input)
-
-
-@pytest.mark.anyio
-async def test_meta(client):
-    audio_url = "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
-
-    input = [audio_url, "a beep", "a horse", "a fish"]
-
-    response = await client.post(
+    response_audio = await client.post(
         f"{PREFIX}/embeddings_audio",
-        json={"model": MODEL, "input": input},
+        json={"model": MODEL, "input": audio_input},
     )
-    assert response.status_code == 200
-    rdata = response.json()
-    rdata_results = rdata["data"]
 
-    embeddings_audio_beep = rdata_results[0]["embedding"]
-    embeddings_text_beep = rdata_results[1]["embedding"]
-    embeddings_text_horse = rdata_results[2]["embedding"]
-    embeddings_text_fish = rdata_results[3]["embedding"]
-    assert cosine_similarity(
+    assert response_text.status_code == 200
+    assert response_audio.status_code == 200
+
+    rdata_text = response_text.json()
+    rdata_results_text = rdata_text["data"]
+
+    rdata_audio = response_audio.json()
+    rdata_results_audio = rdata_audio["data"]
+
+    embeddings_audio_beep = rdata_results_audio[0]["embedding"]
+    embeddings_text_beep = rdata_results_text[0]["embedding"]
+    embeddings_text_horse = rdata_results_text[1]["embedding"]
+    embeddings_text_fish = rdata_results_text[2]["embedding"]
+
+    assert helpers.cosine_similarity(
         embeddings_audio_beep, embeddings_text_beep
-    ) > cosine_similarity(embeddings_audio_beep, embeddings_text_fish)
-    assert cosine_similarity(
+    ) > helpers.cosine_similarity(embeddings_audio_beep, embeddings_text_fish)
+    assert helpers.cosine_similarity(
         embeddings_audio_beep, embeddings_text_beep
-    ) > cosine_similarity(embeddings_audio_beep, embeddings_text_horse)
+    ) > helpers.cosine_similarity(embeddings_audio_beep, embeddings_text_horse)
 
 
 @pytest.mark.anyio
@@ -174,3 +156,12 @@ async def test_audio_empty(client):
         json={"model": MODEL, "input": audio_url_empty},
     )
     assert response_empty.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.anyio
+async def test_unsupported_endpoints(client):
+    response_unsupported = await client.post(
+        f"{PREFIX}/classify",
+        json={"model": MODEL, "input": ["test"]},
+    )
+    assert response_unsupported.status_code == status.HTTP_400_BAD_REQUEST

@@ -93,17 +93,8 @@ class ImageEmbeddingInput(BaseModel):
     user: Optional[str] = None
 
 
-class AudioEmbeddingInput(BaseModel):
-    input: Union[  # type: ignore
-        conlist(  # type: ignore
-            Union[Annotated[AnyUrl, HttpUrl], str],
-            **ITEMS_LIMIT_SMALL,
-        ),
-        Union[Annotated[AnyUrl, HttpUrl], str],
-    ]
-    model: str = "default/not-specified"
-    encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
-    user: Optional[str] = None
+class AudioEmbeddingInput(ImageEmbeddingInput):
+    pass
 
 
 class _EmbeddingObject(BaseModel):
