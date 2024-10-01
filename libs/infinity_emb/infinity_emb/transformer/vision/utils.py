@@ -50,12 +50,23 @@ async def resolve_from_img_url(
         )
 
 
+def resolve_from_img_bytes(bytes_img: bytes) -> ImageSingle:
+    """Resolve an image from a Data URI"""
+    try:
+        img = Image.open(io.BytesIO(bytes_img))
+        return ImageSingle(image=img)
+    except Exception as e:
+        raise ImageCorruption(f"error decoding data URI: {e}")
+
+
 async def resolve_image(
-    img: Union[str, "ImageClassType"], session: "aiohttp.ClientSession"
+    img: Union[str, "ImageClassType", bytes], session: "aiohttp.ClientSession"
 ) -> ImageSingle:
     """Resolve a single image."""
     if isinstance(img, Image.Image):
         return resolve_from_img_obj(img)
+    elif isinstance(img, bytes):
+        return resolve_from_img_bytes(img)
     elif isinstance(img, str):
         return await resolve_from_img_url(img, session=session)
     else:
@@ -65,7 +76,7 @@ async def resolve_image(
 
 
 async def resolve_images(
-    images: List[Union[str, "ImageClassType"]]
+    images: List[Union[str, "ImageClassType", bytes]]
 ) -> List[ImageSingle]:
     """Resolve images from URLs or ImageClassType Objects using multithreading."""
     # TODO: improve parallel requests, safety, error handling

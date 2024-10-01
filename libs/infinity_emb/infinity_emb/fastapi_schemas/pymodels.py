@@ -23,20 +23,13 @@ if CHECK_PYDANTIC.is_available:
     from pydantic import BaseModel, Field, conlist
 
     try:
-        from pydantic import AnyUrl, HttpUrl, StringConstraints
-
-        # Note: adding artificial limit, this might reveal splitting
-        # issues on the client side
-        #      and is not a hard limit on the server side.
-        INPUT_STRING = StringConstraints(max_length=8192 * 15, strip_whitespace=True)
-        ITEMS_LIMIT = {
-            "min_length": 1,
-            "max_length": 2048,
-        }
-        ITEMS_LIMIT_SMALL = {
-            "min_length": 1,
-            "max_length": 32,
-        }
+        from .data_uri import DataURI
+        from .pydantic_v2 import (
+            INPUT_STRING,
+            ITEMS_LIMIT,
+            ITEMS_LIMIT_SMALL,
+            HttpUrl,
+        )
     except ImportError:
         from pydantic import constr
 
@@ -49,10 +42,16 @@ if CHECK_PYDANTIC.is_available:
             "min_items": 1,
             "max_items": 32,
         }
-        HttpUrl, AnyUrl = str, str  # type: ignore
+        HttpUrl = str  # type: ignore
+        DataURI = str  # type: ignore
+    DataURIorURL = Union[Annotated[DataURI, str], HttpUrl]
+
 else:
 
     class BaseModel:  # type: ignore[no-redef]
+        pass
+
+    class DataURI:  # type: ignore
         pass
 
     def Field(*args, **kwargs):  # type: ignore
@@ -83,10 +82,10 @@ class OpenAIEmbeddingInput(BaseModel):
 class ImageEmbeddingInput(BaseModel):
     input: Union[  # type: ignore
         conlist(  # type: ignore
-            Annotated[AnyUrl, HttpUrl],
+            DataURIorURL,
             **ITEMS_LIMIT_SMALL,
         ),
-        Annotated[AnyUrl, HttpUrl],
+        DataURIorURL,
     ]
     model: str = "default/not-specified"
     encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float

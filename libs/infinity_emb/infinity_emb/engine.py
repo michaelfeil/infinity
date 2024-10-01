@@ -203,7 +203,7 @@ class AsyncEmbeddingEngine:
         return scores, usage
 
     async def image_embed(
-        self, *, images: List[Union[str, "ImageClassType"]]
+        self, *, images: List[Union[str, "ImageClassType", bytes]]
     ) -> tuple[list[EmbeddingReturnType], int]:
         """embed multiple images
 
