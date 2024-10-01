@@ -1,4 +1,8 @@
+import base64
+
+import numpy as np
 import pytest
+import requests
 import torch
 from asgi_lifespan import LifespanManager
 from fastapi import status
@@ -8,7 +12,7 @@ from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device, InferenceEngine
 
-PREFIX = "/v1_ct2"
+PREFIX = "/v1_vision"
 MODEL: str = pytest.DEFAULT_VISION_MODEL  # type: ignore[assignment]
 batch_size = 32 if torch.cuda.is_available() else 8
 
@@ -20,6 +24,7 @@ app = create_server(
             batch_size=batch_size,
             engine=InferenceEngine.torch,
             device=Device.auto if not torch.backends.mps.is_available() else Device.cpu,
+            model_warmup=False,
         )
     ],
 )
@@ -46,7 +51,7 @@ async def test_model_route(client):
 
 @pytest.mark.anyio
 async def test_vision_single(client):
-    image_url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+    image_url = pytest.IMAGE_SAMPLE_URL
 
     response = await client.post(
         f"{PREFIX}/embeddings_image",
@@ -62,12 +67,11 @@ async def test_vision_single(client):
 
 
 @pytest.mark.anyio
-@pytest.mark.skip("text only")
 async def test_vision_single_text_only(client):
     text = "a image of a cat"
 
     response = await client.post(
-        f"{PREFIX}/embeddings_image",
+        f"{PREFIX}/embeddings",
         json={"model": MODEL, "input": text},
     )
     assert response.status_code == 200
@@ -80,10 +84,38 @@ async def test_vision_single_text_only(client):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("no_of_images", [1, 5, 10])
+async def test_vision_base64(client):
+    bytes_downloaded = requests.get(pytest.IMAGE_SAMPLE_URL).content
+    base_64_image = base64.b64encode(bytes_downloaded).decode("utf-8")
+
+    response = await client.post(
+        f"{PREFIX}/embeddings_image",
+        json={
+            "model": MODEL,
+            "input": [
+                "data:image/jpeg;base64," + base_64_image,
+                pytest.IMAGE_SAMPLE_URL,
+            ],
+        },
+    )
+    assert response.status_code == 200
+    rdata = response.json()
+    assert "model" in rdata
+    assert "usage" in rdata
+    rdata_results = rdata["data"]
+    assert rdata_results[0]["object"] == "embedding"
+    assert len(rdata_results[0]["embedding"]) > 0
+
+    np.testing.assert_array_equal(
+        rdata_results[0]["embedding"], rdata_results[1]["embedding"]
+    )
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("no_of_images", [1, 10])
 async def test_vision_multiple(client, no_of_images):
     image_urls = [
-        "http://images.cocodataset.org/val2017/000000039769.jpg"
+        pytest.IMAGE_SAMPLE_URL,
     ] * no_of_images
 
     response = await client.post(
@@ -102,13 +134,31 @@ async def test_vision_multiple(client, no_of_images):
 
 @pytest.mark.anyio
 async def test_vision_fail(client):
-    image_url = "https://www.google.com/404"
+    # invalid image url, but valid format
+    image_url = "https://www.google.com/404.jpg"
 
     response = await client.post(
         f"{PREFIX}/embeddings_image",
         json={"model": MODEL, "input": image_url},
     )
     assert response.status_code == status.HTTP_400_BAD_REQUEST
+    response = await client.post(
+        f"{PREFIX}/embeddings_image",
+        json={"model": MODEL, "input": [image_url, image_url]},
+    )
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    # invalid image url, invalid format
+    image_not_a_url = "htt://wrong.url/me.jpg"
+    response = await client.post(
+        f"{PREFIX}/embeddings_image",
+        json={"model": MODEL, "input": image_not_a_url},
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+    response = await client.post(
+        f"{PREFIX}/embeddings_image",
+        json={"model": MODEL, "input": [image_not_a_url, image_not_a_url]},
+    )
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.anyio

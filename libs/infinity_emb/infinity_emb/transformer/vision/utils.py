@@ -2,9 +2,8 @@
 # Copyright (c) 2023-now michaelfeil
 
 import asyncio
-import re
 import io
-from base64 import b64decode
+import re
 from typing import List, Union
 
 from infinity_emb._optional_imports import CHECK_AIOHTTP, CHECK_PIL
@@ -51,17 +50,14 @@ async def resolve_from_img_url(
             f"error opening the payload from an image in your request from url: {e}"
         )
 
-def resolve_from_img_base64(uri: str) -> ImageSingle:
+
+def resolve_from_img_bytes(bytes_img: bytes) -> ImageSingle:
     """Resolve an image from a Data URI"""
     try:
-        base64_image = uri.split(",")[-1]
-        decoded_image = b64decode(base64_image)
-        img = Image.open(io.BytesIO(decoded_image))
+        img = Image.open(io.BytesIO(bytes_img))
         return ImageSingle(image=img)
     except Exception as e:
-        raise ImageCorruption(
-            f"error decoding data URI: {e}"
-        )
+        raise ImageCorruption(f"error decoding data URI: {e}")
 
 
 def is_base64_check(s: str):
@@ -86,15 +82,14 @@ def is_base64_data_uri(uri: str) -> bool:
     return starts_with_data and is_base64
 
 
-
 async def resolve_image(
-    img: Union[str, "ImageClassType"], session: "aiohttp.ClientSession"
+    img: Union[str, "ImageClassType", bytes], session: "aiohttp.ClientSession"
 ) -> ImageSingle:
     """Resolve a single image."""
     if isinstance(img, Image.Image):
         return resolve_from_img_obj(img)
-    elif is_base64_data_uri(img):
-        return resolve_from_img_base64(img)
+    elif isinstance(img, bytes):
+        return resolve_from_img_bytes(img)
     elif isinstance(img, str):
         return await resolve_from_img_url(img, session=session)
     else:
@@ -104,7 +99,7 @@ async def resolve_image(
 
 
 async def resolve_images(
-    images: List[Union[str, "ImageClassType"]]
+    images: List[Union[str, "ImageClassType", bytes]]
 ) -> List[ImageSingle]:
     """Resolve images from URLs or ImageClassType Objects using multithreading."""
     # TODO: improve parallel requests, safety, error handling

@@ -1,6 +1,7 @@
 import csv
 import gzip
 import os
+import socket
 
 import pytest
 from sentence_transformers import InputExample, util  # type: ignore
@@ -11,12 +12,33 @@ pytest.DEFAULT_CLASSIFIER_MODEL = "SamLowe/roberta-base-go_emotions"
 pytest.DEFAULT_AUDIO_MODEL = "laion/clap-htsat-unfused"
 pytest.DEFAULT_VISION_MODEL = "wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M"
 
+pytest.IMAGE_SAMPLE_URL = "https://github.com/michaelfeil/infinity/raw/06fd1f4d8f0a869f4482fc1c78b62a75ccbb66a1/docs/assets/cats_coco_sample.jpg"
+pytest.AUDIO_SAMPLE_URL = "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
+
 pytest.ENGINE_METHODS = ["embed", "image_embed", "classify", "rerank", "audio_embed"]
 
 
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+def internet_available():
+    try:
+        # Attempt to connect to a well-known public DNS server (Google's)
+        socket.create_connection(("8.8.8.8", 53), timeout=1)
+        return True
+    except OSError:
+        return False
+
+
+# pytest hook to dynamically add skip marker for tests that require internet
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    # Apply skipif marker to tests based on internet availability
+    # adds pytest.mark.requires_internet to tests that require internet
+    if "requires_internet" in item.keywords and internet_available():
+        pytest.skip("Test skipped due to no internet connection")
 
 
 @pytest.fixture(scope="session")

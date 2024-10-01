@@ -212,7 +212,7 @@ class BatchHandler:
     async def image_embed(
         self,
         *,
-        images: List[Union[str, "ImageClassType"]],
+        images: List[Union[str, "ImageClassType", bytes]],
     ) -> tuple[list[EmbeddingReturnType], int]:
         """Schedule a images and sentences to be embedded. Awaits until embedded.
 

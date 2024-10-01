@@ -7,7 +7,7 @@ import signal
 import sys
 import time
 from contextlib import asynccontextmanager
-from typing import Any, Optional
+from typing import Any, List, Optional, Union
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
@@ -19,6 +19,7 @@ from infinity_emb.fastapi_schemas.pymodels import (
     AudioEmbeddingInput,
     ClassifyInput,
     ClassifyResult,
+    DataURIorURL,
     ImageEmbeddingInput,
     OpenAIEmbeddingInput,
     OpenAIEmbeddingResult,
@@ -201,6 +202,21 @@ def create_server(
             )
         return engine
 
+    def _resolve_mixed_input(
+        inputs: Union[DataURIorURL, List[DataURIorURL]]
+    ) -> List[Union[str, bytes]]:
+        if hasattr(inputs, "host"):
+            # if it is a single url
+            urls_or_bytes: list[Union[str, bytes]] = [str(inputs)]
+        elif hasattr(inputs, "mimetype"):
+            urls_or_bytes: list[Union[str, bytes]] = [inputs]  # type: ignore
+        else:
+            # is list, resolve to bytes or url
+            urls_or_bytes: list[Union[str, bytes]] = [  # type: ignore
+                str(d) if hasattr(d, "host") else d.data for d in inputs  # type: ignore
+            ]
+        return urls_or_bytes
+
     @app.post(
         f"{url_prefix}/embeddings",
         response_model=OpenAIEmbeddingResult,
@@ -215,6 +231,7 @@ def create_server(
         import requests
         requests.post("http://..:7997/embeddings",
             json={"model":"BAAI/bge-small-en-v1.5","input":["A sentence to encode."]})
+        ```
         """
         engine = _resolve_engine(data.model)
 
@@ -265,6 +282,7 @@ def create_server(
                 "query":"Where is Munich?",
                 "documents":["Munich is in Germany.", "The sky is blue."]
             })
+        ```
         """
         engine = _resolve_engine(data.model)
         try:
@@ -314,6 +332,7 @@ def create_server(
         import requests
         requests.post("http://..:7997/classify",
             json={"model":"SamLowe/roberta-base-go_emotions","input":["I am not having a great day."]})
+        ```
         """
         engine = _resolve_engine(data.model)
         try:
@@ -353,22 +372,27 @@ def create_server(
     async def _embeddings_image(data: ImageEmbeddingInput):
         """Encode Embeddings from Image files
 
+        Supports URLs of Images and Base64-encoded Images
+
         ```python
         import requests
         requests.post("http://..:7997/embeddings_image",
-            json={"model":"openai/clip-vit-base-patch32","input":["http://images.cocodataset.org/val2017/000000039769.jpg"]})
+            json={
+                "model":"openai/clip-vit-base-patch32",
+                "input": [
+                    "http://images.cocodataset.org/val2017/000000039769.jpg",
+                    "data:image/png;base64,iVBORw0KGgoDEMOoSAMPLEoENCODEDIMAGE"
+                ]
+            })
+        ```
         """
         engine = _resolve_engine(data.model)
-        if hasattr(data.input, "host"):
-            # if it is a single url
-            urls = [str(data.input)]
-        else:
-            urls = [str(d) for d in data.input]  # type: ignore
+        urls_or_bytes = _resolve_mixed_input(data.input)  # type: ignore
         try:
-            logger.debug("[📝] Received request with %s Urls ", len(urls))
+            logger.debug("[📝] Received request with %s Urls ", len(urls_or_bytes))
             start = time.perf_counter()
 
-            embedding, usage = await engine.image_embed(images=urls)
+            embedding, usage = await engine.image_embed(images=urls_or_bytes)
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
@@ -381,7 +405,7 @@ def create_server(
             )
         except ImageCorruption as ex:
             raise errors.OpenAIException(
-                f"ImageCorruption, could not open {urls} -> {ex}",
+                f"ImageCorruption, could not open {[b if isinstance(b, str) else 'bytes' for b in urls_or_bytes]} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except ModelNotDeployedError as ex:
@@ -405,22 +429,27 @@ def create_server(
     async def _embeddings_audio(data: AudioEmbeddingInput):
         """Encode Embeddings from Audio files
 
+        Supports URLs of Audios and Base64-encoded Audios
+
         ```python
         import requests
         requests.post("http://..:7997/embeddings_audio",
-            json={"model":"laion/larger_clap_general","input":["https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"]})
+            json={
+                "model":"laion/larger_clap_general",
+                "input": [
+                    "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav",
+                    "data:audio/wav;base64,iVBORw0KGgoDEMOoSAMPLEoENCODEDAUDIO"
+                ]
+            })
+        ```
         """
         engine = _resolve_engine(data.model)
-        if hasattr(data.input, "host"):
-            # if it is a single url
-            audio_inputs = [str(data.input)]
-        else:
-            audio_inputs = [str(d) for d in data.input]  # type: ignore
+        urls_or_bytes = _resolve_mixed_input(data.input)  # type: ignore
         try:
-            logger.debug("[📝] Received request with %s Urls ", len(audio_inputs))
+            logger.debug("[📝] Received request with %s Urls ", len(urls_or_bytes))
             start = time.perf_counter()
 
-            embedding, usage = await engine.audio_embed(audios=audio_inputs)  # type: ignore
+            embedding, usage = await engine.audio_embed(audios=urls_or_bytes)  # type: ignore
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
@@ -433,7 +462,7 @@ def create_server(
             )
         except AudioCorruption as ex:
             raise errors.OpenAIException(
-                f"AudioCorruption, could not open {audio_inputs} -> {ex}",
+                f"AudioCorruption, could not open {[b if isinstance(b, str) else 'bytes' for b in urls_or_bytes]} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except ModelNotDeployedError as ex:
