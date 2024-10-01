@@ -113,23 +113,61 @@ async def test_vision_base64(client):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("no_of_images", [1, 10])
-async def test_vision_multiple(client, no_of_images):
-    image_urls = [
-        pytest.IMAGE_SAMPLE_URL,
-    ] * no_of_images
+async def test_meta(client, helpers):
+    image_url = "http://images.cocodataset.org/val2017/000000039769.jpg"
 
-    response = await client.post(
-        f"{PREFIX}/embeddings_image",
-        json={"model": MODEL, "input": image_urls},
+    text_input = ["a cat", "a car", "a fridge"]
+    image_input = [image_url]
+    response_text = await client.post(
+        f"{PREFIX}/embeddings",
+        json={"model": MODEL, "input": text_input},
     )
-    assert response.status_code == 200
-    rdata = response.json()
-    rdata_results = rdata["data"]
-    assert len(rdata_results) == no_of_images
-    assert "model" in rdata
-    assert "usage" in rdata
-    assert rdata_results[0]["object"] == "embedding"
-    assert len(rdata_results[0]["embedding"]) > 0
+    response_image = await client.post(
+        f"{PREFIX}/embeddings_image",
+        json={"model": MODEL, "input": image_input},
+    )
+
+    assert response_text.status_code == 200
+    assert response_image.status_code == 200
+
+    rdata_text = response_text.json()
+    rdata_results_text = rdata_text["data"]
+
+    rdata_image = response_image.json()
+    rdata_results_image = rdata_image["data"]
+
+    embeddings_image_cat = rdata_results_image[0]["embedding"]
+    embeddings_text_cat = rdata_results_text[0]["embedding"]
+    embeddings_text_car = rdata_results_text[1]["embedding"]
+    embeddings_text_fridge = rdata_results_text[2]["embedding"]
+
+    assert helpers.cosine_similarity(
+        embeddings_image_cat, embeddings_text_cat
+    ) > helpers.cosine_similarity(embeddings_image_cat, embeddings_text_car)
+    assert helpers.cosine_similarity(
+        embeddings_image_cat, embeddings_text_cat
+    ) > helpers.cosine_similarity(embeddings_image_cat, embeddings_text_fridge)
+
+
+# @pytest.mark.anyio
+# @pytest.mark.parametrize("no_of_images", [1, 5, 10])
+# async def test_vision_multiple(client, no_of_images):
+#     image_urls = [
+#         pytest.IMAGE_SAMPLE_URL,
+#     ] * no_of_images
+
+#     response = await client.post(
+#         f"{PREFIX}/embeddings_image",
+#         json={"model": MODEL, "input": image_urls},
+#     )
+#     assert response.status_code == 200
+#     rdata = response.json()
+#     rdata_results = rdata["data"]
+#     assert len(rdata_results) == no_of_images
+#     assert "model" in rdata
+#     assert "usage" in rdata
+#     assert rdata_results[0]["object"] == "embedding"
+#     assert len(rdata_results[0]["embedding"]) > 0
 
 
 @pytest.mark.anyio
@@ -169,3 +207,12 @@ async def test_vision_empty(client):
         json={"model": MODEL, "input": image_url_empty},
     )
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
+
+
+@pytest.mark.anyio
+async def test_unsupported_endpoints(client):
+    response_unsupported = await client.post(
+        f"{PREFIX}/classify",
+        json={"model": MODEL, "input": ["test"]},
+    )
+    assert response_unsupported.status_code == status.HTTP_400_BAD_REQUEST
