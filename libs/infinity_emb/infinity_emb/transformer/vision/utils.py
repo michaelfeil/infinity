@@ -3,7 +3,6 @@
 
 import asyncio
 import io
-import re
 from typing import List, Union
 
 from infinity_emb._optional_imports import CHECK_AIOHTTP, CHECK_PIL
@@ -58,28 +57,6 @@ def resolve_from_img_bytes(bytes_img: bytes) -> ImageSingle:
         return ImageSingle(image=img)
     except Exception as e:
         raise ImageCorruption(f"error decoding data URI: {e}")
-
-
-def is_base64_check(s: str):
-    """Regex check to quickly check if string is base64 or not."""
-    pattern = (
-        r"^[A-Za-z0-9+/]{4}([A-Za-z0-9+/]{4})*([A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
-    )
-    return bool(re.match(pattern, s))
-
-
-def is_base64_data_uri(uri: str) -> bool:
-    """Simply check if the uri is a Data URI or not
-
-    Ref: https://developer.mozilla.org/en-US/docs/web/http/basics_of_http/data_urls
-    """
-
-    starts_with_data = uri.startswith("data:")
-
-    b64_data_q = uri.split(",")[-1]
-    is_base64 = is_base64_check(b64_data_q)
-
-    return starts_with_data and is_base64
 
 
 async def resolve_image(
