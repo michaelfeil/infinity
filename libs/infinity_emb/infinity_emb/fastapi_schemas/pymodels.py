@@ -183,6 +183,7 @@ class RerankInput(BaseModel):
         **ITEMS_LIMIT,
     )
     return_documents: bool = False
+    raw_scores: bool = False
     model: str = "default/not-specified"
 
 
