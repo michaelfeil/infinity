@@ -68,11 +68,19 @@ def sync_detailed(
 
      Encode Embeddings from Image files
 
+    Supports URLs of Images and Base64-encoded Images
+
     ```python
     import requests
     requests.post(\"http://..:7997/embeddings_image\",
-        json={\"model\":\"openai/clip-vit-base-
-    patch32\",\"input\":[\"http://images.cocodataset.org/val2017/000000039769.jpg\"]})
+        json={
+            \"model\":\"openai/clip-vit-base-patch32\",
+            \"input\": [
+                \"http://images.cocodataset.org/val2017/000000039769.jpg\",
+                \"data:image/png;base64,iVBORw0KGgoDEMOoSAMPLEoENCODEDIMAGE\"
+            ]
+        })
+    ```
 
     Args:
         body (ImageEmbeddingInput):
@@ -105,11 +113,19 @@ def sync(
 
      Encode Embeddings from Image files
 
+    Supports URLs of Images and Base64-encoded Images
+
     ```python
     import requests
     requests.post(\"http://..:7997/embeddings_image\",
-        json={\"model\":\"openai/clip-vit-base-
-    patch32\",\"input\":[\"http://images.cocodataset.org/val2017/000000039769.jpg\"]})
+        json={
+            \"model\":\"openai/clip-vit-base-patch32\",
+            \"input\": [
+                \"http://images.cocodataset.org/val2017/000000039769.jpg\",
+                \"data:image/png;base64,iVBORw0KGgoDEMOoSAMPLEoENCODEDIMAGE\"
+            ]
+        })
+    ```
 
     Args:
         body (ImageEmbeddingInput):
@@ -137,11 +153,19 @@ async def asyncio_detailed(
 
      Encode Embeddings from Image files
 
+    Supports URLs of Images and Base64-encoded Images
+
     ```python
     import requests
     requests.post(\"http://..:7997/embeddings_image\",
-        json={\"model\":\"openai/clip-vit-base-
-    patch32\",\"input\":[\"http://images.cocodataset.org/val2017/000000039769.jpg\"]})
+        json={
+            \"model\":\"openai/clip-vit-base-patch32\",
+            \"input\": [
+                \"http://images.cocodataset.org/val2017/000000039769.jpg\",
+                \"data:image/png;base64,iVBORw0KGgoDEMOoSAMPLEoENCODEDIMAGE\"
+            ]
+        })
+    ```
 
     Args:
         body (ImageEmbeddingInput):
@@ -172,11 +196,19 @@ async def asyncio(
 
      Encode Embeddings from Image files
 
+    Supports URLs of Images and Base64-encoded Images
+
     ```python
     import requests
     requests.post(\"http://..:7997/embeddings_image\",
-        json={\"model\":\"openai/clip-vit-base-
-    patch32\",\"input\":[\"http://images.cocodataset.org/val2017/000000039769.jpg\"]})
+        json={
+            \"model\":\"openai/clip-vit-base-patch32\",
+            \"input\": [
+                \"http://images.cocodataset.org/val2017/000000039769.jpg\",
+                \"data:image/png;base64,iVBORw0KGgoDEMOoSAMPLEoENCODEDIMAGE\"
+            ]
+        })
+    ```
 
     Args:
         body (ImageEmbeddingInput):

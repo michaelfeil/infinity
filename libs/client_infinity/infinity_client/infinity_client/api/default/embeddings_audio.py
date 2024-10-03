@@ -68,11 +68,20 @@ def sync_detailed(
 
      Encode Embeddings from Audio files
 
+    Supports URLs of Audios and Base64-encoded Audios
+
     ```python
     import requests
     requests.post(\"http://..:7997/embeddings_audio\",
-        json={\"model\":\"laion/larger_clap_general\",\"input\":[\"https://github.com/michaelfeil/infini
-    ty/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav\"]})
+        json={
+            \"model\":\"laion/larger_clap_general\",
+            \"input\": [
+                \"https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/l
+    ibs/infinity_emb/tests/data/audio/beep.wav\",
+                \"data:audio/wav;base64,iVBORw0KGgoDEMOoSAMPLEoENCODEDAUDIO\"
+            ]
+        })
+    ```
 
     Args:
         body (AudioEmbeddingInput):
@@ -105,11 +114,20 @@ def sync(
 
      Encode Embeddings from Audio files
 
+    Supports URLs of Audios and Base64-encoded Audios
+
     ```python
     import requests
     requests.post(\"http://..:7997/embeddings_audio\",
-        json={\"model\":\"laion/larger_clap_general\",\"input\":[\"https://github.com/michaelfeil/infini
-    ty/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav\"]})
+        json={
+            \"model\":\"laion/larger_clap_general\",
+            \"input\": [
+                \"https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/l
+    ibs/infinity_emb/tests/data/audio/beep.wav\",
+                \"data:audio/wav;base64,iVBORw0KGgoDEMOoSAMPLEoENCODEDAUDIO\"
+            ]
+        })
+    ```
 
     Args:
         body (AudioEmbeddingInput):
@@ -137,11 +155,20 @@ async def asyncio_detailed(
 
      Encode Embeddings from Audio files
 
+    Supports URLs of Audios and Base64-encoded Audios
+
     ```python
     import requests
     requests.post(\"http://..:7997/embeddings_audio\",
-        json={\"model\":\"laion/larger_clap_general\",\"input\":[\"https://github.com/michaelfeil/infini
-    ty/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav\"]})
+        json={
+            \"model\":\"laion/larger_clap_general\",
+            \"input\": [
+                \"https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/l
+    ibs/infinity_emb/tests/data/audio/beep.wav\",
+                \"data:audio/wav;base64,iVBORw0KGgoDEMOoSAMPLEoENCODEDAUDIO\"
+            ]
+        })
+    ```
 
     Args:
         body (AudioEmbeddingInput):
@@ -172,11 +199,20 @@ async def asyncio(
 
      Encode Embeddings from Audio files
 
+    Supports URLs of Audios and Base64-encoded Audios
+
     ```python
     import requests
     requests.post(\"http://..:7997/embeddings_audio\",
-        json={\"model\":\"laion/larger_clap_general\",\"input\":[\"https://github.com/michaelfeil/infini
-    ty/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav\"]})
+        json={
+            \"model\":\"laion/larger_clap_general\",
+            \"input\": [
+                \"https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/l
+    ibs/infinity_emb/tests/data/audio/beep.wav\",
+                \"data:audio/wav;base64,iVBORw0KGgoDEMOoSAMPLEoENCODEDAUDIO\"
+            ]
+        })
+    ```
 
     Args:
         body (AudioEmbeddingInput):

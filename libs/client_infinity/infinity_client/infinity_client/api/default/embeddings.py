@@ -72,6 +72,7 @@ def sync_detailed(
     import requests
     requests.post(\"http://..:7997/embeddings\",
         json={\"model\":\"BAAI/bge-small-en-v1.5\",\"input\":[\"A sentence to encode.\"]})
+    ```
 
     Args:
         body (OpenAIEmbeddingInput):
@@ -108,6 +109,7 @@ def sync(
     import requests
     requests.post(\"http://..:7997/embeddings\",
         json={\"model\":\"BAAI/bge-small-en-v1.5\",\"input\":[\"A sentence to encode.\"]})
+    ```
 
     Args:
         body (OpenAIEmbeddingInput):
@@ -139,6 +141,7 @@ async def asyncio_detailed(
     import requests
     requests.post(\"http://..:7997/embeddings\",
         json={\"model\":\"BAAI/bge-small-en-v1.5\",\"input\":[\"A sentence to encode.\"]})
+    ```
 
     Args:
         body (OpenAIEmbeddingInput):
@@ -173,6 +176,7 @@ async def asyncio(
     import requests
     requests.post(\"http://..:7997/embeddings\",
         json={\"model\":\"BAAI/bge-small-en-v1.5\",\"input\":[\"A sentence to encode.\"]})
+    ```
 
     Args:
         body (OpenAIEmbeddingInput):

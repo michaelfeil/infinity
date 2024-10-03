@@ -76,6 +76,7 @@ def sync_detailed(
             \"query\":\"Where is Munich?\",
             \"documents\":[\"Munich is in Germany.\", \"The sky is blue.\"]
         })
+    ```
 
     Args:
         body (RerankInput): Input for reranking
@@ -116,6 +117,7 @@ def sync(
             \"query\":\"Where is Munich?\",
             \"documents\":[\"Munich is in Germany.\", \"The sky is blue.\"]
         })
+    ```
 
     Args:
         body (RerankInput): Input for reranking
@@ -151,6 +153,7 @@ async def asyncio_detailed(
             \"query\":\"Where is Munich?\",
             \"documents\":[\"Munich is in Germany.\", \"The sky is blue.\"]
         })
+    ```
 
     Args:
         body (RerankInput): Input for reranking
@@ -189,6 +192,7 @@ async def asyncio(
             \"query\":\"Where is Munich?\",
             \"documents\":[\"Munich is in Germany.\", \"The sky is blue.\"]
         })
+    ```
 
     Args:
         body (RerankInput): Input for reranking

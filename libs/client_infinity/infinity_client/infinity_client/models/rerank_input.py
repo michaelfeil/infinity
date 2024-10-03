@@ -16,12 +16,14 @@ class RerankInput:
         query (str):
         documents (List[str]):
         return_documents (Union[Unset, bool]):  Default: False.
+        raw_scores (Union[Unset, bool]):  Default: False.
         model (Union[Unset, str]):  Default: 'default/not-specified'.
     """
 
     query: str
     documents: List[str]
     return_documents: Union[Unset, bool] = False
+    raw_scores: Union[Unset, bool] = False
     model: Union[Unset, str] = "default/not-specified"
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -31,6 +33,8 @@ class RerankInput:
         documents = self.documents
 
         return_documents = self.return_documents
+
+        raw_scores = self.raw_scores
 
         model = self.model
 
@@ -44,6 +48,8 @@ class RerankInput:
         )
         if return_documents is not UNSET:
             field_dict["return_documents"] = return_documents
+        if raw_scores is not UNSET:
+            field_dict["raw_scores"] = raw_scores
         if model is not UNSET:
             field_dict["model"] = model
 
@@ -58,12 +64,15 @@ class RerankInput:
 
         return_documents = d.pop("return_documents", UNSET)
 
+        raw_scores = d.pop("raw_scores", UNSET)
+
         model = d.pop("model", UNSET)
 
         rerank_input = cls(
             query=query,
             documents=documents,
             return_documents=return_documents,
+            raw_scores=raw_scores,
             model=model,
         )
 

@@ -28,7 +28,11 @@ class AudioEmbeddingInput:
     def to_dict(self) -> Dict[str, Any]:
         input_: Union[List[str], str]
         if isinstance(self.input_, list):
-            input_ = self.input_
+            input_ = []
+            for input_type_0_item_data in self.input_:
+                input_type_0_item: str
+                input_type_0_item = input_type_0_item_data
+                input_.append(input_type_0_item)
 
         else:
             input_ = self.input_
@@ -69,7 +73,16 @@ class AudioEmbeddingInput:
             try:
                 if not isinstance(data, list):
                     raise TypeError()
-                input_type_0 = cast(List[str], data)
+                input_type_0 = []
+                _input_type_0 = data
+                for input_type_0_item_data in _input_type_0:
+
+                    def _parse_input_type_0_item(data: object) -> str:
+                        return cast(str, data)
+
+                    input_type_0_item = _parse_input_type_0_item(input_type_0_item_data)
+
+                    input_type_0.append(input_type_0_item)
 
                 return input_type_0
             except:  # noqa: E722

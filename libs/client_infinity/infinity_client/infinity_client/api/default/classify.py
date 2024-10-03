@@ -73,6 +73,7 @@ def sync_detailed(
     requests.post(\"http://..:7997/classify\",
         json={\"model\":\"SamLowe/roberta-base-go_emotions\",\"input\":[\"I am not having a great
     day.\"]})
+    ```
 
     Args:
         body (ClassifyInput):
@@ -110,6 +111,7 @@ def sync(
     requests.post(\"http://..:7997/classify\",
         json={\"model\":\"SamLowe/roberta-base-go_emotions\",\"input\":[\"I am not having a great
     day.\"]})
+    ```
 
     Args:
         body (ClassifyInput):
@@ -142,6 +144,7 @@ async def asyncio_detailed(
     requests.post(\"http://..:7997/classify\",
         json={\"model\":\"SamLowe/roberta-base-go_emotions\",\"input\":[\"I am not having a great
     day.\"]})
+    ```
 
     Args:
         body (ClassifyInput):
@@ -177,6 +180,7 @@ async def asyncio(
     requests.post(\"http://..:7997/classify\",
         json={\"model\":\"SamLowe/roberta-base-go_emotions\",\"input\":[\"I am not having a great
     day.\"]})
+    ```
 
     Args:
         body (ClassifyInput):
