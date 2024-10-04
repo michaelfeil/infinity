@@ -56,11 +56,12 @@ coverage = {extras = ["toml"], version = "^7.3.2"}
 mypy = "^1.5.1"
 requests = "2.28.1"
 types-requests = "2.28.1"
+openai = "*" # 1.51.0 works
 
 # preferred dev dependencies
-torch = "2.4.0"
+torch = "2.4.1"
 prometheus-fastapi-instrumentator = "7.0.0"
-fastapi = "0.110.2"
+fastapi = "0.115.0"
 
 [tool.poetry.group.codespell.dependencies]
 codespell = "^2.2.0"

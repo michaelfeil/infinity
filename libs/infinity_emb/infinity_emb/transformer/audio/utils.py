@@ -28,7 +28,7 @@ async def resolve_audio(
     else:
         try:
             downloaded = await (await session.get(audio)).read()
-            # downloaded = requests.get(audio, stream=True).content
+            #
             audio_bytes = io.BytesIO(downloaded)
         except Exception as e:
             raise AudioCorruption(
