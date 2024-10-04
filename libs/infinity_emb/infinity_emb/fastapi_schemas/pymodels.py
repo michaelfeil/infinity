@@ -257,6 +257,7 @@ class RerankInput(BaseModel):
     return_documents: bool = False
     raw_scores: bool = False
     model: str = "default/not-specified"
+    top_k: int = 0
 
 
 class _ReRankObject(BaseModel):
