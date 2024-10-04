@@ -138,8 +138,8 @@ class BatchHandler:
         """
         if "embed" not in self.model_worker.capabilities:
             raise ModelNotDeployedError(
-                "the loaded moded cannot fullyfill `embed`."
-                f"options are {self.model_worker.capabilities}."
+                "the loaded moded cannot fullyfill `embed`. "
+                f"Options are {self.model_worker.capabilities}."
             )
         input_sentences = [EmbeddingSingle(sentence=s) for s in sentences]
 
@@ -166,8 +166,8 @@ class BatchHandler:
         """
         if "rerank" not in self.model_worker.capabilities:
             raise ModelNotDeployedError(
-                "the loaded moded cannot fullyfill `rerank`."
-                f"options are {self.model_worker.capabilities}."
+                "the loaded moded cannot fullyfill `rerank`. "
+                f"Options are {self.model_worker.capabilities}."
             )
         rerankables = [ReRankSingle(query=query, document=doc) for doc in docs]
         scores, usage = await self._schedule(rerankables)
@@ -197,8 +197,8 @@ class BatchHandler:
         """
         if "classify" not in self.model_worker.capabilities:
             raise ModelNotDeployedError(
-                "the loaded moded cannot fullyfill `classify`."
-                f"options are {self.model_worker.capabilities}."
+                "the loaded moded cannot fullyfill `classify`. "
+                f"Options are {self.model_worker.capabilities}."
             )
         items = [PredictSingle(sentence=s) for s in sentences]
         classifications, usage = await self._schedule(items)
@@ -230,8 +230,8 @@ class BatchHandler:
 
         if "image_embed" not in self.model_worker.capabilities:
             raise ModelNotDeployedError(
-                "the loaded moded cannot fullyfill `image_embed`."
-                f"options are {self.model_worker.capabilities}."
+                "the loaded moded cannot fullyfill `image_embed`. "
+                f"Options are {self.model_worker.capabilities}."
             )
 
         items = await resolve_images(images)
@@ -259,8 +259,8 @@ class BatchHandler:
 
         if "audio_embed" not in self.model_worker.capabilities:
             raise ModelNotDeployedError(
-                "the loaded moded cannot fullyfill `audio_embed`."
-                f"options are {self.model_worker.capabilities}."
+                "the loaded moded cannot fullyfill `audio_embed`. "
+                f"Options are {self.model_worker.capabilities}."
             )
 
         items = await resolve_audios(

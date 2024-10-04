@@ -23,6 +23,14 @@ if CHECK_PYDANTIC.is_available:
     from pydantic import BaseModel, Field, conlist
 
     try:
+        from pydantic import (
+            BaseModel,
+            Discriminator,
+            Field,
+            RootModel,
+            Tag,
+        )
+
         from .data_uri import DataURI
         from .pydantic_v2 import (
             INPUT_STRING,
@@ -51,6 +59,15 @@ else:
     class BaseModel:  # type: ignore[no-redef]
         pass
 
+    class RootModel:  # type: ignore
+        pass
+
+    class Tag:  # type: ignore
+        pass
+
+    class HttpUrl:  # type: ignore
+        pass
+
     class DataURI:  # type: ignore
         pass
 
@@ -66,7 +83,27 @@ class _Usage(BaseModel):
     total_tokens: int
 
 
-class OpenAIEmbeddingInput(BaseModel):
+class _ExtaBody_Text(BaseModel):
+    infinity_extra_modality: Literal["text"] = "text"
+
+
+class _ExtaBody_Image(BaseModel):
+    infinity_extra_modality: Literal["image"] = "image"
+
+
+class _ExtaBody_Audio(BaseModel):
+    infinity_extra_modality: Literal["audio"] = "audio"
+
+
+class _OpenAIEmbeddingInput(BaseModel):
+    model: str = "default/not-specified"
+    encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
+    user: Optional[str] = None
+
+
+class _OpenAIEmbeddingInput_Text(_OpenAIEmbeddingInput):
+    """helper"""
+
     input: Union[  # type: ignore
         conlist(  # type: ignore
             Annotated[str, INPUT_STRING],
@@ -74,12 +111,54 @@ class OpenAIEmbeddingInput(BaseModel):
         ),
         Annotated[str, INPUT_STRING],
     ]
-    model: str = "default/not-specified"
-    encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
-    user: Optional[str] = None
+    infinity_extra_modality: Literal["text"] = "text"
+
+
+class _OpenAIEmbeddingInput_URI(_OpenAIEmbeddingInput):
+    """helper"""
+
+    input: Union[  # type: ignore
+        conlist(  # type: ignore
+            DataURIorURL,
+            **ITEMS_LIMIT_SMALL,
+        ),
+        DataURIorURL,
+    ]
+
+
+class OpenAIEmbeddingInput_Audio(_OpenAIEmbeddingInput_URI):
+    infinity_extra_modality: Literal["audio"] = "audio"
+
+
+class OpenAIEmbeddingInput_IMAGE(_OpenAIEmbeddingInput_URI):
+    infinity_extra_modality: Literal["image"] = "image"
+
+
+def get_infinity_extra_modality(obj: dict) -> str:
+    """resolve the modality of the extra_body
+
+    Function name is used to return error message in case of inv
+    """
+    try:
+        return obj.get("infinity_extra_modality", "text")
+    except Exception:
+        return "text"
+
+
+class MultiModalOpenAIEmbedding(RootModel):
+    root: Annotated[
+        Union[
+            Annotated[_OpenAIEmbeddingInput_Text, Tag("text")],
+            Annotated[OpenAIEmbeddingInput_Audio, Tag("audio")],
+            Annotated[OpenAIEmbeddingInput_IMAGE, Tag("image")],
+        ],
+        Discriminator(get_infinity_extra_modality),
+    ]
 
 
 class ImageEmbeddingInput(BaseModel):
+    """# LEGACY"""
+
     input: Union[  # type: ignore
         conlist(  # type: ignore
             DataURIorURL,
@@ -93,6 +172,8 @@ class ImageEmbeddingInput(BaseModel):
 
 
 class AudioEmbeddingInput(ImageEmbeddingInput):
+    """# LEGACY"""
+
     pass
 
 

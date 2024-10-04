@@ -13,7 +13,7 @@ from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device, InferenceEngine
 
 PREFIX = "/v1_vision"
-MODEL: str = pytest.DEFAULT_VISION_MODEL  # type: ignore[assignment]
+MODEL: str = pytest.DEFAULT_IMAGE_MODEL  # type: ignore[assignment]
 batch_size = 32 if torch.cuda.is_available() else 8
 
 app = create_server(
