@@ -64,7 +64,7 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     body: AudioEmbeddingInput,
 ) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Audio
+    r"""Deprecated: Use `embeddings` with `infinity_extra_modality` set to `audio`
 
      Encode Embeddings from Audio files
 
@@ -84,7 +84,7 @@ def sync_detailed(
     ```
 
     Args:
-        body (AudioEmbeddingInput):
+        body (AudioEmbeddingInput): # LEGACY
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -110,7 +110,7 @@ def sync(
     client: Union[AuthenticatedClient, Client],
     body: AudioEmbeddingInput,
 ) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Audio
+    r"""Deprecated: Use `embeddings` with `infinity_extra_modality` set to `audio`
 
      Encode Embeddings from Audio files
 
@@ -130,7 +130,7 @@ def sync(
     ```
 
     Args:
-        body (AudioEmbeddingInput):
+        body (AudioEmbeddingInput): # LEGACY
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -151,7 +151,7 @@ async def asyncio_detailed(
     client: Union[AuthenticatedClient, Client],
     body: AudioEmbeddingInput,
 ) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Audio
+    r"""Deprecated: Use `embeddings` with `infinity_extra_modality` set to `audio`
 
      Encode Embeddings from Audio files
 
@@ -171,7 +171,7 @@ async def asyncio_detailed(
     ```
 
     Args:
-        body (AudioEmbeddingInput):
+        body (AudioEmbeddingInput): # LEGACY
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -195,7 +195,7 @@ async def asyncio(
     client: Union[AuthenticatedClient, Client],
     body: AudioEmbeddingInput,
 ) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Audio
+    r"""Deprecated: Use `embeddings` with `infinity_extra_modality` set to `audio`
 
      Encode Embeddings from Audio files
 
@@ -215,7 +215,7 @@ async def asyncio(
     ```
 
     Args:
-        body (AudioEmbeddingInput):
+        body (AudioEmbeddingInput): # LEGACY
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

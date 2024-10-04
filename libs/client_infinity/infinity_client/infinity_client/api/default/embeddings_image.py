@@ -64,7 +64,7 @@ def sync_detailed(
     client: Union[AuthenticatedClient, Client],
     body: ImageEmbeddingInput,
 ) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Image
+    r"""Deprecated: Use `embeddings` with `infinity_extra_modality` set to `image`
 
      Encode Embeddings from Image files
 
@@ -83,7 +83,7 @@ def sync_detailed(
     ```
 
     Args:
-        body (ImageEmbeddingInput):
+        body (ImageEmbeddingInput): # LEGACY
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -109,7 +109,7 @@ def sync(
     client: Union[AuthenticatedClient, Client],
     body: ImageEmbeddingInput,
 ) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Image
+    r"""Deprecated: Use `embeddings` with `infinity_extra_modality` set to `image`
 
      Encode Embeddings from Image files
 
@@ -128,7 +128,7 @@ def sync(
     ```
 
     Args:
-        body (ImageEmbeddingInput):
+        body (ImageEmbeddingInput): # LEGACY
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -149,7 +149,7 @@ async def asyncio_detailed(
     client: Union[AuthenticatedClient, Client],
     body: ImageEmbeddingInput,
 ) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Image
+    r"""Deprecated: Use `embeddings` with `infinity_extra_modality` set to `image`
 
      Encode Embeddings from Image files
 
@@ -168,7 +168,7 @@ async def asyncio_detailed(
     ```
 
     Args:
-        body (ImageEmbeddingInput):
+        body (ImageEmbeddingInput): # LEGACY
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -192,7 +192,7 @@ async def asyncio(
     client: Union[AuthenticatedClient, Client],
     body: ImageEmbeddingInput,
 ) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
-    r"""Embeddings Image
+    r"""Deprecated: Use `embeddings` with `infinity_extra_modality` set to `image`
 
      Encode Embeddings from Image files
 
@@ -211,7 +211,7 @@ async def asyncio(
     ```
 
     Args:
-        body (ImageEmbeddingInput):
+        body (ImageEmbeddingInput): # LEGACY
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

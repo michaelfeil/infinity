@@ -130,7 +130,7 @@ class OpenAIEmbeddingInput_Audio(_OpenAIEmbeddingInput_URI):
     infinity_extra_modality: Literal["audio"] = "audio"
 
 
-class OpenAIEmbeddingInput_IMAGE(_OpenAIEmbeddingInput_URI):
+class OpenAIEmbeddingInput_Image(_OpenAIEmbeddingInput_URI):
     infinity_extra_modality: Literal["image"] = "image"
 
 
@@ -150,7 +150,7 @@ class MultiModalOpenAIEmbedding(RootModel):
         Union[
             Annotated[_OpenAIEmbeddingInput_Text, Tag("text")],
             Annotated[OpenAIEmbeddingInput_Audio, Tag("audio")],
-            Annotated[OpenAIEmbeddingInput_IMAGE, Tag("image")],
+            Annotated[OpenAIEmbeddingInput_Image, Tag("image")],
         ],
         Discriminator(get_infinity_extra_modality),
     ]
