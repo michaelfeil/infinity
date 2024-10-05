@@ -152,7 +152,12 @@ class AsyncEmbeddingEngine:
         return embeddings, usage
 
     async def rerank(
-        self, *, query: str, docs: list[str], raw_scores: bool = False
+        self,
+        *,
+        query: str,
+        docs: list[str],
+        raw_scores: bool = False,
+        top_k: Optional[int] = None,
     ) -> tuple[list[float], int]:
         """rerank multiple sentences
 
@@ -160,6 +165,8 @@ class AsyncEmbeddingEngine:
             query (str): query to be reranked
             docs (list[str]): docs to be reranked
             raw_scores (bool): return raw scores instead of sigmoid
+            top_k (Optional[int]): number of top scores to return after reranking
+                if top_k is None, <= 0 or out of range, all scores are returned
 
         Raises:
             ValueError: raised if engine is not started yet
@@ -172,7 +179,10 @@ class AsyncEmbeddingEngine:
         """
         self._assert_running()
         scores, usage = await self._batch_handler.rerank(
-            query=query, docs=docs, raw_scores=raw_scores
+            query=query,
+            docs=docs,
+            raw_scores=raw_scores,
+            top_k=top_k,
         )
 
         return scores, usage

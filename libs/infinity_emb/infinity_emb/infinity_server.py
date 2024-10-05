@@ -392,15 +392,14 @@ def create_server(
             start = time.perf_counter()
 
             scores, usage = await engine.rerank(
-                query=data.query, docs=data.documents, raw_scores=data.raw_scores
+                query=data.query,
+                docs=data.documents,
+                raw_scores=data.raw_scores,
+                top_k=data.top_k,
             )
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
-
-            if data.top_k > 0:
-                data.documents = data.documents[: data.top_k]
-                scores = scores[: data.top_k]
 
             if data.return_documents:
                 docs = data.documents
