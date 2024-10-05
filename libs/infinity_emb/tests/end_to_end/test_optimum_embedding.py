@@ -8,9 +8,7 @@ from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device, InferenceEngine
 
 PREFIX = "/v1_optimum"
-MODEL: str = (
-    "michaelfeil/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
-)
+MODEL: str = pytest.DEFAULT_BERT_MODEL  # type: ignore
 
 batch_size = 8
 

@@ -24,14 +24,16 @@ async def resolve_audio(
         try:
             audio_bytes = io.BytesIO(audio)
         except Exception as e:
-            raise AudioCorruption(f"Error opening audio: {e}")
+            raise AudioCorruption(f"Error opening audio from bytes: {e}")
     else:
         try:
             downloaded = await (await session.get(audio)).read()
-            # downloaded = requests.get(audio, stream=True).content
+            #
             audio_bytes = io.BytesIO(downloaded)
         except Exception as e:
-            raise AudioCorruption(f"Error downloading audio.\nError msg: {str(e)}")
+            raise AudioCorruption(
+                f"Error downloading audio from {audio}. \nError msg: {str(e)}"
+            )
 
     try:
         data, rate = sf.read(audio_bytes)

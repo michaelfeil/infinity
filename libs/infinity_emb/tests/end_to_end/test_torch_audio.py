@@ -8,7 +8,7 @@ from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device, InferenceEngine
 
-PREFIX = "/v1_ct2"
+PREFIX = "/v1_audio"
 MODEL: str = pytest.DEFAULT_AUDIO_MODEL  # type: ignore[assignment]
 batch_size = 32 if torch.cuda.is_available() else 8
 
@@ -116,35 +116,45 @@ async def test_meta(client, helpers):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("no_of_audios", [1, 5, 10])
-async def test_audio_multiple(client, no_of_audios):
-    audio_urls = [
-        "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
-    ] * no_of_audios
+async def test_audio_multiple(client):
+    for route in [f"{PREFIX}/embeddings_audio", f"{PREFIX}/embeddings"]:
+        for no_of_audios in [1, 5, 10]:
+            audio_urls = [
+                "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
+            ] * no_of_audios
 
-    response = await client.post(
-        f"{PREFIX}/embeddings_audio",
-        json={"model": MODEL, "input": audio_urls},
-    )
-    assert response.status_code == 200
-    rdata = response.json()
-    rdata_results = rdata["data"]
-    assert len(rdata_results) == no_of_audios
-    assert "model" in rdata
-    assert "usage" in rdata
-    assert rdata_results[0]["object"] == "embedding"
-    assert len(rdata_results[0]["embedding"]) > 0
+            response = await client.post(
+                route,
+                json={
+                    "model": MODEL,
+                    "input": audio_urls,
+                    "infinity_extra_modality": "audio",
+                },
+            )
+            assert response.status_code == 200
+            rdata = response.json()
+            rdata_results = rdata["data"]
+            assert len(rdata_results) == no_of_audios
+            assert "model" in rdata
+            assert "usage" in rdata
+            assert rdata_results[0]["object"] == "embedding"
+            assert len(rdata_results[0]["embedding"]) > 0
 
 
 @pytest.mark.anyio
 async def test_audio_fail(client):
-    audio_url = "https://www.google.com/404"
+    for route in [f"{PREFIX}/embeddings_audio", f"{PREFIX}/embeddings"]:
+        audio_url = "https://www.google.com/404"
 
-    response = await client.post(
-        f"{PREFIX}/embeddings_audio",
-        json={"model": MODEL, "input": audio_url},
-    )
-    assert response.status_code == status.HTTP_400_BAD_REQUEST
+        response = await client.post(
+            route,
+            json={
+                "model": MODEL,
+                "input": audio_url,
+                "infinity_extra_modality": "audio",
+            },
+        )
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
 
 
 @pytest.mark.anyio
@@ -152,8 +162,12 @@ async def test_audio_empty(client):
     audio_url_empty = []
 
     response_empty = await client.post(
-        f"{PREFIX}/embeddings_audio",
-        json={"model": MODEL, "input": audio_url_empty},
+        f"{PREFIX}/embeddings",
+        json={
+            "model": MODEL,
+            "input": audio_url_empty,
+            "infinity_extra_modality": "audio",
+        },
     )
     assert response_empty.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 

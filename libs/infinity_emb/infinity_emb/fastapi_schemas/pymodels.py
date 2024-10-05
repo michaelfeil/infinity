@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from infinity_emb.primitives import ClassifyReturnType, EmbeddingReturnType
 
 from infinity_emb._optional_imports import CHECK_PYDANTIC
-from infinity_emb.primitives import EmbeddingEncodingFormat
+from infinity_emb.primitives import EmbeddingEncodingFormat, Modality
 
 # potential backwards compatibility to pydantic 1.X
 # pydantic 2.x is preferred by not strictly needed
@@ -23,6 +23,14 @@ if CHECK_PYDANTIC.is_available:
     from pydantic import BaseModel, Field, conlist
 
     try:
+        from pydantic import (
+            BaseModel,
+            Discriminator,
+            Field,
+            RootModel,
+            Tag,
+        )
+
         from .data_uri import DataURI
         from .pydantic_v2 import (
             INPUT_STRING,
@@ -51,6 +59,15 @@ else:
     class BaseModel:  # type: ignore[no-redef]
         pass
 
+    class RootModel:  # type: ignore
+        pass
+
+    class Tag:  # type: ignore
+        pass
+
+    class HttpUrl:  # type: ignore
+        pass
+
     class DataURI:  # type: ignore
         pass
 
@@ -66,7 +83,15 @@ class _Usage(BaseModel):
     total_tokens: int
 
 
-class OpenAIEmbeddingInput(BaseModel):
+class _OpenAIEmbeddingInput(BaseModel):
+    model: str = "default/not-specified"
+    encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
+    user: Optional[str] = None
+
+
+class _OpenAIEmbeddingInput_Text(_OpenAIEmbeddingInput):
+    """helper"""
+
     input: Union[  # type: ignore
         conlist(  # type: ignore
             Annotated[str, INPUT_STRING],
@@ -74,12 +99,56 @@ class OpenAIEmbeddingInput(BaseModel):
         ),
         Annotated[str, INPUT_STRING],
     ]
-    model: str = "default/not-specified"
-    encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
-    user: Optional[str] = None
+    infinity_extra_modality: Literal[Modality.text] = Modality.text  # type: ignore
+
+
+class _OpenAIEmbeddingInput_URI(_OpenAIEmbeddingInput):
+    """helper"""
+
+    input: Union[  # type: ignore
+        conlist(  # type: ignore
+            DataURIorURL,
+            **ITEMS_LIMIT_SMALL,
+        ),
+        DataURIorURL,
+    ]
+
+
+class OpenAIEmbeddingInput_Audio(_OpenAIEmbeddingInput_URI):
+    infinity_extra_modality: Literal[Modality.audio] = Modality.audio  # type: ignore
+
+
+class OpenAIEmbeddingInput_Image(_OpenAIEmbeddingInput_URI):
+    infinity_extra_modality: Literal[Modality.image] = Modality.image  # type: ignore
+
+
+def get_infinity_extra_modality(obj: dict) -> str:
+    """resolve the modality of the extra_body.
+    If not present, default to text
+
+    Function name is used to return error message, keep it explicit
+    """
+    try:
+        return obj.get("infinity_extra_modality", Modality.text.value)
+    except AttributeError:
+        # in case a very weird request is sent, validate it against the default
+        return Modality.text.value
+
+
+class MultiModalOpenAIEmbedding(RootModel):
+    root: Annotated[
+        Union[
+            Annotated[_OpenAIEmbeddingInput_Text, Tag(Modality.text.value)],
+            Annotated[OpenAIEmbeddingInput_Audio, Tag(Modality.audio.value)],
+            Annotated[OpenAIEmbeddingInput_Image, Tag(Modality.image.value)],
+        ],
+        Discriminator(get_infinity_extra_modality),
+    ]
 
 
 class ImageEmbeddingInput(BaseModel):
+    """LEGACY, DO NO LONGER UPDATE"""
+
     input: Union[  # type: ignore
         conlist(  # type: ignore
             DataURIorURL,
@@ -93,6 +162,8 @@ class ImageEmbeddingInput(BaseModel):
 
 
 class AudioEmbeddingInput(ImageEmbeddingInput):
+    """LEGACY, DO NO LONGER UPDATE"""
+
     pass
 
 
@@ -118,9 +189,10 @@ class OpenAIEmbeddingResult(BaseModel):
         encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float,
     ) -> dict[str, Union[str, list[dict], dict]]:
         if encoding_format == EmbeddingEncodingFormat.base64:
-            assert (
-                not engine_args.embedding_dtype.uses_bitpacking()
-            ), f"model {engine_args.served_model_name} does not support base64 encoding, as it uses uint8-bitpacking with {engine_args.embedding_dtype}"
+            if engine_args.embedding_dtype.uses_bitpacking():
+                raise ValueError(
+                    f"model {engine_args.served_model_name} does not support base64 encoding, as it uses uint8-bitpacking with {engine_args.embedding_dtype}"
+                )
             embeddings = [base64.b64encode(np.frombuffer(emb.astype(np.float32), dtype=np.float32)) for emb in embeddings]  # type: ignore
 
         return dict(

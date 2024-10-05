@@ -4,31 +4,43 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.embedding_encoding_format import EmbeddingEncodingFormat
+from ..models.open_ai_embedding_input_audio_infinity_extra_modality import (
+    OpenAIEmbeddingInputAudioInfinityExtraModality,
+)
 from ..types import UNSET, Unset
 
-T = TypeVar("T", bound="OpenAIEmbeddingInput")
+T = TypeVar("T", bound="OpenAIEmbeddingInputAudio")
 
 
 @_attrs_define
-class OpenAIEmbeddingInput:
+class OpenAIEmbeddingInputAudio:
     """
     Attributes:
         input_ (Union[List[str], str]):
         model (Union[Unset, str]):  Default: 'default/not-specified'.
         encoding_format (Union[Unset, EmbeddingEncodingFormat]):
         user (Union[None, Unset, str]):
+        infinity_extra_modality (Union[Unset, OpenAIEmbeddingInputAudioInfinityExtraModality]):  Default:
+            OpenAIEmbeddingInputAudioInfinityExtraModality.AUDIO.
     """
 
     input_: Union[List[str], str]
     model: Union[Unset, str] = "default/not-specified"
     encoding_format: Union[Unset, EmbeddingEncodingFormat] = UNSET
     user: Union[None, Unset, str] = UNSET
+    infinity_extra_modality: Union[
+        Unset, OpenAIEmbeddingInputAudioInfinityExtraModality
+    ] = OpenAIEmbeddingInputAudioInfinityExtraModality.AUDIO
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         input_: Union[List[str], str]
         if isinstance(self.input_, list):
-            input_ = self.input_
+            input_ = []
+            for input_type_0_item_data in self.input_:
+                input_type_0_item: str
+                input_type_0_item = input_type_0_item_data
+                input_.append(input_type_0_item)
 
         else:
             input_ = self.input_
@@ -45,6 +57,10 @@ class OpenAIEmbeddingInput:
         else:
             user = self.user
 
+        infinity_extra_modality: Union[Unset, str] = UNSET
+        if not isinstance(self.infinity_extra_modality, Unset):
+            infinity_extra_modality = self.infinity_extra_modality.value
+
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -58,6 +74,8 @@ class OpenAIEmbeddingInput:
             field_dict["encoding_format"] = encoding_format
         if user is not UNSET:
             field_dict["user"] = user
+        if infinity_extra_modality is not UNSET:
+            field_dict["infinity_extra_modality"] = infinity_extra_modality
 
         return field_dict
 
@@ -69,7 +87,16 @@ class OpenAIEmbeddingInput:
             try:
                 if not isinstance(data, list):
                     raise TypeError()
-                input_type_0 = cast(List[str], data)
+                input_type_0 = []
+                _input_type_0 = data
+                for input_type_0_item_data in _input_type_0:
+
+                    def _parse_input_type_0_item(data: object) -> str:
+                        return cast(str, data)
+
+                    input_type_0_item = _parse_input_type_0_item(input_type_0_item_data)
+
+                    input_type_0.append(input_type_0_item)
 
                 return input_type_0
             except:  # noqa: E722
@@ -96,15 +123,23 @@ class OpenAIEmbeddingInput:
 
         user = _parse_user(d.pop("user", UNSET))
 
-        open_ai_embedding_input = cls(
+        _infinity_extra_modality = d.pop("infinity_extra_modality", UNSET)
+        infinity_extra_modality: Union[Unset, OpenAIEmbeddingInputAudioInfinityExtraModality]
+        if isinstance(_infinity_extra_modality, Unset):
+            infinity_extra_modality = UNSET
+        else:
+            infinity_extra_modality = OpenAIEmbeddingInputAudioInfinityExtraModality(_infinity_extra_modality)
+
+        open_ai_embedding_input_audio = cls(
             input_=input_,
             model=model,
             encoding_format=encoding_format,
             user=user,
+            infinity_extra_modality=infinity_extra_modality,
         )
 
-        open_ai_embedding_input.additional_properties = d
-        return open_ai_embedding_input
+        open_ai_embedding_input_audio.additional_properties = d
+        return open_ai_embedding_input_audio
 
     @property
     def additional_keys(self) -> List[str]:

@@ -11,7 +11,8 @@ T = TypeVar("T", bound="ImageEmbeddingInput")
 
 @_attrs_define
 class ImageEmbeddingInput:
-    """
+    """# LEGACY
+
     Attributes:
         input_ (Union[List[str], str]):
         model (Union[Unset, str]):  Default: 'default/not-specified'.

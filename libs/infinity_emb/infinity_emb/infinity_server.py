@@ -21,7 +21,7 @@ from infinity_emb.fastapi_schemas.pymodels import (
     ClassifyResult,
     DataURIorURL,
     ImageEmbeddingInput,
-    OpenAIEmbeddingInput,
+    MultiModalOpenAIEmbedding,
     OpenAIEmbeddingResult,
     OpenAIModelInfo,
     RerankInput,
@@ -35,6 +35,7 @@ from infinity_emb.primitives import (
     EmbeddingDtype,
     ImageCorruption,
     InferenceEngine,
+    Modality,
     ModelNotDeployedError,
     PoolingMethod,
 )
@@ -224,25 +225,116 @@ def create_server(
         dependencies=route_dependencies,
         operation_id="embeddings",
     )
-    async def _embeddings(data: OpenAIEmbeddingInput):
-        """Encode Embeddings
+    async def _embeddings(data: MultiModalOpenAIEmbedding):
+        """Encode Embeddings. Supports with multimodal inputs.
 
+        ## Running Text Embeddings
         ```python
-        import requests
+        import requests, base64
         requests.post("http://..:7997/embeddings",
-            json={"model":"BAAI/bge-small-en-v1.5","input":["A sentence to encode."]})
+            json={"model":"openai/clip-vit-base-patch32","input":["Two cute cats."]})
+        ```
+
+        ## Running Image Embeddings
+        ```python
+        requests.post("http://..:7997/embeddings",
+            json={
+                "model": "openai/clip-vit-base-patch32",
+                "encoding_format": "base64",
+                "input": [
+                    http://images.cocodataset.org/val2017/000000039769.jpg",
+                    # can also be base64 encoded
+                ],
+                # set extra modality to image to process as image
+                "infinity_extra_modality": "image"
+        )
+        ```
+
+        ## Running Audio Embeddings
+        ```python
+        import requests, base64
+        url = "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
+
+        def url_to_base64(url, modality = "image"):
+            '''small helper to convert url to base64 without server requiring access to the url'''
+            response = requests.get(url)
+            response.raise_for_status()
+            base64_encoded = base64.b64encode(response.content).decode('utf-8')
+            mimetype = f"{modality}/{url.split('.')[-1]}"
+            return f"data:{mimetype};base64,{base64_encoded}"
+
+        requests.post("http://localhost:7997/embeddings",
+            json={
+                "model": "laion/larger_clap_general",
+                "encoding_format": "float",
+                "input": [
+                    url, url_to_base64(url, "audio")
+                ],
+                # set extra modality to audio to process as audio
+                "infinity_extra_modality": "audio"
+            }
+        )
+        ```
+
+        ## Running via OpenAI Client
+        ```python
+        from openai import OpenAI # pip install openai==1.51.0
+        client = OpenAI(base_url="http://localhost:7997/")
+        client.embeddings.create(
+            model="laion/larger_clap_general",
+            input=[url_to_base64(url, "audio")],
+            encoding_format= "base64",
+            extra_body={
+                "infinity_extra_modality": "audio"
+            }
+        )
+
+        client.embeddings.create(
+            model="laion/larger_clap_general",
+            input=["the sound of a beep", "the sound of a cat"],
+            encoding_format= "base64",
+            extra_body={
+                "infinity_extra_modality": "text"
+            }
+        )
+        ```
+
+        ### Hint: Run all the above models on one server:
+        ```bash
+        infinity_emb v2 --model-id BAAI/bge-small-en-v1.5 --model-id openai/clip-vit-base-patch32 --model-id laion/larger_clap_general
         ```
         """
-        engine = _resolve_engine(data.model)
+
+        modality = data.root.infinity_extra_modality
+        data_root = data.root
+        engine = _resolve_engine(data_root.model)
 
         try:
-            if isinstance(data.input, str):
-                data.input = [data.input]
-
-            logger.debug("[📝] Received request with %s inputs ", len(data.input))
             start = time.perf_counter()
-
-            embedding, usage = await engine.embed(sentences=data.input)
+            if modality == Modality.text:
+                if isinstance(data_root.input, str):
+                    input_ = [data_root.input]
+                else:
+                    input_ = data_root.input  # type: ignore
+                logger.debug(
+                    "[📝] Received request with %s input texts ",
+                    len(input_),  # type: ignore
+                )
+                embedding, usage = await engine.embed(sentences=input_)
+            elif modality == Modality.audio:
+                urls_or_bytes = _resolve_mixed_input(data_root.input)  # type: ignore
+                logger.debug(
+                    "[📝] Received request with %s input audios ",
+                    len(urls_or_bytes),  # type: ignore
+                )
+                embedding, usage = await engine.audio_embed(audios=urls_or_bytes)
+            elif modality == Modality.image:
+                urls_or_bytes = _resolve_mixed_input(data_root.input)  # type: ignore
+                logger.debug(
+                    "[📝] Received request with %s input images ",
+                    len(urls_or_bytes),  # type: ignore
+                )
+                embedding, usage = await engine.image_embed(images=urls_or_bytes)
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
@@ -250,12 +342,22 @@ def create_server(
             return OpenAIEmbeddingResult.to_embeddings_response(
                 embeddings=embedding,
                 engine_args=engine.engine_args,
-                encoding_format=data.encoding_format,
+                encoding_format=data_root.encoding_format,
                 usage=usage,
             )
         except ModelNotDeployedError as ex:
             raise errors.OpenAIException(
-                f"ModelNotDeployedError: model=`{data.model}` does not support `embed`. Reason: {ex}",
+                f"ModelNotDeployedError: model=`{data_root.model}` does not support `embed` for modality `{modality.value}`. Reason: {ex}",
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        except (ImageCorruption, AudioCorruption) as ex:
+            # get urls_or_bytes if not defined
+            try:
+                urls_or_bytes = urls_or_bytes
+            except NameError:
+                urls_or_bytes = []
+            raise errors.OpenAIException(
+                f"{modality.value}Corruption, could not open {[b if isinstance(b, str) else 'bytes' for b in urls_or_bytes]} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as ex:
@@ -368,6 +470,8 @@ def create_server(
         response_class=responses.ORJSONResponse,
         dependencies=route_dependencies,
         operation_id="embeddings_image",
+        deprecated=True,
+        summary="Deprecated: Use `embeddings` with `infinity_extra_modality` set to `image`",
     )
     async def _embeddings_image(data: ImageEmbeddingInput):
         """Encode Embeddings from Image files
@@ -425,6 +529,8 @@ def create_server(
         response_class=responses.ORJSONResponse,
         dependencies=route_dependencies,
         operation_id="embeddings_audio",
+        deprecated=True,
+        summary="Deprecated: Use `embeddings` with `infinity_extra_modality` set to `audio`",
     )
     async def _embeddings_audio(data: AudioEmbeddingInput):
         """Encode Embeddings from Audio files
@@ -799,7 +905,7 @@ if CHECK_TYPER.is_available:
 
     def cli():
         if len(sys.argv) == 1 or sys.argv[1] not in ["v1", "v2", "help", "--help"]:
-            for _ in range(9):
+            for _ in range(3):
                 logger.error(
                     "Error: No command given. Defaulting to `v1`. "
                     "Relying on this side effect is considered an error and "

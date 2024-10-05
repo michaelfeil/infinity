@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
 # Function to handle cleanup
 cleanup() {
   echo "Cleaning up..."
@@ -29,12 +31,5 @@ for i in {1..10}; do
   fi
 done
 
-# Run the tests
-pip install openapi-python-client==0.21.1
-	 openapi-python-client generate  \
-	  --url http://0.0.0.0:7997/openapi.json \
-	  --config client_config.yaml \
-	   --overwrite \
-	   --custom-template-path=./template
-
-# Cleanup will be called due to the trap
+# Download the openapi.json
+wget http://0.0.0.0:7997/openapi.json -O "$SCRIPT_DIR/openapi.json"

@@ -8,7 +8,7 @@ from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device, InferenceEngine
 
-PREFIX = "/v1_ct2"
+PREFIX = "/v1_reranker"
 MODEL: str = pytest.DEFAULT_RERANKER_MODEL  # type: ignore[assignment]
 batch_size = 32 if torch.cuda.is_available() else 8
 

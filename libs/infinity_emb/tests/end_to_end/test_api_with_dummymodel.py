@@ -6,7 +6,6 @@ import random
 import sys
 import time
 from unittest import TestCase
-from uuid import uuid4
 
 import numpy as np
 import pytest
@@ -18,8 +17,8 @@ from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import InferenceEngine
 
 PREFIX = ""
-MODEL_NAME = str(uuid4())
-MODEL_NAME_2 = str(uuid4())
+MODEL_NAME = "dummy-number-1"
+MODEL_NAME_2 = "dummy-number-2"
 BATCH_SIZE = 16
 
 PATH_OPENAPI = pathlib.Path(__file__).parent.parent.parent.parent.parent.joinpath(
@@ -67,22 +66,22 @@ async def test_model_route(client):
     assert "unix" in respnse_health.json()
 
 
-@pytest.mark.parametrize("model_name", [MODEL_NAME, MODEL_NAME_2])
 @pytest.mark.anyio
-async def test_embedding_max_length(client, model_name):
+async def test_embedding_max_length(client):
     # TOO long
-    input = "%_" * 4097 * 15
-    response = await client.post(
-        f"{PREFIX}/embeddings", json=dict(input=input, model=model_name)
-    )
-    assert response.status_code == 422, f"{response.status_code}, {response.text}"
-    # works
-    input = "%_" * 4096 * 15
-    response = await client.post(
-        f"{PREFIX}/embeddings", json=dict(input=input, model=model_name)
-    )
-    assert response.status_code == 200, f"{response.status_code}, {response.text}"
-    assert response.json()["model"] == model_name
+    for model_name in [MODEL_NAME, MODEL_NAME_2]:
+        input = "%_" * 4097 * 15
+        response = await client.post(
+            f"{PREFIX}/embeddings", json=dict(input=input, model=model_name)
+        )
+        assert response.status_code == 422, f"{response.status_code}, {response.text}"
+        # works
+        input = "%_" * 4096 * 15
+        response = await client.post(
+            f"{PREFIX}/embeddings", json=dict(input=input, model=model_name)
+        )
+        assert response.status_code == 200, f"{response.status_code}, {response.text}"
+        assert response.json()["model"] == model_name
 
 
 @pytest.mark.parametrize("model_name", [MODEL_NAME])

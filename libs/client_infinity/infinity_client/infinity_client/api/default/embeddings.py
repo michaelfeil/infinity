@@ -6,14 +6,16 @@ import httpx
 from ... import errors
 from ...client import AuthenticatedClient, Client
 from ...models.http_validation_error import HTTPValidationError
-from ...models.open_ai_embedding_input import OpenAIEmbeddingInput
+from ...models.open_ai_embedding_input_audio import OpenAIEmbeddingInputAudio
+from ...models.open_ai_embedding_input_image import OpenAIEmbeddingInputImage
+from ...models.open_ai_embedding_input_text import OpenAIEmbeddingInputText
 from ...models.open_ai_embedding_result import OpenAIEmbeddingResult
 from ...types import Response
 
 
 def _get_kwargs(
     *,
-    body: OpenAIEmbeddingInput,
+    body: Union["OpenAIEmbeddingInputAudio", "OpenAIEmbeddingInputImage", "OpenAIEmbeddingInputText"],
 ) -> Dict[str, Any]:
     headers: Dict[str, Any] = {}
 
@@ -22,7 +24,13 @@ def _get_kwargs(
         "url": "/embeddings",
     }
 
-    _body = body.to_dict()
+    _body: Dict[str, Any]
+    if isinstance(body, OpenAIEmbeddingInputText):
+        _body = body.to_dict()
+    elif isinstance(body, OpenAIEmbeddingInputAudio):
+        _body = body.to_dict()
+    else:
+        _body = body.to_dict()
 
     _kwargs["json"] = _body
     headers["Content-Type"] = "application/json"
@@ -62,20 +70,93 @@ def _build_response(
 def sync_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: OpenAIEmbeddingInput,
+    body: Union["OpenAIEmbeddingInputAudio", "OpenAIEmbeddingInputImage", "OpenAIEmbeddingInputText"],
 ) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
     r"""Embeddings
 
-     Encode Embeddings
+     Encode Embeddings. Supports with multimodal inputs.
 
+    ## Running Text Embeddings
     ```python
-    import requests
+    import requests, base64
     requests.post(\"http://..:7997/embeddings\",
-        json={\"model\":\"BAAI/bge-small-en-v1.5\",\"input\":[\"A sentence to encode.\"]})
+        json={\"model\":\"openai/clip-vit-base-patch32\",\"input\":[\"Two cute cats.\"]})
+    ```
+
+    ## Running Image Embeddings
+    ```python
+    requests.post(\"http://..:7997/embeddings\",
+        json={
+            \"model\": \"openai/clip-vit-base-patch32\",
+            \"encoding_format\": \"base64\",
+            \"input\": [
+                http://images.cocodataset.org/val2017/000000039769.jpg\",
+                # can also be base64 encoded
+            ],
+            # set extra modality to image to process as image
+            \"infinity_extra_modality\": \"image\"
+    )
+    ```
+
+    ## Running Audio Embeddings
+    ```python
+    import requests, base64
+    url = \"https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/in
+    finity_emb/tests/data/audio/beep.wav\"
+
+    def url_to_base64(url, modality = \"image\"):
+        '''small helper to convert url to base64 without server requiring access to the url'''
+        response = requests.get(url)
+        response.raise_for_status()
+        base64_encoded = base64.b64encode(response.content).decode('utf-8')
+        mimetype = f\"{modality}/{url.split('.')[-1]}\"
+        return f\"data:{mimetype};base64,{base64_encoded}\"
+
+    requests.post(\"http://localhost:7997/embeddings\",
+        json={
+            \"model\": \"laion/larger_clap_general\",
+            \"encoding_format\": \"float\",
+            \"input\": [
+                url, url_to_base64(url, \"audio\")
+            ],
+            # set extra modality to audio to process as audio
+            \"infinity_extra_modality\": \"audio\"
+        }
+    )
+    ```
+
+    ## Running via OpenAI Client
+    ```python
+    from openai import OpenAI # pip install openai==1.51.0
+    client = OpenAI(base_url=\"http://localhost:7997/\")
+    client.embeddings.create(
+        model=\"laion/larger_clap_general\",
+        input=[url_to_base64(url, \"audio\")],
+        encoding_format= \"base64\",
+        extra_body={
+            \"infinity_extra_modality\": \"audio\"
+        }
+    )
+
+    client.embeddings.create(
+        model=\"laion/larger_clap_general\",
+        input=[\"the sound of a beep\", \"the sound of a cat\"],
+        encoding_format= \"base64\",
+        extra_body={
+            \"infinity_extra_modality\": \"text\"
+        }
+    )
+    ```
+
+    ### Hint: Run all the above models on one server:
+    ```bash
+    infinity_emb v2 --model-id BAAI/bge-small-en-v1.5 --model-id openai/clip-vit-base-patch32 --model-id
+    laion/larger_clap_general
     ```
 
     Args:
-        body (OpenAIEmbeddingInput):
+        body (Union['OpenAIEmbeddingInputAudio', 'OpenAIEmbeddingInputImage',
+            'OpenAIEmbeddingInputText']):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -99,20 +180,93 @@ def sync_detailed(
 def sync(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: OpenAIEmbeddingInput,
+    body: Union["OpenAIEmbeddingInputAudio", "OpenAIEmbeddingInputImage", "OpenAIEmbeddingInputText"],
 ) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
     r"""Embeddings
 
-     Encode Embeddings
+     Encode Embeddings. Supports with multimodal inputs.
 
+    ## Running Text Embeddings
     ```python
-    import requests
+    import requests, base64
     requests.post(\"http://..:7997/embeddings\",
-        json={\"model\":\"BAAI/bge-small-en-v1.5\",\"input\":[\"A sentence to encode.\"]})
+        json={\"model\":\"openai/clip-vit-base-patch32\",\"input\":[\"Two cute cats.\"]})
+    ```
+
+    ## Running Image Embeddings
+    ```python
+    requests.post(\"http://..:7997/embeddings\",
+        json={
+            \"model\": \"openai/clip-vit-base-patch32\",
+            \"encoding_format\": \"base64\",
+            \"input\": [
+                http://images.cocodataset.org/val2017/000000039769.jpg\",
+                # can also be base64 encoded
+            ],
+            # set extra modality to image to process as image
+            \"infinity_extra_modality\": \"image\"
+    )
+    ```
+
+    ## Running Audio Embeddings
+    ```python
+    import requests, base64
+    url = \"https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/in
+    finity_emb/tests/data/audio/beep.wav\"
+
+    def url_to_base64(url, modality = \"image\"):
+        '''small helper to convert url to base64 without server requiring access to the url'''
+        response = requests.get(url)
+        response.raise_for_status()
+        base64_encoded = base64.b64encode(response.content).decode('utf-8')
+        mimetype = f\"{modality}/{url.split('.')[-1]}\"
+        return f\"data:{mimetype};base64,{base64_encoded}\"
+
+    requests.post(\"http://localhost:7997/embeddings\",
+        json={
+            \"model\": \"laion/larger_clap_general\",
+            \"encoding_format\": \"float\",
+            \"input\": [
+                url, url_to_base64(url, \"audio\")
+            ],
+            # set extra modality to audio to process as audio
+            \"infinity_extra_modality\": \"audio\"
+        }
+    )
+    ```
+
+    ## Running via OpenAI Client
+    ```python
+    from openai import OpenAI # pip install openai==1.51.0
+    client = OpenAI(base_url=\"http://localhost:7997/\")
+    client.embeddings.create(
+        model=\"laion/larger_clap_general\",
+        input=[url_to_base64(url, \"audio\")],
+        encoding_format= \"base64\",
+        extra_body={
+            \"infinity_extra_modality\": \"audio\"
+        }
+    )
+
+    client.embeddings.create(
+        model=\"laion/larger_clap_general\",
+        input=[\"the sound of a beep\", \"the sound of a cat\"],
+        encoding_format= \"base64\",
+        extra_body={
+            \"infinity_extra_modality\": \"text\"
+        }
+    )
+    ```
+
+    ### Hint: Run all the above models on one server:
+    ```bash
+    infinity_emb v2 --model-id BAAI/bge-small-en-v1.5 --model-id openai/clip-vit-base-patch32 --model-id
+    laion/larger_clap_general
     ```
 
     Args:
-        body (OpenAIEmbeddingInput):
+        body (Union['OpenAIEmbeddingInputAudio', 'OpenAIEmbeddingInputImage',
+            'OpenAIEmbeddingInputText']):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -131,20 +285,93 @@ def sync(
 async def asyncio_detailed(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: OpenAIEmbeddingInput,
+    body: Union["OpenAIEmbeddingInputAudio", "OpenAIEmbeddingInputImage", "OpenAIEmbeddingInputText"],
 ) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
     r"""Embeddings
 
-     Encode Embeddings
+     Encode Embeddings. Supports with multimodal inputs.
 
+    ## Running Text Embeddings
     ```python
-    import requests
+    import requests, base64
     requests.post(\"http://..:7997/embeddings\",
-        json={\"model\":\"BAAI/bge-small-en-v1.5\",\"input\":[\"A sentence to encode.\"]})
+        json={\"model\":\"openai/clip-vit-base-patch32\",\"input\":[\"Two cute cats.\"]})
+    ```
+
+    ## Running Image Embeddings
+    ```python
+    requests.post(\"http://..:7997/embeddings\",
+        json={
+            \"model\": \"openai/clip-vit-base-patch32\",
+            \"encoding_format\": \"base64\",
+            \"input\": [
+                http://images.cocodataset.org/val2017/000000039769.jpg\",
+                # can also be base64 encoded
+            ],
+            # set extra modality to image to process as image
+            \"infinity_extra_modality\": \"image\"
+    )
+    ```
+
+    ## Running Audio Embeddings
+    ```python
+    import requests, base64
+    url = \"https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/in
+    finity_emb/tests/data/audio/beep.wav\"
+
+    def url_to_base64(url, modality = \"image\"):
+        '''small helper to convert url to base64 without server requiring access to the url'''
+        response = requests.get(url)
+        response.raise_for_status()
+        base64_encoded = base64.b64encode(response.content).decode('utf-8')
+        mimetype = f\"{modality}/{url.split('.')[-1]}\"
+        return f\"data:{mimetype};base64,{base64_encoded}\"
+
+    requests.post(\"http://localhost:7997/embeddings\",
+        json={
+            \"model\": \"laion/larger_clap_general\",
+            \"encoding_format\": \"float\",
+            \"input\": [
+                url, url_to_base64(url, \"audio\")
+            ],
+            # set extra modality to audio to process as audio
+            \"infinity_extra_modality\": \"audio\"
+        }
+    )
+    ```
+
+    ## Running via OpenAI Client
+    ```python
+    from openai import OpenAI # pip install openai==1.51.0
+    client = OpenAI(base_url=\"http://localhost:7997/\")
+    client.embeddings.create(
+        model=\"laion/larger_clap_general\",
+        input=[url_to_base64(url, \"audio\")],
+        encoding_format= \"base64\",
+        extra_body={
+            \"infinity_extra_modality\": \"audio\"
+        }
+    )
+
+    client.embeddings.create(
+        model=\"laion/larger_clap_general\",
+        input=[\"the sound of a beep\", \"the sound of a cat\"],
+        encoding_format= \"base64\",
+        extra_body={
+            \"infinity_extra_modality\": \"text\"
+        }
+    )
+    ```
+
+    ### Hint: Run all the above models on one server:
+    ```bash
+    infinity_emb v2 --model-id BAAI/bge-small-en-v1.5 --model-id openai/clip-vit-base-patch32 --model-id
+    laion/larger_clap_general
     ```
 
     Args:
-        body (OpenAIEmbeddingInput):
+        body (Union['OpenAIEmbeddingInputAudio', 'OpenAIEmbeddingInputImage',
+            'OpenAIEmbeddingInputText']):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -166,20 +393,93 @@ async def asyncio_detailed(
 async def asyncio(
     *,
     client: Union[AuthenticatedClient, Client],
-    body: OpenAIEmbeddingInput,
+    body: Union["OpenAIEmbeddingInputAudio", "OpenAIEmbeddingInputImage", "OpenAIEmbeddingInputText"],
 ) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
     r"""Embeddings
 
-     Encode Embeddings
+     Encode Embeddings. Supports with multimodal inputs.
 
+    ## Running Text Embeddings
     ```python
-    import requests
+    import requests, base64
     requests.post(\"http://..:7997/embeddings\",
-        json={\"model\":\"BAAI/bge-small-en-v1.5\",\"input\":[\"A sentence to encode.\"]})
+        json={\"model\":\"openai/clip-vit-base-patch32\",\"input\":[\"Two cute cats.\"]})
+    ```
+
+    ## Running Image Embeddings
+    ```python
+    requests.post(\"http://..:7997/embeddings\",
+        json={
+            \"model\": \"openai/clip-vit-base-patch32\",
+            \"encoding_format\": \"base64\",
+            \"input\": [
+                http://images.cocodataset.org/val2017/000000039769.jpg\",
+                # can also be base64 encoded
+            ],
+            # set extra modality to image to process as image
+            \"infinity_extra_modality\": \"image\"
+    )
+    ```
+
+    ## Running Audio Embeddings
+    ```python
+    import requests, base64
+    url = \"https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/in
+    finity_emb/tests/data/audio/beep.wav\"
+
+    def url_to_base64(url, modality = \"image\"):
+        '''small helper to convert url to base64 without server requiring access to the url'''
+        response = requests.get(url)
+        response.raise_for_status()
+        base64_encoded = base64.b64encode(response.content).decode('utf-8')
+        mimetype = f\"{modality}/{url.split('.')[-1]}\"
+        return f\"data:{mimetype};base64,{base64_encoded}\"
+
+    requests.post(\"http://localhost:7997/embeddings\",
+        json={
+            \"model\": \"laion/larger_clap_general\",
+            \"encoding_format\": \"float\",
+            \"input\": [
+                url, url_to_base64(url, \"audio\")
+            ],
+            # set extra modality to audio to process as audio
+            \"infinity_extra_modality\": \"audio\"
+        }
+    )
+    ```
+
+    ## Running via OpenAI Client
+    ```python
+    from openai import OpenAI # pip install openai==1.51.0
+    client = OpenAI(base_url=\"http://localhost:7997/\")
+    client.embeddings.create(
+        model=\"laion/larger_clap_general\",
+        input=[url_to_base64(url, \"audio\")],
+        encoding_format= \"base64\",
+        extra_body={
+            \"infinity_extra_modality\": \"audio\"
+        }
+    )
+
+    client.embeddings.create(
+        model=\"laion/larger_clap_general\",
+        input=[\"the sound of a beep\", \"the sound of a cat\"],
+        encoding_format= \"base64\",
+        extra_body={
+            \"infinity_extra_modality\": \"text\"
+        }
+    )
+    ```
+
+    ### Hint: Run all the above models on one server:
+    ```bash
+    infinity_emb v2 --model-id BAAI/bge-small-en-v1.5 --model-id openai/clip-vit-base-patch32 --model-id
+    laion/larger_clap_general
     ```
 
     Args:
-        body (OpenAIEmbeddingInput):
+        body (Union['OpenAIEmbeddingInputAudio', 'OpenAIEmbeddingInputImage',
+            'OpenAIEmbeddingInputText']):
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
