@@ -404,11 +404,7 @@ class AudioCorruption(Exception):
 ModelCapabilites = Literal["embed", "rerank", "classify", "image_embed", "audio_embed"]
 
 
-class Modality(EnumType):
+class Modality(str, enum.Enum):
     text = "text"
     audio = "audio"
     image = "image"
-
-    @staticmethod
-    def default_value():
-        return Modality.text.value

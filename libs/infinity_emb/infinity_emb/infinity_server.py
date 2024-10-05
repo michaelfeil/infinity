@@ -305,13 +305,12 @@ def create_server(
         ```
         """
 
-        modality = Modality.text
+        modality = data.root.infinity_extra_modality
         data_root = data.root
         engine = _resolve_engine(data_root.model)
 
         try:
             start = time.perf_counter()
-            modality = Modality[data.root.infinity_extra_modality]
             if modality == Modality.text:
                 if isinstance(data_root.input, str):
                     input_ = [data_root.input]
@@ -349,6 +348,16 @@ def create_server(
         except ModelNotDeployedError as ex:
             raise errors.OpenAIException(
                 f"ModelNotDeployedError: model=`{data_root.model}` does not support `embed` for modality `{modality.value}`. Reason: {ex}",
+                code=status.HTTP_400_BAD_REQUEST,
+            )
+        except (ImageCorruption, AudioCorruption) as ex:
+            # get urls_or_bytes if not defined
+            try:
+                urls_or_bytes = urls_or_bytes
+            except NameError:
+                urls_or_bytes = []
+            raise errors.OpenAIException(
+                f"{modality.value}Corruption, could not open {[b if isinstance(b, str) else 'bytes' for b in urls_or_bytes]} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as ex:

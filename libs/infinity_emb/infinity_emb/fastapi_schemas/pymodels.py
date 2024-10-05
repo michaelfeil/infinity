@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from infinity_emb.primitives import ClassifyReturnType, EmbeddingReturnType
 
 from infinity_emb._optional_imports import CHECK_PYDANTIC
-from infinity_emb.primitives import EmbeddingEncodingFormat
+from infinity_emb.primitives import EmbeddingEncodingFormat, Modality
 
 # potential backwards compatibility to pydantic 1.X
 # pydantic 2.x is preferred by not strictly needed
@@ -83,18 +83,6 @@ class _Usage(BaseModel):
     total_tokens: int
 
 
-class _ExtaBody_Text(BaseModel):
-    infinity_extra_modality: Literal["text"] = "text"
-
-
-class _ExtaBody_Image(BaseModel):
-    infinity_extra_modality: Literal["image"] = "image"
-
-
-class _ExtaBody_Audio(BaseModel):
-    infinity_extra_modality: Literal["audio"] = "audio"
-
-
 class _OpenAIEmbeddingInput(BaseModel):
     model: str = "default/not-specified"
     encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
@@ -111,7 +99,7 @@ class _OpenAIEmbeddingInput_Text(_OpenAIEmbeddingInput):
         ),
         Annotated[str, INPUT_STRING],
     ]
-    infinity_extra_modality: Literal["text"] = "text"
+    infinity_extra_modality: Literal[Modality.text] = Modality.text  # type: ignore
 
 
 class _OpenAIEmbeddingInput_URI(_OpenAIEmbeddingInput):
@@ -127,37 +115,39 @@ class _OpenAIEmbeddingInput_URI(_OpenAIEmbeddingInput):
 
 
 class OpenAIEmbeddingInput_Audio(_OpenAIEmbeddingInput_URI):
-    infinity_extra_modality: Literal["audio"] = "audio"
+    infinity_extra_modality: Literal[Modality.audio] = Modality.audio  # type: ignore
 
 
 class OpenAIEmbeddingInput_Image(_OpenAIEmbeddingInput_URI):
-    infinity_extra_modality: Literal["image"] = "image"
+    infinity_extra_modality: Literal[Modality.image] = Modality.image  # type: ignore
 
 
 def get_infinity_extra_modality(obj: dict) -> str:
-    """resolve the modality of the extra_body
+    """resolve the modality of the extra_body.
+    If not present, default to text
 
-    Function name is used to return error message in case of inv
+    Function name is used to return error message, keep it explicit
     """
     try:
-        return obj.get("infinity_extra_modality", "text")
-    except Exception:
-        return "text"
+        return obj.get("infinity_extra_modality", Modality.text.value)
+    except AttributeError:
+        # in case a very weird request is sent, validate it against the default
+        return Modality.text.value
 
 
 class MultiModalOpenAIEmbedding(RootModel):
     root: Annotated[
         Union[
-            Annotated[_OpenAIEmbeddingInput_Text, Tag("text")],
-            Annotated[OpenAIEmbeddingInput_Audio, Tag("audio")],
-            Annotated[OpenAIEmbeddingInput_Image, Tag("image")],
+            Annotated[_OpenAIEmbeddingInput_Text, Tag(Modality.text.value)],
+            Annotated[OpenAIEmbeddingInput_Audio, Tag(Modality.audio.value)],
+            Annotated[OpenAIEmbeddingInput_Image, Tag(Modality.image.value)],
         ],
         Discriminator(get_infinity_extra_modality),
     ]
 
 
 class ImageEmbeddingInput(BaseModel):
-    """# LEGACY"""
+    """LEGACY, DO NO LONGER UPDATE"""
 
     input: Union[  # type: ignore
         conlist(  # type: ignore
@@ -172,7 +162,7 @@ class ImageEmbeddingInput(BaseModel):
 
 
 class AudioEmbeddingInput(ImageEmbeddingInput):
-    """# LEGACY"""
+    """LEGACY, DO NO LONGER UPDATE"""
 
     pass
 
@@ -199,9 +189,10 @@ class OpenAIEmbeddingResult(BaseModel):
         encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float,
     ) -> dict[str, Union[str, list[dict], dict]]:
         if encoding_format == EmbeddingEncodingFormat.base64:
-            assert (
-                not engine_args.embedding_dtype.uses_bitpacking()
-            ), f"model {engine_args.served_model_name} does not support base64 encoding, as it uses uint8-bitpacking with {engine_args.embedding_dtype}"
+            if engine_args.embedding_dtype.uses_bitpacking():
+                raise ValueError(
+                    f"model {engine_args.served_model_name} does not support base64 encoding, as it uses uint8-bitpacking with {engine_args.embedding_dtype}"
+                )
             embeddings = [base64.b64encode(np.frombuffer(emb.astype(np.float32), dtype=np.float32)) for emb in embeddings]  # type: ignore
 
         return dict(
