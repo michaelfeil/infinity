@@ -1,5 +1,6 @@
 import pytest
 import torch
+import sys
 from asgi_lifespan import LifespanManager
 from httpx import AsyncClient
 from transformers import pipeline  # type: ignore[import-untyped]
@@ -89,6 +90,61 @@ async def test_reranker(client, model_base, helpers):
     for i, pred in enumerate(predictions):
         assert abs(rdata_results[i]["relevance_score"] - pred["score"]) < 0.01
 
+@pytest.mark.anyio
+async def test_reranker_top_k(client):
+    query = "Where is the Eiffel Tower located?"
+    documents = [
+        "The Eiffel Tower is located in Paris, France",
+        "The Eiffel Tower is located in the United States.",
+        "The Eiffel Tower is located in the United Kingdom.",
+    ]
+
+    response = await client.post(
+        f"{PREFIX}/rerank",
+        json={"model": MODEL, "query": query, "documents": documents, "top_k": 1},
+    )
+    assert response.status_code == 200
+    rdata = response.json()
+    rdata_results = rdata["results"]
+    assert len(rdata_results) == 1
+
+    response = await client.post(
+        f"{PREFIX}/rerank",
+        json={"model": MODEL, "query": query, "documents": documents, "top_k": 2},
+    )
+    assert response.status_code == 200
+    rdata = response.json()
+    rdata_results = rdata["results"]
+    assert len(rdata_results) == 2
+
+    response = await client.post(
+        f"{PREFIX}/rerank",
+        json={"model": MODEL, "query": query, "documents": documents, "top_k": sys.maxsize},
+    )
+    assert response.status_code == 200
+    rdata = response.json()
+    rdata_results = rdata["results"]
+    assert len(rdata_results) == len(documents)
+
+@pytest.mark.anyio
+async def test_reranker_invalid_top_k(client):
+    query = "Where is the Eiffel Tower located?"
+    documents = [
+        "The Eiffel Tower is located in Paris, France",
+        "The Eiffel Tower is located in the United States.",
+        "The Eiffel Tower is located in the United Kingdom.",
+    ]
+    response = await client.post(
+        f"{PREFIX}/rerank",
+        json={"model": MODEL, "query": query, "documents": documents, "top_k": -1},
+    )
+    assert response.status_code == 422
+
+    response = await client.post(
+        f"{PREFIX}/rerank",
+        json={"model": MODEL, "query": query, "documents": documents, "top_k": 0},
+    )
+    assert response.status_code == 422
 
 @pytest.mark.anyio
 async def test_reranker_cant_embed_or_classify(client):

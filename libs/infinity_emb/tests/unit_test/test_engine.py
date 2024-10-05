@@ -99,6 +99,50 @@ async def test_engine_reranker_torch_opt(engine):
 
 
 @pytest.mark.anyio
+@pytest.mark.parametrize("engine", [InferenceEngine.torch, InferenceEngine.optimum])
+async def test_engine_reranker_top_k(engine):
+    model_unpatched = CrossEncoder(
+        "mixedbread-ai/mxbai-rerank-xsmall-v1",
+    )
+    query = "Where is Paris?"
+    documents = [
+        "Paris is the capital of France.",
+        "Berlin is the capital of Germany.",
+        "You can now purchase my favorite dish",
+    ]
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
+            engine=InferenceEngine.torch,
+            model_warmup=False,
+        )
+    )
+
+    query_docs = [(query, doc) for doc in documents]
+
+    async with engine:
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_k=None)
+    assert len(rankings) == len(documents)
+
+    async with engine:
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_k=-1)
+    assert len(rankings) == len(documents)
+
+    async with engine:
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_k=0)
+    assert len(rankings) == len(documents)
+
+    async with engine:
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_k=3)
+    assert len(rankings) == 3
+
+    async with engine:
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_k=len(documents)+sys.maxsize)
+    assert len(rankings) == len(documents)
+
+
+
+@pytest.mark.anyio
 async def test_async_api_torch_CLASSIFY():
     sentences = ["This is awesome.", "I am depressed."]
     engine = AsyncEmbeddingEngine.from_args(
