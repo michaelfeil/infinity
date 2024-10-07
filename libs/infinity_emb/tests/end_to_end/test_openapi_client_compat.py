@@ -79,38 +79,38 @@ async def test_openai(client: AsyncClient):
                 "the sound of a bird",
             ],
             encoding_format="float",
-            extra_body={"infinity_extra_modality": "text"},
+            extra_body={"modality": "text"},
         )
         emb1_audio = await client_oai.embeddings.create(
             model=pytest.DEFAULT_AUDIO_MODEL,
             input=[url_to_base64(pytest.AUDIO_SAMPLE_URL, "audio")],
             encoding_format="float",
-            extra_body={"infinity_extra_modality": "audio"},
+            extra_body={"modality": "audio"},
         )
         emb1_1_audio = await client_oai.embeddings.create(
             model=pytest.DEFAULT_AUDIO_MODEL,
             input=[pytest.AUDIO_SAMPLE_URL],
             encoding_format="float",
-            extra_body={"infinity_extra_modality": "audio"},
+            extra_body={"modality": "audio"},
         )
         # test: image
         emb_1_image_from_text = await client_oai.embeddings.create(
             model=pytest.DEFAULT_IMAGE_MODEL,
             input=["a cat", "a dog", "a bird"],
             encoding_format="float",
-            extra_body={"infinity_extra_modality": "text"},
+            extra_body={"modality": "text"},
         )
         emb_1_image = await client_oai.embeddings.create(
             model=pytest.DEFAULT_IMAGE_MODEL,
             input=[url_to_base64(pytest.IMAGE_SAMPLE_URL, "image")],  # image is a cat
             encoding_format="float",
-            extra_body={"infinity_extra_modality": "image"},
+            extra_body={"modality": "image"},
         )
         emb_1_1_image = await client_oai.embeddings.create(
             model=pytest.DEFAULT_IMAGE_MODEL,
             input=[pytest.IMAGE_SAMPLE_URL],
             encoding_format="float",
-            extra_body={"infinity_extra_modality": "image"},
+            extra_body={"modality": "image"},
         )
 
         # test: text
@@ -118,7 +118,7 @@ async def test_openai(client: AsyncClient):
             model=pytest.DEFAULT_BERT_MODEL,
             input=["a cat", "a cat", "a bird"],
             encoding_format="float",
-            extra_body={"infinity_extra_modality": "text"},
+            extra_body={"modality": "text"},
         )
 
     # test AUDIO: cosine distance of beep to cat and dog
@@ -156,5 +156,5 @@ async def test_openai(client: AsyncClient):
                 model=pytest.DEFAULT_AUDIO_MODEL,
                 input=[pytest.AUDIO_SAMPLE_URL],
                 encoding_format="float",
-                extra_body={"infinity_extra_modality": "audio"},
+                extra_body={"modality": "audio"},
             )
