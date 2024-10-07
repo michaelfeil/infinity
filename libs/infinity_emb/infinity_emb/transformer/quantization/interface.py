@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import requests  # type: ignore
+import torch.ao.quantization
 
 from infinity_emb._optional_imports import CHECK_SENTENCE_TRANSFORMERS, CHECK_TORCH
 from infinity_emb.env import MANAGER
@@ -34,13 +35,21 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
             Defaults to Device.cpu.
     """
     device_orig = model.device
-    if device == Device.cpu and dtype in [Dtype.int8, Dtype.auto]:
+    if dtype == Dtype.autoquant:
+        import torchao  # type: ignore
+
+        model = torchao.autoquant(model)
+        logger.info("using dtype=autoquant")
+    elif device == Device.cpu and dtype in [Dtype.int8, Dtype.auto]:
         logger.info("using torch.quantization.quantize_dynamic()")
         # TODO: verify if cpu requires quantization with torch.quantization.quantize_dynamic()
         model = torch.quantization.quantize_dynamic(
             model.to("cpu"),  # the original model
             {torch.nn.Linear},  # a set of layers to dynamically quantize
             dtype=torch.qint8,
+        )
+        model = torch.ao.quantization.quantize_dynamic(
+            model, {torch.nn.Linear}, dtype=torch.qint8
         )
     elif device == Device.cuda and dtype in [Dtype.int8, Dtype.auto]:
         logger.info(f"using quantize() for {dtype.value}")

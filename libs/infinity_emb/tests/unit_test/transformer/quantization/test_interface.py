@@ -4,7 +4,11 @@ import pytest
 import torch
 from transformers import AutoTokenizer, BertModel  # type: ignore
 
+from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device, Dtype
+from infinity_emb.transformer.embedder.sentence_transformer import (
+    SentenceTransformerPatched,
+)
 from infinity_emb.transformer.quantization.interface import quant_interface
 
 devices = [Device.cpu]
@@ -49,3 +53,45 @@ def test_quantize_bert(device: Device, dtype: Dtype):
         out_quant = model.forward(**tokens_encoded)["last_hidden_state"].mean(dim=1)
 
     assert torch.cosine_similarity(out_default, out_quant) > 0.95
+
+
+def test_autoquant_quantization():
+    model_st = SentenceTransformerPatched(
+        engine_args=EngineArgs(
+            model_name_or_path="michaelfeil/bge-small-en-v1.5",
+            dtype="autoquant",
+            engine="torch",
+            bettertransformer=False,
+        )
+    )
+    model_default = SentenceTransformerPatched(
+        engine_args=EngineArgs(
+            model_name_or_path="michaelfeil/bge-small-en-v1.5",
+            dtype="float32",
+            engine="torch",
+            bettertransformer=False,
+        )
+    )
+    sentence = "This is a test sentence."
+    for sentence in [
+        "This is a test sentence.",
+        "This is another sentence, that should be embedded. " * 10,
+        "1",
+    ]:
+        embedding_st = model_st.encode_post(
+            model_st.encode_core(model_st.encode_pre([sentence]))
+        )
+        embedding_default = model_default.encode_post(
+            model_default.encode_core(model_default.encode_pre([sentence]))
+        )
+        assert embedding_st.shape == embedding_default.shape
+
+        # cosine similarity
+        sim = torch.nn.functional.cosine_similarity(
+            torch.tensor(embedding_st), torch.tensor(embedding_default)
+        )
+        assert sim > 0.95
+
+
+if __name__ == "__main__":
+    test_autoquant_quantization()

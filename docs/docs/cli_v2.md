@@ -76,7 +76,7 @@ $ infinity_emb v2 --help
 │                                                                                       [default:                      │
 │                                                                                       lengths-via-tokenize]          │
 │ --dtype                                                [float32|float16|int8|fp8|aut  dtype for the model weights.   │
-│                                                        o]                             [env var: `INFINITY_DTYPE`]    │
+│                                                        oquant|auto]                   [env var: `INFINITY_DTYPE`]    │
 │                                                                                       [default: auto]                │
 │ --embedding-dtype                                      [float32|int8|uint8|binary|ub  dtype post-forward pass. If != │
 │                                                        inary]                         `float32`, using Post-Forward  │
