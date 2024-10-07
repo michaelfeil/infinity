@@ -66,8 +66,10 @@ async def test_async_api_torch():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("engine", [InferenceEngine.torch, InferenceEngine.optimum])
-async def test_engine_reranker_torch_opt(engine: InferenceEngine):
+@pytest.mark.parametrize(
+    "engine_name", [InferenceEngine.torch, InferenceEngine.optimum]
+)
+async def test_engine_reranker_torch_opt(engine_name: InferenceEngine):
     model_unpatched = CrossEncoder(
         "mixedbread-ai/mxbai-rerank-xsmall-v1",
     )
@@ -80,7 +82,7 @@ async def test_engine_reranker_torch_opt(engine: InferenceEngine):
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
             model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
-            engine=engine,
+            engine=engine_name,
             model_warmup=False,
         )
     )
@@ -100,8 +102,10 @@ async def test_engine_reranker_torch_opt(engine: InferenceEngine):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("engine", [InferenceEngine.torch, InferenceEngine.optimum])
-async def test_engine_reranker_top_n(engine):
+@pytest.mark.parametrize(
+    "engine_name", [InferenceEngine.torch, InferenceEngine.optimum]
+)
+async def test_engine_reranker_top_n(engine_name):
     query = "Where is Paris?"
     documents = [
         "Paris is the capital of France.",
@@ -111,7 +115,7 @@ async def test_engine_reranker_top_n(engine):
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
             model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
-            engine=engine,
+            engine=engine_name,
             model_warmup=False,
         )
     )
