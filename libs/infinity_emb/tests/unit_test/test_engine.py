@@ -67,7 +67,7 @@ async def test_async_api_torch():
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("engine", [InferenceEngine.torch, InferenceEngine.optimum])
-async def test_engine_reranker_torch_opt(engine):
+async def test_engine_reranker_torch_opt(engine: InferenceEngine):
     model_unpatched = CrossEncoder(
         "mixedbread-ai/mxbai-rerank-xsmall-v1",
     )
@@ -80,7 +80,7 @@ async def test_engine_reranker_torch_opt(engine):
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
             model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
-            engine=InferenceEngine.torch,
+            engine=engine,
             model_warmup=False,
         )
     )
@@ -111,7 +111,7 @@ async def test_engine_reranker_top_n(engine):
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
             model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
-            engine=InferenceEngine.torch,
+            engine=engine,
             model_warmup=False,
         )
     )
