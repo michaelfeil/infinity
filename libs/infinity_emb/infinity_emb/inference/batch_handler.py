@@ -9,7 +9,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, List, Sequence, Set, Union
+from typing import Any, List, Sequence, Set, Union, Optional
 
 import numpy as np
 
@@ -147,7 +147,11 @@ class BatchHandler:
         return embeddings, usage
 
     async def rerank(
-        self, query: str, docs: list[str], raw_scores: bool = False
+        self,
+        query: str,
+        docs: list[str],
+        raw_scores: bool = False,
+        top_k: Optional[int] = None,
     ) -> tuple[list[float], int]:
         """Schedule a query to be reranked with documents. Awaits until reranked.
 
@@ -155,6 +159,8 @@ class BatchHandler:
             query (str): query for reranking
             docs (list[str]): documents to be reranked
             raw_scores (bool): return raw scores instead of sigmoid
+            top_k (Optional[int]): number of top scores to return after reranking
+                if top_k is None, <= 0 or out of range, all scores are returned
 
         Raises:
             ModelNotDeployedError: If loaded model does not expose `embed`
@@ -171,6 +177,9 @@ class BatchHandler:
             )
         rerankables = [ReRankSingle(query=query, document=doc) for doc in docs]
         scores, usage = await self._schedule(rerankables)
+
+        if top_k is not None and top_k > 0:
+            scores = scores[:top_k]
 
         if not raw_scores:
             # perform sigmoid on scores
