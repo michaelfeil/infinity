@@ -103,7 +103,7 @@ class _OpenAIEmbeddingInput_Text(_OpenAIEmbeddingInput):
         ),
         Annotated[str, INPUT_STRING],
     ]
-    infinity_extra_modality: Literal[Modality.text] = Modality.text  # type: ignore
+    modality: Literal[Modality.text] = Modality.text  # type: ignore
 
 
 class _OpenAIEmbeddingInput_URI(_OpenAIEmbeddingInput):
@@ -119,21 +119,21 @@ class _OpenAIEmbeddingInput_URI(_OpenAIEmbeddingInput):
 
 
 class OpenAIEmbeddingInput_Audio(_OpenAIEmbeddingInput_URI):
-    infinity_extra_modality: Literal[Modality.audio] = Modality.audio  # type: ignore
+    modality: Literal[Modality.audio] = Modality.audio  # type: ignore
 
 
 class OpenAIEmbeddingInput_Image(_OpenAIEmbeddingInput_URI):
-    infinity_extra_modality: Literal[Modality.image] = Modality.image  # type: ignore
+    modality: Literal[Modality.image] = Modality.image  # type: ignore
 
 
-def get_infinity_extra_modality(obj: dict) -> str:
+def get_modality(obj: dict) -> str:
     """resolve the modality of the extra_body.
     If not present, default to text
 
     Function name is used to return error message, keep it explicit
     """
     try:
-        return obj.get("infinity_extra_modality", Modality.text.value)
+        return obj.get("modality", Modality.text.value)
     except AttributeError:
         # in case a very weird request is sent, validate it against the default
         return Modality.text.value
@@ -146,7 +146,7 @@ class MultiModalOpenAIEmbedding(RootModel):
             Annotated[OpenAIEmbeddingInput_Audio, Tag(Modality.audio.value)],
             Annotated[OpenAIEmbeddingInput_Image, Tag(Modality.image.value)],
         ],
-        Discriminator(get_infinity_extra_modality),
+        Discriminator(get_modality),
     ]
 
 
