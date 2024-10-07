@@ -119,7 +119,7 @@ asyncio.run(embed_text(array[0]))
 ```
 
 Example embedding models:
-- Any trending embedding / reranking model is likley supported: https://huggingface.co/models?other=text-embeddings-inference&sort=trending
+- Any trending embedding / reranking model is likely supported: https://huggingface.co/models?other=text-embeddings-inference&sort=trending
 - [mixedbread-ai/mxbai-embed-large-v1](https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1)
 - [WhereIsAI/UAE-Large-V1](https://huggingface.co/WhereIsAI/UAE-Large-V1)
 - [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5)
