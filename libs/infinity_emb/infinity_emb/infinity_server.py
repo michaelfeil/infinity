@@ -246,7 +246,7 @@ def create_server(
                     # can also be base64 encoded
                 ],
                 # set extra modality to image to process as image
-                "infinity_extra_modality": "image"
+                "modality": "image"
         )
         ```
 
@@ -271,7 +271,7 @@ def create_server(
                     url, url_to_base64(url, "audio")
                 ],
                 # set extra modality to audio to process as audio
-                "infinity_extra_modality": "audio"
+                "modality": "audio"
             }
         )
         ```
@@ -285,7 +285,7 @@ def create_server(
             input=[url_to_base64(url, "audio")],
             encoding_format= "base64",
             extra_body={
-                "infinity_extra_modality": "audio"
+                "modality": "audio"
             }
         )
 
@@ -294,7 +294,7 @@ def create_server(
             input=["the sound of a beep", "the sound of a cat"],
             encoding_format= "base64",
             extra_body={
-                "infinity_extra_modality": "text"
+                "modality": "text"
             }
         )
         ```
@@ -305,7 +305,7 @@ def create_server(
         ```
         """
 
-        modality = data.root.infinity_extra_modality
+        modality = data.root.modality
         data_root = data.root
         engine = _resolve_engine(data_root.model)
 
@@ -471,7 +471,7 @@ def create_server(
         dependencies=route_dependencies,
         operation_id="embeddings_image",
         deprecated=True,
-        summary="Deprecated: Use `embeddings` with `infinity_extra_modality` set to `image`",
+        summary="Deprecated: Use `embeddings` with `modality` set to `image`",
     )
     async def _embeddings_image(data: ImageEmbeddingInput):
         """Encode Embeddings from Image files
@@ -530,7 +530,7 @@ def create_server(
         dependencies=route_dependencies,
         operation_id="embeddings_audio",
         deprecated=True,
-        summary="Deprecated: Use `embeddings` with `infinity_extra_modality` set to `audio`",
+        summary="Deprecated: Use `embeddings` with `modality` set to `audio`",
     )
     async def _embeddings_audio(data: AudioEmbeddingInput):
         """Encode Embeddings from Audio files
