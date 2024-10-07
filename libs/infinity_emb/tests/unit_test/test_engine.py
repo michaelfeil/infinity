@@ -66,8 +66,10 @@ async def test_async_api_torch():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize("engine", [InferenceEngine.torch, InferenceEngine.optimum])
-async def test_engine_reranker_torch_opt(engine):
+@pytest.mark.parametrize(
+    "engine_name", [InferenceEngine.torch, InferenceEngine.optimum]
+)
+async def test_engine_reranker_torch_opt(engine_name: InferenceEngine):
     model_unpatched = CrossEncoder(
         "mixedbread-ai/mxbai-rerank-xsmall-v1",
     )
@@ -80,7 +82,7 @@ async def test_engine_reranker_torch_opt(engine):
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
             model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
-            engine=InferenceEngine.torch,
+            engine=engine_name,
             model_warmup=False,
         )
     )
@@ -88,14 +90,57 @@ async def test_engine_reranker_torch_opt(engine):
     query_docs = [(query, doc) for doc in documents]
 
     async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents)
-
+        rankings_objects, usage = await engine.rerank(query=query, docs=documents)
+    rankings_objects = sorted(rankings_objects, key=lambda x: x.index, reverse=False)
+    rankings = [r.relevance_score for r in rankings_objects]
     rankings_unpatched = model_unpatched.predict(query_docs)
 
     np.testing.assert_allclose(rankings, rankings_unpatched, rtol=1e-1, atol=1e-1)
     assert usage == sum([len(query) + len(d) for d in documents])
     assert len(rankings) == len(documents)
     np.testing.assert_almost_equal(rankings[:3], [0.83, 0.085, 0.028], decimal=2)
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "engine_name", [InferenceEngine.torch, InferenceEngine.optimum]
+)
+async def test_engine_reranker_top_n(engine_name):
+    query = "Where is Paris?"
+    documents = [
+        "Paris is the capital of France.",
+        "Berlin is the capital of Germany.",
+        "You can now purchase my favorite dish",
+    ]
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
+            engine=engine_name,
+            model_warmup=False,
+        )
+    )
+
+    async with engine:
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=None)
+    assert len(rankings) == len(documents)
+
+    async with engine:
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=-1)
+    assert len(rankings) == len(documents)
+
+    async with engine:
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=0)
+    assert len(rankings) == len(documents)
+
+    async with engine:
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=3)
+    assert len(rankings) == 3
+
+    async with engine:
+        rankings, usage = await engine.rerank(
+            query=query, docs=documents, top_n=len(documents) + sys.maxsize
+        )
+    assert len(rankings) == len(documents)
 
 
 @pytest.mark.anyio

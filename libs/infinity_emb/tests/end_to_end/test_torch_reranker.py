@@ -1,3 +1,6 @@
+import asyncio
+import itertools
+
 import pytest
 import torch
 from asgi_lifespan import LifespanManager
@@ -67,9 +70,11 @@ async def test_model_route(client):
 async def test_reranker(client, model_base, helpers):
     query = "Where is the Eiffel Tower located?"
     documents = [
-        "The Eiffel Tower is located in Paris, France",
+        "My favorite dish is a hamburger.",
         "The Eiffel Tower is located in the United States.",
+        "The Eiffel Tower is located in Paris, France",
         "The Eiffel Tower is located in the United Kingdom.",
+        "I enjoiy flying to the moon.",
     ]
     response = await client.post(
         f"{PREFIX}/rerank",
@@ -80,6 +85,7 @@ async def test_reranker(client, model_base, helpers):
     assert "model" in rdata
     assert "usage" in rdata
     rdata_results = rdata["results"]
+    rdata_results = sorted(rdata_results, key=lambda x: x["index"], reverse=False)
 
     predictions = [
         model_base.predict({"text": query, "text_pair": doc}) for doc in documents
@@ -88,6 +94,74 @@ async def test_reranker(client, model_base, helpers):
     assert len(rdata_results) == len(predictions)
     for i, pred in enumerate(predictions):
         assert abs(rdata_results[i]["relevance_score"] - pred["score"]) < 0.01
+
+
+@pytest.mark.anyio
+async def test_reranker_top_n(client):
+    async def test_inner(
+        client, query: str, documents: list[str], return_docs: bool, top_n: int
+    ):
+        response = await client.post(
+            f"{PREFIX}/rerank",
+            json={
+                "model": MODEL,
+                "query": query,
+                "documents": documents,
+                "top_n": top_n,
+                "return_documents": return_docs,
+            },
+        )
+        assert response.status_code == 200
+        rdata = response.json()
+        rdata_results = rdata["results"]
+        assert len(rdata_results) == min(top_n, len(documents))
+        assert rdata_results[0]["index"] == documents.index(
+            "The Eiffel Tower is located in Paris, France"
+        )
+        if return_docs:
+            assert (
+                rdata_results[0]["document"]
+                == "The Eiffel Tower is located in Paris, France"
+            )
+
+        return True
+
+    query = "Where is the Eiffel Tower located?"
+    documents = [
+        "The Eiffel Tower is located in the United States.",
+        "The Eiffel Tower is located in Paris, France",
+        "The Eiffel Tower is located in the United Kingdom.",
+    ]
+
+    cases = [
+        test_inner(client, query, docs, return_docs, top_n)
+        for docs in itertools.permutations(documents, r=len(documents))
+        for top_n in [1, 2, 8000]
+        for return_docs in [True, False]
+    ]
+    results = await asyncio.gather(*cases)
+    assert all(results)
+
+
+@pytest.mark.anyio
+async def test_reranker_invalid_top_n(client):
+    query = "Where is the Eiffel Tower located?"
+    documents = [
+        "The Eiffel Tower is located in Paris, France",
+        "The Eiffel Tower is located in the United States.",
+        "The Eiffel Tower is located in the United Kingdom.",
+    ]
+    response = await client.post(
+        f"{PREFIX}/rerank",
+        json={"model": MODEL, "query": query, "documents": documents, "top_n": -1},
+    )
+    assert response.status_code == 422
+
+    response = await client.post(
+        f"{PREFIX}/rerank",
+        json={"model": MODEL, "query": query, "documents": documents, "top_n": 0},
+    )
+    assert response.status_code == 422
 
 
 @pytest.mark.anyio
