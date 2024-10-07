@@ -226,7 +226,7 @@ def create_server(
         operation_id="embeddings",
     )
     async def _embeddings(data: MultiModalOpenAIEmbedding):
-        """Encode Embeddings. Supports with multimodal inputs.
+        """Encode Embeddings. Supports with multimodal inputs. Aligned with OpenAI Embeddings API.
 
         ## Running Text Embeddings
         ```python
@@ -374,7 +374,7 @@ def create_server(
         operation_id="rerank",
     )
     async def _rerank(data: RerankInput):
-        """Rerank documents
+        """Rerank documents. Aligned with Cohere API (https://docs.cohere.com/reference/rerank)
 
         ```python
         import requests
@@ -395,22 +395,17 @@ def create_server(
                 query=data.query,
                 docs=data.documents,
                 raw_scores=data.raw_scores,
-                top_k=data.top_k,
+                top_n=data.top_n,
             )
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
 
-            if data.return_documents:
-                docs = data.documents
-            else:
-                docs = None
-
             return ReRankResult.to_rerank_response(
                 scores=scores,
-                documents=docs,
                 model=engine.engine_args.served_model_name,
                 usage=usage,
+                return_documents=data.return_documents,
             )
         except ModelNotDeployedError as ex:
             raise errors.OpenAIException(

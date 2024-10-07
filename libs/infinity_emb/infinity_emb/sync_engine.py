@@ -13,6 +13,7 @@ from typing import (
     Callable,
     Iterator,
     List,
+    Optional,
     TypeVar,
     Union,
 )
@@ -183,7 +184,13 @@ class SyncEngineArray(WeakAsyncLifeMixin):
 
     @add_start_docstrings(AsyncEngineArray.rerank.__doc__)
     def rerank(
-        self, *, model: str, query: str, docs: list[str], raw_scores: bool = False
+        self,
+        *,
+        model: str,
+        query: str,
+        docs: list[str],
+        raw_scores: bool = False,
+        top_n: Optional[int] = None
     ):
         """sync interface of AsyncEngineArray"""
         return self.async_run(
@@ -192,6 +199,7 @@ class SyncEngineArray(WeakAsyncLifeMixin):
             query=query,
             docs=docs,
             raw_scores=raw_scores,
+            top_n=top_n,
         )
 
     @add_start_docstrings(AsyncEngineArray.classify.__doc__)

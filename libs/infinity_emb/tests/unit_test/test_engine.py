@@ -88,8 +88,9 @@ async def test_engine_reranker_torch_opt(engine):
     query_docs = [(query, doc) for doc in documents]
 
     async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents)
-
+        rankings_objects, usage = await engine.rerank(query=query, docs=documents)
+    rankings_objects = sorted(rankings_objects, key=lambda x: x.index, reverse=False)
+    rankings = [r.relevance_score for r in rankings_objects]
     rankings_unpatched = model_unpatched.predict(query_docs)
 
     np.testing.assert_allclose(rankings, rankings_unpatched, rtol=1e-1, atol=1e-1)
@@ -100,10 +101,7 @@ async def test_engine_reranker_torch_opt(engine):
 
 @pytest.mark.anyio
 @pytest.mark.parametrize("engine", [InferenceEngine.torch, InferenceEngine.optimum])
-async def test_engine_reranker_top_k(engine):
-    model_unpatched = CrossEncoder(
-        "mixedbread-ai/mxbai-rerank-xsmall-v1",
-    )
+async def test_engine_reranker_top_n(engine):
     query = "Where is Paris?"
     documents = [
         "Paris is the capital of France.",
@@ -118,28 +116,27 @@ async def test_engine_reranker_top_k(engine):
         )
     )
 
-    query_docs = [(query, doc) for doc in documents]
-
     async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents, top_k=None)
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=None)
     assert len(rankings) == len(documents)
 
     async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents, top_k=-1)
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=-1)
     assert len(rankings) == len(documents)
 
     async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents, top_k=0)
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=0)
     assert len(rankings) == len(documents)
 
     async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents, top_k=3)
+        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=3)
     assert len(rankings) == 3
 
     async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents, top_k=len(documents)+sys.maxsize)
+        rankings, usage = await engine.rerank(
+            query=query, docs=documents, top_n=len(documents) + sys.maxsize
+        )
     assert len(rankings) == len(documents)
-
 
 
 @pytest.mark.anyio
