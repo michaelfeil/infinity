@@ -50,6 +50,13 @@ EmbeddingReturnType = npt.NDArray[Union[np.float32, np.float32]]
 AudioInputType = npt.NDArray[np.float32]
 
 
+@dataclass(**dataclass_args)
+class RerankReturnType:
+    relevance_score: float
+    document: str
+    index: int
+
+
 class ClassifyReturnType(TypedDict):
     label: str
     score: float
@@ -240,7 +247,7 @@ class AbstractInner(ABC, Generic[AbstractInnerType]):
 @dataclass(order=True, **dataclass_args)
 class EmbeddingInner(AbstractInner):
     content: EmbeddingSingle
-    embedding: Optional[EmbeddingReturnType] = None
+    embedding: Optional["EmbeddingReturnType"] = None
 
     async def complete(self, result: EmbeddingReturnType) -> None:
         """marks the future for completion.
@@ -312,7 +319,7 @@ class PredictInner(AbstractInner):
 @dataclass(order=True, **dataclass_args)
 class ImageInner(AbstractInner):
     content: ImageSingle
-    embedding: Optional[EmbeddingReturnType] = None
+    embedding: Optional["EmbeddingReturnType"] = None
 
     async def complete(self, result: EmbeddingReturnType) -> None:
         """marks the future for completion.
@@ -336,7 +343,7 @@ class ImageInner(AbstractInner):
 @dataclass(order=True, **dataclass_args)
 class AudioInner(AbstractInner):
     content: AudioSingle
-    embedding: Optional[EmbeddingReturnType] = None
+    embedding: Optional["EmbeddingReturnType"] = None
 
     async def complete(self, result: EmbeddingReturnType) -> None:
         """marks the future for completion.

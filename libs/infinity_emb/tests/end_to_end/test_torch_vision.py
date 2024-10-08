@@ -127,7 +127,7 @@ async def test_meta(client, helpers):
             json={
                 "model": MODEL,
                 "input": image_input,
-                "infinity_extra_modality": "image",
+                "modality": "image",
             },
         )
 
@@ -166,7 +166,7 @@ async def test_vision_multiple(client):
                 json={
                     "model": MODEL,
                     "input": image_urls,
-                    "infinity_extra_modality": "image",
+                    "modality": "image",
                 },
             )
             assert response.status_code == 200

@@ -128,7 +128,7 @@ async def test_audio_multiple(client):
                 json={
                     "model": MODEL,
                     "input": audio_urls,
-                    "infinity_extra_modality": "audio",
+                    "modality": "audio",
                 },
             )
             assert response.status_code == 200
@@ -151,7 +151,7 @@ async def test_audio_fail(client):
             json={
                 "model": MODEL,
                 "input": audio_url,
-                "infinity_extra_modality": "audio",
+                "modality": "audio",
             },
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -166,7 +166,7 @@ async def test_audio_empty(client):
         json={
             "model": MODEL,
             "input": audio_url_empty,
-            "infinity_extra_modality": "audio",
+            "modality": "audio",
         },
     )
     assert response_empty.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY

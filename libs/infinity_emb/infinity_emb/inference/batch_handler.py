@@ -9,7 +9,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, List, Sequence, Set, Union
+from typing import Any, List, Optional, Sequence, Set, Union
 
 import numpy as np
 
@@ -29,6 +29,7 @@ from infinity_emb.primitives import (
     OverloadStatus,
     PredictSingle,
     PrioritizedQueueItem,
+    RerankReturnType,
     ReRankSingle,
     get_inner_item,
 )
@@ -122,7 +123,7 @@ class BatchHandler:
 
     async def embed(
         self, sentences: list[str]
-    ) -> tuple[list[EmbeddingReturnType], int]:
+    ) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule a sentence to be embedded. Awaits until embedded.
 
         Args:
@@ -133,7 +134,7 @@ class BatchHandler:
                 capabilities
 
         Returns:
-            list[EmbeddingReturnType]: list of embedding as 1darray
+            list["EmbeddingReturnType"]: list of embedding as 1darray
             int: token usage
         """
         if "embed" not in self.model_worker.capabilities:
@@ -147,14 +148,20 @@ class BatchHandler:
         return embeddings, usage
 
     async def rerank(
-        self, query: str, docs: list[str], raw_scores: bool = False
-    ) -> tuple[list[float], int]:
+        self,
+        query: str,
+        docs: list[str],
+        raw_scores: bool = False,
+        top_n: Optional[int] = None,
+    ) -> tuple[list[RerankReturnType], int]:
         """Schedule a query to be reranked with documents. Awaits until reranked.
 
         Args:
             query (str): query for reranking
             docs (list[str]): documents to be reranked
             raw_scores (bool): return raw scores instead of sigmoid
+            top_n (Optional[int]): number of top scores to return after reranking
+                if top_n is None, <= 0 or out of range, all scores are returned
 
         Raises:
             ModelNotDeployedError: If loaded model does not expose `embed`
@@ -174,9 +181,18 @@ class BatchHandler:
 
         if not raw_scores:
             # perform sigmoid on scores
-            scores = (1 / (1 + np.exp(-np.array(scores)))).tolist()
+            scores = 1 / (1 + np.exp(-np.array(scores)))
 
-        return scores, usage
+        results = [
+            RerankReturnType(relevance_score=scores[i], index=i, document=docs[i])
+            for i in range(len(scores))
+        ]
+        results = sorted(results, key=lambda x: x.relevance_score, reverse=True)
+
+        if top_n is not None and top_n > 0:
+            results = results[:top_n]
+
+        return results, usage
 
     async def classify(
         self, *, sentences: list[str], raw_scores: bool = True
@@ -213,7 +229,7 @@ class BatchHandler:
         self,
         *,
         images: List[Union[str, "ImageClassType", bytes]],
-    ) -> tuple[list[EmbeddingReturnType], int]:
+    ) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule a images and sentences to be embedded. Awaits until embedded.
 
         Args:
@@ -224,7 +240,7 @@ class BatchHandler:
                 capabilities
 
         Returns:
-            list[EmbeddingReturnType]: list of embedding as 1darray
+            list["EmbeddingReturnType"]: list of embedding as 1darray
             int: token usage
         """
 
@@ -242,7 +258,7 @@ class BatchHandler:
         self,
         *,
         audios: List[Union[str, bytes]],
-    ) -> tuple[list[EmbeddingReturnType], int]:
+    ) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule audios and sentences to be embedded. Awaits until embedded.
 
         Args:
@@ -253,7 +269,7 @@ class BatchHandler:
                 capabilities
 
         Returns:
-            list[EmbeddingReturnType]: list of embedding as 1darray
+            list["EmbeddingReturnType"]: list of embedding as 1darray
             int: token usage
         """
 
