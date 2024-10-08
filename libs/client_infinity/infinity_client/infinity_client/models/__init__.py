@@ -14,11 +14,11 @@ from .model_info import ModelInfo
 from .model_info_object import ModelInfoObject
 from .model_info_owned_by import ModelInfoOwnedBy
 from .open_ai_embedding_input_audio import OpenAIEmbeddingInputAudio
-from .open_ai_embedding_input_audio_infinity_extra_modality import OpenAIEmbeddingInputAudioInfinityExtraModality
+from .open_ai_embedding_input_audio_modality import OpenAIEmbeddingInputAudioModality
 from .open_ai_embedding_input_image import OpenAIEmbeddingInputImage
-from .open_ai_embedding_input_image_infinity_extra_modality import OpenAIEmbeddingInputImageInfinityExtraModality
+from .open_ai_embedding_input_image_modality import OpenAIEmbeddingInputImageModality
 from .open_ai_embedding_input_text import OpenAIEmbeddingInputText
-from .open_ai_embedding_input_text_infinity_extra_modality import OpenAIEmbeddingInputTextInfinityExtraModality
+from .open_ai_embedding_input_text_modality import OpenAIEmbeddingInputTextModality
 from .open_ai_embedding_result import OpenAIEmbeddingResult
 from .open_ai_embedding_result_object import OpenAIEmbeddingResultObject
 from .open_ai_model_info import OpenAIModelInfo
@@ -46,11 +46,11 @@ __all__ = (
     "ModelInfoObject",
     "ModelInfoOwnedBy",
     "OpenAIEmbeddingInputAudio",
-    "OpenAIEmbeddingInputAudioInfinityExtraModality",
+    "OpenAIEmbeddingInputAudioModality",
     "OpenAIEmbeddingInputImage",
-    "OpenAIEmbeddingInputImageInfinityExtraModality",
+    "OpenAIEmbeddingInputImageModality",
     "OpenAIEmbeddingInputText",
-    "OpenAIEmbeddingInputTextInfinityExtraModality",
+    "OpenAIEmbeddingInputTextModality",
     "OpenAIEmbeddingResult",
     "OpenAIEmbeddingResultObject",
     "OpenAIModelInfo",

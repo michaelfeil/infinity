@@ -11,7 +11,7 @@ T = TypeVar("T", bound="ImageEmbeddingInput")
 
 @_attrs_define
 class ImageEmbeddingInput:
-    """# LEGACY
+    """LEGACY, DO NO LONGER UPDATE
 
     Attributes:
         input_ (Union[List[str], str]):
