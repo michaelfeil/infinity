@@ -22,7 +22,7 @@ test tests:
 	poetry run pytest 
 
 openapi:
-	./../../docs/assets/create_openapi_with_server_hook.sh
+	poetry run ./../../docs/assets/create_openapi_with_server_hook.sh
 
 ######################
 # LINTING AND FORMATTING
@@ -60,7 +60,7 @@ benchmark_embed: tests/data/benchmark/benchmark_embed.json
 
 # Generate CLI v2 documentation
 cli_v2_docs:
-	./../../docs/assets/create_cli_v2_docs.sh
+	poetry run ./../../docs/assets/create_cli_v2_docs.sh
 
 ######################
 # HELP

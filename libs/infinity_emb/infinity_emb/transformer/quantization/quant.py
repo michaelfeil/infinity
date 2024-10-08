@@ -506,7 +506,10 @@ class WeightOnlyInt4QuantHandler:
             cur_state_dict = self.mod.state_dict()
             for fqn, mod in self.mod.named_modules():
                 if isinstance(mod, torch.nn.Linear):
-                    assert not mod.bias
+                    if mod.bias is not None:
+                        raise ValueError(
+                            "int4 quantization requires all layers to have bias=False. This model is not compatible."
+                        )
                     out_features = mod.out_features
                     in_features = mod.in_features
                     assert out_features % 8 == 0, "require out_features % 8 == 0"
@@ -710,7 +713,10 @@ def quantize(
         quantized_state_dict = quant_handler.create_quantized_state_dict()
 
         new_base_name = base_name.replace(".pth", f"{label}int8.pth")
+    elif mode == "autoquant":
+        import torchao
 
+        model = torchao.autoquant(torch.compile(model))
     elif mode == "int4":
         logger.info(
             "Quantizing model weights for int4 weight-only affine per-channel groupwise quantization"

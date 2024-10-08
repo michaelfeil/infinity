@@ -41,6 +41,7 @@ diskcache = {version = "*", optional=true}
 onnxruntime-gpu = {version = "*", optional=true} 
 tensorrt = {version = "^8.6.1", optional=true}
 soundfile = {version="^0.12.1", optional=true}
+torchao = {version="^0.5.0", optional=true} 
 
 [tool.poetry.scripts]
 infinity_emb = "infinity_emb.infinity_server:cli"
@@ -81,9 +82,9 @@ types-chardet = "^5.0.4.6"
 mypy-protobuf = "^3.0.0"
 
 [tool.poetry.extras]
-ct2=["ctranslate2","sentence-transformers","torch","transformers"]
+ct2=["ctranslate2","sentence-transformers","torch","torchao","transformers"]
 optimum=["optimum"]
-torch=["sentence-transformers","torch"]
+torch=["sentence-transformers","torch","torchao"]
 einops=["einops"]
 logging=["rich"]
 cache=["diskcache"]

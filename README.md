@@ -20,7 +20,6 @@
 [![DOI](https://zenodo.org/badge/703686617.svg)](https://zenodo.org/doi/10.5281/zenodo.11406462)
 ![Docker pulls](https://img.shields.io/docker/pulls/michaelf34/infinity)
 
-
  Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models and clip. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE).
 
 ## Why Infinity
