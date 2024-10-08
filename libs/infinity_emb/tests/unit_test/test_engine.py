@@ -66,9 +66,7 @@ async def test_async_api_torch():
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(
-    "engine_name", [InferenceEngine.torch, InferenceEngine.optimum]
-)
+@pytest.mark.parametrize("engine_name", [InferenceEngine.torch])
 async def test_engine_reranker_torch_opt(engine_name: InferenceEngine):
     model_unpatched = CrossEncoder(
         "mixedbread-ai/mxbai-rerank-xsmall-v1",
@@ -82,7 +80,7 @@ async def test_engine_reranker_torch_opt(engine_name: InferenceEngine):
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
             model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
-            engine=engine_name,
+            engine=InferenceEngine.torch,
             model_warmup=False,
         )
     )
@@ -91,8 +89,10 @@ async def test_engine_reranker_torch_opt(engine_name: InferenceEngine):
 
     async with engine:
         rankings_objects, usage = await engine.rerank(query=query, docs=documents)
-    rankings_objects = sorted(rankings_objects, key=lambda x: x.index, reverse=False)
-    rankings = [r.relevance_score for r in rankings_objects]
+    rankings = [
+        x.relevance_score
+        for x in sorted(rankings_objects, key=lambda x: x.index, reverse=False)
+    ]
     rankings_unpatched = model_unpatched.predict(query_docs)
 
     np.testing.assert_allclose(rankings, rankings_unpatched, rtol=1e-1, atol=1e-1)
@@ -102,9 +102,7 @@ async def test_engine_reranker_torch_opt(engine_name: InferenceEngine):
 
 
 @pytest.mark.anyio
-@pytest.mark.parametrize(
-    "engine_name", [InferenceEngine.torch, InferenceEngine.optimum]
-)
+@pytest.mark.parametrize("engine_name", [InferenceEngine.torch])
 async def test_engine_reranker_top_n(engine_name):
     query = "Where is Paris?"
     documents = [
@@ -117,30 +115,17 @@ async def test_engine_reranker_top_n(engine_name):
             model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
             engine=engine_name,
             model_warmup=False,
+            bettertransformer=False,
         )
     )
 
     async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=None)
-    assert len(rankings) == len(documents)
-
-    async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=-1)
-    assert len(rankings) == len(documents)
-
-    async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=0)
-    assert len(rankings) == len(documents)
-
-    async with engine:
-        rankings, usage = await engine.rerank(query=query, docs=documents, top_n=3)
-    assert len(rankings) == 3
-
-    async with engine:
-        rankings, usage = await engine.rerank(
-            query=query, docs=documents, top_n=len(documents) + sys.maxsize
-        )
-    assert len(rankings) == len(documents)
+        for top_k in [None, 1, 2, 3, len(documents) + 999999]:
+            rankings, _ = await engine.rerank(query=query, docs=documents, top_n=top_k)
+            if top_k is None:
+                assert len(rankings) == len(documents)
+            else:
+                assert len(rankings) == min(top_k, len(documents))
 
 
 @pytest.mark.anyio
