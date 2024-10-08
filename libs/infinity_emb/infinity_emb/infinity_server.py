@@ -7,7 +7,7 @@ import signal
 import sys
 import time
 from contextlib import asynccontextmanager
-from typing import Any, List, Optional, Union
+from typing import Any, Optional, Union
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
@@ -204,8 +204,8 @@ def create_server(
         return engine
 
     def _resolve_mixed_input(
-        inputs: Union[DataURIorURL, List[DataURIorURL]]
-    ) -> List[Union[str, bytes]]:
+        inputs: Union[DataURIorURL, list[DataURIorURL]]
+    ) -> list[Union[str, bytes]]:
         if hasattr(inputs, "host"):
             # if it is a single url
             urls_or_bytes: list[Union[str, bytes]] = [str(inputs)]
