@@ -4,9 +4,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.embedding_encoding_format import EmbeddingEncodingFormat
-from ..models.open_ai_embedding_input_image_infinity_extra_modality import (
-    OpenAIEmbeddingInputImageInfinityExtraModality,
-)
+from ..models.open_ai_embedding_input_image_modality import OpenAIEmbeddingInputImageModality
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OpenAIEmbeddingInputImage")
@@ -20,17 +18,14 @@ class OpenAIEmbeddingInputImage:
         model (Union[Unset, str]):  Default: 'default/not-specified'.
         encoding_format (Union[Unset, EmbeddingEncodingFormat]):
         user (Union[None, Unset, str]):
-        infinity_extra_modality (Union[Unset, OpenAIEmbeddingInputImageInfinityExtraModality]):  Default:
-            OpenAIEmbeddingInputImageInfinityExtraModality.IMAGE.
+        modality (Union[Unset, OpenAIEmbeddingInputImageModality]):  Default: OpenAIEmbeddingInputImageModality.IMAGE.
     """
 
     input_: Union[List[str], str]
     model: Union[Unset, str] = "default/not-specified"
     encoding_format: Union[Unset, EmbeddingEncodingFormat] = UNSET
     user: Union[None, Unset, str] = UNSET
-    infinity_extra_modality: Union[
-        Unset, OpenAIEmbeddingInputImageInfinityExtraModality
-    ] = OpenAIEmbeddingInputImageInfinityExtraModality.IMAGE
+    modality: Union[Unset, OpenAIEmbeddingInputImageModality] = OpenAIEmbeddingInputImageModality.IMAGE
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -57,9 +52,9 @@ class OpenAIEmbeddingInputImage:
         else:
             user = self.user
 
-        infinity_extra_modality: Union[Unset, str] = UNSET
-        if not isinstance(self.infinity_extra_modality, Unset):
-            infinity_extra_modality = self.infinity_extra_modality.value
+        modality: Union[Unset, str] = UNSET
+        if not isinstance(self.modality, Unset):
+            modality = self.modality.value
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -74,8 +69,8 @@ class OpenAIEmbeddingInputImage:
             field_dict["encoding_format"] = encoding_format
         if user is not UNSET:
             field_dict["user"] = user
-        if infinity_extra_modality is not UNSET:
-            field_dict["infinity_extra_modality"] = infinity_extra_modality
+        if modality is not UNSET:
+            field_dict["modality"] = modality
 
         return field_dict
 
@@ -123,19 +118,19 @@ class OpenAIEmbeddingInputImage:
 
         user = _parse_user(d.pop("user", UNSET))
 
-        _infinity_extra_modality = d.pop("infinity_extra_modality", UNSET)
-        infinity_extra_modality: Union[Unset, OpenAIEmbeddingInputImageInfinityExtraModality]
-        if isinstance(_infinity_extra_modality, Unset):
-            infinity_extra_modality = UNSET
+        _modality = d.pop("modality", UNSET)
+        modality: Union[Unset, OpenAIEmbeddingInputImageModality]
+        if isinstance(_modality, Unset):
+            modality = UNSET
         else:
-            infinity_extra_modality = OpenAIEmbeddingInputImageInfinityExtraModality(_infinity_extra_modality)
+            modality = OpenAIEmbeddingInputImageModality(_modality)
 
         open_ai_embedding_input_image = cls(
             input_=input_,
             model=model,
             encoding_format=encoding_format,
             user=user,
-            infinity_extra_modality=infinity_extra_modality,
+            modality=modality,
         )
 
         open_ai_embedding_input_image.additional_properties = d

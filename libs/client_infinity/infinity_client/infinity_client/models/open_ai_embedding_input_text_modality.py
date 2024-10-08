@@ -1,8 +1,8 @@
 from enum import Enum
 
 
-class OpenAIEmbeddingInputImageInfinityExtraModality(str, Enum):
-    IMAGE = "image"
+class OpenAIEmbeddingInputTextModality(str, Enum):
+    TEXT = "text"
 
     def __str__(self) -> str:
         return str(self.value)

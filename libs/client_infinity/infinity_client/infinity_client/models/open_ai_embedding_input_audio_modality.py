@@ -1,7 +1,7 @@
 from enum import Enum
 
 
-class OpenAIEmbeddingInputAudioInfinityExtraModality(str, Enum):
+class OpenAIEmbeddingInputAudioModality(str, Enum):
     AUDIO = "audio"
 
     def __str__(self) -> str:

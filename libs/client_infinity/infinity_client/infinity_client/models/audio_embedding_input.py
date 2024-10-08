@@ -11,7 +11,7 @@ T = TypeVar("T", bound="AudioEmbeddingInput")
 
 @_attrs_define
 class AudioEmbeddingInput:
-    """# LEGACY
+    """LEGACY, DO NO LONGER UPDATE
 
     Attributes:
         input_ (Union[List[str], str]):
