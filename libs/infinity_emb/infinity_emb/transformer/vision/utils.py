@@ -3,7 +3,7 @@
 
 import asyncio
 import io
-from typing import List, Union
+from typing import Union
 
 from infinity_emb._optional_imports import CHECK_AIOHTTP, CHECK_PIL
 from infinity_emb.primitives import (
@@ -76,8 +76,8 @@ async def resolve_image(
 
 
 async def resolve_images(
-    images: List[Union[str, "ImageClassType", bytes]]
-) -> List[ImageSingle]:
+    images: list[Union[str, "ImageClassType", bytes]]
+) -> list[ImageSingle]:
     """Resolve images from URLs or ImageClassType Objects using multithreading."""
     # TODO: improve parallel requests, safety, error handling
     CHECK_AIOHTTP.mark_required()

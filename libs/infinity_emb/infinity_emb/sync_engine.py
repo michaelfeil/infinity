@@ -12,7 +12,6 @@ from typing import (
     Awaitable,
     Callable,
     Iterator,
-    List,
     Optional,
     TypeVar,
     Union,
@@ -213,7 +212,7 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         )
 
     @add_start_docstrings(AsyncEngineArray.image_embed.__doc__)
-    def image_embed(self, *, model: str, images: List[Union[str, ImageClassType]]):
+    def image_embed(self, *, model: str, images: list[Union[str, ImageClassType]]):
         """sync interface of AsyncEngineArray"""
         return self.async_run(
             self.async_engine_array.image_embed, model=model, images=images

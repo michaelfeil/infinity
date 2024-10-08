@@ -9,7 +9,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
-from typing import Any, List, Optional, Sequence, Set, Union
+from typing import Any, Optional, Sequence, Union
 
 import numpy as np
 
@@ -228,7 +228,7 @@ class BatchHandler:
     async def image_embed(
         self,
         *,
-        images: List[Union[str, "ImageClassType", bytes]],
+        images: list[Union[str, "ImageClassType", bytes]],
     ) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule a images and sentences to be embedded. Awaits until embedded.
 
@@ -257,7 +257,7 @@ class BatchHandler:
     async def audio_embed(
         self,
         *,
-        audios: List[Union[str, bytes]],
+        audios: list[Union[str, bytes]],
     ) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule audios and sentences to be embedded. Awaits until embedded.
 
@@ -310,7 +310,7 @@ class BatchHandler:
         return result, usage
 
     @property
-    def capabilities(self) -> Set[ModelCapabilites]:
+    def capabilities(self) -> set[ModelCapabilites]:
         # TODO: try to remove inheritance here and return upon init.
         return self.model_worker.capabilities
 
@@ -447,7 +447,7 @@ class ModelWorker:
         self._threadpool.submit(self._postprocess_batch)
 
     @property
-    def capabilities(self) -> Set[ModelCapabilites]:
+    def capabilities(self) -> set[ModelCapabilites]:
         return self._model.capabilities
 
     def tokenize_lengths(self, *args, **kwargs):

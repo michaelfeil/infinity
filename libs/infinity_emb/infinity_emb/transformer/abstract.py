@@ -4,7 +4,7 @@
 import random
 from abc import ABC, abstractmethod
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, Set, Union
+from typing import TYPE_CHECKING, Any, Union
 
 from infinity_emb._optional_imports import CHECK_PIL  # , CHECK_SOUNDFILE
 from infinity_emb.primitives import (
@@ -42,7 +42,7 @@ if CHECK_PIL.is_available:
 
 
 class BaseTransformer(ABC):  # Inherit from ABC(Abstract base class)
-    capabilities: Set[ModelCapabilites] = set()
+    capabilities: set[ModelCapabilites] = set()
     engine_args: "EngineArgs"
 
     @abstractmethod  # Decorator to define an abstract method
