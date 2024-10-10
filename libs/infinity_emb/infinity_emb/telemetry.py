@@ -1,10 +1,10 @@
 import hashlib
 import logging
-import os
 import platform
 import sys
 from abc import abstractmethod
 from dataclasses import asdict, dataclass
+from functools import cache
 from typing import Any
 
 from infinity_emb._optional_imports import CHECK_POSTHOG
@@ -38,6 +38,7 @@ class StartupTelemetry(ProductTelemetryEvent):
         return "startup"
 
 
+@cache
 def get_system_anonymous_name():
     attributes = []
 
@@ -49,12 +50,6 @@ def get_system_anonymous_name():
 
     # Machine hardware name
     attributes.append(platform.uname().machine)
-
-    # Environment variables
-    env_vars = ["PATH", "LANG", "SHELL"]
-    for var in env_vars:
-        value = os.environ.get(var, "")
-        attributes.append(value)
 
     # Combine attributes and hash them
     fingerprint_str = "|".join(attributes)
@@ -87,8 +82,8 @@ class _PostHogCapture:
             )
             self._posthog = Posthog(
                 (
-                    "ph"  # split  
-                    "c_1l0OUnO8H0dUHjc" # to avoid spam.
+                    "ph"  # split
+                    "c_1l0OUnO8H0dUHjc"  # to avoid spam.
                     "AURlAGQUuyDLhncR8mFeP6LLO4DJ"
                 ),
                 host="https://eu.i.posthog.com",
