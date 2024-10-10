@@ -9,9 +9,6 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-import cpuinfo  # type: ignore
-import psutil  # type: ignore
-
 from infinity_emb._optional_imports import CHECK_POSTHOG, CHECK_TORCH
 from infinity_emb.args import EngineArgs
 from infinity_emb.env import MANAGER
@@ -122,9 +119,14 @@ def _detect_cloud_provider() -> str:
 
 @cache
 def _get_cpu_info():
-    info = cpuinfo.get_cpu_info()
+    try:
+        import cpuinfo  # type: ignore
+
+        info = cpuinfo.get_cpu_info()
+    except Exception:
+        info = {}
     return {
-        "count": info.get("count", 0),
+        "count": info.get("count", -1),
         "cpu_type": info.get("brand_raw", ""),
         "cpu_family_model_stepping": ",".join(
             [
@@ -138,11 +140,18 @@ def _get_cpu_info():
 
 @cache
 def _get_os_info():
+    try:
+        import psutil  # type: ignore
+
+        memory = psutil.virtual_memory().total // (1024**2)
+    except Exception:
+        memory = -1
+
     return {
         "os": platform.system(),
         "architecture": platform.machine(),
         "machine": platform.processor(),
-        "total_memory": psutil.virtual_memory().total // (1024**2),
+        "total_memory": memory,
     }
 
 
@@ -152,7 +161,7 @@ class StartupTelemetry(ProductTelemetryEvent):
     num_engines: int
     capabilities: set["ModelCapabilites"]
     session_id: str
-    
+
     # auto populated fields
     cloud_provider: str = field(default_factory=_detect_cloud_provider)
     os: str = field(default_factory=lambda: _get_os_info()["os"])
