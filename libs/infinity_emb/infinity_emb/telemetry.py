@@ -87,8 +87,9 @@ class _PostHogCapture:
             )
             self._posthog = Posthog(
                 (
-                    "phc_"  # split key to avoid spam.
-                    "1l0OUnO8H0dUHjcAURlAGQUuyDLhncR8mFeP6LLO4DJ"
+                    "ph"  # split  
+                    "c_1l0OUnO8H0dUHjc" # to avoid spam.
+                    "AURlAGQUuyDLhncR8mFeP6LLO4DJ"
                 ),
                 host="https://eu.i.posthog.com",
             )
