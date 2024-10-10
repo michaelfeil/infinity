@@ -229,6 +229,17 @@ files = [
 dev = ["freezegun (>=1.0,<2.0)", "pytest (>=6.0)", "pytest-cov"]
 
 [[package]]
+name = "backoff"
+version = "2.2.1"
+description = "Function decoration for backoff and retry"
+optional = true
+python-versions = ">=3.7,<4.0"
+files = [
+    {file = "backoff-2.2.1-py3-none-any.whl", hash = "sha256:63579f9a0628e06278f7e47b7d7d5b6ce20dc65c5e96a6f3ca99a6adca0396e8"},
+    {file = "backoff-2.2.1.tar.gz", hash = "sha256:03f829f5bb1923180821643f8753b0502c3b682293992485b0eef2807afa5cba"},
+]
+
+[[package]]
 name = "beautifulsoup4"
 version = "4.12.3"
 description = "Screen-scraping library"
@@ -1604,6 +1615,17 @@ files = [
 beautifulsoup4 = ">=4.11.1"
 
 [[package]]
+name = "monotonic"
+version = "1.6"
+description = "An implementation of time.monotonic() for Python 2 & < 3.3"
+optional = true
+python-versions = "*"
+files = [
+    {file = "monotonic-1.6-py2.py3-none-any.whl", hash = "sha256:68687e19a14f11f26d140dd5c86f3dba4bf5df58003000ed467e0e2a69bca96c"},
+    {file = "monotonic-1.6.tar.gz", hash = "sha256:3a55207bcfed53ddd5c5bae174524062935efed17792e9de2ad0205ce9ad63f7"},
+]
+
+[[package]]
 name = "mpmath"
 version = "1.3.0"
 description = "Python library for arbitrary-precision floating-point arithmetic"
@@ -2537,6 +2559,29 @@ files = [
 [package.extras]
 dev = ["pre-commit", "tox"]
 testing = ["pytest", "pytest-benchmark"]
+
+[[package]]
+name = "posthog"
+version = "3.7.0"
+description = "Integrate PostHog into any python application."
+optional = true
+python-versions = "*"
+files = [
+    {file = "posthog-3.7.0-py2.py3-none-any.whl", hash = "sha256:3555161c3a9557b5666f96d8e1f17f410ea0f07db56e399e336a1656d4e5c722"},
+    {file = "posthog-3.7.0.tar.gz", hash = "sha256:b095d4354ba23f8b346ab5daed8ecfc5108772f922006982dfe8b2d29ebc6e0e"},
+]
+
+[package.dependencies]
+backoff = ">=1.10.0"
+monotonic = ">=1.5"
+python-dateutil = ">2.1"
+requests = ">=2.7,<3.0"
+six = ">=1.5"
+
+[package.extras]
+dev = ["black", "flake8", "flake8-print", "isort", "pre-commit"]
+sentry = ["django", "sentry-sdk"]
+test = ["coverage", "django", "flake8", "freezegun (==0.3.15)", "mock (>=2.0.0)", "pylint", "pytest", "pytest-timeout"]
 
 [[package]]
 name = "prometheus-client"
@@ -4752,7 +4797,7 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 type = ["pytest-mypy"]
 
 [extras]
-all = ["ctranslate2", "diskcache", "einops", "fastapi", "optimum", "orjson", "pillow", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "soundfile", "timm", "torch", "typer", "uvicorn"]
+all = ["ctranslate2", "diskcache", "einops", "fastapi", "optimum", "orjson", "pillow", "posthog", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "soundfile", "timm", "torch", "typer", "uvicorn"]
 audio = ["soundfile"]
 cache = ["diskcache"]
 ct2 = ["ctranslate2", "sentence-transformers", "torch", "transformers"]
@@ -4760,7 +4805,7 @@ einops = ["einops"]
 logging = ["rich"]
 onnxruntime-gpu = ["onnxruntime-gpu"]
 optimum = ["optimum"]
-server = ["fastapi", "orjson", "prometheus-fastapi-instrumentator", "pydantic", "rich", "typer", "uvicorn"]
+server = ["fastapi", "orjson", "posthog", "prometheus-fastapi-instrumentator", "pydantic", "rich", "typer", "uvicorn"]
 tensorrt = ["tensorrt"]
 torch = ["sentence-transformers", "torch"]
 vision = ["pillow", "timm"]
@@ -4768,4 +4813,4 @@ vision = ["pillow", "timm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<4"
-content-hash = "806fe858fc679b8842cb847d213b8607a887cdfe58c28bab1def8bfde0fbda05"
+content-hash = "0c763ca18d0acb2628b5f25516cf7702214d22425fc8c6761ff7054c6285e9dd"
