@@ -39,6 +39,7 @@ from infinity_emb.primitives import (
     ModelNotDeployedError,
     PoolingMethod,
 )
+from infinity_emb.telemetry import PostHog, StartupTelemetry
 
 
 def create_server(
@@ -75,6 +76,8 @@ def create_server(
                 prefix=url_prefix,
             )
         )
+
+        PostHog.capture(StartupTelemetry(engine_args=engine_args_list))
 
         if preload_only:
             # this is a hack to exit the process after 3 seconds

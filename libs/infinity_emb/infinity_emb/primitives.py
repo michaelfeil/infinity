@@ -67,7 +67,7 @@ ReRankReturnType = float
 UnionReturnType = Union[EmbeddingReturnType, ReRankReturnType, ClassifyReturnType]
 
 
-class EnumType(enum.Enum):
+class EnumType(str, enum.Enum):
     @classmethod
     @lru_cache
     def names_enum(cls) -> enum.Enum:
