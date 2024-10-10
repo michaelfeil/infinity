@@ -208,11 +208,12 @@ class StartupTelemetry(ProductTelemetryEvent):
 class _PostHogCapture:
     def __init__(self):
         self._posthog = None
-
+        disabled = False
         if not CHECK_POSTHOG.is_available or (not MANAGER.anonymous_usage_stats):
             return
         if "pytest" in sys.modules:
             # disable posthog
+            disabled = True
             posthog.disabled = True
 
         try:
@@ -228,6 +229,7 @@ class _PostHogCapture:
             self._posthog = Posthog(
                 project_api_key=k,
                 host="https://eu.i.posthog.com",
+                disabled=disabled,
             )
 
             posthog_logger = logging.getLogger("posthog")
