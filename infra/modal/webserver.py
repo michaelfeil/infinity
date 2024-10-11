@@ -10,7 +10,7 @@ from modal import Image, App, gpu, web_server
 # Configuration
 PORT = 7997
 
-VERSION_INF = os.environ.get("VERSION_INF", "0.0.51")
+VERSION_INF = os.environ.get("VERSION_INF", "0.0.63")
 ENV = {
     # Per model args, padded by `;`
     "INFINITY_MODEL_ID": "jinaai/jina-clip-v1;michaelfeil/bge-small-en-v1.5;mixedbread-ai/mxbai-rerank-xsmall-v1;philschmid/tiny-bert-sst2-distilled;",
@@ -20,7 +20,9 @@ ENV = {
     # One-off args
     "INFINITY_QUEUE_SIZE": "4096",
     "INFINITY_PORT": str(PORT),
+    "DO_NOT_TRACK": os.environ.get("CI_DEPLOY_INF", ""),
 }
+
 CMD = "infinity_emb v2"
 
 MINUTES = 60  # in seconds
