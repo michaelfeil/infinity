@@ -166,7 +166,6 @@ async def test_audio_base64(client):
     assert rdata_results[0]["object"] == "embedding"
     assert len(rdata_results[0]["embedding"]) > 0
 
-    print(rdata_results[0]["embedding"])
     np.testing.assert_array_equal(
         rdata_results[0]["embedding"], rdata_results[1]["embedding"]
     )
