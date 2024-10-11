@@ -166,9 +166,28 @@ async def test_audio_base64(client):
     assert rdata_results[0]["object"] == "embedding"
     assert len(rdata_results[0]["embedding"]) > 0
 
+    print(rdata_results[0]["embedding"])
     np.testing.assert_array_equal(
         rdata_results[0]["embedding"], rdata_results[1]["embedding"]
     )
+
+
+@pytest.mark.anyio
+async def test_audio_base64_fail(client):
+    base_64_audio = "somethingsomething"
+
+    response = await client.post(
+        f"{PREFIX}/embeddings_audio",
+        json={
+            "model": MODEL,
+            "input": [
+                "data:audio/wav;base64," + base_64_audio,
+                pytest.AUDIO_SAMPLE_URL,
+            ],
+        },
+    )
+
+    assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
 @pytest.mark.anyio
