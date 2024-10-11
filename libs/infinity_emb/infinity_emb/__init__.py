@@ -28,7 +28,7 @@ from infinity_emb.infinity_server import create_server  # noqa: E402
 from infinity_emb.log_handler import logger  # noqa: E402
 from infinity_emb.sync_engine import SyncEngineArray  # noqa: E402
 
-__version__ = importlib.metadata.version("infinity_emb")
+__version__: str = importlib.metadata.version("infinity_emb")
 
 __all__ = [
     "__version__",

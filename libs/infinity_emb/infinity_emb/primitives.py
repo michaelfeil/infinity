@@ -67,7 +67,7 @@ ReRankReturnType = float
 UnionReturnType = Union[EmbeddingReturnType, ReRankReturnType, ClassifyReturnType]
 
 
-class EnumType(enum.Enum):
+class EnumType(str, enum.Enum):
     @classmethod
     @lru_cache
     def names_enum(cls) -> enum.Enum:
@@ -125,6 +125,7 @@ class Device(EnumType):
 class Dtype(EnumType):
     float32: str = "float32"
     float16: str = "float16"
+    bfloat16: str = "bfloat16"
     int8: str = "int8"
     fp8: str = "fp8"
     auto: str = "auto"
