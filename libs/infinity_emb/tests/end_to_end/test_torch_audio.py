@@ -50,7 +50,7 @@ async def test_model_route(client):
 
 @pytest.mark.anyio
 async def test_audio_single(client):
-    audio_url = "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
+    audio_url = pytest.AUDIO_SAMPLE_URL
 
     response = await client.post(
         f"{PREFIX}/embeddings_audio",
@@ -84,7 +84,7 @@ async def test_audio_single_text_only(client):
 
 @pytest.mark.anyio
 async def test_meta(client, helpers):
-    audio_url = "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
+    audio_url = pytest.AUDIO_SAMPLE_URL
 
     text_input = ["a beep", "a horse", "a fish"]
     audio_input = [audio_url]
