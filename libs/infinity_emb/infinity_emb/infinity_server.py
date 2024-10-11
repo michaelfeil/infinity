@@ -6,6 +6,7 @@ import os
 import signal
 import sys
 import time
+import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Optional, Union
 
@@ -36,9 +37,11 @@ from infinity_emb.primitives import (
     ImageCorruption,
     InferenceEngine,
     Modality,
+    ModelCapabilites,
     ModelNotDeployedError,
     PoolingMethod,
 )
+from infinity_emb.telemetry import PostHog, StartupTelemetry
 
 
 def create_server(
@@ -61,10 +64,32 @@ def create_server(
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from prometheus_fastapi_instrumentator import Instrumentator
 
+    def send_telemetry_start(
+        engine_args_list: list[EngineArgs],
+        capabilities_list: list[set[ModelCapabilites]],
+    ):
+        session_id = uuid.uuid4().hex
+        for arg, capabilities in zip(engine_args_list, capabilities_list):
+            PostHog.capture(
+                StartupTelemetry(
+                    engine_args=arg,
+                    num_engines=len(engine_args_list),
+                    capabilities=capabilities,
+                    session_id=session_id,
+                )
+            )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         instrumentator.expose(app)  # type: ignore
         app.engine_array = AsyncEngineArray.from_args(engine_args_list)  # type: ignore
+        asyncio.create_task(
+            asyncio.to_thread(
+                send_telemetry_start,
+                engine_args_list,
+                [e.capabilities for e in app.engine_array],  # type: ignore
+            )
+        )
         # start in a threadpool
         await app.engine_array.astart()  # type: ignore
 
@@ -87,6 +112,7 @@ def create_server(
                 " -> exit ."
             )
             asyncio.create_task(kill_later(3))
+
         yield
         await app.engine_array.astop()  # type: ignore
         # shutdown!
