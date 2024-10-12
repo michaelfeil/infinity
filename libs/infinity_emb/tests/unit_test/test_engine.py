@@ -4,7 +4,6 @@ import sys
 
 import numpy as np
 import pytest
-import requests
 import torch
 from PIL import Image
 from sentence_transformers import CrossEncoder  # type: ignore[import-untyped]
@@ -217,13 +216,13 @@ async def test_torch_clip_embed():
 
 
 @pytest.mark.anyio
-async def test_clap_like_model():
-    model_name = "laion/clap-htsat-unfused"
+async def test_clap_like_model(audio_sample):
+    model_name = pytest.DEFAULT_AUDIO_MODEL
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(model_name_or_path=model_name, dtype="float32")
     )
-    url = pytest.AUDIO_SAMPLE_URL
-    bytes_url = requests.get(url).content
+    url = audio_sample[1]
+    bytes_url = audio_sample[0].content
 
     inputs = ["a sound of a cat", "a sound of a cat"]
     audios = [url, bytes_url]
@@ -240,11 +239,8 @@ async def test_clap_like_model():
 
 
 @pytest.mark.anyio
-async def test_clip_embed_pil_image_input():
-    response = requests.get(pytest.IMAGE_SAMPLE_URL, stream=True)
-
-    assert response.status_code == 200
-    img_data = response.raw
+async def test_clip_embed_pil_image_input(image_sample):
+    img_data = image_sample[0].raw
     img_obj = Image.open(img_data)
     images = [img_obj]  # a photo of two cats
     sentences = [
@@ -255,7 +251,7 @@ async def test_clip_embed_pil_image_input():
     ]
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
-            model_name_or_path="wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M",
+            model_name_or_path=pytest.DEFAULT_IMAGE_MODEL,
             engine=InferenceEngine.torch,
             model_warmup=True,
         )
@@ -301,7 +297,7 @@ async def test_async_api_torch_embedding_quant(embedding_dtype: EmbeddingDtype):
         device = "cpu"
     engine = AsyncEmbeddingEngine.from_args(
         EngineArgs(
-            model_name_or_path="michaelfeil/bge-small-en-v1.5",
+            model_name_or_path=pytest.DEFAULT_BERT_MODEL,  # type: ignore
             engine=InferenceEngine.torch,
             device=Device[device],
             lengths_via_tokenize=True,

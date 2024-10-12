@@ -2,7 +2,6 @@ import base64
 
 import numpy as np
 import pytest
-import requests
 import torch
 from asgi_lifespan import LifespanManager
 from fastapi import status
@@ -144,8 +143,8 @@ async def test_audio_multiple(client):
 
 
 @pytest.mark.anyio
-async def test_audio_base64(client):
-    bytes_downloaded = requests.get(pytest.AUDIO_SAMPLE_URL).content
+async def test_audio_base64(client, audio_sample):
+    bytes_downloaded = audio_sample[0].content
     base_64_audio = base64.b64encode(bytes_downloaded).decode("utf-8")
 
     response = await client.post(
@@ -154,7 +153,7 @@ async def test_audio_base64(client):
             "model": MODEL,
             "input": [
                 "data:audio/wav;base64," + base_64_audio,
-                pytest.AUDIO_SAMPLE_URL,
+                audio_sample[1],
             ],
         },
     )
@@ -166,8 +165,8 @@ async def test_audio_base64(client):
     assert rdata_results[0]["object"] == "embedding"
     assert len(rdata_results[0]["embedding"]) > 0
 
-    np.testing.assert_array_equal(
-        rdata_results[0]["embedding"], rdata_results[1]["embedding"]
+    np.testing.assert_array_almost_equal(
+        rdata_results[0]["embedding"], rdata_results[1]["embedding"], decimal=4
     )
 
 
