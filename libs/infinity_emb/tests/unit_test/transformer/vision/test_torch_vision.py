@@ -10,11 +10,11 @@ from infinity_emb.transformer.vision.torch_vision import TorchImageModel
 
 
 def test_clip_like_model():
-    model_name = "openai/clip-vit-base-patch32"
+    model_name = pytest.DEFAULT_IMAGE_MODEL
     model = TorchImageModel(
         engine_args=EngineArgs(model_name_or_path=model_name, dtype="auto")
     )
-    url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+    url = pytest.IMAGE_SAMPLE_URL
     image = Image.open(requests.get(url, stream=True).raw)
 
     inputs = [
@@ -49,19 +49,15 @@ def test_clip_like_model():
 
 @pytest.mark.parametrize("dtype", ["auto", "int8"])
 def test_colpali(dtype):
-    # model_name = "vidore/colpali-v1.2-merged"
-    # revision="refs/pr/2"
-    # model_name = "trl-internal-testing/tiny-random-paligemma"
-    # revision = "main"
-    model_name = "michaelfeil/colpali-v12-random-testing"
+    model_name = pytest.DEFAULT_IMAGE_COLPALI_MODEL
     revision = "main"
 
     model = TorchImageModel(
         engine_args=EngineArgs(
-            model_name_or_path=model_name, dtype="float16", revision=revision
+            model_name_or_path=model_name, dtype=dtype, revision=revision
         )
     )
-    url = "http://images.cocodataset.org/val2017/000000039769.jpg"
+    url = pytest.IMAGE_SAMPLE_URL
     image = Image.open(requests.get(url, stream=True).raw)
 
     inputs = [
