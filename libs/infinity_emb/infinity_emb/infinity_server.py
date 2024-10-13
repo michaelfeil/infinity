@@ -3,6 +3,7 @@
 
 import asyncio
 import os
+import re
 import signal
 import sys
 import time
@@ -739,6 +740,16 @@ if CHECK_TYPER.is_available:
             envvar=f"`{MANAGER.to_name(name)}`",
         )
 
+    def validate_url(path: str):
+        """
+        This regex matches:
+        - An empty string or A single '/'
+        - A string that starts with '/' and does not end with '/'
+        """
+        if re.match(r"^$|^/$|^/.*[^/]$", path):
+            return path
+        raise typer.BadParameter("Path must start with '/' and must not end with '/'")
+
     @tp.command("v2")
     def v2(
         # t
@@ -813,6 +824,7 @@ if CHECK_TYPER.is_available:
         ),
         url_prefix: str = typer.Option(
             **_construct("url_prefix"),
+            callback=validate_url,
             help="prefix for all routes of the FastAPI uvicorn server. Useful if you run behind a proxy / cascaded API.",
         ),
         redirect_slash: str = typer.Option(
@@ -928,6 +940,7 @@ if CHECK_TYPER.is_available:
         uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
     def cli():
+        CHECK_TYPER.mark_required()
         if len(sys.argv) == 1 or sys.argv[1] not in ["v1", "v2", "help", "--help"]:
             for _ in range(3):
                 logger.error(
