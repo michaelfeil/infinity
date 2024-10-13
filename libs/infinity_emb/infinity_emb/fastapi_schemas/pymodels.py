@@ -173,7 +173,7 @@ class AudioEmbeddingInput(ImageEmbeddingInput):
 
 class _EmbeddingObject(BaseModel):
     object: Literal["embedding"] = "embedding"
-    embedding: Union[list[float], bytes]
+    embedding: Union[list[float], bytes, list[list[float]]]
     index: int
 
 
@@ -187,7 +187,7 @@ class OpenAIEmbeddingResult(BaseModel):
 
     @staticmethod
     def to_embeddings_response(
-        embeddings: Iterable["EmbeddingReturnType"],
+        embeddings: Union[Iterable["EmbeddingReturnType"], np.ndarray],
         engine_args: "EngineArgs",
         usage: int,
         encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float,
@@ -198,7 +198,10 @@ class OpenAIEmbeddingResult(BaseModel):
                     f"model {engine_args.served_model_name} does not support base64 encoding, as it uses uint8-bitpacking with {engine_args.embedding_dtype}"
                 )
             embeddings = [base64.b64encode(np.frombuffer(emb.astype(np.float32), dtype=np.float32)) for emb in embeddings]  # type: ignore
-
+        elif isinstance(embeddings, np.ndarray):
+            embeddings = embeddings.tolist()
+        else:
+            embeddings = [e.tolist() for e in embeddings]
         return dict(
             model=engine_args.served_model_name,
             data=[
