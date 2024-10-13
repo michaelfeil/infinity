@@ -14,7 +14,11 @@ from infinity_emb._optional_imports import (
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Dtype
 from infinity_emb.transformer.abstract import BaseClipVisionModel
-from infinity_emb.transformer.quantization.interface import quant_embedding_decorator
+from infinity_emb.transformer.quantization.interface import (
+    quant_embedding_decorator,
+    quant_interface,
+)
+from infinity_emb.transformer.vision import IMAGE_COL_MODELS
 
 if TYPE_CHECKING:
     from PIL.Image import Image as ImageClass
@@ -38,27 +42,38 @@ class TorchImageModel(BaseClipVisionModel):
             engine_args.model_name_or_path,
             revision=engine_args.revision,
         )
-        self.is_colipali = config.architectures[0] in [
-            "ColPali",
-            "ColQwen2",
-            "PaliGemmaForConditionalGeneration",
-        ]
+        self.is_colipali = config.architectures[0] in IMAGE_COL_MODELS
         self.mock_image = Image.new("RGB", (16, 16), color="black")
         if self.is_colipali:
             CHECK_COLPALI_ENGINE.mark_required()
             from colpali_engine.models import (  # type: ignore
+                ColIdefics2,
+                ColIdefics2Processor,
                 ColPali,
                 ColPaliProcessor,
+                ColQwen2,
+                ColQwen2Processor,
             )
         if self.is_colipali:
-            self.model = ColPali.from_pretrained(
+            model_cls = {
+                "ColPali": ColPali,
+                "ColQwen2": ColQwen2,
+                "ColIdefics2": ColIdefics2,
+            }[config.architectures[0]]
+            processor_cls = {
+                "ColPali": ColPaliProcessor,
+                "ColQwen2": ColQwen2Processor,
+                "ColIdefics2": ColIdefics2Processor,
+            }[config.architectures[0]]
+
+            self.model = model_cls.from_pretrained(
                 engine_args.model_name_or_path,
                 revision=engine_args.revision,
                 trust_remote_code=engine_args.trust_remote_code,
                 torch_dtype=engine_args.dtype.value,
             )
 
-            self.processor = ColPaliProcessor.from_pretrained(
+            self.processor = processor_cls.from_pretrained(
                 engine_args.model_name_or_path,
                 revision=engine_args.revision,
                 trust_remote_code=engine_args.trust_remote_code,
@@ -87,6 +102,10 @@ class TorchImageModel(BaseClipVisionModel):
             if engine_args.dtype in (Dtype.float16, Dtype.auto):
                 self.model = self.model.half()
 
+        if engine_args.dtype in (Dtype.int8, Dtype.fp8):
+            self.model = quant_interface(
+                self.model, engine_args.dtype, device=self.engine_args.device
+            )
         self.engine_args = engine_args
 
         if engine_args.compile:

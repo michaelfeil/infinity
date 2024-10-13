@@ -5,7 +5,6 @@ import torch
 from PIL import Image  # type: ignore
 from transformers import CLIPModel, CLIPProcessor  # type: ignore
 
-from infinity_emb._optional_imports import CHECK_COLPALI_ENGINE
 from infinity_emb.args import EngineArgs
 from infinity_emb.transformer.vision.torch_vision import TorchImageModel
 
@@ -48,11 +47,8 @@ def test_clip_like_model():
     torch.testing.assert_close(embeddings[1], embeddings[3])
 
 
-@pytest.mark.skipif(
-    not CHECK_COLPALI_ENGINE.is_available or not torch.cuda.is_available(),
-    reason="colpali_engine is not installed.",
-)
-def test_colpali():
+@pytest.mark.parametrize("dtype", ["auto", "int8"])
+def test_colpali(dtype):
     # model_name = "vidore/colpali-v1.2-merged"
     # revision="refs/pr/2"
     # model_name = "trl-internal-testing/tiny-random-paligemma"
@@ -82,49 +78,49 @@ def test_colpali():
     embeddings = [torch.tensor(t) for t in embeddings]
 
     model = None
-    from colpali_engine.models import ColPali, ColPaliProcessor  # type: ignore
-
-    model = ColPali.from_pretrained(
-        model_name,
-        torch_dtype=torch.float16,
-        device_map="cuda:0",
-    ).eval()
-
-    processor = ColPaliProcessor.from_pretrained(model_name, revision=revision)
-
-    # Your inputs
-    images = [
-        image,
-        image,
-        Image.new("RGB", (32, 32), color="white"),
-        Image.new("RGB", (16, 16), color="black"),
-    ]
-    queries = [
-        "a photo of a cat",
-        "a photo of a dog",
-    ]
-
-    # Process the inputs
-    batch_images = processor.process_images(images).to(model.device)
-    batch_queries = processor.process_queries(queries).to(model.device)
-
-    # Forward pass
-    with torch.no_grad():
-        image_embeddings = model(**batch_images).to("cpu")
-        query_embeddings = model(**batch_queries).to("cpu")
-    torch.testing.assert_close(
-        query_embeddings[0], embeddings[0], check_dtype=False, rtol=0, atol=5e-3
-    )
-    torch.testing.assert_close(
-        image_embeddings[0].mean(0),
-        embeddings[3].mean(0),
-        check_dtype=False,
-        rtol=0,
-        atol=5e-3,
-    )
     torch.testing.assert_close(embeddings[1], embeddings[3])
+    if dtype == "auto":
+        from colpali_engine.models import ColPali, ColPaliProcessor  # type: ignore
+
+        model = ColPali.from_pretrained(
+            model_name,
+        ).eval()
+
+        processor = ColPaliProcessor.from_pretrained(model_name, revision=revision)
+
+        # Your inputs
+        images = [
+            image,
+            image,
+            Image.new("RGB", (32, 32), color="white"),
+            Image.new("RGB", (16, 16), color="black"),
+        ]
+        queries = [
+            "a photo of a cat",
+            "a photo of a dog",
+        ]
+
+        # Process the inputs
+        batch_images = processor.process_images(images).to(model.device)
+        batch_queries = processor.process_queries(queries).to(model.device)
+
+        # Forward pass
+        with torch.no_grad():
+            image_embeddings = model(**batch_images).to("cpu")
+            query_embeddings = model(**batch_queries).to("cpu")
+        torch.testing.assert_close(
+            query_embeddings[0], embeddings[0], check_dtype=False, rtol=0, atol=5e-3
+        )
+        torch.testing.assert_close(
+            image_embeddings[0].mean(0),
+            embeddings[3].mean(0),
+            check_dtype=False,
+            rtol=0,
+            atol=5e-3,
+        )
 
 
 if __name__ == "__main__":
-    test_colpali()
+    test_colpali("int8")
+    test_colpali("auto")
     test_clip_like_model()
