@@ -118,6 +118,7 @@ class Device(EnumType):
 
     def resolve(self) -> Optional[str]:
         if self == Device.auto:
+            """gets the torch dtype string"""
             return None
         return self.value
 
@@ -132,6 +133,12 @@ class Dtype(EnumType):
     @staticmethod
     def default_value():
         return Dtype.auto.value
+
+    def resolve(self) -> Optional[str]:
+        """gets the torch dtype string"""
+        if self == Dtype.auto:
+            return None
+        return self.value
 
 
 class EmbeddingDtype(EnumType):

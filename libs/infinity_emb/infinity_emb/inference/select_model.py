@@ -50,7 +50,7 @@ def get_engine_type_from_config(
             return RerankEngine.from_inference_engine(engine_args.engine)
         else:
             return PredictEngine.from_inference_engine(engine_args.engine)
-    if config.get("vision_config") and "clip" in config.get("model_type", "").lower():
+    if config.get("vision_config"):
         return ClipLikeEngine.from_inference_engine(engine_args.engine)
     if config.get("audio_config") and "clap" in config.get("model_type", "").lower():
         return ClapLikeEngine.from_inference_engine(engine_args.engine)

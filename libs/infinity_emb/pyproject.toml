@@ -35,12 +35,14 @@ einops = {version = "*", optional=true}
 # vision
 pillow = {version = "*", optional=true}
 timm = {version = "*", optional=true}
+colpali-engine = {version="^0.3.1", optional=true}
 # cache
 diskcache = {version = "*", optional=true}
 # gpu
 onnxruntime-gpu = {version = "*", optional=true} 
 tensorrt = {version = "^8.6.1", optional=true}
 soundfile = {version="^0.12.1", optional=true}
+
 
 [tool.poetry.scripts]
 infinity_emb = "infinity_emb.infinity_server:cli"
@@ -87,7 +89,7 @@ torch=["sentence-transformers","torch"]
 einops=["einops"]
 logging=["rich"]
 cache=["diskcache"]
-vision=["pillow","timm"]
+vision=["colpali-engine","pillow","timm"]
 audio=["soundfile"]
 server=[
     "fastapi",
@@ -99,6 +101,7 @@ server=[
     "uvicorn",
 ]
 all=[
+    "colpali-engine",
     "ctranslate2",
     "diskcache",
     "einops",

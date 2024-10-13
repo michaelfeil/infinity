@@ -5,7 +5,12 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
 
-from infinity_emb._optional_imports import CHECK_TORCH, CHECK_TRANSFORMERS
+from infinity_emb._optional_imports import (
+    CHECK_COLPALI_ENGINE,
+    CHECK_PIL,
+    CHECK_TORCH,
+    CHECK_TRANSFORMERS,
+)
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Dtype
 from infinity_emb.transformer.abstract import BaseClipVisionModel
@@ -18,49 +23,83 @@ if TYPE_CHECKING:
 if CHECK_TORCH.is_available:
     import torch
 if CHECK_TRANSFORMERS.is_available:
-    from transformers import AutoModel, AutoProcessor  # type: ignore
+    from transformers import AutoConfig, AutoModel, AutoProcessor  # type: ignore
+if CHECK_PIL.is_available:
+    from PIL import Image
 
 
-class ClipLikeModel(BaseClipVisionModel):
+class TorchImageModel(BaseClipVisionModel):
     """CrossEncoder with .encode_core() and no microbatching"""
 
-    def __init__(self, *, engine_args: EngineArgs):
+    def __init__(self, *, engine_args: "EngineArgs"):
         CHECK_TORCH.mark_required()
         CHECK_TRANSFORMERS.mark_required()
-        self.model = AutoModel.from_pretrained(
+        config = AutoConfig.from_pretrained(
             engine_args.model_name_or_path,
             revision=engine_args.revision,
-            trust_remote_code=engine_args.trust_remote_code,
-            # attn_implementation="eager" if engine_args.bettertransformer else None,
         )
+        self.is_colipali = config.architectures[0] in [
+            "ColPali",
+            "ColQwen2",
+            "PaliGemmaForConditionalGeneration",
+        ]
+        self.mock_image = Image.new("RGB", (16, 16), color="black")
+        if self.is_colipali:
+            CHECK_COLPALI_ENGINE.mark_required()
+            from colpali_engine.models import (  # type: ignore
+                ColPali,
+                ColPaliProcessor,
+            )
+        if self.is_colipali:
+            self.model = ColPali.from_pretrained(
+                engine_args.model_name_or_path,
+                revision=engine_args.revision,
+                trust_remote_code=engine_args.trust_remote_code,
+                torch_dtype=engine_args.dtype.value,
+            )
+
+            self.processor = ColPaliProcessor.from_pretrained(
+                engine_args.model_name_or_path,
+                revision=engine_args.revision,
+                trust_remote_code=engine_args.trust_remote_code,
+            )
+        else:
+            self.model = AutoModel.from_pretrained(
+                engine_args.model_name_or_path,
+                revision=engine_args.revision,
+                trust_remote_code=engine_args.trust_remote_code,
+                # attn_implementation="eager" if engine_args.bettertransformer else None,
+            )
+
+            self.processor = AutoProcessor.from_pretrained(
+                engine_args.model_name_or_path,
+                revision=engine_args.revision,
+                trust_remote_code=engine_args.trust_remote_code,
+            )
+            assert hasattr(
+                self.model, "get_text_features"
+            ), f"AutoModel of {engine_args.model_name_or_path} does not have get_text_features method"
+            assert hasattr(
+                self.model, "get_image_features"
+            ), f"AutoModel of {engine_args.model_name_or_path} does not have get_image_features method"
         if torch.cuda.is_available():
             self.model = self.model.cuda()
             if engine_args.dtype in (Dtype.float16, Dtype.auto):
                 self.model = self.model.half()
-        # self.model = to_bettertransformer(
-        #     self.model,
-        #     engine_args,
-        #     logger,
-        # )
-        self.processor = AutoProcessor.from_pretrained(
-            engine_args.model_name_or_path,
-            revision=engine_args.revision,
-            trust_remote_code=engine_args.trust_remote_code,
-        )
+
         self.engine_args = engine_args
 
         if engine_args.compile:
-            self.model.vision_model = torch.compile(
-                self.model.vision_model, dynamic=True
-            )
-            self.model.text_model = torch.compile(self.model.text_model, dynamic=True)
+            if self.is_colipali:
+                self.model = torch.compile(self.model, dynamic=True)
+            else:
+                self.model.vision_model = torch.compile(
+                    self.model.vision_model, dynamic=True
+                )
+                self.model.text_model = torch.compile(
+                    self.model.text_model, dynamic=True
+                )
 
-        assert hasattr(
-            self.model, "get_text_features"
-        ), f"AutoModel of {engine_args.model_name_or_path} does not have get_text_features method"
-        assert hasattr(
-            self.model, "get_image_features"
-        ), f"AutoModel of {engine_args.model_name_or_path} does not have get_image_features method"
         self.max_length = None
         if hasattr(self.model.config, "max_length"):
             self.max_length = self.model.config.max_length
@@ -84,23 +123,43 @@ class ClipLikeModel(BaseClipVisionModel):
             else:
                 image_list.append(im_or_text)
                 type_is_img.append(True)
+        if self.is_colipali:
+            preprocessed_q = {}  # type: ignore
+            if text_list:
+                preprocessed_q = {
+                    k: v.to(self.model.device)
+                    for k, v in self.processor.process_queries(text_list).items()
+                }
 
-        preprocessed = self.processor(
-            images=image_list if image_list else None,
-            text=text_list if text_list else None,
-            return_tensors="pt",
-            padding=True,
-            truncation=True,
-            max_length=self.max_length,
-        )
-        preprocessed = {k: v.to(self.model.device) for k, v in preprocessed.items()}
+            preprocessed_i = {}  # type: ignore
+            if image_list:
+                preprocessed_i = {
+                    k: v.to(self.model.device)
+                    for k, v in self.processor.process_images(image_list).items()
+                }
+            preprocessed = (preprocessed_q, preprocessed_i)  # type: ignore
+        else:
+            preprocessed = self.processor(
+                images=image_list if image_list else None,
+                text=text_list if text_list else None,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=self.max_length,
+            )
+            preprocessed = {k: v.to(self.model.device) for k, v in preprocessed.items()}  # type: ignore
 
         return (preprocessed, type_is_img)
 
-    def _normalize_cpu(self, tensor: Optional["Tensor"]) -> Iterable["Tensor"]:
+    def _normalize_cpu(
+        self, tensor: Optional["Tensor"], normalize: bool
+    ) -> Iterable["Tensor"]:
         if tensor is None:
             return iter([])
-        return iter((tensor / tensor.norm(p=2, dim=-1, keepdim=True)).cpu().numpy())
+        elif normalize:
+            return iter((tensor / tensor.norm(p=2, dim=-1, keepdim=True)).cpu().numpy())
+        else:
+            return iter(tensor.cpu().numpy())
 
     def encode_core(
         self, features_and_types: tuple[dict[str, "Tensor"], list[bool]]
@@ -109,29 +168,37 @@ class ClipLikeModel(BaseClipVisionModel):
         Computes sentence embeddings
         """
         features, type_is_img = features_and_types
+        text_embeds, image_embeds = None, None  # type: ignore
         with torch.no_grad():
             # TODO: torch.cuda.stream()
-            if "input_ids" in features:
-                text_embeds = self.model.get_text_features(
-                    input_ids=features.get("input_ids"),
-                    attention_mask=features.get("attention_mask"),
-                )
+            if self.is_colipali:
+                text, image = features
+                if text:
+                    text_embeds: "Tensor" = self.model.forward(  # type: ignore
+                        **text,
+                    )
+                if image:
+                    image_embeds: "Tensor" = self.model.forward(  # type: ignore
+                        **image,
+                    )
             else:
-                text_embeds = None  # type: ignore
-            if "pixel_values" in features:
-                image_embeds = self.model.get_image_features(
-                    pixel_values=features.get("pixel_values"),
-                )
-            else:
-                image_embeds = None
-
-        return text_embeds, image_embeds, type_is_img
+                if "input_ids" in features:
+                    text_embeds: "Tensor" = self.model.get_text_features(  # type: ignore
+                        input_ids=features.get("input_ids"),
+                        attention_mask=features.get("attention_mask"),
+                    )
+                if "pixel_values" in features:
+                    image_embeds: "Tensor" = self.model.get_image_features(  # type: ignore
+                        pixel_values=features.get("pixel_values"),
+                    )
+        return text_embeds, image_embeds, type_is_img  # type: ignore
 
     @quant_embedding_decorator()
     def encode_post(self, out_features) -> list[float]:
         text_embeds, image_embeds, type_is_img = out_features
-        text_embeds = self._normalize_cpu(text_embeds)
-        image_embeds = self._normalize_cpu(image_embeds)
+        text_embeds = self._normalize_cpu(text_embeds, normalize=not self.is_colipali)
+        image_embeds = self._normalize_cpu(image_embeds, normalize=not self.is_colipali)
+
         embeddings = list(
             next(image_embeds if is_img else text_embeds) for is_img in type_is_img
         )
@@ -139,6 +206,9 @@ class ClipLikeModel(BaseClipVisionModel):
 
     def tokenize_lengths(self, text_list: list[str]) -> list[int]:
         preprocessed = self.processor(
-            text=text_list, truncation=True, max_length=self.max_length
+            text=text_list,
+            images=[self.mock_image] * len(text_list),
+            truncation=True,
+            max_length=self.max_length,
         )
         return [len(t) for t in preprocessed["input_ids"]]
