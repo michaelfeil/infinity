@@ -95,7 +95,7 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
         return run_warmup(self, inp)
 
 
-class BaseClipVisionModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
+class BaseTIMM(BaseEmbedder):  # Inherit from ABC(Abstract base class)
     capabilities = {"embed", "image_embed"}
 
     @property
@@ -136,7 +136,7 @@ class BaseClipVisionModel(BaseEmbedder):  # Inherit from ABC(Abstract base class
         return run_warmup(self, inp)
 
 
-class BaseClapAudioModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
+class BaseAudioEmbedModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
     capabilities = {"embed", "audio_embed"}
 
     @property

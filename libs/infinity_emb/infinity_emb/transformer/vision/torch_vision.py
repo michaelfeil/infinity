@@ -13,7 +13,7 @@ from infinity_emb._optional_imports import (
 )
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import Device, Dtype
-from infinity_emb.transformer.abstract import BaseClipVisionModel
+from infinity_emb.transformer.abstract import BaseTIMM
 from infinity_emb.transformer.quantization.interface import (
     quant_embedding_decorator,
     quant_interface,
@@ -32,7 +32,7 @@ if CHECK_PIL.is_available:
     from PIL import Image
 
 
-class TorchImageModel(BaseClipVisionModel):
+class TIMM(BaseTIMM):
     """CrossEncoder with .encode_core() and no microbatching"""
 
     def __init__(self, *, engine_args: "EngineArgs"):

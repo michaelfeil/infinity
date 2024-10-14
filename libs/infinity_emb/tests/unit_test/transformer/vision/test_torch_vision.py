@@ -6,14 +6,12 @@ from PIL import Image  # type: ignore
 from transformers import CLIPModel, CLIPProcessor  # type: ignore
 
 from infinity_emb.args import EngineArgs
-from infinity_emb.transformer.vision.torch_vision import TorchImageModel
+from infinity_emb.transformer.vision.torch_vision import TIMM
 
 
 def test_clip_like_model(image_sample):
     model_name = pytest.DEFAULT_IMAGE_MODEL
-    model = TorchImageModel(
-        engine_args=EngineArgs(model_name_or_path=model_name, dtype="auto")
-    )
+    model = TIMM(engine_args=EngineArgs(model_name_or_path=model_name, dtype="auto"))
     image = Image.open(image_sample[0].raw)
 
     inputs = [
@@ -51,7 +49,7 @@ def test_colpali(dtype, image_sample):
     model_name = pytest.DEFAULT_IMAGE_COLPALI_MODEL
     revision = "main"
 
-    model = TorchImageModel(
+    model = TIMM(
         engine_args=EngineArgs(
             model_name_or_path=model_name, dtype=dtype, revision=revision, device="cpu"
         )
