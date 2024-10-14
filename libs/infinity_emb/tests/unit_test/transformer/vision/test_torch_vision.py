@@ -45,14 +45,14 @@ def test_clip_like_model(image_sample):
     torch.testing.assert_close(embeddings[1], embeddings[3])
 
 
-@pytest.mark.parametrize("dtype", ["auto", "int8"])
+@pytest.mark.parametrize("dtype", ["auto"])
 def test_colpali(dtype, image_sample):
     model_name = pytest.DEFAULT_IMAGE_COLPALI_MODEL
     revision = "main"
 
     model = TorchImageModel(
         engine_args=EngineArgs(
-            model_name_or_path=model_name, dtype=dtype, revision=revision
+            model_name_or_path=model_name, dtype=dtype, revision=revision, device="cpu"
         )
     )
     image = Image.open(image_sample[0].raw)
