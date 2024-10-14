@@ -8,10 +8,9 @@ from infinity_emb.args import EngineArgs
 from infinity_emb.transformer.vision.torch_vision import TorchImageModel
 
 
-
 def test_clip_like_model(image_sample):
     model_name = pytest.DEFAULT_IMAGE_MODEL
-    model = ClipLikeModel(
+    model = TorchImageModel(
         engine_args=EngineArgs(model_name_or_path=model_name, dtype="auto")
     )
     image = Image.open(image_sample[0].raw)
@@ -47,7 +46,7 @@ def test_clip_like_model(image_sample):
 
 
 @pytest.mark.parametrize("dtype", ["auto", "int8"])
-def test_colpali(dtype):
+def test_colpali(dtype, sample_image):
     model_name = pytest.DEFAULT_IMAGE_COLPALI_MODEL
     revision = "main"
 
@@ -56,8 +55,7 @@ def test_colpali(dtype):
             model_name_or_path=model_name, dtype=dtype, revision=revision
         )
     )
-    url = pytest.IMAGE_SAMPLE_URL
-    image = Image.open(requests.get(url, stream=True).raw)
+    image = Image.open(sample_image.raw)
 
     inputs = [
         "a photo of a cat",
@@ -116,6 +114,7 @@ def test_colpali(dtype):
 
 
 if __name__ == "__main__":
-    test_colpali("int8")
-    test_colpali("auto")
-    test_clip_like_model()
+    import requests
+
+    test_colpali("int8", requests.get(pytest.DEFAULT_IMAGE_SAMPLE, stream=True))  # type: ignore
+    test_colpali("auto", requests.get(pytest.DEFAULT_IMAGE_SAMPLE, stream=True))  # type: ignore
