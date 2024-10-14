@@ -2,7 +2,7 @@ import requests
 import time
 import pytest
 
-pytest.URL = "http://0.0.0.0:7997"
+pytest.URL = "http://0.0.0.0:7994"
 
 
 @pytest.fixture

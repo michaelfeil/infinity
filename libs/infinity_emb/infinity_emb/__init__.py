@@ -4,8 +4,6 @@
 import importlib.metadata
 import os
 
-import huggingface_hub.constants  # type: ignore
-
 ### Check if HF_HUB_ENABLE_HF_TRANSFER is set, if not try to enable it
 if "HF_HUB_ENABLE_HF_TRANSFER" not in os.environ:
     try:
@@ -13,9 +11,15 @@ if "HF_HUB_ENABLE_HF_TRANSFER" not in os.environ:
         import hf_transfer  # type: ignore # noqa
 
         # Needs to be at the top of the file / before other
+        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+        os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+        import huggingface_hub.constants  # type: ignore
+
         huggingface_hub.constants.HF_HUB_ENABLE_HF_TRANSFER = True
     except ImportError:
         pass
+import huggingface_hub.constants  # type: ignore
+
 huggingface_hub.constants.HF_HUB_DISABLE_PROGRESS_BARS = True
 
 

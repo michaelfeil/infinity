@@ -7,12 +7,12 @@ import torch
 from transformers import ClapModel, ClapProcessor  # type: ignore
 
 from infinity_emb.args import EngineArgs
-from infinity_emb.transformer.audio.torch import ClapLikeModel
+from infinity_emb.transformer.audio.torch import TorchAudioModel
 
 
 def test_clap_like_model(audio_sample):
     model_name = pytest.DEFAULT_AUDIO_MODEL
-    model = ClapLikeModel(engine_args=EngineArgs(model_name_or_path=model_name))
+    model = TorchAudioModel(engine_args=EngineArgs(model_name_or_path=model_name))
     raw_bytes = audio_sample[0].content
     data, samplerate = sf.read(io.BytesIO(raw_bytes))
 

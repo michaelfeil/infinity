@@ -269,7 +269,7 @@ def create_server(
                 "model": "openai/clip-vit-base-patch32",
                 "encoding_format": "base64",
                 "input": [
-                    http://images.cocodataset.org/val2017/000000039769.jpg",
+                    "http://images.cocodataset.org/val2017/000000039769.jpg",
                     # can also be base64 encoded
                 ],
                 # set extra modality to image to process as image
@@ -310,7 +310,7 @@ def create_server(
         client.embeddings.create(
             model="laion/larger_clap_general",
             input=[url_to_base64(url, "audio")],
-            encoding_format= "base64",
+            encoding_format="float",
             extra_body={
                 "modality": "audio"
             }
@@ -319,7 +319,7 @@ def create_server(
         client.embeddings.create(
             model="laion/larger_clap_general",
             input=["the sound of a beep", "the sound of a cat"],
-            encoding_format= "base64",
+            encoding_format="base64", # base64: optional high performance setting
             extra_body={
                 "modality": "text"
             }
