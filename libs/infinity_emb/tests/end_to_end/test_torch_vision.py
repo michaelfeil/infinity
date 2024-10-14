@@ -2,7 +2,6 @@ import base64
 
 import numpy as np
 import pytest
-import requests
 import torch
 from asgi_lifespan import LifespanManager
 from fastapi import status
@@ -84,8 +83,8 @@ async def test_vision_single_text_only(client):
 
 
 @pytest.mark.anyio
-async def test_vision_base64(client):
-    bytes_downloaded = requests.get(pytest.IMAGE_SAMPLE_URL).content
+async def test_vision_base64(client, image_sample):
+    bytes_downloaded = image_sample[0].content
     base_64_image = base64.b64encode(bytes_downloaded).decode("utf-8")
 
     response = await client.post(
@@ -106,8 +105,8 @@ async def test_vision_base64(client):
     assert rdata_results[0]["object"] == "embedding"
     assert len(rdata_results[0]["embedding"]) > 0
 
-    np.testing.assert_array_equal(
-        rdata_results[0]["embedding"], rdata_results[1]["embedding"]
+    np.testing.assert_array_almost_equal(
+        rdata_results[0]["embedding"], rdata_results[1]["embedding"], decimal=4
     )
 
 

@@ -1,5 +1,5 @@
 import numpy as np
-import requests  # type: ignore
+import pytest
 import torch
 from PIL import Image  # type: ignore
 from transformers import CLIPModel, CLIPProcessor  # type: ignore
@@ -8,13 +8,12 @@ from infinity_emb.args import EngineArgs
 from infinity_emb.transformer.vision.torch_vision import ClipLikeModel
 
 
-def test_clip_like_model():
-    model_name = "openai/clip-vit-base-patch32"
+def test_clip_like_model(image_sample):
+    model_name = pytest.DEFAULT_IMAGE_MODEL
     model = ClipLikeModel(
-        engine_args=EngineArgs(model_name_or_path=model_name, dtype="float16")
+        engine_args=EngineArgs(model_name_or_path=model_name, dtype="auto")
     )
-    url = "http://images.cocodataset.org/val2017/000000039769.jpg"
-    image = Image.open(requests.get(url, stream=True).raw)
+    image = Image.open(image_sample[0].raw)
 
     inputs = [
         "a photo of a cat",
