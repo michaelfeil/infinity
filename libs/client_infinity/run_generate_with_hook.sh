@@ -20,7 +20,7 @@ echo "infinity_emb started with PID $INFINITY_PID"
 
 # Wait for infinity_emb to be ready
 for i in {1..10}; do
-  if wget -q --spider http://0.0.0.0:7997/openapi.json; then
+  if wget -q --spider http://0.0.0.0:7994/openapi.json; then
     echo "infinity_emb is ready."
     break
   else

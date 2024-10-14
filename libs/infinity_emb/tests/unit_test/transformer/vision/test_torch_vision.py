@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 import torch
+from colpali_engine.models import ColPali, ColPaliProcessor  # type: ignore
 from PIL import Image  # type: ignore
 from transformers import CLIPModel, CLIPProcessor  # type: ignore
 
@@ -73,8 +74,6 @@ def test_colpali(dtype, image_sample):
     model = None
     torch.testing.assert_close(embeddings[1], embeddings[3])
     if dtype == "auto":
-        from colpali_engine.models import ColPali, ColPaliProcessor  # type: ignore
-
         model = ColPali.from_pretrained(
             model_name,
         ).eval()

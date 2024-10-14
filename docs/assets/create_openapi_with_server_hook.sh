@@ -16,13 +16,13 @@ cleanup() {
 trap cleanup EXIT
 
 # Start infinity_emb in the background
-infinity_emb v2 --log-level error --engine debugengine &
+infinity_emb v2 --log-level error --engine debugengine --port 7996 &
 INFINITY_PID=$!
 echo "infinity_emb started with PID $INFINITY_PID"
 
 # Wait for infinity_emb to be ready
 for i in {1..10}; do
-  if wget -q --spider http://0.0.0.0:7997/openapi.json; then
+  if wget -q --spider http://0.0.0.0:7996/openapi.json; then
     echo "infinity_emb is ready."
     break
   else
@@ -32,4 +32,4 @@ for i in {1..10}; do
 done
 
 # Download the openapi.json
-wget http://0.0.0.0:7997/openapi.json -O "$SCRIPT_DIR/openapi.json"
+wget http://0.0.0.0:7996/openapi.json -O "$SCRIPT_DIR/openapi.json"

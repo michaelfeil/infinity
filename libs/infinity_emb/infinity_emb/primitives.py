@@ -117,8 +117,8 @@ class Device(EnumType):
         return Device.auto.value
 
     def resolve(self) -> Optional[str]:
+        """gets the torch device string"""
         if self == Device.auto:
-            """gets the torch dtype string"""
             return None
         return self.value
 
