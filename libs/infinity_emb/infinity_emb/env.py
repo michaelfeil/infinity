@@ -68,7 +68,7 @@ class __Infinity_EnvManager:
 
     @staticmethod
     def _to_bool(value: str) -> bool:
-        return value.lower() in {"true", "1"}
+        return value.lower() in {"true", "1", "yes", "y"}
 
     @staticmethod
     def _to_bool_multiple(value: list[str]) -> list[bool]:
@@ -152,6 +152,17 @@ class __Infinity_EnvManager:
             "calibration_dataset_url",
             default="https://raw.githubusercontent.com/michaelfeil/infinity/2da1f32d610b8edbe4ce58d0c44fc27c963abca6/docs/assets/multilingual_calibration.utf8",
         )
+
+    @cached_property
+    def anonymous_usage_stats(self):
+        tracking_allowed = self._to_bool(
+            self._optional_infinity_var(
+                "anonymous_usage_stats",
+                default="true",
+            )
+        )
+        tracking_allowed_2 = not self._to_bool(os.getenv("DO_NOT_TRACK", "0"))
+        return tracking_allowed and tracking_allowed_2
 
     @cached_property
     def cache_dir(self) -> Path:
