@@ -128,6 +128,7 @@ class Dtype(EnumType):
     bfloat16: str = "bfloat16"
     int8: str = "int8"
     fp8: str = "fp8"
+    autoquant: str = "autoquant"
     auto: str = "auto"
 
     @staticmethod

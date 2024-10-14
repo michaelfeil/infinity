@@ -25,7 +25,6 @@ from infinity_emb.transformer.quantization.interface import (
 if TYPE_CHECKING:
     from torch import Tensor
 
-
 if CHECK_SENTENCE_TRANSFORMERS.is_available:
     from sentence_transformers import SentenceTransformer, util  # type: ignore
 else:
@@ -88,7 +87,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         ]:
             fm.auto_model.to(torch.bfloat16)
 
-        if engine_args.dtype in (Dtype.int8, Dtype.fp8):
+        if engine_args.dtype in (Dtype.int8, Dtype.fp8, Dtype.autoquant):
             fm.auto_model = quant_interface(
                 fm.auto_model, engine_args.dtype, device=Device[self.device.type]
             )

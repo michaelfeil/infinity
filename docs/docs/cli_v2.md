@@ -75,6 +75,9 @@ $ infinity_emb v2 --help
 │                                                                                       `INFINITY_LENGTHS_VIA_TOKENIZ… │
 │                                                                                       [default:                      │
 │                                                                                       lengths-via-tokenize]          │
+│ --dtype                                                [float32|float16|int8|fp8|aut  dtype for the model weights.   │
+│                                                        oquant|auto]                   [env var: `INFINITY_DTYPE`]    │
+
 │ --dtype                                                [float32|float16|bfloat16|int  dtype for the model weights.   │
 │                                                        8|fp8|auto]                    [env var: `INFINITY_DTYPE`]    │
 │                                                                                       [default: auto]                │
