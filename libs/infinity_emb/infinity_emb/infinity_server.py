@@ -269,7 +269,7 @@ def create_server(
                 "model": "openai/clip-vit-base-patch32",
                 "encoding_format": "base64",
                 "input": [
-                    http://images.cocodataset.org/val2017/000000039769.jpg",
+                    "http://images.cocodataset.org/val2017/000000039769.jpg",
                     # can also be base64 encoded
                 ],
                 # set extra modality to image to process as image

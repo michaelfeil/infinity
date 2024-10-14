@@ -12,7 +12,7 @@ from infinity_emb._optional_imports import (
     CHECK_TRANSFORMERS,
 )
 from infinity_emb.args import EngineArgs
-from infinity_emb.primitives import Dtype
+from infinity_emb.primitives import Dtype, Device
 from infinity_emb.transformer.abstract import BaseClipVisionModel
 from infinity_emb.transformer.quantization.interface import (
     quant_embedding_decorator,
@@ -54,6 +54,15 @@ class TorchImageModel(BaseClipVisionModel):
                 ColQwen2,
                 ColQwen2Processor,
             )
+        extra_model_args = {}
+        device = engine_args.device
+        if device == Device.auto and torch.cuda.is_available():
+            device = Device.cuda
+        if device == "cuda"  and engine_args.dtype in (Dtype.float16, Dtype.bfloat16):
+            extra_model_args["torch_dtype"] = engine_args.dtype.value
+        elif device == "cuda" and engine_args.dtype in (Dtype.auto):
+            extra_model_args["torch_dtype"] = "float16"
+        
         if self.is_colipali:
             model_cls = {
                 "ColPali": ColPali,
@@ -70,7 +79,7 @@ class TorchImageModel(BaseClipVisionModel):
                 engine_args.model_name_or_path,
                 revision=engine_args.revision,
                 trust_remote_code=engine_args.trust_remote_code,
-                torch_dtype=engine_args.dtype.value,
+                **extra_model_args,
             )
 
             self.processor = processor_cls.from_pretrained(
@@ -83,6 +92,7 @@ class TorchImageModel(BaseClipVisionModel):
                 engine_args.model_name_or_path,
                 revision=engine_args.revision,
                 trust_remote_code=engine_args.trust_remote_code,
+                **extra_model_args
                 # attn_implementation="eager" if engine_args.bettertransformer else None,
             )
 
@@ -104,7 +114,7 @@ class TorchImageModel(BaseClipVisionModel):
 
         if engine_args.dtype in (Dtype.int8, Dtype.fp8):
             self.model = quant_interface(
-                self.model, engine_args.dtype, device=self.engine_args.device
+                self.model, engine_args.dtype, device=device
             )
         self.engine_args = engine_args
 
@@ -175,7 +185,8 @@ class TorchImageModel(BaseClipVisionModel):
     ) -> Iterable["Tensor"]:
         if tensor is None:
             return iter([])
-        elif normalize:
+        tensor = tensor.to(torch.float32)
+        if normalize:
             return iter((tensor / tensor.norm(p=2, dim=-1, keepdim=True)).cpu().numpy())
         else:
             return iter(tensor.cpu().numpy())

@@ -46,7 +46,7 @@ def test_clip_like_model(image_sample):
 
 
 @pytest.mark.parametrize("dtype", ["auto", "int8"])
-def test_colpali(dtype, sample_image):
+def test_colpali(dtype, image_sample):
     model_name = pytest.DEFAULT_IMAGE_COLPALI_MODEL
     revision = "main"
 
@@ -55,7 +55,7 @@ def test_colpali(dtype, sample_image):
             model_name_or_path=model_name, dtype=dtype, revision=revision
         )
     )
-    image = Image.open(sample_image.raw)
+    image = Image.open(image_sample[0].raw)
 
     inputs = [
         "a photo of a cat",
