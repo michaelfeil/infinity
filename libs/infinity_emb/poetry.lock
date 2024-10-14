@@ -5054,7 +5054,7 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 type = ["pytest-mypy"]
 
 [extras]
-all = ["colpali-engine", "ctranslate2", "diskcache", "einops", "fastapi", "optimum", "orjson", "pillow", "posthog","prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "soundfile", "timm", "torch", "typer", "uvicorn"]
+all = ["colpali-engine", "ctranslate2", "diskcache", "einops", "fastapi", "optimum", "orjson", "pillow", "posthog", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "soundfile", "timm", "torch", "typer", "uvicorn"]
 audio = ["soundfile"]
 cache = ["diskcache"]
 ct2 = ["ctranslate2", "sentence-transformers", "torch", "transformers"]
@@ -5070,4 +5070,4 @@ vision = ["colpali-engine", "pillow", "timm"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<4"
-content-hash = "8e63f58cd483ae79f39c6208fcc783763ee63fe9eec34b87ab038c14d555d580"
+content-hash = "ddb2234dae1ebb22503ff767029fcaa8a7f15b394ace3f15864d4547fd866966"
