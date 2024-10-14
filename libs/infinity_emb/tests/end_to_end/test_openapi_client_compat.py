@@ -55,7 +55,15 @@ async def client():
 
 def url_to_base64(url, modality="image"):
     """small helper to convert url to base64 without server requiring access to the url"""
-    response = requests.get(url)
+    for i in range(3):
+        try:
+            response = requests.get(url)
+            if response.status_code == 200:
+                break
+        except Exception:
+            pass
+    else:
+        raise Exception(f"Failed to download {url}")
     response.raise_for_status()
     base64_encoded = base64.b64encode(response.content).decode("utf-8")
     mimetype = f"{modality}/{url.split('.')[-1]}"

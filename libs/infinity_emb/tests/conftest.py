@@ -4,6 +4,7 @@ import os
 import socket
 
 import pytest
+import requests
 from sentence_transformers import InputExample, util  # type: ignore
 
 pytest.DEFAULT_BERT_MODEL = "michaelfeil/bge-small-en-v1.5"
@@ -22,6 +23,28 @@ pytest.ENGINE_METHODS = ["embed", "image_embed", "classify", "rerank", "audio_em
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
+
+
+def _download(url: str, **kwargs) -> requests.Response:
+    for i in range(5):
+        try:
+            response = requests.get(url, **kwargs)
+            if response.status_code == 200:
+                return response
+        except Exception:
+            pass
+    else:
+        raise Exception(f"Failed to download {url}")
+
+
+@pytest.fixture(scope="function")
+def audio_sample() -> tuple[requests.Response, str]:
+    return (_download(pytest.AUDIO_SAMPLE_URL)), pytest.AUDIO_SAMPLE_URL  # type: ignore
+
+
+@pytest.fixture(scope="function")
+def image_sample() -> tuple[requests.Response, str]:
+    return (_download(pytest.IMAGE_SAMPLE_URL, stream=True)), pytest.IMAGE_SAMPLE_URL  # type: ignore
 
 
 def internet_available():
