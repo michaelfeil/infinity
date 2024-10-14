@@ -74,7 +74,7 @@ def sync_detailed(
 ) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
     r"""Embeddings
 
-     Encode Embeddings. Supports with multimodal inputs.
+     Encode Embeddings. Supports with multimodal inputs. Aligned with OpenAI Embeddings API.
 
     ## Running Text Embeddings
     ```python
@@ -94,7 +94,7 @@ def sync_detailed(
                 # can also be base64 encoded
             ],
             # set extra modality to image to process as image
-            \"infinity_extra_modality\": \"image\"
+            \"modality\": \"image\"
     )
     ```
 
@@ -120,7 +120,7 @@ def sync_detailed(
                 url, url_to_base64(url, \"audio\")
             ],
             # set extra modality to audio to process as audio
-            \"infinity_extra_modality\": \"audio\"
+            \"modality\": \"audio\"
         }
     )
     ```
@@ -134,7 +134,7 @@ def sync_detailed(
         input=[url_to_base64(url, \"audio\")],
         encoding_format= \"base64\",
         extra_body={
-            \"infinity_extra_modality\": \"audio\"
+            \"modality\": \"audio\"
         }
     )
 
@@ -143,7 +143,7 @@ def sync_detailed(
         input=[\"the sound of a beep\", \"the sound of a cat\"],
         encoding_format= \"base64\",
         extra_body={
-            \"infinity_extra_modality\": \"text\"
+            \"modality\": \"text\"
         }
     )
     ```
@@ -184,7 +184,7 @@ def sync(
 ) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
     r"""Embeddings
 
-     Encode Embeddings. Supports with multimodal inputs.
+     Encode Embeddings. Supports with multimodal inputs. Aligned with OpenAI Embeddings API.
 
     ## Running Text Embeddings
     ```python
@@ -204,7 +204,7 @@ def sync(
                 # can also be base64 encoded
             ],
             # set extra modality to image to process as image
-            \"infinity_extra_modality\": \"image\"
+            \"modality\": \"image\"
     )
     ```
 
@@ -230,7 +230,7 @@ def sync(
                 url, url_to_base64(url, \"audio\")
             ],
             # set extra modality to audio to process as audio
-            \"infinity_extra_modality\": \"audio\"
+            \"modality\": \"audio\"
         }
     )
     ```
@@ -244,7 +244,7 @@ def sync(
         input=[url_to_base64(url, \"audio\")],
         encoding_format= \"base64\",
         extra_body={
-            \"infinity_extra_modality\": \"audio\"
+            \"modality\": \"audio\"
         }
     )
 
@@ -253,7 +253,7 @@ def sync(
         input=[\"the sound of a beep\", \"the sound of a cat\"],
         encoding_format= \"base64\",
         extra_body={
-            \"infinity_extra_modality\": \"text\"
+            \"modality\": \"text\"
         }
     )
     ```
@@ -289,7 +289,7 @@ async def asyncio_detailed(
 ) -> Response[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
     r"""Embeddings
 
-     Encode Embeddings. Supports with multimodal inputs.
+     Encode Embeddings. Supports with multimodal inputs. Aligned with OpenAI Embeddings API.
 
     ## Running Text Embeddings
     ```python
@@ -309,7 +309,7 @@ async def asyncio_detailed(
                 # can also be base64 encoded
             ],
             # set extra modality to image to process as image
-            \"infinity_extra_modality\": \"image\"
+            \"modality\": \"image\"
     )
     ```
 
@@ -335,7 +335,7 @@ async def asyncio_detailed(
                 url, url_to_base64(url, \"audio\")
             ],
             # set extra modality to audio to process as audio
-            \"infinity_extra_modality\": \"audio\"
+            \"modality\": \"audio\"
         }
     )
     ```
@@ -349,7 +349,7 @@ async def asyncio_detailed(
         input=[url_to_base64(url, \"audio\")],
         encoding_format= \"base64\",
         extra_body={
-            \"infinity_extra_modality\": \"audio\"
+            \"modality\": \"audio\"
         }
     )
 
@@ -358,7 +358,7 @@ async def asyncio_detailed(
         input=[\"the sound of a beep\", \"the sound of a cat\"],
         encoding_format= \"base64\",
         extra_body={
-            \"infinity_extra_modality\": \"text\"
+            \"modality\": \"text\"
         }
     )
     ```
@@ -397,7 +397,7 @@ async def asyncio(
 ) -> Optional[Union[HTTPValidationError, OpenAIEmbeddingResult]]:
     r"""Embeddings
 
-     Encode Embeddings. Supports with multimodal inputs.
+     Encode Embeddings. Supports with multimodal inputs. Aligned with OpenAI Embeddings API.
 
     ## Running Text Embeddings
     ```python
@@ -417,7 +417,7 @@ async def asyncio(
                 # can also be base64 encoded
             ],
             # set extra modality to image to process as image
-            \"infinity_extra_modality\": \"image\"
+            \"modality\": \"image\"
     )
     ```
 
@@ -443,7 +443,7 @@ async def asyncio(
                 url, url_to_base64(url, \"audio\")
             ],
             # set extra modality to audio to process as audio
-            \"infinity_extra_modality\": \"audio\"
+            \"modality\": \"audio\"
         }
     )
     ```
@@ -457,7 +457,7 @@ async def asyncio(
         input=[url_to_base64(url, \"audio\")],
         encoding_format= \"base64\",
         extra_body={
-            \"infinity_extra_modality\": \"audio\"
+            \"modality\": \"audio\"
         }
     )
 
@@ -466,7 +466,7 @@ async def asyncio(
         input=[\"the sound of a beep\", \"the sound of a cat\"],
         encoding_format= \"base64\",
         extra_body={
-            \"infinity_extra_modality\": \"text\"
+            \"modality\": \"text\"
         }
     )
     ```

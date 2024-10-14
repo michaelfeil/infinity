@@ -6,7 +6,7 @@ Example is currently not tested.
 from modal import App, Image, build, enter, method
 import os
 
-INFINITY_VERSION = os.environ.get("INFINITY_VERSION", "0.0.46")
+INFINITY_VERSION = os.environ.get("INFINITY_VERSION", "0.0.63")
 image = Image.from_registry(f"michaelf34/infinity:{INFINITY_VERSION}").entrypoint([])
 
 app = App("infinity-functional", image=image)

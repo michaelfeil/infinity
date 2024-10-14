@@ -66,7 +66,7 @@ def sync_detailed(
 ) -> Response[Union[HTTPValidationError, ReRankResult]]:
     r"""Rerank
 
-     Rerank documents
+     Rerank documents. Aligned with Cohere API (https://docs.cohere.com/reference/rerank)
 
     ```python
     import requests
@@ -107,7 +107,7 @@ def sync(
 ) -> Optional[Union[HTTPValidationError, ReRankResult]]:
     r"""Rerank
 
-     Rerank documents
+     Rerank documents. Aligned with Cohere API (https://docs.cohere.com/reference/rerank)
 
     ```python
     import requests
@@ -143,7 +143,7 @@ async def asyncio_detailed(
 ) -> Response[Union[HTTPValidationError, ReRankResult]]:
     r"""Rerank
 
-     Rerank documents
+     Rerank documents. Aligned with Cohere API (https://docs.cohere.com/reference/rerank)
 
     ```python
     import requests
@@ -182,7 +182,7 @@ async def asyncio(
 ) -> Optional[Union[HTTPValidationError, ReRankResult]]:
     r"""Rerank
 
-     Rerank documents
+     Rerank documents. Aligned with Cohere API (https://docs.cohere.com/reference/rerank)
 
     ```python
     import requests

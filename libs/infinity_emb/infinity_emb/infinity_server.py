@@ -3,11 +3,13 @@
 
 import asyncio
 import os
+import re
 import signal
 import sys
 import time
+import uuid
 from contextlib import asynccontextmanager
-from typing import Any, List, Optional, Union
+from typing import Any, Optional, Union
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
@@ -36,9 +38,11 @@ from infinity_emb.primitives import (
     ImageCorruption,
     InferenceEngine,
     Modality,
+    ModelCapabilites,
     ModelNotDeployedError,
     PoolingMethod,
 )
+from infinity_emb.telemetry import PostHog, StartupTelemetry
 
 
 def create_server(
@@ -61,10 +65,32 @@ def create_server(
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from prometheus_fastapi_instrumentator import Instrumentator
 
+    def send_telemetry_start(
+        engine_args_list: list[EngineArgs],
+        capabilities_list: list[set[ModelCapabilites]],
+    ):
+        session_id = uuid.uuid4().hex
+        for arg, capabilities in zip(engine_args_list, capabilities_list):
+            PostHog.capture(
+                StartupTelemetry(
+                    engine_args=arg,
+                    num_engines=len(engine_args_list),
+                    capabilities=capabilities,
+                    session_id=session_id,
+                )
+            )
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         instrumentator.expose(app)  # type: ignore
         app.engine_array = AsyncEngineArray.from_args(engine_args_list)  # type: ignore
+        asyncio.create_task(
+            asyncio.to_thread(
+                send_telemetry_start,
+                engine_args_list,
+                [e.capabilities for e in app.engine_array],  # type: ignore
+            )
+        )
         # start in a threadpool
         await app.engine_array.astart()  # type: ignore
 
@@ -87,6 +113,7 @@ def create_server(
                 " -> exit ."
             )
             asyncio.create_task(kill_later(3))
+
         yield
         await app.engine_array.astop()  # type: ignore
         # shutdown!
@@ -204,8 +231,8 @@ def create_server(
         return engine
 
     def _resolve_mixed_input(
-        inputs: Union[DataURIorURL, List[DataURIorURL]]
-    ) -> List[Union[str, bytes]]:
+        inputs: Union[DataURIorURL, list[DataURIorURL]]
+    ) -> list[Union[str, bytes]]:
         if hasattr(inputs, "host"):
             # if it is a single url
             urls_or_bytes: list[Union[str, bytes]] = [str(inputs)]
@@ -713,6 +740,16 @@ if CHECK_TYPER.is_available:
             envvar=f"`{MANAGER.to_name(name)}`",
         )
 
+    def validate_url(path: str):
+        """
+        This regex matches:
+        - An empty string or A single '/'
+        - A string that starts with '/' and does not end with '/'
+        """
+        if re.match(r"^$|^/$|^/.*[^/]$", path):
+            return path
+        raise typer.BadParameter("Path must start with '/' and must not end with '/'")
+
     @tp.command("v2")
     def v2(
         # t
@@ -787,6 +824,7 @@ if CHECK_TYPER.is_available:
         ),
         url_prefix: str = typer.Option(
             **_construct("url_prefix"),
+            callback=validate_url,
             help="prefix for all routes of the FastAPI uvicorn server. Useful if you run behind a proxy / cascaded API.",
         ),
         redirect_slash: str = typer.Option(
@@ -902,6 +940,7 @@ if CHECK_TYPER.is_available:
         uvicorn.run(app, host=host, port=port, log_level=log_level.name)
 
     def cli():
+        CHECK_TYPER.mark_required()
         if len(sys.argv) == 1 or sys.argv[1] not in ["v1", "v2", "help", "--help"]:
             for _ in range(3):
                 logger.error(

@@ -5,7 +5,7 @@ import textwrap
 from base64 import b64decode as decode64
 from base64 import b64encode as encode64
 from dataclasses import dataclass
-from typing import Any, Dict, MutableMapping, Optional, Tuple, TypeVar, Union
+from typing import Any, MutableMapping, Optional, TypeVar, Union
 
 if sys.version_info >= (3, 11):
     from typing import Self
@@ -162,7 +162,7 @@ class DataURI(str):
     @property
     def _parse(
         self,
-    ) -> Tuple[Optional[str], Optional[str], Optional[str], bool, bytes]:
+    ) -> tuple[Optional[str], Optional[str], Optional[str], bool, bytes]:
         match = _DATA_URI_RE.match(self)
         if match is None:
             raise InvalidDataURI("Not a valid data URI: %r" % self)
@@ -228,7 +228,7 @@ class DataURI(str):
         return json_schema
 
     @classmethod
-    def __modify_schema__(cls, field_schema: Dict[str, Any]) -> None:
+    def __modify_schema__(cls, field_schema: dict[str, Any]) -> None:
         # __modify_schema__ should mutate the dict it receives in place,
         # the returned value will be ignored
         field_schema.update(

@@ -18,6 +18,7 @@ class RerankInput:
         return_documents (Union[Unset, bool]):  Default: False.
         raw_scores (Union[Unset, bool]):  Default: False.
         model (Union[Unset, str]):  Default: 'default/not-specified'.
+        top_n (Union[None, Unset, int]):
     """
 
     query: str
@@ -25,6 +26,7 @@ class RerankInput:
     return_documents: Union[Unset, bool] = False
     raw_scores: Union[Unset, bool] = False
     model: Union[Unset, str] = "default/not-specified"
+    top_n: Union[None, Unset, int] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -37,6 +39,12 @@ class RerankInput:
         raw_scores = self.raw_scores
 
         model = self.model
+
+        top_n: Union[None, Unset, int]
+        if isinstance(self.top_n, Unset):
+            top_n = UNSET
+        else:
+            top_n = self.top_n
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -52,6 +60,8 @@ class RerankInput:
             field_dict["raw_scores"] = raw_scores
         if model is not UNSET:
             field_dict["model"] = model
+        if top_n is not UNSET:
+            field_dict["top_n"] = top_n
 
         return field_dict
 
@@ -68,12 +78,22 @@ class RerankInput:
 
         model = d.pop("model", UNSET)
 
+        def _parse_top_n(data: object) -> Union[None, Unset, int]:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(Union[None, Unset, int], data)
+
+        top_n = _parse_top_n(d.pop("top_n", UNSET))
+
         rerank_input = cls(
             query=query,
             documents=documents,
             return_documents=return_documents,
             raw_scores=raw_scores,
             model=model,
+            top_n=top_n,
         )
 
         rerank_input.additional_properties = d
