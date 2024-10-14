@@ -12,7 +12,7 @@ from infinity_emb._optional_imports import (
     CHECK_TRANSFORMERS,
 )
 from infinity_emb.args import EngineArgs
-from infinity_emb.primitives import Dtype, Device
+from infinity_emb.primitives import Device, Dtype
 from infinity_emb.transformer.abstract import BaseClipVisionModel
 from infinity_emb.transformer.quantization.interface import (
     quant_embedding_decorator,
@@ -58,11 +58,11 @@ class TorchImageModel(BaseClipVisionModel):
         device = engine_args.device
         if device == Device.auto and torch.cuda.is_available():
             device = Device.cuda
-        if device == "cuda"  and engine_args.dtype in (Dtype.float16, Dtype.bfloat16):
+        if device == "cuda" and engine_args.dtype in (Dtype.float16, Dtype.bfloat16):
             extra_model_args["torch_dtype"] = engine_args.dtype.value
         elif device == "cuda" and engine_args.dtype in (Dtype.auto):
             extra_model_args["torch_dtype"] = "float16"
-        
+
         if self.is_colipali:
             model_cls = {
                 "ColPali": ColPali,
@@ -113,9 +113,7 @@ class TorchImageModel(BaseClipVisionModel):
                 self.model = self.model.half()
 
         if engine_args.dtype in (Dtype.int8, Dtype.fp8):
-            self.model = quant_interface(
-                self.model, engine_args.dtype, device=device
-            )
+            self.model = quant_interface(self.model, engine_args.dtype, device=device)
         self.engine_args = engine_args
 
         if engine_args.compile:
