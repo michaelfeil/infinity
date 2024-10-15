@@ -11,11 +11,20 @@ on:
         required: true
         type: string
         description: "Name of the image to build"
+      appendix_tag:
+        required: false
+        type: string
+        description: "Appendix tag to add to the image, e.g. `-cpu`"
       context:
         required: false
         type: string
         description: "Path to the build context"
         default: "./libs/infinity_emb"
+      platforms:
+        required: false
+        type: string
+        description: "Platforms to build for"
+        default: "linux/amd64,linux/arm64"
 
 env:
   TEST_TAG: ${{ inputs.image }}:test
@@ -78,6 +87,6 @@ jobs:
           # QEMU and base python image, for now build only for
           # linux/amd64 and linux/arm64
           # cache-from: type=registry,ref=${{ env.LATEST_TAG }}
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ env.LATEST_TAG }},${{ env.VERSION_TAG }}
+          platforms: ${{ inputs.platforms }}
+          tags: ${{ env.LATEST_TAG }}{{ inputs.appendix_tag }},${{ env.VERSION_TAG }}{{ inputs.appendix_tag }}
           push: true

@@ -1340,6 +1340,26 @@ MarkupSafe = ">=2.0"
 i18n = ["Babel (>=2.7)"]
 
 [[package]]
+name = "jinja2-cli"
+version = "0.8.2"
+description = "A CLI interface to Jinja2"
+optional = false
+python-versions = "*"
+files = [
+    {file = "jinja2-cli-0.8.2.tar.gz", hash = "sha256:a16bb1454111128e206f568c95938cdef5b5a139929378f72bb8cf6179e18e50"},
+    {file = "jinja2_cli-0.8.2-py2.py3-none-any.whl", hash = "sha256:b91715c79496beaddad790171e7258a87db21c1a0b6d2b15bca3ba44b74aac5d"},
+]
+
+[package.dependencies]
+jinja2 = "*"
+
+[package.extras]
+tests = ["flake8", "jinja2", "pytest"]
+toml = ["jinja2", "toml"]
+xml = ["jinja2", "xmltodict"]
+yaml = ["jinja2", "pyyaml"]
+
+[[package]]
 name = "jiter"
 version = "0.6.1"
 description = "Fast iterable JSON parser."
@@ -2270,13 +2290,13 @@ datalib = ["numpy (>=1)", "pandas (>=1.2.3)", "pandas-stubs (>=1.1.0.11)"]
 
 [[package]]
 name = "optimum"
-version = "1.17.1"
+version = "1.23.1"
 description = "Optimum Library is an extension of the Hugging Face Transformers library, providing a framework to integrate third-party libraries from Hardware Partners and interface with their specific functionality."
 optional = true
 python-versions = ">=3.7.0"
 files = [
-    {file = "optimum-1.17.1-py3-none-any.whl", hash = "sha256:508bc55db3c9434f4e8d5a30c39a46ac63c4cdb45bcc5a641b6c1c77cae88d23"},
-    {file = "optimum-1.17.1.tar.gz", hash = "sha256:e59af717e8691b11903fe2cfb8c6efd6f6798b0417f3e70d231e578a02448ceb"},
+    {file = "optimum-1.23.1-py3-none-any.whl", hash = "sha256:9a910601b665ac617ef14df99a44fe06e51040bcf945093f7b111d0e692fa5ac"},
+    {file = "optimum-1.23.1.tar.gz", hash = "sha256:bdef34c20d702a0856b0f35720287f561e55854e0fc4655512a99365ac480dde"},
 ]
 
 [package.dependencies]
@@ -2294,30 +2314,35 @@ packaging = "*"
 protobuf = {version = ">=3.20.1", optional = true, markers = "extra == \"onnxruntime\""}
 sympy = "*"
 torch = ">=1.11"
-transformers = {version = ">=4.26.0", extras = ["sentencepiece"]}
+transformers = [
+    {version = ">=4.29", extras = ["sentencepiece"]},
+    {version = "<4.46.0", optional = true, markers = "extra == \"onnxruntime\""},
+]
 
 [package.extras]
 amd = ["optimum-amd"]
 benchmark = ["evaluate (>=0.2.0)", "optuna", "scikit-learn", "seqeval", "torchvision", "tqdm"]
-dev = ["Pillow", "accelerate", "black (>=23.1,<24.0)", "diffusers (>=0.17.0)", "einops", "invisible-watermark", "parameterized", "pytest", "pytest-xdist", "requests", "rjieba", "ruff (==0.1.5)", "sacremoses", "scikit-learn", "timm", "torchaudio", "torchvision"]
+dev = ["Pillow", "accelerate", "black (>=23.1,<24.0)", "diffusers (>=0.17.0)", "einops", "invisible-watermark", "parameterized", "pytest (<=8.0.0)", "pytest-xdist", "requests", "rjieba", "ruff (==0.1.5)", "sacremoses", "scikit-learn", "timm", "torchaudio", "torchvision"]
 diffusers = ["diffusers"]
 doc-build = ["accelerate"]
-exporters = ["onnx", "onnxruntime", "timm"]
-exporters-gpu = ["onnx", "onnxruntime-gpu", "timm"]
-exporters-tf = ["h5py", "numpy (<1.24.0)", "onnx", "onnxruntime", "tensorflow (>=2.4,<=2.12.1)", "tf2onnx", "timm"]
+exporters = ["onnx", "onnxruntime", "timm", "transformers (<4.46.0)"]
+exporters-gpu = ["onnx", "onnxruntime-gpu", "timm", "transformers (<4.46.0)"]
+exporters-tf = ["datasets (<=2.16)", "h5py", "numpy (<1.24.0)", "onnx", "onnxruntime", "tensorflow (>=2.4,<=2.12.1)", "tf2onnx", "timm", "transformers[sentencepiece] (>=4.26,<4.38)"]
 furiosa = ["optimum-furiosa"]
 graphcore = ["optimum-graphcore"]
-habana = ["optimum-habana", "transformers (>=4.37.0,<4.38.0)"]
-intel = ["optimum-intel (>=1.15.0)"]
-neural-compressor = ["optimum-intel[neural-compressor] (>=1.15.0)"]
-neuron = ["optimum-neuron[neuron]"]
-neuronx = ["optimum-neuron[neuronx]"]
-nncf = ["optimum-intel[nncf] (>=1.15.0)"]
-onnxruntime = ["datasets (>=1.2.1)", "evaluate", "onnx", "onnxruntime (>=1.11.0)", "protobuf (>=3.20.1)"]
-onnxruntime-gpu = ["accelerate", "datasets (>=1.2.1)", "evaluate", "onnx", "onnxruntime-gpu (>=1.11.0)", "protobuf (>=3.20.1)"]
-openvino = ["optimum-intel[openvino] (>=1.15.0)"]
+habana = ["optimum-habana", "transformers (>=4.43.0,<4.44.0)"]
+intel = ["optimum-intel (>=1.18.0)"]
+ipex = ["optimum-intel[ipex] (>=1.18.0)"]
+neural-compressor = ["optimum-intel[neural-compressor] (>=1.18.0)"]
+neuron = ["optimum-neuron[neuron] (>=0.0.20)", "transformers (>=4.36.2,<4.42.0)"]
+neuronx = ["optimum-neuron[neuronx] (>=0.0.20)", "transformers (>=4.36.2,<4.42.0)"]
+nncf = ["optimum-intel[nncf] (>=1.18.0)"]
+onnxruntime = ["datasets (>=1.2.1)", "evaluate", "onnx", "onnxruntime (>=1.11.0)", "protobuf (>=3.20.1)", "transformers (<4.46.0)"]
+onnxruntime-gpu = ["accelerate", "datasets (>=1.2.1)", "evaluate", "onnx", "onnxruntime-gpu (>=1.11.0)", "protobuf (>=3.20.1)", "transformers (<4.46.0)"]
+openvino = ["optimum-intel[openvino] (>=1.18.0)"]
 quality = ["black (>=23.1,<24.0)", "ruff (==0.1.5)"]
-tests = ["Pillow", "accelerate", "diffusers (>=0.17.0)", "einops", "invisible-watermark", "parameterized", "pytest", "pytest-xdist", "requests", "rjieba", "sacremoses", "scikit-learn", "timm", "torchaudio", "torchvision"]
+quanto = ["optimum-quanto (>=0.2.4)"]
+tests = ["Pillow", "accelerate", "diffusers (>=0.17.0)", "einops", "invisible-watermark", "parameterized", "pytest (<=8.0.0)", "pytest-xdist", "requests", "rjieba", "sacremoses", "scikit-learn", "timm", "torchaudio", "torchvision"]
 
 [[package]]
 name = "orjson"
@@ -5054,7 +5079,7 @@ test = ["big-O", "importlib-resources", "jaraco.functools", "jaraco.itertools", 
 type = ["pytest-mypy"]
 
 [extras]
-all = ["colpali-engine", "ctranslate2", "diskcache", "einops", "fastapi", "optimum", "orjson", "pillow", "posthog", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "soundfile", "timm", "torch", "typer", "uvicorn"]
+all = ["colpali-engine", "ctranslate2", "diskcache", "einops", "fastapi", "optimum", "orjson", "pillow", "posthog", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "soundfile", "timm", "torch", "torchvision", "typer", "uvicorn"]
 audio = ["soundfile"]
 cache = ["diskcache"]
 ct2 = ["ctranslate2", "sentence-transformers", "torch", "transformers"]
@@ -5065,9 +5090,9 @@ optimum = ["optimum"]
 server = ["fastapi", "orjson", "posthog", "prometheus-fastapi-instrumentator", "pydantic", "rich", "typer", "uvicorn"]
 tensorrt = ["tensorrt"]
 torch = ["sentence-transformers", "torch"]
-vision = ["colpali-engine", "pillow", "timm"]
+vision = ["colpali-engine", "pillow", "timm", "torchvision"]
 
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<4"
-content-hash = "ddb2234dae1ebb22503ff767029fcaa8a7f15b394ace3f15864d4547fd866966"
+content-hash = "88abd4ba04370e75955d60208cbaa746d0de66247d123cfba0d8a5a4e79371dd"
