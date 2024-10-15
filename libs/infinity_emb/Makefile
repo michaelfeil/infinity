@@ -1,4 +1,4 @@
-.PHONY: all clean docs_build docs_clean docs_linkcheck api_docs_build api_docs_clean api_docs_linkcheck format lint test tests test_watch integration_tests docker_tests help extended_tests
+.PHONY: all clean docs_build docs_clean docs_linkcheck api_docs_build api_docs_clean api_docs_linkcheck format lint test tests test_watch template_docker integration_tests docker_tests help extended_tests
 
 # Default target executed when no arguments are given to make.
 all: help
@@ -41,6 +41,11 @@ lint lint_diff:
 format format_diff:
 	[ "$(PYTHON_FILES)" = "" ] || poetry run black $(PYTHON_FILES)
 	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff --select I --fix $(PYTHON_FILES)
+
+template_docker:
+	jinja2 Dockerfile.jinja2 docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
+	jinja2 Dockerfile.jinja2 docker.template.yaml --format=yaml -s cpu > Dockerfile.cpu_auto
+	jinja2 Dockerfile.jinja2 docker.template.yaml --format=yaml -s nvidia > Dockerfile.nvidia_auto
 
 poetry_check:
 	poetry check
