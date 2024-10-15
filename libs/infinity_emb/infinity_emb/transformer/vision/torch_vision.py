@@ -38,12 +38,25 @@ class TIMM(BaseTIMM):
     def __init__(self, *, engine_args: "EngineArgs"):
         CHECK_TORCH.mark_required()
         CHECK_TRANSFORMERS.mark_required()
-        config = AutoConfig.from_pretrained(
-            engine_args.model_name_or_path,
+        base_config = dict(
+            pretrained_model_name_or_path=engine_args.model_name_or_path,
             revision=engine_args.revision,
+            trust_remote_code=engine_args.trust_remote_code,
         )
+        config = AutoConfig.from_pretrained(**base_config)
         self.is_colipali = config.architectures[0] in IMAGE_COL_MODELS
         self.mock_image = Image.new("RGB", (16, 16), color="black")
+
+        extra_model_args = dict(**base_config)
+        extra_processor_args = dict(**base_config)
+        device = engine_args.device
+        if device == Device.auto and torch.cuda.is_available():
+            device = Device.cuda
+        if device == "cuda" and engine_args.dtype in (Dtype.float16, Dtype.bfloat16):
+            extra_model_args["torch_dtype"] = engine_args.dtype.value
+        elif device == "cuda" and engine_args.dtype in (Dtype.auto):
+            extra_model_args["torch_dtype"] = "float16"
+
         if self.is_colipali:
             CHECK_COLPALI_ENGINE.mark_required()
             from colpali_engine.models import (  # type: ignore
@@ -54,16 +67,7 @@ class TIMM(BaseTIMM):
                 ColQwen2,
                 ColQwen2Processor,
             )
-        extra_model_args = {}
-        device = engine_args.device
-        if device == Device.auto and torch.cuda.is_available():
-            device = Device.cuda
-        if device == "cuda" and engine_args.dtype in (Dtype.float16, Dtype.bfloat16):
-            extra_model_args["torch_dtype"] = engine_args.dtype.value
-        elif device == "cuda" and engine_args.dtype in (Dtype.auto):
-            extra_model_args["torch_dtype"] = "float16"
 
-        if self.is_colipali:
             model_cls = {
                 "ColPali": ColPali,
                 "ColQwen2": ColQwen2,
@@ -76,30 +80,20 @@ class TIMM(BaseTIMM):
             }[config.architectures[0]]
 
             self.model = model_cls.from_pretrained(
-                engine_args.model_name_or_path,
-                revision=engine_args.revision,
-                trust_remote_code=engine_args.trust_remote_code,
                 **extra_model_args,
             )
 
             self.processor = processor_cls.from_pretrained(
-                engine_args.model_name_or_path,
-                revision=engine_args.revision,
-                trust_remote_code=engine_args.trust_remote_code,
+                **extra_processor_args,
             )
         else:
             self.model = AutoModel.from_pretrained(
-                engine_args.model_name_or_path,
-                revision=engine_args.revision,
-                trust_remote_code=engine_args.trust_remote_code,
                 **extra_model_args
                 # attn_implementation="eager" if engine_args.bettertransformer else None,
             )
 
             self.processor = AutoProcessor.from_pretrained(
-                engine_args.model_name_or_path,
-                revision=engine_args.revision,
-                trust_remote_code=engine_args.trust_remote_code,
+                **extra_processor_args,
             )
             assert hasattr(
                 self.model, "get_text_features"
