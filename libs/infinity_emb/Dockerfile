@@ -36,14 +36,14 @@ RUN echo "Poetry version:" && poetry --version
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
 RUN true
-RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}" --no-root --without lint,test && poetry cache clear pypi --all
+RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all
 COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package
-RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"  --without lint,test && poetry cache clear pypi --all
+RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all
 
 FROM builder as testing
 # install lint and test dependencies
-RUN poetry install --no-interaction --no-ansi --extras "${EXTRAS}"  --with lint,test && poetry cache clear pypi --all
+RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --with lint,test && poetry cache clear pypi --all
 # lint 
 RUN poetry run ruff .
 RUN poetry run black --check .
