@@ -29,7 +29,7 @@ jobs:
       dockerfile: libs/infinity_emb/Dockerfile.cpu_auto
       image: michaelf34/infinity
       appendix_tag: "-cpu"
-      platforms: "linux/amd64,linux/arm64"
+      platforms: "linux/amd64"
     secrets: inherit
   
   # docker-container-push-amd:

@@ -13,11 +13,12 @@ ENV PYTHONUNBUFFERED=1 \
     \
     # make poetry create the virtual environment in the project's root
     # it gets named `.venv`
-    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_VIRTUALENVS_CREATE="{{poetry_virtualenvs_create | default('true')}}" \
+    POETRY_VIRTUALENVS_IN_PROJECT="{{poetry_virtualenvs_in_project | default('true')}}" \
     # do not ask any interactive question
     POETRY_NO_INTERACTION=1 \
     EXTRAS="all" \
-    PYTHON="python3.11"
+    PYTHON="{{python_version | default('python3.11')}}"
 RUN apt-get update && apt-get install build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl -y 
 WORKDIR /app
 
@@ -35,7 +36,7 @@ RUN echo "Poetry version:" && poetry --version
 # Copy the rest of the app source code (this layer will be invalidated and rebuilt whenever the source code changes)
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
-RUN {{pyproject_sed}}
+{{pyproject_sed | default('#')}}
 RUN {{main_install}} && poetry cache clear pypi --all
 COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package

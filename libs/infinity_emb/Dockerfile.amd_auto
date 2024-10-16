@@ -13,11 +13,12 @@ ENV PYTHONUNBUFFERED=1 \
     \
     # make poetry create the virtual environment in the project's root
     # it gets named `.venv`
-    POETRY_VIRTUALENVS_IN_PROJECT=true \
+    POETRY_VIRTUALENVS_CREATE="false" \
+    POETRY_VIRTUALENVS_IN_PROJECT="false" \
     # do not ask any interactive question
     POETRY_NO_INTERACTION=1 \
     EXTRAS="all" \
-    PYTHON="python3.11"
+    PYTHON="python3.10"
 RUN apt-get update && apt-get install build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl -y 
 WORKDIR /app
 
@@ -35,7 +36,7 @@ RUN echo "Poetry version:" && poetry --version
 # Copy the rest of the app source code (this layer will be invalidated and rebuilt whenever the source code changes)
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
-RUN sed -i 's|"pypi"|"pytorch_rocm"|' pyproject.toml && sed -i 's|torch = "2.4.1"|#|' pyproject.toml  && rm poetry.lock
+RUN sed -i 's|"pypi"|"pytorch_rocm"|' pyproject.toml && sed -i 's|torch = "2.4.1"|torch = "2.4.1"|' pyproject.toml && sed -i 's|torchvision = {version = "\*"|torchvision = {version = "0.19.1"|' pyproject.toml && rm poetry.lock
 RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all
 COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package
