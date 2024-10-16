@@ -14,23 +14,30 @@ T = TypeVar("T", bound="EmbeddingObject")
 class EmbeddingObject:
     """
     Attributes:
-        embedding (Union[File, List[float]]):
+        embedding (Union[File, List[List[float]], List[float]]):
         index (int):
         object_ (Union[Unset, EmbeddingObjectObject]):  Default: EmbeddingObjectObject.EMBEDDING.
     """
 
-    embedding: Union[File, List[float]]
+    embedding: Union[File, List[List[float]], List[float]]
     index: int
     object_: Union[Unset, EmbeddingObjectObject] = EmbeddingObjectObject.EMBEDDING
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        embedding: Union[FileJsonType, List[float]]
+        embedding: Union[FileJsonType, List[List[float]], List[float]]
         if isinstance(self.embedding, list):
             embedding = self.embedding
 
-        else:
+        elif isinstance(self.embedding, File):
             embedding = self.embedding.to_tuple()
+
+        else:
+            embedding = []
+            for embedding_type_2_item_data in self.embedding:
+                embedding_type_2_item = embedding_type_2_item_data
+
+                embedding.append(embedding_type_2_item)
 
         index = self.index
 
@@ -55,7 +62,7 @@ class EmbeddingObject:
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
         d = src_dict.copy()
 
-        def _parse_embedding(data: object) -> Union[File, List[float]]:
+        def _parse_embedding(data: object) -> Union[File, List[List[float]], List[float]]:
             try:
                 if not isinstance(data, list):
                     raise TypeError()
@@ -64,11 +71,24 @@ class EmbeddingObject:
                 return embedding_type_0
             except:  # noqa: E722
                 pass
-            if not isinstance(data, bytes):
-                raise TypeError()
-            embedding_type_1 = File(payload=BytesIO(data))
+            try:
+                if not isinstance(data, bytes):
+                    raise TypeError()
+                embedding_type_1 = File(payload=BytesIO(data))
 
-            return embedding_type_1
+                return embedding_type_1
+            except:  # noqa: E722
+                pass
+            if not isinstance(data, list):
+                raise TypeError()
+            embedding_type_2 = []
+            _embedding_type_2 = data
+            for embedding_type_2_item_data in _embedding_type_2:
+                embedding_type_2_item = cast(List[float], embedding_type_2_item_data)
+
+                embedding_type_2.append(embedding_type_2_item)
+
+            return embedding_type_2
 
         embedding = _parse_embedding(d.pop("embedding"))
 
