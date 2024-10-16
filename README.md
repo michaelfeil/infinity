@@ -25,10 +25,10 @@
 
 ## Why Infinity
 * **Deploy any model from HuggingFace**: deploy any embedding, reranking, clip and sentence-transformer model from [HuggingFace]( https://huggingface.co/models?other=text-embeddings-inference&sort=trending)
-* **Fast inference backends**: The inference server is built on top of [torch](https://github.com/pytorch/pytorch), [optimum (ONNX/TensorRT)](https://huggingface.co/docs/optimum/index) and [CTranslate2](https://github.com/OpenNMT/CTranslate2), using FlashAttention to get the most out of your **NVIDIA CUDA**, **AMD ROCM**, **CPU**, **AWS INF2** or **APPLE MPS** accelerator. Infinity uses dynamic batching and tokenization dedicated in worker threads.
+* **Fast inference backends**: The inference server is built on top of [torch](https://github.com/pytorch/pytorch), [optimum (ONNX/TensorRT)](https://huggingface.co/docs/optimum/index) and [CTranslate2](https://github.com/OpenNMT/CTranslate2), using FlashAttention to get the most out of your **NVIDIA CUDA**, **AMD ROCM**, **CPU**, **AWS INF2** or **APPLE MPS** accelerator. Infinity uses dynamic batching and tokenization dedicated to worker threads.
 * **Multi-modal and multi-model**: Mix-and-match multiple models. Infinity orchestrates them.
-* **Tested implementation**: Unit and end-to-end tested. Embeddings via infinity are correctly embedded. Lets API users create embeddings till infinity and beyond.
-* **Easy to use**: Built on [FastAPI](https://fastapi.tiangolo.com/). Infinity CLI v2 allows launching of all arguments via Environment variable or argument. OpenAPI aligned to [OpenAI's API specs](https://platform.openai.com/docs/guides/embeddings/what-are-embeddings). View the docs at [https:///michaelfeil.github.io/infinity](https:///michaelfeil.github.io/infinity) on how to get started.
+* **Tested implementation**: Unit and end-to-end tested. Embeddings via infinity are correctly embedded. Let API users create embeddings to infinity and beyond.
+* **Easy to use**: Built on [FastAPI](https://fastapi.tiangolo.com/). Infinity CLI v2 allows the launching of all arguments via Environment variable or argument. OpenAPI aligned to [OpenAI's API specs](https://platform.openai.com/docs/guides/embeddings/what-are-embeddings). View the docs at [https:///michaelfeil.github.io/infinity](https:///michaelfeil.github.io/infinity) on how to get started.
 
 <p align="center">
   <a href="https://github.com/runpod-workers/worker-infinity-embedding"><img src="https://github.com/user-attachments/assets/24f1906d-31b8-4e16-a479-1382cbdea046" alt="Logo Runpod" width="50"/></a>
@@ -59,7 +59,7 @@
 ```bash
 pip install infinity-emb[all]
 ```
-After your pip install, with your venv active, you can run the CLI directly.
+After your pip installs, with your Venv active, you can run the CLI directly.
 
 ```bash
 infinity_emb v2 --model-id BAAI/bge-small-en-v1.5
@@ -97,7 +97,7 @@ In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sen
 ### Launch it via the Python API
 
 Instead of the cli & RestAPI use infinity's interface via the Python API. 
-This gives you most flexibility. The Python API builds on `asyncio` with its `await/async` features, to allow concurrent processing of requests. Arguments of the CLI are also available via Python.
+This gives you the most flexibility. The Python API builds on `asyncio` with its `await/async` features, to allow concurrent processing of requests. Arguments of the CLI are also available via Python.
 
 ```python
 import asyncio
@@ -131,8 +131,8 @@ Example embedding models:
 ### Reranking
 
 Reranking gives you a score for similarity between a query and multiple documents. 
-Use it in conjunction with a VectorDB+Embeddings, or as standalone for small amount of documents.
-Please select a model from huggingface that is a AutoModelForSequenceClassification with one class classification.
+Use it in conjunction with VectorDB+Embeddings, or as a standalone for a small amount of documents.
+Please select a model from huggingface that is an AutoModelForSequenceClassification with one class classification.
 
 ```python
 import asyncio
@@ -200,7 +200,7 @@ Example models:
 
 ### CLAP models
 
-CLAP models are able to encode audio and text at the same time. 
+CLAP models can encode audio and text at the same time. 
 
 ```python
 import asyncio
@@ -283,7 +283,7 @@ Example models:
   Embedding models can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. 
   And it also can be used in vector databases for LLMs. 
   
-  The most known architecture are encoder-only transformers such as BERT, and most popular implementation include [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/).
+  The most known architecture is encoder-only transformers such as BERT, and the most popular implementation includes [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/).
 </details>
 
 <details>
@@ -308,14 +308,14 @@ Example models:
   <summary>Launching multiple models</summary>
   
   Since infinity_emb>=0.0.34, you can use cli `v2` method to launch multiple models at the same time.
-  Checkout `infinity_emb v2 --help` for all args.
+  Check out `infinity_emb v2 --help` for all args.
      
 </details>
 
 <details>
   <summary>Using Langchain with Infinity</summary>
   
-  Infinity has a official integration into `pip install langchain>=0.342`. 
+  Infinity has an official integration into `pip install langchain>=0.342`. 
   You can find more documentation on that here:
   https://python.langchain.com/docs/integrations/text_embedding/infinity
 
