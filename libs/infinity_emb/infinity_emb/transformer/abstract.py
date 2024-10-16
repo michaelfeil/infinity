@@ -120,7 +120,7 @@ class BaseTIMM(BaseEmbedder):  # Inherit from ABC(Abstract base class)
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> tuple[float, float, str]:
         sample_text = ["warm " * n_tokens] * max(1, batch_size // 2)
-        sample_image = [Image.new("RGB", (100, 1000), (255, 255, 255))] * max(1, batch_size // 2)  # type: ignore
+        sample_image = [Image.new("RGB", (128, 128), (255, 255, 255))] * max(1, batch_size // 2)  # type: ignore
         inp = [
             # TODO: warmup for images
             ImageInner(content=ImageSingle(image=img), future=None)  # type: ignore

@@ -82,8 +82,8 @@ def test_colpali(dtype, image_sample):
         images = [
             image,
             image,
-            Image.new("RGB", (32, 32), color="white"),
-            Image.new("RGB", (16, 16), color="black"),
+            Image.new("RGB", (128, 128), color="white"),
+            Image.new("RGB", (128, 128), color="black"),
         ]
         queries = [
             "a photo of a cat",

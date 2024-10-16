@@ -45,7 +45,7 @@ class TIMM(BaseTIMM):
         )
         config = AutoConfig.from_pretrained(**base_config)
         self.is_colipali = config.architectures[0] in IMAGE_COL_MODELS
-        self.mock_image = Image.new("RGB", (16, 16), color="black")
+        self.mock_image = Image.new("RGB", (128, 128), color="black")
 
         extra_model_args = dict(**base_config)
         extra_processor_args = dict(**base_config)
