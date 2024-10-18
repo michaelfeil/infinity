@@ -43,8 +43,8 @@ $ infinity_emb v2 --help
 │                                                                                       [env var:                      │
 │                                                                                       `INFINITY_TRUST_REMOTE_CODE`]  │
 │                                                                                       [default: trust-remote-code]   │
-│ --engine                                               [torch|ctranslate2|optimum|de  Which backend to use. `torch`  │
-│                                                        bugengine]                     uses Pytorch GPU/CPU, optimum  │
+│ --engine                                               [torch|ctranslate2|optimum|ne  Which backend to use. `torch`  │
+│                                                        uron|debugengine]              uses Pytorch GPU/CPU, optimum  │
 │                                                                                       uses ONNX on                   │
 │                                                                                       GPU/CPU/NVIDIA-TensorRT,       │
 │                                                                                       `CTranslate2` uses             │
