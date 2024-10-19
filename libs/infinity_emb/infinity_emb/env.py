@@ -40,7 +40,7 @@ class __Infinity_EnvManager:
         if "LOG_LEVEL" in message:
             return  # recursion
         elif self.log_level in {"debug", "trace"}:
-            # sending to info to avoid setting not beeing set yet
+            # sending to info to avoid setting not being set yet
             if "API_KEY" in message:
                 logger.info("INFINITY_API_KEY=anonymized_for_logging_purposes")
                 logger.info(f"INFINITY_LOG_LEVEL={MANAGER.log_level}")
