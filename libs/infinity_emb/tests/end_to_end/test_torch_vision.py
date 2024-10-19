@@ -213,7 +213,6 @@ async def test_vision_fail(client):
     )
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-
     response_unsupported = await client.post(
         f"{PREFIX}/classify",
         json={"model": MODEL, "input": ["test"]},
