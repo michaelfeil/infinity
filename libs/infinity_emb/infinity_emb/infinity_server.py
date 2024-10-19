@@ -9,7 +9,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, TYPE_CHECKING
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
@@ -21,7 +21,6 @@ from infinity_emb.fastapi_schemas.pymodels import (
     AudioEmbeddingInput,
     ClassifyInput,
     ClassifyResult,
-    DataURIorURL,
     ImageEmbeddingInput,
     MultiModalOpenAIEmbedding,
     OpenAIEmbeddingResult,
@@ -43,6 +42,9 @@ from infinity_emb.primitives import (
     PoolingMethod,
 )
 from infinity_emb.telemetry import PostHog, StartupTelemetry, telemetry_log_info
+
+if TYPE_CHECKING:
+    from infinity_emb.fastapi_schemas.pymodels import DataURIorURL
 
 
 def create_server(
@@ -232,7 +234,7 @@ def create_server(
         return engine
 
     def _resolve_mixed_input(
-        inputs: Union[DataURIorURL, list[DataURIorURL]],
+        inputs: Union["DataURIorURL", list["DataURIorURL"]],
     ) -> list[Union[str, bytes]]:
         if hasattr(inputs, "host"):
             # if it is a single url

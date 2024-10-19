@@ -187,9 +187,6 @@ async def test_audio_base64_fail(client):
 
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-
-@pytest.mark.anyio
-async def test_audio_fail(client):
     for route in [f"{PREFIX}/embeddings_audio", f"{PREFIX}/embeddings"]:
         audio_url = "https://www.google.com/404"
 
@@ -203,9 +200,6 @@ async def test_audio_fail(client):
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-
-@pytest.mark.anyio
-async def test_audio_empty(client):
     audio_url_empty = []
 
     response_empty = await client.post(
@@ -218,9 +212,6 @@ async def test_audio_empty(client):
     )
     assert response_empty.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-
-@pytest.mark.anyio
-async def test_unsupported_endpoints(client):
     response_unsupported = await client.post(
         f"{PREFIX}/classify",
         json={"model": MODEL, "input": ["test"]},

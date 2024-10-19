@@ -206,9 +206,6 @@ async def test_vision_fail(client):
     )
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-
-@pytest.mark.anyio
-async def test_vision_empty(client):
     image_url_empty = []
     response = await client.post(
         f"{PREFIX}/embeddings_image",
@@ -217,8 +214,6 @@ async def test_vision_empty(client):
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
 
-@pytest.mark.anyio
-async def test_unsupported_endpoints(client):
     response_unsupported = await client.post(
         f"{PREFIX}/classify",
         json={"model": MODEL, "input": ["test"]},
