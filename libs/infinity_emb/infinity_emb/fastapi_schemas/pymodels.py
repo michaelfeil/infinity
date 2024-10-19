@@ -81,6 +81,8 @@ else:
     def conlist():  # type: ignore
         pass
 
+    DataURIorURL = None  # type: ignore
+
 
 class _Usage(BaseModel):
     prompt_tokens: int
