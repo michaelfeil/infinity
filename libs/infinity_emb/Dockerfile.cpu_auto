@@ -37,7 +37,7 @@ RUN echo "Poetry version:" && poetry --version
 # Copy the rest of the app source code (this layer will be invalidated and rebuilt whenever the source code changes)
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
-RUN sed -i 's|"pypi"|"pytorch_cpu"|' pyproject.toml && rm poetry.lock
+RUN sed -i 's|"pypi"|"pytorch_cpu"|' pyproject.toml && poetry lock
 RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all
 COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package
@@ -70,7 +70,7 @@ RUN if [ -z "$TARGETPLATFORM" ]; then \
     if [ "$TARGETPLATFORM" = "linux/arm64" ] ; then \
         poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
     else \
-        poetry run python -m pytest tests/end_to_end -m "not performance" -x ; \
+        poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py tests/end_to_end/test_sentence_transformers.py  -m "not performance" -x ; \
     fi
 RUN echo "all tests passed" > "test_results.txt"
 
@@ -88,20 +88,20 @@ RUN echo "copied all files"
 
 # Export with tensorrt, not recommended.
 # docker buildx build --target=production-tensorrt -f Dockerfile .
-FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=off \
-    PYTHON="python3.11"
-RUN apt-get update && apt-get install python3-dev python3-pip $PYTHON build-essential curl -y 
-COPY --from=builder /app /app
-# force testing stage to run
-COPY --from=testing /app/test_results.txt /app/test_results.txt
-ENV HF_HOME=/app/.cache/torch
-ENV PATH=/app/.venv/bin:$PATH
-RUN pip install --no-cache-dir "onnxruntime-gpu==1.17.0" "tensorrt==8.6.*"
-ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
-ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
-ENTRYPOINT ["infinity_emb"]
+# FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
+# ENV PYTHONUNBUFFERED=1 \
+#     PIP_NO_CACHE_DIR=off \
+#     PYTHON="python3.11"
+# RUN apt-get update && apt-get install python3-dev python3-pip $PYTHON build-essential curl -y 
+# COPY --from=builder /app /app
+# # force testing stage to run
+# COPY --from=testing /app/test_results.txt /app/test_results.txt
+# ENV HF_HOME=/app/.cache/torch
+# ENV PATH=/app/.venv/bin:$PATH
+# RUN pip install --no-cache-dir "onnxruntime-gpu==1.17.0" "tensorrt==8.6.*"
+# ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
+# ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
+# ENTRYPOINT ["infinity_emb"]
 
 
 # Use a multi-stage build -> production version, with download

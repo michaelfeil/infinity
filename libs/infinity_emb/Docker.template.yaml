@@ -7,7 +7,7 @@ nvidia:
 cpu:
   # 2. command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s cpu > Dockerfile.cpu_auto
   base_image: 'ubuntu:22.04' 
-  pyproject_sed: RUN sed -i 's|"pypi"|"pytorch_cpu"|' pyproject.toml && rm poetry.lock 
+  pyproject_sed: RUN sed -i 's|"pypi"|"pytorch_cpu"|' pyproject.toml && poetry lock
 
 amd:
   # 2 . command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
@@ -15,7 +15,7 @@ amd:
   pyproject_sed: |
     RUN sed -i 's|"pypi"|"pytorch_rocm"|' pyproject.toml 
     RUN sed -i 's|torch = "2.4.1"|torch = "2.4.1"|' pyproject.toml 
-    RUN sed -i 's|torchvision = {version = "\*"|torchvision = {version = "0.19.1"|' pyproject.toml && rm poetry.lock 
+    RUN sed -i 's|torchvision = {version = "\*"|torchvision = {version = "0.19.1"|' pyproject.toml && poetry lock
   poetry_virtualenvs_create: "false"
   poetry_virtualenvs_in_project: "false"
   poetry_extras: "all onnxruntime-gpu"
