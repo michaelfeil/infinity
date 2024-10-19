@@ -31,9 +31,7 @@ async def resolve_audio(
             #
             audio_bytes = io.BytesIO(downloaded)
         except Exception as e:
-            raise AudioCorruption(
-                f"Error downloading audio from {audio}. \nError msg: {str(e)}"
-            )
+            raise AudioCorruption(f"Error downloading audio from {audio}. \nError msg: {str(e)}")
 
     try:
         data, rate = sf.read(audio_bytes)
@@ -57,10 +55,7 @@ async def resolve_audios(
     async with aiohttp.ClientSession(trust_env=True) as session:
         try:
             resolved_audios = await asyncio.gather(
-                *[
-                    resolve_audio(audio, allowed_sampling_rate, session)
-                    for audio in audio_urls
-                ]
+                *[resolve_audio(audio, allowed_sampling_rate, session) for audio in audio_urls]
             )
         except Exception as e:
             raise AudioCorruption(f"Failed to resolve audio: {e}")

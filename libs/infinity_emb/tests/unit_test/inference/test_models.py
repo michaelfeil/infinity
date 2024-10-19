@@ -42,9 +42,7 @@ def _pretrained_model_score(
                 bettertransformer=not torch.backends.mps.is_available(),
             )
         )
-    evaluator = EmbeddingSimilarityEvaluator.from_input_examples(
-        test_samples, name="sts-test"
-    )
+    evaluator = EmbeddingSimilarityEvaluator.from_input_examples(test_samples, name="sts-test")
 
     score = model.evaluate(evaluator)["sts-test_spearman_cosine"] * 100  # type: ignore
     print(model_name, "{:.2f} vs. exp: {:.2f}".format(score, expected_score))

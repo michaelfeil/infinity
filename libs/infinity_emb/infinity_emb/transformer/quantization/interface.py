@@ -65,9 +65,7 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
         logger.info("using dtype=fp8")
         swap_linear_with_float8_linear(model, Float8DynamicLinear)
     else:
-        raise ValueError(
-            f"Quantization is not supported on {device} with dtype {dtype}."
-        )
+        raise ValueError(f"Quantization is not supported on {device} with dtype {dtype}.")
     return model
 
 
@@ -115,14 +113,10 @@ def _create_statistics_embedding(model: "BaseEmbedder", percentile=100) -> np.nd
         )
     dataset = _get_text_calibration_dataset()
 
-    logger.info(
-        f"Creating calibration dataset for model using {len(dataset)} sentences."
-    )
+    logger.info(f"Creating calibration dataset for model using {len(dataset)} sentences.")
 
     calibration_embeddings = np.concatenate(list(_encode(model, dataset)))
-    assert (
-        percentile > 50 and percentile <= 100
-    ), "percentile should be between 50 and 100"
+    assert percentile > 50 and percentile <= 100, "percentile should be between 50 and 100"
     return np.percentile(calibration_embeddings, [100 - percentile, percentile], axis=0)
 
 

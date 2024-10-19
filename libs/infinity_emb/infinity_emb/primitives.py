@@ -76,9 +76,7 @@ class EnumType(str, enum.Enum):
 
         Allows for type hinting of the enum names.
         """
-        return enum.Enum(
-            cls.__name__ + "__names", {k: k for k in cls.__members__.keys()}
-        )
+        return enum.Enum(cls.__name__ + "__names", {k: k for k in cls.__members__.keys()})
 
     @staticmethod
     def default_value() -> str:
@@ -372,9 +370,7 @@ class AudioInner(AbstractInner):
         return self.embedding
 
 
-QueueItemInner = Union[
-    EmbeddingInner, ReRankInner, PredictInner, ImageInner, AudioInner
-]
+QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner, ImageInner, AudioInner]
 
 _type_to_inner_item_map = {
     EmbeddingSingle: EmbeddingInner,

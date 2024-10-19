@@ -112,10 +112,7 @@ def create_server(
                 await asyncio.sleep(seconds)
                 os.kill(os.getpid(), signal.SIGINT)
 
-            logger.info(
-                f"Preloaded configuration successfully. {engine_args_list} "
-                " -> exit ."
-            )
+            logger.info(f"Preloaded configuration successfully. {engine_args_list} " " -> exit .")
             asyncio.create_task(kill_later(3))
 
         yield
@@ -235,7 +232,7 @@ def create_server(
         return engine
 
     def _resolve_mixed_input(
-        inputs: Union[DataURIorURL, list[DataURIorURL]]
+        inputs: Union[DataURIorURL, list[DataURIorURL]],
     ) -> list[Union[str, bytes]]:
         if hasattr(inputs, "host"):
             # if it is a single url
@@ -245,7 +242,8 @@ def create_server(
         else:
             # is list, resolve to bytes or url
             urls_or_bytes: list[Union[str, bytes]] = [  # type: ignore
-                str(d) if hasattr(d, "host") else d.data for d in inputs  # type: ignore
+                str(d) if hasattr(d, "host") else d.data
+                for d in inputs  # type: ignore
             ]
         return urls_or_bytes
 
@@ -650,10 +648,7 @@ def typer_option_resolve(*args):
             if hasattr(args[0], "default") and hasattr(args[0], "envvar")
             else args[0]
         )
-    return (
-        a.default if (hasattr(a, "default") and hasattr(a, "envvar")) else a
-        for a in args
-    )
+    return (a.default if (hasattr(a, "default") and hasattr(a, "envvar")) else a for a in args)
 
 
 # CLI
@@ -694,9 +689,7 @@ if CHECK_TYPER.is_available:
     ):
         """Infinity API ♾️  cli v1 - deprecated, consider use cli v2 via `infinity_emb v2`."""
         if api_key:
-            raise ValueError(
-                "api_key is not supported in `v1`. Please migrate to `v2`."
-            )
+            raise ValueError("api_key is not supported in `v1`. Please migrate to `v2`.")
         if not (
             embedding_dtype == EmbeddingDtype.float32
             or embedding_dtype == EmbeddingDtype.default_value()
@@ -820,12 +813,8 @@ if CHECK_TYPER.is_available:
             **_construct("preload_only"),
             help="If true, only downloads models and verifies setup, then exit. Recommended for pre-caching the download in a Dockerfile.",
         ),
-        host: str = typer.Option(
-            **_construct("host"), help="host for the FastAPI uvicorn server"
-        ),
-        port: int = typer.Option(
-            **_construct("port"), help="port for the FastAPI uvicorn server"
-        ),
+        host: str = typer.Option(**_construct("host"), help="host for the FastAPI uvicorn server"),
+        port: int = typer.Option(**_construct("port"), help="port for the FastAPI uvicorn server"),
         url_prefix: str = typer.Option(
             **_construct("url_prefix"),
             callback=validate_url,
@@ -834,7 +823,9 @@ if CHECK_TYPER.is_available:
         redirect_slash: str = typer.Option(
             **_construct("redirect_slash"), help="where to redirect `/` requests to."
         ),
-        log_level: UVICORN_LOG_LEVELS = typer.Option(**_construct("log_level"), help="console log level."),  # type: ignore
+        log_level: UVICORN_LOG_LEVELS = typer.Option(
+            **_construct("log_level"), help="console log level."
+        ),  # type: ignore
         permissive_cors: bool = typer.Option(
             **_construct("permissive_cors"), help="whether to allow permissive cors."
         ),

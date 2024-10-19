@@ -32,9 +32,9 @@ def model_base() -> pipeline:
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(
-        app=app, base_url="http://test", timeout=20
-    ) as client, LifespanManager(app):
+    async with AsyncClient(app=app, base_url="http://test", timeout=20) as client, LifespanManager(
+        app
+    ):
         yield client
 
 

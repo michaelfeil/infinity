@@ -22,14 +22,10 @@ def test_sentence_transformer_equals_fastembed(
     ),
     model_name="BAAI/bge-small-en-v1.5",
 ) -> None:
-    model_st = SentenceTransformerPatched(
-        engine_args=EngineArgs(model_name_or_path=model_name)
-    )
+    model_st = SentenceTransformerPatched(engine_args=EngineArgs(model_name_or_path=model_name))
     model_fastembed = TextEmbedding(model_name)
 
-    embedding_st = model_st.encode_post(
-        model_st.encode_core(model_st.encode_pre([text]))
-    )
+    embedding_st = model_st.encode_post(model_st.encode_core(model_st.encode_pre([text])))
     embedding_fast = np.array(list(model_fastembed.embed(documents=[text])))
 
     assert embedding_fast.shape == embedding_st.shape

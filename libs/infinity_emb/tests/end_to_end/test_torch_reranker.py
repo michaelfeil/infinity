@@ -35,9 +35,9 @@ def model_base() -> pipeline:
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(
-        app=app, base_url="http://test", timeout=20
-    ) as client, LifespanManager(app):
+    async with AsyncClient(app=app, base_url="http://test", timeout=20) as client, LifespanManager(
+        app
+    ):
         yield client
 
 
@@ -87,9 +87,7 @@ async def test_reranker(client, model_base, helpers):
     rdata_results = rdata["results"]
     rdata_results = sorted(rdata_results, key=lambda x: x["index"], reverse=False)
 
-    predictions = [
-        model_base.predict({"text": query, "text_pair": doc}) for doc in documents
-    ]
+    predictions = [model_base.predict({"text": query, "text_pair": doc}) for doc in documents]
 
     assert len(rdata_results) == len(predictions)
     for i, pred in enumerate(predictions):
@@ -98,9 +96,7 @@ async def test_reranker(client, model_base, helpers):
 
 @pytest.mark.anyio
 async def test_reranker_top_n(client):
-    async def test_inner(
-        client, query: str, documents: list[str], return_docs: bool, top_n: int
-    ):
+    async def test_inner(client, query: str, documents: list[str], return_docs: bool, top_n: int):
         response = await client.post(
             f"{PREFIX}/rerank",
             json={
@@ -119,10 +115,7 @@ async def test_reranker_top_n(client):
             "The Eiffel Tower is located in Paris, France"
         )
         if return_docs:
-            assert (
-                rdata_results[0]["document"]
-                == "The Eiffel Tower is located in Paris, France"
-            )
+            assert rdata_results[0]["document"] == "The Eiffel Tower is located in Paris, France"
 
         return True
 

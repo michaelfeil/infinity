@@ -28,9 +28,7 @@ if TYPE_CHECKING:
     from infinity_emb.args import EngineArgs
 
 
-def to_bettertransformer(
-    model: "PreTrainedModel", engine_args: "EngineArgs", logger: "Logger"
-):
+def to_bettertransformer(model: "PreTrainedModel", engine_args: "EngineArgs", logger: "Logger"):
     if not engine_args.bettertransformer:
         return model
 

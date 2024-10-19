@@ -197,9 +197,10 @@ class OpenAIEmbeddingResult(BaseModel):
                 raise ValueError(
                     f"model {engine_args.served_model_name} does not support base64 encoding, as it uses uint8-bitpacking with {engine_args.embedding_dtype}"
                 )
-            embeddings = [base64.b64encode(np.frombuffer(emb.astype(np.float32), dtype=np.float32)) for emb in embeddings]  # type: ignore
-        elif isinstance(embeddings, np.ndarray):
-            embeddings = embeddings.tolist()
+            embeddings = [
+                base64.b64encode(np.frombuffer(emb.astype(np.float32), dtype=np.float32))  # type: ignore
+                for emb in embeddings
+            ]  # type: ignore
         else:
             embeddings = [e.tolist() for e in embeddings]
         return dict(

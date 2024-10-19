@@ -121,9 +121,7 @@ class BatchHandler:
                 " Consider increasing queue size"
             )
 
-    async def embed(
-        self, sentences: list[str]
-    ) -> tuple[list["EmbeddingReturnType"], int]:
+    async def embed(self, sentences: list[str]) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule a sentence to be embedded. Awaits until embedded.
 
         Args:
@@ -286,9 +284,7 @@ class BatchHandler:
         embeddings, usage = await self._schedule(items)
         return embeddings, usage
 
-    async def _schedule(
-        self, list_queueitem: Sequence[AbstractSingle]
-    ) -> tuple[list[Any], int]:
+    async def _schedule(self, list_queueitem: Sequence[AbstractSingle]) -> tuple[list[Any], int]:
         """adds list of items to the queue and awaits until these are completed."""
         prios, usage = await self._get_prios_usage(list_queueitem)
         new_prioqueue: list[PrioritizedQueueItem] = []
@@ -331,9 +327,7 @@ class BatchHandler:
             results_absolute=len(self._result_store),
         )
 
-    async def _get_prios_usage(
-        self, items: Sequence[AbstractSingle]
-    ) -> tuple[list[int], int]:
+    async def _get_prios_usage(self, items: Sequence[AbstractSingle]) -> tuple[list[int], int]:
         """get priorities and usage
 
         Args:
@@ -465,8 +459,7 @@ class ModelWorker:
                 # - or if many items are queued anyhow, so that a good batch
                 #   may be popped already.
                 if not self._feature_queue.empty() and (
-                    self._feature_queue.full()
-                    or (len(self._queue_prio) < self._max_batch_size * 4)
+                    self._feature_queue.full() or (len(self._queue_prio) < self._max_batch_size * 4)
                 ):
                     # add some stochastic delay
                     time.sleep(self._batch_delay)
@@ -550,8 +543,7 @@ class ModelWorker:
 
                 if (
                     self._postprocess_queue.empty()
-                    and self._last_inference
-                    < time.perf_counter() + self._batch_delay * 2
+                    and self._last_inference < time.perf_counter() + self._batch_delay * 2
                 ):
                     # 5 ms, assuming this is below
                     # 3-50ms for inference on avg.

@@ -30,9 +30,7 @@ if CHECK_TORCH.is_available:
 def mean_pooling(last_hidden_states: np.ndarray, attention_mask: np.ndarray):
     input_mask_expanded = (np.expand_dims(attention_mask, axis=-1)).astype(float)
 
-    sum_embeddings = np.sum(
-        last_hidden_states.astype(float) * input_mask_expanded, axis=1
-    )
+    sum_embeddings = np.sum(last_hidden_states.astype(float) * input_mask_expanded, axis=1)
     mask_sum = np.maximum(np.sum(input_mask_expanded, axis=1), 1e-9)
 
     return sum_embeddings / mask_sum
@@ -91,10 +89,7 @@ def optimize_model(
     """
     CHECK_ONNXRUNTIME.mark_required()
     path_folder = (
-        Path(HUGGINGFACE_HUB_CACHE)
-        / "infinity_onnx"
-        / execution_provider
-        / model_name_or_path
+        Path(HUGGINGFACE_HUB_CACHE) / "infinity_onnx" / execution_provider / model_name_or_path
     )
     OPTIMIZED_SUFFIX = "_optimized.onnx"
     files_optimized = list(path_folder.glob(f"**/*{OPTIMIZED_SUFFIX}"))
@@ -165,9 +160,7 @@ def optimize_model(
             file_name=Path(file_name).name.replace(".onnx", OPTIMIZED_SUFFIX),
         )
     except Exception as e:
-        logger.warning(
-            f"Optimization failed with {e}. Going to use the unoptimized model."
-        )
+        logger.warning(f"Optimization failed with {e}. Going to use the unoptimized model.")
         model = unoptimized_model
 
     return model
@@ -186,9 +179,7 @@ def _list_all_repo_files(
         return list(
             map(
                 Path,
-                HfApi().list_repo_files(
-                    model_name_or_path, revision=revision, token=token
-                ),
+                HfApi().list_repo_files(model_name_or_path, revision=revision, token=token),
             )
         )
     else:
@@ -223,6 +214,4 @@ def get_onnx_files(
     elif len(onnx_files) == 1:
         return onnx_files[0]
     else:
-        raise ValueError(
-            f"No onnx files found for {model_name_or_path} and revision {revision}"
-        )
+        raise ValueError(f"No onnx files found for {model_name_or_path} and revision {revision}")

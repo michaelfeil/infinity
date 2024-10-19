@@ -74,13 +74,9 @@ class EngineArgs:
         if not isinstance(self.dtype, Dtype):
             object.__setattr__(self, "dtype", Dtype[self.dtype])
         if not isinstance(self.pooling_method, PoolingMethod):
-            object.__setattr__(
-                self, "pooling_method", PoolingMethod[self.pooling_method]
-            )
+            object.__setattr__(self, "pooling_method", PoolingMethod[self.pooling_method])
         if not isinstance(self.embedding_dtype, EmbeddingDtype):
-            object.__setattr__(
-                self, "embedding_dtype", EmbeddingDtype[self.embedding_dtype]
-            )
+            object.__setattr__(self, "embedding_dtype", EmbeddingDtype[self.embedding_dtype])
         if not self.served_model_name:
             object.__setattr__(
                 self,

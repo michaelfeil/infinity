@@ -28,24 +28,19 @@ TELEMETRY_ENABLED = CHECK_POSTHOG.is_available and (MANAGER.anonymous_usage_stat
 def telemetry_log_info():
     if TELEMETRY_ENABLED:
         logger.info(
-            "Anonymized telemetry can be disabled "
-            "via environment variable `DO_NOT_TRACK=1`."
+            "Anonymized telemetry can be disabled " "via environment variable `DO_NOT_TRACK=1`."
         )
     else:
-        return logger.info(
-            "DO_NOT_TRACK=1 registered. Anonymized usage statistics are disabled."
-        )
+        return logger.info("DO_NOT_TRACK=1 registered. Anonymized usage statistics are disabled.")
 
 
 @dataclass
 class ProductTelemetryEvent:
     @abstractmethod
-    def render(self) -> dict[str, Any]:
-        ...
+    def render(self) -> dict[str, Any]: ...
 
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
 
 @cache
@@ -84,9 +79,7 @@ def get_system_properties():
             device_property = torch.cuda.get_device_properties(0)
             gpu_count = torch.cuda.device_count()
             gpu_type = str(device_property.name)
-            gpu_memory_per_device_mb = (
-                int(device_property.total_memory) * 1000000 / 1024**2
-            )
+            gpu_memory_per_device_mb = int(device_property.total_memory) * 1000000 / 1024**2
 
     return {
         "gpu_count": gpu_count,
