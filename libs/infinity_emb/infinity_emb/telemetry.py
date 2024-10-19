@@ -21,6 +21,21 @@ if CHECK_POSTHOG.is_available:
 if CHECK_TORCH.is_available:
     import torch
 
+TELEMETRY_ENABLED = CHECK_POSTHOG.is_available and (MANAGER.anonymous_usage_stats)
+
+
+@cache
+def telemetry_log_info():
+    if TELEMETRY_ENABLED:
+        logger.info(
+            "Anonymized telemetry can be disabled "
+            "via environment variable `DO_NOT_TRACK=1`."
+        )
+    else:
+        return logger.info(
+            "DO_NOT_TRACK=1 registered. Anonymized usage statistics are disabled."
+        )
+
 
 @dataclass
 class ProductTelemetryEvent:
@@ -208,19 +223,16 @@ class StartupTelemetry(ProductTelemetryEvent):
 class _PostHogCapture:
     def __init__(self):
         self._posthog = None
-        disabled = False
-        if not CHECK_POSTHOG.is_available or (not MANAGER.anonymous_usage_stats):
+        self._posthog_disabled = False
+
+        if not TELEMETRY_ENABLED:
+            self._posthog_disabled = True
             return
         if "pytest" in sys.modules:
             # disable posthog
-            disabled = True
+            self._posthog_disabled = True
             posthog.disabled = True
-
         try:
-            logger.debug(
-                "Anonymized telemetry enabled. See \
-                    https://michaelfeil.github.io/infinity for more information."
-            )
             k = (
                 "ph"  # split
                 "c_IOq"  # to avoid spam on project
@@ -229,7 +241,7 @@ class _PostHogCapture:
             self._posthog = Posthog(
                 project_api_key=k,
                 host="https://eu.i.posthog.com",
-                disabled=disabled,
+                disabled=self._posthog_disabled,
             )
 
             posthog_logger = logging.getLogger("posthog")

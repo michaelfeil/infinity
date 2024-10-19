@@ -66,6 +66,7 @@ class AsyncEmbeddingEngine:
         Args:
             engine_args (EngineArgs): EngineArgs object
         """
+        logger.debug("Creating AsyncEmbeddingEngine from `%s`", engine_args)
         engine = cls(**engine_args.to_dict(), _show_deprecation_warning=False)
 
         return engine

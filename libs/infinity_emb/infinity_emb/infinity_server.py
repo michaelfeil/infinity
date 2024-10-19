@@ -42,7 +42,7 @@ from infinity_emb.primitives import (
     ModelNotDeployedError,
     PoolingMethod,
 )
-from infinity_emb.telemetry import PostHog, StartupTelemetry
+from infinity_emb.telemetry import PostHog, StartupTelemetry, telemetry_log_info
 
 
 def create_server(
@@ -83,6 +83,10 @@ def create_server(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         instrumentator.expose(app)  # type: ignore
+        logger.info(
+            f"Creating {len(engine_args_list)}engines: engines={[e.served_model_name for e in engine_args_list]}"
+        )
+        telemetry_log_info()
         app.engine_array = AsyncEngineArray.from_args(engine_args_list)  # type: ignore
         asyncio.create_task(
             asyncio.to_thread(
