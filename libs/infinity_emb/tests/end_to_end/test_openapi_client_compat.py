@@ -14,9 +14,7 @@ from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 
 PREFIX = ""
-MODEL: str = (
-    "michaelfeil/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
-)
+MODEL: str = "michaelfeil/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
 baseurl = "http://openaidemo"
 batch_size = 8
 
@@ -47,9 +45,7 @@ def model_base() -> SentenceTransformer:
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(
-        app=app, base_url=baseurl, timeout=20
-    ) as client, LifespanManager(app):
+    async with AsyncClient(app=app, base_url=baseurl, timeout=20) as client, LifespanManager(app):
         yield client
 
 
@@ -72,9 +68,7 @@ def url_to_base64(url, modality="image"):
 
 @pytest.mark.anyio
 async def test_openai(client: AsyncClient):
-    client_oai = AsyncOpenAI(
-        api_key="some_dummy_key", base_url=baseurl, http_client=client
-    )
+    client_oai = AsyncOpenAI(api_key="some_dummy_key", base_url=baseurl, http_client=client)
 
     async with client_oai:
         # test audio
@@ -156,9 +150,7 @@ async def test_openai(client: AsyncClient):
 
     # wrong key
     with pytest.raises(APIConnectionError):
-        client_oai = AsyncOpenAI(
-            api_key="some_wrong", base_url=baseurl, http_client=client
-        )
+        client_oai = AsyncOpenAI(api_key="some_wrong", base_url=baseurl, http_client=client)
         async with client_oai:
             await client_oai.embeddings.create(
                 model=pytest.DEFAULT_AUDIO_MODEL,

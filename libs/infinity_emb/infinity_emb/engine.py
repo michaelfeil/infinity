@@ -52,9 +52,7 @@ class AsyncEmbeddingEngine:
 
         self.running = False
         self._running_sepamore: Optional[Semaphore] = None
-        self._model, self._min_inference_t, self._max_inference_t = select_model(
-            self._engine_args
-        )
+        self._model, self._min_inference_t, self._max_inference_t = select_model(self._engine_args)
 
     @classmethod
     def from_args(
@@ -130,9 +128,7 @@ class AsyncEmbeddingEngine:
     def engine_args(self) -> EngineArgs:
         return self._engine_args
 
-    async def embed(
-        self, sentences: list[str]
-    ) -> tuple[list["EmbeddingReturnType"], int]:
+    async def embed(self, sentences: list[str]) -> tuple[list["EmbeddingReturnType"], int]:
         """embed multiple sentences
 
         Kwargs:
@@ -279,9 +275,7 @@ class AsyncEngineArray:
             set(engine.engine_args.served_model_name for engine in engines)
         ):
             raise ValueError("Engines must have unique model names")
-        self.engines_dict = {
-            engine.engine_args.served_model_name: engine for engine in engines
-        }
+        self.engines_dict = {engine.engine_args.served_model_name: engine for engine in engines}
 
     @classmethod
     def from_args(cls, engine_args_array: Iterable[EngineArgs]) -> "AsyncEngineArray":
@@ -358,9 +352,7 @@ class AsyncEngineArray:
             list[float]: list of scores
             int: token usage
         """
-        return await self[model].rerank(
-            query=query, docs=docs, raw_scores=raw_scores, top_n=top_n
-        )
+        return await self[model].rerank(query=query, docs=docs, raw_scores=raw_scores, top_n=top_n)
 
     async def classify(
         self, *, model: str, sentences: list[str], raw_scores: bool = False

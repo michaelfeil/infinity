@@ -39,9 +39,9 @@ def model_base() -> SentenceTransformer:
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(
-        app=app, base_url="http://test", timeout=20
-    ) as client, LifespanManager(app):
+    async with AsyncClient(app=app, base_url="http://test", timeout=20) as client, LifespanManager(
+        app
+    ):
         yield client
 
 
@@ -52,9 +52,7 @@ def test_load_model(model_base):
     s = ["This is a test sentence."]
     e1 = model_base.encode(s)
     e2 = CT2SentenceTransformer(
-        engine_args=EngineArgs(
-            model_name_or_path=MODEL, device="cpu", bettertransformer=False
-        )
+        engine_args=EngineArgs(model_name_or_path=MODEL, device="cpu", bettertransformer=False)
     ).encode(s)
     np.testing.assert_almost_equal(e1, e2, decimal=6)
 

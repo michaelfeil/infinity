@@ -44,9 +44,7 @@ app = create_server(
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(app=app, base_url="http://test") as client, LifespanManager(
-        app
-    ):
+    async with AsyncClient(app=app, base_url="http://test") as client, LifespanManager(app):
         yield client
 
 
@@ -100,9 +98,7 @@ async def test_encoding_base_64(client, model_name):
     assert response_base64.status_code == 200
     embedding = response.json()["data"][0]["embedding"]
     embedding_base64 = response_base64.json()["data"][0]["embedding"]
-    embedding_base64 = np.frombuffer(
-        base64.b64decode(embedding_base64), dtype=np.float32
-    ).tolist()
+    embedding_base64 = np.frombuffer(base64.b64decode(embedding_base64), dtype=np.float32).tolist()
     assert embedding_base64 == embedding
 
 
@@ -113,9 +109,7 @@ async def test_embedding(client):
         ["This is a test sentence.", "This is another test sentence."],
     ]
     for inp in possible_inputs:
-        response = await client.post(
-            f"{PREFIX}/embeddings", json=dict(input=inp, model=MODEL_NAME)
-        )
+        response = await client.post(f"{PREFIX}/embeddings", json=dict(input=inp, model=MODEL_NAME))
         assert response.status_code == 200, f"{response.status_code}, {response.text}"
         rdata = response.json()
         assert "data" in rdata and isinstance(rdata["data"], list)
@@ -135,9 +129,7 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset):
     sentences = sentences
 
     async def _post_batch(inputs):
-        return await client.post(
-            f"{PREFIX}/embeddings", json=dict(input=inputs, model=MODEL_NAME)
-        )
+        return await client.post(f"{PREFIX}/embeddings", json=dict(input=inputs, model=MODEL_NAME))
 
     _request_size = BATCH_SIZE // 2
     tasks = [

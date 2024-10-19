@@ -66,17 +66,13 @@ def pytest_runtest_setup(item):
 
 
 @pytest.fixture(scope="session")
-def get_sts_bechmark_dataset() -> (
-    tuple[list[InputExample], list[InputExample], list[InputExample]]
-):
+def get_sts_bechmark_dataset() -> tuple[list[InputExample], list[InputExample], list[InputExample]]:
     sts_dataset_path = os.path.join(
         os.path.dirname(__file__), "data", "datasets", "stsbenchmark.tsv.gz"
     )
 
     if not os.path.exists(sts_dataset_path):
-        util.http_get(
-            "https://sbert.net/datasets/stsbenchmark.tsv.gz", sts_dataset_path
-        )
+        util.http_get("https://sbert.net/datasets/stsbenchmark.tsv.gz", sts_dataset_path)
 
     train_samples = []
     dev_samples = []
@@ -85,9 +81,7 @@ def get_sts_bechmark_dataset() -> (
         reader = csv.DictReader(fIn, delimiter="\t", quoting=csv.QUOTE_NONE)
         for row in reader:
             score = float(row["score"]) / 5.0  # Normalize score to range 0 ... 1
-            inp_example = InputExample(
-                texts=[row["sentence1"], row["sentence2"]], label=score
-            )
+            inp_example = InputExample(texts=[row["sentence1"], row["sentence2"]], label=score)
 
             if row["split"] == "dev":
                 dev_samples.append(inp_example)

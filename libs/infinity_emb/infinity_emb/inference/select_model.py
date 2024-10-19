@@ -22,9 +22,7 @@ from infinity_emb.transformer.utils import (
 
 def get_engine_type_from_config(
     engine_args: EngineArgs,
-) -> Union[
-    EmbedderEngine, RerankEngine, PredictEngine, ImageEmbedEngine, AudioEmbedEngine
-]:
+) -> Union[EmbedderEngine, RerankEngine, PredictEngine, ImageEmbedEngine, AudioEmbedEngine]:
     """resolved the class of inference engine path from config.json of the repo."""
     if engine_args.engine in [InferenceEngine.debugengine]:
         return EmbedderEngine.from_inference_engine(engine_args.engine)
@@ -44,9 +42,7 @@ def get_engine_type_from_config(
     with open(config_path, "r") as f:
         config = json.load(f)
 
-    if any(
-        "SequenceClassification" in arch for arch in config.get("architectures", [])
-    ):
+    if any("SequenceClassification" in arch for arch in config.get("architectures", [])):
         id2label = config.get("id2label", {"0": "dummy"})
         if len(id2label) < 2:
             return RerankEngine.from_inference_engine(engine_args.engine)
@@ -81,9 +77,7 @@ def select_model(
         # size one, warm up warm start timings.
         loaded_engine.warmup(batch_size=engine_args.batch_size, n_tokens=1)
         # size one token
-        min_inference_t = min(
-            loaded_engine.warmup(batch_size=1, n_tokens=1)[1] for _ in range(10)
-        )
+        min_inference_t = min(loaded_engine.warmup(batch_size=1, n_tokens=1)[1] for _ in range(10))
         loaded_engine.warmup(batch_size=engine_args.batch_size, n_tokens=1)
         emb_per_sec_short, max_inference_t, log_msg = loaded_engine.warmup(
             batch_size=engine_args.batch_size, n_tokens=1

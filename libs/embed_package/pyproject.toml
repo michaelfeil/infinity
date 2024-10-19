@@ -16,11 +16,11 @@ priority = "explicit"
 [tool.poetry.dependencies]
 python = ">=3.9,<4"
 # infinity_emb = {path = "../infinity_emb", extras = ["optimum","vision","torch","audio"]}
-infinity_emb = {version = "0.0.58", extras = ["optimum","vision","torch","audio"]}
+infinity_emb = {version = "0.0.65", extras = ["optimum","vision","torch","audio"]}
 [tool.poetry.group.test.dependencies]
-pytest = "^7.0.0"
+pytest = "^8.0.0"
 coverage = {extras = ["toml"], version = "^7.3.2"}
-mypy = "^1.5.1"
+mypy = "^1.12.0"
 
 [tool.poetry.group.codespell.dependencies]
 codespell = "^2.2.0"

@@ -7,13 +7,9 @@ from infinity_emb.transformer.embedder.optimum import OptimumEmbedder
 
 def test_embedder_optimum(size="large"):
     model = OptimumEmbedder(
-        engine_args=EngineArgs(
-            model_name_or_path=f"Xenova/bge-{size}-en-v1.5", device="cpu"
-        )
+        engine_args=EngineArgs(model_name_or_path=f"Xenova/bge-{size}-en-v1.5", device="cpu")
     )
-    st_model = SentenceTransformer(
-        model_name_or_path=f"BAAI/bge-{size}-en-v1.5", device="cpu"
-    )
+    st_model = SentenceTransformer(model_name_or_path=f"BAAI/bge-{size}-en-v1.5", device="cpu")
 
     sentences = ["This is awesome.", "I am depressed."]
 

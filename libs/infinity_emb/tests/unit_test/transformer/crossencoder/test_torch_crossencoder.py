@@ -40,9 +40,7 @@ def test_patched_crossencoder_vs_sentence_transformers():
             model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1", compile=True
         )
     )
-    model_unpatched = CrossEncoder(
-        "mixedbread-ai/mxbai-rerank-xsmall-v1", trust_remote_code=True
-    )
+    model_unpatched = CrossEncoder("mixedbread-ai/mxbai-rerank-xsmall-v1", trust_remote_code=True)
 
     query = "Where is Paris?"
     documents = [
@@ -60,6 +58,4 @@ def test_patched_crossencoder_vs_sentence_transformers():
 
     rankings_unpatched = model_unpatched.predict(query_docs)
 
-    np.testing.assert_allclose(
-        rankings_sigmoid, rankings_unpatched, rtol=1e-2, atol=1e-2
-    )
+    np.testing.assert_allclose(rankings_sigmoid, rankings_unpatched, rtol=1e-2, atol=1e-2)

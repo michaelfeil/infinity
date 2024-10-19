@@ -46,9 +46,7 @@ class OptimumEmbedder(BaseEmbedder):
         )
 
         self.pooling = (
-            mean_pooling
-            if engine_args.pooling_method == PoolingMethod.mean
-            else cls_token_pooling
+            mean_pooling if engine_args.pooling_method == PoolingMethod.mean else cls_token_pooling
         )
 
         self.model = optimize_model(
@@ -112,8 +110,6 @@ class OptimumEmbedder(BaseEmbedder):
                 truncation="longest_first",
             )
         else:
-            tks = self._infinity_tokenizer(
-                sentences, padding=False, truncation="longest_first"
-            )
+            tks = self._infinity_tokenizer(sentences, padding=False, truncation="longest_first")
 
         return [len(t) for t in tks["input_ids"]]

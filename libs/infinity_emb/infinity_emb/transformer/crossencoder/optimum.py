@@ -84,9 +84,7 @@ class OptimumCrossEncoder(BaseCrossEncoder):
 
     def tokenize_lengths(self, sentences: list[str]) -> list[int]:
         if hasattr(self._infinity_tokenizer, "encode_batch"):
-            tks = self._infinity_tokenizer.encode_batch(
-                sentences, padding=False, truncation=True
-            )
+            tks = self._infinity_tokenizer.encode_batch(sentences, padding=False, truncation=True)
         else:
             tks = self._infinity_tokenizer(sentences, padding=False, truncation=True)
 

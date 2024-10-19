@@ -32,13 +32,12 @@ lint format: PYTHON_FILES=.
 lint_diff format_diff: PYTHON_FILES=$(shell git diff --relative=libs/infinity_emb --name-only --diff-filter=d master | grep -E '\.py$$|\.ipynb$$')
 
 lint lint_diff:
-	poetry run ruff .
-	[ "$(PYTHON_FILES)" = "" ] || poetry run black $(PYTHON_FILES) --check
+	poetry run ruff check .
+	
 	[ "$(PYTHON_FILES)" = "" ] || poetry run mypy $(PYTHON_FILES)
 
 format format_diff:
-	[ "$(PYTHON_FILES)" = "" ] || poetry run black $(PYTHON_FILES)
-	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff --select I --fix $(PYTHON_FILES)
+	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff format $(PYTHON_FILES)
 
 poetry_check:
 	poetry check

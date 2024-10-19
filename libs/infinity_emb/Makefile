@@ -30,17 +30,15 @@ openapi:
 
 # Define a variable for Python and notebook files.
 PYTHON_FILES=.
-lint format: PYTHON_FILES=.
+lint: PYTHON_FILES=./infinity_emb
 lint_diff format_diff: PYTHON_FILES=$(shell git diff --relative=libs/infinity_emb --name-only --diff-filter=d master | grep -E '\.py$$|\.ipynb$$')
 
 lint lint_diff:
-	poetry run ruff .
-	[ "$(PYTHON_FILES)" = "" ] || poetry run black $(PYTHON_FILES) --check
+	poetry run ruff check .
 	[ "$(PYTHON_FILES)" = "" ] || poetry run mypy $(PYTHON_FILES)
 
 format format_diff:
-	[ "$(PYTHON_FILES)" = "" ] || poetry run black $(PYTHON_FILES)
-	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff --select I --fix $(PYTHON_FILES)
+	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff format $(PYTHON_FILES)
 
 template_docker:
 	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
