@@ -7,12 +7,17 @@
 - We will **not** sell data or buy data about you.
 
 ## Why telemetry is useful for the infinity project
-All CLI arguments are currently logged, as well as system info such as os.
-The feedback will be used to optimzed common models / OS support.
+All CLI arguments are currently logged, and system info: OS, GPU, Processor, arm/x86
 
-Examples:
-- which or if a GPU card is used, helps to know if e.g. flash-attn build would be useful / worth the effort, or not worth it because most card are still
-- devices: e.g. is mps or neuron used often, are people using AMD
+Examples how this improves infinity:
+- GPU model effects:
+    - if e.g. flash-attn build would be useful / worth the effort, or not worth it because most card are still
+    - default parameters, e.g. batch size
+- Model Architecture:
+    - Helps create custom flash attention builds
+    - If enough people deploy a DebertaV2 based model, work on faster implementation for that.
+- Devices: 
+    - prioritizes: apple mps / neuron / AMD depelopment 
 - CLI args, to deprecate old ones or less popular ones such as onnx/tensorrt gpu + optimum or ctranslate2. Or to see if the v1 of the cli is still used.
 
 ## Disable Telemetry
