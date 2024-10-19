@@ -173,9 +173,30 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
+<a class="md-nav__link" href="#principles">
+<span class="md-ellipsis">
+      Principles:
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#why-telemetry-is-useful-for-the-infinity-project">
+<span class="md-ellipsis">
+      Why telemetry is useful for the infinity project
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#disable-telemetry">
 <span class="md-ellipsis">
       Disable Telemetry
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#review-which-data-is-sent">
+<span class="md-ellipsis">
+      Review which data is sent:
     </span>
 </a>
 </li>
@@ -197,9 +218,30 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
+<a class="md-nav__link" href="#principles">
+<span class="md-ellipsis">
+      Principles:
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#why-telemetry-is-useful-for-the-infinity-project">
+<span class="md-ellipsis">
+      Why telemetry is useful for the infinity project
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#disable-telemetry">
 <span class="md-ellipsis">
       Disable Telemetry
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#review-which-data-is-sent">
+<span class="md-ellipsis">
+      Review which data is sent:
     </span>
 </a>
 </li>
@@ -211,16 +253,40 @@
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
 <h1 id="telemetry">Telemetry</h1>
-<p>All CLI arguments are currently logged, as well as system info such as os.
-The feedback will be used to optimzed common models / OS support.</p>
+<h2 id="principles">Principles:</h2>
+<ul>
+<li><strong>No surprises</strong> — you will be notified before we begin collecting data. You will be notified of any changes to the data being collected or how it is used.</li>
+<li><strong>Easy opt-out:</strong> You will be able to easily opt-out of data collection</li>
+<li><strong>Transparency</strong> — you will be able to review all data that is sent to us</li>
+<li>We will <strong>not</strong> sell data or buy data about you.</li>
+</ul>
+<h2 id="why-telemetry-is-useful-for-the-infinity-project">Why telemetry is useful for the infinity project</h2>
+<p>All CLI arguments are currently logged, and system info: OS, GPU, Processor, arm/x86</p>
+<p>Examples how this improves infinity:
+- GPU model effects:
+    - if e.g. flash-attn build would be useful / worth the effort, or not worth it because most card are still
+    - default parameters, e.g. batch size
+- Model Architecture:
+    - Helps create custom flash attention builds
+    - If enough people deploy a DebertaV2 based model, work on faster implementation for that.
+- Devices: 
+    - prioritizes: apple mps / neuron / AMD depelopment 
+- CLI args, to deprecate old ones or less popular ones such as onnx/tensorrt gpu + optimum or ctranslate2. Or to see if the v1 of the cli is still used.</p>
 <h2 id="disable-telemetry">Disable Telemetry</h2>
 <p>You can disable tracking like the following:</p>
-<div class="language-text highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a># set 
-</span><span id="__span-0-2"><a href="#__codelineno-0-2" id="__codelineno-0-2" name="__codelineno-0-2"></a>export DO_NOT_TRACK="1"
-</span><span id="__span-0-3"><a href="#__codelineno-0-3" id="__codelineno-0-3" name="__codelineno-0-3"></a># infinity specific setting
-</span><span id="__span-0-4"><a href="#__codelineno-0-4" id="__codelineno-0-4" name="__codelineno-0-4"></a>export INFINITY_ANONYMOUS_USAGE_STATS="0"
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a><span class="c1"># set </span>
+</span><span id="__span-0-2"><a href="#__codelineno-0-2" id="__codelineno-0-2" name="__codelineno-0-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">DO_NOT_TRACK</span><span class="o">=</span><span class="s2">"1"</span>
+</span><span id="__span-0-3"><a href="#__codelineno-0-3" id="__codelineno-0-3" name="__codelineno-0-3"></a><span class="c1"># infinity specific setting</span>
+</span><span id="__span-0-4"><a href="#__codelineno-0-4" id="__codelineno-0-4" name="__codelineno-0-4"></a><span class="nb">export</span><span class="w"> </span><span class="nv">INFINITY_ANONYMOUS_USAGE_STATS</span><span class="o">=</span><span class="s2">"0"</span>
 </span></code></pre></div>
-<p>or by CLI argument.</p>
+<p>This is in line with various FOSS projects:
+- https://docs.vllm.ai/en/latest/serving/usage_stats.html#usage-stats-collection
+- https://docs.ray.io/en/latest/cluster/usage-stats.html
+- https://github.com/langflow-ai/langflow/blob/eedfe43e6983bfed3c9a15e197c0206ea21b14eb/docs/docs/Contributing/contributing-telemetry.md?plain=1#L25
+- https://github.com/LineaLabs/lineapy/blob/eebe5d5862f9888eaf619ba9bbeaa21b3ea5d2e5/README.md?plain=1#L266
+- https://github.com/dbt-labs/dbt-core/blob/78c05718c589a56bc49f7520b47474690ae1cbe0/core/dbt/contracts/project.py#L19</p>
+<h2 id="review-which-data-is-sent">Review which data is sent:</h2>
+<p>https://github.com/michaelfeil/infinity/blob/main/libs/infinity_emb/infinity_emb/telemetry.py </p>
 </article>
 </div>
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
