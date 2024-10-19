@@ -8,6 +8,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import TypeVar
 
+from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
     Device,
     Dtype,
@@ -20,30 +21,41 @@ from infinity_emb.primitives import (
 EnumTypeLike = TypeVar("EnumTypeLike", bound=EnumType)
 
 
-class __Infinity_EnvManager:
-    def __init__(self):
-        self._debug(f"Loading Infinity ENV variables.\nCONFIG:\n{'-'*10}")
-        for f_name in dir(self):
-            if isinstance(getattr(type(self), f_name, None), cached_property):
-                getattr(self, f_name)  # pre-cache
-        self._debug(f"{'-'*10}\nENV variables loaded.")
+_IS_CACHING = False
 
+
+def _cache_all():
+    global _IS_CACHING
+    _IS_CACHING = True
+    if _IS_CACHING:
+        return
+
+    MANAGER._debug(f"Loading Infinity ENV variables.\nCONFIG:\n{'-'*10}")
+    for f_name in dir(MANAGER):
+        if isinstance(getattr(type(MANAGER), f_name, None), cached_property):
+            if not f_name.startswith("__"):
+                getattr(MANAGER, f_name)  # pre-cache
+    MANAGER._debug(f"{'-'*10}\nENV variables loaded.")
+
+
+class __Infinity_EnvManager:
     def _debug(self, message: str):
         """print as debug without having to import logging."""
         if "LOG_LEVEL" in message:
             return  # recursion
-        elif self.log_level in {"debug", "trace"}:
+        elif MANAGER.log_level in {"debug", "trace"}:
             if "API_KEY" in message:
-                print("INFINITY_API_KEY=not_shown")
-                print(f"INFINITY_LOG_LEVEL={self.log_level}")
+                logger.warning("INFINITY_API_KEY=not_shown")
+                logger.warning(f"INFINITY_LOG_LEVEL={MANAGER.log_level}")
             else:
-                print(message)
+                logger.warning(message)
 
     @staticmethod
     def to_name(name: str) -> str:
         return "INFINITY_" + name.upper().replace("-", "_")
 
     def _optional_infinity_var(self, name: str, default: str = ""):
+        _cache_all()
         name = self.to_name(name)
         value = os.getenv(name)
         if value is None:
@@ -55,6 +67,7 @@ class __Infinity_EnvManager:
     def _optional_infinity_var_multiple(
         self, name: str, default: list[str]
     ) -> list[str]:
+        _cache_all()
         name = self.to_name(name)
         value = os.getenv(name)
         if value is None:
@@ -68,7 +81,7 @@ class __Infinity_EnvManager:
 
     @staticmethod
     def _to_bool(value: str) -> bool:
-        return value.lower() in {"true", "1", "yes", "y"}
+        return value.lower().strip() in {"true", "t", "1", "yes", "y"}
 
     @staticmethod
     def _to_bool_multiple(value: list[str]) -> list[bool]:

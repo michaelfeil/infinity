@@ -14,7 +14,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Start infinity_emb in the background
-infinity_emb v2 --log-level error --engine debugengine --no-model-warmup --port 7994 &
+DO_NOT_TRACK=1 infinity_emb v2 --log-level error --engine debugengine --no-model-warmup --port 7994 &
 INFINITY_PID=$!
 echo "infinity_emb started with PID $INFINITY_PID"
 
