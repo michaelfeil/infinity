@@ -44,6 +44,7 @@ template_docker:
 	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
 	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s cpu > Dockerfile.cpu_auto
 	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s nvidia > Dockerfile.nvidia_auto
+	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s trt > Dockerfile.trt_onnx_auto
 
 poetry_check:
 	poetry check

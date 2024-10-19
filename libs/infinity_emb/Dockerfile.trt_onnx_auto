@@ -2,7 +2,7 @@
 # This file is generated from Dockerfile.jinja2. Do not edit the Dockerfile.cuda|cpu|amd file directly.
 # Only contribute to the Dockerfile.jinja2 and dockerfile_template.yaml and regenerate the Dockerfile.cuda|cpu|amd
 
-FROM {{ base_image }} AS base
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04 AS base
 
 ENV PYTHONUNBUFFERED=1 \
     \
@@ -13,17 +13,17 @@ ENV PYTHONUNBUFFERED=1 \
     \
     # make poetry create the virtual environment in the project's root
     # it gets named `.venv`
-    POETRY_VIRTUALENVS_CREATE="{{poetry_virtualenvs_create | default('true')}}" \
-    POETRY_VIRTUALENVS_IN_PROJECT="{{poetry_virtualenvs_in_project | default('true')}}" \
+    POETRY_VIRTUALENVS_CREATE="true" \
+    POETRY_VIRTUALENVS_IN_PROJECT="true" \
     # do not ask any interactive question
     POETRY_NO_INTERACTION=1 \
-    EXTRAS="{{poetry_extras | default('all')}}" \
-    PYTHON="{{python_version | default('python3.11')}}"
+    EXTRAS="all onnxruntime-gpu" \
+    PYTHON="python3.10"
 RUN apt-get update && apt-get install -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
 WORKDIR /app
 
 FROM base as builder
-{% set main_install2 = "poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test" %}
+
 # Set the working directory for the app
 # Define the version of Poetry to install (default is 1.7.1)
 # Define the directory to install Poetry to (default is /opt/poetry)
@@ -37,17 +37,24 @@ RUN echo "Poetry version:" && poetry --version
 # Copy the rest of the app source code (this layer will be invalidated and rebuilt whenever the source code changes)
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
-{{pyproject_sed | default('#')}}
-RUN {{main_install2}} && poetry cache clear pypi --all
+#
+RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all
 COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package
-RUN {{main_install2|replace("--no-root","")}} && poetry cache clear pypi --all
-{{extra_installs_main | default('#')}}
+RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all
+# Install utils for tensorrt
+RUN apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev git git-lfs python3-pip
+RUN poetry run $PYTHON -m pip install --no-cache-dir flash-attn --no-build-isolation
+RUN poetry run $PYTHON -m pip install --no-cache-dir "tensorrt==10.2.0" "tensorrt_lean==10.2.0" "tensorrt_dispatch==10.2.0"
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib/$PYTHON/dist-packages/tensorrt/
+# ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
+# ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
+
 
 
 FROM builder as testing
 # install lint and test dependencies
-RUN {{main_install2|replace("--without", "--with")|replace("--no-root","")}} && poetry cache clear pypi --all
+RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --with lint,test && poetry cache clear pypi --all
 # lint 
 RUN poetry run ruff check .
 RUN poetry run mypy .

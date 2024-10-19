@@ -19,10 +19,11 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_NO_INTERACTION=1 \
     EXTRAS="all" \
     PYTHON="python3.11"
-RUN apt-get update && apt-get install build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl -y 
+RUN apt-get update && apt-get install -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
 WORKDIR /app
 
 FROM base as builder
+
 # Set the working directory for the app
 # Define the version of Poetry to install (default is 1.7.1)
 # Define the directory to install Poetry to (default is /opt/poetry)
@@ -41,24 +42,36 @@ RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --w
 COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package
 RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all
+#
+
 
 FROM builder as testing
 # install lint and test dependencies
 RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --with lint,test && poetry cache clear pypi --all
 # lint 
-RUN poetry run ruff .
-RUN poetry run black --check .
+RUN poetry run ruff check .
 RUN poetry run mypy .
 # pytest
 COPY tests tests
 # run end to end tests because of duration of build in github ci.
 # Run tests/end_to_end on TARGETPLATFORM x86_64 otherwise run tests/end_to_end_gpu
 # poetry run python -m pytest tests/end_to_end -x # TODO: does not work.
-RUN if [ "$TARGETPLATFORM" = "linux/amd64" ] ; then \
-poetry run python -m pytest tests/end_to_end -x ; \
-else \
-poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
-fi
+RUN if [ -z "$TARGETPLATFORM" ]; then \
+      ARCH=$(uname -m); \
+      if [ "$ARCH" = "x86_64" ]; then \
+          TARGETPLATFORM="linux/amd64"; \
+      elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+          TARGETPLATFORM="linux/arm64"; \
+      else \
+          echo "Unsupported architecture: $ARCH"; exit 1; \
+      fi; \
+    fi; \
+    echo "Running tests on TARGETPLATFORM=$TARGETPLATFORM"; \
+    if [ "$TARGETPLATFORM" = "linux/arm64" ] ; then \
+        poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
+    else \
+        poetry run python -m pytest tests/end_to_end -m "not performance" -x ; \
+    fi
 RUN echo "all tests passed" > "test_results.txt"
 
 
@@ -100,15 +113,9 @@ ARG MODEL_NAME
 RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
 ARG ENGINE
 RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
-ARG EXTRA_PACKAGES
-RUN if [ -n "${EXTRA_PACKAGES}" ]; then python -m pip install --no-cache-dir ${EXTRA_PACKAGES} ; fi
+
 # will exit with 3 if model is downloaded # TODO: better exit code
 RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
-ENTRYPOINT ["infinity_emb"]
-
-# flash attention fa2
-FROM tested-builder AS production-with-fa2
-RUN python -m pip install https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.1/flash_attn-2.6.1+cu123torch2.3cxx11abiFalse-cp310-cp310-linux_x86_64.whl
 ENTRYPOINT ["infinity_emb"]
 
 # Use a multi-stage build -> production version
