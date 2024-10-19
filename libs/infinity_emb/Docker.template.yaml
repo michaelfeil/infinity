@@ -1,20 +1,35 @@
+# run all commands here via: `make template_docker`
+
 # 1. Guide: pip install jinja2 jinja2-cli
 nvidia:
   # 2 .command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s nvidia > Dockerfile.nvidia_auto
   base_image: 'nvidia/cuda:12.1.1-base-ubuntu22.04'
-  main_install: poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test  
-
 cpu:
   # 2. command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s cpu > Dockerfile.cpu_auto
   base_image: 'ubuntu:22.04' 
-  main_install: poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test 
   pyproject_sed: RUN sed -i 's|"pypi"|"pytorch_cpu"|' pyproject.toml && rm poetry.lock 
 
 amd:
   # 2 . command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
   base_image: 'rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0'
-  main_install: poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test 
-  pyproject_sed: RUN sed -i 's|"pypi"|"pytorch_rocm"|' pyproject.toml && sed -i 's|torch = "2.4.1"|torch = "2.4.1"|' pyproject.toml && sed -i 's|torchvision = {version = "\*"|torchvision = {version = "0.19.1"|' pyproject.toml && rm poetry.lock 
+  pyproject_sed: |
+    RUN sed -i 's|"pypi"|"pytorch_rocm"|' pyproject.toml 
+    RUN sed -i 's|torch = "2.4.1"|torch = "2.4.1"|' pyproject.toml 
+    RUN sed -i 's|torchvision = {version = "\*"|torchvision = {version = "0.19.1"|' pyproject.toml && rm poetry.lock 
   poetry_virtualenvs_create: "false"
   poetry_virtualenvs_in_project: "false"
+  poetry_extras: "all onnxruntime-gpu"
+  python_version: python3.10
+
+trt:
+  base_image: nvidia/cuda:12.1.1-devel-ubuntu22.04
+  poetry_extras: "all onnxruntime-gpu"
+  extra_installs_main: | 
+    # Install utils for tensorrt
+    RUN apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev git git-lfs python3-pip
+    RUN poetry run $PYTHON -m pip install --no-cache-dir flash-attn --no-build-isolation
+    RUN poetry run $PYTHON -m pip install --no-cache-dir "tensorrt==10.2.0" "tensorrt_lean==10.2.0" "tensorrt_dispatch==10.2.0"
+    ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib/$PYTHON/dist-packages/tensorrt/
+    # ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
+    # ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
   python_version: python3.10
