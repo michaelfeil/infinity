@@ -19,7 +19,7 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_NO_INTERACTION=1 \
     EXTRAS="all onnxruntime-gpu" \
     PYTHON="python3.10"
-RUN apt-get update && apt-get install -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
 WORKDIR /app
 
 FROM base as builder
@@ -27,7 +27,7 @@ FROM base as builder
 # Set the working directory for the app
 # Define the version of Poetry to install (default is 1.7.1)
 # Define the directory to install Poetry to (default is /opt/poetry)
-ARG POETRY_VERSION=1.7.1
+ARG POETRY_VERSION=1.8.4
 ARG POETRY_HOME=/opt/poetry
 # Create a Python virtual environment for Poetry and install it
 RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION $PYTHON -
@@ -45,10 +45,9 @@ RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --without li
 # Install utils for tensorrt
 RUN apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev git git-lfs python3-pip
 RUN poetry run $PYTHON -m pip install --no-cache-dir flash-attn --no-build-isolation
-RUN poetry run $PYTHON -m pip install --no-cache-dir "tensorrt==10.2.0" "tensorrt_lean==10.2.0" "tensorrt_dispatch==10.2.0"
-ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib/$PYTHON/dist-packages/tensorrt/
-# ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
-# ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
+RUN poetry run $PYTHON -m pip install --no-cache-dir "tensorrt==10.0.1" "tensorrt_lean==10.0.1" "tensorrt_dispatch==10.0.1"
+ENV LD_LIBRARY_PATH /app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
+ENV PATH /app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
 
 
 
@@ -120,7 +119,6 @@ ARG MODEL_NAME
 RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
 ARG ENGINE
 RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
-
 # will exit with 3 if model is downloaded # TODO: better exit code
 RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
 ENTRYPOINT ["infinity_emb"]

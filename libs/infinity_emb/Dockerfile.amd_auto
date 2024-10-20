@@ -13,13 +13,13 @@ ENV PYTHONUNBUFFERED=1 \
     \
     # make poetry create the virtual environment in the project's root
     # it gets named `.venv`
-    POETRY_VIRTUALENVS_CREATE="false" \
-    POETRY_VIRTUALENVS_IN_PROJECT="false" \
+    POETRY_VIRTUALENVS_CREATE="true" \
+    POETRY_VIRTUALENVS_IN_PROJECT="true" \
     # do not ask any interactive question
     POETRY_NO_INTERACTION=1 \
     EXTRAS="all onnxruntime-gpu" \
     PYTHON="python3.10"
-RUN apt-get update && apt-get install -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
 WORKDIR /app
 
 FROM base as builder
@@ -27,7 +27,7 @@ FROM base as builder
 # Set the working directory for the app
 # Define the version of Poetry to install (default is 1.7.1)
 # Define the directory to install Poetry to (default is /opt/poetry)
-ARG POETRY_VERSION=1.7.1
+ARG POETRY_VERSION=1.8.4
 ARG POETRY_HOME=/opt/poetry
 # Create a Python virtual environment for Poetry and install it
 RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION $PYTHON -
@@ -39,7 +39,8 @@ COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
 RUN sed -i 's|"pypi"|"pytorch_rocm"|' pyproject.toml 
 RUN sed -i 's|torch = "2.4.1"|torch = "2.4.1"|' pyproject.toml 
-RUN sed -i 's|torchvision = {version = "\*"|torchvision = {version = "0.19.1"|' pyproject.toml && poetry lock
+RUN sed -i 's|torchvision = {version = "\*"|torchvision = {version = "0.19.1"|' pyproject.toml 
+RUN poetry lock --no-update
 
 RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all
 COPY infinity_emb infinity_emb
@@ -116,7 +117,6 @@ ARG MODEL_NAME
 RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
 ARG ENGINE
 RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
-
 # will exit with 3 if model is downloaded # TODO: better exit code
 RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
 ENTRYPOINT ["infinity_emb"]
