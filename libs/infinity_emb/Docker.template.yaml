@@ -4,22 +4,31 @@
 nvidia:
   # 2 .command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s nvidia > Dockerfile.nvidia_auto
   base_image: 'nvidia/cuda:12.1.1-base-ubuntu22.04'
+  main_install: "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
 cpu:
   # 2. command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s cpu > Dockerfile.cpu_auto
   base_image: 'ubuntu:22.04' 
-  pyproject_sed: |
-    RUN sed -i 's|torch = "2.4.1"|torch = "2.5.0"|' pyproject.toml 
-    RUN sed -i 's|"pypi"|"pytorch_cpu"|' pyproject.toml
-    RUN poetry lock --no-update
+  # pyproject_sed: |
+  #   RUN sed -i 's|torch = "2.4.1"|torch = "2.5.0"|' pyproject.toml 
+  #   RUN sed -i 's|"pypi"|"pytorch_cpu"|' pyproject.toml
+  #   RUN poetry lock --no-update
+  main_install: |
+    # "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
+    COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
+    RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/cpu"
 
 amd:
   # 2 . command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
   base_image: 'rocm/pytorch:rocm6.2.3_ubuntu22.04_py3.10_pytorch_release_2.3.0'
-  pyproject_sed: |
-    RUN sed -i 's|"pypi"|"pytorch_rocm"|' pyproject.toml 
-    RUN sed -i 's|torch = "2.4.1"|torch = "2.4.1"|' pyproject.toml 
-    RUN sed -i 's|torchvision = {version = "\*"|torchvision = {version = "0.19.1"|' pyproject.toml 
-    RUN poetry lock --no-update
+  # pyproject_sed: |
+  #   RUN sed -i 's|"pypi"|"pytorch_rocm"|' pyproject.toml 
+  #   RUN sed -i 's|torch = "2.4.1"|torch = "2.4.1"|' pyproject.toml 
+  #   RUN sed -i 's|torchvision = {version = "\*"|torchvision = {version = "0.19.1"|' pyproject.toml 
+  #   RUN poetry lock --no-update
+  main_install: |
+    # "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
+    COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
+    RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/rocm6.2"
 
   poetry_extras: "all onnxruntime-gpu"
   python_version: python3.10
@@ -35,3 +44,4 @@ trt:
     ENV LD_LIBRARY_PATH /app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
     ENV PATH /app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
   python_version: python3.10
+  main_install: "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"

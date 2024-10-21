@@ -5207,4 +5207,4 @@ vision = ["colpali-engine", "pillow", "timm", "torchvision"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<4"
-content-hash = "64f964097d2d9b50dcbf00e2ce0bd3fc95a36d0827def3c3464f571c4e655b7f"
+content-hash = "7c1ea0ab21471d654f972c36a500c9df07f5cb3fb42d1438b6fda78c66672503"

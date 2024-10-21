@@ -23,7 +23,6 @@ RUN apt-get update && apt-get install --no-install-recommends -y build-essential
 WORKDIR /app
 
 FROM base as builder
-{% set main_install = "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all" %}
 # Set the working directory for the app
 # Define the version of Poetry to install (default is 1.7.1)
 # Define the directory to install Poetry to (default is /opt/poetry)
