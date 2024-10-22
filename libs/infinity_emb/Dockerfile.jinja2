@@ -19,15 +19,14 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_NO_INTERACTION=1 \
     EXTRAS="{{poetry_extras | default('all')}}" \
     PYTHON="{{python_version | default('python3.11')}}"
-RUN apt-get update && apt-get install -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
 WORKDIR /app
 
 FROM base as builder
-{% set main_install2 = "poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test" %}
 # Set the working directory for the app
 # Define the version of Poetry to install (default is 1.7.1)
 # Define the directory to install Poetry to (default is /opt/poetry)
-ARG POETRY_VERSION=1.7.1
+ARG POETRY_VERSION=1.8.4
 ARG POETRY_HOME=/opt/poetry
 # Create a Python virtual environment for Poetry and install it
 RUN curl -sSL https://install.python-poetry.org | POETRY_HOME=$POETRY_HOME POETRY_VERSION=$POETRY_VERSION $PYTHON -
@@ -38,16 +37,16 @@ RUN echo "Poetry version:" && poetry --version
 COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # Install dependencies only
 {{pyproject_sed | default('#')}}
-RUN {{main_install2}} && poetry cache clear pypi --all
+{{main_install}}
 COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package
-RUN {{main_install2|replace("--no-root","")}} && poetry cache clear pypi --all
+{{main_install|replace("--no-root","")}}
 {{extra_installs_main | default('#')}}
 
 
 FROM builder as testing
 # install lint and test dependencies
-RUN {{main_install2|replace("--without", "--with")|replace("--no-root","")}} && poetry cache clear pypi --all
+{{main_install|replace("--without", "--with")|replace("--no-root","")}}
 # lint 
 RUN poetry run ruff check .
 RUN poetry run mypy .
@@ -113,7 +112,6 @@ ARG MODEL_NAME
 RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
 ARG ENGINE
 RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
-
 # will exit with 3 if model is downloaded # TODO: better exit code
 RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
 ENTRYPOINT ["infinity_emb"]

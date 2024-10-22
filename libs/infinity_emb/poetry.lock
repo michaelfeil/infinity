@@ -4029,12 +4029,25 @@ dev = ["hypothesis (>=6.70.0)", "pytest (>=7.1.0)"]
 
 [[package]]
 name = "tensorrt"
-version = "8.6.1.post1"
+version = "10.5.0"
+description = "TensorRT Metapackage"
+optional = true
+python-versions = "*"
+files = [
+    {file = "tensorrt-10.5.0.tar.gz", hash = "sha256:d5c6338d44aeda20250fdbe31f9df8ca152b830f811aaf19d6c4d1dafd18c84b"},
+]
+
+[package.dependencies]
+tensorrt-cu12 = "10.5.0"
+
+[[package]]
+name = "tensorrt-cu12"
+version = "10.5.0"
 description = "A high performance deep learning inference library"
 optional = true
 python-versions = ">=3.6"
 files = [
-    {file = "tensorrt-8.6.1.post1.tar.gz", hash = "sha256:0ca64da500480a2d204c18d7c6791ec462c163ae4fa1db574b8c211da1116ea2"},
+    {file = "tensorrt-cu12-10.5.0.tar.gz", hash = "sha256:46edbda08c54c8ffa88c75d75b4761eb9839e81678135e8d1530adc8cef6a61b"},
 ]
 
 [package.extras]
@@ -5194,4 +5207,4 @@ vision = ["colpali-engine", "pillow", "timm", "torchvision"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<4"
-content-hash = "49cc99edf0b7213d00cfa6606b9a1bfa62700c79a09529adb86d858ce242f21d"
+content-hash = "7c1ea0ab21471d654f972c36a500c9df07f5cb3fb42d1438b6fda78c66672503"
