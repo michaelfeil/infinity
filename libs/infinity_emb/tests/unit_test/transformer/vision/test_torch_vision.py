@@ -3,14 +3,16 @@ import pytest
 import torch
 from colpali_engine.models import ColPali, ColPaliProcessor  # type: ignore
 from PIL import Image  # type: ignore
-from transformers import CLIPModel, CLIPProcessor  # type: ignore
+from transformers import AutoModel, AutoProcessor  # type: ignore
 
 from infinity_emb.args import EngineArgs
 from infinity_emb.transformer.vision.torch_vision import TIMM
 
 
-def test_clip_like_model(image_sample):
-    model_name = pytest.DEFAULT_IMAGE_MODEL
+@pytest.mark.parametrize("model_name", ["default", "google/siglip-so400m-patch14-384"])
+def test_clip_like_model(image_sample, model_name: str):
+    if model_name == "default":
+        model_name = pytest.DEFAULT_IMAGE_MODEL
     model = TIMM(engine_args=EngineArgs(model_name_or_path=model_name, dtype="auto"))
     image = Image.open(image_sample[0].raw)
 
@@ -26,8 +28,8 @@ def test_clip_like_model(image_sample):
     assert isinstance(embeddings[0], np.ndarray)
     assert len(embeddings) == len(inputs)
     embeddings = torch.tensor(embeddings)
-    model = CLIPModel.from_pretrained(model_name)
-    processor = CLIPProcessor.from_pretrained(model_name)
+    model = AutoModel.from_pretrained(model_name)
+    processor = AutoProcessor.from_pretrained(model_name)
 
     inputs_clip = processor(
         text=["a photo of a cat"], images=[image], return_tensors="pt", padding=True
@@ -113,5 +115,9 @@ def test_colpali(dtype, image_sample):
 if __name__ == "__main__":
     import requests
 
-    test_colpali("int8", requests.get(pytest.DEFAULT_IMAGE_SAMPLE, stream=True))  # type: ignore
-    test_colpali("auto", requests.get(pytest.DEFAULT_IMAGE_SAMPLE, stream=True))  # type: ignore
+    pytest.IMAGE_SAMPLE_URL = "https://github.com/michaelfeil/infinity/raw/06fd1f4d8f0a869f4482fc1c78b62a75ccbb66a1/docs/assets/cats_coco_sample.jpg"
+
+    test_clip_like_model(
+        [requests.get(pytest.IMAGE_SAMPLE_URL, stream=True)], "google/siglip-so400m-patch14-384"
+    )  # type: ignore
+    test_colpali("auto", [requests.get(pytest.IMAGE_SAMPLE_URL, stream=True)])  # type: ignore
