@@ -155,6 +155,9 @@ markers = [
 [tool.ruff]
 line-length = 100
 
+[tool.codespell]
+skip = "./tests/data/benchmark"
+
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
