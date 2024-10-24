@@ -1,0 +1,50 @@
+name: Wasp (Semgrep) - SAST Check
+
+on:
+  pull_request_target:
+    branches:
+        - main
+        
+  schedule:
+    - cron: '0 */24 * * *' 
+  workflow_dispatch: 
+
+jobs:
+  wasp-scan:
+    name: Wasp scan
+    runs-on:
+      group: security-lrg
+    steps:
+      - name: Setting permission
+        run: sudo chown runner:runner -R .*
+
+      - name: Repository checkout
+        uses: actions/checkout@v4
+
+      - name: Running Wasp scan
+        uses: freshactions/wasp@latest
+        env:
+          WASP_LOG_LEVEL: DEBUG
+          WASP_SAVE_JSON: true
+          WASP_SAVE_HTML: true
+          WASP_SAVE_CSV: true
+          WASP_FRESHRELEASE_PR_PROJECT_KEY: ${{ vars.SECURITY_APPSEC_FRESHRELEASE_PROJECT_KEY }}
+          WASP_DRY_RUN: ${{ vars.SECURITY_APPSEC_WASP_DRY_RUN }}
+
+          WASP_FRESHRELEASE_URL: ${{ vars.SECURITY_APPSEC_FRESHRELEASE_URL }}
+          WASP_FRESHRELEASE_PR_ISSUE_TYPE: ${{ vars.SECURITY_APPSEC_FRESHRELEASE_PR_ISSUE_TYPE }}          
+
+          WASP_TOKEN: ${{ secrets.SECURITY_APPSEC_WASP_TOKEN }}
+          WASP_FRESHRELEASE_TOKEN: ${{ secrets.SECURITY_APPSEC_FRESHRELEASE_TOKEN }}
+          WASP_SLACK_TOKEN: ${{ secrets.SECURITY_APPSEC_SLACK_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.SECURITY_APPSEC_GH_TOKEN }}
+      
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Wasp scan report archive
+          retention-days: ${{ vars.SECURITY_APPSEC_WASP_RESULT_RETENTION_DAYS }}
+          path: |
+            wasp-report.csv
+            wasp-report.json
+            wasp-report.html
