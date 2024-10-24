@@ -27,8 +27,8 @@
 * **Deploy any model from HuggingFace**: deploy any embedding, reranking, clip and sentence-transformer model from [HuggingFace]( https://huggingface.co/models?other=text-embeddings-inference&sort=trending)
 * **Fast inference backends**: The inference server is built on top of [torch](https://github.com/pytorch/pytorch), [optimum (ONNX/TensorRT)](https://huggingface.co/docs/optimum/index) and [CTranslate2](https://github.com/OpenNMT/CTranslate2), using FlashAttention to get the most out of your **NVIDIA CUDA**, **AMD ROCM**, **CPU**, **AWS INF2** or **APPLE MPS** accelerator. Infinity uses dynamic batching and tokenization dedicated in worker threads.
 * **Multi-modal and multi-model**: Mix-and-match multiple models. Infinity orchestrates them.
-* **Tested implementation**: Unit and end-to-end tested. Embeddings via infinity are correctly embedded. Lets API users create embeddings till infinity and beyond.
-* **Easy to use**: Built on [FastAPI](https://fastapi.tiangolo.com/). Infinity CLI v2 allows launching of all arguments via Environment variable or argument. OpenAPI aligned to [OpenAI's API specs](https://platform.openai.com/docs/guides/embeddings/what-are-embeddings). View the docs at [https:///michaelfeil.github.io/infinity](https:///michaelfeil.github.io/infinity) on how to get started.
+* **Tested implementation**: Unit and end-to-end tested. Embeddings via infinity are correctly embedded. Let's API users create embeddings till infinity and beyond.
+* **Easy to use**: Built on [FastAPI](https://fastapi.tiangolo.com/). Infinity CLI v2 allows launching of all arguments via Environment variable or argument. OpenAPI aligned to [OpenAI's API specs](https://platform.openai.com/docs/guides/embeddings/what-are-embeddings). View the docs at [https://michaelfeil.github.io/infinity](https://michaelfeil.github.io/infinity) on how to get started.
 
 <p align="center">
   <a href="https://github.com/runpod-workers/worker-infinity-embedding"><img src="https://github.com/user-attachments/assets/24f1906d-31b8-4e16-a479-1382cbdea046" alt="Logo Runpod" width="50"/></a>
@@ -331,7 +331,7 @@ Example models:
 </details>
 
 ## Documentation
-View the docs at [https:///michaelfeil.github.io/infinity](https://michaelfeil.github.io/infinity) on how to get started.
+View the docs at [https://michaelfeil.github.io/infinity](https://michaelfeil.github.io/infinity) on how to get started.
 After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in this case `http://localhost:7997/docs`. You can also find a interactive preview here: https://infinity.modal.michaelfeil.eu/docs (and https://michaelfeil-infinity.hf.space/docs)
 
 ## Contribute and Develop
