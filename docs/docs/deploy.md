@@ -21,6 +21,38 @@ docker run -it --gpus all \
 ```
 The cache path at inside the docker container is set by the environment variable `HF_HOME`.
 
+
+### AMD Docker: Deploy on AMD Platform (MI200 Series and MI300 Series) 
+#### Launch the CLI using a pre-built docker container (recommended) 
+
+```bash
+port=7997
+model1=michaelfeil/bge-small-en-v1.5
+model2=mixedbread-ai/mxbai-rerank-xsmall-v1
+volume=$PWD/data
+
+docker run -it \
+  --cap-add=SYS_PTRACE \
+  --security-opt seccomp=unconfined \
+  --device=/dev/kfd \
+  --device=/dev/dri \
+  --group-add video \
+  --network host \
+  -v $volume:/app/.cache \
+  -p $port:$port \
+  michaelf34/infinity:latest-rocm \
+  v2 \
+  --model-id $model1 \
+  --model-id $model2 \
+  --port $port \
+  --engine torch \
+  --compile \
+  --no-bettertransformer
+```
+The cache path at inside the docker container is set by the environment variable `HF_HOME`.
+
+
+
 ## Modal Labs
 
 A deployment example for usage within are located at repo, including a Github Actions Pipeline.
