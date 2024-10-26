@@ -52,6 +52,8 @@ def device_to_onnx(device: Device) -> str:
     if device == Device.cpu:
         return "CPUExecutionProvider"
     elif device == Device.cuda:
+        if torch.version.hip is not None:
+            return "ROCMExecutionProvider"
         return "CUDAExecutionProvider"
     elif device == Device.mps:
         return "CoreMLExecutionProvider"

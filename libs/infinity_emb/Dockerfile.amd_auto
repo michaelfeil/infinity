@@ -47,6 +47,23 @@ COPY infinity_emb infinity_emb
 COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
 RUN ./requirements_install_from_poetry.sh  --without lint,test "https://download.pytorch.org/whl/rocm6.2"
 
+# Follow the steps here to install onnxruntime-rocm 
+# https://huggingface.co/docs/optimum/onnxruntime/usage_guides/amdgpu
+RUN python3 -m pip uninstall onnxruntime \
+    && python3 -m pip install cmake onnx \
+    && (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y) \
+    && (. $HOME/.cargo/env)
+
+RUN git clone --single-branch --branch main --recursive https://github.com/Microsoft/onnxruntime onnxruntime \
+    && cd onnxruntime \
+    && (./build.sh --config Release --build_wheel --allow_running_as_root --update --build --parallel --cmake_extra_defines CMAKE_HIP_ARCHITECTURES=gfx90a,gfx942 ONNXRUNTIME_VERSION=$(cat ./VERSION_NUMBER) --use_rocm --rocm_home=/opt/rocm) \
+    && python3 -m pip install build/Linux/Release/dist/* \
+    && cd ..
+
+RUN git clone https://github.com/huggingface/optimum-amd.git \
+    && cd optimum-amd \
+    && pip install -e .
+
 #
 
 
@@ -56,9 +73,15 @@ FROM builder as testing
 COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
 RUN ./requirements_install_from_poetry.sh  --with lint,test "https://download.pytorch.org/whl/rocm6.2"
 
+RUN /app/.venv/bin/python -m pip uninstall onnxruntime -y \
+    && /app/.venv/bin/python -m pip install onnxruntime/build/Linux/Release/dist/* \
+    && cd optimum-amd \
+    && /app/.venv/bin/python -m pip install -e .
+
 # lint 
-RUN poetry run ruff check .
-RUN poetry run mypy .
+RUN poetry run ruff check . --exclude ./onnxruntime --exclude ./optimum-amd --exclude ./.venv
+RUN poetry run mypy . --exclude 'onnxruntime|optimum-amd|.venv'
+
 # pytest
 COPY tests tests
 # run end to end tests because of duration of build in github ci.
@@ -86,6 +109,12 @@ RUN echo "all tests passed" > "test_results.txt"
 # Use a multi-stage build -> production version, with download
 FROM base AS tested-builder
 COPY --from=builder /app /app
+
+RUN /app/.venv/bin/python -m pip uninstall onnxruntime -y \
+    && /app/.venv/bin/python -m pip install onnxruntime/build/Linux/Release/dist/* \
+    && cd optimum-amd \
+    && /app/.venv/bin/python -m pip install -e .
+    
 # force testing stage to run
 COPY --from=testing /app/test_results.txt /app/test_results.txt
 ENV HF_HOME=/app/.cache/huggingface
