@@ -180,7 +180,7 @@ class _EmbeddingObject(BaseModel):
 
 
 class OpenAIEmbeddingResult(BaseModel):
-    object: Literal["embedding"] = "embedding"
+    object: Literal["list"] = "list"
     data: list[_EmbeddingObject]
     model: str
     usage: _Usage
