@@ -382,7 +382,7 @@ All contributions must be made in a way to be compatible with the MIT License of
 [issues-shield]: https://img.shields.io/github/issues/michaelfeil/infinity.svg?style=for-the-badge
 [issues-url]: https://github.com/michaelfeil/infinity/issues
 [license-shield]: https://img.shields.io/github/license/michaelfeil/infinity.svg?style=for-the-badge
-[license-url]: https://github.com/michaelfeil/infinity/blob/master/LICENSE.txt
+[license-url]: https://github.com/michaelfeil/infinity/blob/main/LICENSE
 [pepa-shield]: https://static.pepy.tech/badge/infinity-emb
 [pepa-url]: https://www.pepy.tech/projects/infinity-emb
 [codecov-shield]: https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ
