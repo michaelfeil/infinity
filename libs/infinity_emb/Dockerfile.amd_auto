@@ -62,9 +62,9 @@ RUN ./requirements_install_from_poetry.sh  --without lint,test "https://download
 #     && pip install -e . 
 # OPTION2: Install onnxruntime-rocm from the wheel
 RUN python3 -m pip uninstall onnxruntime onnxruntime-rocm && python3 -m pip install "numpy<2" https://repo.radeon.com/rocm/manylinux/rocm-rel-6.2.3/onnxruntime_rocm-1.18.0-cp310-cp310-linux_x86_64.whl
-RUN git clone https://github.com/huggingface/optimum-amd.git \
-    && cd optimum-amd \
-    && pip install -e . 
+RUN git clone https://github.com/huggingface/optimum-amd.git /tmp-optimum \
+    && cd /tmp-optimum \
+    && pip install . 
 
 
 
