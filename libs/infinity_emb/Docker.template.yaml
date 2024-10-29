@@ -32,22 +32,22 @@ amd:
   extra_installs_main: | 
     # OPTION1: Follow the steps here to install onnxruntime-rocm 
     # https://huggingface.co/docs/optimum/onnxruntime/usage_guides/amdgpu
-    RUN python3 -m pip uninstall onnxruntime \
-      && python3 -m pip install cmake onnx \
-      && (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y) \
-      && (. $HOME/.cargo/env)
-    RUN git clone --single-branch --branch main --recursive https://github.com/Microsoft/onnxruntime onnxruntime \
-        && cd onnxruntime \
-        && (./build.sh --config Release --build_wheel --allow_running_as_root --update --build --parallel --cmake_extra_defines CMAKE_HIP_ARCHITECTURES=gfx90a,gfx942 ONNXRUNTIME_VERSION=$(cat ./VERSION_NUMBER) --use_rocm --rocm_home=/opt/rocm) \
-        && python3 -m pip install build/Linux/Release/dist/* 
-    RUN git clone https://github.com/huggingface/optimum-amd.git \
-        && cd optimum-amd \
-        && pip install -e . 
-    # OPTION2: Install onnxruntime-rocm from the wheel
-    # RUN python3 -m pip uninstall onnxruntime onnxruntime-rocm && python3 -m pip install "numpy<2" https://repo.radeon.com/rocm/manylinux/rocm-rel-6.2.3/onnxruntime_rocm-1.18.0-cp310-cp310-linux_x86_64.whl
+    # RUN python3 -m pip uninstall onnxruntime \
+    #   && python3 -m pip install cmake onnx \
+    #   && (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y) \
+    #   && (. $HOME/.cargo/env)
+    # RUN git clone --single-branch --branch main --recursive https://github.com/Microsoft/onnxruntime onnxruntime \
+    #     && cd onnxruntime \
+    #     && (./build.sh --config Release --build_wheel --allow_running_as_root --update --build --parallel --cmake_extra_defines CMAKE_HIP_ARCHITECTURES=gfx90a,gfx942 ONNXRUNTIME_VERSION=$(cat ./VERSION_NUMBER) --use_rocm --rocm_home=/opt/rocm) \
+    #     && python3 -m pip install build/Linux/Release/dist/* 
     # RUN git clone https://github.com/huggingface/optimum-amd.git \
     #     && cd optimum-amd \
     #     && pip install -e . 
+    # OPTION2: Install onnxruntime-rocm from the wheel
+    RUN python3 -m pip uninstall onnxruntime onnxruntime-rocm && python3 -m pip install "numpy<2" https://repo.radeon.com/rocm/manylinux/rocm-rel-6.2.3/onnxruntime_rocm-1.18.0-cp310-cp310-linux_x86_64.whl
+    RUN git clone https://github.com/huggingface/optimum-amd.git \
+        && cd optimum-amd \
+        && pip install -e . 
   poetry_extras: "all"
   python_version: python3.10
 
