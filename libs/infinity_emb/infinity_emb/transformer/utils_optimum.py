@@ -87,12 +87,7 @@ def optimize_model(
         revision (Optional[str], optional): The revision to use. Defaults to None.
         trust_remote_code (bool, optional): Whether to trust the remote code. Defaults to True.
     """
-    CHECK_ONNXRUNTIME.mark_required()
-    path_folder = (
-        Path(HUGGINGFACE_HUB_CACHE) / "infinity_onnx" / execution_provider / model_name_or_path
-    )
-    OPTIMIZED_SUFFIX = "_optimized.onnx"
-    files_optimized = list(path_folder.glob(f"**/*{OPTIMIZED_SUFFIX}"))
+    
     if execution_provider == "TensorrtExecutionProvider":
         return model_class.from_pretrained(
             model_name_or_path,
@@ -110,14 +105,33 @@ def optimize_model(
                 # "trt_int8_enable": "quantize" in file_name,
             },
         )
+
+    CHECK_ONNXRUNTIME.mark_required()
+
+    files_optimized = []
+
+    if CHECK_OPTIMUM_INTEL.is_available(): # Optimum Intel OpenVINO path
+        path_folder = (
+            Path(HUGGINGFACE_HUB_CACHE) / "infinity_openvino" / execution_provider / model_name_or_path
+        )
+        OPTIMIZED_PREFIX="openvino_model"
+        files_optimized = list(path_folder.glob(f"**/{OPTIMIZED_PREFIX}*"))
+    else: # Optimum onnx cpu path
+        path_folder = (
+            Path(HUGGINGFACE_HUB_CACHE) / "infinity_onnx" / execution_provider / model_name_or_path
+        )
+        OPTIMIZED_SUFFIX = "_optimized.onnx"
+        files_optimized = list(path_folder.glob(f"**/*{OPTIMIZED_SUFFIX}"))
+            
     if files_optimized:
+        print("files_optimized: ", files_optimized)
         file_optimized = files_optimized[0]
         logger.info(f"Optimized model found at {file_optimized}, skipping optimization")
         return model_class.from_pretrained(
             file_optimized.parent.as_posix(),
             revision=revision,
             trust_remote_code=trust_remote_code,
-            provider=execution_provider,
+            provider=execution_provider, # will be ignored by optimum intel
             file_name=file_optimized.name,
         )
 
@@ -126,39 +140,49 @@ def optimize_model(
         revision=revision,
         trust_remote_code=trust_remote_code,
         provider=execution_provider,
-        file_name=file_name,
+        file_name=file_name
     )
     if not optimize_model or execution_provider == "TensorrtExecutionProvider":
         return unoptimized_model
     try:
         logger.info("Optimizing model")
+        if CHECK_OPTIMUM_INTEL.is_available():
+            model = OVModelForFeatureExtraction.from_pretrained(
+                model_id, 
+                export=True, 
+                ov_config={"INFERENCE_PRECISION_HINT": "fp16"} # fp16 for now as it has better precision than bf16
+            )
+            model.save_pretrained(path_folder.as_posix()) # save the model
 
-        optimizer = ORTOptimizer.from_pretrained(unoptimized_model)
+        else:
+            optimizer = ORTOptimizer.from_pretrained(unoptimized_model)
 
-        is_gpu = "cpu" not in execution_provider.lower()
-        optimization_config = OptimizationConfig(
-            optimization_level=99,
-            optimize_with_onnxruntime_only=False,
-            optimize_for_gpu=is_gpu,
-            fp16=is_gpu,
-            # enable_gelu_approximation=True,
-            # enable_gemm_fast_gelu_fusion=True, # might not work
-        )
+            is_gpu = "cpu" not in execution_provider.lower()
+            optimization_config = OptimizationConfig(
+                optimization_level=99,
+                optimize_with_onnxruntime_only=False,
+                optimize_for_gpu=is_gpu,
+                fp16=is_gpu,
+                # enable_gelu_approximation=True,
+                # enable_gemm_fast_gelu_fusion=True, # might not work
+            )
 
-        optimized_model_path = optimizer.optimize(
-            optimization_config=optimization_config,
-            save_dir=path_folder.as_posix(),
-            # if larger than 2gb use external data format
-            one_external_file=True,
-        )
+            optimized_model_path = optimizer.optimize(
+                optimization_config=optimization_config,
+                save_dir=path_folder.as_posix(),
+                # if larger than 2gb use external data format
+                one_external_file=True,
+            )
 
-        model = model_class.from_pretrained(
-            optimized_model_path,
-            revision=revision,
-            trust_remote_code=trust_remote_code,
-            provider=execution_provider,
-            file_name=Path(file_name).name.replace(".onnx", OPTIMIZED_SUFFIX),
-        )
+            model = model_class.from_pretrained(
+                optimized_model_path,
+                revision=revision,
+                trust_remote_code=trust_remote_code,
+                provider=execution_provider,
+                file_name=Path(file_name).name.replace(".onnx", OPTIMIZED_SUFFIX),
+            )
+
+
     except Exception as e:
         logger.warning(f"Optimization failed with {e}. Going to use the unoptimized model.")
         model = unoptimized_model

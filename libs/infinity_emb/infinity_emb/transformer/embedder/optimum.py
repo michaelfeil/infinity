@@ -14,7 +14,7 @@ from infinity_emb.transformer.quantization.interface import quant_embedding_deco
 from infinity_emb.transformer.utils_optimum import (
     cls_token_pooling,
     device_to_onnx,
-    get_onnx_files,
+    # get_onnx_files,
     mean_pooling,
     normalize,
     optimize_model,
@@ -25,9 +25,18 @@ if CHECK_ONNXRUNTIME.is_available:
         from optimum.onnxruntime import (  # type: ignore[import-untyped]
             ORTModelForFeatureExtraction,
         )
+        from infinity_emb.transformer.utils_optimum import get_onnx_files
 
     except (ImportError, RuntimeError, Exception) as ex:
         CHECK_ONNXRUNTIME.mark_dirty(ex)
+
+
+if CHECK_OPTIMUM_INTEL.is_available:
+    try:
+        from optimum.intel import OVModelForFeatureExtraction as ORTModelForFeatureExtraction # type: ignore[import-untyped]
+
+    except (ImportError, RuntimeError, Exception) as ex:
+        CHECK_OPTIMUM_INTEL.mark_dirty(ex)
 
 if CHECK_TRANSFORMERS.is_available:
     from transformers import AutoConfig, AutoTokenizer  # type: ignore[import-untyped]
@@ -35,32 +44,33 @@ if CHECK_TRANSFORMERS.is_available:
 
 class OptimumEmbedder(BaseEmbedder):
     def __init__(self, *, engine_args: EngineArgs):
-        CHECK_ONNXRUNTIME.mark_required()
+        # CHECK_ONNXRUNTIME.mark_required()
         provider = device_to_onnx(engine_args.device)
 
-        onnx_file = get_onnx_files(
-            model_name_or_path=engine_args.model_name_or_path,
-            revision=engine_args.revision,
-            use_auth_token=True,
-            prefer_quantized="cpu" in provider.lower(),
-        )
+        if CHECK_ONNXRUNTIME.is_available():
+            onnx_file = get_onnx_files(
+                model_name_or_path=engine_args.model_name_or_path,
+                revision=engine_args.revision,
+                use_auth_token=True,
+                prefer_quantized="cpu" in provider.lower(),
+            )
+            self.model = optimize_model(
+                model_name_or_path=engine_args.model_name_or_path,
+                revision=engine_args.revision,
+                trust_remote_code=engine_args.trust_remote_code,
+                execution_provider=provider,
+                file_name=onnx_file.as_posix(),
+                optimize_model=not os.environ.get(
+                    "INFINITY_ONNX_DISABLE_OPTIMIZE", False
+                ),  # TODO: make this env variable public
+                model_class=ORTModelForFeatureExtraction,
+            )
+            self.model.use_io_binding = False
 
         self.pooling = (
             mean_pooling if engine_args.pooling_method == PoolingMethod.mean else cls_token_pooling
         )
 
-        self.model = optimize_model(
-            model_name_or_path=engine_args.model_name_or_path,
-            revision=engine_args.revision,
-            trust_remote_code=engine_args.trust_remote_code,
-            execution_provider=provider,
-            file_name=onnx_file.as_posix(),
-            optimize_model=not os.environ.get(
-                "INFINITY_ONNX_DISABLE_OPTIMIZE", False
-            ),  # TODO: make this env variable public
-            model_class=ORTModelForFeatureExtraction,
-        )
-        self.model.use_io_binding = False
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,
