@@ -8,9 +8,10 @@ import numpy as np
 from huggingface_hub import HfApi, HfFolder  # type: ignore
 from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
 
-from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TORCH
+from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TORCH, CHECK_OPTIMUM_INTEL
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device
+
 
 if CHECK_ONNXRUNTIME.is_available:
     try:
@@ -22,6 +23,14 @@ if CHECK_ONNXRUNTIME.is_available:
         from optimum.onnxruntime.configuration import OptimizationConfig  # type: ignore
     except (ImportError, RuntimeError, Exception) as ex:
         CHECK_ONNXRUNTIME.mark_dirty(ex)
+
+if CHECK_OPTIMUM_INTEL.is_available:
+    try:
+        from optimum.intel import OVModelForFeatureExtraction  # type: ignore[import-untyped]
+
+    except (ImportError, RuntimeError, Exception) as ex:
+        CHECK_OPTIMUM_INTEL.mark_dirty(ex)
+
 
 if CHECK_TORCH.is_available:
     import torch
@@ -51,6 +60,8 @@ def normalize(input_array, p=2, dim=1, eps=1e-12):
 def device_to_onnx(device: Device) -> str:
     if device == Device.cpu:
         return "CPUExecutionProvider"
+    elif device == Device.openvino:
+        return "OpenVINOExecutionProvider"
     elif device == Device.cuda:
         return "CUDAExecutionProvider"
     elif device == Device.mps:
@@ -87,7 +98,7 @@ def optimize_model(
         revision (Optional[str], optional): The revision to use. Defaults to None.
         trust_remote_code (bool, optional): Whether to trust the remote code. Defaults to True.
     """
-    
+
     if execution_provider == "TensorrtExecutionProvider":
         return model_class.from_pretrained(
             model_name_or_path,
@@ -106,32 +117,44 @@ def optimize_model(
             },
         )
 
-    CHECK_ONNXRUNTIME.mark_required()
-
     files_optimized = []
 
-    if CHECK_OPTIMUM_INTEL.is_available(): # Optimum Intel OpenVINO path
+    print(f"model_class: {model_class}")
+
+    if execution_provider == "OpenVINOExecutionProvider":  # Optimum Intel OpenVINO path
+        CHECK_OPTIMUM_INTEL.mark_required()
         path_folder = (
-            Path(HUGGINGFACE_HUB_CACHE) / "infinity_openvino" / execution_provider / model_name_or_path
+            Path(HUGGINGFACE_HUB_CACHE)
+            / "infinity_openvino"
+            / execution_provider
+            / model_name_or_path
         )
-        OPTIMIZED_PREFIX="openvino_model"
+        OPTIMIZED_PREFIX = "openvino_model"
         files_optimized = list(path_folder.glob(f"**/{OPTIMIZED_PREFIX}*"))
-    else: # Optimum onnx cpu path
+    elif execution_provider == "CPUExecutionProvider":  # Optimum onnx cpu path
+        CHECK_ONNXRUNTIME.mark_required()
         path_folder = (
             Path(HUGGINGFACE_HUB_CACHE) / "infinity_onnx" / execution_provider / model_name_or_path
         )
         OPTIMIZED_SUFFIX = "_optimized.onnx"
         files_optimized = list(path_folder.glob(f"**/*{OPTIMIZED_SUFFIX}"))
-            
+    else:
+        raise ValueError(
+            f"Does not support {execution_provider}."
+            "Optimum engine only support `OpenVINOExecutionProvider` "
+            "and `CPUExecutionProvider`."
+        )
+
     if files_optimized:
-        print("files_optimized: ", files_optimized)
+        # print("files_optimized: ", files_optimized)
         file_optimized = files_optimized[0]
+        logger.info(file_optimized.name)
         logger.info(f"Optimized model found at {file_optimized}, skipping optimization")
         return model_class.from_pretrained(
             file_optimized.parent.as_posix(),
             revision=revision,
             trust_remote_code=trust_remote_code,
-            provider=execution_provider, # will be ignored by optimum intel
+            provider=execution_provider,  # will be ignored by optimum intel
             file_name=file_optimized.name,
         )
 
@@ -140,21 +163,25 @@ def optimize_model(
         revision=revision,
         trust_remote_code=trust_remote_code,
         provider=execution_provider,
-        file_name=file_name
+        file_name=file_name,
     )
     if not optimize_model or execution_provider == "TensorrtExecutionProvider":
         return unoptimized_model
     try:
         logger.info("Optimizing model")
-        if CHECK_OPTIMUM_INTEL.is_available():
+        if execution_provider == "OpenVINOExecutionProvider":
             model = OVModelForFeatureExtraction.from_pretrained(
-                model_id, 
-                export=True, 
-                ov_config={"INFERENCE_PRECISION_HINT": "fp16"} # fp16 for now as it has better precision than bf16
+                model_name_or_path,
+                export=True,
+                # ov_config={"INFERENCE_PRECISION_HINT": "fp32"} # fp16 for now as it has better precision than bf16
+                # ov_config={"INFERENCE_PRECISION_HINT": "fp16"} # fp16 for now as it has better precision than bf16
+                ov_config={
+                    "INFERENCE_PRECISION_HINT": "bf16"
+                },  # fp16 for now as it has better precision than bf16
             )
-            model.save_pretrained(path_folder.as_posix()) # save the model
+            model.save_pretrained(path_folder.as_posix())  # save the model
 
-        else:
+        elif execution_provider == "CPUExecutionProvider":  # Optimum onnx cpu path
             optimizer = ORTOptimizer.from_pretrained(unoptimized_model)
 
             is_gpu = "cpu" not in execution_provider.lower()
@@ -181,11 +208,18 @@ def optimize_model(
                 provider=execution_provider,
                 file_name=Path(file_name).name.replace(".onnx", OPTIMIZED_SUFFIX),
             )
-
+        else:
+            raise ValueError(
+                f"Does not support {execution_provider}."
+                "Optimum engine only support `OpenVINOExecutionProvider` "
+                "and `CPUExecutionProvider`."
+            )
 
     except Exception as e:
         logger.warning(f"Optimization failed with {e}. Going to use the unoptimized model.")
         model = unoptimized_model
+
+    print(type(model))
 
     return model
 
@@ -239,3 +273,31 @@ def get_onnx_files(
         return onnx_files[0]
     else:
         raise ValueError(f"No onnx files found for {model_name_or_path} and revision {revision}")
+
+
+def get_openvino_files(
+    *,
+    model_name_or_path: str,
+    revision: Union[str, None] = None,
+    use_auth_token: Union[bool, str] = True,
+) -> Path:
+    """gets the onnx files from the repo"""
+    repo_files = _list_all_repo_files(
+        model_name_or_path=model_name_or_path,
+        revision=revision,
+        use_auth_token=use_auth_token,
+    )
+    pattern = "**/openvino_model.*"
+    openvino_files = [p for p in repo_files if p.match(pattern)]
+
+    if len(openvino_files) > 1:
+        logger.info(f"Found {len(openvino_files)} onnx files: {openvino_files}")
+        openvino_file = openvino_files[-1]
+        logger.info(f"Using {openvino_file} as the model")
+        return openvino_file
+    elif len(openvino_files) == 1:
+        return openvino_files[0]
+    else:
+        raise ValueError(
+            f"No openvino files found for {model_name_or_path} and revision {revision}"
+        )

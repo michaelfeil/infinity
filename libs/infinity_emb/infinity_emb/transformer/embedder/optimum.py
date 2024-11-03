@@ -6,7 +6,11 @@ import os
 
 import numpy as np
 
-from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TRANSFORMERS
+from infinity_emb._optional_imports import (
+    CHECK_ONNXRUNTIME,
+    CHECK_TRANSFORMERS,
+    CHECK_OPTIMUM_INTEL,
+)
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
@@ -33,10 +37,12 @@ if CHECK_ONNXRUNTIME.is_available:
 
 if CHECK_OPTIMUM_INTEL.is_available:
     try:
-        from optimum.intel import OVModelForFeatureExtraction as ORTModelForFeatureExtraction # type: ignore[import-untyped]
+        from optimum.intel import OVModelForFeatureExtraction  # type: ignore[import-untyped]
+        from infinity_emb.transformer.utils_optimum import get_openvino_files
 
     except (ImportError, RuntimeError, Exception) as ex:
         CHECK_OPTIMUM_INTEL.mark_dirty(ex)
+
 
 if CHECK_TRANSFORMERS.is_available:
     from transformers import AutoConfig, AutoTokenizer  # type: ignore[import-untyped]
@@ -44,10 +50,39 @@ if CHECK_TRANSFORMERS.is_available:
 
 class OptimumEmbedder(BaseEmbedder):
     def __init__(self, *, engine_args: EngineArgs):
-        # CHECK_ONNXRUNTIME.mark_required()
         provider = device_to_onnx(engine_args.device)
+        self.provider = provider
+        print(f"provider: {provider}")
+        print("CHECK_ONNXRUNTIME: ", CHECK_ONNXRUNTIME.is_available)
 
-        if CHECK_ONNXRUNTIME.is_available():
+        if provider == "OpenVINOExecutionProvider":
+            CHECK_OPTIMUM_INTEL.mark_required()
+            filename = ""
+            try:
+                openvino_file = get_openvino_files(
+                    model_name_or_path=engine_args.model_name_or_path,
+                    revision=engine_args.revision,
+                    use_auth_token=True,
+                )
+                filename = openvino_file.as_posix()
+            except Exception as e:  # show error then let the optimum intel compress on the fly
+                print(str(e))
+
+            self.model = optimize_model(
+                model_name_or_path=engine_args.model_name_or_path,
+                revision=engine_args.revision,
+                trust_remote_code=engine_args.trust_remote_code,
+                execution_provider=provider,
+                file_name=filename,
+                optimize_model=not os.environ.get(
+                    "INFINITY_ONNX_DISABLE_OPTIMIZE", False
+                ),  # TODO: make this env variable public
+                model_class=OVModelForFeatureExtraction,
+            )
+            print(type(self.model))
+
+        elif provider == "CPUExecutionProvider":
+            CHECK_ONNXRUNTIME.mark_required()
             onnx_file = get_onnx_files(
                 model_name_or_path=engine_args.model_name_or_path,
                 revision=engine_args.revision,
@@ -70,7 +105,6 @@ class OptimumEmbedder(BaseEmbedder):
         self.pooling = (
             mean_pooling if engine_args.pooling_method == PoolingMethod.mean else cls_token_pooling
         )
-
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,

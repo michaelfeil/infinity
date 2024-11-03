@@ -106,6 +106,7 @@ class InferenceEngine(EnumType):
 
 class Device(EnumType):
     cpu = "cpu"
+    openvino = "openvino"
     cuda = "cuda"
     mps = "mps"
     tensorrt = "tensorrt"
