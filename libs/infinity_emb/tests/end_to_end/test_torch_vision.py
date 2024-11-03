@@ -169,7 +169,7 @@ async def test_vision_multiple(client):
                     },
                 )
                 if response.status_code == 200:
-                    break # if successful, break
+                    break  # if successful, break
             assert response.status_code == 200
             rdata = response.json()
             rdata_results = rdata["data"]
