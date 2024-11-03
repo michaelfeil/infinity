@@ -52,7 +52,9 @@ class AsyncEmbeddingEngine:
 
         self.running = False
         self._running_sepamore: Optional[Semaphore] = None
-        self._model, self._min_inference_t, self._max_inference_t = select_model(self._engine_args)
+        self._model_replicas, self._min_inference_t, self._max_inference_t = select_model(
+            self._engine_args
+        )
 
     @classmethod
     def from_args(
@@ -85,7 +87,7 @@ class AsyncEmbeddingEngine:
                 self.running = True
                 self._batch_handler = BatchHandler(
                     max_batch_size=self._engine_args.batch_size,
-                    model=self._model,
+                    model_replicas=self._model_replicas,
                     batch_delay=self._min_inference_t / 2,
                     vector_disk_cache_path=self._engine_args.vector_disk_cache_path,
                     verbose=logger.level <= 10,
@@ -122,7 +124,7 @@ class AsyncEmbeddingEngine:
 
     @property
     def capabilities(self) -> set[ModelCapabilites]:
-        return self._model.capabilities
+        return self._model_replicas[0].capabilities
 
     @property
     def engine_args(self) -> EngineArgs:

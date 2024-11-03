@@ -167,6 +167,37 @@ class PoolingMethod(EnumType):
         return PoolingMethod.auto.value
 
 
+class DeviceID(list[int]):
+    def __init__(self, ids: list[int] | str):
+        if isinstance(ids, str):
+            ids = [int(i) for i in ids.split(",") if i]
+        self.ids = list(ids)
+        super().__init__(ids)
+
+    def __repr__(self) -> str:
+        return "DeviceID(" + ", ".join(str(i) for i in self.ids) + ")"
+
+    @staticmethod
+    def default_value():
+        return []
+
+
+class DeviceIDProxy(str):
+    pass
+
+    @staticmethod
+    def default_value():
+        return ""
+
+
+@dataclass(**dataclass_args)
+class LoadingStrategy:
+    device_mapping: list[str]
+    loading_dtype: str | Dtype | Any
+    quantization_dtype: str | Dtype | Any
+    device_placement: Optional[str] = None
+
+
 @dataclass(**dataclass_args)
 class AbstractSingle(ABC):
     @abstractmethod

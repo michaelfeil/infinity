@@ -34,7 +34,7 @@ async def load_patched_bh() -> tuple[SentenceTransformerPatched, BatchHandler]:
         )
     )
     model.encode(["hello " * 512] * BATCH_SIZE)
-    bh = BatchHandler(model=model, max_batch_size=BATCH_SIZE)
+    bh = BatchHandler(model_replicas=[model], max_batch_size=BATCH_SIZE)
     await bh.spawn()
     return model, bh
 
