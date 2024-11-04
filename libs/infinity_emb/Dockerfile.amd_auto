@@ -47,24 +47,34 @@ COPY infinity_emb infinity_emb
 COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
 RUN ./requirements_install_from_poetry.sh  --without lint,test "https://download.pytorch.org/whl/rocm6.2"
 
-# OPTION1: Follow the steps here to install onnxruntime-rocm 
-# https://huggingface.co/docs/optimum/onnxruntime/usage_guides/amdgpu
-# RUN python3 -m pip uninstall onnxruntime \
-#   && python3 -m pip install cmake onnx \
-#   && (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y) \
-#   && (. $HOME/.cargo/env)
-# RUN git clone --single-branch --branch main --recursive https://github.com/Microsoft/onnxruntime onnxruntime \
-#     && cd onnxruntime \
-#     && (./build.sh --config Release --build_wheel --allow_running_as_root --update --build --parallel --cmake_extra_defines CMAKE_HIP_ARCHITECTURES=gfx90a,gfx942 ONNXRUNTIME_VERSION=$(cat ./VERSION_NUMBER) --use_rocm --rocm_home=/opt/rocm) \
-#     && python3 -m pip install build/Linux/Release/dist/* 
-# RUN git clone https://github.com/huggingface/optimum-amd.git \
-#     && cd optimum-amd \
-#     && pip install -e . 
-# OPTION2: Install onnxruntime-rocm from the wheel
-RUN python3 -m pip uninstall onnxruntime onnxruntime-rocm && python3 -m pip install "numpy<2" https://repo.radeon.com/rocm/manylinux/rocm-rel-6.2.3/onnxruntime_rocm-1.18.0-cp310-cp310-linux_x86_64.whl
-RUN git clone https://github.com/huggingface/optimum-amd.git /tmp-optimum \
+ARG GPU_ARCH
+# GPU architecture specific installations
+RUN apt update -y && apt install migraphx -y
+RUN if [ "$GPU_ARCH" = "gfx90a" ] || [ "$GPU_ARCH" = "gfx942" ]; then \
+    # OPTION1: Follow the steps here to install onnxruntime-rocm 
+    # https://huggingface.co/docs/optimum/onnxruntime/usage_guides/amdgpu
+    . .venv/bin/activate && python -m pip uninstall onnxruntime -y \
+    && python -m pip install cmake onnx -y \
+    && (curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y) \
+    && (. $HOME/.cargo/env) \
+    && git clone --single-branch --branch main --recursive https://github.com/Microsoft/onnxruntime onnxruntime \
+    && cd onnxruntime \
+    && (./build.sh --config Release --build_wheel --allow_running_as_root --update --build --parallel --cmake_extra_defines CMAKE_HIP_ARCHITECTURES=${GPU_ARCH} ONNXRUNTIME_VERSION=$(cat ./VERSION_NUMBER) --use_rocm --rocm_home=/opt/rocm) \
+    && python -m pip uninstall onnxruntime -y \
+    && python -m pip install build/Linux/Release/dist/* \
+    && git clone https://github.com/huggingface/optimum-amd.git \
+    && cd optimum-amd \
+    && python -m pip install -e .; \
+elif [ "$GPU_ARCH" = "gfx1100" ]; then \
+    # OPTION2: Install onnxruntime-rocm from the wheel
+    . .venv/bin/activate && python -m pip uninstall onnxruntime onnxruntime-rocm -y && python -m pip install "numpy<2" https://repo.radeon.com/rocm/manylinux/rocm-rel-6.2.3/onnxruntime_rocm-1.18.0-cp310-cp310-linux_x86_64.whl \
+    && git clone https://github.com/huggingface/optimum-amd.git /tmp-optimum \
     && cd /tmp-optimum \
-    && pip install . 
+    && python -m pip install .; \
+else \
+    echo "Unsupported GPU_ARCH: ${GPU_ARCH}"; \
+    exit 1; \
+fi
 
 
 

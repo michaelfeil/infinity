@@ -8,7 +8,7 @@ import numpy as np
 from huggingface_hub import HfApi, HfFolder  # type: ignore
 from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
 
-from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TORCH
+from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TORCH, CHECK_OPTIMUM_AMD
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device
 
@@ -52,9 +52,17 @@ def device_to_onnx(device: Device) -> str:
     if device == Device.cpu:
         return "CPUExecutionProvider"
     elif device == Device.cuda:
+        return "CUDAExecutionProvider"
+    elif device == Device.rocm:
         if torch.version.hip is not None:
             return "ROCMExecutionProvider"
-        return "CUDAExecutionProvider"
+        else:
+            raise ValueError("The `torch` installed is not for ROCm.")
+    elif device == Device.migraphx:
+        if torch.version.hip is not None:
+            return "MIGraphXExecutionProvider"
+        else:
+            raise ValueError("The `torch` installed is not for ROCm.")
     elif device == Device.mps:
         return "CoreMLExecutionProvider"
     elif device == Device.tensorrt:
@@ -89,12 +97,8 @@ def optimize_model(
         revision (Optional[str], optional): The revision to use. Defaults to None.
         trust_remote_code (bool, optional): Whether to trust the remote code. Defaults to True.
     """
-    CHECK_ONNXRUNTIME.mark_required()
-    path_folder = (
-        Path(HUGGINGFACE_HUB_CACHE) / "infinity_onnx" / execution_provider / model_name_or_path
-    )
-    OPTIMIZED_SUFFIX = "_optimized.onnx"
-    files_optimized = list(path_folder.glob(f"**/*{OPTIMIZED_SUFFIX}"))
+
+    ## If there is no need for optimization
     if execution_provider == "TensorrtExecutionProvider":
         return model_class.from_pretrained(
             model_name_or_path,
@@ -112,8 +116,28 @@ def optimize_model(
                 # "trt_int8_enable": "quantize" in file_name,
             },
         )
+
+    elif execution_provider in ["ROCMExecutionProvider", "MIGraphXExecutionProvider"]:
+        CHECK_OPTIMUM_AMD.mark_required()
+        return model_class.from_pretrained(
+            model_name_or_path,
+            revision=revision,
+            trust_remote_code=trust_remote_code,
+            provider=execution_provider,
+            file_name=file_name,
+        )
+
+    ## path to find if model has been optimized
+    CHECK_ONNXRUNTIME.mark_required()
+    path_folder = (
+        Path(HUGGINGFACE_HUB_CACHE) / "infinity_onnx" / execution_provider / model_name_or_path
+    )
+    OPTIMIZED_SUFFIX = "_optimized.onnx"
+    files_optimized = list(path_folder.glob(f"**/*{OPTIMIZED_SUFFIX}"))
+
+    logger.info(f"files_optimized: {files_optimized}")
     if files_optimized:
-        file_optimized = files_optimized[0]
+        file_optimized = files_optimized[-1]
         logger.info(f"Optimized model found at {file_optimized}, skipping optimization")
         return model_class.from_pretrained(
             file_optimized.parent.as_posix(),

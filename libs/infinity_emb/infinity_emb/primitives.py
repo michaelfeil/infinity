@@ -107,6 +107,8 @@ class InferenceEngine(EnumType):
 class Device(EnumType):
     cpu = "cpu"
     cuda = "cuda"
+    rocm = "rocm"
+    migraphx = "migraphx"
     mps = "mps"
     tensorrt = "tensorrt"
     auto = "auto"
