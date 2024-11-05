@@ -66,7 +66,7 @@ def select_model(
         f"using engine=`{engine_args.engine.value}`"
         f" and device=`{engine_args.device.resolve()}`"
     )
-    # engine_args.update_loading_stategy()
+    # engine_args.update_loading_strategy()
 
     unloaded_engine = get_engine_type_from_config(engine_args)
 

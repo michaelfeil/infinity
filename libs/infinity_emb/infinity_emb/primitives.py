@@ -168,7 +168,7 @@ class PoolingMethod(EnumType):
 
 
 class DeviceID(list[int]):
-    def __init__(self, ids: list[int] | str):
+    def __init__(self, ids: Union[list[int], str]):
         if isinstance(ids, str):
             ids = [int(i) for i in ids.split(",") if i]
         self.ids = list(ids)
@@ -193,8 +193,8 @@ class DeviceIDProxy(str):
 @dataclass(**dataclass_args)
 class LoadingStrategy:
     device_mapping: list[str]
-    loading_dtype: str | Dtype | Any
-    quantization_dtype: str | Dtype | Any
+    loading_dtype: Union[str, Dtype, Any]
+    quantization_dtype: Union[str, Dtype, Any]
     device_placement: Optional[str] = None
 
 

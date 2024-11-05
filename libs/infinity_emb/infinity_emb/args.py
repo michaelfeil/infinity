@@ -122,14 +122,14 @@ class EngineArgs:
             # validate
             EngineArgsPydantic(**self.__dict__)
         if self._loading_strategy is None:
-            self.update_loading_stategy()
+            self.update_loading_strategy()
         elif isinstance(self._loading_strategy, dict):
             object.__setattr__(self, "_loading_strategy", LoadingStrategy(**self._loading_strategy))
 
     def to_dict(self):
         return asdict(self)
 
-    def update_loading_stategy(self):
+    def update_loading_strategy(self):
         """Assign a device id to the EngineArgs object."""
         from infinity_emb.inference import loading_strategy  # type: ignore
 

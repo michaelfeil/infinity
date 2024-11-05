@@ -660,6 +660,7 @@ if CHECK_TYPER.is_available:
     CHECK_UVICORN.mark_required()
     import typer
     import uvicorn
+    import uvloop
 
     tp = typer.Typer()
 
@@ -942,7 +943,10 @@ if CHECK_TYPER.is_available:
             api_key=api_key,
             proxy_root_path=proxy_root_path,
         )
-        uvicorn.run(app, host=host, port=port, log_level=log_level.name)
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        uvicorn.run(
+            app, host=host, port=port, log_level=log_level.name, http="httptools", loop="uvloop"
+        )
 
     def cli():
         CHECK_TYPER.mark_required()

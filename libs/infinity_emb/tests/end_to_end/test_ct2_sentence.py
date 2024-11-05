@@ -52,7 +52,6 @@ def test_load_model(model_base):
     s = ["This is a test sentence."]
     e1 = model_base.encode(s)
     args = EngineArgs(model_name_or_path=MODEL, device="cpu", bettertransformer=False)
-    args.update_loading_stategy()
     e2 = CT2SentenceTransformer(
         engine_args=args,
     ).encode(s)
