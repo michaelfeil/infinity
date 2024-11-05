@@ -52,8 +52,6 @@ class OptimumEmbedder(BaseEmbedder):
     def __init__(self, *, engine_args: EngineArgs):
         provider = device_to_onnx(engine_args.device)
         self.provider = provider
-        print(f"provider: {provider}")
-        print("CHECK_ONNXRUNTIME: ", CHECK_ONNXRUNTIME.is_available)
 
         if provider == "OpenVINOExecutionProvider":
             CHECK_OPTIMUM_INTEL.mark_required()
@@ -79,7 +77,6 @@ class OptimumEmbedder(BaseEmbedder):
                 ),  # TODO: make this env variable public
                 model_class=OVModelForFeatureExtraction,
             )
-            print(type(self.model))
 
         elif provider == "CPUExecutionProvider":
             CHECK_ONNXRUNTIME.mark_required()

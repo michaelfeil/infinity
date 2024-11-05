@@ -119,8 +119,6 @@ def optimize_model(
 
     files_optimized = []
 
-    print(f"model_class: {model_class}")
-
     if execution_provider == "OpenVINOExecutionProvider":  # Optimum Intel OpenVINO path
         CHECK_OPTIMUM_INTEL.mark_required()
         path_folder = (
