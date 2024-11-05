@@ -49,6 +49,8 @@ amd:
         && (./build.sh --config Release --build_wheel --allow_running_as_root --update --build --parallel --cmake_extra_defines CMAKE_HIP_ARCHITECTURES=${GPU_ARCH} ONNXRUNTIME_VERSION=$(cat ./VERSION_NUMBER) --use_rocm --use_migraphx --rocm_home=/opt/rocm) \
         && python -m pip uninstall onnxruntime -y \
         && python -m pip install build/Linux/Release/dist/* \
+        && cp -r /app/onnxruntime/build/Linux/Release/*.so /usr/local/lib/ \
+        && cp -r /app/onnxruntime/build/Linux/Release/*.so.* /usr/local/lib/ \
         && git clone https://github.com/huggingface/optimum-amd.git \
         && cd optimum-amd \
         && python -m pip install -e .; \
