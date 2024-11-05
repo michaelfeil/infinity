@@ -276,6 +276,7 @@ Example models:
 - [infiniflow/Ragflow](https://github.com/infiniflow/ragflow)
 - [SAP Core AI](https://github.com/SAP-samples/btp-generative-ai-hub-use-cases/tree/main/10-byom-oss-llm-ai-core)
 - [gpt_server - gpt_server is an open-source framework designed for production-level deployment of LLMs (Large Language Models) or Embeddings.](https://github.com/shell-nlp/gpt_server)
+- [KubeAI: Kubernetes AI Operator for inferencing](https://github.com/substratusai/kubeai)
 
 ## Launch FAQ:
 <details>
