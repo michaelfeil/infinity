@@ -117,7 +117,9 @@ def optimize_model(
             },
         )
 
-    files_optimized = []
+    file_optimized = ''
+
+    logger.info(f"file_name: {file_name}")
 
     if execution_provider == "OpenVINOExecutionProvider":  # Optimum Intel OpenVINO path
         CHECK_OPTIMUM_INTEL.mark_required()
@@ -128,7 +130,11 @@ def optimize_model(
             / model_name_or_path
         )
         OPTIMIZED_PREFIX = "openvino_model"
-        files_optimized = list(path_folder.glob(f"**/{OPTIMIZED_PREFIX}*"))
+        files_optimized = sorted(list(path_folder.glob(f"**/{OPTIMIZED_PREFIX}*")))
+        if files_optimized:
+            file_optimized = files_optimized[-1]
+        if file_name:
+            file_optimized = file_name
     elif execution_provider == "CPUExecutionProvider":  # Optimum onnx cpu path
         CHECK_ONNXRUNTIME.mark_required()
         path_folder = (
@@ -136,6 +142,10 @@ def optimize_model(
         )
         OPTIMIZED_SUFFIX = "_optimized.onnx"
         files_optimized = list(path_folder.glob(f"**/*{OPTIMIZED_SUFFIX}"))
+        if files_optimized:
+            file_optimized = files_optimized[0]
+
+            file_name=file_optimized.name
     else:
         raise ValueError(
             f"Does not support {execution_provider}."
@@ -143,17 +153,15 @@ def optimize_model(
             "and `CPUExecutionProvider`."
         )
 
-    if files_optimized:
+    if file_optimized:
         # print("files_optimized: ", files_optimized)
-        file_optimized = files_optimized[0]
-        logger.info(file_optimized.name)
         logger.info(f"Optimized model found at {file_optimized}, skipping optimization")
         return model_class.from_pretrained(
-            file_optimized.parent.as_posix(),
+            file_optimized.parent.as_posix() if not isinstance(file_optimized, str) else model_name_or_path,
             revision=revision,
             trust_remote_code=trust_remote_code,
             provider=execution_provider,  # will be ignored by optimum intel
-            file_name=file_optimized.name,
+            file_name=file_optimized.name if not isinstance(file_optimized, str) else file_optimized,
         )
 
     unoptimized_model = model_class.from_pretrained(
@@ -285,7 +293,7 @@ def get_openvino_files(
         revision=revision,
         use_auth_token=use_auth_token,
     )
-    pattern = "**/openvino_model.*"
+    pattern = "**openvino_model.*"
     openvino_files = [p for p in repo_files if p.match(pattern)]
 
     if len(openvino_files) > 1:
