@@ -117,7 +117,9 @@ def optimize_model(
             },
         )
 
-    file_optimized = ''
+    file_optimized: Union[str, list] = ''
+
+    extra_args = {}
 
     logger.info(f"file_name: {file_name}")
 
@@ -135,6 +137,13 @@ def optimize_model(
             file_optimized = files_optimized[-1]
         if file_name:
             file_optimized = file_name
+
+        extra_args = {
+            "ov_config":{
+                "INFERENCE_PRECISION_HINT": "bf16"
+            }
+        }
+        
     elif execution_provider == "CPUExecutionProvider":  # Optimum onnx cpu path
         CHECK_ONNXRUNTIME.mark_required()
         path_folder = (
@@ -144,8 +153,6 @@ def optimize_model(
         files_optimized = list(path_folder.glob(f"**/*{OPTIMIZED_SUFFIX}"))
         if files_optimized:
             file_optimized = files_optimized[0]
-
-            file_name=file_optimized.name
     else:
         raise ValueError(
             f"Does not support {execution_provider}."
@@ -161,7 +168,8 @@ def optimize_model(
             revision=revision,
             trust_remote_code=trust_remote_code,
             provider=execution_provider,  # will be ignored by optimum intel
-            file_name=file_optimized.name if not isinstance(file_optimized, str) else file_optimized,
+            file_name=file_optimized.name if not isinstance(file_optimized, str) else file_optimized,            
+            **extra_args
         )
 
     unoptimized_model = model_class.from_pretrained(
@@ -224,8 +232,6 @@ def optimize_model(
     except Exception as e:
         logger.warning(f"Optimization failed with {e}. Going to use the unoptimized model.")
         model = unoptimized_model
-
-    print(type(model))
 
     return model
 
