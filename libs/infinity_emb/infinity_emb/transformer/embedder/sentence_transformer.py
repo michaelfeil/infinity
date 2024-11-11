@@ -76,6 +76,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self.mode_colbert = False
         if "colbert" in fm.auto_model.config.architectures[0].lower():
             self.mode_colbert = True
+            self.normalize_embeddings = False
 
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         self.eval()
@@ -128,7 +129,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         with torch.inference_mode():
             if not self.mode_colbert:
                 embeddings: "Tensor" = out_features.to(torch.float32)
-                if self.normalize_embeddings and not self.mode_colbert:
+                if self.normalize_embeddings:
                     embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
                 embeddings_np: np.ndarray = embeddings.numpy()
             else:
