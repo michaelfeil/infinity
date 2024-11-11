@@ -953,7 +953,12 @@ if CHECK_TYPER.is_available:
         )
 
         uvicorn.run(
-            app, host=host, port=port, log_level=log_level.name, http="httptools", loop=loopname
+            app,
+            host=host,
+            port=port,
+            log_level=log_level.name,
+            http="httptools",
+            loop=loopname,  # type: ignore
         )
 
     def cli():
