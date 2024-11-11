@@ -70,6 +70,13 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         # to be able to could the tokens in another thread
         # without corrupting the original.
         fm = self._first_module()
+
+        self.normalize_embeddings = True
+
+        self.mode_colbert = False
+        if "colbert" in fm.auto_model.config.architectures[0].lower():
+            self.mode_colbert = True
+
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         self.eval()
         self.engine_args = engine_args
@@ -102,20 +109,38 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
 
         with torch.no_grad():
             features = util.batch_to_device(features, self.device)  # type: ignore
-            out_features: "Tensor" = self.forward(features)["sentence_embedding"]
+            out: dict[str, "Tensor"] = self.forward(features)
+            if not self.mode_colbert:
+                out_features = out["sentence_embedding"].detach().cpu()
+            else:
+                out_features = {  # type: ignore # noqa
+                    "token_embeddings": out["token_embeddings"].detach().cpu(),
+                    "attention_mask": out["attention_mask"].detach().cpu(),
+                }
 
-        return out_features.detach().cpu()
+        return out_features
 
     @quant_embedding_decorator()
     def encode_post(
-        self, out_features: "Tensor", normalize_embeddings: bool = True
+        self,
+        out_features: "Tensor",
     ) -> "EmbeddingReturnType":
         with torch.inference_mode():
-            embeddings: "Tensor" = out_features.to(torch.float32)
-            if normalize_embeddings:
-                embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
-
-            embeddings_np: np.ndarray = embeddings.numpy()
+            if not self.mode_colbert:
+                embeddings: "Tensor" = out_features.to(torch.float32)
+                if self.normalize_embeddings and not self.mode_colbert:
+                    embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+                embeddings_np: np.ndarray = embeddings.numpy()
+            else:
+                # remove the attention mask for two inputs with 5 and 3 tokens that's [[1,1,1,1,1],[1,1,1,0,0]]
+                # and convert to list of numpy arrays
+                embeddings_np = [  # type: ignore # noqa
+                    z[m].numpy()
+                    for z, m in zip(
+                        out_features["token_embeddings"].to(torch.float32),  # type: ignore
+                        out_features["attention_mask"].bool(),  # type: ignore
+                    )
+                ]
 
         return embeddings_np
 
