@@ -75,19 +75,19 @@ jobs:
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       # Uncomment these steps for local testing before pushing to Docker Hub
-      - name: Build for Test
-        if: ${{ inputs.appendix_tag == '' }} # Optionally run only if no appendix tag is provided
-        uses: docker/build-push-action@v5
-        with:
-          context: ${{ inputs.context }}
-          file: ${{ inputs.dockerfile }}
-          load: true
-          tags: ${{ env.TEST_TAG }}
+      # - name: Build for Test
+      #   if: ${{ inputs.appendix_tag == '' }} # Optionally run only if no appendix tag is provided
+      #   uses: docker/build-push-action@v5
+      #   with:
+      #     context: ${{ inputs.context }}
+      #     file: ${{ inputs.dockerfile }}
+      #     load: true
+      #     tags: ${{ env.TEST_TAG }}
 
-      - name: Test Docker Image
-        if: steps.test_image_build.outputs.success == 'true' # Only if test build succeeded
-        run: |
-          docker run --rm ${{ env.TEST_TAG }} --help
+      # - name: Test Docker Image
+      #   if: steps.test_image_build.outputs.success == 'true' # Only if test build succeeded
+      #   run: |
+      #     docker run --rm ${{ env.TEST_TAG }} --help
 
       - name: Build and Push to Docker Hub
         uses: docker/build-push-action@v5
