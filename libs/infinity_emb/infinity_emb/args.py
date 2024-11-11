@@ -42,6 +42,8 @@ class EngineArgs:
         vector_disk_cache_path, str: file path to folder of cache.
             Defaults to "" - default no caching.
         device, Device or str: device to use for inference. Defaults to Device.auto.
+        device_id, DeviceID or str: device index to use for inference.
+            Defaults to [], no preferred placement.
         compile, bool: compile model for better performance. Defaults to False.
         bettertransformer, bool: use bettertransformer. Defaults to True.
         dtype, Dtype or str: data type to use for inference. Defaults to Dtype.auto.

@@ -106,5 +106,6 @@ def select_model(
                 f" embeddings/sec at batch_size={engine_args.batch_size}"
             )
         engine_replicas.append(loaded_engine)
+    assert len(engine_replicas) > 0, "No engine replicas were loaded"
 
     return engine_replicas, min_inference_t, max_inference_t

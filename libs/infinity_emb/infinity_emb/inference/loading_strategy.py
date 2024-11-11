@@ -9,7 +9,7 @@ if CHECK_TRANSFORMERS.is_available:
     from transformers import is_torch_npu_available  # type: ignore
 
 
-def _validate_availabe_device_ids(
+def _validate_availale_device_ids(
     device: str, available_devices: list[int], desired_device_ids: DeviceID
 ) -> list[str]:
     if desired_device_ids:
@@ -42,17 +42,17 @@ def get_loading_strategy_torch(args: EngineArgs) -> LoadingStrategy:
 
     # mix with device_id
     if autodevice == "cuda":
-        autodevice_string = _validate_availabe_device_ids(
+        autodevice_string = _validate_availale_device_ids(
             "cuda", list(range(torch.cuda.device_count())), args.device_id
         )
     elif autodevice == "npu":
-        autodevice_string = _validate_availabe_device_ids(
+        autodevice_string = _validate_availale_device_ids(
             "npu",
             list(range(torch.npu.device_count())),  # type: ignore
             args.device_id,
         )
     elif autodevice == "mps":
-        autodevice_string = _validate_availabe_device_ids(
+        autodevice_string = _validate_availale_device_ids(
             "mps", list(range(torch.mps.device_count())), args.device_id
         )
     elif autodevice == "cpu":
