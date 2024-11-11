@@ -74,29 +74,22 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      # Uncomment these steps for local testing before pushing to Docker Hub
+      # Uncomment the following steps if you want to build and test the image locally
       # - name: Build for Test
-      #   if: ${{ inputs.appendix_tag == '' }} # Optionally run only if no appendix tag is provided
       #   uses: docker/build-push-action@v5
       #   with:
       #     context: ${{ inputs.context }}
       #     file: ${{ inputs.dockerfile }}
       #     load: true
       #     tags: ${{ env.TEST_TAG }}
-
-      # - name: Test Docker Image
-      #   if: steps.test_image_build.outputs.success == 'true' # Only if test build succeeded
+      #
+      # - name: Test
+      #   # show that at least --help command is running
       #   run: |
       #     docker run --rm ${{ env.TEST_TAG }} --help
-
       - name: Build and Push to Docker Hub
         uses: docker/build-push-action@v5
         with:
-          context:  ${{ inputs.context }}
-          file: ${{ inputs.dockerfile }}
-          # We can only build for the intersection of platforms supported by
-          # QEMU and base python image, for now build only for
-          # linux/amd64 and linux/arm64
           # cache-from: type=registry,ref=${{ env.LATEST_TAG }}
           platforms: ${{ inputs.platforms }}
           tags: ${{ env.LATEST_TAG }}${{ env.APPENDIX_TAG }},${{ env.VERSION_TAG }}${{ env.APPENDIX_TAG }}
