@@ -190,8 +190,11 @@ class StartupTelemetry(ProductTelemetryEvent):
 
     def render(self):
         """defines the message to be sent to posthog"""
+        ea = asdict(self.engine_args)
+        loading_strategy = {str(k): str(v) for k, v in ea.pop("_loading_strategy").items()}
         return {
-            **asdict(self.engine_args),
+            **ea,
+            **loading_strategy,
             "session_id": self.session_id,
             "num_engines": self.num_engines,
             "capabilities": self.capabilities,

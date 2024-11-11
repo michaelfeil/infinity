@@ -51,8 +51,9 @@ def test_load_model(model_base):
     # or internal pytorch errors
     s = ["This is a test sentence."]
     e1 = model_base.encode(s)
+    args = EngineArgs(model_name_or_path=MODEL, device="cpu", bettertransformer=False)
     e2 = CT2SentenceTransformer(
-        engine_args=EngineArgs(model_name_or_path=MODEL, device="cpu", bettertransformer=False)
+        engine_args=args,
     ).encode(s)
     np.testing.assert_almost_equal(e1, e2, decimal=6)
 

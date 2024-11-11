@@ -3,7 +3,7 @@
 
 from functools import cache, wraps
 from hashlib import md5
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Union
 
 import numpy as np
 import requests  # type: ignore
@@ -16,6 +16,7 @@ from infinity_emb.transformer.quantization.quant import quantize
 
 if TYPE_CHECKING:
     from infinity_emb.transformer.abstract import BaseEmbedder
+    import torch
 
 if CHECK_TORCH.is_available:
     import torch
@@ -24,7 +25,7 @@ if CHECK_SENTENCE_TRANSFORMERS.is_available:
     from sentence_transformers.quantization import quantize_embeddings  # type: ignore
 
 
-def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Device.cpu):
+def quant_interface(model: Any, dtype: Union[Dtype] = Dtype.int8, device: Device = Device.cpu):
     """Quantize a model to a specific dtype and device.
 
     Args:
@@ -34,7 +35,7 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
             Defaults to Device.cpu.
     """
     device_orig = model.device
-    if device == Device.cpu and dtype in [Dtype.int8, Dtype.auto]:
+    if device == Device.cpu and dtype in [Dtype.int8, Dtype.auto, torch.int8]:
         logger.info("using torch.quantization.quantize_dynamic()")
         # TODO: verify if cpu requires quantization with torch.quantization.quantize_dynamic()
         model = torch.quantization.quantize_dynamic(
@@ -42,13 +43,13 @@ def quant_interface(model: Any, dtype: Dtype = Dtype.int8, device: Device = Devi
             {torch.nn.Linear},  # a set of layers to dynamically quantize
             dtype=torch.qint8,
         )
-    elif device == Device.cuda and dtype in [Dtype.int8, Dtype.auto]:
+    elif device == Device.cuda and dtype in [Dtype.int8, Dtype.auto, torch.int8]:
         logger.info(f"using quantize() for {dtype.value}")
         quant_handler, state_dict = quantize(model, mode=dtype.value)
         model = quant_handler.convert_for_runtime()
         model.load_state_dict(state_dict)
         model.to(device_orig)
-    elif device == Device.cuda and dtype == Dtype.fp8:
+    elif device == Device.cuda and dtype in [Dtype.fp8, torch.float8_e5m2]:
         try:
             from float8_experimental.float8_dynamic_linear import (  # type: ignore
                 Float8DynamicLinear,

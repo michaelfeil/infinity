@@ -21,7 +21,7 @@
 ![Docker pulls](https://img.shields.io/docker/pulls/michaelf34/infinity)
 
 
- Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models and clip. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE).
+Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models, clip, clap and colpali. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE).
 
 ## Why Infinity
 * **Deploy any model from HuggingFace**: deploy any embedding, reranking, clip and sentence-transformer model from [HuggingFace]( https://huggingface.co/models?other=text-embeddings-inference&sort=trending)
@@ -276,6 +276,7 @@ Example models:
 - [infiniflow/Ragflow](https://github.com/infiniflow/ragflow)
 - [SAP Core AI](https://github.com/SAP-samples/btp-generative-ai-hub-use-cases/tree/main/10-byom-oss-llm-ai-core)
 - [gpt_server - gpt_server is an open-source framework designed for production-level deployment of LLMs (Large Language Models) or Embeddings.](https://github.com/shell-nlp/gpt_server)
+- [KubeAI: Kubernetes AI Operator for inferencing](https://github.com/substratusai/kubeai)
 
 ## Launch FAQ:
 <details>
@@ -382,7 +383,7 @@ All contributions must be made in a way to be compatible with the MIT License of
 [issues-shield]: https://img.shields.io/github/issues/michaelfeil/infinity.svg?style=for-the-badge
 [issues-url]: https://github.com/michaelfeil/infinity/issues
 [license-shield]: https://img.shields.io/github/license/michaelfeil/infinity.svg?style=for-the-badge
-[license-url]: https://github.com/michaelfeil/infinity/blob/master/LICENSE.txt
+[license-url]: https://github.com/michaelfeil/infinity/blob/main/LICENSE
 [pepa-shield]: https://static.pepy.tech/badge/infinity-emb
 [pepa-url]: https://www.pepy.tech/projects/infinity-emb
 [codecov-shield]: https://codecov.io/gh/michaelfeil/infinity/branch/main/graph/badge.svg?token=NMVQY5QOFQ
