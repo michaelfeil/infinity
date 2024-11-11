@@ -660,7 +660,15 @@ if CHECK_TYPER.is_available:
     CHECK_UVICORN.mark_required()
     import typer
     import uvicorn
-    import uvloop
+
+    try:
+        import uvloop
+
+        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+        loopname = "uvloop"
+    except ImportError:
+        # Windows does not support uvloop
+        loopname = "auto"
 
     tp = typer.Typer()
 
@@ -943,9 +951,9 @@ if CHECK_TYPER.is_available:
             api_key=api_key,
             proxy_root_path=proxy_root_path,
         )
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+
         uvicorn.run(
-            app, host=host, port=port, log_level=log_level.name, http="httptools", loop="uvloop"
+            app, host=host, port=port, log_level=log_level.name, http="httptools", loop=loopname
         )
 
     def cli():
