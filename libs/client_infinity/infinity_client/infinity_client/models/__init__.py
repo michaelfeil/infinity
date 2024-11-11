@@ -1,4 +1,4 @@
-""" Contains all the data models used in inputs/outputs """
+"""Contains all the data models used in inputs/outputs"""
 
 from .audio_embedding_input import AudioEmbeddingInput
 from .classify_input import ClassifyInput
