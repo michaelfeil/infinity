@@ -661,14 +661,16 @@ if CHECK_TYPER.is_available:
     import typer
     import uvicorn
 
-    try:
-        import uvloop
+    loopname = "auto"
+    if sys.version_info < (3, 12):
+        try:
+            import uvloop
 
-        asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-        loopname = "uvloop"
-    except ImportError:
-        # Windows does not support uvloop
-        loopname = "auto"
+            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+            loopname = "uvloop"
+        except ImportError:
+            # Windows does not support uvloop
+            pass
 
     tp = typer.Typer()
 
