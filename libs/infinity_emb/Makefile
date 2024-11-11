@@ -63,7 +63,7 @@ benchmark_embed: tests/data/benchmark/benchmark_embed.json
 	# sudo apt-get apache2-utils
 
 benchmark_embed_vision: tests/data/benchmark/benchmark_embed_image.json
-	ab -n 10000 -c 10 -l -s 480 \
+	ab -n 100 -c 50 -l -s 480 \
 	-T 'application/json' \
 	-p $< \
 	http://127.0.0.1:7997/embeddings
