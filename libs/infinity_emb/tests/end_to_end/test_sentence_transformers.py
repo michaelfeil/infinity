@@ -27,7 +27,10 @@ app = create_server(
 
 @pytest.fixture
 def model_base() -> SentenceTransformer:
-    return SentenceTransformer(MODEL)
+    model = SentenceTransformer(MODEL)
+    if model.device == "cuda":
+        model = model.to(torch.float16)
+    return model
 
 
 @pytest.fixture()
@@ -56,7 +59,7 @@ async def test_model_route(client):
 
 @pytest.mark.anyio
 async def test_embedding(client, model_base, helpers):
-    await helpers.embedding_verify(client, model_base, prefix=PREFIX, model_name=MODEL)
+    await helpers.embedding_verify(client, model_base, prefix=PREFIX, model_name=MODEL, atol=5e-3)
 
 
 @pytest.mark.performance
@@ -70,4 +73,5 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, hel
         model_name=MODEL,
         batch_size=batch_size,
         downsample=2 if torch.cuda.is_available() else 16,
+        atol=1e-2,
     )

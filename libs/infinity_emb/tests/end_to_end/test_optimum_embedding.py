@@ -50,7 +50,7 @@ async def test_model_route(client):
 
 @pytest.mark.anyio
 async def test_embedding(client, model_base, helpers):
-    await helpers.embedding_verify(client, model_base, prefix=PREFIX, model_name=MODEL, decimal=2)
+    await helpers.embedding_verify(client, model_base, prefix=PREFIX, model_name=MODEL, atol=5e-2)
 
 
 @pytest.mark.performance
@@ -64,5 +64,5 @@ async def test_batch_embedding(client, get_sts_bechmark_dataset, model_base, hel
         model_name=MODEL,
         batch_size=batch_size,
         downsample=16,
-        decimal=1,
+        atol=5e-2,
     )

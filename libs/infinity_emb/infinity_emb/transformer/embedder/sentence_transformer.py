@@ -14,7 +14,7 @@ from infinity_emb._optional_imports import (
 )
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import Device, Dtype, EmbeddingReturnType
+from infinity_emb.primitives import Device
 from infinity_emb.transformer.abstract import BaseEmbedder
 from infinity_emb.transformer.acceleration import to_bettertransformer
 from infinity_emb.transformer.quantization.interface import (
@@ -24,6 +24,7 @@ from infinity_emb.transformer.quantization.interface import (
 
 if TYPE_CHECKING:
     from torch import Tensor
+    from infinity_emb.primitives import EmbeddingReturnType
 
 
 if CHECK_SENTENCE_TRANSFORMERS.is_available:
@@ -55,14 +56,16 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         if engine_args.bettertransformer:
             model_kwargs["attn_implementation"] = "eager"
 
+        ls = engine_args._loading_strategy
+
         super().__init__(
             engine_args.model_name_or_path,
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
-            device=engine_args.device.resolve(),
+            device=ls.device_placement,
             model_kwargs=model_kwargs,
         )
-        self.to(self.device)
+        self.to(ls.device_placement)
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
         # without corrupting the original.
@@ -77,19 +80,10 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             logger,
         )
 
-        if self.device.type == "cuda" and engine_args.dtype in [
-            Dtype.auto,
-            Dtype.float16,
-        ]:
-            logger.info("Switching to half() precision (cuda: fp16). ")
-            self.half()
-        elif self.device.type == "cuda" and engine_args.dtype in [
-            Dtype.bfloat16,
-        ]:
-            fm.auto_model.to(torch.bfloat16)
+        fm.to(ls.loading_dtype)
 
-        if engine_args.dtype in (Dtype.int8, Dtype.fp8):
-            fm.auto_model = quant_interface(
+        if ls.quantization_dtype is not None:
+            fm.auto_model = quant_interface(  # TODO: add ls.quantization_dtype and ls.placement
                 fm.auto_model, engine_args.dtype, device=Device[self.device.type]
             )
 
@@ -99,7 +93,6 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
 
     def encode_pre(self, sentences) -> dict[str, "Tensor"]:
         features = self.tokenize(sentences)
-
         return features
 
     def encode_core(self, features: dict[str, "Tensor"]) -> "Tensor":
@@ -116,7 +109,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
     @quant_embedding_decorator()
     def encode_post(
         self, out_features: "Tensor", normalize_embeddings: bool = True
-    ) -> EmbeddingReturnType:
+    ) -> "EmbeddingReturnType":
         with torch.inference_mode():
             embeddings: "Tensor" = out_features.to(torch.float32)
             if normalize_embeddings:

@@ -63,6 +63,35 @@ async def test_async_api_torch():
 
 
 @pytest.mark.anyio
+async def test_async_api_torch_double_launch():
+    sentences = ["Hi", "how"]
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="michaelfeil/bge-small-en-v1.5",
+            engine=InferenceEngine.debugengine,
+            device_id=[0, 1],
+            revision="main",
+            device="cpu",
+        )
+    )
+    assert engine.capabilities == {"embed"}
+    async with engine:
+        embeddings, usage = await engine.embed(sentences=sentences)
+        assert isinstance(embeddings, list)
+        assert isinstance(embeddings[0], np.ndarray)
+        embeddings = np.array(embeddings)
+        assert usage == sum([len(s) for s in sentences])
+        assert embeddings.shape[0] == len(sentences)
+        assert embeddings.shape[1] >= 10
+
+        # test if model denies classification and reranking
+        with pytest.raises(ModelNotDeployedError):
+            await engine.classify(sentences=sentences)
+        with pytest.raises(ModelNotDeployedError):
+            await engine.rerank(query="dummy", docs=sentences)
+
+
+@pytest.mark.anyio
 @pytest.mark.parametrize("engine_name", [InferenceEngine.torch])
 async def test_engine_reranker_torch_opt(engine_name: InferenceEngine):
     model_unpatched = CrossEncoder(

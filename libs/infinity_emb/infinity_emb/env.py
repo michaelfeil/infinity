@@ -11,6 +11,7 @@ from typing import TypeVar
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
     Device,
+    DeviceIDProxy,
     Dtype,
     EmbeddingDtype,
     EnumType,
@@ -224,7 +225,7 @@ class __Infinity_EnvManager:
 
     def _typed_multiple(self, name: str, cls: type["EnumTypeLike"]) -> list["str"]:
         result = self._optional_infinity_var_multiple(name, default=[cls.default_value()])
-        assert all(cls(v) for v in result)
+        tuple(cls(v) for v in result)  # check if all values are valid
         return result
 
     @cached_property
@@ -242,6 +243,10 @@ class __Infinity_EnvManager:
     @cached_property
     def device(self) -> list[str]:
         return self._typed_multiple("device", Device)
+
+    @cached_property
+    def device_id(self):
+        return self._typed_multiple("device_id", DeviceIDProxy)
 
     @cached_property
     def embedding_dtype(self) -> list[str]:
