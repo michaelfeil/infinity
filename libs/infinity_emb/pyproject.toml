@@ -164,7 +164,7 @@ markers = [
 line-length = 100
 
 [tool.codespell]
-skip = "./tests/data/benchmark"
+skip = "./tests/data/benchmark,*.lock"
 
 [build-system]
 requires = ["poetry-core"]
