@@ -124,7 +124,7 @@ The cache path at inside the docker container is set by the environment variable
  
 <details>
   <summary>Docker Container for Onnx-GPU, Cuda Extensions, TensorRT</summary>
-  Use the `latest-trt-onnx` image or `x.x.x-trt-onnx` for rocm compatible inference.
+  Use the `latest-trt-onnx` image or `x.x.x-trt-onnx` for nvidia compatible inference.
   **This image is currently not build via CI/CD (to large), consider pinning to exact version.**
 
   This image has support for:

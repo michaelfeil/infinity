@@ -44,7 +44,7 @@ from infinity_client.types import Response
 
 with i_client as client:
     embeds: OpenAIEmbeddingResult = embeddings.sync(client=client, body=OpenAIEmbeddingInput.from_dict({
-        "input":["Hello, this is a sentence-to-embed", "Hello, my cat is cute"],
+        "input": ["Hello, this is a sentence-to-embed", "Hello, my cat is cute"],
         "model": "michaelfeil/bge-small-en-v1.5",
     }))
 ```
@@ -53,7 +53,7 @@ Or do the same thing with an async version:
 
 ```python
 from infinity_client.models import OpenAIModelInfo
-from infinity_client.api.my_tag import models
+from infinity_client.api.default import models
 from infinity_client.types import Response
 
 async with i_client as client:
@@ -66,7 +66,7 @@ By default, when you're calling an HTTPS API it will attempt to verify that SSL 
 
 ```python
 i_client = AuthenticatedClient(
-    base_url="https://internal_api.example.com", 
+    base_url="https://internal_api.example.com",
     token="SuperSecretToken",
     verify_ssl="/path/to/certificate_bundle.pem",
 )
