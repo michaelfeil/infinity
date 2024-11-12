@@ -64,6 +64,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             trust_remote_code=engine_args.trust_remote_code,
             device=ls.device_placement,
             model_kwargs=model_kwargs,
+            # TODO: set torch_dtype=ls.loading_dtype to save memory on loading.
         )
         self.to(ls.device_placement)
         # make a copy of the tokenizer,
