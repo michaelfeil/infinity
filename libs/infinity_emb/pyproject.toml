@@ -30,9 +30,9 @@ posthog = {version = "*", optional=true}
 # pin torch to a specific source, but default to pypi. use sed to overwrite.
 torch = {version = ">=2.2.1", source = "pypi", optional=true}
 sentence-transformers = {version = "^3.0.1", optional=true} 
-transformers = {version = ">4.34.0,<=5.0", optional=true} 
+transformers = {version = ">4.34.0,<=5.0", optional=true, extras=["sentencepiece"]}
 ctranslate2 = {version = "^4.0.0", optional=true}
-optimum = {version = ">=1.23.1", optional=true, extras=["onnxruntime"]}
+optimum = {version = ">=1.23.3", optional=true, extras=["onnxruntime"]}
 hf_transfer = {version=">=0.1.5"}
 einops = {version = "*", optional=true}
 # vision
@@ -40,7 +40,11 @@ pillow = {version = "*", optional=true}
 timm = {version = "*", optional=true}
 colpali-engine = {version="^0.3.1", optional=true}
 # openvino
-optimum-intel = {version=">=1.20.0", optional=true, extras=["openvino"]}
+# optimum-intel = {version=">=1.20.0", optional=true, extras=["openvino"]}
+onnxruntime-openvino = {version=">=1.19.0", optional=true}
+openvino = {version="2024.4.0", optional=true}
+openvino-tokenizers = {version="2024.4.0.0", optional=true}
+
 
 # pin torchvision to a specific source, but default to pypi. use sed to overwrite.
 torchvision = {version = "*", source = "pypi", optional=true}
@@ -50,7 +54,7 @@ diskcache = {version = "*", optional=true}
 # https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html:
 # Most combinations of onnxruntime and tensorrt are not compatible, and some are broken.
 onnxruntime-gpu = {version = "1.19.*", optional=true} 
-tensorrt = {version = "^10.2.0", optional=true}
+tensorrt = {version = "^10.6.0", optional=true}
 soundfile = {version="^0.12.1", optional=true}
 
 
@@ -102,7 +106,7 @@ einops=["einops"]
 logging=["rich"]
 cache=["diskcache"]
 vision=["colpali-engine","pillow","timm","torchvision"]
-openvino=["optimum-intel"]
+openvino=["onnxruntime-openvino","openvino","openvino-tokenizers"]
 audio=["soundfile"]
 server=[
     "fastapi",
@@ -160,7 +164,7 @@ markers = [
 line-length = 100
 
 [tool.codespell]
-skip = "./tests/data/benchmark"
+skip = "./tests/data/benchmark,*.lock"
 
 [build-system]
 requires = ["poetry-core"]

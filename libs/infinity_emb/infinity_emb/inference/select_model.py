@@ -82,7 +82,7 @@ def select_model(
 
         if engine_args.model_warmup:
             # size one, warm up warm start timings.
-            loaded_engine.warmup(batch_size=engine_args.batch_size, n_tokens=1)
+            # loaded_engine.warmup(batch_size=engine_args.batch_size, n_tokens=1)
             # size one token
             min_inference_t = min(
                 min(loaded_engine.warmup(batch_size=1, n_tokens=1)[1] for _ in range(10)),
