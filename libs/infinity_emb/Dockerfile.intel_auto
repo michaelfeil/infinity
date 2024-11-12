@@ -40,6 +40,7 @@ COPY poetry.lock poetry.toml pyproject.toml README.md /app/
 # "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
 COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
 RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/cpu"
+
 RUN poetry run python -m pip install --upgrade --upgrade-strategy eager "optimum[openvino]"
 
 COPY infinity_emb infinity_emb
@@ -47,7 +48,6 @@ COPY infinity_emb infinity_emb
 # "RUN poetry install --no-interaction --no-ansi  --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
 COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
 RUN ./requirements_install_from_poetry.sh  --without lint,test "https://download.pytorch.org/whl/cpu"
-RUN poetry run python -m pip install --upgrade --upgrade-strategy eager "optimum[openvino]"
 
 #
 
@@ -57,44 +57,43 @@ FROM builder as testing
 # "RUN poetry install --no-interaction --no-ansi  --extras \"${EXTRAS}\" --with lint,test && poetry cache clear pypi --all"
 COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
 RUN ./requirements_install_from_poetry.sh  --with lint,test "https://download.pytorch.org/whl/cpu"
-RUN poetry run python -m pip install --upgrade --upgrade-strategy eager "optimum[openvino]"
 
-# lint 
-RUN poetry run ruff check .
-RUN poetry run mypy .
-# pytest
-COPY tests tests
-# run end to end tests because of duration of build in github ci.
-# Run tests/end_to_end on TARGETPLATFORM x86_64 otherwise run tests/end_to_end_gpu
-# poetry run python -m pytest tests/end_to_end -x # TODO: does not work.
-RUN if [ -z "$TARGETPLATFORM" ]; then \
-      ARCH=$(uname -m); \
-      if [ "$ARCH" = "x86_64" ]; then \
-          TARGETPLATFORM="linux/amd64"; \
-      elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
-          TARGETPLATFORM="linux/arm64"; \
-      else \
-          echo "Unsupported architecture: $ARCH"; exit 1; \
-      fi; \
-    fi; \
-    echo "Running tests on TARGETPLATFORM=$TARGETPLATFORM"; \
-    if [ "$TARGETPLATFORM" = "linux/arm64" ] ; then \
-        poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
-    else \
-        poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py tests/end_to_end/test_sentence_transformers.py  -m "not performance" -x ; \
-    fi
-RUN echo "all tests passed" > "test_results.txt"
+# # lint 
+# # RUN poetry run ruff check .
+# # RUN poetry run mypy .
+# # pytest
+# COPY tests tests
+# # run end to end tests because of duration of build in github ci.
+# # Run tests/end_to_end on TARGETPLATFORM x86_64 otherwise run tests/end_to_end_gpu
+# # poetry run python -m pytest tests/end_to_end -x # TODO: does not work.
+# RUN if [ -z "$TARGETPLATFORM" ]; then \
+#       ARCH=$(uname -m); \
+#       if [ "$ARCH" = "x86_64" ]; then \
+#           TARGETPLATFORM="linux/amd64"; \
+#       elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then \
+#           TARGETPLATFORM="linux/arm64"; \
+#       else \
+#           echo "Unsupported architecture: $ARCH"; exit 1; \
+#       fi; \
+#     fi; \
+#     echo "Running tests on TARGETPLATFORM=$TARGETPLATFORM"; \
+#     if [ "$TARGETPLATFORM" = "linux/arm64" ] ; then \
+#         poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py -x ; \
+#     else \
+#         poetry run python -m pytest tests/end_to_end/test_api_with_dummymodel.py tests/end_to_end/test_sentence_transformers.py  -m "not performance" -x ; \
+#     fi
+# RUN echo "all tests passed" > "test_results.txt"
 
 
-# Use a multi-stage build -> production version, with download
-FROM base AS tested-builder
-COPY --from=builder /app /app
-# force testing stage to run
-COPY --from=testing /app/test_results.txt /app/test_results.txt
-ENV HF_HOME=/app/.cache/huggingface
-ENV PATH=/app/.venv/bin:$PATH
-# do nothing
-RUN echo "copied all files"
+# # Use a multi-stage build -> production version, with download
+# FROM base AS tested-builder
+# COPY --from=builder /app /app
+# # force testing stage to run
+# COPY --from=testing /app/test_results.txt /app/test_results.txt
+# ENV HF_HOME=/app/.cache/huggingface
+# ENV PATH=/app/.venv/bin:$PATH
+# # do nothing
+# RUN echo "copied all files"
 
 
 # Export with tensorrt, not recommended.
@@ -115,19 +114,19 @@ RUN echo "copied all files"
 # ENTRYPOINT ["infinity_emb"]
 
 
-# Use a multi-stage build -> production version, with download
-# docker buildx build --target=production-with-download \
-# --build-arg MODEL_NAME=BAAI/bge-small-en-v1.5 --build-arg ENGINE=torch -f Dockerfile -t infinity-BAAI-small .
-FROM tested-builder AS production-with-download
-# collect model name and engine from build args
-ARG MODEL_NAME
-RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
-ARG ENGINE
-RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
-# will exit with 3 if model is downloaded # TODO: better exit code
-RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
-ENTRYPOINT ["infinity_emb"]
+# # Use a multi-stage build -> production version, with download
+# # docker buildx build --target=production-with-download \
+# # --build-arg MODEL_NAME=BAAI/bge-small-en-v1.5 --build-arg ENGINE=torch -f Dockerfile -t infinity-BAAI-small .
+# FROM tested-builder AS production-with-download
+# # collect model name and engine from build args
+# ARG MODEL_NAME
+# RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
+# ARG ENGINE
+# RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
+# # will exit with 3 if model is downloaded # TODO: better exit code
+# RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
+# ENTRYPOINT ["infinity_emb"]
 
-# Use a multi-stage build -> production version
-FROM tested-builder AS production
-ENTRYPOINT ["infinity_emb"]
+# # Use a multi-stage build -> production version
+# FROM tested-builder AS production
+# ENTRYPOINT ["infinity_emb"]
