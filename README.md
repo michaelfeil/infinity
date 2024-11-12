@@ -39,10 +39,13 @@ Infinity is a high-throughput, low-latency REST API for serving text-embeddings,
   <a href="https://x.com/StuartReid1929/status/1763434100382163333"><img src="https://github.com/user-attachments/assets/477a4c54-1113-434b-83bc-1985f10981d3" alt="Logo Nosible" width="44"/></a>
   <a href="https://github.com/freshworksinc/freddy-infinity"><img src="https://github.com/user-attachments/assets/a68da78b-d958-464e-aaf6-f39132be68a0" alt="Logo FreshWorks" width="50"/></a>
   <a href="https://github.com/dstackai/dstack/tree/master/examples/deployment/infinity"><img src="https://github.com/user-attachments/assets/9cde2d6b-dc16-4f0a-81ba-535a84321467" alt="Logo Dstack" width="50"/></a>
+    <a href="https://embeddedllm.com/blog/"><img src="https://avatars.githubusercontent.com/u/148834374" alt="Logo JamAI" width="50"/></a>
 </p> 
 
 ### Latest News 🔥
 
+- [2024/11] AMD, CPU, ONNX docker images
+- [2024/10] `pip install infinity_client`
 - [2024/07] Inference deployment example via [Modal](./infra/modal/README.md) and a [free GPU deployment](https://infinity.modal.michaelfeil.eu/)
 - [2024/06] Support for multi-modal: clip, text-classification & launch all arguments from env variables
 - [2024/05] launch multiple models using the `v2` cli, including `--api-key`
@@ -50,7 +53,7 @@ Infinity is a high-throughput, low-latency REST API for serving text-embeddings,
 - [2024/03] Docs are online: https://michaelfeil.github.io/infinity/latest/
 - [2024/02] Community meetup at the [Run:AI Infra Club](https://discord.gg/7D4fbEgWjv)
 - [2024/01] TensorRT / ONNX inference
-- [2023/10] First release
+- [2023/10] Initial release
 
 
 ## Getting started
@@ -90,15 +93,221 @@ docker run -it --gpus all \
 ```
 The cache path at inside the docker container is set by the environment variable `HF_HOME`.
 
-### CLI demo
-In this demo [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), deployed at batch-size=2. After initialization, from a second terminal 3 requests  (payload 1,1,and 5 sentences) are sent via cURL.
-![](docs/demo_v0_0_1.gif)
+#### Specialized docker images
+<details>
+  <summary>Docker container for CPU</summary>
+  Use the `latest-cpu` image or `x.x.x-cpu` for slimer image. 
+  Run like any other cpu-only docker image. 
+  Optimum/Onnx is often the prefered engine. 
 
-### Launch it via the Python API
+  ```
+  docker run -it \
+  -v $volume:/app/.cache \
+  -p $port:$port \
+  michaelf34/infinity:latest-cpu \
+  v2 \
+  --engine optimum \
+  --model-id $model1 \
+  --model-id $model2 \
+  --port $port
+  ```
+</details>
+
+<details>
+  <summary>Docker Container for ROCm (MI200 Series and MI300 Series)</summary>
+  Use the `latest-rocm` image or `x.x.x-rocm` for rocm compatible inference.
+  **This image is currently not build via CI/CD (to large), consider pinning to exact version.**
+  Make sure you have ROCm is correctly installed and ready to use with Docker.
+
+  Visit [Docs](https://michaelfeil.github.io/infinity) for more info.
+</details>
+ 
+<details>
+  <summary>Docker Container for Onnx-GPU, Cuda Extensions, TensorRT</summary>
+  Use the `latest-trt-onnx` image or `x.x.x-trt-onnx` for rocm compatible inference.
+  **This image is currently not build via CI/CD (to large), consider pinning to exact version.**
+
+  This image has support for:
+  - ONNX-Cuda "CudaExecutionProvider" 
+  - ONNX-TensorRT "TensorRTExecutionProvider" (may not always work due to version mismatch with ORT)
+  - CudaExtensions and packages, e.g. Tri-Dao's `pip install flash-attn` package when using Pytorch.
+  - nvcc compiler support
+  
+  ```
+  docker run -it \
+  -v $volume:/app/.cache \
+  -p $port:$port \
+  michaelf34/infinity:latest-trt-onnx \
+  v2 \
+  --engine optimum \
+  --device cuda \
+  --model-id $model1 \
+  --port $port
+  ```
+</details>
+
+#### Advanced CLI usage
+
+<details>
+  <summary>Launching multiple models at once</summary>
+  Since infinity_emb>=0.0.34, you can use cli `v2` method to launch multiple models at the same time.
+  Checkout `infinity_emb v2 --help` for all args and validation.
+
+   Multiple Model CLI Playbook:                                                                                         
+ - 1. cli options can be overloaded i.e. `v2 --model-id model/id1 --model-id/id2 --batch-size 8 --batch-size 4`       
+ - 2. or adapt the defaults by setting ENV Variables separated by `;`: INFINITY_MODEL_ID="model/id1;model/id2;" &&    
+ INFINITY_BATCH_SIZE="8;4;"                                                                                           
+ - 3. single items are broadcasted to `--model-id` length, making `v2 --model-id model/id1 --model-id/id2             
+ --batch-size 8` both models have batch-size 8.        
+</details>
+
+<details>
+  <summary>Using environment variables instead of the cli</summary>
+  All CLI arguments are also launchable via environment variables.
+
+  Environment variables start with `INFINITY_{UPPER_CASE_SNAKE_CASE}` and often match the `--{lower-case-kebab-case}` cli arguments.
+  
+  The following two are equivalent:
+  - CLI `infinity_emb v2 --model-id BAAI/bge-base-en-v1.5`
+  - ENV-CLI: `export INFINITY_MODEL_ID="BAAI/bge-base-en-v1.5" && infinity_emb v2`
+
+  Multiple models can be used via `;` syntax: `INFINITY_MODEL_ID="model/id1;model/id2;"`
+</details>
+
+<details>
+  <summary>API Key</summary>
+  Supply an `--api-key secret123` via CLI or ENV INFINITY_API_KEY="secret123".
+</details>
+
+<details>
+  <summary>Chosing the fastest engine</summary>
+  
+  With the command `--engine torch` the model must be compatible with https://github.com/UKPLab/sentence-transformers/ and AutoModel
+
+  With the command `--engine optimum`, there must be an onnx file. Models from https://huggingface.co/Xenova are recommended.
+  
+  With the command `--engine ctranslate2`
+    - only `BERT` models are supported.
+</details>
+
+<details>
+  <summary>Telemetry opt-out</summary>
+  
+  See which telemetry is collected: https://michaelfeil.eu/infinity/main/telemetry/
+  ```
+  # Disable
+  export INFINITY_ANONYMOUS_USAGE_STATS="0"
+  ```
+</details>
+
+### Supported Tasks and Models by Infinity
+
+Infinity aims to be the inference server supporting most functionality for embeddings, reranking and related RAG tasks.
+
+The following tasks and tested example models are supported. Infinity tests 15+ architectures and all of the below cases in the Github CI.
+
+<details>
+  <summary>Text Embeddings</summary>
+  
+  Text embeddings measure the relatedness of text strings. Embeddings are used for search, clustering, recommendations.
+  Think about a private deployed version of openai's text embeddings. https://platform.openai.com/docs/guides/embeddings
+
+  Tested embedding models:
+  - [mixedbread-ai/mxbai-embed-large-v1](https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1)
+  - [WhereIsAI/UAE-Large-V1](https://huggingface.co/WhereIsAI/UAE-Large-V1)
+  - [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5)
+  - [Alibaba-NLP/gte-large-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5)
+  - [jinaai/jina-embeddings-v2-base-code](https://huggingface.co/jinaai/jina-embeddings-v2-base-code)
+  - [intfloat/multilingual-e5-large-instruct](https://huggingface.co/intfloat/multilingual-e5-large-instruct)
+  - limited support for decoder=based models, e.g. Qwen / Mistral7B. See [Alibaba-NLP/gte-Qwen2-1.5B-instruct manual](https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/discussions/20). Keep in mind that they are ~20-100x larger (&slower) than bert-small models.
+
+  Other models:
+  - Most embedding model are likely supported: https://huggingface.co/models?pipeline_tag=feature-extraction&other=text-embeddings-inference&sort=trending
+  - Check MTEB leaderboard for models https://huggingface.co/spaces/mteb/leaderboard . Note: Most high ranking models are very large models which are expensive to run at scale for marginal accuracy improvements.
+</details>
+
+<details>
+  <summary>Reranking</summary>
+  Given a query and a list of documents, Reranking indexes the documents from most to least semantically relevant to the query.
+  Think like a locally deployed version of https://docs.cohere.com/reference/rerank
+  
+  Tested reranking models:
+  - [mixedbread-ai/mxbai-rerank-xsmall-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-xsmall-v1)
+  - [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)
+  - [jinaai/jina-reranker-v1-turbo-en](https://huggingface.co/jinaai/jina-reranker-v1-turbo-en)
+  - [BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)
+
+  Other reranking models:
+  - Reranking Models supported by infinity are bert-style classification Models with one category.
+  - Most reranking model are likely supported: https://huggingface.co/models?pipeline_tag=text-classification&other=text-embeddings-inference&sort=trending
+  - https://huggingface.co/models?pipeline_tag=text-classification&sort=trending&search=rerank
+</details>
+
+<details>
+  <summary>Multi-modal and cross-modal - image and audio embeddings</summary>
+  Specialized embedding models that allow for image<->text or image<->audio search. 
+  Typically, these models allow for text<->text, text<->other and other<->other search, with accuracy tradeoffs when going cross-modal.
+  
+  Image<->text models can be used for e.g. photo-gallery search, where users can type in keywords to find photos, or use a photo to find related images.
+  Audio<->text models are less popular, and can be e.g. used to find music songs based on a text description or related music songs.
+  
+  Tested image<->text models:
+  - [wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M](https://huggingface.co/wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M)
+  - [jinaai/jina-clip-v1](https://huggingface.co/jinaai/jina-clip-v1)
+  - Models of type: ClipModel
+  
+  Tested audio<->text models:
+  - [Clap Models from LAION](https://huggingface.co/collections/laion/clap-contrastive-language-audio-pretraining-65415c0b18373b607262a490)
+  - limited number open source organizations training these models
+  - * Note: The sampling rate of the audio data needs to match the model *
+
+  Not supported:
+  - Plain vision models e.g. nomic-ai/nomic-embed-vision-v1.5
+</details>
+
+<details>
+  <summary>ColBert-style late-interaction Embeddings</summary>
+  ColBert Embeddings don't perform any special Pooling methods, but return the raw **token embeddings**.
+  The **token embeddings** are then to be scored with the MaxSim Metric in a VectorDB (Qdrant / Vespa)
+  
+  For usage via the RestAPI, late-interaction embeddings may best be transported via `base64` encoding.
+  Example notebook: https://colab.research.google.com/drive/14FqLc0N_z92_VgL_zygWV5pJZkaskyk7?usp=sharing
+  
+  Tested colbert models:
+  - [colbert-ir/colbertv2.0](https://huggingface.co/colbert-ir/colbertv2.0)
+  - [jinaai/jina-colbert-v2](https://huggingface.co/jinaai/jina-colbert-v2)
+  - [mixedbread-ai/mxbai-colbert-large-v1](https://huggingface.co/mixedbread-ai/mxbai-colbert-large-v1)
+</details>
+
+<details>
+  <summary>ColPali-style late-interaction Image<->Text Embeddings</summary>
+  Similar usage to ColBert, but scanning over an image<->text instead of only text.
+  
+  For usage via the RestAPI, late-interaction embeddings may best be transported via `base64` encoding.
+  Example notebook: https://colab.research.google.com/drive/14FqLc0N_z92_VgL_zygWV5pJZkaskyk7?usp=sharing
+  
+  Tested ColPali/ColQwen models:
+  - [michaelfeil/colpali-v1.2-merged](https://huggingface.co/michaelfeil/colpali-v1.2-merged)
+  - [michaelfeil/colqwen2-v0.1](https://huggingface.co/michaelfeil/colqwen2-v0.1)
+  - No lora adapters supported, only "merged" models.
+</details>
+
+<details>
+  <summary>Text classification</summary>
+  A bert-style multi-label text classification. Classifies it into distinct categories. 
+  
+  Tested models:
+  - [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert), financial news classification
+  - [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions), text to emotion categories.
+  - bert-models with more than 1 label.
+</details>
+
+### Infinity usage via the Python API
 
 Instead of the cli & RestAPI use infinity's interface via the Python API. 
 This gives you most flexibility. The Python API builds on `asyncio` with its `await/async` features, to allow concurrent processing of requests. Arguments of the CLI are also available via Python.
 
+#### Embeddings
 ```python
 import asyncio
 from infinity_emb import AsyncEngineArray, EngineArgs, AsyncEmbeddingEngine
@@ -118,21 +327,11 @@ async def embed_text(engine: AsyncEmbeddingEngine):
 asyncio.run(embed_text(array[0]))
 ```
 
-Example embedding models:
-- Any trending embedding / reranking model is likely supported: https://huggingface.co/models?other=text-embeddings-inference&sort=trending
-- [mixedbread-ai/mxbai-embed-large-v1](https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1)
-- [WhereIsAI/UAE-Large-V1](https://huggingface.co/WhereIsAI/UAE-Large-V1)
-- [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5)
-- [Alibaba-NLP/gte-large-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5)
-- [jinaai/jina-embeddings-v2-base-code](https://huggingface.co/jinaai/jina-embeddings-v2-base-code)
-- [intfloat/multilingual-e5-large-instruct](https://huggingface.co/intfloat/multilingual-e5-large-instruct)
-
-
-### Reranking
+#### Reranking
 
 Reranking gives you a score for similarity between a query and multiple documents. 
 Use it in conjunction with a VectorDB+Embeddings, or as standalone for small amount of documents.
-Please select a model from huggingface that is a AutoModelForSequenceClassification with one class classification.
+Please select a model from huggingface that is a AutoModelForSequenceClassification compatible model with one class classification.
 
 ```python
 import asyncio
@@ -162,12 +361,7 @@ When using the CLI, use this command to launch rerankers:
 infinity_emb v2 --model-id mixedbread-ai/mxbai-rerank-xsmall-v1
 ```
 
-Example models:
-- [mixedbread-ai/mxbai-rerank-xsmall-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-xsmall-v1)
-- [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)
-- [jinaai/jina-reranker-v1-turbo-en](https://huggingface.co/jinaai/jina-reranker-v1-turbo-en)
-
-### CLIP models
+#### Image-Embeddings: CLIP models
 
 CLIP models are able to encode images and text at the same time. 
 
@@ -192,13 +386,7 @@ async def embed(engine: AsyncEmbeddingEngine):
 asyncio.run(embed(array["wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M"]))
 ```
 
-Example models:
-- [wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M](https://huggingface.co/wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M)
-- [jinaai/jina-clip-v1](https://huggingface.co/jinaai/jina-clip-v1) (requires `pip install timm`)
-- Currently no support for pure vision models: nomic-ai/nomic-embed-vision-v1.5, ..
-
-
-### CLAP models
+#### Audio-Embeddings: CLAP models
 
 CLAP models are able to encode audio and text at the same time. 
 
@@ -232,14 +420,7 @@ async def embed(engine: AsyncEmbeddingEngine):
 asyncio.run(embed(array["laion/clap-htsat-unfused"]))
 ```
 
-* Note: The sampling rate of the audio data needs to match the model *
-
-Example models:
-- [Clap Models from LAION](https://huggingface.co/collections/laion/clap-contrastive-language-audio-pretraining-65415c0b18373b607262a490)
-
-
-
-### Text Classification 
+#### Text Classification 
 
 Use text classification with Infinity's `classify` feature, which allows for sentiment analysis, emotion detection, and more classification tasks.
 
@@ -263,9 +444,17 @@ async def classifier():
 asyncio.run(classifier(array["SamLowe/roberta-base-go_emotions"]))
 ```
 
-Example models:
-- [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert)
-- [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions)
+### Infinity usage via the Python Client
+
+Infinity has a generated client code for RestAPI client side usage.
+
+If you want to call a remote infinity instance via RestAPI, install the following package locally:
+```bash
+pip install infinity_client
+```
+
+For more information, check out the Client Readme
+https://github.com/michaelfeil/infinity/tree/main/libs/client_infinity/infinity_client
 
 ## Integrations:
 - [Serverless deployments at Runpod](https://github.com/runpod-workers/worker-infinity-embedding)
@@ -277,59 +466,7 @@ Example models:
 - [SAP Core AI](https://github.com/SAP-samples/btp-generative-ai-hub-use-cases/tree/main/10-byom-oss-llm-ai-core)
 - [gpt_server - gpt_server is an open-source framework designed for production-level deployment of LLMs (Large Language Models) or Embeddings.](https://github.com/shell-nlp/gpt_server)
 - [KubeAI: Kubernetes AI Operator for inferencing](https://github.com/substratusai/kubeai)
-
-## Launch FAQ:
-<details>
-  <summary>What are embedding models?</summary>
-  Embedding models can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. 
-  And it also can be used in vector databases for LLMs. 
-  
-  The most known architecture are encoder-only transformers such as BERT, and most popular implementation include [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/).
-</details>
-
-<details>
-  <summary>What models are supported?</summary>
-  
-  All models of the sentence transformers org are supported https://huggingface.co/sentence-transformers / sbert.net. 
-  LLM's like LLAMA2-7B are not intended for deployment.
-
-  With the command `--engine torch` the model must be compatible with https://github.com/UKPLab/sentence-transformers/ and AutoModel
-
-  With the command `--engine optimum`, there must be an onnx file. Models from https://huggingface.co/Xenova are recommended.
-  
-  With the command `--engine ctranslate2`
-    - only `BERT` models are supported.
-  
-  For the latest trends, you might want to check out one of the following models.
-    https://huggingface.co/spaces/mteb/leaderboard
-    
-</details>
-
-<details>
-  <summary>Launching multiple models</summary>
-  
-  Since infinity_emb>=0.0.34, you can use cli `v2` method to launch multiple models at the same time.
-  Checkout `infinity_emb v2 --help` for all args.
-     
-</details>
-
-<details>
-  <summary>Using Langchain with Infinity</summary>
-  
-  Infinity has a official integration into `pip install langchain>=0.342`. 
-  You can find more documentation on that here:
-  https://python.langchain.com/docs/integrations/text_embedding/infinity
-
-  ```python
-  from langchain.embeddings.infinity import InfinityEmbeddings
-  from langchain.docstore.document import Document
-  
-  documents = [Document(page_content="Hello world!", metadata={"source": "unknown"})]
-
-  emb_model = InfinityEmbeddings(model="BAAI/bge-small", infinity_api_url="http://localhost:7997/v1")
-  print(emb_model.embed_documents([doc.page_content for doc in docs]))
-  ```
-</details>
+- [LangChain](https://python.langchain.com/docs/integrations/text_embedding/infinity)
 
 ## Documentation
 View the docs at [https:///michaelfeil.github.io/infinity](https://michaelfeil.github.io/infinity) on how to get started.
@@ -337,18 +474,16 @@ After startup, the Swagger Ui will be available under `{url}:{port}/docs`, in th
 
 ## Contribute and Develop
 
-Install via Poetry 1.7.1 and Python3.11 on Ubuntu 22.04
+Install via Poetry 1.8.1, Python3.11 on Ubuntu 22.04
 ```bash
 cd libs/infinity_emb
-poetry install --extras all --with test
+poetry install --extras all --with lint,test
 ```
 
 To pass the CI:
 ```bash
 cd libs/infinity_emb
-make format
-make lint
-poetry run pytest ./tests
+make precommit
 ```
 
 All contributions must be made in a way to be compatible with the MIT License of this repo. 
