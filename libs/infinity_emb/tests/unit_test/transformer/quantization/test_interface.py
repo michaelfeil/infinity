@@ -8,7 +8,6 @@ from infinity_emb.primitives import Device, Dtype
 from infinity_emb.transformer.quantization.interface import quant_interface
 
 devices = [Device.cpu]
-# TODO: add support for cuda
 if torch.cuda.is_available():
     devices.append(Device.cuda)
 

@@ -76,17 +76,19 @@ def get_loading_strategy_torch(args: EngineArgs) -> LoadingStrategy:
                 autodtype = torch.float16
         else:
             autodtype = torch.float32
+    else:
+        autodtype = torch.float32  # TODO: Lazy loading
 
     # mix with dtype
     loading_dtype = autodtype
 
     # mix with quantization dtype
-    if loading_dtype in [torch.float32, torch.bfloat16, torch.float16]:
-        quantization_dtype = None
-    elif args.dtype == Dtype.int8:
+    if args.dtype == Dtype.int8:
         quantization_dtype = torch.int8
     elif args.dtype == Dtype.fp8:
         quantization_dtype = torch.float8_e5m2
+    elif loading_dtype in [torch.float32, torch.bfloat16, torch.float16]:
+        quantization_dtype = None
     else:
         raise ValueError(f"Unknown dtype {args.dtype}")
 
