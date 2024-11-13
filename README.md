@@ -55,9 +55,7 @@ Infinity is a high-throughput, low-latency REST API for serving text-embeddings,
 - [2024/01] TensorRT / ONNX inference
 - [2023/10] Initial release
 
-
 ## Getting started
-
 ### Launch the cli via pip install
 ```bash
 pip install infinity-emb[all]
@@ -71,7 +69,6 @@ Check the `v2 --help` command to get a description for all parameters.
 ```bash
 infinity_emb v2 --help
 ```
-
 ### Launch the CLI using a pre-built docker container (recommended)
 Instead of installing the CLI via pip, you may also use docker to run `michaelf34/infinity`. 
 Make sure you mount your accelerator ( i.e. install `nvidia-docker` and activate with `--gpus all`). 
@@ -202,9 +199,8 @@ The cache path at inside the docker container is set by the environment variable
 
 ### Supported Tasks and Models by Infinity
 
-Infinity aims to be the inference server supporting most functionality for embeddings, reranking and related RAG tasks.
-
-The following tasks and tested example models are supported. Infinity tests 15+ architectures and all of the below cases in the Github CI.
+Infinity aims to be the inference server supporting most functionality for embeddings, reranking and related RAG tasks. The following  Infinity tests 15+ architectures and all of the below cases in the Github CI.
+Click on the sections below to find tasks and **validated example models**.
 
 <details>
   <summary>Text Embeddings</summary>
@@ -218,12 +214,19 @@ The following tasks and tested example models are supported. Infinity tests 15+ 
   - [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5)
   - [Alibaba-NLP/gte-large-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5)
   - [jinaai/jina-embeddings-v2-base-code](https://huggingface.co/jinaai/jina-embeddings-v2-base-code)
+  - [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
   - [intfloat/multilingual-e5-large-instruct](https://huggingface.co/intfloat/multilingual-e5-large-instruct)
-  - limited support for decoder=based models, e.g. Qwen / Mistral7B. See [Alibaba-NLP/gte-Qwen2-1.5B-instruct manual](https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/discussions/20). Keep in mind that they are ~20-100x larger (&slower) than bert-small models.
+  - [intfloat/multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small)
+  - [jinaai/jina-embeddings-v3](nomic-ai/nomic-embed-text-v1.5)
+  - [BAAI/bge-m3, no sparse](https://huggingface.co/BAAI/bge-m3)
+  - decoder-based models. Keep in mind that they are ~20-100x larger (&slower) than bert-small models:
+    - [Alibaba-NLP/gte-Qwen2-1.5B-instruct](https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/discussions/20)
+    - [Salesforce/SFR-Embedding-2_R](https://huggingface.co/Salesforce/SFR-Embedding-2_R/discussions/6)
+    - [Alibaba-NLP/gte-Qwen2-7B-instruct](https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct/discussions/39)
 
   Other models:
   - Most embedding model are likely supported: https://huggingface.co/models?pipeline_tag=feature-extraction&other=text-embeddings-inference&sort=trending
-  - Check MTEB leaderboard for models https://huggingface.co/spaces/mteb/leaderboard . Note: Most high ranking models are very large models which are expensive to run at scale for marginal accuracy improvements.
+  - Check MTEB leaderboard for models https://huggingface.co/spaces/mteb/leaderboard.
 </details>
 
 <details>
@@ -234,6 +237,7 @@ The following tasks and tested example models are supported. Infinity tests 15+ 
   Tested reranking models:
   - [mixedbread-ai/mxbai-rerank-xsmall-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-xsmall-v1)
   - [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)
+  - [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)
   - [jinaai/jina-reranker-v1-turbo-en](https://huggingface.co/jinaai/jina-reranker-v1-turbo-en)
   - [BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)
 
@@ -254,7 +258,8 @@ The following tasks and tested example models are supported. Infinity tests 15+ 
   Tested image<->text models:
   - [wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M](https://huggingface.co/wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M)
   - [jinaai/jina-clip-v1](https://huggingface.co/jinaai/jina-clip-v1)
-  - Models of type: ClipModel
+  - [google/siglip-so400m-patch14-384](https://huggingface.co/google/siglip-so400m-patch14-384)
+  - Models of type: ClipModel / SiglipModel in `config.json`
   
   Tested audio<->text models:
   - [Clap Models from LAION](https://huggingface.co/collections/laion/clap-contrastive-language-audio-pretraining-65415c0b18373b607262a490)
@@ -277,6 +282,8 @@ The following tasks and tested example models are supported. Infinity tests 15+ 
   - [colbert-ir/colbertv2.0](https://huggingface.co/colbert-ir/colbertv2.0)
   - [jinaai/jina-colbert-v2](https://huggingface.co/jinaai/jina-colbert-v2)
   - [mixedbread-ai/mxbai-colbert-large-v1](https://huggingface.co/mixedbread-ai/mxbai-colbert-large-v1)
+  - [answerai-colbert-small-v1 - click link for instructions](https://huggingface.co/answerdotai/answerai-colbert-small-v1/discussions/14)
+
 </details>
 
 <details>
@@ -287,7 +294,7 @@ The following tasks and tested example models are supported. Infinity tests 15+ 
   Example notebook: https://colab.research.google.com/drive/14FqLc0N_z92_VgL_zygWV5pJZkaskyk7?usp=sharing
   
   Tested ColPali/ColQwen models:
-  - [michaelfeil/colpali-v1.2-merged](https://huggingface.co/michaelfeil/colpali-v1.2-merged)
+  - [vidore/colpali-v1.2-merged](https://huggingface.co/michaelfeil/colpali-v1.2-merged)
   - [michaelfeil/colqwen2-v0.1](https://huggingface.co/michaelfeil/colqwen2-v0.1)
   - No lora adapters supported, only "merged" models.
 </details>
@@ -299,7 +306,7 @@ The following tasks and tested example models are supported. Infinity tests 15+ 
   Tested models:
   - [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert), financial news classification
   - [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions), text to emotion categories.
-  - bert-models with more than 1 label.
+  - bert-style text-classifcation models with more than >1 label in `config.json`
 </details>
 
 ### Infinity usage via the Python API
