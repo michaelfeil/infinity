@@ -1,0 +1,429 @@
+
+<!DOCTYPE html>
+
+<html class="no-js" lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta content="width=device-width,initial-scale=1" name="viewport"/>
+<link href="https://michaelfeil.github.io/infinity/0.0.69/cli_v2/" rel="canonical"/>
+<link href="../benchmarking/" rel="prev"/>
+<link href="../client_infinity/" rel="next"/>
+<link href="../assets/images/favicon.png" rel="icon"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.5.41" name="generator"/>
+<title>CLI v2 Documentation - Infinity</title>
+<link href="../assets/stylesheets/main.0253249f.min.css" rel="stylesheet"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
+<style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+</head>
+<body dir="ltr">
+<input autocomplete="off" class="md-toggle" data-md-toggle="drawer" id="__drawer" type="checkbox"/>
+<input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
+<label class="md-overlay" for="__drawer"></label>
+<div data-md-component="skip">
+<a class="md-skip" href="#cli-v2-documentation">
+          Skip to content
+        </a>
+</div>
+<div data-md-component="announce">
+</div>
+<div data-md-color-scheme="default" data-md-component="outdated" hidden="">
+</div>
+<header class="md-header md-header--shadow" data-md-component="header">
+<nav aria-label="Header" class="md-header__inner md-grid">
+<a aria-label="Infinity" class="md-header__button md-logo" data-md-component="logo" href=".." title="Infinity">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+</a>
+<label class="md-header__button md-icon" for="__drawer">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"></path></svg>
+</label>
+<div class="md-header__title" data-md-component="header-title">
+<div class="md-header__ellipsis">
+<div class="md-header__topic">
+<span class="md-ellipsis">
+            Infinity
+          </span>
+</div>
+<div class="md-header__topic" data-md-component="header-topic">
+<span class="md-ellipsis">
+            
+              CLI v2 Documentation
+            
+          </span>
+</div>
+</div>
+</div>
+<script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+<div class="md-header__source">
+<a class="md-source" data-md-component="source" href="https://github.com/michaelfeil/infinity/" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 6.6.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+</nav>
+</header>
+<div class="md-container" data-md-component="container">
+<main class="md-main" data-md-component="main">
+<div class="md-main__inner md-grid">
+<div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Navigation" class="md-nav md-nav--primary" data-md-level="0">
+<label class="md-nav__title" for="__drawer">
+<a aria-label="Infinity" class="md-nav__button md-logo" data-md-component="logo" href=".." title="Infinity">
+<svg viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"></path></svg>
+</a>
+    Infinity
+  </label>
+<div class="md-nav__source">
+<a class="md-source" data-md-component="source" href="https://github.com/michaelfeil/infinity/" title="Go to repository">
+<div class="md-source__icon md-icon">
+<svg viewbox="0 0 448 512" xmlns="http://www.w3.org/2000/svg"><!--! Font Awesome Free 6.6.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2024 Fonticons, Inc.--><path d="M439.55 236.05 244 40.45a28.87 28.87 0 0 0-40.81 0l-40.66 40.63 51.52 51.52c27.06-9.14 52.68 16.77 43.39 43.68l49.66 49.66c34.23-11.8 61.18 31 35.47 56.69-26.49 26.49-70.21-2.87-56-37.34L240.22 199v121.85c25.3 12.54 22.26 41.85 9.08 55a34.34 34.34 0 0 1-48.55 0c-17.57-17.6-11.07-46.91 11.25-56v-123c-20.8-8.51-24.6-30.74-18.64-45L142.57 101 8.45 235.14a28.86 28.86 0 0 0 0 40.81l195.61 195.6a28.86 28.86 0 0 0 40.8 0l194.69-194.69a28.86 28.86 0 0 0 0-40.81"></path></svg>
+</div>
+<div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+</div>
+<ul class="md-nav__list" data-md-scrollfix="">
+<li class="md-nav__item">
+<a class="md-nav__link" href="..">
+<span class="md-ellipsis">
+    Infinity
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../benchmarking/">
+<span class="md-ellipsis">
+    Benchmarking details
+  </span>
+</a>
+</li>
+<li class="md-nav__item md-nav__item--active">
+<input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
+<a class="md-nav__link md-nav__link--active" href="./">
+<span class="md-ellipsis">
+    CLI v2 Documentation
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../client_infinity/">
+<span class="md-ellipsis">
+    infinity_client
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../contribution/">
+<span class="md-ellipsis">
+    Contribute and Develop
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../deploy/">
+<span class="md-ellipsis">
+    Deployment
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../embed/">
+<span class="md-ellipsis">
+    Embed (package)
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../integrations/">
+<span class="md-ellipsis">
+    Python Integrations
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../python_engine/">
+<span class="md-ellipsis">
+    Python Engine Integration
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../swagger_ui/">
+<span class="md-ellipsis">
+    Swagger UI
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../telemetry/">
+<span class="md-ellipsis">
+    Telemetry
+  </span>
+</a>
+</li>
+</ul>
+</nav>
+</div>
+</div>
+</div>
+<div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc">
+<div class="md-sidebar__scrollwrap">
+<div class="md-sidebar__inner">
+<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
+</nav>
+</div>
+</div>
+</div>
+<div class="md-content" data-md-component="content">
+<article class="md-content__inner md-typeset">
+<h1 id="cli-v2-documentation">CLI v2 Documentation</h1>
+<p>The current version of Infinity uses the following arguments in its CLI:
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a>$<span class="w"> </span>infinity_emb<span class="w"> </span>v2<span class="w"> </span>--help
+</span></code></pre></div></p>
+<p><div class="language-text highlight"><pre><span></span><code><span id="__span-1-1"><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a> Usage: infinity_emb v2 [OPTIONS]                                                                                       
+</span><span id="__span-1-2"><a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a> Infinity API ♾️  cli v2. MIT License. Copyright (c) 2023-now Michael Feil                                               
+</span><span id="__span-1-4"><a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a> Multiple Model CLI Playbook:                                                                                           
+</span><span id="__span-1-5"><a href="#__codelineno-1-5" id="__codelineno-1-5" name="__codelineno-1-5"></a> - 1. cli options can be overloaded i.e. `v2 --model-id model/id1 --model-id/id2 --batch-size 8 --batch-size 4`         
+</span><span id="__span-1-6"><a href="#__codelineno-1-6" id="__codelineno-1-6" name="__codelineno-1-6"></a> - 2. or adapt the defaults by setting ENV Variables separated by `;`: INFINITY_MODEL_ID="model/id1;model/id2;" &amp;&amp;      
+</span><span id="__span-1-7"><a href="#__codelineno-1-7" id="__codelineno-1-7" name="__codelineno-1-7"></a> INFINITY_BATCH_SIZE="8;4;"                                                                                             
+</span><span id="__span-1-8"><a href="#__codelineno-1-8" id="__codelineno-1-8" name="__codelineno-1-8"></a> - 3. single items are broadcasted to `--model-id` length, making `v2 --model-id model/id1 --model-id/id2 --batch-size  
+</span><span id="__span-1-9"><a href="#__codelineno-1-9" id="__codelineno-1-9" name="__codelineno-1-9"></a> 8` both models have batch-size 8.                                                                                      
+</span><span id="__span-1-10"><a href="#__codelineno-1-10" id="__codelineno-1-10" name="__codelineno-1-10"></a>
+</span><span id="__span-1-11"><a href="#__codelineno-1-11" id="__codelineno-1-11" name="__codelineno-1-11"></a>╭─ Options ────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+</span><span id="__span-1-12"><a href="#__codelineno-1-12" id="__codelineno-1-12" name="__codelineno-1-12"></a>│ --model-id                                             TEXT                           Huggingface model repo id.     │
+</span><span id="__span-1-13"><a href="#__codelineno-1-13" id="__codelineno-1-13" name="__codelineno-1-13"></a>│                                                                                       Subset of possible models:     │
+</span><span id="__span-1-14"><a href="#__codelineno-1-14" id="__codelineno-1-14" name="__codelineno-1-14"></a>│                                                                                       https://huggingface.co/models… │
+</span><span id="__span-1-15"><a href="#__codelineno-1-15" id="__codelineno-1-15" name="__codelineno-1-15"></a>│                                                                                       [env var: `INFINITY_MODEL_ID`] │
+</span><span id="__span-1-16"><a href="#__codelineno-1-16" id="__codelineno-1-16" name="__codelineno-1-16"></a>│                                                                                       [default:                      │
+</span><span id="__span-1-17"><a href="#__codelineno-1-17" id="__codelineno-1-17" name="__codelineno-1-17"></a>│                                                                                       michaelfeil/bge-small-en-v1.5] │
+</span><span id="__span-1-18"><a href="#__codelineno-1-18" id="__codelineno-1-18" name="__codelineno-1-18"></a>│ --served-model-name                                    TEXT                           the nickname for the API,      │
+</span><span id="__span-1-19"><a href="#__codelineno-1-19" id="__codelineno-1-19" name="__codelineno-1-19"></a>│                                                                                       under which the model_id can   │
+</span><span id="__span-1-20"><a href="#__codelineno-1-20" id="__codelineno-1-20" name="__codelineno-1-20"></a>│                                                                                       be selected                    │
+</span><span id="__span-1-21"><a href="#__codelineno-1-21" id="__codelineno-1-21" name="__codelineno-1-21"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-22"><a href="#__codelineno-1-22" id="__codelineno-1-22" name="__codelineno-1-22"></a>│                                                                                       `INFINITY_SERVED_MODEL_NAME`]  │
+</span><span id="__span-1-23"><a href="#__codelineno-1-23" id="__codelineno-1-23" name="__codelineno-1-23"></a>│ --batch-size                                           INTEGER                        maximum batch size for         │
+</span><span id="__span-1-24"><a href="#__codelineno-1-24" id="__codelineno-1-24" name="__codelineno-1-24"></a>│                                                                                       inference                      │
+</span><span id="__span-1-25"><a href="#__codelineno-1-25" id="__codelineno-1-25" name="__codelineno-1-25"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-26"><a href="#__codelineno-1-26" id="__codelineno-1-26" name="__codelineno-1-26"></a>│                                                                                       `INFINITY_BATCH_SIZE`]         │
+</span><span id="__span-1-27"><a href="#__codelineno-1-27" id="__codelineno-1-27" name="__codelineno-1-27"></a>│                                                                                       [default: 32]                  │
+</span><span id="__span-1-28"><a href="#__codelineno-1-28" id="__codelineno-1-28" name="__codelineno-1-28"></a>│ --revision                                             TEXT                           huggingface  model repo        │
+</span><span id="__span-1-29"><a href="#__codelineno-1-29" id="__codelineno-1-29" name="__codelineno-1-29"></a>│                                                                                       revision.                      │
+</span><span id="__span-1-30"><a href="#__codelineno-1-30" id="__codelineno-1-30" name="__codelineno-1-30"></a>│                                                                                       [env var: `INFINITY_REVISION`] │
+</span><span id="__span-1-31"><a href="#__codelineno-1-31" id="__codelineno-1-31" name="__codelineno-1-31"></a>│ --trust-remote-code       --no-trust-remote-code                                      if potential remote modeling   │
+</span><span id="__span-1-32"><a href="#__codelineno-1-32" id="__codelineno-1-32" name="__codelineno-1-32"></a>│                                                                                       code from huggingface repo is  │
+</span><span id="__span-1-33"><a href="#__codelineno-1-33" id="__codelineno-1-33" name="__codelineno-1-33"></a>│                                                                                       trusted.                       │
+</span><span id="__span-1-34"><a href="#__codelineno-1-34" id="__codelineno-1-34" name="__codelineno-1-34"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-35"><a href="#__codelineno-1-35" id="__codelineno-1-35" name="__codelineno-1-35"></a>│                                                                                       `INFINITY_TRUST_REMOTE_CODE`]  │
+</span><span id="__span-1-36"><a href="#__codelineno-1-36" id="__codelineno-1-36" name="__codelineno-1-36"></a>│                                                                                       [default: trust-remote-code]   │
+</span><span id="__span-1-37"><a href="#__codelineno-1-37" id="__codelineno-1-37" name="__codelineno-1-37"></a>│ --engine                                               [torch|ctranslate2|optimum|ne  Which backend to use. `torch`  │
+</span><span id="__span-1-38"><a href="#__codelineno-1-38" id="__codelineno-1-38" name="__codelineno-1-38"></a>│                                                        uron|debugengine]              uses Pytorch GPU/CPU, optimum  │
+</span><span id="__span-1-39"><a href="#__codelineno-1-39" id="__codelineno-1-39" name="__codelineno-1-39"></a>│                                                                                       uses ONNX on                   │
+</span><span id="__span-1-40"><a href="#__codelineno-1-40" id="__codelineno-1-40" name="__codelineno-1-40"></a>│                                                                                       GPU/CPU/NVIDIA-TensorRT,       │
+</span><span id="__span-1-41"><a href="#__codelineno-1-41" id="__codelineno-1-41" name="__codelineno-1-41"></a>│                                                                                       `CTranslate2` uses             │
+</span><span id="__span-1-42"><a href="#__codelineno-1-42" id="__codelineno-1-42" name="__codelineno-1-42"></a>│                                                                                       torch+ctranslate2 on CPU/GPU.  │
+</span><span id="__span-1-43"><a href="#__codelineno-1-43" id="__codelineno-1-43" name="__codelineno-1-43"></a>│                                                                                       [env var: `INFINITY_ENGINE`]   │
+</span><span id="__span-1-44"><a href="#__codelineno-1-44" id="__codelineno-1-44" name="__codelineno-1-44"></a>│                                                                                       [default: torch]               │
+</span><span id="__span-1-45"><a href="#__codelineno-1-45" id="__codelineno-1-45" name="__codelineno-1-45"></a>│ --model-warmup            --no-model-warmup                                           if model should be warmed up   │
+</span><span id="__span-1-46"><a href="#__codelineno-1-46" id="__codelineno-1-46" name="__codelineno-1-46"></a>│                                                                                       after startup, and before      │
+</span><span id="__span-1-47"><a href="#__codelineno-1-47" id="__codelineno-1-47" name="__codelineno-1-47"></a>│                                                                                       ready.                         │
+</span><span id="__span-1-48"><a href="#__codelineno-1-48" id="__codelineno-1-48" name="__codelineno-1-48"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-49"><a href="#__codelineno-1-49" id="__codelineno-1-49" name="__codelineno-1-49"></a>│                                                                                       `INFINITY_MODEL_WARMUP`]       │
+</span><span id="__span-1-50"><a href="#__codelineno-1-50" id="__codelineno-1-50" name="__codelineno-1-50"></a>│                                                                                       [default: model-warmup]        │
+</span><span id="__span-1-51"><a href="#__codelineno-1-51" id="__codelineno-1-51" name="__codelineno-1-51"></a>│ --vector-disk-cache       --no-vector-disk-cache                                      If hash(request)/results       │
+</span><span id="__span-1-52"><a href="#__codelineno-1-52" id="__codelineno-1-52" name="__codelineno-1-52"></a>│                                                                                       should be cached to SQLite for │
+</span><span id="__span-1-53"><a href="#__codelineno-1-53" id="__codelineno-1-53" name="__codelineno-1-53"></a>│                                                                                       latency improvement.           │
+</span><span id="__span-1-54"><a href="#__codelineno-1-54" id="__codelineno-1-54" name="__codelineno-1-54"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-55"><a href="#__codelineno-1-55" id="__codelineno-1-55" name="__codelineno-1-55"></a>│                                                                                       `INFINITY_VECTOR_DISK_CACHE`]  │
+</span><span id="__span-1-56"><a href="#__codelineno-1-56" id="__codelineno-1-56" name="__codelineno-1-56"></a>│                                                                                       [default: vector-disk-cache]   │
+</span><span id="__span-1-57"><a href="#__codelineno-1-57" id="__codelineno-1-57" name="__codelineno-1-57"></a>│ --device                                               [cpu|cuda|mps|tensorrt|auto]   device to use for computing    │
+</span><span id="__span-1-58"><a href="#__codelineno-1-58" id="__codelineno-1-58" name="__codelineno-1-58"></a>│                                                                                       the model forward pass.        │
+</span><span id="__span-1-59"><a href="#__codelineno-1-59" id="__codelineno-1-59" name="__codelineno-1-59"></a>│                                                                                       [env var: `INFINITY_DEVICE`]   │
+</span><span id="__span-1-60"><a href="#__codelineno-1-60" id="__codelineno-1-60" name="__codelineno-1-60"></a>│                                                                                       [default: auto]                │
+</span><span id="__span-1-61"><a href="#__codelineno-1-61" id="__codelineno-1-61" name="__codelineno-1-61"></a>│ --device-id                                            TEXT                           device id defines the model    │
+</span><span id="__span-1-62"><a href="#__codelineno-1-62" id="__codelineno-1-62" name="__codelineno-1-62"></a>│                                                                                       placement. e.g. `0,1` will     │
+</span><span id="__span-1-63"><a href="#__codelineno-1-63" id="__codelineno-1-63" name="__codelineno-1-63"></a>│                                                                                       place the model on             │
+</span><span id="__span-1-64"><a href="#__codelineno-1-64" id="__codelineno-1-64" name="__codelineno-1-64"></a>│                                                                                       MPS/CUDA/GPU 0 and 1 each      │
+</span><span id="__span-1-65"><a href="#__codelineno-1-65" id="__codelineno-1-65" name="__codelineno-1-65"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-66"><a href="#__codelineno-1-66" id="__codelineno-1-66" name="__codelineno-1-66"></a>│                                                                                       `INFINITY_DEVICE_ID`]          │
+</span><span id="__span-1-67"><a href="#__codelineno-1-67" id="__codelineno-1-67" name="__codelineno-1-67"></a>│ --lengths-via-tokenize    --no-lengths-via-tokenize                                   if True, returned tokens is    │
+</span><span id="__span-1-68"><a href="#__codelineno-1-68" id="__codelineno-1-68" name="__codelineno-1-68"></a>│                                                                                       based on actual tokenizer      │
+</span><span id="__span-1-69"><a href="#__codelineno-1-69" id="__codelineno-1-69" name="__codelineno-1-69"></a>│                                                                                       count. If false, uses          │
+</span><span id="__span-1-70"><a href="#__codelineno-1-70" id="__codelineno-1-70" name="__codelineno-1-70"></a>│                                                                                       len(input) as proxy.           │
+</span><span id="__span-1-71"><a href="#__codelineno-1-71" id="__codelineno-1-71" name="__codelineno-1-71"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-72"><a href="#__codelineno-1-72" id="__codelineno-1-72" name="__codelineno-1-72"></a>│                                                                                       `INFINITY_LENGTHS_VIA_TOKENIZ… │
+</span><span id="__span-1-73"><a href="#__codelineno-1-73" id="__codelineno-1-73" name="__codelineno-1-73"></a>│                                                                                       [default:                      │
+</span><span id="__span-1-74"><a href="#__codelineno-1-74" id="__codelineno-1-74" name="__codelineno-1-74"></a>│                                                                                       lengths-via-tokenize]          │
+</span><span id="__span-1-75"><a href="#__codelineno-1-75" id="__codelineno-1-75" name="__codelineno-1-75"></a>│ --dtype                                                [float32|float16|bfloat16|int  dtype for the model weights.   │
+</span><span id="__span-1-76"><a href="#__codelineno-1-76" id="__codelineno-1-76" name="__codelineno-1-76"></a>│                                                        8|fp8|auto]                    [env var: `INFINITY_DTYPE`]    │
+</span><span id="__span-1-77"><a href="#__codelineno-1-77" id="__codelineno-1-77" name="__codelineno-1-77"></a>│                                                                                       [default: auto]                │
+</span><span id="__span-1-78"><a href="#__codelineno-1-78" id="__codelineno-1-78" name="__codelineno-1-78"></a>│ --embedding-dtype                                      [float32|int8|uint8|binary|ub  dtype post-forward pass. If != │
+</span><span id="__span-1-79"><a href="#__codelineno-1-79" id="__codelineno-1-79" name="__codelineno-1-79"></a>│                                                        inary]                         `float32`, using Post-Forward  │
+</span><span id="__span-1-80"><a href="#__codelineno-1-80" id="__codelineno-1-80" name="__codelineno-1-80"></a>│                                                                                       Static quantization.           │
+</span><span id="__span-1-81"><a href="#__codelineno-1-81" id="__codelineno-1-81" name="__codelineno-1-81"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-82"><a href="#__codelineno-1-82" id="__codelineno-1-82" name="__codelineno-1-82"></a>│                                                                                       `INFINITY_EMBEDDING_DTYPE`]    │
+</span><span id="__span-1-83"><a href="#__codelineno-1-83" id="__codelineno-1-83" name="__codelineno-1-83"></a>│                                                                                       [default: float32]             │
+</span><span id="__span-1-84"><a href="#__codelineno-1-84" id="__codelineno-1-84" name="__codelineno-1-84"></a>│ --pooling-method                                       [mean|cls|auto]                overwrite the pooling method   │
+</span><span id="__span-1-85"><a href="#__codelineno-1-85" id="__codelineno-1-85" name="__codelineno-1-85"></a>│                                                                                       if inferred incorrectly.       │
+</span><span id="__span-1-86"><a href="#__codelineno-1-86" id="__codelineno-1-86" name="__codelineno-1-86"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-87"><a href="#__codelineno-1-87" id="__codelineno-1-87" name="__codelineno-1-87"></a>│                                                                                       `INFINITY_POOLING_METHOD`]     │
+</span><span id="__span-1-88"><a href="#__codelineno-1-88" id="__codelineno-1-88" name="__codelineno-1-88"></a>│                                                                                       [default: auto]                │
+</span><span id="__span-1-89"><a href="#__codelineno-1-89" id="__codelineno-1-89" name="__codelineno-1-89"></a>│ --compile                 --no-compile                                                Enable usage of                │
+</span><span id="__span-1-90"><a href="#__codelineno-1-90" id="__codelineno-1-90" name="__codelineno-1-90"></a>│                                                                                       `torch.compile(dynamic=True)`  │
+</span><span id="__span-1-91"><a href="#__codelineno-1-91" id="__codelineno-1-91" name="__codelineno-1-91"></a>│                                                                                       if engine relies on it.        │
+</span><span id="__span-1-92"><a href="#__codelineno-1-92" id="__codelineno-1-92" name="__codelineno-1-92"></a>│                                                                                       [env var: `INFINITY_COMPILE`]  │
+</span><span id="__span-1-93"><a href="#__codelineno-1-93" id="__codelineno-1-93" name="__codelineno-1-93"></a>│                                                                                       [default: compile]             │
+</span><span id="__span-1-94"><a href="#__codelineno-1-94" id="__codelineno-1-94" name="__codelineno-1-94"></a>│ --bettertransformer       --no-bettertransformer                                      Enables varlen                 │
+</span><span id="__span-1-95"><a href="#__codelineno-1-95" id="__codelineno-1-95" name="__codelineno-1-95"></a>│                                                                                       flash-attention-2 via the      │
+</span><span id="__span-1-96"><a href="#__codelineno-1-96" id="__codelineno-1-96" name="__codelineno-1-96"></a>│                                                                                       `BetterTransformer`            │
+</span><span id="__span-1-97"><a href="#__codelineno-1-97" id="__codelineno-1-97" name="__codelineno-1-97"></a>│                                                                                       implementation. If available   │
+</span><span id="__span-1-98"><a href="#__codelineno-1-98" id="__codelineno-1-98" name="__codelineno-1-98"></a>│                                                                                       for this model.                │
+</span><span id="__span-1-99"><a href="#__codelineno-1-99" id="__codelineno-1-99" name="__codelineno-1-99"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-100"><a href="#__codelineno-1-100" id="__codelineno-1-100" name="__codelineno-1-100"></a>│                                                                                       `INFINITY_BETTERTRANSFORMER`]  │
+</span><span id="__span-1-101"><a href="#__codelineno-1-101" id="__codelineno-1-101" name="__codelineno-1-101"></a>│                                                                                       [default: bettertransformer]   │
+</span><span id="__span-1-102"><a href="#__codelineno-1-102" id="__codelineno-1-102" name="__codelineno-1-102"></a>│ --preload-only            --no-preload-only                                           If true, only downloads models │
+</span><span id="__span-1-103"><a href="#__codelineno-1-103" id="__codelineno-1-103" name="__codelineno-1-103"></a>│                                                                                       and verifies setup, then exit. │
+</span><span id="__span-1-104"><a href="#__codelineno-1-104" id="__codelineno-1-104" name="__codelineno-1-104"></a>│                                                                                       Recommended for pre-caching    │
+</span><span id="__span-1-105"><a href="#__codelineno-1-105" id="__codelineno-1-105" name="__codelineno-1-105"></a>│                                                                                       the download in a Dockerfile.  │
+</span><span id="__span-1-106"><a href="#__codelineno-1-106" id="__codelineno-1-106" name="__codelineno-1-106"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-107"><a href="#__codelineno-1-107" id="__codelineno-1-107" name="__codelineno-1-107"></a>│                                                                                       `INFINITY_PRELOAD_ONLY`]       │
+</span><span id="__span-1-108"><a href="#__codelineno-1-108" id="__codelineno-1-108" name="__codelineno-1-108"></a>│                                                                                       [default: no-preload-only]     │
+</span><span id="__span-1-109"><a href="#__codelineno-1-109" id="__codelineno-1-109" name="__codelineno-1-109"></a>│ --host                                                 TEXT                           host for the FastAPI uvicorn   │
+</span><span id="__span-1-110"><a href="#__codelineno-1-110" id="__codelineno-1-110" name="__codelineno-1-110"></a>│                                                                                       server                         │
+</span><span id="__span-1-111"><a href="#__codelineno-1-111" id="__codelineno-1-111" name="__codelineno-1-111"></a>│                                                                                       [env var: `INFINITY_HOST`]     │
+</span><span id="__span-1-112"><a href="#__codelineno-1-112" id="__codelineno-1-112" name="__codelineno-1-112"></a>│                                                                                       [default: 0.0.0.0]             │
+</span><span id="__span-1-113"><a href="#__codelineno-1-113" id="__codelineno-1-113" name="__codelineno-1-113"></a>│ --port                                                 INTEGER                        port for the FastAPI uvicorn   │
+</span><span id="__span-1-114"><a href="#__codelineno-1-114" id="__codelineno-1-114" name="__codelineno-1-114"></a>│                                                                                       server                         │
+</span><span id="__span-1-115"><a href="#__codelineno-1-115" id="__codelineno-1-115" name="__codelineno-1-115"></a>│                                                                                       [env var: `INFINITY_PORT`]     │
+</span><span id="__span-1-116"><a href="#__codelineno-1-116" id="__codelineno-1-116" name="__codelineno-1-116"></a>│                                                                                       [default: 7997]                │
+</span><span id="__span-1-117"><a href="#__codelineno-1-117" id="__codelineno-1-117" name="__codelineno-1-117"></a>│ --url-prefix                                           TEXT                           prefix for all routes of the   │
+</span><span id="__span-1-118"><a href="#__codelineno-1-118" id="__codelineno-1-118" name="__codelineno-1-118"></a>│                                                                                       FastAPI uvicorn server. Useful │
+</span><span id="__span-1-119"><a href="#__codelineno-1-119" id="__codelineno-1-119" name="__codelineno-1-119"></a>│                                                                                       if you run behind a proxy /    │
+</span><span id="__span-1-120"><a href="#__codelineno-1-120" id="__codelineno-1-120" name="__codelineno-1-120"></a>│                                                                                       cascaded API.                  │
+</span><span id="__span-1-121"><a href="#__codelineno-1-121" id="__codelineno-1-121" name="__codelineno-1-121"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-122"><a href="#__codelineno-1-122" id="__codelineno-1-122" name="__codelineno-1-122"></a>│                                                                                       `INFINITY_URL_PREFIX`]         │
+</span><span id="__span-1-123"><a href="#__codelineno-1-123" id="__codelineno-1-123" name="__codelineno-1-123"></a>│ --redirect-slash                                       TEXT                           where to redirect `/` requests │
+</span><span id="__span-1-124"><a href="#__codelineno-1-124" id="__codelineno-1-124" name="__codelineno-1-124"></a>│                                                                                       to.                            │
+</span><span id="__span-1-125"><a href="#__codelineno-1-125" id="__codelineno-1-125" name="__codelineno-1-125"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-126"><a href="#__codelineno-1-126" id="__codelineno-1-126" name="__codelineno-1-126"></a>│                                                                                       `INFINITY_REDIRECT_SLASH`]     │
+</span><span id="__span-1-127"><a href="#__codelineno-1-127" id="__codelineno-1-127" name="__codelineno-1-127"></a>│                                                                                       [default: /docs]               │
+</span><span id="__span-1-128"><a href="#__codelineno-1-128" id="__codelineno-1-128" name="__codelineno-1-128"></a>│ --log-level                                            [critical|error|warning|info|  console log level.             │
+</span><span id="__span-1-129"><a href="#__codelineno-1-129" id="__codelineno-1-129" name="__codelineno-1-129"></a>│                                                        debug|trace]                   [env var:                      │
+</span><span id="__span-1-130"><a href="#__codelineno-1-130" id="__codelineno-1-130" name="__codelineno-1-130"></a>│                                                                                       `INFINITY_LOG_LEVEL`]          │
+</span><span id="__span-1-131"><a href="#__codelineno-1-131" id="__codelineno-1-131" name="__codelineno-1-131"></a>│                                                                                       [default: info]                │
+</span><span id="__span-1-132"><a href="#__codelineno-1-132" id="__codelineno-1-132" name="__codelineno-1-132"></a>│ --permissive-cors         --no-permissive-cors                                        whether to allow permissive    │
+</span><span id="__span-1-133"><a href="#__codelineno-1-133" id="__codelineno-1-133" name="__codelineno-1-133"></a>│                                                                                       cors.                          │
+</span><span id="__span-1-134"><a href="#__codelineno-1-134" id="__codelineno-1-134" name="__codelineno-1-134"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-135"><a href="#__codelineno-1-135" id="__codelineno-1-135" name="__codelineno-1-135"></a>│                                                                                       `INFINITY_PERMISSIVE_CORS`]    │
+</span><span id="__span-1-136"><a href="#__codelineno-1-136" id="__codelineno-1-136" name="__codelineno-1-136"></a>│                                                                                       [default: no-permissive-cors]  │
+</span><span id="__span-1-137"><a href="#__codelineno-1-137" id="__codelineno-1-137" name="__codelineno-1-137"></a>│ --api-key                                              TEXT                           api_key used for               │
+</span><span id="__span-1-138"><a href="#__codelineno-1-138" id="__codelineno-1-138" name="__codelineno-1-138"></a>│                                                                                       authentication headers.        │
+</span><span id="__span-1-139"><a href="#__codelineno-1-139" id="__codelineno-1-139" name="__codelineno-1-139"></a>│                                                                                       [env var: `INFINITY_API_KEY`]  │
+</span><span id="__span-1-140"><a href="#__codelineno-1-140" id="__codelineno-1-140" name="__codelineno-1-140"></a>│ --proxy-root-path                                      TEXT                           Proxy prefix for the           │
+</span><span id="__span-1-141"><a href="#__codelineno-1-141" id="__codelineno-1-141" name="__codelineno-1-141"></a>│                                                                                       application. See:              │
+</span><span id="__span-1-142"><a href="#__codelineno-1-142" id="__codelineno-1-142" name="__codelineno-1-142"></a>│                                                                                       https://fastapi.tiangolo.com/… │
+</span><span id="__span-1-143"><a href="#__codelineno-1-143" id="__codelineno-1-143" name="__codelineno-1-143"></a>│                                                                                       [env var:                      │
+</span><span id="__span-1-144"><a href="#__codelineno-1-144" id="__codelineno-1-144" name="__codelineno-1-144"></a>│                                                                                       `INFINITY_PROXY_ROOT_PATH`]    │
+</span><span id="__span-1-145"><a href="#__codelineno-1-145" id="__codelineno-1-145" name="__codelineno-1-145"></a>│ --help                                                                                Show this message and exit.    │
+</span><span id="__span-1-146"><a href="#__codelineno-1-146" id="__codelineno-1-146" name="__codelineno-1-146"></a>╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+</span></code></pre></div>
+Note: This doc is auto-generated. Do not edit this file directly.</p>
+</article>
+</div>
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+</div>
+</main>
+<footer class="md-footer">
+<div class="md-footer-meta md-typeset">
+<div class="md-footer-meta__inner md-grid">
+<div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" rel="noopener" target="_blank">
+      Material for MkDocs
+    </a>
+</div>
+</div>
+</div>
+</footer>
+</div>
+<div class="md-dialog" data-md-component="dialog">
+<div class="md-dialog__inner md-typeset"></div>
+</div>
+<script id="__config" type="application/json">{"base": "..", "features": ["content.code.copy", "content.code.select"], "search": "../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+<script src="../assets/javascripts/bundle.83f73b43.min.js"></script>
+<script>document$.subscribe(() => {
+            window.update_swagger_ui_iframe_height = function (id) {
+                var iFrameID = document.getElementById(id);
+                if (iFrameID) {
+                    full_height = (iFrameID.contentWindow.document.body.scrollHeight + 80) + "px";
+                    iFrameID.height = full_height;
+                    iFrameID.style.height = full_height;
+                }
+            }
+        
+            let iframe_id_list = []
+            var iframes = document.getElementsByClassName("swagger-ui-iframe");
+            for (var i = 0; i < iframes.length; i++) { 
+                iframe_id_list.push(iframes[i].getAttribute("id"))
+            }
+        
+            let ticking = true;
+            
+            document.addEventListener('scroll', function(e) {
+                if (!ticking) {
+                    window.requestAnimationFrame(()=> {
+                        let half_vh = window.innerHeight/2;
+                        for(var i = 0; i < iframe_id_list.length; i++) {
+                            let element = document.getElementById(iframe_id_list[i])
+                            if(element==null){
+                                return
+                            }
+                            let diff = element.getBoundingClientRect().top
+                            if(element.contentWindow.update_top_val){
+                                element.contentWindow.update_top_val(half_vh - diff)
+                            }
+                        }
+                        ticking = false;
+                    });
+                    ticking = true;
+                }
+            });
+        
+            const dark_scheme_name = "slate"
+            
+            window.scheme = document.body.getAttribute("data-md-color-scheme")
+            const options = {
+                attributeFilter: ['data-md-color-scheme'],
+            };
+            function color_scheme_callback(mutations) {
+                for (let mutation of mutations) {
+                    if (mutation.attributeName === "data-md-color-scheme") {
+                        scheme = document.body.getAttribute("data-md-color-scheme")
+                        var iframe_list = document.getElementsByClassName("swagger-ui-iframe")
+                        for(var i = 0; i < iframe_list.length; i++) {
+                            var ele = iframe_list.item(i);
+                            if (ele) {
+                                if (scheme === dark_scheme_name) {
+                                    ele.contentWindow.enable_dark_mode();
+                                } else {
+                                    ele.contentWindow.disable_dark_mode();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            observer = new MutationObserver(color_scheme_callback);
+            observer.observe(document.body, options);
+            })</script></body>
+</html>
