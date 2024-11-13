@@ -57,6 +57,10 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             model_kwargs["attn_implementation"] = "eager"
 
         ls = engine_args._loading_strategy
+        assert ls is not None
+
+        if ls.loading_dtype is not None:
+            model_kwargs["torch_dtype"] = ls.loading_dtype
 
         super().__init__(
             engine_args.model_name_or_path,
@@ -64,7 +68,6 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             trust_remote_code=engine_args.trust_remote_code,
             device=ls.device_placement,
             model_kwargs=model_kwargs,
-            # TODO: set torch_dtype=ls.loading_dtype to save memory on loading.
         )
         self.to(ls.device_placement)
         # make a copy of the tokenizer,
