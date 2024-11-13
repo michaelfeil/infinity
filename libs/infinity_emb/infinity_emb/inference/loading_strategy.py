@@ -67,13 +67,12 @@ def get_loading_strategy_torch(args: EngineArgs) -> LoadingStrategy:
     elif args.dtype == Dtype.float16:
         autodtype = torch.float16
     elif args.dtype == Dtype.bfloat16:
+        # if not torch.cuda.is_bf16_supported():
+        #     raise ValueError("bfloat16 is not supported on this device")
         autodtype = torch.bfloat16
     elif args.dtype == Dtype.auto:
         if autodevice == "cuda":
-            if torch.cuda.is_bf16_supported():
-                autodtype = torch.bfloat16
-            else:
-                autodtype = torch.float16
+            autodtype = torch.float16
         else:
             autodtype = torch.float32
     else:

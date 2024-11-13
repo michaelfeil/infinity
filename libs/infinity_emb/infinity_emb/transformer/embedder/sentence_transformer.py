@@ -105,9 +105,12 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
 
         self.is_data_parallel = False
         if len(ls.device_mapping_ids) > 1:
+            config = fm.auto_model.config
             fm.auto_model = torch.nn.DataParallel(
-                fm.auto_model, device_ids=ls.device_mapping_ids, output_device=torch.device("cpu")
+                fm.auto_model, device_ids=ls.device_mapping_ids
             )
+            fm.auto_model.config = config
+            
             self.is_data_parallel = True
 
     def encode_pre(self, sentences) -> dict[str, "Tensor"]:
