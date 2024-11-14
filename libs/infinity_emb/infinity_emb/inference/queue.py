@@ -3,7 +3,7 @@
 
 import asyncio
 import threading
-from typing import Optional, Union
+from typing import Optional, Generator
 
 from infinity_emb.inference.caching_layer import Cache
 from infinity_emb.primitives import (
@@ -34,7 +34,7 @@ class CustomFIFOQueue:
 
     def pop_optimal_batches(
         self, size: int, max_n_batches: int = 4, timeout=0.2, **kwargs
-    ) -> Union[list[list[QueueItemInner]], None]:
+    ) -> Generator[list[QueueItemInner], None, None]:
         """
         pop batch `up to size` + `continuous (sorted)` from queue
 
@@ -52,11 +52,11 @@ class CustomFIFOQueue:
         """
         if not self._queue:
             if not self._sync_event.wait(timeout):
-                return None
+                return
 
-        # slice as many batches as possible
-        n_batches = min(max_n_batches, max(1, len(self._queue) // size))
-        size_batches = size * n_batches
+        # Determine the number of batches to process
+        # n_batches = min(max_n_batches, max(1, len(self._queue) // size))
+        size_batches = size * max_n_batches
 
         with self._lock_queue_event:
             new_items_l = self._queue[:size_batches]
@@ -64,23 +64,16 @@ class CustomFIFOQueue:
             if not self._queue:
                 self._sync_event.clear()
 
-        if n_batches > 1:
-            # sort the sentences by len ->
-            # optimal padding per batch
+        if len(new_items_l) > size:
+            # Sort the items for optimal batching
             new_items_l.sort()
 
-        new_items: list[list[QueueItemInner]] = []
-        for i in range(n_batches):
-            mini_batch = new_items_l[size * i : size * (i + 1)]
-            mini_batch_e: list[QueueItemInner] = [
-                mi.item for mi in mini_batch if not mi.item.future.done()
-            ]
-            if mini_batch_e:
-                new_items.append(mini_batch_e)
-        if new_items:
-            return new_items
-        else:
-            return None
+        new_items: list[QueueItemInner] = [
+            mi.item for mi in new_items_l if not mi.item.future.done()
+        ]
+
+        for i in range(0, len(new_items), size):
+            yield new_items[i : i + size]
 
 
 class ResultKVStoreFuture:
