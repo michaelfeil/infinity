@@ -220,6 +220,11 @@ class BaseCrossEncoder(BaseTransformer):  # Inherit from ABC(Abstract base class
         return run_warmup(self, inp)
 
 
+BaseTypeHint = Union[
+    BaseTransformer, BaseEmbedder, BaseTIMM, BaseAudioEmbedModel, BaseClassifer, BaseCrossEncoder
+]
+
+
 def run_warmup(model, inputs) -> tuple[float, float, str]:
     inputs_formated = [i.content.to_input() for i in inputs]
     start = perf_counter()
