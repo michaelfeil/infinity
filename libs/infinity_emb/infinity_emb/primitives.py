@@ -193,6 +193,7 @@ class DeviceIDProxy(str):
 @dataclass(**dataclass_args)
 class LoadingStrategy:
     device_mapping: list[str]
+    device_mapping_ids: list[int]
     loading_dtype: Union[str, Dtype, Any]
     quantization_dtype: Union[str, Dtype, Any]
     device_placement: Optional[str] = None

@@ -11,7 +11,7 @@ if CHECK_TRANSFORMERS.is_available:
 
 def _validate_availale_device_ids(
     device: str, available_devices: list[int], desired_device_ids: DeviceID
-) -> list[str]:
+) -> tuple[list[str], list[int]]:
     if desired_device_ids:
         for device_id in desired_device_ids:
             if device_id not in available_devices:
@@ -22,7 +22,7 @@ def _validate_availale_device_ids(
         used_ids = list(desired_device_ids)
     else:
         used_ids = available_devices
-    return [f"{device}:{device_id}" for device_id in used_ids]
+    return [f"{device}:{device_id}" for device_id in used_ids], used_ids
 
 
 def get_loading_strategy_torch(args: EngineArgs) -> LoadingStrategy:
@@ -42,22 +42,22 @@ def get_loading_strategy_torch(args: EngineArgs) -> LoadingStrategy:
 
     # mix with device_id
     if autodevice == "cuda":
-        autodevice_string = _validate_availale_device_ids(
+        autodevice_string, autodevice_ids = _validate_availale_device_ids(
             "cuda", list(range(torch.cuda.device_count())), args.device_id
         )
     elif autodevice == "npu":
-        autodevice_string = _validate_availale_device_ids(
+        autodevice_string, autodevice_ids = _validate_availale_device_ids(
             "npu",
             list(range(torch.npu.device_count())),  # type: ignore
             args.device_id,
         )
     elif autodevice == "mps":
-        autodevice_string = _validate_availale_device_ids(
+        autodevice_string, autodevice_ids = _validate_availale_device_ids(
             "mps", list(range(torch.mps.device_count())), args.device_id
         )
     elif autodevice == "cpu":
         # spawn multiple processes on CPU. This is useful for debugging, but not for performance.
-        autodevice_string = ["cpu"] * max(len(args.device_id), 1)
+        autodevice_string, autodevice_ids = ["cpu"] * max(len(args.device_id), 1), [0]
     else:
         raise ValueError(f"Unknown device {autodevice}")
 
@@ -94,6 +94,7 @@ def get_loading_strategy_torch(args: EngineArgs) -> LoadingStrategy:
 
     return LoadingStrategy(
         device_mapping=autodevice_string,
+        device_mapping_ids=autodevice_ids,
         loading_dtype=loading_dtype,
         quantization_dtype=quantization_dtype,
         device_placement=autodevice_string[0],
@@ -105,7 +106,10 @@ def get_loading_strategy(args: EngineArgs) -> LoadingStrategy:
         stat = get_loading_strategy_torch(args)
     else:
         stat = LoadingStrategy(
-            device_mapping=["not-specified"], loading_dtype=None, quantization_dtype=None
+            device_mapping=["not-specified"],
+            device_mapping_ids=[],
+            loading_dtype=None,
+            quantization_dtype=None,
         )
 
     return stat

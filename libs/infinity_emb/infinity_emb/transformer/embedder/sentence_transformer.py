@@ -25,6 +25,7 @@ from infinity_emb.transformer.quantization.interface import (
 if TYPE_CHECKING:
     from torch import Tensor
     from infinity_emb.primitives import EmbeddingReturnType
+    from sentence_transformers.models import Transformer
 
 
 if CHECK_SENTENCE_TRANSFORMERS.is_available:
@@ -73,8 +74,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
         # without corrupting the original.
-        fm = self._first_module()
-
+        fm: "Transformer" = self._first_module()
         self.normalize_embeddings = True
 
         self.mode_colbert = False
@@ -103,6 +103,13 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             logger.info("using torch.compile(dynamic=True)")
             fm.auto_model = torch.compile(fm.auto_model, dynamic=True)
 
+        self.is_data_parallel = False
+        if len(ls.device_mapping_ids) > 1:
+            fm.auto_model = torch.nn.DataParallel(
+                fm.auto_model, device_ids=ls.device_mapping_ids, output_device=torch.device("cpu")
+            )
+            self.is_data_parallel = True
+
     def encode_pre(self, sentences) -> dict[str, "Tensor"]:
         features = self.tokenize(sentences)
         return features
@@ -113,7 +120,8 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         """
 
         with torch.no_grad():
-            features = util.batch_to_device(features, self.device)  # type: ignore
+            if not self.is_data_parallel:
+                features = util.batch_to_device(features, self.device)  # type: ignore
             out: dict[str, "Tensor"] = self.forward(features)
             if not self.mode_colbert:
                 out_features = out["sentence_embedding"].detach().cpu()

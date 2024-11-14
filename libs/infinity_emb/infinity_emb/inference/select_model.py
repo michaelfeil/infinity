@@ -75,7 +75,7 @@ def select_model(
     max_inference_t = 4e-3
 
     # TODO: Can be parallelized
-    for device_map in engine_args._loading_strategy.device_mapping:  # type: ignore
+    for device_map in engine_args._loading_strategy.device_mapping[:1]:  # type: ignore
         engine_args_copy = engine_args.copy()
         engine_args_copy._loading_strategy.device_placement = device_map
         loaded_engine = unloaded_engine.value(engine_args=engine_args_copy)
