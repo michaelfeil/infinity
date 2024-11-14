@@ -71,8 +71,7 @@ class CustomFIFOQueue:
         for i in range(n_batches):
             mini_batch = new_items_l[size * i : size * (i + 1)]
             mini_batch_e: list[QueueItemInner] = [
-                mi.item
-                for mi in mini_batch if not mi.item.future.done()
+                mi.item for mi in mini_batch if not mi.item.future.done()
             ]
             if mini_batch_e:
                 yield mini_batch_e
