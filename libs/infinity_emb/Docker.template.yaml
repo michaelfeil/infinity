@@ -36,9 +36,10 @@ amd:
   poetry_extras: "all onnxruntime-gpu"
   python_version: python3.10
   extra_env_variables: |
-    # Sets default to onnx
-    RUN conda init --reverse --all
-    RUN rm -rf /opt/conda && rm -rf /var/lib/jenkins
+    # RUN conda init --reverse --all
+    # RUN rm -rf /opt/conda && rm -rf /var/lib/jenkins
+    # Bettertransformer is not supported on AMD
+    ENV INFINITY_BETTERTRANSFORMER="0"
 
 trt:
   base_image: nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
