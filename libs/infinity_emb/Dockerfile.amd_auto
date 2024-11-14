@@ -84,6 +84,7 @@ elif [ "$GPU_ARCH" = "gfx1100" ]; then \
     && python -m pip install .; \
 else \
     echo "Unsupported GPU_ARCH: ${GPU_ARCH}"; \
+    exit(1); \
 fi
 
 

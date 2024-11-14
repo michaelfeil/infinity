@@ -66,6 +66,7 @@ amd:
         && python -m pip install .; \
     else \
         echo "Unsupported GPU_ARCH: ${GPU_ARCH}"; \
+        exit(1); \
     fi
   poetry_extras: "all"
   python_version: python3.10
