@@ -12,10 +12,14 @@ cpu:
   #   RUN sed -i 's|torch = "2.4.1"|torch = "2.5.0"|' pyproject.toml 
   #   RUN sed -i 's|"pypi"|"pytorch_cpu"|' pyproject.toml
   #   RUN poetry lock --no-update
+  poetry_extras: "all openvino"
   main_install: |
     # "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
     COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
     RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/cpu"
+  extra_env_variables: |
+    # Sets default to onnx
+    ENV INFINITY_ENGINE="optimum"
 
 amd:
   # 2 . command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
@@ -33,8 +37,7 @@ amd:
     ARG GPU_ARCH
     ENV GPU_ARCH=${GPU_ARCH}
     # GPU architecture specific installations
-    RUN cd /opt/rocm/share/amd_smi \
-    && python -m pip wheel . --wheel-dir=/install
+    RUN cd /opt/rocm/share/amd_smi && python -m pip wheel . --wheel-dir=/install
     RUN apt update -y && apt install migraphx -y
     RUN if [ "$GPU_ARCH" = "gfx90a" ] || [ "$GPU_ARCH" = "gfx942" ]; then \
         # OPTION1: Follow the steps here to install onnxruntime-rocm 
@@ -63,20 +66,26 @@ amd:
         && python -m pip install .; \
     else \
         echo "Unsupported GPU_ARCH: ${GPU_ARCH}"; \
-        exit 1; \
     fi
   poetry_extras: "all"
   python_version: python3.10
+  extra_env_variables: |
+    # RUN conda init --reverse --all
+    # RUN rm -rf /opt/conda && rm -rf /var/lib/jenkins
+    # Bettertransformer is not supported on AMD
+    ENV INFINITY_BETTERTRANSFORMER="0"
 
 trt:
-  base_image: nvidia/cuda:12.1.1-devel-ubuntu22.04
+  base_image: nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04
   poetry_extras: "all onnxruntime-gpu"
   extra_installs_main: | 
     # Install utils for tensorrt
     RUN apt-get install -y --no-install-recommends openmpi-bin libopenmpi-dev git git-lfs python3-pip
     RUN poetry run $PYTHON -m pip install --no-cache-dir flash-attn --no-build-isolation
-    RUN poetry run $PYTHON -m pip install --no-cache-dir "tensorrt==10.0.1" "tensorrt_lean==10.0.1" "tensorrt_dispatch==10.0.1"
-    ENV LD_LIBRARY_PATH /app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
-    ENV PATH /app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
+    RUN poetry run $PYTHON -m pip install --no-cache-dir "tensorrt==10.3.0" "tensorrt_lean==10.3.0" "tensorrt_dispatch==10.3.0"
+  extra_env_variables: |
+    # Set default to tensorrt
+    ENV LD_LIBRARY_PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
+    ENV PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
   python_version: python3.10
   main_install: "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"

@@ -92,7 +92,7 @@ def test_sync_engine():
         (
             "wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M",
             "image_embed",
-            {"images": ["http://images.cocodataset.org/val2017/000000039769.jpg"]},
+            {"images": [pytest.IMAGE_SAMPLE_URL]},
         ),
         (
             "philschmid/tiny-bert-sst2-distilled",

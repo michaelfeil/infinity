@@ -11,7 +11,7 @@ First, create a client:
 
 ```python
 from {{ package_name }} import Client
-client = Client(base_url="https://infinity.modal.michaelfeil.eu")
+i_client = Client(base_url="https://infinity.modal.michaelfeil.eu")
 ```
 
 If the endpoints you're going to hit require authentication, use `AuthenticatedClient` instead:
@@ -19,7 +19,7 @@ If the endpoints you're going to hit require authentication, use `AuthenticatedC
 ```python
 from {{ package_name }} import AuthenticatedClient
 
-client = AuthenticatedClient(base_url="https://infinity.modal.michaelfeil.eu", token="SuperSecretToken")
+i_client = AuthenticatedClient(base_url="https://infinity.modal.michaelfeil.eu", token="SuperSecretToken")
 ```
 
 Now call your endpoint and use your models:
@@ -29,7 +29,7 @@ from {{ package_name }}.models import OpenAIModelInfo
 from {{ package_name }}.api.default import models, health
 from {{ package_name }}.types import Response
 
-with client as client:
+with i_client as client:
     model_info: OpenAIModelInfo = models.sync(client=client)
     # or if you need more info (e.g. status_code)
     response: Response[OpenAIModelInfo] = models.sync_detailed(client=client)
@@ -42,9 +42,9 @@ from {{ package_name }}.models import OpenAIEmbeddingInput, OpenAIEmbeddingResul
 from {{ package_name }}.api.default import classify, embeddings, embeddings_image, rerank
 from {{ package_name }}.types import Response
 
-with client as client:
+with i_client as client:
     embeds: OpenAIEmbeddingResult = embeddings.sync(client=client, body=OpenAIEmbeddingInput.from_dict({
-        "input":["Hello, this is a sentence-to-embed", "Hello, my cat is cute"],
+        "input": ["Hello, this is a sentence-to-embed", "Hello, my cat is cute"],
         "model": "michaelfeil/bge-small-en-v1.5",
     }))
 ```
@@ -53,10 +53,10 @@ Or do the same thing with an async version:
 
 ```python
 from {{ package_name }}.models import OpenAIModelInfo
-from {{ package_name }}.api.my_tag import models
+from {{ package_name }}.api.default import models
 from {{ package_name }}.types import Response
 
-async with client as client:
+async with i_client as client:
     model_info: OpenAIModelInfo = await models.asyncio(client=client)
     response: Response[OpenAIModelInfo] = await models.asyncio_detailed(client=client)
 ```
@@ -65,8 +65,8 @@ async with client as client:
 By default, when you're calling an HTTPS API it will attempt to verify that SSL is working correctly. Using certificate verification is highly recommended most of the time, but sometimes you may need to authenticate to a server (especially an internal server) using a custom certificate bundle.
 
 ```python
-client = AuthenticatedClient(
-    base_url="https://internal_api.example.com", 
+i_client = AuthenticatedClient(
+    base_url="https://internal_api.example.com",
     token="SuperSecretToken",
     verify_ssl="/path/to/certificate_bundle.pem",
 )
@@ -75,7 +75,7 @@ client = AuthenticatedClient(
 You can also disable certificate validation altogether, but beware that **this is a security risk**.
 
 ```python
-client = AuthenticatedClient(
+i_client = AuthenticatedClient(
     base_url="https://internal_api.example.com", 
     token="SuperSecretToken", 
     verify_ssl=False
@@ -107,7 +107,7 @@ def log_response(response):
     request = response.request
     print(f"Response event hook: {request.method} {request.url} - Status {response.status_code}")
 
-client = Client(
+i_client = Client(
     base_url="https://infinity.modal.michaelfeil.eu",
     httpx_args={"event_hooks": {"request": [log_request], "response": [log_response]}},
 )
@@ -121,11 +121,11 @@ You can even set the httpx client directly, but beware that this will override a
 import httpx
 from {{ package_name }} import Client
 
-client = Client(
+i_client = Client(
     base_url="https://infinity.modal.michaelfeil.eu",
 )
 # Note that base_url needs to be re-set, as would any shared cookies, headers, etc.
-client.set_httpx_client(httpx.Client(base_url="https://infinity.modal.michaelfeil.eu", proxies="http://localhost:8030"))
+i_client.set_httpx_client(httpx.Client(base_url="https://infinity.modal.michaelfeil.eu", proxies="http://localhost:8030"))
 ```
 
 {% if poetry %}

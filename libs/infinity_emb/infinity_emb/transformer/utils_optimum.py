@@ -8,12 +8,14 @@ import numpy as np
 from huggingface_hub import HfApi, HfFolder  # type: ignore
 from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
 
-from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TORCH, CHECK_OPTIMUM_AMD
+from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_OPTIMUM_AMD
+
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device
 
 if CHECK_ONNXRUNTIME.is_available:
     try:
+        import onnxruntime as ort  # type: ignore
         from optimum.modeling_base import OptimizedModel  # type: ignore
         from optimum.onnxruntime import (  # type: ignore
             ORTModel,
@@ -22,9 +24,6 @@ if CHECK_ONNXRUNTIME.is_available:
         from optimum.onnxruntime.configuration import OptimizationConfig  # type: ignore
     except (ImportError, RuntimeError, Exception) as ex:
         CHECK_ONNXRUNTIME.mark_dirty(ex)
-
-if CHECK_TORCH.is_available:
-    import torch
 
 
 def mean_pooling(last_hidden_states: np.ndarray, attention_mask: np.ndarray):
@@ -49,27 +48,36 @@ def normalize(input_array, p=2, dim=1, eps=1e-12):
 
 
 def device_to_onnx(device: Device) -> str:
+    CHECK_ONNXRUNTIME.mark_required()
+    available = ort.get_available_providers()
+
     if device == Device.cpu:
+        if "OpenVINOExecutionProvider" in available:
+            return "OpenVINOExecutionProvider"
         return "CPUExecutionProvider"
     elif device == Device.cuda:
-        return "CUDAExecutionProvider"
-    elif device == Device.rocm:
-        if torch.version.hip is not None:
+        if "ROCMExecutionProvider" in available:
             return "ROCMExecutionProvider"
-        else:
-            raise ValueError("The `torch` installed is not for ROCm.")
-    elif device == Device.migraphx:
-        if torch.version.hip is not None:
+        elif "MIGraphXExecutionProvider" in available:
             return "MIGraphXExecutionProvider"
-        else:
-            raise ValueError("The `torch` installed is not for ROCm.")
+        return "CUDAExecutionProvider"
     elif device == Device.mps:
         return "CoreMLExecutionProvider"
     elif device == Device.tensorrt:
         return "TensorrtExecutionProvider"
     elif device is None or device == Device.auto:
-        if CHECK_TORCH.is_available and torch.cuda.is_available():
+        if "TensorrtExecutionProvider" in available:
+            return "TensorrtExecutionProvider"
+        elif "CUDAExecutionProvider" in available:
             return "CUDAExecutionProvider"
+        elif "MIGraphXExecutionProvider" in available:
+            return "MIGraphXExecutionProvider"  # swapped order of ROCM and MIGraphX
+        elif "ROCMExecutionProvider" in available:
+            return "ROCMExecutionProvider"
+        elif "CoreMLExecutionProvider" in available:
+            return "CoreMLExecutionProvider"
+        elif "OpenVINOExecutionProvider" in available:
+            return "OpenVINOExecutionProvider"
         else:
             return "CPUExecutionProvider"
     else:
@@ -161,7 +169,9 @@ def optimize_model(
 
         optimizer = ORTOptimizer.from_pretrained(unoptimized_model)
 
-        is_gpu = "cpu" not in execution_provider.lower()
+        is_gpu = not (
+            "cpu" in execution_provider.lower() or "openvino" in execution_provider.lower()
+        )
         optimization_config = OptimizationConfig(
             optimization_level=99,
             optimize_with_onnxruntime_only=False,

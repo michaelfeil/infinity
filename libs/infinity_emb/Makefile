@@ -1,4 +1,4 @@
-.PHONY: all clean docs_build docs_clean docs_linkcheck api_docs_build api_docs_clean api_docs_linkcheck format lint test tests test_watch template_docker integration_tests docker_tests help extended_tests
+.PHONY: all clean docs_build docs_clean docs_linkcheck api_docs_build api_docs_clean api_docs_linkcheck format lint test tests test_watch template_docker integration_tests docker_tests help extended_tests build-all-docker build-amd build-trt
 
 # Default target executed when no arguments are given to make.
 all: help
@@ -11,6 +11,7 @@ precommit : | format spell_fix spell_check lint poetry_check cli_v2_docs templat
 
 # Define a variable for the test file path.
 TEST_FILE ?= tests/unit_tests/
+VERSION ?= DEV
 
 # Run unit tests and generate a coverage report.
 coverage:
@@ -46,6 +47,18 @@ template_docker:
 	poetry run jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s nvidia > Dockerfile.nvidia_auto
 	poetry run jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s trt > Dockerfile.trt_onnx_auto
 
+# Add new targets
+build-amd:
+	docker buildx build -t michaelf34/infinity:$(VERSION)-amd -f Dockerfile.amd_auto --push .
+
+build-trt:
+	docker buildx build -t michaelf34/infinity:$(VERSION)-trt-onnx -f Dockerfile.trt_onnx_auto --push .
+
+# Combined target to build both
+build-all-docker: 
+	docker buildx build -t michaelf34/infinity:$(VERSION)-amd -f Dockerfile.amd_auto --push . & \
+	docker buildx build -t michaelf34/infinity:$(VERSION)-trt-onnx -f Dockerfile.trt_onnx_auto --push .
+
 poetry_check:
 	poetry check
 
@@ -63,7 +76,7 @@ benchmark_embed: tests/data/benchmark/benchmark_embed.json
 	# sudo apt-get apache2-utils
 
 benchmark_embed_vision: tests/data/benchmark/benchmark_embed_image.json
-	ab -n 10000 -c 10 -l -s 480 \
+	ab -n 100 -c 50 -l -s 480 \
 	-T 'application/json' \
 	-p $< \
 	http://127.0.0.1:7997/embeddings

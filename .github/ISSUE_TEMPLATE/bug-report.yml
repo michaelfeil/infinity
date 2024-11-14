@@ -6,7 +6,7 @@ body:
     attributes:
       label: System Info
       description: | 
-        Please share your system info with us (`infinity_emb --help` if installed locally).
+        Please share your system info with us (`infinity_emb v2 --help` if installed locally).
         The full command line used that causes issues: 
         OS version: (linux/win/macos)
         Model being used (BAAI/..)
@@ -23,8 +23,9 @@ body:
       label: Information
       description: 'The problem arises when using:'
       options:
-        - label: "Docker"
-        - label: "The CLI directly via pip"
+        - label: "Docker + cli"
+        - label: "pip + cli"
+        - label: "pip + usage of Python interface"
 
   - type: checkboxes
     id: information-tasks
@@ -32,7 +33,7 @@ body:
       label: Tasks
       description: "The thing I am working on is:"
       options:
-        - label: "An officially supported command"
+        - label: "An officially supported CLI command"
         - label: "My own modifications"
 
   - type: textarea
@@ -53,12 +54,9 @@ body:
           1.
           2.
           3.
+
+        Expected behavior:
+          ..
+        
           
 
-  - type: textarea
-    id: expected-behavior
-    validations:
-      required: true
-    attributes:
-      label: Expected behavior
-      description: "A clear and concise description of what you would expect to happen."

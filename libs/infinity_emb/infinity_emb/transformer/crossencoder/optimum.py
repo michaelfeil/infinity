@@ -34,7 +34,7 @@ class OptimumCrossEncoder(BaseCrossEncoder):
             model_name_or_path=engine_args.model_name_or_path,
             revision=engine_args.revision,
             use_auth_token=True,
-            prefer_quantized="cpu" in provider.lower(),
+            prefer_quantized=("cpu" in provider.lower() or "openvino" in provider.lower()),
         )
 
         self.model = optimize_model(

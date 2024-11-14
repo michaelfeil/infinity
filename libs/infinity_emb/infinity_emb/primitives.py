@@ -107,8 +107,6 @@ class InferenceEngine(EnumType):
 class Device(EnumType):
     cpu = "cpu"
     cuda = "cuda"
-    rocm = "rocm"
-    migraphx = "migraphx"
     mps = "mps"
     tensorrt = "tensorrt"
     auto = "auto"
@@ -167,6 +165,37 @@ class PoolingMethod(EnumType):
     @staticmethod
     def default_value():
         return PoolingMethod.auto.value
+
+
+class DeviceID(list[int]):
+    def __init__(self, ids: Union[list[int], str]):
+        if isinstance(ids, str):
+            ids = [int(i) for i in ids.split(",") if i]
+        self.ids = list(ids)
+        super().__init__(ids)
+
+    def __repr__(self) -> str:
+        return "DeviceID(" + ", ".join(str(i) for i in self.ids) + ")"
+
+    @staticmethod
+    def default_value():
+        return []
+
+
+class DeviceIDProxy(str):
+    pass
+
+    @staticmethod
+    def default_value():
+        return ""
+
+
+@dataclass(**dataclass_args)
+class LoadingStrategy:
+    device_mapping: list[str]
+    loading_dtype: Union[str, Dtype, Any]
+    quantization_dtype: Union[str, Dtype, Any]
+    device_placement: Optional[str] = None
 
 
 @dataclass(**dataclass_args)

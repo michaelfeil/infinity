@@ -20,6 +20,7 @@ ENV PYTHONUNBUFFERED=1 \
     EXTRAS="all" \
     PYTHON="python3.11"
 RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
+
 WORKDIR /app
 
 FROM base as builder
@@ -81,27 +82,6 @@ COPY --from=builder /app /app
 COPY --from=testing /app/test_results.txt /app/test_results.txt
 ENV HF_HOME=/app/.cache/huggingface
 ENV PATH=/app/.venv/bin:$PATH
-# do nothing
-RUN echo "copied all files"
-
-
-# Export with tensorrt, not recommended.
-# docker buildx build --target=production-tensorrt -f Dockerfile .
-# FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04 AS production-tensorrt
-# ENV PYTHONUNBUFFERED=1 \
-#     PIP_NO_CACHE_DIR=off \
-#     PYTHON="python3.11"
-# RUN apt-get update && apt-get install python3-dev python3-pip $PYTHON build-essential curl -y 
-# COPY --from=builder /app /app
-# # force testing stage to run
-# COPY --from=testing /app/test_results.txt /app/test_results.txt
-# ENV HF_HOME=/app/.cache/torch
-# ENV PATH=/app/.venv/bin:$PATH
-# RUN pip install --no-cache-dir "onnxruntime-gpu==1.17.0" "tensorrt==8.6.*"
-# ENV LD_LIBRARY_PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/$(PYTHON)/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
-# ENV PATH /app/.venv/lib/$(PYTHON)/site-packages/tensorrt/bin:${PATH}
-# ENTRYPOINT ["infinity_emb"]
-
 
 # Use a multi-stage build -> production version, with download
 # docker buildx build --target=production-with-download \

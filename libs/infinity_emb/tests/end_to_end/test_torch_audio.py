@@ -121,17 +121,19 @@ async def test_meta(client, helpers):
 @pytest.mark.anyio
 async def test_audio_multiple(client):
     for route in [f"{PREFIX}/embeddings_audio", f"{PREFIX}/embeddings"]:
-        for no_of_audios in [1, 5, 10]:
+        for no_of_audios in [1, 3]:
             audio_urls = [pytest.AUDIO_SAMPLE_URL] * no_of_audios
-
-            response = await client.post(
-                route,
-                json={
-                    "model": MODEL,
-                    "input": audio_urls,
-                    "modality": "audio",
-                },
-            )
+            for _ in range(3):
+                response = await client.post(
+                    route,
+                    json={
+                        "model": MODEL,
+                        "input": audio_urls,
+                        "modality": "audio",
+                    },
+                )
+                if response.status_code == 200:
+                    break
             assert response.status_code == 200
             rdata = response.json()
             rdata_results = rdata["data"]

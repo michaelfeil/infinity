@@ -32,6 +32,7 @@ from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.primitives import (
     AudioCorruption,
     Device,
+    DeviceID,
     Dtype,
     EmbeddingDtype,
     ImageCorruption,
@@ -646,9 +647,9 @@ def typer_option_resolve(*args):
     """returns the value or the default value"""
     if len(args) == 1:
         return (
-            args[0].default
+            args[0].default  # if it is a typer option
             if hasattr(args[0], "default") and hasattr(args[0], "envvar")
-            else args[0]
+            else args[0]  # if it is a normal value
         )
     return (a.default if (hasattr(a, "default") and hasattr(a, "envvar")) else a for a in args)
 
@@ -659,6 +660,17 @@ if CHECK_TYPER.is_available:
     CHECK_UVICORN.mark_required()
     import typer
     import uvicorn
+
+    loopname = "auto"
+    if sys.version_info < (3, 12):
+        try:
+            import uvloop
+
+            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+            loopname = "uvloop"
+        except ImportError:
+            # Windows does not support uvloop
+            pass
 
     tp = typer.Typer()
 
@@ -718,7 +730,7 @@ if CHECK_TYPER.is_available:
             lengths_via_tokenize=[lengths_via_tokenize],
             compile=[compile],
             bettertransformer=[bettertransformer],
-            embedding_dtype=[EmbeddingDtype.float32],
+            embedding_dtype=[EmbeddingDtype.float32],  # set to float32
             # unique kwargs
             preload_only=preload_only,
             url_prefix=url_prefix,
@@ -728,6 +740,7 @@ if CHECK_TYPER.is_available:
             log_level=log_level,
             permissive_cors=permissive_cors,
             api_key=api_key,
+            proxy_root_path="",  # set as empty string
         )
 
     def _construct(name: str):
@@ -786,6 +799,10 @@ if CHECK_TYPER.is_available:
         device: list[Device] = typer.Option(
             **_construct("device"),
             help="device to use for computing the model forward pass.",
+        ),
+        device_id: list[str] = typer.Option(
+            **_construct("device_id"),
+            help="device id defines the model placement. e.g. `0,1` will place the model on MPS/CUDA/GPU 0 and 1 each",
         ),
         lengths_via_tokenize: list[bool] = typer.Option(
             **_construct("lengths_via_tokenize"),
@@ -879,6 +896,7 @@ if CHECK_TYPER.is_available:
         proxy_root_path, str: optional Proxy prefix for the application. See: https://fastapi.tiangolo.com/advanced/behind-a-proxy/
         """
         logger.setLevel(log_level.to_int())
+        device_id_typed = [DeviceID(d) for d in typer_option_resolve(device_id)]
         padder = AutoPadding(
             length=len(model_id),
             model_name_or_path=model_id,
@@ -889,6 +907,7 @@ if CHECK_TYPER.is_available:
             model_warmup=model_warmup,
             vector_disk_cache_path=vector_disk_cache,
             device=device,
+            device_id=device_id_typed,
             lengths_via_tokenize=lengths_via_tokenize,
             dtype=dtype,
             embedding_dtype=embedding_dtype,
@@ -934,7 +953,15 @@ if CHECK_TYPER.is_available:
             api_key=api_key,
             proxy_root_path=proxy_root_path,
         )
-        uvicorn.run(app, host=host, port=port, log_level=log_level.name)
+
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level=log_level.name,
+            http="httptools",
+            loop=loopname,  # type: ignore
+        )
 
     def cli():
         CHECK_TYPER.mark_required()

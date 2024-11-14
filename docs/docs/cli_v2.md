@@ -67,6 +67,12 @@ $ infinity_emb v2 --help
 │                                                                                       the model forward pass.        │
 │                                                                                       [env var: `INFINITY_DEVICE`]   │
 │                                                                                       [default: auto]                │
+│ --device-id                                            TEXT                           device id defines the model    │
+│                                                                                       placement. e.g. `0,1` will     │
+│                                                                                       place the model on             │
+│                                                                                       MPS/CUDA/GPU 0 and 1 each      │
+│                                                                                       [env var:                      │
+│                                                                                       `INFINITY_DEVICE_ID`]          │
 │ --lengths-via-tokenize    --no-lengths-via-tokenize                                   if True, returned tokens is    │
 │                                                                                       based on actual tokenizer      │
 │                                                                                       count. If false, uses          │
