@@ -20,6 +20,10 @@ ENV PYTHONUNBUFFERED=1 \
     EXTRAS="all onnxruntime-gpu" \
     PYTHON="python3.10"
 RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
+# Sets default to onnx
+RUN conda init --reverse --all
+RUN rm -rf /opt/conda && rm -rf /var/lib/jenkins
+
 WORKDIR /app
 
 FROM base as builder
@@ -90,8 +94,6 @@ COPY --from=builder /app /app
 COPY --from=testing /app/test_results.txt /app/test_results.txt
 ENV HF_HOME=/app/.cache/huggingface
 ENV PATH=/app/.venv/bin:$PATH
-# do nothing
-#
 
 # Use a multi-stage build -> production version, with download
 # docker buildx build --target=production-with-download \

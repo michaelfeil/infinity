@@ -35,6 +35,10 @@ amd:
     RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/rocm6.2"
   poetry_extras: "all onnxruntime-gpu"
   python_version: python3.10
+  extra_env_variables: |
+    # Sets default to onnx
+    RUN conda init --reverse --all
+    RUN rm -rf /opt/conda && rm -rf /var/lib/jenkins
 
 trt:
   base_image: nvidia/cuda:12.3.2-cudnn9-devel-ubuntu22.04

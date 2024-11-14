@@ -20,6 +20,10 @@ ENV PYTHONUNBUFFERED=1 \
     EXTRAS="all onnxruntime-gpu" \
     PYTHON="python3.10"
 RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
+# Set default to tensorrt
+ENV LD_LIBRARY_PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
+ENV PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
+
 WORKDIR /app
 
 FROM base as builder
@@ -85,11 +89,6 @@ COPY --from=builder /app /app
 COPY --from=testing /app/test_results.txt /app/test_results.txt
 ENV HF_HOME=/app/.cache/huggingface
 ENV PATH=/app/.venv/bin:$PATH
-# do nothing
-# Set default to tensorrt
-ENV LD_LIBRARY_PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
-ENV PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
-
 
 # Use a multi-stage build -> production version, with download
 # docker buildx build --target=production-with-download \

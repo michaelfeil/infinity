@@ -144,6 +144,10 @@ tensorrt=["tensorrt"]
 onnxruntime-gpu=["onnxruntime-gpu"]
 
 [[tool.poetry.source]]
+name = "pypi"
+priority = "primary"
+
+[[tool.poetry.source]]
 # used for monkey-patching cpu onlu
 name = "pytorch_cpu"
 url = "https://download.pytorch.org/whl/cpu"
