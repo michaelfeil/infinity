@@ -55,8 +55,8 @@ class CustomFIFOQueue:
                 return
 
         # Determine the number of batches to process
-        n_batches = min(max_n_batches, max(1, len(self._queue) // size))
-        size_batches = size * n_batches
+        # n_batches = min(max_n_batches, max(1, len(self._queue) // size))
+        size_batches = size * max_n_batches
 
         with self._lock_queue_event:
             new_items_l = self._queue[:size_batches]
@@ -64,17 +64,16 @@ class CustomFIFOQueue:
             if not self._queue:
                 self._sync_event.clear()
 
-        if n_batches > 1:
+        if len(new_items_l) > size:
             # Sort the items for optimal batching
             new_items_l.sort()
 
-        for i in range(n_batches):
-            mini_batch = new_items_l[size * i : size * (i + 1)]
-            mini_batch_e: list[QueueItemInner] = [
-                mi.item for mi in mini_batch if not mi.item.future.done()
-            ]
-            if mini_batch_e:
-                yield mini_batch_e
+        new_items: list[QueueItemInner] = [
+            mi.item for mi in new_items_l if not mi.item.future.done()
+        ]
+
+        for i in range(0, len(new_items), size):
+            yield new_items[i : i + size]
 
 
 class ResultKVStoreFuture:
