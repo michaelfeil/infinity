@@ -8,8 +8,10 @@ from functools import cached_property
 from pathlib import Path
 from typing import TypeVar
 
+from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
     Device,
+    DeviceIDProxy,
     Dtype,
     EmbeddingDtype,
     EnumType,
@@ -21,11 +23,17 @@ EnumTypeLike = TypeVar("EnumTypeLike", bound=EnumType)
 
 
 class __Infinity_EnvManager:
-    def __init__(self):
-        self._debug(f"Loading Infinity ENV variables.\nCONFIG:\n{'-'*10}")
+    __IS_RECURSION = False
+
+    def __pre_fetch_env_manager(self):
+        if self.__IS_RECURSION:
+            return
+        self.__IS_RECURSION = True
+
+        self._debug(f"Loading Infinity variables from environment.\nCONFIG:\n{'-'*10}")
         for f_name in dir(self):
             if isinstance(getattr(type(self), f_name, None), cached_property):
-                getattr(self, f_name)  # pre-cache
+                getattr(MANAGER, f_name)  # pre-cache
         self._debug(f"{'-'*10}\nENV variables loaded.")
 
     def _debug(self, message: str):
@@ -33,17 +41,19 @@ class __Infinity_EnvManager:
         if "LOG_LEVEL" in message:
             return  # recursion
         elif self.log_level in {"debug", "trace"}:
+            # sending to info to avoid setting not being set yet
             if "API_KEY" in message:
-                print("INFINITY_API_KEY=not_shown")
-                print(f"INFINITY_LOG_LEVEL={self.log_level}")
+                logger.info("INFINITY_API_KEY=anonymized_for_logging_purposes")
+                logger.info(f"INFINITY_LOG_LEVEL={MANAGER.log_level}")
             else:
-                print(message)
+                logger.info(message)
 
     @staticmethod
     def to_name(name: str) -> str:
         return "INFINITY_" + name.upper().replace("-", "_")
 
     def _optional_infinity_var(self, name: str, default: str = ""):
+        self.__pre_fetch_env_manager()
         name = self.to_name(name)
         value = os.getenv(name)
         if value is None:
@@ -52,9 +62,8 @@ class __Infinity_EnvManager:
         self._debug(f"{name}=`{value}`")
         return value
 
-    def _optional_infinity_var_multiple(
-        self, name: str, default: list[str]
-    ) -> list[str]:
+    def _optional_infinity_var_multiple(self, name: str, default: list[str]) -> list[str]:
+        self.__pre_fetch_env_manager()
         name = self.to_name(name)
         value = os.getenv(name)
         if value is None:
@@ -68,7 +77,7 @@ class __Infinity_EnvManager:
 
     @staticmethod
     def _to_bool(value: str) -> bool:
-        return value.lower() in {"true", "1", "yes", "y"}
+        return value.lower().strip() in {"true", "t", "1", "yes", "y"}
 
     @staticmethod
     def _to_bool_multiple(value: list[str]) -> list[bool]:
@@ -123,9 +132,7 @@ class __Infinity_EnvManager:
     @cached_property
     def lengths_via_tokenize(self):
         return self._to_bool_multiple(
-            self._optional_infinity_var_multiple(
-                "lengths_via_tokenize", default=["false"]
-            )
+            self._optional_infinity_var_multiple("lengths_via_tokenize", default=["false"])
         )
 
     @cached_property
@@ -142,9 +149,7 @@ class __Infinity_EnvManager:
 
     @cached_property
     def preload_only(self):
-        return self._to_bool(
-            self._optional_infinity_var("preload_only", default="false")
-        )
+        return self._to_bool(self._optional_infinity_var("preload_only", default="false"))
 
     @cached_property
     def calibration_dataset_url(self):
@@ -188,9 +193,7 @@ class __Infinity_EnvManager:
 
     @cached_property
     def permissive_cors(self):
-        return self._to_bool(
-            self._optional_infinity_var("permissive_cors", default="false")
-        )
+        return self._to_bool(self._optional_infinity_var("permissive_cors", default="false"))
 
     @cached_property
     def url_prefix(self):
@@ -213,9 +216,7 @@ class __Infinity_EnvManager:
     @cached_property
     def redirect_slash(self):
         route = self._optional_infinity_var("redirect_slash", default="/docs")
-        assert not route or route.startswith(
-            "/"
-        ), "INFINITY_REDIRECT_SLASH must start with /"
+        assert not route or route.startswith("/"), "INFINITY_REDIRECT_SLASH must start with /"
         return route
 
     @cached_property
@@ -223,10 +224,8 @@ class __Infinity_EnvManager:
         return self._optional_infinity_var("log_level", default="info")
 
     def _typed_multiple(self, name: str, cls: type["EnumTypeLike"]) -> list["str"]:
-        result = self._optional_infinity_var_multiple(
-            name, default=[cls.default_value()]
-        )
-        assert all(cls(v) for v in result)
+        result = self._optional_infinity_var_multiple(name, default=[cls.default_value()])
+        tuple(cls(v) for v in result)  # check if all values are valid
         return result
 
     @cached_property
@@ -244,6 +243,10 @@ class __Infinity_EnvManager:
     @cached_property
     def device(self) -> list[str]:
         return self._typed_multiple("device", Device)
+
+    @cached_property
+    def device_id(self):
+        return self._typed_multiple("device_id", DeviceIDProxy)
 
     @cached_property
     def embedding_dtype(self) -> list[str]:

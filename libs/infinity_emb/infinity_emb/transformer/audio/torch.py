@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional, Union
 from infinity_emb._optional_imports import CHECK_TORCH, CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import AudioInputType
-from infinity_emb.transformer.abstract import BaseClapAudioModel
+from infinity_emb.transformer.abstract import BaseAudioEmbedModel
 from infinity_emb.transformer.quantization.interface import quant_embedding_decorator
 
 if TYPE_CHECKING:
@@ -16,11 +16,11 @@ if TYPE_CHECKING:
 
 if CHECK_TORCH.is_available:
     import torch
-if CHECK_TRANSFORMERS.is_available:
+if CHECK_TORCH.is_available and CHECK_TRANSFORMERS.is_available:
     from transformers import AutoModel, AutoProcessor  # type: ignore
 
 
-class ClapLikeModel(BaseClapAudioModel):
+class TorchAudioModel(BaseAudioEmbedModel):
     """Audio model for CLAP models"""
 
     def __init__(self, *, engine_args: EngineArgs):
@@ -46,9 +46,7 @@ class ClapLikeModel(BaseClapAudioModel):
         self.engine_args = engine_args
 
         if engine_args.compile:
-            self.model.vision_model = torch.compile(
-                self.model.vision_model, dynamic=True
-            )
+            self.model.vision_model = torch.compile(self.model.vision_model, dynamic=True)
             self.model.text_model = torch.compile(self.model.text_model, dynamic=True)
 
         assert hasattr(
@@ -136,8 +134,7 @@ class ClapLikeModel(BaseClapAudioModel):
         audio_embeds = self._normalize_cpu(audio_embeds)
 
         embeddings = list(
-            next(audio_embeds if is_audio else text_embeds)
-            for is_audio in type_is_audio
+            next(audio_embeds if is_audio else text_embeds) for is_audio in type_is_audio
         )
 
         return embeddings

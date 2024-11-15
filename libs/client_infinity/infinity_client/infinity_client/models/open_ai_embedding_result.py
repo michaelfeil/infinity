@@ -21,7 +21,7 @@ class OpenAIEmbeddingResult:
         data (List['EmbeddingObject']):
         model (str):
         usage (Usage):
-        object_ (Union[Unset, OpenAIEmbeddingResultObject]):  Default: OpenAIEmbeddingResultObject.EMBEDDING.
+        object_ (Union[Unset, OpenAIEmbeddingResultObject]):  Default: OpenAIEmbeddingResultObject.LIST.
         id (Union[Unset, str]):
         created (Union[Unset, int]):
     """
@@ -29,7 +29,7 @@ class OpenAIEmbeddingResult:
     data: List["EmbeddingObject"]
     model: str
     usage: "Usage"
-    object_: Union[Unset, OpenAIEmbeddingResultObject] = OpenAIEmbeddingResultObject.EMBEDDING
+    object_: Union[Unset, OpenAIEmbeddingResultObject] = OpenAIEmbeddingResultObject.LIST
     id: Union[Unset, str] = UNSET
     created: Union[Unset, int] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)

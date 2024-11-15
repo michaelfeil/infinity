@@ -34,7 +34,7 @@ class OptimumCrossEncoder(BaseCrossEncoder):
             model_name_or_path=engine_args.model_name_or_path,
             revision=engine_args.revision,
             use_auth_token=True,
-            prefer_quantized="cpu" in provider.lower(),
+            prefer_quantized=("cpu" in provider.lower() or "openvino" in provider.lower()),
         )
 
         self.model = optimize_model(
@@ -84,9 +84,7 @@ class OptimumCrossEncoder(BaseCrossEncoder):
 
     def tokenize_lengths(self, sentences: list[str]) -> list[int]:
         if hasattr(self._infinity_tokenizer, "encode_batch"):
-            tks = self._infinity_tokenizer.encode_batch(
-                sentences, padding=False, truncation=True
-            )
+            tks = self._infinity_tokenizer.encode_batch(sentences, padding=False, truncation=True)
         else:
             tks = self._infinity_tokenizer(sentences, padding=False, truncation=True)
 

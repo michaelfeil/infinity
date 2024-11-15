@@ -1,22 +1,19 @@
 import io
 
 import numpy as np
-import requests  # type: ignore
+import pytest
 import soundfile as sf  # type: ignore
 import torch
 from transformers import ClapModel, ClapProcessor  # type: ignore
 
 from infinity_emb.args import EngineArgs
-from infinity_emb.transformer.audio.torch import ClapLikeModel
+from infinity_emb.transformer.audio.torch import TorchAudioModel
 
 
-def test_clap_like_model():
-    model_name = "laion/clap-htsat-unfused"
-    model = ClapLikeModel(
-        engine_args=EngineArgs(model_name_or_path=model_name, dtype="float16")
-    )
-    url = "https://github.com/michaelfeil/infinity/raw/3b72eb7c14bae06e68ddd07c1f23fe0bf403f220/libs/infinity_emb/tests/data/audio/beep.wav"
-    raw_bytes = requests.get(url, stream=True).content
+def test_clap_like_model(audio_sample):
+    model_name = pytest.DEFAULT_AUDIO_MODEL
+    model = TorchAudioModel(engine_args=EngineArgs(model_name_or_path=model_name))
+    raw_bytes = audio_sample[0].content
     data, samplerate = sf.read(io.BytesIO(raw_bytes))
 
     assert samplerate == model.sampling_rate

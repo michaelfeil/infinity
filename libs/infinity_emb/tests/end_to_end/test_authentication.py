@@ -32,9 +32,7 @@ app = create_server(
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(app=app, base_url="http://test") as client, LifespanManager(
-        app
-    ):
+    async with AsyncClient(app=app, base_url="http://test") as client, LifespanManager(app):
         yield client
 
 

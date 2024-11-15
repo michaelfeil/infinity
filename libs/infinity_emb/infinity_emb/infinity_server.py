@@ -9,7 +9,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, TYPE_CHECKING
 
 import infinity_emb
 from infinity_emb._optional_imports import CHECK_TYPER, CHECK_UVICORN
@@ -21,7 +21,6 @@ from infinity_emb.fastapi_schemas.pymodels import (
     AudioEmbeddingInput,
     ClassifyInput,
     ClassifyResult,
-    DataURIorURL,
     ImageEmbeddingInput,
     MultiModalOpenAIEmbedding,
     OpenAIEmbeddingResult,
@@ -33,6 +32,7 @@ from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.primitives import (
     AudioCorruption,
     Device,
+    DeviceID,
     Dtype,
     EmbeddingDtype,
     ImageCorruption,
@@ -42,7 +42,10 @@ from infinity_emb.primitives import (
     ModelNotDeployedError,
     PoolingMethod,
 )
-from infinity_emb.telemetry import PostHog, StartupTelemetry
+from infinity_emb.telemetry import PostHog, StartupTelemetry, telemetry_log_info
+
+if TYPE_CHECKING:
+    from infinity_emb.fastapi_schemas.pymodels import DataURIorURL
 
 
 def create_server(
@@ -83,6 +86,10 @@ def create_server(
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         instrumentator.expose(app)  # type: ignore
+        logger.info(
+            f"Creating {len(engine_args_list)}engines: engines={[e.served_model_name for e in engine_args_list]}"
+        )
+        telemetry_log_info()
         app.engine_array = AsyncEngineArray.from_args(engine_args_list)  # type: ignore
         asyncio.create_task(
             asyncio.to_thread(
@@ -108,10 +115,7 @@ def create_server(
                 await asyncio.sleep(seconds)
                 os.kill(os.getpid(), signal.SIGINT)
 
-            logger.info(
-                f"Preloaded configuration successfully. {engine_args_list} "
-                " -> exit ."
-            )
+            logger.info(f"Preloaded configuration successfully. {engine_args_list} " " -> exit .")
             asyncio.create_task(kill_later(3))
 
         yield
@@ -231,7 +235,7 @@ def create_server(
         return engine
 
     def _resolve_mixed_input(
-        inputs: Union[DataURIorURL, list[DataURIorURL]]
+        inputs: Union["DataURIorURL", list["DataURIorURL"]],
     ) -> list[Union[str, bytes]]:
         if hasattr(inputs, "host"):
             # if it is a single url
@@ -241,7 +245,8 @@ def create_server(
         else:
             # is list, resolve to bytes or url
             urls_or_bytes: list[Union[str, bytes]] = [  # type: ignore
-                str(d) if hasattr(d, "host") else d.data for d in inputs  # type: ignore
+                str(d) if hasattr(d, "host") else d.data
+                for d in inputs  # type: ignore
             ]
         return urls_or_bytes
 
@@ -269,7 +274,7 @@ def create_server(
                 "model": "openai/clip-vit-base-patch32",
                 "encoding_format": "base64",
                 "input": [
-                    http://images.cocodataset.org/val2017/000000039769.jpg",
+                    "http://images.cocodataset.org/val2017/000000039769.jpg",
                     # can also be base64 encoded
                 ],
                 # set extra modality to image to process as image
@@ -310,7 +315,7 @@ def create_server(
         client.embeddings.create(
             model="laion/larger_clap_general",
             input=[url_to_base64(url, "audio")],
-            encoding_format= "base64",
+            encoding_format="float",
             extra_body={
                 "modality": "audio"
             }
@@ -319,7 +324,7 @@ def create_server(
         client.embeddings.create(
             model="laion/larger_clap_general",
             input=["the sound of a beep", "the sound of a cat"],
-            encoding_format= "base64",
+            encoding_format="base64", # base64: optional high performance setting
             extra_body={
                 "modality": "text"
             }
@@ -642,14 +647,11 @@ def typer_option_resolve(*args):
     """returns the value or the default value"""
     if len(args) == 1:
         return (
-            args[0].default
+            args[0].default  # if it is a typer option
             if hasattr(args[0], "default") and hasattr(args[0], "envvar")
-            else args[0]
+            else args[0]  # if it is a normal value
         )
-    return (
-        a.default if (hasattr(a, "default") and hasattr(a, "envvar")) else a
-        for a in args
-    )
+    return (a.default if (hasattr(a, "default") and hasattr(a, "envvar")) else a for a in args)
 
 
 # CLI
@@ -658,6 +660,17 @@ if CHECK_TYPER.is_available:
     CHECK_UVICORN.mark_required()
     import typer
     import uvicorn
+
+    loopname = "auto"
+    if sys.version_info < (3, 12):
+        try:
+            import uvloop
+
+            asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+            loopname = "uvloop"
+        except ImportError:
+            # Windows does not support uvloop
+            pass
 
     tp = typer.Typer()
 
@@ -690,9 +703,7 @@ if CHECK_TYPER.is_available:
     ):
         """Infinity API ♾️  cli v1 - deprecated, consider use cli v2 via `infinity_emb v2`."""
         if api_key:
-            raise ValueError(
-                "api_key is not supported in `v1`. Please migrate to `v2`."
-            )
+            raise ValueError("api_key is not supported in `v1`. Please migrate to `v2`.")
         if not (
             embedding_dtype == EmbeddingDtype.float32
             or embedding_dtype == EmbeddingDtype.default_value()
@@ -719,7 +730,7 @@ if CHECK_TYPER.is_available:
             lengths_via_tokenize=[lengths_via_tokenize],
             compile=[compile],
             bettertransformer=[bettertransformer],
-            embedding_dtype=[EmbeddingDtype.float32],
+            embedding_dtype=[EmbeddingDtype.float32],  # set to float32
             # unique kwargs
             preload_only=preload_only,
             url_prefix=url_prefix,
@@ -729,6 +740,7 @@ if CHECK_TYPER.is_available:
             log_level=log_level,
             permissive_cors=permissive_cors,
             api_key=api_key,
+            proxy_root_path="",  # set as empty string
         )
 
     def _construct(name: str):
@@ -788,6 +800,10 @@ if CHECK_TYPER.is_available:
             **_construct("device"),
             help="device to use for computing the model forward pass.",
         ),
+        device_id: list[str] = typer.Option(
+            **_construct("device_id"),
+            help="device id defines the model placement. e.g. `0,1` will place the model on MPS/CUDA/GPU 0 and 1 each",
+        ),
         lengths_via_tokenize: list[bool] = typer.Option(
             **_construct("lengths_via_tokenize"),
             help="if True, returned tokens is based on actual tokenizer count. If false, uses len(input) as proxy.",
@@ -816,12 +832,8 @@ if CHECK_TYPER.is_available:
             **_construct("preload_only"),
             help="If true, only downloads models and verifies setup, then exit. Recommended for pre-caching the download in a Dockerfile.",
         ),
-        host: str = typer.Option(
-            **_construct("host"), help="host for the FastAPI uvicorn server"
-        ),
-        port: int = typer.Option(
-            **_construct("port"), help="port for the FastAPI uvicorn server"
-        ),
+        host: str = typer.Option(**_construct("host"), help="host for the FastAPI uvicorn server"),
+        port: int = typer.Option(**_construct("port"), help="port for the FastAPI uvicorn server"),
         url_prefix: str = typer.Option(
             **_construct("url_prefix"),
             callback=validate_url,
@@ -830,7 +842,9 @@ if CHECK_TYPER.is_available:
         redirect_slash: str = typer.Option(
             **_construct("redirect_slash"), help="where to redirect `/` requests to."
         ),
-        log_level: UVICORN_LOG_LEVELS = typer.Option(**_construct("log_level"), help="console log level."),  # type: ignore
+        log_level: UVICORN_LOG_LEVELS = typer.Option(
+            **_construct("log_level"), help="console log level."
+        ),  # type: ignore
         permissive_cors: bool = typer.Option(
             **_construct("permissive_cors"), help="whether to allow permissive cors."
         ),
@@ -882,6 +896,7 @@ if CHECK_TYPER.is_available:
         proxy_root_path, str: optional Proxy prefix for the application. See: https://fastapi.tiangolo.com/advanced/behind-a-proxy/
         """
         logger.setLevel(log_level.to_int())
+        device_id_typed = [DeviceID(d) for d in typer_option_resolve(device_id)]
         padder = AutoPadding(
             length=len(model_id),
             model_name_or_path=model_id,
@@ -892,6 +907,7 @@ if CHECK_TYPER.is_available:
             model_warmup=model_warmup,
             vector_disk_cache_path=vector_disk_cache,
             device=device,
+            device_id=device_id_typed,
             lengths_via_tokenize=lengths_via_tokenize,
             dtype=dtype,
             embedding_dtype=embedding_dtype,
@@ -937,7 +953,15 @@ if CHECK_TYPER.is_available:
             api_key=api_key,
             proxy_root_path=proxy_root_path,
         )
-        uvicorn.run(app, host=host, port=port, log_level=log_level.name)
+
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level=log_level.name,
+            http="httptools",
+            loop=loopname,  # type: ignore
+        )
 
     def cli():
         CHECK_TYPER.mark_required()

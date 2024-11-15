@@ -51,9 +51,7 @@ def embedding_live_performance():
     model = None
 
     print("Measuring latency via requests")
-    latency_request = timeit.timeit(
-        "remote(json_d, iters=5)", number=2, globals=locals()
-    )
+    latency_request = timeit.timeit("remote(json_d, iters=5)", number=2, globals=locals())
     print(f"Request latency: {latency_request}")
 
     assert latency_st * 1.1 > latency_request

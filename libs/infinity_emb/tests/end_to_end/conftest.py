@@ -18,7 +18,7 @@ class Helpers:
         model_name: str,
         batch_size: int,
         downsample: int = 2,
-        decimal=3,
+        atol=1e-3,
     ):
         sentences = []
         for d in sts_bechmark_dataset:
@@ -69,13 +69,11 @@ class Helpers:
         for r, e in zip(responses, encodings):
             cosine_sim = np.dot(r, e) / (np.linalg.norm(e) * np.linalg.norm(r))
             assert cosine_sim > 0.94
-        np.testing.assert_almost_equal(
-            np.array(responses), np.array(encodings), decimal=decimal
-        )
+        np.testing.assert_allclose(np.array(responses), np.array(encodings), atol=atol)
         assert time_api / time_st < 2.5
 
     @staticmethod
-    async def embedding_verify(client, model_base, prefix, model_name, decimal=3):
+    async def embedding_verify(client, model_base, prefix, model_name, atol=1e-3):
         possible_inputs = [
             ["This is a test sentence."],
             ["This is a test sentence.", "This is another test sentence."],
@@ -85,9 +83,7 @@ class Helpers:
             response = await client.post(
                 f"{prefix}/embeddings", json=dict(input=inp, model=model_name)
             )
-            assert (
-                response.status_code == 200
-            ), f"{response.status_code}, {response.text}"
+            assert response.status_code == 200, f"{response.status_code}, {response.text}"
             rdata = response.json()
             assert "data" in rdata and isinstance(rdata["data"], list)
             assert all("embedding" in d for d in rdata["data"])
@@ -96,9 +92,7 @@ class Helpers:
             want_embeddings = model_base.encode(inp)
 
             for embedding, st_embedding in zip(rdata["data"], want_embeddings):
-                np.testing.assert_almost_equal(
-                    embedding["embedding"], st_embedding, decimal=decimal
-                )
+                np.testing.assert_allclose(embedding["embedding"], st_embedding, atol=atol)
 
     @staticmethod
     def cosine_similarity(a, b):

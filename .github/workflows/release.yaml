@@ -10,17 +10,51 @@ env:
   WORKDIR: "libs/infinity_emb"
 
 jobs:
-  docker-container-push:
+  docker-container-push-nvidia:
     uses:
       ./.github/workflows/release_docker_container.yaml
     with:
       # working-directory: libs/infinity_emb
-      dockerfile: libs/infinity_emb/Dockerfile
+      dockerfile: libs/infinity_emb/Dockerfile.nvidia_auto
       image: michaelf34/infinity
+      appendix_tag: ""
+      platforms: "linux/amd64,linux/arm64"
     secrets: inherit
+  
+  docker-container-push-cpu:
+    uses:
+      ./.github/workflows/release_docker_container.yaml
+    with:
+      # working-directory: libs/infinity_emb
+      dockerfile: libs/infinity_emb/Dockerfile.cpu_auto
+      image: michaelf34/infinity
+      appendix_tag: "-cpu"
+      platforms: "linux/amd64"
+    secrets: inherit
+  
+  docker-container-push-onnx-trt:
+    uses:
+      ./.github/workflows/release_docker_container.yaml
+    with:
+      # working-directory: libs/infinity_emb
+      dockerfile: libs/infinity_emb/Dockerfile.trt_onnx_auto
+      image: michaelf34/infinity
+      appendix_tag: "-trt-onnx"
+      platforms: "linux/amd64"
+    secrets: inherit
+  
+  # docker-container-push-amd:
+  #   uses:
+  #     ./.github/workflows/release_docker_container.yaml
+  #   with:
+  #     # working-directory: libs/infinity_emb
+  #     dockerfile: libs/infinity_emb/Dockerfile.amd_auto
+  #     image: michaelf34/infinity
+  #     appendix_tag: "-amd"
+  #     platforms: "linux/amd64"
+  #   secrets: inherit
 
   modal-deploy:
-    needs: docker-container-push
     uses:
       ./.github/workflows/release_modal_com.yaml
     secrets: inherit

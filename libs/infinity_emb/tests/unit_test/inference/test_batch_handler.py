@@ -34,7 +34,7 @@ async def load_patched_bh() -> tuple[SentenceTransformerPatched, BatchHandler]:
         )
     )
     model.encode(["hello " * 512] * BATCH_SIZE)
-    bh = BatchHandler(model=model, max_batch_size=BATCH_SIZE)
+    bh = BatchHandler(model_replicas=[model], max_batch_size=BATCH_SIZE)
     await bh.spawn()
     return model, bh
 
@@ -98,9 +98,7 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
         time.sleep(2)
         time_st = np.median([method_st(sentences) for _ in range(N_TIMINGS)])
         time.sleep(2)
-        time_st_patched = np.median(
-            [method_patched(sentences) for _ in range(N_TIMINGS)]
-        )
+        time_st_patched = np.median([method_patched(sentences) for _ in range(N_TIMINGS)])
 
         print(
             f"times are sentence-transformers: {time_st},"
@@ -116,8 +114,7 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
             f" SentenceTransformers.encode: {time_st_patched} > {time_st}"
         )
         assert time_batch_handler / time_st < LIMIT_SLOWDOWN, (
-            "batch_handler slower than Sentence Transformers"
-            f" {time_batch_handler}: > {time_st}"
+            "batch_handler slower than Sentence Transformers" f" {time_batch_handler}: > {time_st}"
         )
         assert time_batch_handler / time_st_patched < LIMIT_SLOWDOWN, (
             "raw batch_handler threaded queueing looses significant "

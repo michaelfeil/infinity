@@ -57,20 +57,23 @@ class OptionalImports:
         raise ImportError(msg)
 
 
-CHECK_DISKCACHE = OptionalImports("diskcache", "cache")
+CHECK_AIOHTTP = OptionalImports("aiohttp", "server")
+CHECK_COLPALI_ENGINE = OptionalImports("colpali_engine", "vision")
 CHECK_CTRANSLATE2 = OptionalImports("ctranslate2", "ctranslate2")
+CHECK_DISKCACHE = OptionalImports("diskcache", "cache")
 CHECK_FASTAPI = OptionalImports("fastapi", "server")
 CHECK_ONNXRUNTIME = OptionalImports("optimum.onnxruntime", "optimum")
 CHECK_OPTIMUM = OptionalImports("optimum", "optimum")
-CHECK_OPTIMUM_NEURON = OptionalImports("optimum.neuron", "neuronx")
-CHECK_SENTENCE_TRANSFORMERS = OptionalImports("sentence_transformers", "torch")
-CHECK_TRANSFORMERS = OptionalImports("transformers", "torch")
-CHECK_TORCH = OptionalImports("torch.nn", "torch")
-# CHECK_REQUESTS = OptionalImports("requests", "server")
-CHECK_POSTHOG = OptionalImports("posthog", "server")
-CHECK_AIOHTTP = OptionalImports("aiohttp", "server")
+CHECK_OPTIMUM_NEURON = OptionalImports(
+    "optimum.neuron",
+    "<neuronx not available as extra, only runs on AMI image, no pip install possible.>",
+)
 CHECK_PIL = OptionalImports("PIL", "vision")
-CHECK_SOUNDFILE = OptionalImports("soundfile", "audio")
+CHECK_POSTHOG = OptionalImports("posthog", "server")
 CHECK_PYDANTIC = OptionalImports("pydantic", "server")
+CHECK_SENTENCE_TRANSFORMERS = OptionalImports("sentence_transformers", "torch")
+CHECK_SOUNDFILE = OptionalImports("soundfile", "audio")
+CHECK_TORCH = OptionalImports("torch.nn", "torch")
+CHECK_TRANSFORMERS = OptionalImports("transformers", "torch")
 CHECK_TYPER = OptionalImports("typer", "server")
 CHECK_UVICORN = OptionalImports("uvicorn", "server")

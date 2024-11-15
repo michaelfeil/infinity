@@ -32,9 +32,9 @@ def model_base() -> pipeline:
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(
-        app=app, base_url="http://test", timeout=20
-    ) as client, LifespanManager(app):
+    async with AsyncClient(app=app, base_url="http://test", timeout=20) as client, LifespanManager(
+        app
+    ):
         yield client
 
 
@@ -73,12 +73,3 @@ async def test_classifier(client, model_base):
     rdata = response.json()
     assert "model" in rdata
     assert "usage" in rdata
-    # rdata_results = rdata["results"]
-
-    # predictions = [
-    #     model_base.predict({"text": query, "text_pair": doc}) for doc in documents
-    # ]
-
-    # assert len(rdata_results) == len(predictions)
-    # for i, pred in enumerate(predictions):
-    #     assert abs(rdata_results[i]["relevance_score"] - pred["score"]) < 0.01

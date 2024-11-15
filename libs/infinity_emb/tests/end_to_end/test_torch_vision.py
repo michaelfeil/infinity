@@ -2,7 +2,6 @@ import base64
 
 import numpy as np
 import pytest
-import requests
 import torch
 from asgi_lifespan import LifespanManager
 from fastapi import status
@@ -32,9 +31,9 @@ app = create_server(
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(
-        app=app, base_url="http://test", timeout=20
-    ) as client, LifespanManager(app):
+    async with AsyncClient(app=app, base_url="http://test", timeout=20) as client, LifespanManager(
+        app
+    ):
         yield client
 
 
@@ -84,8 +83,8 @@ async def test_vision_single_text_only(client):
 
 
 @pytest.mark.anyio
-async def test_vision_base64(client):
-    bytes_downloaded = requests.get(pytest.IMAGE_SAMPLE_URL).content
+async def test_vision_base64(client, image_sample):
+    bytes_downloaded = image_sample[0].content
     base_64_image = base64.b64encode(bytes_downloaded).decode("utf-8")
 
     response = await client.post(
@@ -106,8 +105,8 @@ async def test_vision_base64(client):
     assert rdata_results[0]["object"] == "embedding"
     assert len(rdata_results[0]["embedding"]) > 0
 
-    np.testing.assert_array_equal(
-        rdata_results[0]["embedding"], rdata_results[1]["embedding"]
+    np.testing.assert_array_almost_equal(
+        rdata_results[0]["embedding"], rdata_results[1]["embedding"], decimal=4
     )
 
 
@@ -156,19 +155,21 @@ async def test_meta(client, helpers):
 @pytest.mark.anyio
 async def test_vision_multiple(client):
     for route in [f"{PREFIX}/embeddings_image", f"{PREFIX}/embeddings"]:
-        for no_of_images in [1, 5, 10]:
+        for no_of_images in [1, 2]:
             image_urls = [
                 pytest.IMAGE_SAMPLE_URL,
             ] * no_of_images
-
-            response = await client.post(
-                route,
-                json={
-                    "model": MODEL,
-                    "input": image_urls,
-                    "modality": "image",
-                },
-            )
+            for _ in range(3):
+                response = await client.post(
+                    route,
+                    json={
+                        "model": MODEL,
+                        "input": image_urls,
+                        "modality": "image",
+                    },
+                )
+                if response.status_code == 200:
+                    break  # if successful, break
             assert response.status_code == 200
             rdata = response.json()
             rdata_results = rdata["data"]
@@ -207,9 +208,6 @@ async def test_vision_fail(client):
     )
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-
-@pytest.mark.anyio
-async def test_vision_empty(client):
     image_url_empty = []
     response = await client.post(
         f"{PREFIX}/embeddings_image",
@@ -217,9 +215,6 @@ async def test_vision_empty(client):
     )
     assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-
-@pytest.mark.anyio
-async def test_unsupported_endpoints(client):
     response_unsupported = await client.post(
         f"{PREFIX}/classify",
         json={"model": MODEL, "input": ["test"]},

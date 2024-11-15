@@ -21,16 +21,26 @@ if CHECK_POSTHOG.is_available:
 if CHECK_TORCH.is_available:
     import torch
 
+TELEMETRY_ENABLED = CHECK_POSTHOG.is_available and (MANAGER.anonymous_usage_stats)
+
+
+@cache
+def telemetry_log_info():
+    if TELEMETRY_ENABLED:
+        logger.info(
+            "Anonymized telemetry can be disabled " "via environment variable `DO_NOT_TRACK=1`."
+        )
+    else:
+        return logger.info("DO_NOT_TRACK=1 registered. Anonymized usage statistics are disabled.")
+
 
 @dataclass
 class ProductTelemetryEvent:
     @abstractmethod
-    def render(self) -> dict[str, Any]:
-        ...
+    def render(self) -> dict[str, Any]: ...
 
     @abstractmethod
-    def name(self) -> str:
-        ...
+    def name(self) -> str: ...
 
 
 @cache
@@ -69,9 +79,7 @@ def get_system_properties():
             device_property = torch.cuda.get_device_properties(0)
             gpu_count = torch.cuda.device_count()
             gpu_type = str(device_property.name)
-            gpu_memory_per_device_mb = (
-                int(device_property.total_memory) * 1000000 / 1024**2
-            )
+            gpu_memory_per_device_mb = int(device_property.total_memory) * 1000000 / 1024**2
 
     return {
         "gpu_count": gpu_count,
@@ -182,8 +190,11 @@ class StartupTelemetry(ProductTelemetryEvent):
 
     def render(self):
         """defines the message to be sent to posthog"""
+        ea = asdict(self.engine_args)
+        loading_strategy = {str(k): str(v) for k, v in ea.pop("_loading_strategy").items()}
         return {
-            **asdict(self.engine_args),
+            **ea,
+            **loading_strategy,
             "session_id": self.session_id,
             "num_engines": self.num_engines,
             "capabilities": self.capabilities,
@@ -208,19 +219,16 @@ class StartupTelemetry(ProductTelemetryEvent):
 class _PostHogCapture:
     def __init__(self):
         self._posthog = None
-        disabled = False
-        if not CHECK_POSTHOG.is_available or (not MANAGER.anonymous_usage_stats):
+        self._posthog_disabled = False
+
+        if not TELEMETRY_ENABLED:
+            self._posthog_disabled = True
             return
         if "pytest" in sys.modules:
             # disable posthog
-            disabled = True
+            self._posthog_disabled = True
             posthog.disabled = True
-
         try:
-            logger.debug(
-                "Anonymized telemetry enabled. See \
-                    https://michaelfeil.github.io/infinity for more information."
-            )
             k = (
                 "ph"  # split
                 "c_IOq"  # to avoid spam on project
@@ -229,7 +237,7 @@ class _PostHogCapture:
             self._posthog = Posthog(
                 project_api_key=k,
                 host="https://eu.i.posthog.com",
-                disabled=disabled,
+                disabled=self._posthog_disabled,
             )
 
             posthog_logger = logging.getLogger("posthog")

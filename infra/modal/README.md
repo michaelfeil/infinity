@@ -7,9 +7,8 @@ Run the following sequence of commands to deploy:
 
 ```bash
 git clone https://github.com/michaelfeil/infinity
-cd infra/modal
 pip install modal
-modal deploy --env main modal.infra.webserver
+modal deploy --env main infra.modal.webserver
 ```
 
 ### Github Actions

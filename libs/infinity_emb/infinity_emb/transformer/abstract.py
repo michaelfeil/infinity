@@ -81,9 +81,7 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
         """takes care of the tokenization and feature preparation"""
 
     @abstractmethod
-    def encode_post(
-        self, embedding: OUT_FEATURES, skip_quanitzation=True
-    ) -> EmbeddingReturnType:
+    def encode_post(self, embedding: OUT_FEATURES, skip_quanitzation=True) -> EmbeddingReturnType:
         """runs post encoding such as normalization"""
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> tuple[float, float, str]:
@@ -95,7 +93,7 @@ class BaseEmbedder(BaseTransformer):  # Inherit from ABC(Abstract base class)
         return run_warmup(self, inp)
 
 
-class BaseClipVisionModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
+class BaseTIMM(BaseEmbedder):  # Inherit from ABC(Abstract base class)
     capabilities = {"embed", "image_embed"}
 
     @property
@@ -104,30 +102,27 @@ class BaseClipVisionModel(BaseEmbedder):  # Inherit from ABC(Abstract base class
         return self.engine_args.embedding_dtype
 
     @abstractmethod  # Decorator to define an abstract method
-    def encode_pre(
-        self, sentences_or_images: list[Union[str, "ImageClass"]]
-    ) -> INPUT_FEATURE:
+    def encode_pre(self, sentences_or_images: list[Union[str, "ImageClass"]]) -> INPUT_FEATURE:
         """
         takes a list of sentences, or a list of images.
         Images could be url or numpy arrays/pil
         """
 
     @abstractmethod
-    def encode_post(
-        self, embedding: OUT_FEATURES, skip_quanitzation=True
-    ) -> EmbeddingReturnType:
+    def encode_post(self, embedding: OUT_FEATURES, skip_quanitzation=True) -> EmbeddingReturnType:
         """runs post encoding such as normalization"""
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> tuple[float, float, str]:
         sample_text = ["warm " * n_tokens] * max(1, batch_size // 2)
-        sample_image = [Image.new("RGB", (100, 1000), (255, 255, 255))] * max(1, batch_size // 2)  # type: ignore
+        sample_image = [Image.new("RGB", (128, 128), (255, 255, 255))] * max(1, batch_size // 2)  # type: ignore
         inp = [
             # TODO: warmup for images
             ImageInner(content=ImageSingle(image=img), future=None)  # type: ignore
             for img in sample_image
         ] + [
             EmbeddingInner(
-                content=EmbeddingSingle(sentence=s), future=None  # type: ignore
+                content=EmbeddingSingle(sentence=s),
+                future=None,  # type: ignore
             )
             for s in sample_text
         ]
@@ -136,7 +131,7 @@ class BaseClipVisionModel(BaseEmbedder):  # Inherit from ABC(Abstract base class
         return run_warmup(self, inp)
 
 
-class BaseClapAudioModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
+class BaseAudioEmbedModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
     capabilities = {"embed", "audio_embed"}
 
     @property
@@ -149,33 +144,33 @@ class BaseClapAudioModel(BaseEmbedder):  # Inherit from ABC(Abstract base class)
         raise NotImplementedError
 
     @abstractmethod  # Decorator to define an abstract method
-    def encode_pre(
-        self, sentences_or_audios: list[Union[str, AudioInputType]]
-    ) -> INPUT_FEATURE:
+    def encode_pre(self, sentences_or_audios: list[Union[str, AudioInputType]]) -> INPUT_FEATURE:
         """
         takes a list of sentences, or a list of audios.
         Audios could be raw byte array of the wave file
         """
 
     @abstractmethod
-    def encode_post(
-        self, embedding: OUT_FEATURES, skip_quanitzation=True
-    ) -> EmbeddingReturnType:
+    def encode_post(self, embedding: OUT_FEATURES, skip_quanitzation=True) -> EmbeddingReturnType:
         """runs post encoding such as normalization"""
 
     def warmup(self, *, batch_size: int = 64, n_tokens=1) -> tuple[float, float, str]:
         sample_text = ["warm " * n_tokens] * max(1, batch_size // 2)
         # sample_audios = [sf.SoundFile()] * max(1, batch_size // 2)  # type: ignore
-        inp: list[Union[AudioInner, EmbeddingInner]] = [
-            # TODO: warmup for audio
-            # AudioInner(content=AudioSingle(audio=audio), future=None)  # type: ignore
-            # for audio in sample_audios
-        ] + [
-            EmbeddingInner(
-                content=EmbeddingSingle(sentence=s), future=None  # type: ignore
-            )
-            for s in sample_text
-        ]
+        inp: list[Union[AudioInner, EmbeddingInner]] = (
+            [
+                # TODO: warmup for audio
+                # AudioInner(content=AudioSingle(audio=audio), future=None)  # type: ignore
+                # for audio in sample_audios
+            ]
+            + [
+                EmbeddingInner(
+                    content=EmbeddingSingle(sentence=s),
+                    future=None,  # type: ignore
+                )
+                for s in sample_text
+            ]
+        )
         random.shuffle(inp)
 
         return run_warmup(self, inp)
@@ -217,11 +212,17 @@ class BaseCrossEncoder(BaseTransformer):  # Inherit from ABC(Abstract base class
         sample = ["warm " * n_tokens] * batch_size
         inp = [
             ReRankInner(
-                content=ReRankSingle(query=s, document=s), future=None  # type: ignore
+                content=ReRankSingle(query=s, document=s),
+                future=None,  # type: ignore
             )
             for s in sample
         ]
         return run_warmup(self, inp)
+
+
+BaseTypeHint = Union[
+    BaseTransformer, BaseEmbedder, BaseTIMM, BaseAudioEmbedModel, BaseClassifer, BaseCrossEncoder
+]
 
 
 def run_warmup(model, inputs) -> tuple[float, float, str]:

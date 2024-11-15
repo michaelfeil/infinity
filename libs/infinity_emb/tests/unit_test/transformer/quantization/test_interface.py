@@ -8,7 +8,6 @@ from infinity_emb.primitives import Device, Dtype
 from infinity_emb.transformer.quantization.interface import quant_interface
 
 devices = [Device.cpu]
-# TODO: add support for cuda
 if torch.cuda.is_available():
     devices.append(Device.cuda)
 
@@ -43,9 +42,7 @@ def test_quantize_bert(device: Device, dtype: Dtype):
     )
     tokens_encoded = {k: v.to(device.resolve()) for k, v in tokens_encoded.items()}
     with torch.no_grad():
-        out_default = model_unquantized.forward(**tokens_encoded)[
-            "last_hidden_state"
-        ].mean(dim=1)
+        out_default = model_unquantized.forward(**tokens_encoded)["last_hidden_state"].mean(dim=1)
         out_quant = model.forward(**tokens_encoded)["last_hidden_state"].mean(dim=1)
 
     assert torch.cosine_similarity(out_default, out_quant) > 0.95
