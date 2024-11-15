@@ -23,9 +23,7 @@ SHOULD_TORCH_COMPILE = sys.platform == "linux" and sys.version_info < (3, 12)
 @pytest.mark.anyio
 async def test_async_api_debug():
     sentences = ["Embedded this is sentence via Infinity.", "Paris is in France."]
-    engine = AsyncEmbeddingEngine.from_args(
-        EngineArgs(engine=InferenceEngine.debugengine)
-    )
+    engine = AsyncEmbeddingEngine.from_args(EngineArgs(engine=InferenceEngine.debugengine))
     async with engine:
         embeddings, usage = await engine.embed(sentences)
         embeddings = np.array(embeddings)
@@ -43,6 +41,35 @@ async def test_async_api_torch():
         EngineArgs(
             model_name_or_path="michaelfeil/bge-small-en-v1.5",
             engine=InferenceEngine.torch,
+            revision="main",
+            device="cpu",
+        )
+    )
+    assert engine.capabilities == {"embed"}
+    async with engine:
+        embeddings, usage = await engine.embed(sentences=sentences)
+        assert isinstance(embeddings, list)
+        assert isinstance(embeddings[0], np.ndarray)
+        embeddings = np.array(embeddings)
+        assert usage == sum([len(s) for s in sentences])
+        assert embeddings.shape[0] == len(sentences)
+        assert embeddings.shape[1] >= 10
+
+        # test if model denies classification and reranking
+        with pytest.raises(ModelNotDeployedError):
+            await engine.classify(sentences=sentences)
+        with pytest.raises(ModelNotDeployedError):
+            await engine.rerank(query="dummy", docs=sentences)
+
+
+@pytest.mark.anyio
+async def test_async_api_torch_double_launch():
+    sentences = ["Hi", "how"]
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="michaelfeil/bge-small-en-v1.5",
+            engine=InferenceEngine.debugengine,
+            device_id=[0, 1],
             revision="main",
             device="cpu",
         )
@@ -89,8 +116,7 @@ async def test_engine_reranker_torch_opt(engine_name: InferenceEngine):
     async with engine:
         rankings_objects, usage = await engine.rerank(query=query, docs=documents)
     rankings = [
-        x.relevance_score
-        for x in sorted(rankings_objects, key=lambda x: x.index, reverse=False)
+        x.relevance_score for x in sorted(rankings_objects, key=lambda x: x.index, reverse=False)
     ]
     rankings_unpatched = model_unpatched.predict(query_docs)
 
@@ -176,9 +202,7 @@ async def test_async_api_torch_lengths_via_tokenize_usage():
 
 @pytest.mark.anyio
 async def test_torch_clip_embed():
-    image_urls = [
-        "http://images.cocodataset.org/val2017/000000039769.jpg"
-    ]  # a photo of two cats
+    image_urls = ["http://images.cocodataset.org/val2017/000000039769.jpg"]  # a photo of two cats
     sentences = [
         "a photo of two cats",
         "a photo of a cat",
@@ -193,9 +217,10 @@ async def test_torch_clip_embed():
         )
     )
     async with engine:
-        t1, t2 = asyncio.create_task(
-            engine.embed(sentences=sentences)
-        ), asyncio.create_task(engine.image_embed(images=image_urls))
+        t1, t2 = (
+            asyncio.create_task(engine.embed(sentences=sentences)),
+            asyncio.create_task(engine.image_embed(images=image_urls)),
+        )
         emb_text, usage_text = await t1
         emb_image, usage_image = await t2
         emb_text_np = np.array(emb_text)  # type: ignore
@@ -210,9 +235,7 @@ async def test_torch_clip_embed():
 
     # check if cat image and two cats are most similar
     for i in range(1, len(sentences)):
-        assert np.dot(emb_text_np[0], emb_image_np[0]) > np.dot(
-            emb_text_np[i], emb_image_np[0]
-        )
+        assert np.dot(emb_text_np[0], emb_image_np[0]) > np.dot(emb_text_np[i], emb_image_np[0])
 
 
 @pytest.mark.anyio
@@ -257,9 +280,10 @@ async def test_clip_embed_pil_image_input(image_sample):
         )
     )
     async with engine:
-        t1, t2 = asyncio.create_task(
-            engine.embed(sentences=sentences)
-        ), asyncio.create_task(engine.image_embed(images=images))
+        t1, t2 = (
+            asyncio.create_task(engine.embed(sentences=sentences)),
+            asyncio.create_task(engine.image_embed(images=images)),
+        )
         emb_text, usage_text = await t1
         emb_image, usage_image = await t2
         emb_text_np = np.array(emb_text)  # type: ignore
@@ -274,9 +298,7 @@ async def test_clip_embed_pil_image_input(image_sample):
 
     # check if cat image and two cats are most similar
     for i in range(1, len(sentences)):
-        assert np.dot(emb_text_np[0], emb_image_np[0]) > np.dot(
-            emb_text_np[i], emb_image_np[0]
-        )
+        assert np.dot(emb_text_np[0], emb_image_np[0]) > np.dot(emb_text_np[i], emb_image_np[0])
 
 
 @pytest.mark.anyio

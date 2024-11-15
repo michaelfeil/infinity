@@ -76,9 +76,7 @@ class EnumType(str, enum.Enum):
 
         Allows for type hinting of the enum names.
         """
-        return enum.Enum(
-            cls.__name__ + "__names", {k: k for k in cls.__members__.keys()}
-        )
+        return enum.Enum(cls.__name__ + "__names", {k: k for k in cls.__members__.keys()})
 
     @staticmethod
     def default_value() -> str:
@@ -98,6 +96,7 @@ class InferenceEngine(EnumType):
     torch = "torch"
     ctranslate2 = "ctranslate2"
     optimum = "optimum"
+    neuron = "neuron"
     debugengine = "debugengine"
 
     @staticmethod
@@ -166,6 +165,37 @@ class PoolingMethod(EnumType):
     @staticmethod
     def default_value():
         return PoolingMethod.auto.value
+
+
+class DeviceID(list[int]):
+    def __init__(self, ids: Union[list[int], str]):
+        if isinstance(ids, str):
+            ids = [int(i) for i in ids.split(",") if i]
+        self.ids = list(ids)
+        super().__init__(ids)
+
+    def __repr__(self) -> str:
+        return "DeviceID(" + ", ".join(str(i) for i in self.ids) + ")"
+
+    @staticmethod
+    def default_value():
+        return []
+
+
+class DeviceIDProxy(str):
+    pass
+
+    @staticmethod
+    def default_value():
+        return ""
+
+
+@dataclass(**dataclass_args)
+class LoadingStrategy:
+    device_mapping: list[str]
+    loading_dtype: Union[str, Dtype, Any]
+    quantization_dtype: Union[str, Dtype, Any]
+    device_placement: Optional[str] = None
 
 
 @dataclass(**dataclass_args)
@@ -371,9 +401,7 @@ class AudioInner(AbstractInner):
         return self.embedding
 
 
-QueueItemInner = Union[
-    EmbeddingInner, ReRankInner, PredictInner, ImageInner, AudioInner
-]
+QueueItemInner = Union[EmbeddingInner, ReRankInner, PredictInner, ImageInner, AudioInner]
 
 _type_to_inner_item_map = {
     EmbeddingSingle: EmbeddingInner,

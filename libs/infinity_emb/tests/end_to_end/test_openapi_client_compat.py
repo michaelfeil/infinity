@@ -6,19 +6,17 @@ import numpy as np
 import pytest
 import requests
 from asgi_lifespan import LifespanManager
+import time
 from httpx import AsyncClient
 from openai import APIConnectionError, AsyncOpenAI
-from sentence_transformers import SentenceTransformer  # type: ignore
 
 from infinity_emb import create_server
 from infinity_emb.args import EngineArgs
 
 PREFIX = ""
-MODEL: str = (
-    "michaelfeil/bge-small-en-v1.5"  #  pytest.DEFAULT_BERT_MODEL  # type: ignore
-)
-baseurl = "http://openaidemo"
+baseurl = "http://openaicompat"
 batch_size = 8
+api_key = "some_dummy_key"
 
 app = create_server(
     url_prefix=PREFIX,
@@ -26,6 +24,7 @@ app = create_server(
         EngineArgs(
             model_name_or_path=pytest.DEFAULT_AUDIO_MODEL,
             batch_size=batch_size,
+            device="cpu",
         ),
         EngineArgs(
             model_name_or_path=pytest.DEFAULT_IMAGE_MODEL,
@@ -34,22 +33,16 @@ app = create_server(
         EngineArgs(
             model_name_or_path=pytest.DEFAULT_BERT_MODEL,
             batch_size=batch_size,
+            device="cpu",
         ),
     ],
-    api_key="some_dummy_key",
+    api_key=api_key,
 )
-
-
-@pytest.fixture
-def model_base() -> SentenceTransformer:
-    return SentenceTransformer(MODEL)
 
 
 @pytest.fixture()
 async def client():
-    async with AsyncClient(
-        app=app, base_url=baseurl, timeout=20
-    ) as client, LifespanManager(app):
+    async with AsyncClient(app=app, base_url=baseurl, timeout=20) as client, LifespanManager(app):
         yield client
 
 
@@ -61,7 +54,7 @@ def url_to_base64(url, modality="image"):
             if response.status_code == 200:
                 break
         except Exception:
-            pass
+            time.sleep(1)
     else:
         raise Exception(f"Failed to download {url}")
     response.raise_for_status()
@@ -72,9 +65,7 @@ def url_to_base64(url, modality="image"):
 
 @pytest.mark.anyio
 async def test_openai(client: AsyncClient):
-    client_oai = AsyncOpenAI(
-        api_key="some_dummy_key", base_url=baseurl, http_client=client
-    )
+    client_oai = AsyncOpenAI(api_key=api_key, base_url=baseurl, http_client=client)
 
     async with client_oai:
         # test audio
@@ -156,9 +147,7 @@ async def test_openai(client: AsyncClient):
 
     # wrong key
     with pytest.raises(APIConnectionError):
-        client_oai = AsyncOpenAI(
-            api_key="some_wrong", base_url=baseurl, http_client=client
-        )
+        client_oai = AsyncOpenAI(api_key="some_wrong", base_url=baseurl, http_client=client)
         async with client_oai:
             await client_oai.embeddings.create(
                 model=pytest.DEFAULT_AUDIO_MODEL,

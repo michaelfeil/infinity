@@ -8,12 +8,13 @@ import numpy as np
 from huggingface_hub import HfApi, HfFolder  # type: ignore
 from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
 
-from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TORCH
+from infinity_emb._optional_imports import CHECK_ONNXRUNTIME
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device
 
 if CHECK_ONNXRUNTIME.is_available:
     try:
+        import onnxruntime as ort  # type: ignore
         from optimum.modeling_base import OptimizedModel  # type: ignore
         from optimum.onnxruntime import (  # type: ignore
             ORTModel,
@@ -23,16 +24,11 @@ if CHECK_ONNXRUNTIME.is_available:
     except (ImportError, RuntimeError, Exception) as ex:
         CHECK_ONNXRUNTIME.mark_dirty(ex)
 
-if CHECK_TORCH.is_available:
-    import torch
-
 
 def mean_pooling(last_hidden_states: np.ndarray, attention_mask: np.ndarray):
     input_mask_expanded = (np.expand_dims(attention_mask, axis=-1)).astype(float)
 
-    sum_embeddings = np.sum(
-        last_hidden_states.astype(float) * input_mask_expanded, axis=1
-    )
+    sum_embeddings = np.sum(last_hidden_states.astype(float) * input_mask_expanded, axis=1)
     mask_sum = np.maximum(np.sum(input_mask_expanded, axis=1), 1e-9)
 
     return sum_embeddings / mask_sum
@@ -51,17 +47,32 @@ def normalize(input_array, p=2, dim=1, eps=1e-12):
 
 
 def device_to_onnx(device: Device) -> str:
+    CHECK_ONNXRUNTIME.mark_required()
+    available = ort.get_available_providers()
+
     if device == Device.cpu:
+        if "OpenVINOExecutionProvider" in available:
+            return "OpenVINOExecutionProvider"
         return "CPUExecutionProvider"
     elif device == Device.cuda:
+        if "ROCMExecutionProvider" in available:
+            return "ROCMExecutionProvider"
         return "CUDAExecutionProvider"
     elif device == Device.mps:
         return "CoreMLExecutionProvider"
     elif device == Device.tensorrt:
         return "TensorrtExecutionProvider"
     elif device is None or device == Device.auto:
-        if CHECK_TORCH.is_available and torch.cuda.is_available():
+        if "TensorrtExecutionProvider" in available:
+            return "TensorrtExecutionProvider"
+        elif "CUDAExecutionProvider" in available:
             return "CUDAExecutionProvider"
+        elif "ROCMExecutionProvider" in available:
+            return "ROCMExecutionProvider"
+        elif "CoreMLExecutionProvider" in available:
+            return "CoreMLExecutionProvider"
+        elif "OpenVINOExecutionProvider" in available:
+            return "OpenVINOExecutionProvider"
         else:
             return "CPUExecutionProvider"
     else:
@@ -91,10 +102,7 @@ def optimize_model(
     """
     CHECK_ONNXRUNTIME.mark_required()
     path_folder = (
-        Path(HUGGINGFACE_HUB_CACHE)
-        / "infinity_onnx"
-        / execution_provider
-        / model_name_or_path
+        Path(HUGGINGFACE_HUB_CACHE) / "infinity_onnx" / execution_provider / model_name_or_path
     )
     OPTIMIZED_SUFFIX = "_optimized.onnx"
     files_optimized = list(path_folder.glob(f"**/*{OPTIMIZED_SUFFIX}"))
@@ -140,7 +148,9 @@ def optimize_model(
 
         optimizer = ORTOptimizer.from_pretrained(unoptimized_model)
 
-        is_gpu = "cpu" not in execution_provider.lower()
+        is_gpu = not (
+            "cpu" in execution_provider.lower() or "openvino" in execution_provider.lower()
+        )
         optimization_config = OptimizationConfig(
             optimization_level=99,
             optimize_with_onnxruntime_only=False,
@@ -165,9 +175,7 @@ def optimize_model(
             file_name=Path(file_name).name.replace(".onnx", OPTIMIZED_SUFFIX),
         )
     except Exception as e:
-        logger.warning(
-            f"Optimization failed with {e}. Going to use the unoptimized model."
-        )
+        logger.warning(f"Optimization failed with {e}. Going to use the unoptimized model.")
         model = unoptimized_model
 
     return model
@@ -186,9 +194,7 @@ def _list_all_repo_files(
         return list(
             map(
                 Path,
-                HfApi().list_repo_files(
-                    model_name_or_path, revision=revision, token=token
-                ),
+                HfApi().list_repo_files(model_name_or_path, revision=revision, token=token),
             )
         )
     else:
@@ -223,6 +229,4 @@ def get_onnx_files(
     elif len(onnx_files) == 1:
         return onnx_files[0]
     else:
-        raise ValueError(
-            f"No onnx files found for {model_name_or_path} and revision {revision}"
-        )
+        raise ValueError(f"No onnx files found for {model_name_or_path} and revision {revision}")

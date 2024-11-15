@@ -90,7 +90,7 @@ def sync_detailed(
             \"model\": \"openai/clip-vit-base-patch32\",
             \"encoding_format\": \"base64\",
             \"input\": [
-                http://images.cocodataset.org/val2017/000000039769.jpg\",
+                \"http://images.cocodataset.org/val2017/000000039769.jpg\",
                 # can also be base64 encoded
             ],
             # set extra modality to image to process as image
@@ -132,7 +132,7 @@ def sync_detailed(
     client.embeddings.create(
         model=\"laion/larger_clap_general\",
         input=[url_to_base64(url, \"audio\")],
-        encoding_format= \"base64\",
+        encoding_format=\"float\",
         extra_body={
             \"modality\": \"audio\"
         }
@@ -141,7 +141,7 @@ def sync_detailed(
     client.embeddings.create(
         model=\"laion/larger_clap_general\",
         input=[\"the sound of a beep\", \"the sound of a cat\"],
-        encoding_format= \"base64\",
+        encoding_format=\"base64\", # base64: optional high performance setting
         extra_body={
             \"modality\": \"text\"
         }
@@ -200,7 +200,7 @@ def sync(
             \"model\": \"openai/clip-vit-base-patch32\",
             \"encoding_format\": \"base64\",
             \"input\": [
-                http://images.cocodataset.org/val2017/000000039769.jpg\",
+                \"http://images.cocodataset.org/val2017/000000039769.jpg\",
                 # can also be base64 encoded
             ],
             # set extra modality to image to process as image
@@ -242,7 +242,7 @@ def sync(
     client.embeddings.create(
         model=\"laion/larger_clap_general\",
         input=[url_to_base64(url, \"audio\")],
-        encoding_format= \"base64\",
+        encoding_format=\"float\",
         extra_body={
             \"modality\": \"audio\"
         }
@@ -251,7 +251,7 @@ def sync(
     client.embeddings.create(
         model=\"laion/larger_clap_general\",
         input=[\"the sound of a beep\", \"the sound of a cat\"],
-        encoding_format= \"base64\",
+        encoding_format=\"base64\", # base64: optional high performance setting
         extra_body={
             \"modality\": \"text\"
         }
@@ -305,7 +305,7 @@ async def asyncio_detailed(
             \"model\": \"openai/clip-vit-base-patch32\",
             \"encoding_format\": \"base64\",
             \"input\": [
-                http://images.cocodataset.org/val2017/000000039769.jpg\",
+                \"http://images.cocodataset.org/val2017/000000039769.jpg\",
                 # can also be base64 encoded
             ],
             # set extra modality to image to process as image
@@ -347,7 +347,7 @@ async def asyncio_detailed(
     client.embeddings.create(
         model=\"laion/larger_clap_general\",
         input=[url_to_base64(url, \"audio\")],
-        encoding_format= \"base64\",
+        encoding_format=\"float\",
         extra_body={
             \"modality\": \"audio\"
         }
@@ -356,7 +356,7 @@ async def asyncio_detailed(
     client.embeddings.create(
         model=\"laion/larger_clap_general\",
         input=[\"the sound of a beep\", \"the sound of a cat\"],
-        encoding_format= \"base64\",
+        encoding_format=\"base64\", # base64: optional high performance setting
         extra_body={
             \"modality\": \"text\"
         }
@@ -413,7 +413,7 @@ async def asyncio(
             \"model\": \"openai/clip-vit-base-patch32\",
             \"encoding_format\": \"base64\",
             \"input\": [
-                http://images.cocodataset.org/val2017/000000039769.jpg\",
+                \"http://images.cocodataset.org/val2017/000000039769.jpg\",
                 # can also be base64 encoded
             ],
             # set extra modality to image to process as image
@@ -455,7 +455,7 @@ async def asyncio(
     client.embeddings.create(
         model=\"laion/larger_clap_general\",
         input=[url_to_base64(url, \"audio\")],
-        encoding_format= \"base64\",
+        encoding_format=\"float\",
         extra_body={
             \"modality\": \"audio\"
         }
@@ -464,7 +464,7 @@ async def asyncio(
     client.embeddings.create(
         model=\"laion/larger_clap_general\",
         input=[\"the sound of a beep\", \"the sound of a cat\"],
-        encoding_format= \"base64\",
+        encoding_format=\"base64\", # base64: optional high performance setting
         extra_body={
             \"modality\": \"text\"
         }

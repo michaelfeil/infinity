@@ -64,7 +64,10 @@ CHECK_DISKCACHE = OptionalImports("diskcache", "cache")
 CHECK_FASTAPI = OptionalImports("fastapi", "server")
 CHECK_ONNXRUNTIME = OptionalImports("optimum.onnxruntime", "optimum")
 CHECK_OPTIMUM = OptionalImports("optimum", "optimum")
-CHECK_OPTIMUM_NEURON = OptionalImports("optimum.neuron", "neuronx")
+CHECK_OPTIMUM_NEURON = OptionalImports(
+    "optimum.neuron",
+    "<neuronx not available as extra, only runs on AMI image, no pip install possible.>",
+)
 CHECK_PIL = OptionalImports("PIL", "vision")
 CHECK_POSTHOG = OptionalImports("posthog", "server")
 CHECK_PYDANTIC = OptionalImports("pydantic", "server")

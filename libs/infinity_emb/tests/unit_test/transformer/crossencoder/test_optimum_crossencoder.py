@@ -55,6 +55,4 @@ def test_patched_crossencoder_vs_sentence_transformers():
 
     rankings_unpatched = model_unpatched.predict(query_docs)
 
-    np.testing.assert_allclose(
-        rankings_sigmoid, rankings_unpatched, rtol=0.04, atol=0.04
-    )
+    np.testing.assert_allclose(rankings_sigmoid, rankings_unpatched, rtol=0.04, atol=0.04)

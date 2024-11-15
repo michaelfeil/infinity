@@ -1,9 +1,9 @@
-.PHONY: all clean docs_build docs_clean docs_linkcheck api_docs_build api_docs_clean api_docs_linkcheck format lint test tests test_watch integration_tests docker_tests help extended_tests
+.PHONY: all clean docs_build docs_clean docs_linkcheck api_docs_build api_docs_clean api_docs_linkcheck format lint test tests test_watch template_docker integration_tests docker_tests help extended_tests build-all-docker build-amd build-trt
 
 # Default target executed when no arguments are given to make.
 all: help
 
-precommit : | format spell_fix spell_check lint poetry_check cli_v2_docs openapi test 
+precommit : | format spell_fix spell_check lint poetry_check cli_v2_docs template_docker openapi test 
 
 ######################
 # TESTING AND COVERAGE
@@ -11,6 +11,7 @@ precommit : | format spell_fix spell_check lint poetry_check cli_v2_docs openapi
 
 # Define a variable for the test file path.
 TEST_FILE ?= tests/unit_tests/
+VERSION ?= DEV
 
 # Run unit tests and generate a coverage report.
 coverage:
@@ -30,17 +31,33 @@ openapi:
 
 # Define a variable for Python and notebook files.
 PYTHON_FILES=.
-lint format: PYTHON_FILES=.
+lint: PYTHON_FILES=./infinity_emb
 lint_diff format_diff: PYTHON_FILES=$(shell git diff --relative=libs/infinity_emb --name-only --diff-filter=d master | grep -E '\.py$$|\.ipynb$$')
 
 lint lint_diff:
-	poetry run ruff .
-	[ "$(PYTHON_FILES)" = "" ] || poetry run black $(PYTHON_FILES) --check
+	poetry run ruff check .
 	[ "$(PYTHON_FILES)" = "" ] || poetry run mypy $(PYTHON_FILES)
 
 format format_diff:
-	[ "$(PYTHON_FILES)" = "" ] || poetry run black $(PYTHON_FILES)
-	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff --select I --fix $(PYTHON_FILES)
+	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff format $(PYTHON_FILES)
+
+template_docker:
+	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
+	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s cpu > Dockerfile.cpu_auto
+	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s nvidia > Dockerfile.nvidia_auto
+	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s trt > Dockerfile.trt_onnx_auto
+
+# Add new targets
+build-amd:
+	docker buildx build -t michaelf34/infinity:$(VERSION)-amd -f Dockerfile.amd_auto --push .
+
+build-trt:
+	docker buildx build -t michaelf34/infinity:$(VERSION)-trt-onnx -f Dockerfile.trt_onnx_auto --push .
+
+# Combined target to build both
+build-all-docker: 
+	docker buildx build -t michaelf34/infinity:$(VERSION)-amd -f Dockerfile.amd_auto --push . & \
+	docker buildx build -t michaelf34/infinity:$(VERSION)-trt-onnx -f Dockerfile.trt_onnx_auto --push .
 
 poetry_check:
 	poetry check
@@ -53,6 +70,13 @@ spell_fix:
 
 benchmark_embed: tests/data/benchmark/benchmark_embed.json
 	ab -n 10 -c 10 -l -s 480 \
+	-T 'application/json' \
+	-p $< \
+	http://127.0.0.1:7997/embeddings
+	# sudo apt-get apache2-utils
+
+benchmark_embed_vision: tests/data/benchmark/benchmark_embed_image.json
+	ab -n 100 -c 50 -l -s 480 \
 	-T 'application/json' \
 	-p $< \
 	http://127.0.0.1:7997/embeddings

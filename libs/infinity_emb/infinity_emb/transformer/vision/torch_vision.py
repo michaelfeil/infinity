@@ -38,12 +38,25 @@ class TIMM(BaseTIMM):
     def __init__(self, *, engine_args: "EngineArgs"):
         CHECK_TORCH.mark_required()
         CHECK_TRANSFORMERS.mark_required()
-        config = AutoConfig.from_pretrained(
-            engine_args.model_name_or_path,
+        base_config = dict(
+            pretrained_model_name_or_path=engine_args.model_name_or_path,
             revision=engine_args.revision,
+            trust_remote_code=engine_args.trust_remote_code,
         )
+        config = AutoConfig.from_pretrained(**base_config)
         self.is_colipali = config.architectures[0] in IMAGE_COL_MODELS
-        self.mock_image = Image.new("RGB", (16, 16), color="black")
+        self.mock_image = Image.new("RGB", (128, 128), color="black")
+
+        extra_model_args = dict(**base_config)
+        extra_processor_args = dict(**base_config)
+        device = engine_args.device
+        if device == Device.auto and torch.cuda.is_available():
+            device = Device.cuda
+        if device == "cuda" and engine_args.dtype in (Dtype.float16, Dtype.bfloat16):
+            extra_model_args["torch_dtype"] = engine_args.dtype.value
+        elif device == "cuda" and engine_args.dtype in (Dtype.auto):
+            extra_model_args["torch_dtype"] = "float16"
+
         if self.is_colipali:
             CHECK_COLPALI_ENGINE.mark_required()
             from colpali_engine.models import (  # type: ignore
@@ -54,16 +67,7 @@ class TIMM(BaseTIMM):
                 ColQwen2,
                 ColQwen2Processor,
             )
-        extra_model_args = {}
-        device = engine_args.device
-        if device == Device.auto and torch.cuda.is_available():
-            device = Device.cuda
-        if device == "cuda" and engine_args.dtype in (Dtype.float16, Dtype.bfloat16):
-            extra_model_args["torch_dtype"] = engine_args.dtype.value
-        elif device == "cuda" and engine_args.dtype in (Dtype.auto):
-            extra_model_args["torch_dtype"] = "float16"
 
-        if self.is_colipali:
             model_cls = {
                 "ColPali": ColPali,
                 "ColQwen2": ColQwen2,
@@ -76,30 +80,20 @@ class TIMM(BaseTIMM):
             }[config.architectures[0]]
 
             self.model = model_cls.from_pretrained(
-                engine_args.model_name_or_path,
-                revision=engine_args.revision,
-                trust_remote_code=engine_args.trust_remote_code,
                 **extra_model_args,
             )
 
             self.processor = processor_cls.from_pretrained(
-                engine_args.model_name_or_path,
-                revision=engine_args.revision,
-                trust_remote_code=engine_args.trust_remote_code,
+                **extra_processor_args,
             )
         else:
             self.model = AutoModel.from_pretrained(
-                engine_args.model_name_or_path,
-                revision=engine_args.revision,
-                trust_remote_code=engine_args.trust_remote_code,
                 **extra_model_args
                 # attn_implementation="eager" if engine_args.bettertransformer else None,
             )
 
             self.processor = AutoProcessor.from_pretrained(
-                engine_args.model_name_or_path,
-                revision=engine_args.revision,
-                trust_remote_code=engine_args.trust_remote_code,
+                **extra_processor_args,
             )
             assert hasattr(
                 self.model, "get_text_features"
@@ -120,12 +114,8 @@ class TIMM(BaseTIMM):
             if self.is_colipali:
                 self.model = torch.compile(self.model, dynamic=True)
             else:
-                self.model.vision_model = torch.compile(
-                    self.model.vision_model, dynamic=True
-                )
-                self.model.text_model = torch.compile(
-                    self.model.text_model, dynamic=True
-                )
+                self.model.vision_model = torch.compile(self.model.vision_model, dynamic=True)
+                self.model.text_model = torch.compile(self.model.text_model, dynamic=True)
 
         self.max_length = None
         if hasattr(self.model.config, "max_length"):
@@ -178,9 +168,7 @@ class TIMM(BaseTIMM):
 
         return (preprocessed, type_is_img)
 
-    def _normalize_cpu(
-        self, tensor: Optional["Tensor"], normalize: bool
-    ) -> Iterable["Tensor"]:
+    def _normalize_cpu(self, tensor: Optional["Tensor"], normalize: bool) -> Iterable["Tensor"]:
         if tensor is None:
             return iter([])
         tensor = tensor.to(torch.float32)
@@ -212,12 +200,13 @@ class TIMM(BaseTIMM):
             else:
                 if "input_ids" in features:
                     text_embeds: "Tensor" = self.model.get_text_features(  # type: ignore
-                        input_ids=features.get("input_ids"),
+                        input_ids=features.get("input_ids"),  # requires int32
                         attention_mask=features.get("attention_mask"),
                     )
                 if "pixel_values" in features:
                     image_embeds: "Tensor" = self.model.get_image_features(  # type: ignore
-                        pixel_values=features.get("pixel_values"),
+                        pixel_values=features.get("pixel_values").to(self.model.dtype),  # type: ignore
+                        # requires float32 or float16 or bfloat16
                     )
         return text_embeds, image_embeds, type_is_img  # type: ignore
 
@@ -227,16 +216,24 @@ class TIMM(BaseTIMM):
         text_embeds = self._normalize_cpu(text_embeds, normalize=not self.is_colipali)
         image_embeds = self._normalize_cpu(image_embeds, normalize=not self.is_colipali)
 
-        embeddings = list(
-            next(image_embeds if is_img else text_embeds) for is_img in type_is_img
-        )
+        embeddings = list(next(image_embeds if is_img else text_embeds) for is_img in type_is_img)
         return embeddings
 
     def tokenize_lengths(self, text_list: list[str]) -> list[int]:
-        preprocessed = self.processor(
-            text=text_list,
-            images=[self.mock_image] * len(text_list),
-            truncation=True,
-            max_length=self.max_length,
-        )
-        return [len(t) for t in preprocessed["input_ids"]]
+        if self.is_colipali:
+            preprocessed = self.processor(
+                text=text_list,
+                images=[self.mock_image] * len(text_list),
+                truncation=True,
+                max_length=self.max_length,
+            )
+            return [len(t) for t in preprocessed["input_ids"]]
+        else:
+            preprocessed = self.processor(
+                text=text_list,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=self.max_length,
+            )
+            return [len(t) for t in preprocessed["input_ids"]]

@@ -3,5 +3,5 @@ create = true
 in-project = true
 
 [installer]
-modern-installation = false
+modern-installation = true
 max-workers = 10
