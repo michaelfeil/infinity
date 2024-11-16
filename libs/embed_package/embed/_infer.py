@@ -87,7 +87,7 @@ class BatchedInference:
     def image_embed(
         self,
         *,
-        images: Union[str, bytes],
+        images: list[Union[str, bytes]],
         model_id: ModelIndex = 0,
     ) -> Future[tuple[list[list[float]], int]]:
         """Embed images with a model.
@@ -105,7 +105,7 @@ class BatchedInference:
     def audio_embed(
         self,
         *,
-        audios: Union[str, bytes],
+        audios: list[Union[str, bytes]],
         model_id: ModelIndex = 0,
     ) -> Future[tuple[list[list[float]], int]]:
         """Embed audios with a model.
