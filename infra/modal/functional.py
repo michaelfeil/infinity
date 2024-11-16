@@ -28,21 +28,15 @@ class BaseInfinityModel:
 
     @build()
     async def download_model(self):
-        try:
-            print(f"downloading models {self.model_id} ...")
-            self._get_array()
-        except Exception as e:
-            print(f"Error downloading model: {e}")
+        print(f"downloading models {self.model_id} ...")
+        self._get_array()
 
     @enter()
     async def enter(self):
-        try:
-            print("Starting the engine array ...")
-            self.engine_array = self._get_array()
-            await self.engine_array.astart()
-            print("engine array started!")
-        except Exception as e:
-            print(f"Error starting the engine array: {e}")
+        print("Starting the engine array ...")
+        self.engine_array = self._get_array()
+        await self.engine_array.astart()
+        print("engine array started!")
 
 
 @app.cls(gpu="any", allow_concurrent_inputs=500)
@@ -55,43 +49,27 @@ class InfinityModal(BaseInfinityModel):
 
     @method()
     async def embed(self, sentences: list[str], model: str | int = 0):
-        try:
-            engine = self.engine_array[model]
-            embeddings, usage = await engine.embed(sentences=sentences)
-            return embeddings
-        except Exception as e:
-            print(f"Error embedding sentences: {e}")
-            return None
+        engine = self.engine_array[model]
+        embeddings, usage = await engine.embed(sentences=sentences)
+        return embeddings
 
     @method()
     async def image_embed(self, urls: list[str], model: str | int = 0):
-        try:
-            engine = self.engine_array[model]
-            embeddings, usage = await engine.image_embed(images=urls)
-            return embeddings
-        except Exception as e:
-            print(f"Error embedding images: {e}")
-            return None
+        engine = self.engine_array[model]
+        embeddings, usage = await engine.image_embed(images=urls)
+        return embeddings
 
     @method()
     async def rerank(self, query: str, docs: list[str], model: str | int = 0):
-        try:
-            engine = self.engine_array[model]
-            rankings, usage = await engine.rerank(query=query, docs=docs)
-            return rankings
-        except Exception as e:
-            print(f"Error reranking documents: {e}")
-            return None
+        engine = self.engine_array[model]
+        rankings, usage = await engine.rerank(query=query, docs=docs)
+        return rankings
 
     @method()
     async def classify(self, sentences: list[str], model: str | int = 0):
-        try:
-            engine = self.engine_array[model]
-            classes, usage = await engine.classify(sentences=sentences)
-            return classes
-        except Exception as e:
-            print(f"Error classifying sentences: {e}")
-            return None
+        engine = self.engine_array[model]
+        classes, usage = await engine.classify(sentences=sentences)
+        return classes
 
 
 @app.local_entrypoint()
@@ -103,32 +81,28 @@ def main():
         "philschmid/tiny-bert-sst2-distilled",
     )
     deployment = InfinityModal(model_id=model_id)
-    
-    try:
-        embeddings_1 = deployment.embed.remote(sentences=["hello world"], model=model_id[1])
-        embeddings_2 = deployment.image_embed.remote(
-            urls=["http://images.cocodataset.org/val2017/000000039769.jpg"],
-            model=model_id[0],
-        )
+    embeddings_1 = deployment.embed.remote(sentences=["hello world"], model=model_id[1])
+    embeddings_2 = deployment.image_embed.remote(
+        urls=["http://images.cocodataset.org/val2017/000000039769.jpg"],
+        model=model_id[0],
+    )
 
-        rerankings_1 = deployment.rerank.remote(
-            query="Where is Paris?",
-            docs=["Paris is the capital of France.", "Berlin is a city in Europe."],
-            model=model_id[2],
-        )
+    rerankings_1 = deployment.rerank.remote(
+        query="Where is Paris?",
+        docs=["Paris is the capital of France.", "Berlin is a city in Europe."],
+        model=model_id[2],
+    )
 
-        classifications_1 = deployment.classify.remote(
-            sentences=["I feel great today!"], model=model_id[3]
-        )
+    classifications_1 = deployment.classify.remote(
+        sentences=["I feel great today!"], model=model_id[3]
+    )
 
-        print(
-            "Success, all tasks submitted! Embeddings:",
-            embeddings_1[0].shape if embeddings_1 else "N/A",
-            embeddings_2[0].shape if embeddings_2 else "N/A",
-            "Rerankings:",
-            rerankings_1 if rerankings_1 else "N/A",
-            "Classifications:",
-            classifications_1 if classifications_1 else "N/A",
-        )
-    except Exception as e:
-        print(f"Error in main entrypoint: {e}")
+    print(
+        "Success, all tasks submitted! Embeddings:",
+        embeddings_1[0].shape,
+        embeddings_2[0].shape,
+        "Rerankings:",
+        rerankings_1,
+        "Classifications:",
+        classifications_1,
+    )
