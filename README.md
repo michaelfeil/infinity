@@ -88,7 +88,7 @@ docker run -it --gpus all \
  --model-id $model2 \
  --port $port
 ```
-The cache path at inside the docker container is set by the environment variable `HF_HOME`.
+The cache path inside the docker container is set by the environment variable `HF_HOME`.
 
 #### Specialized docker images
 <details>

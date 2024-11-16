@@ -49,7 +49,7 @@ docker run -it --gpus all \
  --model-id $model2 \
  --port $port
 ```
-The cache path at inside the docker container is set by the environment variable `HF_HOME`.
+The cache path inside the docker container is set by the environment variable `HF_HOME`.
 
 ### or launch the cli after the pip install
 After your pip install, with your venv activate, you can run the CLI directly.
