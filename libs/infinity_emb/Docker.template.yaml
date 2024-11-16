@@ -12,12 +12,12 @@ cpu:
   #   RUN sed -i 's|torch = "2.4.1"|torch = "2.5.0"|' pyproject.toml 
   #   RUN sed -i 's|"pypi"|"pytorch_cpu"|' pyproject.toml
   #   RUN poetry lock --no-update
-  poetry_extras: "all openvino"
+  poetry_extras: "all"
   main_install: |
     # "RUN poetry install --no-interaction --no-ansi --no-root --extras \"${EXTRAS}\" --without lint,test && poetry cache clear pypi --all"
     COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh
     RUN ./requirements_install_from_poetry.sh --no-root --without lint,test "https://download.pytorch.org/whl/cpu"
-    RUN poetry run python -m pip install --upgrade --upgrade-strategy eager "optimum[openvino]"
+    RUN poetry run python -m pip install onnxruntime-openvino optimum-intel    
   extra_env_variables: |
     # Sets default to onnx
     ENV INFINITY_ENGINE="optimum"

@@ -18,7 +18,6 @@ from infinity_emb.transformer.quantization.interface import quant_embedding_deco
 from infinity_emb.transformer.utils_optimum import (
     cls_token_pooling,
     device_to_onnx,
-    # get_onnx_files,
     mean_pooling,
     normalize,
     optimize_model,

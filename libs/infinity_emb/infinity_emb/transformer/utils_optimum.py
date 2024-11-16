@@ -29,7 +29,7 @@ if CHECK_ONNXRUNTIME.is_available:
 if CHECK_OPTIMUM_INTEL.is_available:
     try:
         from optimum.intel import OVModelForFeatureExtraction  # type: ignore[import-untyped]
-
+        # from optimum.intel import OVWeightQuantizationConfig, OVDynamicQuantizationConfig  # type: ignore
     except (ImportError, RuntimeError, Exception) as ex:
         CHECK_OPTIMUM_INTEL.mark_dirty(ex)
 
@@ -60,9 +60,9 @@ def device_to_onnx(device: Device) -> str:
     available = ort.get_available_providers()
 
     if device == Device.cpu:
-        if "OpenVINOExecutionProvider" in available:
-            return "OpenVINOExecutionProvider"
         return "CPUExecutionProvider"
+    elif device == Device.openvino:
+        return "OpenVINOExecutionProvider"
     elif device == Device.cuda:
         if "ROCMExecutionProvider" in available:
             return "ROCMExecutionProvider"
@@ -153,9 +153,8 @@ def optimize_model(
         else:
             file_optimized = None
 
-        extra_args = {"ov_config": {"INFERENCE_PRECISION_HINT": "bf16"}}
-
-    elif execution_provider == "CPUExecutionProvider":  # Optimum onnx cpu path
+        extra_args = {"ov_config": {"INFERENCE_PRECISION_HINT": "bf16", "PERFORMANCE_HINT": "THROUGHPUT"}}
+    else:  # Optimum onnx cpu path
         CHECK_ONNXRUNTIME.mark_required()
         path_folder = (
             Path(HUGGINGFACE_HUB_CACHE) / "infinity_onnx" / execution_provider / model_name_or_path
@@ -166,12 +165,6 @@ def optimize_model(
             file_optimized = files_optimized[0]
         else:
             file_optimized = None
-    else:
-        raise ValueError(
-            f"Does not support {execution_provider}."
-            "Optimum engine only support `OpenVINOExecutionProvider` "
-            "and `CPUExecutionProvider`."
-        )
 
     if file_optimized:
         # print("files_optimized: ", files_optimized)
@@ -199,16 +192,14 @@ def optimize_model(
     if not optimize_model or execution_provider == "TensorrtExecutionProvider":
         return unoptimized_model
     try:
-        logger.info("Optimizing model")
+        logger.info(f"Optimizing model for {execution_provider}")
         if execution_provider == "OpenVINOExecutionProvider":
             model = OVModelForFeatureExtraction.from_pretrained(
                 model_name_or_path,
                 export=True,
-                # ov_config={"INFERENCE_PRECISION_HINT": "fp32"} # fp16 for now as it has better precision than bf16
-                # ov_config={"INFERENCE_PRECISION_HINT": "fp16"} # fp16 for now as it has better precision than bf16
-                ov_config={
-                    "INFERENCE_PRECISION_HINT": "bf16"
-                },  # fp16 for now as it has better precision than bf16
+                # quantization_config = OVDynamicQuantizationConfig(bits=8),
+                # ov_config={"INFERENCE_PRECISION_HINT": "f32", "PERFORMANCE_HINT": "THROUGHPUT"} # fp16 for now as it has better precision than bf16
+                ov_config={"INFERENCE_PRECISION_HINT": "bf16", "PERFORMANCE_HINT": "THROUGHPUT"},  # fp16 for now as it has better precision than bf16
             )
             model.save_pretrained(path_folder.as_posix())  # save the model
         else:  # Optimum onnx cpu path
