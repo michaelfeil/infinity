@@ -7,6 +7,7 @@ import re
 import signal
 import sys
 import time
+import threading
 import uuid
 from contextlib import asynccontextmanager
 from typing import Any, Optional, Union, TYPE_CHECKING
@@ -35,6 +36,23 @@ from infinity_emb.telemetry import PostHog, StartupTelemetry, telemetry_log_info
 
 if TYPE_CHECKING:
     from infinity_emb.fastapi_schemas.pymodels import DataURIorURL
+
+
+def send_telemetry_start(
+    engine_args_list: list[EngineArgs],
+    capabilities_list: list[set[ModelCapabilites]],
+):
+    time.sleep(60)
+    session_id = uuid.uuid4().hex
+    for arg, capabilities in zip(engine_args_list, capabilities_list):
+        PostHog.capture(
+            StartupTelemetry(
+                engine_args=arg,
+                num_engines=len(engine_args_list),
+                capabilities=capabilities,
+                session_id=session_id,
+            )
+        )
 
 
 def create_server(
@@ -68,21 +86,6 @@ def create_server(
         ReRankResult,
     )
 
-    def send_telemetry_start(
-        engine_args_list: list[EngineArgs],
-        capabilities_list: list[set[ModelCapabilites]],
-    ):
-        session_id = uuid.uuid4().hex
-        for arg, capabilities in zip(engine_args_list, capabilities_list):
-            PostHog.capture(
-                StartupTelemetry(
-                    engine_args=arg,
-                    num_engines=len(engine_args_list),
-                    capabilities=capabilities,
-                    session_id=session_id,
-                )
-            )
-
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         instrumentator.expose(app)  # type: ignore
@@ -91,13 +94,12 @@ def create_server(
         )
         telemetry_log_info()
         app.engine_array = AsyncEngineArray.from_args(engine_args_list)  # type: ignore
-        asyncio.create_task(
-            asyncio.to_thread(
-                send_telemetry_start,
-                engine_args_list,
-                [e.capabilities for e in app.engine_array],  # type: ignore
-            )
+        th = threading.Thread(
+            target=send_telemetry_start,
+            args=(engine_args_list, [e.capabilities for e in app.engine_array]),  # type: ignore
         )
+        th.daemon = True
+        th.start()
         # start in a threadpool
         await app.engine_array.astart()  # type: ignore
 
