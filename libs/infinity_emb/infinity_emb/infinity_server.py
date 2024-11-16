@@ -17,17 +17,6 @@ from infinity_emb.args import EngineArgs
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray
 from infinity_emb.env import MANAGER
 from infinity_emb.fastapi_schemas import docs, errors
-from infinity_emb.fastapi_schemas.pymodels import (
-    AudioEmbeddingInput,
-    ClassifyInput,
-    ClassifyResult,
-    ImageEmbeddingInput,
-    MultiModalOpenAIEmbedding,
-    OpenAIEmbeddingResult,
-    OpenAIModelInfo,
-    RerankInput,
-    ReRankResult,
-)
 from infinity_emb.log_handler import UVICORN_LOG_LEVELS, logger
 from infinity_emb.primitives import (
     AudioCorruption,
@@ -67,6 +56,17 @@ def create_server(
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
     from prometheus_fastapi_instrumentator import Instrumentator
+    from infinity_emb.fastapi_schemas.pymodels import (
+        AudioEmbeddingInput,
+        ClassifyInput,
+        ClassifyResult,
+        ImageEmbeddingInput,
+        MultiModalOpenAIEmbedding,
+        OpenAIEmbeddingResult,
+        OpenAIModelInfo,
+        RerankInput,
+        ReRankResult,
+    )
 
     def send_telemetry_start(
         engine_args_list: list[EngineArgs],
@@ -241,7 +241,7 @@ def create_server(
             # if it is a single url
             urls_or_bytes: list[Union[str, bytes]] = [str(inputs)]
         elif hasattr(inputs, "mimetype"):
-            urls_or_bytes: list[Union[str, bytes]] = [inputs]  # type: ignore
+            urls_or_bytes: list[Union[str, bytes]] = [inputs.data]  # type: ignore
         else:
             # is list, resolve to bytes or url
             urls_or_bytes: list[Union[str, bytes]] = [  # type: ignore

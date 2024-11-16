@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2023-now michaelfeil
+# IMPORT of this file requires pydantic 2.x
 
 from __future__ import annotations
 
@@ -10,6 +11,29 @@ from uuid import uuid4
 
 import numpy as np
 
+
+from infinity_emb._optional_imports import CHECK_PYDANTIC
+from infinity_emb.primitives import EmbeddingEncodingFormat, Modality
+
+CHECK_PYDANTIC.mark_required()
+# pydantic 2.x is strictly needed starting v0.0.70
+from pydantic import (  # noqa
+    BaseModel,
+    Discriminator,
+    Field,
+    RootModel,
+    Tag,
+    conlist,
+)
+
+from .data_uri import DataURI  # noqa
+from .pydantic_v2 import (  # noqa
+    INPUT_STRING,
+    ITEMS_LIMIT,
+    ITEMS_LIMIT_SMALL,
+    HttpUrl,
+)
+
 if TYPE_CHECKING:
     from infinity_emb.args import EngineArgs
     from infinity_emb.primitives import (
@@ -18,70 +42,7 @@ if TYPE_CHECKING:
         RerankReturnType,
     )
 
-from infinity_emb._optional_imports import CHECK_PYDANTIC
-from infinity_emb.primitives import EmbeddingEncodingFormat, Modality
-
-# potential backwards compatibility to pydantic 1.X
-# pydantic 2.x is preferred by not strictly needed
-if CHECK_PYDANTIC.is_available:
-    from pydantic import BaseModel, Field, conlist
-
-    try:
-        from pydantic import (
-            BaseModel,
-            Discriminator,
-            Field,
-            RootModel,
-            Tag,
-        )
-
-        from .data_uri import DataURI
-        from .pydantic_v2 import (
-            INPUT_STRING,
-            ITEMS_LIMIT,
-            ITEMS_LIMIT_SMALL,
-            HttpUrl,
-        )
-    except ImportError:
-        from pydantic import constr
-
-        INPUT_STRING = constr(max_length=8192 * 15, strip_whitespace=True)  # type: ignore
-        ITEMS_LIMIT = {
-            "min_items": 1,
-            "max_items": 2048,
-        }
-        ITEMS_LIMIT_SMALL = {
-            "min_items": 1,
-            "max_items": 32,
-        }
-        HttpUrl = str  # type: ignore
-        DataURI = str  # type: ignore
-    DataURIorURL = Union[Annotated[DataURI, str], HttpUrl]
-
-else:
-
-    class BaseModel:  # type: ignore[no-redef]
-        pass
-
-    class RootModel:  # type: ignore
-        pass
-
-    class Tag:  # type: ignore
-        pass
-
-    class HttpUrl:  # type: ignore
-        pass
-
-    class DataURI:  # type: ignore
-        pass
-
-    def Field(*args, **kwargs):  # type: ignore
-        pass
-
-    def conlist():  # type: ignore
-        pass
-
-    DataURIorURL = None  # type: ignore
+DataURIorURL = Union[Annotated[DataURI, str], HttpUrl]
 
 
 class _Usage(BaseModel):
