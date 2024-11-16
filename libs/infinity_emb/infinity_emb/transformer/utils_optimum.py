@@ -153,7 +153,9 @@ def optimize_model(
         else:
             file_optimized = None
 
-        extra_args = {"ov_config": {"INFERENCE_PRECISION_HINT": "bf16", "PERFORMANCE_HINT": "THROUGHPUT"}}
+        extra_args = {
+            "ov_config": {"INFERENCE_PRECISION_HINT": "bf16", "PERFORMANCE_HINT": "THROUGHPUT"}
+        }
     else:  # Optimum onnx cpu path
         CHECK_ONNXRUNTIME.mark_required()
         path_folder = (
@@ -199,7 +201,10 @@ def optimize_model(
                 export=True,
                 # quantization_config = OVDynamicQuantizationConfig(bits=8),
                 # ov_config={"INFERENCE_PRECISION_HINT": "f32", "PERFORMANCE_HINT": "THROUGHPUT"} # fp16 for now as it has better precision than bf16
-                ov_config={"INFERENCE_PRECISION_HINT": "bf16", "PERFORMANCE_HINT": "THROUGHPUT"},  # fp16 for now as it has better precision than bf16
+                ov_config={
+                    "INFERENCE_PRECISION_HINT": "bf16",
+                    "PERFORMANCE_HINT": "THROUGHPUT",
+                },  # fp16 for now as it has better precision than bf16
             )
             model.save_pretrained(path_folder.as_posix())  # save the model
         else:  # Optimum onnx cpu path
