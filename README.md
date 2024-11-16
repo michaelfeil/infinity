@@ -42,6 +42,8 @@ Infinity is a high-throughput, low-latency REST API for serving text-embeddings,
   <a href="https://embeddedllm.com/blog/"><img src="https://avatars.githubusercontent.com/u/148834374" alt="Logo JamAI" width="50"/></a>
   <a href="https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct#infinity_emb"><img src="https://avatars.githubusercontent.com/u/1961952" alt="Logo Alibaba Group" width="50"/></a>
   <a href="https://github.com/bentoml/BentoInfinity/"><img src="https://avatars.githubusercontent.com/u/49176046" alt="Logo BentoML" width="50"/></a>
+  <a href="https://x.com/bo_wangbo/status/1766371909086724481"><img src="https://avatars.githubusercontent.com/u/60539444" alt="Logo JinaAi" width="50"/></a>
+  <a href="https://github.com/dwarvesf/llm-hosting"><img src="https://avatars.githubusercontent.com/u/10388449" alt="Logo Dwarves Foundation" width="50"/></a>
 </p> 
 
 ### Latest News 🔥
@@ -477,6 +479,7 @@ https://github.com/michaelfeil/infinity/tree/main/libs/client_infinity/infinity_
 - [gpt_server - gpt_server is an open-source framework designed for production-level deployment of LLMs (Large Language Models) or Embeddings.](https://github.com/shell-nlp/gpt_server)
 - [KubeAI: Kubernetes AI Operator for inferencing](https://github.com/substratusai/kubeai)
 - [LangChain](https://python.langchain.com/docs/integrations/text_embedding/infinity)
+- [Batched, modification of the Batching algoritm in Infinity](https://github.com/mixedbread-ai/batched)
 
 ## Documentation
 View the docs at [https:///michaelfeil.github.io/infinity](https://michaelfeil.github.io/infinity) on how to get started.

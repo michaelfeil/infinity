@@ -6,11 +6,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, responses
 
 from infinity_emb.fastapi_schemas.pymodels import (
-    OpenAIEmbeddingInput,
+    MultiModalOpenAIEmbedding,
     OpenAIEmbeddingResult,
 )
 from embed import BatchedInference
-from infinity_emb.fastapi_schemas.convert import list_embeddings_to_response
 from infinity_emb import AsyncEmbeddingEngine, EngineArgs
 import asyncio
 import numpy as np
@@ -100,7 +99,7 @@ if USE_INFINITY:
         response_model=OpenAIEmbeddingResult,
         response_class=responses.ORJSONResponse,
     )
-    async def embed(request: OpenAIEmbeddingInput) -> OpenAIEmbeddingResult:
+    async def embed(request: MultiModalOpenAIEmbedding) -> OpenAIEmbeddingResult:
         """the goal of this code is to write an as simple as possible server
         that can we rebuild by any other p
         """
@@ -109,17 +108,16 @@ if USE_INFINITY:
 
         encoded = await encode_infinity(sentences)
         # response parsing
-        response = list_embeddings_to_response(
+        return OpenAIEmbeddingResult.to_embeddings_response(
             encoded, MODEL_NAME, sum(len(t) for t in sentences)
         )
-        return OpenAIEmbeddingResult(**response)
 else:
     @app.post(
         "/embeddings",
         response_model=OpenAIEmbeddingResult,
         response_class=responses.ORJSONResponse,
     )
-    def embed(request: OpenAIEmbeddingInput) -> OpenAIEmbeddingResult:
+    def embed(request: MultiModalOpenAIEmbedding) -> OpenAIEmbeddingResult:
         """the goal of this code is to write an as simple as possible server
         that can we rebuild by any other p
         """
@@ -134,10 +132,9 @@ else:
             encoded = encode_sentence_transformer(sentences)
 
         # response parsing
-        response = list_embeddings_to_response(
+        return OpenAIEmbeddingResult.to_embeddings_response(
             encoded, MODEL_NAME, sum(len(t) for t in sentences)
         )
-        return OpenAIEmbeddingResult(**response)
 
 if __name__ == "__main__":
     import uvicorn

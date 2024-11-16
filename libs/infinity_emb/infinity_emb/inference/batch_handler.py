@@ -95,7 +95,13 @@ class BatchHandler:
         self._shutdown = threading.Event()
         self._threadpool = ThreadPoolExecutor()
         self._queue_prio = CustomFIFOQueue()
+        self._publish_to_model_queue: Queue = Queue(8)
         self._result_queue: Queue = Queue(8)
+
+        self.max_batch_size = max_batch_size
+        self._verbose = verbose
+        self.batch_delay = batch_delay
+
         # cache
         cache = (
             Cache(
@@ -106,16 +112,16 @@ class BatchHandler:
             else None
         )
         self._result_store = ResultKVStoreFuture(cache)
+
         # model
         self.model_worker = [
             ModelWorker(
-                max_batch_size=max_batch_size,
                 shutdown=ShutdownReadOnly(self._shutdown),
                 model=model_replica,
                 threadpool=ThreadPoolExecutorReadOnly(self._threadpool),
-                input_q=self._queue_prio,
+                input_q=self._publish_to_model_queue,
                 output_q=self._result_queue,
-                verbose=verbose,
+                verbose=self.batch_delay,
                 batch_delay=batch_delay,
             )
             for model_replica in model_replicas
@@ -353,8 +359,53 @@ class BatchHandler:
                 tokenize=self.model_worker[0].tokenize_lengths,
             )
 
+    def _publish_towards_model(
+        self,
+        # shutdown: ShutdownReadOnly,
+        # queue_prio: "CustomFIFOQueue",
+        # publish_to_model_queue: Queue,
+        # max_batch_size: int,
+        # verbose: bool
+    ):
+        """background thread for reading  exits only if shutdown.is_set()"""
+        max_n_batches = 8
+        try:
+            while not self._shutdown.is_set():
+                if not self._publish_to_model_queue.empty() and (
+                    self._publish_to_model_queue.full()
+                    or (len(self._queue_prio) < self.max_batch_size * max_n_batches)
+                ):
+                    # patience:
+                    # do not pop a batch if self._publish_to_model_queue still has item(s) left.
+                    # - until GPU / _core_batch starts processing the previous item
+                    # - or if many items are queued anyhow, so that a good batch
+                    #   may be popped already.
+                    time.sleep(self.batch_delay)
+                    continue
+                # decision to attempt to pop a batch
+                # -> will happen if a single datapoint is available
+
+                batches = self._queue_prio.pop_optimal_batches(self.max_batch_size, max_n_batches)
+
+                for batch in batches:
+                    if self._verbose:
+                        logger.debug(
+                            "[📦] batched %s requests, queue remaining:  %s",
+                            len(batch),
+                            len(self._queue_prio),
+                        )
+                    while not self._shutdown.is_set():
+                        try:
+                            self._publish_to_model_queue.put(batch, timeout=QUEUE_TIMEOUT)
+                            break
+                        except queue.Full:
+                            continue
+        except Exception as ex:
+            logger.exception(ex)
+            raise ValueError("Postprocessor crashed")
+
     @staticmethod
-    async def _collect_from_model(
+    async def _subscribe_to_model(
         shutdown: ShutdownReadOnly, result_queue: Queue, tp: ThreadPoolExecutor
     ):
         """background thread for reading  exits only if shutdown.is_set()"""
@@ -385,15 +436,19 @@ class BatchHandler:
                 result_queue.task_done()
         except Exception as ex:
             logger.exception(ex)
-            raise ValueError("Postprocessor crashed")
+            raise ValueError("_subscribe_to_model crashed")
 
     async def spawn(self):
         """spawns the resources"""
         logger.info("creating batching engine")
         self.loop = asyncio.get_event_loop()
 
-        self._collect_task = asyncio.create_task(
-            self._collect_from_model(
+        self._threadpool.submit(
+            self._publish_towards_model,
+        )
+
+        self._push_task = asyncio.create_task(
+            self._subscribe_to_model(
                 ShutdownReadOnly(self._shutdown), self._result_queue, self._threadpool
             )
         )
@@ -409,7 +464,7 @@ class BatchHandler:
         self._shutdown.set()
         await asyncio.to_thread(self._threadpool.shutdown)
         # collect task
-        self._collect_task.cancel()
+        self._push_task.cancel()
 
 
 class ModelWorker:
@@ -417,23 +472,21 @@ class ModelWorker:
 
     def __init__(
         self,
-        max_batch_size: int,
         shutdown: ShutdownReadOnly,
         model: "BaseTypeHint",
         threadpool: ThreadPoolExecutorReadOnly,
-        input_q: CustomFIFOQueue,
+        input_q: Queue,
         output_q: Queue,
         batch_delay: float = 5e-3,
         verbose=False,
     ) -> None:
-        self._max_batch_size = max_batch_size
         self._shutdown = shutdown
         self._model = model
         self._threadpool = threadpool
-        self._feature_queue: Queue = Queue(6)
-        self._postprocess_queue: Queue = Queue(4)
+        self._feature_queue: Queue = Queue(3)
+        self._postprocess_queue: Queue = Queue(5)
         self._batch_delay = float(max(1e-4, batch_delay))
-        self._queue_prio = input_q
+        self._input_q = input_q
         self._output_q = output_q
         self._last_inference = time.perf_counter()
         self._verbose = verbose
@@ -460,45 +513,33 @@ class ModelWorker:
         self._ready = True
         try:
             while not self._shutdown.is_set():
-                # patience:
-                # do not pop a batch if self._feature_queue still has an item left
-                # - until GPU / _core_batch starts processing the previous item
-                # - or if many items are queued anyhow, so that a good batch
-                #   may be popped already.
-                if not self._feature_queue.empty() and (
-                    self._feature_queue.full() or (len(self._queue_prio) < self._max_batch_size * 4)
-                ):
-                    # add some stochastic delay
-                    time.sleep(self._batch_delay)
+                try:
+                    batch = self._input_q.get(timeout=QUEUE_TIMEOUT)
+                except queue.Empty:
                     continue
-                # decision to attempt to pop a batch
-                # -> will happen if a single datapoint is available
-
-                batches = self._queue_prio.pop_optimal_batches(self._max_batch_size)
                 # optimal batch has been selected ->
                 # lets tokenize it and move tensors to GPU.
-                for batch in batches:
-                    if self._feature_queue.qsize() > 2:
-                        # add some stochastic delay
-                        time.sleep(self._batch_delay * 2)
 
-                    items_for_pre = [item.content.to_input() for item in batch]
-                    feat = self._model.encode_pre(items_for_pre)
-                    if self._verbose:
-                        logger.debug(
-                            "[📦] batched %s requests, queue remaining:  %s",
-                            len(items_for_pre),
-                            len(self._queue_prio),
-                        )
-                    if self._shutdown.is_set():
+                if self._feature_queue.qsize() > 2:
+                    # add some stochastic delay
+                    time.sleep(self._batch_delay * 2)
+
+                items_for_pre = [item.content.to_input() for item in batch]
+                feat = self._model.encode_pre(items_for_pre)
+                if self._verbose:
+                    logger.debug(
+                        "[🏃->🧠] preprocessed %s requests",
+                        len(items_for_pre),
+                    )
+                if self._shutdown.is_set():
+                    break
+                # while-loop just for shutdown
+                while not self._shutdown.is_set():
+                    try:
+                        self._feature_queue.put((feat, batch), timeout=QUEUE_TIMEOUT)
                         break
-                    # while-loop just for shutdown
-                    while not self._shutdown.is_set():
-                        try:
-                            self._feature_queue.put((feat, batch), timeout=QUEUE_TIMEOUT)
-                            break
-                        except queue.Full:
-                            continue
+                    except queue.Full:
+                        continue
         except Exception as ex:
             logger.exception(ex)
             raise ValueError("_preprocess_batch crashed")
@@ -517,7 +558,7 @@ class ModelWorker:
                     continue
                 (feat, batch) = core_batch
                 if self._verbose:
-                    logger.debug("[🏃] Inference on batch_size=%s", len(batch))
+                    logger.debug("[🧠] Inference on batch_size=%s", len(batch))
                 self._last_inference = time.perf_counter()
                 embed = self._model.encode_core(feat)
 
@@ -555,6 +596,8 @@ class ModelWorker:
                     time.sleep(self._batch_delay)
                 embed, batch = post_batch
                 results = self._model.encode_post(embed)
+                if self._verbose:
+                    logger.debug("[🧠->🏁] postprocessed %s requests", len(batch))
                 # while-loop just for shutdown
                 while not self._shutdown.is_set():
                     try:
@@ -566,25 +609,3 @@ class ModelWorker:
         except Exception as ex:
             logger.exception(ex)
             raise ValueError("Postprocessor crashed")
-
-    # def _delayed_warmup(self):
-    #     """Idea: to improve cold-start, only warm-up after 10 seconds. This allows the initial batches to computed, and hides
-    #     first request times on cold-start, without reducing startup-times. Send only a short request to trigger CUDA Graph and torch.compile.
-    #     """
-    #     Remove warmup, as this leads to errors when the model is shutdown before the warmup happens.
-    #     The issue also occurs in the Model worker, not here, which is why this code is currently disabled.
-    #     time.sleep(5)
-    #     if not self._shutdown.is_set():
-    #         logger.debug("Sending a warm up through embedding.")
-    #         try:
-    #             if "embed" in self.capabilities:
-    #                 # await self.embed(sentences=["test"] * self.max_batch_size)
-    #                 self.
-    #             if "rerank" in self.capabilities:
-    #                 # await self.rerank(
-    #                 #     query="query", docs=["test"] * self.max_batch_size
-    #                 # )
-    #             if "classify" in self.capabilities:
-    #                 # await self.classify(sentences=["test"] * self.max_batch_size)
-    #         except Exception:
-    #             pass
