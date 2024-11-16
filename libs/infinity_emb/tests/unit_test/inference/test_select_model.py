@@ -7,7 +7,7 @@ from infinity_emb.primitives import Device, InferenceEngine
 
 @pytest.mark.parametrize("engine", [e for e in InferenceEngine if e != InferenceEngine.neuron])
 def test_engine(engine):
-    select_model(
+    model_funcs = select_model(
         EngineArgs(
             engine=engine,
             model_name_or_path=(pytest.DEFAULT_BERT_MODEL),
@@ -16,3 +16,4 @@ def test_engine(engine):
             model_warmup=False,
         )
     )
+    [model_func() for model_func in model_funcs]

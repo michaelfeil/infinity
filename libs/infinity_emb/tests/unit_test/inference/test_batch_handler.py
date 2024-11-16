@@ -27,16 +27,19 @@ MODEL_NAME: str = pytest.DEFAULT_BERT_MODEL  # type: ignore[assignment]
     reason="windows and macos are not stable with python3.12",
 )
 async def load_patched_bh() -> tuple[SentenceTransformerPatched, BatchHandler]:
-    model = SentenceTransformerPatched(
-        engine_args=EngineArgs(
-            model_name_or_path=MODEL_NAME,
-            bettertransformer=not torch.backends.mps.is_available(),
+    def get_m():
+        model = SentenceTransformerPatched(
+            engine_args=EngineArgs(
+                model_name_or_path=MODEL_NAME,
+                bettertransformer=not torch.backends.mps.is_available(),
+            )
         )
-    )
-    model.encode(["hello " * 512] * BATCH_SIZE)
-    bh = BatchHandler(model_replicas=[model], max_batch_size=BATCH_SIZE)
+        model.encode(["hello " * 512] * BATCH_SIZE)
+        return model
+
+    bh = BatchHandler(model_replicas=[get_m], max_batch_size=BATCH_SIZE)
     await bh.spawn()
-    return model, bh
+    return get_m(), bh
 
 
 @pytest.mark.performance
@@ -91,13 +94,13 @@ async def test_batch_performance_raw(get_sts_bechmark_dataset, load_patched_bh):
         # yappi.stop()
         method_st(sentences[::10])
         await method_batch_handler(sentences[::10])
-        time.sleep(2)
+        time.sleep(1)
         time_batch_handler = np.median(
             [(await method_batch_handler(sentences)) for _ in range(N_TIMINGS)]
         )
-        time.sleep(2)
+        time.sleep(1)
         time_st = np.median([method_st(sentences) for _ in range(N_TIMINGS)])
-        time.sleep(2)
+        time.sleep(1)
         time_st_patched = np.median([method_patched(sentences) for _ in range(N_TIMINGS)])
 
         print(

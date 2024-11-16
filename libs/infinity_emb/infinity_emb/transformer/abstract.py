@@ -4,7 +4,7 @@
 import random
 from abc import ABC, abstractmethod
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, Union, Protocol
 
 from infinity_emb._optional_imports import CHECK_PIL  # , CHECK_SOUNDFILE
 from infinity_emb.primitives import (
@@ -223,6 +223,11 @@ class BaseCrossEncoder(BaseTransformer):  # Inherit from ABC(Abstract base class
 BaseTypeHint = Union[
     BaseTransformer, BaseEmbedder, BaseTIMM, BaseAudioEmbedModel, BaseClassifer, BaseCrossEncoder
 ]
+
+
+class CallableReturningBaseTypeHint(Protocol):
+    def __call__(self) -> BaseTypeHint:
+        pass
 
 
 def run_warmup(model, inputs) -> tuple[float, float, str]:
