@@ -6,7 +6,11 @@ import os
 
 import numpy as np
 
-from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TRANSFORMERS
+from infinity_emb._optional_imports import (
+    CHECK_ONNXRUNTIME,
+    CHECK_TRANSFORMERS,
+    CHECK_OPTIMUM_INTEL,
+)
 from infinity_emb.args import EngineArgs
 from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseEmbedder
@@ -14,7 +18,7 @@ from infinity_emb.transformer.quantization.interface import quant_embedding_deco
 from infinity_emb.transformer.utils_optimum import (
     cls_token_pooling,
     device_to_onnx,
-    get_onnx_files,
+    # get_onnx_files,
     mean_pooling,
     normalize,
     optimize_model,
@@ -25,9 +29,20 @@ if CHECK_ONNXRUNTIME.is_available:
         from optimum.onnxruntime import (  # type: ignore[import-untyped]
             ORTModelForFeatureExtraction,
         )
+        from infinity_emb.transformer.utils_optimum import get_onnx_files
 
     except (ImportError, RuntimeError, Exception) as ex:
         CHECK_ONNXRUNTIME.mark_dirty(ex)
+
+
+if CHECK_OPTIMUM_INTEL.is_available:
+    try:
+        from optimum.intel import OVModelForFeatureExtraction  # type: ignore[import-untyped]
+        from infinity_emb.transformer.utils_optimum import get_openvino_files
+
+    except (ImportError, RuntimeError, Exception) as ex:
+        CHECK_OPTIMUM_INTEL.mark_dirty(ex)
+
 
 if CHECK_TRANSFORMERS.is_available:
     from transformers import AutoConfig, AutoTokenizer  # type: ignore[import-untyped]
@@ -35,14 +50,13 @@ if CHECK_TRANSFORMERS.is_available:
 
 class OptimumEmbedder(BaseEmbedder):
     def __init__(self, *, engine_args: EngineArgs):
-        CHECK_ONNXRUNTIME.mark_required()
         provider = device_to_onnx(engine_args.device)
 
         onnx_file = get_onnx_files(
             model_name_or_path=engine_args.model_name_or_path,
             revision=engine_args.revision,
             use_auth_token=True,
-            prefer_quantized=("cpu" in provider.lower() or "openvino" in provider.lower()),
+            prefer_quantized="cpu" in provider.lower(),
         )
 
         self.pooling = (

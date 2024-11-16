@@ -20,6 +20,8 @@ cpu:
   extra_env_variables: |
     # Sets default to onnx
     ENV INFINITY_ENGINE="optimum"
+    RUN poetry run python -m pip install --upgrade --upgrade-strategy eager "optimum[openvino]"
+
 
 amd:
   # 2 . command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
