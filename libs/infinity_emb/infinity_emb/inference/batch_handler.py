@@ -368,20 +368,18 @@ class BatchHandler:
         # verbose: bool
     ):
         """background thread for reading  exits only if shutdown.is_set()"""
-        max_n_batches = 4
+        max_n_batches = 8
         try:
             while not self._shutdown.is_set():
-                # patience:
-                # do not pop a batch if self._feature_queue still has an item left
-                # - until GPU / _core_batch starts processing the previous item
-                # - or if many items are queued anyhow, so that a good batch
-                #   may be popped already.
-
                 if not self._publish_to_model_queue.empty() and (
                     self._publish_to_model_queue.full()
                     or (len(self._queue_prio) < self.max_batch_size * max_n_batches)
                 ):
-                    # add some stochastic delay
+                    # patience:
+                    # do not pop a batch if self._publish_to_model_queue still has item(s) left.
+                    # - until GPU / _core_batch starts processing the previous item
+                    # - or if many items are queued anyhow, so that a good batch
+                    #   may be popped already.
                     time.sleep(self.batch_delay)
                     continue
                 # decision to attempt to pop a batch
@@ -485,8 +483,8 @@ class ModelWorker:
         self._shutdown = shutdown
         self._model = model
         self._threadpool = threadpool
-        self._feature_queue: Queue = Queue(6)
-        self._postprocess_queue: Queue = Queue(4)
+        self._feature_queue: Queue = Queue(3)
+        self._postprocess_queue: Queue = Queue(5)
         self._batch_delay = float(max(1e-4, batch_delay))
         self._input_q = input_q
         self._output_q = output_q
