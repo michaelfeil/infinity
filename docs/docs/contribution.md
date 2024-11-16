@@ -2,7 +2,7 @@
 
 ## Developer setup
 
-Install via Poetry 1.7.1 and Python3.11 on Ubuntu 22.04
+Install via Poetry 1.8.4 and Python3.11 on Ubuntu 22.04
 ```bash
 git clone https://github.com/michaelfeil/infinity
 cd infinity

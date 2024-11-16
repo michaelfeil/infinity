@@ -1,28 +1,27 @@
 ---
-name: libs/infinity_emb - Release Publish to pypi
+name: libs - Release Publish to pypi
 
 on:
   release:
     types: [published]
 
 env:
-  POETRY_VERSION: "1.7.1"
-  WORKDIR: "libs/infinity_emb"
+  POETRY_VERSION: "1.8.4"
 
 jobs:
   publish-to-pypi:
+    strategy:
+      matrix:
+        package:
+          - workdir: "libs/infinity_emb"
+          - workdir: "libs/client_infinity"
     defaults:
       run:
-        working-directory: ${{ env.WORKDIR }}
+        working-directory: ${{ matrix.package.workdir }}
     runs-on: ubuntu-latest
     environment:
       name: publish
     permissions:
-      # This permission is used for trusted publishing:
-      # https://blog.pypi.org/posts/2023-04-20-introducing-trusted-publishers/
-      #
-      # Trusted publishing has to also be configured on PyPI for each package:
-      # https://docs.pypi.org/trusted-publishers/adding-a-publisher/
       id-token: write
     steps:
       - uses: actions/checkout@v4
@@ -32,21 +31,30 @@ jobs:
         with:
           python-version: "3.10"
           poetry-version: ${{ env.POETRY_VERSION }}
-          working-directory: ${{ env.WORKDIR }}
+          working-directory: ${{ matrix.package.workdir }}
           cache-key: release
+
       - name: Copy readme
         id: readme-copy
         run: |
           cp ../../README.md .
+
       - name: Build project for distribution
         run: poetry build
+
       - name: Check Version
         id: check-version
         run: |
           echo version=$(poetry version --short) >> $GITHUB_OUTPUT
+
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          packages-dir: ${{ env.WORKDIR }}/dist/
+          packages-dir: ${{ matrix.package.workdir }}/dist/
           verbose: true
           print-hash: true
+    
+  modal-deploy:
+    needs: publish-to-pypi
+    uses: ./.github/workflows/release_modal_com.yaml
+    secrets: inherit

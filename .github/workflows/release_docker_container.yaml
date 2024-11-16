@@ -1,3 +1,4 @@
+# This workflow will build a docker image and push it to Docker Hub
 name: release_docker
 
 on:
