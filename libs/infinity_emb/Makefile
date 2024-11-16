@@ -42,10 +42,10 @@ format format_diff:
 	[ "$(PYTHON_FILES)" = "" ] || poetry run ruff format $(PYTHON_FILES)
 
 template_docker:
-	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
-	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s cpu > Dockerfile.cpu_auto
-	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s nvidia > Dockerfile.nvidia_auto
-	jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s trt > Dockerfile.trt_onnx_auto
+	poetry run jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s amd > Dockerfile.amd_auto
+	poetry run jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s cpu > Dockerfile.cpu_auto
+	poetry run jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s nvidia > Dockerfile.nvidia_auto
+	poetry run jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s trt > Dockerfile.trt_onnx_auto
 
 # Add new targets
 build-amd:
