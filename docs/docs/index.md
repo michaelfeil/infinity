@@ -23,7 +23,7 @@ pip install infinity-emb[all]
   <summary>Install from source with Poetry</summary>
   
   Advanced:
-  To install via Poetry use Poetry 1.7.1, Python 3.11 on Ubuntu 22.04
+  To install via Poetry use Poetry 1.8.4, Python 3.11 on Ubuntu 22.04
   ```bash
   git clone https://github.com/michaelfeil/infinity
   cd infinity

@@ -27,7 +27,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  POETRY_VERSION: "1.7.1"
+  POETRY_VERSION: "1.8.4"
   WORKDIR: "libs/infinity_emb"
 
 jobs:

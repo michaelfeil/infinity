@@ -27,7 +27,7 @@ WORKDIR /app
 
 FROM base as builder
 # Set the working directory for the app
-# Define the version of Poetry to install (default is 1.7.1)
+# Define the version of Poetry to install (default is 1.8.4)
 # Define the directory to install Poetry to (default is /opt/poetry)
 ARG POETRY_VERSION=1.8.4
 ARG POETRY_HOME=/opt/poetry
