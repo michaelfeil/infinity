@@ -14,7 +14,7 @@ jobs:
       matrix:
         package:
           - workdir: "libs/infinity_emb"
-          - workdir: "libs/client_infinity"
+          - workdir: "libs/client_infinity/infinity_client"
     defaults:
       run:
         working-directory: ${{ matrix.package.workdir }}
@@ -35,6 +35,7 @@ jobs:
           cache-key: release
 
       - name: Copy readme
+        if: matrix.package.workdir == 'libs/infinity_emb'
         id: readme-copy
         run: |
           cp ../../README.md .
