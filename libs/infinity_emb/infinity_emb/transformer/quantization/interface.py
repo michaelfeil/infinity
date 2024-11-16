@@ -6,7 +6,7 @@ from hashlib import md5
 from typing import TYPE_CHECKING, Any, Union
 
 import numpy as np
-import requests  # type: ignore
+import requests  # type: ignore[import-untyped]
 
 from infinity_emb._optional_imports import CHECK_SENTENCE_TRANSFORMERS, CHECK_TORCH
 from infinity_emb.env import MANAGER

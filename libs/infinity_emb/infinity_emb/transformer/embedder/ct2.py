@@ -32,7 +32,7 @@ else:
 
 
 if CHECK_CTRANSLATE2.is_available:
-    import ctranslate2  # type: ignore
+    import ctranslate2  # type: ignore[import-untyped]
 
 
 class CT2SentenceTransformer(SentenceTransformerPatched):

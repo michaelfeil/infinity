@@ -66,7 +66,7 @@ class _OpenAIEmbeddingInput_Text(_OpenAIEmbeddingInput):
         ),
         Annotated[str, INPUT_STRING],
     ]
-    modality: Literal[Modality.text] = Modality.text  # type: ignore
+    modality: Literal[Modality.text] = Modality.text
 
 
 class _OpenAIEmbeddingInput_URI(_OpenAIEmbeddingInput):
@@ -82,11 +82,11 @@ class _OpenAIEmbeddingInput_URI(_OpenAIEmbeddingInput):
 
 
 class OpenAIEmbeddingInput_Audio(_OpenAIEmbeddingInput_URI):
-    modality: Literal[Modality.audio] = Modality.audio  # type: ignore
+    modality: Literal[Modality.audio] = Modality.audio
 
 
 class OpenAIEmbeddingInput_Image(_OpenAIEmbeddingInput_URI):
-    modality: Literal[Modality.image] = Modality.image  # type: ignore
+    modality: Literal[Modality.image] = Modality.image
 
 
 def get_modality(obj: dict) -> str:

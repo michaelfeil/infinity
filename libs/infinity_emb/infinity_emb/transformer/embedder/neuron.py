@@ -140,8 +140,8 @@ class NeuronOptimumEmbedder(BaseEmbedder):
         }
 
     @quant_embedding_decorator()
-    def encode_post(self, embedding: dict) -> EmbeddingReturnType:
-        embedding = self.pooling(  # type: ignore
+    def encode_post(self, embedding: dict[str, "torch.Tensor"]) -> EmbeddingReturnType:
+        embedding = self.pooling(
             embedding["token_embeddings"].numpy(), embedding["attention_mask"].numpy()
         )
 

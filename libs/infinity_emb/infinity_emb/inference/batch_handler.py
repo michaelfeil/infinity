@@ -511,9 +511,9 @@ class ModelWorker:
 
         extras = {}
         if hasattr(self._model, "sampling_rate"):
-            extras["sampling_rate"] = self._model.sampling_rate  # type: ignore
+            extras["sampling_rate"] = self._model.sampling_rate
 
-        return self._model.capabilities, extras  # type: ignore
+        return self._model.capabilities, extras
 
     @property
     def model(self):

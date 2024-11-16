@@ -18,7 +18,7 @@ from infinity_emb.transformer.utils import (
 )
 
 if TYPE_CHECKING:
-    from infinity_emb.transformer.abstract import CallableReturningBaseTypeHint, BaseTypeHint
+    from infinity_emb.transformer.abstract import BaseTypeHint  # , CallableReturningBaseTypeHint
     from infinity_emb.args import (
         EngineArgs,
     )
@@ -91,7 +91,7 @@ def _get_engine_replica(unloaded_engine, engine_args, device_map) -> "BaseTypeHi
 
 def select_model(
     engine_args: "EngineArgs",
-) -> list["CallableReturningBaseTypeHint"]:
+) -> list[partial["BaseTypeHint"]]:
     """based on engine args, fully instantiates the Engine."""
     logger.info(
         f"model=`{engine_args.model_name_or_path}` selected, "
@@ -108,4 +108,4 @@ def select_model(
         )
     assert len(engine_replicas) > 0, "No engine replicas were loaded"
 
-    return engine_replicas  # type: ignore
+    return engine_replicas
