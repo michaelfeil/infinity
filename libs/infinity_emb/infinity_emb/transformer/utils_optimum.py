@@ -216,10 +216,18 @@ def optimize_model(
                 },  # fp16 for now as it has better precision than bf16
             )
             model.save_pretrained(path_folder.as_posix())  # save the model
-
-        elif execution_provider == "CPUExecutionProvider":  # Optimum onnx cpu path
+        else:  # Optimum onnx cpu path
             optimizer = ORTOptimizer.from_pretrained(unoptimized_model)
 
+            is_gpu = "cpu" not in execution_provider.lower()
+            optimization_config = OptimizationConfig(
+                optimization_level=99,
+                optimize_with_onnxruntime_only=False,
+                optimize_for_gpu=is_gpu,
+                fp16=is_gpu,
+                # enable_gelu_approximation=True,
+                # enable_gemm_fast_gelu_fusion=True, # might not work
+            )
             is_gpu = "cpu" not in execution_provider.lower()
             optimization_config = OptimizationConfig(
                 optimization_level=99,
@@ -244,13 +252,6 @@ def optimize_model(
                 provider=execution_provider,
                 file_name=Path(file_name).name.replace(".onnx", OPTIMIZED_SUFFIX),
             )
-        else:
-            raise ValueError(
-                f"Does not support {execution_provider}."
-                "Optimum engine only support `OpenVINOExecutionProvider` "
-                "and `CPUExecutionProvider`."
-            )
-
     except Exception as e:
         logger.warning(f"Optimization failed with {e}. Going to use the unoptimized model.")
         model = unoptimized_model
