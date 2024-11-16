@@ -25,11 +25,22 @@ if CHECK_ONNXRUNTIME.is_available:
         CHECK_ONNXRUNTIME.mark_dirty(ex)
 
 if CHECK_OPTIMUM_INTEL.is_available:
-    try:
-        from optimum.intel import OVModelForFeatureExtraction  # type: ignore[import-untyped]
+    from optimum.intel import (
+        OVModelForFeatureExtraction,  # type: ignore[import-untyped]
+        OVWeightQuantizationConfig, 
+        OVConfig,
+        OVQuantizer,
+    )
+    # try:
+    #     from optimum.intel import (
+    #         OVModelForFeatureExtraction,  # type: ignore[import-untyped]
+    #         OVWeightQuantizationConfig, 
+    #         OVConfig,
+    #         OVQuantizer,
+    #     )
 
-    except (ImportError, RuntimeError, Exception) as ex:
-        CHECK_OPTIMUM_INTEL.mark_dirty(ex)
+    # except (ImportError, RuntimeError, Exception) as ex:
+    #     CHECK_OPTIMUM_INTEL.mark_dirty(ex)
 
 
 if CHECK_TORCH.is_available:
@@ -117,7 +128,7 @@ def optimize_model(
             },
         )
 
-    file_optimized: Union[str, list] = ''
+    file_optimized: Path | str = ""
 
     extra_args = {}
 
@@ -138,12 +149,8 @@ def optimize_model(
         if file_name:
             file_optimized = file_name
 
-        extra_args = {
-            "ov_config":{
-                "INFERENCE_PRECISION_HINT": "bf16"
-            }
-        }
-        
+        extra_args = {"ov_config": {"INFERENCE_PRECISION_HINT": "bf16"}}
+
     elif execution_provider == "CPUExecutionProvider":  # Optimum onnx cpu path
         CHECK_ONNXRUNTIME.mark_required()
         path_folder = (
@@ -164,12 +171,19 @@ def optimize_model(
         # print("files_optimized: ", files_optimized)
         logger.info(f"Optimized model found at {file_optimized}, skipping optimization")
         return model_class.from_pretrained(
-            file_optimized.parent.as_posix() if not isinstance(file_optimized, str) else model_name_or_path,
+            file_optimized.parent.as_posix()
+            if not isinstance(file_optimized, str)
+            else model_name_or_path,
             revision=revision,
             trust_remote_code=trust_remote_code,
             provider=execution_provider,  # will be ignored by optimum intel
-            file_name=file_optimized.name if not isinstance(file_optimized, str) else file_optimized,            
-            **extra_args
+            file_name=file_optimized.name
+            if not isinstance(file_optimized, str)
+            else file_optimized,
+            # **extra_args,
+            ov_config={
+                "INFERENCE_PRECISION_HINT": "bf16"
+            },  # fp16 for now as it has better precision than bf16, 
         )
 
     unoptimized_model = model_class.from_pretrained(
@@ -184,7 +198,17 @@ def optimize_model(
     try:
         logger.info("Optimizing model")
         if execution_provider == "OpenVINOExecutionProvider":
-            model = OVModelForFeatureExtraction.from_pretrained(
+            logger.info("Optimizing model OpenVINOExecutionProvider")
+            # model = OVModelForFeatureExtraction.from_pretrained(
+            #     model_name_or_path,
+            #     export=True,
+            #     # ov_config={"INFERENCE_PRECISION_HINT": "fp32"} # fp16 for now as it has better precision than bf16
+            #     # ov_config={"INFERENCE_PRECISION_HINT": "fp16"} # fp16 for now as it has better precision than bf16
+            #     ov_config={
+            #         "INFERENCE_PRECISION_HINT": "bf16"
+            #     },  # fp16 for now as it has better precision than bf16
+            # )
+            ov_model = OVModelForFeatureExtraction.from_pretrained(
                 model_name_or_path,
                 export=True,
                 # ov_config={"INFERENCE_PRECISION_HINT": "fp32"} # fp16 for now as it has better precision than bf16
@@ -193,7 +217,29 @@ def optimize_model(
                     "INFERENCE_PRECISION_HINT": "bf16"
                 },  # fp16 for now as it has better precision than bf16
             )
-            model.save_pretrained(path_folder.as_posix())  # save the model
+            quantizer = OVQuantizer.from_pretrained(ov_model, task="feature-extraction", export=True)
+            ov_config = OVConfig(
+                quantization_config=OVWeightQuantizationConfig(
+                    bits=4, 
+                    sym=False,
+                    ratio=1.0,
+                    group_size=128,
+                    all_layers=None,
+                )
+            )
+            # print("ov_config.dtype: ", ov_config.dtype)
+            quantizer.quantize(ov_config=ov_config, save_directory=path_folder.as_posix())
+            model = OVModelForFeatureExtraction.from_pretrained(
+                path_folder.as_posix(), 
+                # ov_config={"INFERENCE_PRECISION_HINT": "fp32"} # fp16 for now as it has better precision than bf16
+                # ov_config={"INFERENCE_PRECISION_HINT": "fp16"} # fp16 for now as it has better precision than bf16
+                ov_config={
+                    "INFERENCE_PRECISION_HINT": "bf16"
+                },  # fp16 for now as it has better precision than bf16, 
+                export=False,
+            )
+            logger.info("Successfully load optimized model OpenVINOExecutionProvider")
+            # model.save_pretrained(path_folder.as_posix())  # save the model
 
         elif execution_provider == "CPUExecutionProvider":  # Optimum onnx cpu path
             optimizer = ORTOptimizer.from_pretrained(unoptimized_model)
@@ -300,7 +346,7 @@ def get_openvino_files(
         use_auth_token=use_auth_token,
     )
     pattern = "**openvino_model.*"
-    openvino_files = [p for p in repo_files if p.match(pattern)]
+    openvino_files = sorted([p for p in repo_files if p.match(pattern)])
 
     if len(openvino_files) > 1:
         logger.info(f"Found {len(openvino_files)} onnx files: {openvino_files}")
