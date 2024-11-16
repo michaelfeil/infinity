@@ -22,7 +22,7 @@ ENV PYTHONUNBUFFERED=1 \
 RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
 # RUN conda init --reverse --all
 # RUN rm -rf /opt/conda && rm -rf /var/lib/jenkins
-# Sets default to onnx
+# Bettertransformer is not supported on AMD
 ENV INFINITY_BETTERTRANSFORMER="0"
 
 WORKDIR /app
