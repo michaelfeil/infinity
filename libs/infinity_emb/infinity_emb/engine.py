@@ -88,7 +88,7 @@ class AsyncEmbeddingEngine:
                 self._batch_handler = BatchHandler(
                     max_batch_size=self._engine_args.batch_size,
                     model_replicas=self._model_replicas,
-                    batch_delay=self._min_inference_t / 2,
+                    # batch_delay=self._min_inference_t / 2,
                     vector_disk_cache_path=self._engine_args.vector_disk_cache_path,
                     verbose=logger.level <= 10,
                     lengths_via_tokenize=self._engine_args.lengths_via_tokenize,
