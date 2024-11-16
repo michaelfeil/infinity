@@ -8,12 +8,7 @@ import numpy as np
 from huggingface_hub import HfApi, HfFolder  # type: ignore
 from huggingface_hub.constants import HUGGINGFACE_HUB_CACHE  # type: ignore
 
-from infinity_emb._optional_imports import (
-    CHECK_ONNXRUNTIME,
-    CHECK_TORCH,
-    CHECK_OPTIMUM_INTEL,
-    CHECK_OPTIMUM_AMD,
-)
+from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_OPTIMUM_INTEL
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device
 
@@ -68,8 +63,6 @@ def device_to_onnx(device: Device) -> str:
         if "OpenVINOExecutionProvider" in available:
             return "OpenVINOExecutionProvider"
         return "CPUExecutionProvider"
-    elif device == Device.openvino:
-        return "OpenVINOExecutionProvider"
     elif device == Device.cuda:
         if "ROCMExecutionProvider" in available:
             return "ROCMExecutionProvider"
@@ -139,8 +132,6 @@ def optimize_model(
             },
         )
 
-    file_optimized: Union[str, list] = ""
-
     extra_args = {}
 
     logger.info(f"file_name: {file_name}")
@@ -157,8 +148,10 @@ def optimize_model(
         files_optimized = sorted(list(path_folder.glob(f"**/{OPTIMIZED_PREFIX}*")))
         if files_optimized:
             file_optimized = files_optimized[-1]
-        if file_name:
-            file_optimized = file_name
+        elif file_name:
+            file_optimized = Path(file_name)
+        else:
+            file_optimized = None
 
         extra_args = {"ov_config": {"INFERENCE_PRECISION_HINT": "bf16"}}
 
@@ -171,6 +164,8 @@ def optimize_model(
         files_optimized = list(path_folder.glob(f"**/*{OPTIMIZED_SUFFIX}"))
         if files_optimized:
             file_optimized = files_optimized[0]
+        else:
+            file_optimized = None
     else:
         raise ValueError(
             f"Does not support {execution_provider}."
