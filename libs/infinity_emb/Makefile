@@ -54,6 +54,9 @@ build-amd:
 build-trt:
 	docker buildx build -t michaelf34/infinity:$(VERSION)-trt-onnx -f Dockerfile.trt_onnx_auto --push .
 
+build-cpu:
+	docker buildx build -t michaelf34/infinity:$(VERSION)-cpu -f Dockerfile.cpu_auto --push .
+
 # Combined target to build both
 build-all-docker: 
 	docker buildx build -t michaelf34/infinity:$(VERSION)-amd -f Dockerfile.amd_auto --push . & \

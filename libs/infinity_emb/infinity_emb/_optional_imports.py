@@ -69,6 +69,7 @@ CHECK_OPTIMUM_NEURON = OptionalImports(
     "optimum.neuron",
     "<neuronx not available as extra, only runs on AMI image, no pip install possible.>",
 )
+CHECK_OPTIMUM_INTEL = OptionalImports("optimum.intel", "optimum")
 CHECK_PIL = OptionalImports("PIL", "vision")
 CHECK_POSTHOG = OptionalImports("posthog", "server")
 CHECK_PYDANTIC = OptionalImports("pydantic", "server")
