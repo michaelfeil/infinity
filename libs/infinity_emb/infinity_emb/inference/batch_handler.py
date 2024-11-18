@@ -10,8 +10,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from queue import Queue
 from typing import Any, Optional, Sequence, Union, TYPE_CHECKING
-
 import numpy as np
+from functools import cached_property
 
 from infinity_emb.env import MANAGER
 from infinity_emb.inference.caching_layer import Cache
@@ -39,7 +39,7 @@ from infinity_emb.transformer.utils import get_lengths_with_tokenize
 from infinity_emb.transformer.vision.utils import resolve_images
 
 if TYPE_CHECKING:
-    from infinity_emb.transformer.abstract import BaseTypeHint
+    from infinity_emb.transformer.abstract import CallableReturningBaseTypeHint
 
 
 QUEUE_TIMEOUT = 0.5
@@ -64,7 +64,7 @@ class ThreadPoolExecutorReadOnly:
 class BatchHandler:
     def __init__(
         self,
-        model_replicas: list["BaseTypeHint"],
+        model_replicas: list["CallableReturningBaseTypeHint"],
         max_batch_size: int,
         max_queue_wait: int = MANAGER.queue_size,
         batch_delay: float = 5e-3,
@@ -91,6 +91,9 @@ class BatchHandler:
 
         self._max_queue_wait = max_queue_wait
         self._lengths_via_tokenize = lengths_via_tokenize
+        self._max_batch_size = max_batch_size
+        self._batch_delay = batch_delay
+        self._verbose = verbose
 
         self._shutdown = threading.Event()
         self._threadpool = ThreadPoolExecutor()
@@ -114,18 +117,8 @@ class BatchHandler:
         self._result_store = ResultKVStoreFuture(cache)
 
         # model
-        self.model_worker = [
-            ModelWorker(
-                shutdown=ShutdownReadOnly(self._shutdown),
-                model=model_replica,
-                threadpool=ThreadPoolExecutorReadOnly(self._threadpool),
-                input_q=self._publish_to_model_queue,
-                output_q=self._result_queue,
-                verbose=self.batch_delay,
-                batch_delay=batch_delay,
-            )
-            for model_replica in model_replicas
-        ]
+        self.model_replica_fns = model_replicas
+        self._capabilities = None
 
         if batch_delay > 0.1:
             logger.warning(f"high batch delay of {batch_delay}")
@@ -135,6 +128,12 @@ class BatchHandler:
                 f"over batch_size={max_batch_size}."
                 " Consider increasing queue size"
             )
+
+    @cached_property
+    def _tiktoken_encoding(self):
+        import tiktoken
+
+        return tiktoken.encoding_for_model("gpt-3.5-turbo")
 
     async def embed(self, sentences: list[str]) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule a sentence to be embedded. Awaits until embedded.
@@ -289,10 +288,7 @@ class BatchHandler:
                 f"Options are {self.capabilities}."
             )
 
-        items = await resolve_audios(
-            audios,
-            getattr(self.model_worker[0]._model, "sampling_rate", -42),
-        )
+        items = await resolve_audios(audios, self._extras.get("sampling_rate", -42))
         embeddings, usage = await self._schedule(items)
         return embeddings, usage
 
@@ -319,8 +315,8 @@ class BatchHandler:
 
     @property
     def capabilities(self) -> set[ModelCapabilites]:
-        # TODO: try to remove inheritance here and return upon init.
-        return self.model_worker[0].capabilities
+        assert self._capabilities is not None, "Model not loaded"
+        return self._capabilities
 
     def is_overloaded(self) -> bool:
         """checks if more items can be queued.
@@ -352,12 +348,11 @@ class BatchHandler:
         if not self._lengths_via_tokenize:
             return get_lengths_with_tokenize([it.str_repr() for it in items])
         else:
-            return await to_thread(
-                get_lengths_with_tokenize,
-                self._threadpool,
-                _sentences=[it.str_repr() for it in items],
-                tokenize=self.model_worker[0].tokenize_lengths,
-            )
+            tokenized = [
+                len(i)
+                for i in self._tiktoken_encoding.encode_batch([it.str_repr() for it in items])
+            ]
+            return tokenized, sum(tokenized)
 
     def _publish_towards_model(
         self,
@@ -452,8 +447,21 @@ class BatchHandler:
                 ShutdownReadOnly(self._shutdown), self._result_queue, self._threadpool
             )
         )
-        for worker in self.model_worker:
-            worker.spawn()
+
+        def get_model_worker(model_replica_fn) -> tuple[set[ModelCapabilites], dict]:
+            return ModelWorker(
+                shutdown=ShutdownReadOnly(self._shutdown),
+                model_fn=model_replica_fn,
+                threadpool=ThreadPoolExecutorReadOnly(self._threadpool),
+                input_q=self._publish_to_model_queue,
+                output_q=self._result_queue,
+                verbose=self.batch_delay,
+                batch_delay=self._batch_delay,
+            ).spawn()
+
+        self._capabilities, self._extras = get_model_worker(self.model_replica_fns[0])
+        if len(self.model_replica_fns) > 1:
+            self._threadpool.map(get_model_worker, self.model_replica_fns[1:])
 
     async def shutdown(self):
         """
@@ -473,7 +481,7 @@ class ModelWorker:
     def __init__(
         self,
         shutdown: ShutdownReadOnly,
-        model: "BaseTypeHint",
+        model_fn: "CallableReturningBaseTypeHint",
         threadpool: ThreadPoolExecutorReadOnly,
         input_q: Queue,
         output_q: Queue,
@@ -481,7 +489,7 @@ class ModelWorker:
         verbose=False,
     ) -> None:
         self._shutdown = shutdown
-        self._model = model
+        self._model_fn = model_fn
         self._threadpool = threadpool
         self._feature_queue: Queue = Queue(3)
         self._postprocess_queue: Queue = Queue(5)
@@ -492,20 +500,28 @@ class ModelWorker:
         self._verbose = verbose
         self._ready = False
 
-    def spawn(self):
+    def spawn(self) -> tuple[set[ModelCapabilites], dict]:
         if self._ready:
             raise ValueError("already spawned")
         # start the threads
+        self._model = self._model_fn()
         self._threadpool.submit(self._preprocess_batch)
         self._threadpool.submit(self._core_batch)
         self._threadpool.submit(self._postprocess_batch)
 
+        extras = {}
+        if hasattr(self._model, "sampling_rate"):
+            extras["sampling_rate"] = self._model.sampling_rate
+
+        return self._model.capabilities, extras
+
     @property
-    def capabilities(self) -> set[ModelCapabilites]:
-        return self._model.capabilities
+    def model(self):
+        assert self._model is not None, "Model not loaded"
+        return self._model
 
     def tokenize_lengths(self, *args, **kwargs):
-        return self._model.tokenize_lengths(*args, **kwargs)
+        return self.model.tokenize_lengths(*args, **kwargs)
 
     def _preprocess_batch(self):
         """loops and checks if the _core_batch has worked on all items"""
@@ -560,7 +576,7 @@ class ModelWorker:
                 if self._verbose:
                     logger.debug("[🧠] Inference on batch_size=%s", len(batch))
                 self._last_inference = time.perf_counter()
-                embed = self._model.encode_core(feat)
+                embed = self.model.encode_core(feat)
 
                 # while-loop just for shutdown
                 while not self._shutdown.is_set():

@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 if CHECK_TORCH.is_available:
     import torch
 if CHECK_TRANSFORMERS.is_available:
-    from transformers import AutoConfig, AutoModel, AutoProcessor  # type: ignore
+    from transformers import AutoConfig, AutoModel, AutoProcessor  # type: ignore[import-untyped]
 if CHECK_PIL.is_available:
     from PIL import Image
 

@@ -12,7 +12,7 @@ if CHECK_AIOHTTP.is_available:
     import aiohttp
 
 if CHECK_SOUNDFILE.is_available:
-    import soundfile as sf  # type: ignore
+    import soundfile as sf  # type: ignore[import-untyped]
 
 
 async def resolve_audio(

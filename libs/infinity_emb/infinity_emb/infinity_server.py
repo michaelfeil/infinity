@@ -88,20 +88,20 @@ def create_server(
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
-        instrumentator.expose(app)  # type: ignore
+        instrumentator.expose(app)
         logger.info(
-            f"Creating {len(engine_args_list)}engines: engines={[e.served_model_name for e in engine_args_list]}"
+            f"Creating {len(engine_args_list)} engines: engines={[e.served_model_name for e in engine_args_list]}"
         )
         telemetry_log_info()
-        app.engine_array = AsyncEngineArray.from_args(engine_args_list)  # type: ignore
+        engine_array = AsyncEngineArray.from_args(engine_args_list)
         th = threading.Thread(
             target=send_telemetry_start,
-            args=(engine_args_list, [e.capabilities for e in app.engine_array]),  # type: ignore
+            args=(engine_args_list, [{} for e in engine_array]),
         )
         th.daemon = True
         th.start()
         # start in a threadpool
-        await app.engine_array.astart()  # type: ignore
+        await engine_array.astart()
 
         logger.info(
             docs.startup_message(
@@ -120,8 +120,9 @@ def create_server(
             logger.info(f"Preloaded configuration successfully. {engine_args_list} " " -> exit .")
             asyncio.create_task(kill_later(3))
 
+        app.engine_array = engine_array  # type: ignore
         yield
-        await app.engine_array.astop()  # type: ignore
+        await engine_array.astop()
         # shutdown!
 
     app = FastAPI(
@@ -691,7 +692,7 @@ if CHECK_TYPER.is_available:
         device: Device = MANAGER.device[0],  # type: ignore
         lengths_via_tokenize: bool = MANAGER.lengths_via_tokenize[0],
         dtype: Dtype = MANAGER.dtype[0],  # type: ignore
-        embedding_dtype: EmbeddingDtype = EmbeddingDtype.default_value(),  # type: ignore
+        embedding_dtype: EmbeddingDtype = EmbeddingDtype.default_value(),
         pooling_method: PoolingMethod = MANAGER.pooling_method[0],  # type: ignore
         compile: bool = MANAGER.compile[0],
         bettertransformer: bool = MANAGER.bettertransformer[0],
@@ -701,7 +702,7 @@ if CHECK_TYPER.is_available:
         url_prefix: str = MANAGER.url_prefix,
         host: str = MANAGER.host,
         port: int = MANAGER.port,
-        log_level: UVICORN_LOG_LEVELS = MANAGER.log_level,  # type: ignore
+        log_level: UVICORN_LOG_LEVELS = MANAGER.log_level,
     ):
         """Infinity API ♾️  cli v1 - deprecated, consider use cli v2 via `infinity_emb v2`."""
         if api_key:
@@ -719,9 +720,9 @@ if CHECK_TYPER.is_available:
         time.sleep(1)
         v2(
             model_id=[model_name_or_path],
-            served_model_name=[served_model_name],  # type: ignore
+            served_model_name=[served_model_name],
             batch_size=[batch_size],
-            revision=[revision],  # type: ignore
+            revision=[revision],
             trust_remote_code=[trust_remote_code],
             engine=[engine],
             dtype=[dtype],
@@ -732,7 +733,7 @@ if CHECK_TYPER.is_available:
             lengths_via_tokenize=[lengths_via_tokenize],
             compile=[compile],
             bettertransformer=[bettertransformer],
-            embedding_dtype=[EmbeddingDtype.float32],  # set to float32
+            embedding_dtype=[EmbeddingDtype.float32],
             # unique kwargs
             preload_only=preload_only,
             url_prefix=url_prefix,
@@ -846,7 +847,7 @@ if CHECK_TYPER.is_available:
         ),
         log_level: UVICORN_LOG_LEVELS = typer.Option(
             **_construct("log_level"), help="console log level."
-        ),  # type: ignore
+        ),
         permissive_cors: bool = typer.Option(
             **_construct("permissive_cors"), help="whether to allow permissive cors."
         ),

@@ -45,8 +45,9 @@ async def test_async_api_torch():
             device="cpu",
         )
     )
-    assert engine.capabilities == {"embed"}
+
     async with engine:
+        assert engine.capabilities == {"embed"}
         embeddings, usage = await engine.embed(sentences=sentences)
         assert isinstance(embeddings, list)
         assert isinstance(embeddings[0], np.ndarray)
@@ -74,8 +75,9 @@ async def test_async_api_torch_double_launch():
             device="cpu",
         )
     )
-    assert engine.capabilities == {"embed"}
+
     async with engine:
+        assert engine.capabilities == {"embed"}
         embeddings, usage = await engine.embed(sentences=sentences)
         assert isinstance(embeddings, list)
         assert isinstance(embeddings[0], np.ndarray)
@@ -164,9 +166,9 @@ async def test_async_api_torch_CLASSIFY():
             device="cpu",
         )
     )
-    assert engine.capabilities == {"classify"}
 
     async with engine:
+        assert engine.capabilities == {"classify"}
         predictions, usage = await engine.classify(sentences=sentences)
     assert usage == sum([len(s) for s in sentences])
     assert len(predictions) == len(sentences)
