@@ -168,7 +168,6 @@ def optimize_model(
         )
 
     if file_optimized:
-        # print("files_optimized: ", files_optimized)
         logger.info(f"Optimized model found at {file_optimized}, skipping optimization")
         return model_class.from_pretrained(
             file_optimized.parent.as_posix()
@@ -180,10 +179,7 @@ def optimize_model(
             file_name=file_optimized.name
             if not isinstance(file_optimized, str)
             else file_optimized,
-            # **extra_args,
-            ov_config={
-                "INFERENCE_PRECISION_HINT": "bf16"
-            },  # fp16 for now as it has better precision than bf16, 
+            **extra_args,
         )
 
     unoptimized_model = model_class.from_pretrained(
@@ -199,15 +195,6 @@ def optimize_model(
         logger.info("Optimizing model")
         if execution_provider == "OpenVINOExecutionProvider":
             logger.info("Optimizing model OpenVINOExecutionProvider")
-            # model = OVModelForFeatureExtraction.from_pretrained(
-            #     model_name_or_path,
-            #     export=True,
-            #     # ov_config={"INFERENCE_PRECISION_HINT": "fp32"} # fp16 for now as it has better precision than bf16
-            #     # ov_config={"INFERENCE_PRECISION_HINT": "fp16"} # fp16 for now as it has better precision than bf16
-            #     ov_config={
-            #         "INFERENCE_PRECISION_HINT": "bf16"
-            #     },  # fp16 for now as it has better precision than bf16
-            # )
             ov_model = OVModelForFeatureExtraction.from_pretrained(
                 model_name_or_path,
                 export=True,
@@ -227,7 +214,6 @@ def optimize_model(
                     all_layers=None,
                 )
             )
-            # print("ov_config.dtype: ", ov_config.dtype)
             quantizer.quantize(ov_config=ov_config, save_directory=path_folder.as_posix())
             model = OVModelForFeatureExtraction.from_pretrained(
                 path_folder.as_posix(), 
@@ -239,7 +225,6 @@ def optimize_model(
                 export=False,
             )
             logger.info("Successfully load optimized model OpenVINOExecutionProvider")
-            # model.save_pretrained(path_folder.as_posix())  # save the model
 
         elif execution_provider == "CPUExecutionProvider":  # Optimum onnx cpu path
             optimizer = ORTOptimizer.from_pretrained(unoptimized_model)
@@ -349,7 +334,7 @@ def get_openvino_files(
     openvino_files = sorted([p for p in repo_files if p.match(pattern)])
 
     if len(openvino_files) > 1:
-        logger.info(f"Found {len(openvino_files)} onnx files: {openvino_files}")
+        logger.info(f"Found {len(openvino_files)} openvino files: {openvino_files}")
         openvino_file = openvino_files[-1]
         logger.info(f"Using {openvino_file} as the model")
         return openvino_file
