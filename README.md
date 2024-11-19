@@ -44,6 +44,7 @@ Infinity is a high-throughput, low-latency REST API for serving text-embeddings,
   <a href="https://github.com/bentoml/BentoInfinity/"><img src="https://avatars.githubusercontent.com/u/49176046" alt="Logo BentoML" width="50"/></a>
   <a href="https://x.com/bo_wangbo/status/1766371909086724481"><img src="https://avatars.githubusercontent.com/u/60539444" alt="Logo JinaAi" width="50"/></a>
   <a href="https://github.com/dwarvesf/llm-hosting"><img src="https://avatars.githubusercontent.com/u/10388449" alt="Logo Dwarves Foundation" width="50"/></a>
+  <a href="https://github.com/huggingface/chat-ui/blob/daf695ea4a6e2d081587d7dbcae3cacd466bf8b2/docs/source/configuration/embeddings.md#openai"><img src="https://avatars.githubusercontent.com/u/25720743" alt="Logo HF" width="50"/></a>
 </p> 
 
 ### Latest News 🔥
