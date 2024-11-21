@@ -7,7 +7,7 @@ Run the following sequence of commands to deploy:
 
 ```bash
 git clone https://github.com/michaelfeil/infinity
-pip install modal
+pip install modal==0.66.0
 modal deploy --env main infra.modal.webserver
 ```
 

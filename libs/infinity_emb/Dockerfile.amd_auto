@@ -83,8 +83,7 @@ elif [ "$GPU_ARCH" = "gfx1100" ]; then \
     && cd /tmp-optimum \
     && python -m pip install .; \
 else \
-    echo "Unsupported GPU_ARCH: ${GPU_ARCH}"; \
-    exit(1); \
+    echo "NO GPU_ARCH, skip optium: ${GPU_ARCH}"; \
 fi
 
 
