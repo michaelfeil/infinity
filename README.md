@@ -152,15 +152,15 @@ The cache path inside the docker container is set by the environment variable `H
 
 <details>
   <summary>Launching multiple models at once</summary>
-  Since infinity_emb>=0.0.34, you can use cli `v2` method to launch multiple models at the same time.
+  
+  Since `infinity_emb>=0.0.34`, you can use cli `v2` method to launch multiple models at the same time.
   Checkout `infinity_emb v2 --help` for all args and validation.
 
-   Multiple Model CLI Playbook:                                                                                         
- - 1. cli options can be overloaded i.e. `v2 --model-id model/id1 --model-id/id2 --batch-size 8 --batch-size 4`       
- - 2. or adapt the defaults by setting ENV Variables separated by `;`: INFINITY_MODEL_ID="model/id1;model/id2;" &&    
- INFINITY_BATCH_SIZE="8;4;"                                                                                           
- - 3. single items are broadcasted to `--model-id` length, making `v2 --model-id model/id1 --model-id/id2             
- --batch-size 8` both models have batch-size 8.        
+  Multiple Model CLI Playbook:                                                                                         
+   - 1. cli options can be repeated e.g. `v2 --model-id model/id1 --model-id/id2 --batch-size 8 --batch-size 4`. This will create two models `model/id1` and `model/id2`
+   - 2. or adapt the defaults by setting ENV Variables separated by `;`: `INFINITY_MODEL_ID="model/id1;model/id2;" && INFINITY_BATCH_SIZE="8;4;"`
+   - 3. single items are broadcasted to `--model-id` length,  `v2 --model-id model/id1 --model-id/id2 --batch-size 8` making both models have batch-size 8.
+   - 4. Everything is broadcasted to the number of `--model-id` + API requests are routed to the `--served-model-name/--model-id`
 </details>
 
 <details>
@@ -173,7 +173,7 @@ The cache path inside the docker container is set by the environment variable `H
   - CLI `infinity_emb v2 --model-id BAAI/bge-base-en-v1.5`
   - ENV-CLI: `export INFINITY_MODEL_ID="BAAI/bge-base-en-v1.5" && infinity_emb v2`
 
-  Multiple models can be used via `;` syntax: `INFINITY_MODEL_ID="model/id1;model/id2;"`
+  Multiple arguments can be used via `;` syntax: `INFINITY_MODEL_ID="model/id1;model/id2;"`
 </details>
 
 <details>
