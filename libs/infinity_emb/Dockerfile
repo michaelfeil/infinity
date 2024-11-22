@@ -2,6 +2,9 @@ ARG BASE_IMAGE=nvidia/cuda:12.1.0-base-ubuntu22.04
 # Use the Python base image
 FROM $BASE_IMAGE AS base
 
+# Define a build-time argument with a default value
+ARG DTYPE=auto
+
 ENV PYTHONUNBUFFERED=1 \
     \
     # pip
@@ -15,7 +18,8 @@ ENV PYTHONUNBUFFERED=1 \
     # do not ask any interactive question
     POETRY_NO_INTERACTION=1 \
     EXTRAS="all" \
-    PYTHON="python3.11"
+    PYTHON="python3.11" \
+    DTYPE=$DTYPE
 
 RUN apt-get update && apt-get install build-essential python3-dev $PYTHON-venv $PYTHON curl -y
 
@@ -57,4 +61,4 @@ COPY environment_config.sh ./environment_config.sh
 ENV SENTENCE_TRANSFORMERS_HOME=/app/.cache/torch
 ENV PATH=/app/.venv/bin:$PATH
 
-ENTRYPOINT ["/bin/bash" , "-c", "source ./environment_config.sh "]
+ENTRYPOINT ["/bin/bash" , "-c", "source ./environment_config.sh $DTYPE"]
