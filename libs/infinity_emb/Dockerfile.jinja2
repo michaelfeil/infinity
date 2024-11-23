@@ -5,18 +5,18 @@
 FROM {{ base_image }} AS base
 
 ENV PYTHONUNBUFFERED=1 \
-    \
     # pip
     PIP_NO_CACHE_DIR=off \
     PIP_DISABLE_PIP_VERSION_CHECK=on \
     PIP_DEFAULT_TIMEOUT=100 \
-    \
     # make poetry create the virtual environment in the project's root
     # it gets named `.venv`
     POETRY_VIRTUALENVS_CREATE="{{poetry_virtualenvs_create | default('true')}}" \
     POETRY_VIRTUALENVS_IN_PROJECT="{{poetry_virtualenvs_in_project | default('true')}}" \
-    # do not ask any interactive question
     POETRY_NO_INTERACTION=1 \
+    # huggingface     
+    HF_HUB_ENABLE_HF_TRANSFER=1 \
+    # extras
     EXTRAS="{{poetry_extras | default('all')}}" \
     PYTHON="{{python_version | default('python3.11')}}"
 RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
@@ -83,17 +83,20 @@ COPY --from=testing /app/test_results.txt /app/test_results.txt
 ENV HF_HOME=/app/.cache/huggingface
 ENV PATH=/app/.venv/bin:$PATH
 
-# Use a multi-stage build -> production version, with download
-# docker buildx build --target=production-with-download \
-# --build-arg MODEL_NAME=BAAI/bge-small-en-v1.5 --build-arg ENGINE=torch -f Dockerfile -t infinity-BAAI-small .
+# Use a multi-stage build -> production version, with download:
+# docker buildx build --target=production-with-download --build-arg MODEL_NAME=mixedbread-ai/mxbai-rerank-xsmall-v1 \
+# --build-arg ENGINE=torch -f Dockerfile.nvidia_auto -t infinity-with-mixedbread-ai-mxbai-rerank-xsmall-v1 .
 FROM tested-builder AS production-with-download
 # collect model name and engine from build args
 ARG MODEL_NAME
-RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
 ARG ENGINE
+RUN if [ -z "${MODEL_NAME}" ]; then echo "Error: Build argument MODEL_NAME not set." && exit 1; fi
 RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && exit 1; fi
+
+ENV INFINITY_MODEL_ID=$MODEL_NAME
+ENV INFINITY_ENGINE=$ENGINE
 # will exit with 3 if model is downloaded # TODO: better exit code
-RUN infinity_emb v2 --model-id $MODEL_NAME --engine $ENGINE --preload-only || [ $? -eq 3 ]
+RUN infinity_emb v2 --preload-only || [ $? -eq 3 ]
 ENTRYPOINT ["infinity_emb"]
 
 # Use a multi-stage build -> production version
