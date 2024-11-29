@@ -16,7 +16,7 @@ cleanup() {
 trap cleanup EXIT
 
 # Start infinity_emb in the background
-DO_NOT_TRACK=1 infinity_emb v2 --log-level error --engine debugengine --port 7996 &
+DO_NOT_TRACK=1 poetry run infinity_emb v2 --log-level error --engine debugengine --port 7996 &
 INFINITY_PID=$!
 echo "infinity_emb started with PID $INFINITY_PID"
 
