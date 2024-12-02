@@ -1,0 +1,11 @@
+# Is an mirror of 
+# 763104351884.dkr.ecr.us-west-2.amazonaws.com/huggingface-pytorch-inference-neuronx:2.1.2-transformers4.43.2-neuronx-py310-sdk2.20.0-ubuntu20.04
+FROM michaelf34/aws-neuron-base-img:0.0.25-inference AS base
+
+WORKDIR /app
+COPY requirements_no_gpu.txt requirements_no_gpu.txt
+RUN pip3 install -r requirements_no_gpu.txt
+# req
+RUN pip3 install --no-deps --upgrade optimum[neuronx]==1.18.0 transformers==4.43.0 
+RUN pip3 install --no-deps infinity_emb==0.0.71 sentence_transformers==3.3.1 
+RUN apt-get update && apt-get install nano
