@@ -99,7 +99,7 @@ class NeuronOptimumEmbedder(BaseEmbedder):
 
         compiler_args = {"num_cores": get_nc_count(), "auto_cast_type": "fp16"}
         input_shapes = {
-            "batch_size": 4,
+            "batch_size": engine_args.batch_size,
             "sequence_length": (
                 self.config.max_position_embeddings
                 if hasattr(self.config, "max_position_embeddings")

@@ -3,9 +3,21 @@
 FROM michaelf34/aws-neuron-base-img:0.0.25-inference AS base
 
 WORKDIR /app
-COPY requirements_no_gpu.txt requirements_no_gpu.txt
+
+COPY ./infra/aws_neuron/requirements_no_gpu.txt requirements_no_gpu.txt
 RUN pip3 install -r requirements_no_gpu.txt
+RUN pip config set global.extra-index-url https://pip.repos.neuron.amazonaws.com
 # req
-RUN pip3 install --no-deps --upgrade optimum[neuronx]==1.18.0 transformers==4.43.0 
-RUN pip3 install --no-deps infinity_emb==0.0.71 sentence_transformers==3.3.1 
+# RUN pip3 install --no-deps --upgrade optimum[neuronx]==1.20.0 
+RUN pip3 install --no-deps sentence_transformers==3.3.1 
 RUN apt-get update && apt-get install nano
+# RUN pip3 install --upgrade neuronx-cc==2.15.* torch-neuronx torchvision transformers-neuronx libneuronxla protobuf 
+# libneuronxla-2.0.5347.0 ml-dtypes-0.2.0 neuronx-cc-2.15.143.0+e39249ad setuptools-69.5.1 torch-neuronx-2.1.2.2.3.2 torch-xla-2.1.5 transformers-neuronx-0.12.313
+RUN pip3 install --upgrade neuronx-cc==2.15.* torch-neuronx torchvision transformers-neuronx libneuronxla protobuf optimum-neuron==0.0.20
+
+FROM base AS infinity_latest
+COPY ./libs/infinity_emb .
+RUN pip3 install -e .
+ENV INFINITY_BATCH_SIZE=4
+ENV INFINITY_ENGINE=neuron
+ENTRYPOINT [ "infinity_emb" ]
