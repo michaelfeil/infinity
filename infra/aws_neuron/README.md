@@ -8,8 +8,15 @@
 - Set Instance type `inf2.xlarge` (has two neuron accelerators)
 - Login with username `ubuntu` (using your standard EC2 setup e.g. `ssh ubuntu@ec2-14-11-13-12.us-west-2.compute.amazonaws.com`)
 
-### Run
+### Optional: build docker image from scratch
+```bash
+git clone https://github.com/michaelfeil/infinity
+cd infinity
+docker buildx build -t michaelf34/infinity:0.0.x-neuron -f ./infra/aws_neuron/Dockerfile.neuron
+```
+
+### Run the image on EC2
 
 ```bash
-docker run -it -rm --name infbase --entrypoint /bin/bash --device=/dev/neuron0 --pull always michaelf34/aws-neuron-base-img:inf-new
+docker run -it --rm --device=/dev/neuron0 michaelf34/infinity:0.0.71-neuron v2 --model-id BAAI/bge-small-en-v1.5 --batch-size 8 --log-level debug
 ```
