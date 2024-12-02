@@ -41,8 +41,11 @@ if CHECK_TORCH.is_available:
     import torch._inductor.config
 
     # torch._inductor.config.coordinate_descent_tuning = True
-    torch._inductor.config.triton.unique_kernel_names = True
-    torch._inductor.config.fx_graph_cache = True
+    try:
+        torch._inductor.config.triton.unique_kernel_names = True
+        torch._inductor.config.fx_graph_cache = True
+    except Exception:
+        pass
 
 
 class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):

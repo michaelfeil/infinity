@@ -5,7 +5,7 @@ import copy
 import json
 import subprocess
 from typing import Union
-
+from functools import cache
 import numpy as np
 
 from infinity_emb._optional_imports import CHECK_OPTIMUM_NEURON, CHECK_TORCH
@@ -30,6 +30,7 @@ __all__ = [
 ]
 
 
+@cache
 def get_nc_count() -> Union[int, None]:
     """Returns the number of neuron cores on the current instance."""
     try:
@@ -45,7 +46,7 @@ def get_nc_count() -> Union[int, None]:
         return None
 
 
-def pad_up_to_size(desired_max_bs, input_ids):
+def pad_up_to_size(desired_max_bs: int, input_ids: "torch.Tensor") -> "torch.Tensor":
     """input_ids a 2D array with batch_size on dim=0
 
     makes sure the func runs with self.batch_size
@@ -116,7 +117,7 @@ class NeuronOptimumEmbedder(BaseEmbedder):
         )
         self.batch_size = self.model.neuron_config.input_shapes["batch_size"]
 
-    def encode_pre(self, sentences: list[str]) -> dict[str, np.ndarray]:
+    def encode_pre(self, sentences: list[str]) -> dict[str, "torch.Tensor"]:
         input_dict = self.tokenizer(
             sentences,
             max_length=self.config.max_position_embeddings,
@@ -127,7 +128,7 @@ class NeuronOptimumEmbedder(BaseEmbedder):
         )
         return input_dict
 
-    def encode_core(self, input_dict: dict[str, np.ndarray]) -> dict:
+    def encode_core(self, input_dict: dict[str, "torch.Tensor"]) -> dict:
         """requires constant batch size, which is a bit of extra work"""
         for key, tensor in input_dict.items():
             actual_bsize = tensor.shape[0]
@@ -140,7 +141,7 @@ class NeuronOptimumEmbedder(BaseEmbedder):
         }
 
     @quant_embedding_decorator()
-    def encode_post(self, embedding: dict) -> EmbeddingReturnType:
+    def encode_post(self, embedding: dict[str, "torch.Tensor"]) -> EmbeddingReturnType:
         embedding = self.pooling(  # type: ignore
             embedding["token_embeddings"].numpy(), embedding["attention_mask"].numpy()
         )
