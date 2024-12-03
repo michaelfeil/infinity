@@ -16,12 +16,12 @@ cleanup() {
 trap cleanup EXIT
 
 # Start infinity_emb in the background
-DO_NOT_TRACK=1 poetry run infinity_emb v2 --log-level error --engine debugengine --port 7996 &
+DO_NOT_TRACK=1 infinity_emb v2 --log-level error --engine debugengine --port 7996 &
 INFINITY_PID=$!
 echo "infinity_emb started with PID $INFINITY_PID"
 
 # Wait for infinity_emb to be ready
-for i in {1..10}; do
+for i in {1..20}; do
   if wget -q --spider http://0.0.0.0:7996/openapi.json; then
     echo "infinity_emb is ready."
     break
