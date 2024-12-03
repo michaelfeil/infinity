@@ -447,7 +447,7 @@ engine_args = EngineArgs(
     engine="torch", model_warmup=True)
 array = AsyncEngineArray.from_args([engine_args])
 
-async def classifier(): 
+async def classifier(engine: AsyncEmbeddingEngine): 
     async with engine:
         predictions, usage = await engine.classify(sentences=sentences)
     # or handle the async start / stop yourself.
