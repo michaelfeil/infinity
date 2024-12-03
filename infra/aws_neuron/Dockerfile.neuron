@@ -10,8 +10,6 @@ RUN pip config set global.extra-index-url https://pip.repos.neuron.amazonaws.com
 # req
 # RUN pip3 install --no-deps --upgrade optimum[neuronx]==1.20.0 
 RUN pip3 install --no-deps sentence_transformers==3.3.1 
-RUN apt-get update && apt-get install nano
-# RUN pip3 install --upgrade neuronx-cc==2.15.* torch-neuronx torchvision transformers-neuronx libneuronxla protobuf 
 # libneuronxla-2.0.5347.0 ml-dtypes-0.2.0 neuronx-cc-2.15.143.0+e39249ad setuptools-69.5.1 torch-neuronx-2.1.2.2.3.2 torch-xla-2.1.5 transformers-neuronx-0.12.313
 RUN pip3 install --upgrade neuronx-cc==2.15.* torch-neuronx torchvision transformers-neuronx libneuronxla protobuf optimum-neuron==0.0.20
 
