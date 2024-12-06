@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: MIT
 # Copyright (c) 2023-now michaelfeilfeil
+from __future__ import annotations
 
 from asyncio import Semaphore
 from typing import Iterable, Iterator, Optional, Union
@@ -318,7 +319,7 @@ class AsyncEngineArray:
             await engine.astop()
 
     async def embed(
-        self, *, model: str, sentences: list[str], matryoshka_dim: Optional[int]=None
+        self, *, model: str, sentences: list[str], matryoshka_dim: Optional[int] = None
     ) -> tuple[list["EmbeddingReturnType"], int]:
         """embed multiple sentences
 
@@ -393,7 +394,11 @@ class AsyncEngineArray:
         return await self[model].classify(sentences=sentences, raw_scores=raw_scores)
 
     async def image_embed(
-        self, *, model: str, images: list[Union[str, "ImageClassType"]], matryoshka_dim:Optional[int]=None
+        self,
+        *,
+        model: str,
+        images: list[Union[str, "ImageClassType"]],
+        matryoshka_dim: Optional[int] = None,
     ) -> tuple[list["EmbeddingReturnType"], int]:
         """embed multiple images
 
@@ -432,7 +437,7 @@ class AsyncEngineArray:
         )
 
     async def audio_embed(
-        self, *, model: str, audios: list[Union[str, bytes]], matryoshka_dim:Optional[int]=None
+        self, *, model: str, audios: list[Union[str, bytes]], matryoshka_dim: Optional[int] = None
     ) -> tuple[list["EmbeddingReturnType"], int]:
         """embed multiple audios
 
