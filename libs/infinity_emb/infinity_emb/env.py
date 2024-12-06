@@ -189,7 +189,15 @@ class __Infinity_EnvManager:
 
     @cached_property
     def queue_size(self) -> int:
-        return int(self._optional_infinity_var("queue_size", default="32000"))
+        size = int(self._optional_infinity_var("queue_size", default="32000"))
+        assert size > 0, "INFINITY_QUEUE_SIZE must be a positive number"
+        return size
+
+    @cached_property
+    def max_client_batch_size(self) -> int:
+        size = int(self._optional_infinity_var("max_client_batch_size", default="2048"))
+        assert size > 0, "INFINITY_MAX_CLIENT_BATCH_SIZE must be a positive number"
+        return size
 
     @cached_property
     def permissive_cors(self):

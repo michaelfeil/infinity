@@ -1,4 +1,5 @@
 from pydantic import AnyUrl, HttpUrl, StringConstraints
+from infinity_emb.env import MANAGER
 
 __all__ = [
     "INPUT_STRING",
@@ -14,9 +15,9 @@ __all__ = [
 INPUT_STRING = StringConstraints(max_length=8192 * 15, strip_whitespace=True)
 ITEMS_LIMIT = {
     "min_length": 1,
-    "max_length": 2048,
+    "max_length": MANAGER.max_client_batch_size,
 }
 ITEMS_LIMIT_SMALL = {
     "min_length": 1,
-    "max_length": 32,
+    "max_length": min(32, MANAGER.max_client_batch_size),
 }
