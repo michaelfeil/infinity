@@ -8,15 +8,10 @@ import numpy as np
 
 from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
-from infinity_emb.primitives import EmbeddingReturnType, PoolingMethod
 from infinity_emb.transformer.abstract import BaseClassifer
-from infinity_emb.transformer.quantization.interface import quant_embedding_decorator
 from infinity_emb.transformer.utils_optimum import (
-    cls_token_pooling,
     device_to_onnx,
     get_onnx_files,
-    mean_pooling,
-    normalize,
     optimize_model,
 )
 
@@ -44,10 +39,6 @@ class OptimumClassifier(BaseClassifer):
             revision=engine_args.revision,
             use_auth_token=True,
             prefer_quantized=("cpu" in provider.lower() or "openvino" in provider.lower()),
-        )
-
-        self.pooling = (
-            mean_pooling if engine_args.pooling_method == PoolingMethod.mean else cls_token_pooling
         )
 
         self.model = optimize_model(
