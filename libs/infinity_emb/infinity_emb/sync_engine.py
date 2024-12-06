@@ -171,9 +171,14 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         self.async_run(self.async_engine_array.astop).result()
 
     @add_start_docstrings(AsyncEngineArray.embed.__doc__)
-    def embed(self, *, model: str, sentences: list[str]):
+    def embed(self, *, model: str, sentences: list[str], matryoshka_dim=None):
         """sync interface of AsyncEngineArray"""
-        return self.async_run(self.async_engine_array.embed, model=model, sentences=sentences)
+        return self.async_run(
+            self.async_engine_array.embed,
+            model=model,
+            sentences=sentences,
+            matryoshka_dim=matryoshka_dim,
+        )
 
     @add_start_docstrings(AsyncEngineArray.rerank.__doc__)
     def rerank(
@@ -206,14 +211,24 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         )
 
     @add_start_docstrings(AsyncEngineArray.image_embed.__doc__)
-    def image_embed(self, *, model: str, images: list[Union[str, bytes]]):
+    def image_embed(self, *, model: str, images: list[Union[str, bytes]], matryoshka_dim=None):
         """sync interface of AsyncEngineArray"""
-        return self.async_run(self.async_engine_array.image_embed, model=model, images=images)
+        return self.async_run(
+            self.async_engine_array.image_embed,
+            model=model,
+            images=images,
+            matryoshka_dim=matryoshka_dim,
+        )
 
     @add_start_docstrings(AsyncEngineArray.audio_embed.__doc__)
-    def audio_embed(self, *, model: str, audios: list[Union[str, bytes]]):
+    def audio_embed(self, *, model: str, audios: list[Union[str, bytes]], matryoshka_dim=None):
         """sync interface of AsyncEngineArray"""
-        return self.async_run(self.async_engine_array.audio_embed, model=model, audios=audios)
+        return self.async_run(
+            self.async_engine_array.audio_embed,
+            model=model,
+            audios=audios,
+            matryoshka_dim=matryoshka_dim,
+        )
 
     def __del__(self):
         self.stop()
