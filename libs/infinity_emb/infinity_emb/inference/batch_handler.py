@@ -137,7 +137,7 @@ class BatchHandler:
             )
 
     async def embed(
-        self, sentences: list[str], matryoshka_dim=None
+        self, sentences: list[str], matryoshka_dim:Optional[int]=None
     ) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule a sentence to be embedded. Awaits until embedded.
 
@@ -240,7 +240,7 @@ class BatchHandler:
         return classifications, usage
 
     async def image_embed(
-        self, *, images: list[Union[str, "ImageClassType", bytes]], matryoshka_dim=None
+        self, *, images: list[Union[str, "ImageClassType", bytes]], matryoshka_dim:Optional[int]=None
     ) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule a images and sentences to be embedded. Awaits until embedded.
 
@@ -269,7 +269,7 @@ class BatchHandler:
         return embeddings, usage
 
     async def audio_embed(
-        self, *, audios: list[Union[str, bytes]], matryoshka_dim=None
+        self, *, audios: list[Union[str, bytes]], matryoshka_dim:Optional[int]=None
     ) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule audios and sentences to be embedded. Awaits until embedded.
 
