@@ -136,7 +136,9 @@ class BatchHandler:
                 " Consider increasing queue size"
             )
 
-    async def embed(self, sentences: list[str]) -> tuple[list["EmbeddingReturnType"], int]:
+    async def embed(
+        self, sentences: list[str], matryoshka_dim: Optional[int] = None
+    ) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule a sentence to be embedded. Awaits until embedded.
 
         Args:
@@ -157,6 +159,8 @@ class BatchHandler:
         input_sentences = [EmbeddingSingle(sentence=s) for s in sentences]
 
         embeddings, usage = await self._schedule(input_sentences)
+        if matryoshka_dim:
+            embeddings = [embedding[:matryoshka_dim] for embedding in embeddings]
         return embeddings, usage
 
     async def rerank(
@@ -239,6 +243,7 @@ class BatchHandler:
         self,
         *,
         images: list[Union[str, "ImageClassType", bytes]],
+        matryoshka_dim: Optional[int] = None,
     ) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule a images and sentences to be embedded. Awaits until embedded.
 
@@ -262,12 +267,12 @@ class BatchHandler:
 
         items = await resolve_images(images)
         embeddings, usage = await self._schedule(items)
+        if matryoshka_dim:
+            embeddings = [embedding[:matryoshka_dim] for embedding in embeddings]
         return embeddings, usage
 
     async def audio_embed(
-        self,
-        *,
-        audios: list[Union[str, bytes]],
+        self, *, audios: list[Union[str, bytes]], matryoshka_dim: Optional[int] = None
     ) -> tuple[list["EmbeddingReturnType"], int]:
         """Schedule audios and sentences to be embedded. Awaits until embedded.
 
@@ -294,6 +299,8 @@ class BatchHandler:
             getattr(self.model_worker[0]._model, "sampling_rate", -42),
         )
         embeddings, usage = await self._schedule(items)
+        if matryoshka_dim:
+            embeddings = [embedding[:matryoshka_dim] for embedding in embeddings]
         return embeddings, usage
 
     async def _schedule(self, list_queueitem: Sequence[AbstractSingle]) -> tuple[list[Any], int]:

@@ -170,3 +170,26 @@ async def test_openapi_same_as_docs_file(client):
     tc.assertDictEqual(openapi_json["info"], openapi_json_expected["info"])
     tc.assertDictEqual(openapi_json["paths"], openapi_json_expected["paths"])
     # tc.assertDictEqual(openapi_json["components"], openapi_json_expected["components"])
+
+
+@pytest.mark.anyio
+async def test_matryoshka_embedding(client):
+    matryoshka_dim = 10
+
+    possible_inputs = [
+        ["This is a test sentence."],
+        ["This is a test sentence.", "This is another test sentence."],
+    ]
+    for inp in possible_inputs:
+        response = await client.post(
+            f"{PREFIX}/embeddings",
+            json=dict(input=inp, model=MODEL_NAME, dimensions=matryoshka_dim),
+        )
+        assert response.status_code == 200, f"{response.status_code}, {response.text}"
+        rdata = response.json()
+        assert "data" in rdata and isinstance(rdata["data"], list)
+        assert all("embedding" in d for d in rdata["data"])
+        assert len(rdata["data"]) == len(inp)
+        for embedding, sentence in zip(rdata["data"], inp):
+            assert len(sentence) == embedding["embedding"][0]
+            assert len(embedding["embedding"]) == matryoshka_dim
