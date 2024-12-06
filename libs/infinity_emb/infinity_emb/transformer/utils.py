@@ -7,6 +7,7 @@ from typing import Callable
 from infinity_emb.primitives import InferenceEngine
 from infinity_emb.transformer.audio.torch import TorchAudioModel
 from infinity_emb.transformer.classifier.torch import SentenceClassifier
+from infinity_emb.transformer.classifier.optimum import OptimumClassifier
 from infinity_emb.transformer.crossencoder.optimum import OptimumCrossEncoder
 from infinity_emb.transformer.crossencoder.torch import (
     CrossEncoderPatched as CrossEncoderTorch,
@@ -87,11 +88,14 @@ class AudioEmbedEngine(Enum):
 
 class PredictEngine(Enum):
     torch = SentenceClassifier
+    optimum = OptimumClassifier
 
     @staticmethod
     def from_inference_engine(engine: InferenceEngine):
         if engine == InferenceEngine.torch:
             return PredictEngine.torch
+        elif engine == InferenceEngine.optimum:
+            return PredictEngine.optimum
         else:
             raise NotImplementedError(f"PredictEngine for {engine} not implemented")
 
