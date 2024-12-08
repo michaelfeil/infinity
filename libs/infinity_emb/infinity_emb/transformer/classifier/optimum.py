@@ -69,6 +69,9 @@ class OptimumClassifier(BaseClassifer):
         self._pipe = pipeline(
             task="text-classification",
             model=self.model,
+            trust_remote_code=engine_args.trust_remote_code,
+            top_k=None,
+            revision=engine_args.revision,
             tokenizer=self.tokenizer,
             device=engine_args.device,
         )
