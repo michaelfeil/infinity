@@ -8,8 +8,8 @@ from infinity_emb.transformer.classifier.optimum import OptimumClassifier
 def test_classifier(model_name: str = "SamLowe/roberta-base-go_emotions"):
     model = OptimumClassifier(
         engine_args=EngineArgs(
-        model_name_or_path=model_name,
-        device="cuda" if torch.cuda.is_available() else "cpu",
+            model_name_or_path=model_name,
+            device="cuda" if torch.cuda.is_available() else "cpu",
         )  # type: ignore
     )
     pipe = pipeline(model=model_name, task="text-classification")

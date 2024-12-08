@@ -4,8 +4,6 @@
 import copy
 import os
 
-import numpy as np
-
 from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
 from infinity_emb.transformer.abstract import BaseClassifer
@@ -25,7 +23,7 @@ if CHECK_ONNXRUNTIME.is_available:
         CHECK_ONNXRUNTIME.mark_dirty(ex)
 
 if CHECK_TRANSFORMERS.is_available:
-    from transformers import AutoConfig, AutoTokenizer, pipeline  # type: ignore[import-untyped]
+    from transformers import AutoTokenizer, pipeline  # type: ignore[import-untyped]
 
 
 class OptimumClassifier(BaseClassifer):
@@ -79,7 +77,7 @@ class OptimumClassifier(BaseClassifer):
         outputs = self._pipe(sentences)
         return outputs
 
-    def encode_post(self, classes) -> dict[str, float]:
+    def encode_post(self, classes) -> list[list[dict[str, float]]]:
         """runs post encoding such as normalization"""
         return classes
 
