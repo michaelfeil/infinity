@@ -131,7 +131,7 @@ ENV PATH=/app/.venv/bin:$PATH
 
 # Use a multi-stage build -> production version, with download:
 # docker buildx build --target=production-with-download --build-arg MODEL_NAME=mixedbread-ai/mxbai-rerank-xsmall-v1 \
-# --build-arg ENGINE=torch -f Dockerfile.nvidia_auto -t infinity-with-mixedbread-ai-mxbai-rerank-xsmall-v1 .
+# --build-arg ENGINE=torch -f Dockerfile.nvidia_auto -t michaelf34/infinity:0.0.71-with-mixedbread-ai-mxbai-rerank-xsmall-v1 .
 FROM tested-builder AS production-with-download
 # collect model name and engine from build args
 ARG MODEL_NAME
@@ -142,9 +142,9 @@ RUN if [ -z "${ENGINE}" ]; then echo "Error: Build argument ENGINE not set." && 
 ENV INFINITY_MODEL_ID=$MODEL_NAME
 ENV INFINITY_ENGINE=$ENGINE
 # will exit with 3 if model is downloaded # TODO: better exit code
-RUN infinity_emb v2 --preload-only || [ $? -eq 3 ]
+RUN infinity_emb v2 --preload-only --no-model-warmup || [ $? -eq 3 ]
 ENTRYPOINT ["infinity_emb"]
 
-# Use a multi-stage build -> production version
+# Use a multiçç-stage build -> production version
 FROM tested-builder AS production
 ENTRYPOINT ["infinity_emb"]
