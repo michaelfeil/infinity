@@ -59,13 +59,9 @@ class OptimumClassifier(BaseClassifer):
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
-        self.config = AutoConfig.from_pretrained(
-            engine_args.model_name_or_path,
-            revision=engine_args.revision,
-            trust_remote_code=engine_args.trust_remote_code,
-        )
+
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
-        self.engine_args = engine_args
+
         self._pipe = pipeline(
             task="text-classification",
             model=self.model,
