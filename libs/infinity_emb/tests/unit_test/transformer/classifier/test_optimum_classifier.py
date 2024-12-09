@@ -1,18 +1,25 @@
 import torch
-from transformers import pipeline  # type: ignore
-
+from optimum.pipelines import pipeline  # type: ignore
+from optimum.onnxruntime import ORTModelForSequenceClassification
 from infinity_emb.args import EngineArgs
 from infinity_emb.transformer.classifier.optimum import OptimumClassifier
 
 
-def test_classifier(model_name: str = "SamLowe/roberta-base-go_emotions"):
+def test_classifier(model_name: str = "SamLowe/roberta-base-go_emotions-onnx"):
     model = OptimumClassifier(
         engine_args=EngineArgs(
             model_name_or_path=model_name,
             device="cuda" if torch.cuda.is_available() else "cpu",
         )  # type: ignore
     )
-    pipe = pipeline(model=model_name, task="text-classification")
+
+    pipe = pipeline(
+        task="text-classification",
+        model=ORTModelForSequenceClassification.from_pretrained(
+            model_name, file_name="onnx/model_quantized.onnx"
+        ),
+        top_k=None,
+    )
 
     sentences = ["This is awesome.", "I am depressed."]
 

@@ -75,7 +75,7 @@ class OptimumClassifier(BaseClassifer):
         outputs = self._pipe(sentences)
         return outputs
 
-    def encode_post(self, classes) -> list[list[dict[str, float]]]:
+    def encode_post(self, classes) -> dict[str, float]:
         """runs post encoding such as normalization"""
         return classes
 
