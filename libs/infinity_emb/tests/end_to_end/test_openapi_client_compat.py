@@ -120,6 +120,16 @@ async def test_openai(client: AsyncClient):
             extra_body={"modality": "text"},
         )
 
+        # test: text matryoshka
+        emb_1_text_matryoshka_dim = await client_oai.embeddings.create(
+            model=pytest.DEFAULT_BERT_MODEL,
+            input=["a cat", "a cat", "a bird"],
+            encoding_format="float",
+            dimensions=64,
+            extra_body={"modality": "text"},
+        )
+        assert len(emb_1_text_matryoshka_dim.data[0].embedding) == 64
+
     # test AUDIO: cosine distance of beep to cat and dog
     np.testing.assert_allclose(
         emb1_audio.data[0].embedding, emb1_1_audio.data[0].embedding, rtol=1e-5
