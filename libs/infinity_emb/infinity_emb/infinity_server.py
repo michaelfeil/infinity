@@ -354,21 +354,27 @@ def create_server(
                     "[📝] Received request with %s input texts ",
                     len(input_),  # type: ignore
                 )
-                embedding, usage = await engine.embed(sentences=input_,matryoshka_dim=data_root.dimensions)
+                embedding, usage = await engine.embed(
+                    sentences=input_, matryoshka_dim=data_root.dimensions
+                )
             elif modality == Modality.audio:
                 urls_or_bytes = _resolve_mixed_input(data_root.input)  # type: ignore
                 logger.debug(
                     "[📝] Received request with %s input audios ",
                     len(urls_or_bytes),  # type: ignore
                 )
-                embedding, usage = await engine.audio_embed(audios=urls_or_bytes,matryoshka_dim=data_root.dimensions)
+                embedding, usage = await engine.audio_embed(
+                    audios=urls_or_bytes, matryoshka_dim=data_root.dimensions
+                )
             elif modality == Modality.image:
                 urls_or_bytes = _resolve_mixed_input(data_root.input)  # type: ignore
                 logger.debug(
                     "[📝] Received request with %s input images ",
                     len(urls_or_bytes),  # type: ignore
                 )
-                embedding, usage = await engine.image_embed(images=urls_or_bytes,matryoshka_dim=data_root.dimensions)
+                embedding, usage = await engine.image_embed(
+                    images=urls_or_bytes, matryoshka_dim=data_root.dimensions
+                )
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
