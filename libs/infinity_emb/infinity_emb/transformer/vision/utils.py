@@ -78,11 +78,7 @@ async def resolve_images(
     CHECK_PIL.mark_required()
 
     resolved_imgs = []
-
-    try:
-        async with aiohttp.ClientSession(trust_env=True) as session:
-            resolved_imgs = await asyncio.gather(*[resolve_image(img, session) for img in images])
-    except Exception as e:
-        raise ImageCorruption(f"Failed to resolve image: {images}.\nError msg: {str(e)}")
+    async with aiohttp.ClientSession(trust_env=True) as session:
+        resolved_imgs = await asyncio.gather(*[resolve_image(img, session) for img in images])
 
     return resolved_imgs

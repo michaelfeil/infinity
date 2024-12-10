@@ -29,6 +29,7 @@ from infinity_emb.primitives import (
     InferenceEngine,
     Modality,
     ModelCapabilites,
+    MatryoshkaDimError,
     ModelNotDeployedError,
     PoolingMethod,
 )
@@ -390,14 +391,9 @@ def create_server(
                 f"ModelNotDeployedError: model=`{data_root.model}` does not support `embed` for modality `{modality.value}`. Reason: {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
-        except (ImageCorruption, AudioCorruption) as ex:
-            # get urls_or_bytes if not defined
-            try:
-                urls_or_bytes = urls_or_bytes
-            except NameError:
-                urls_or_bytes = []
+        except (ImageCorruption, AudioCorruption, MatryoshkaDimError) as ex:
             raise errors.OpenAIException(
-                f"{modality.value}Corruption, could not open {[b if isinstance(b, str) else 'bytes' for b in urls_or_bytes]} -> {ex}",
+                f"{ex.__class__} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as ex:
@@ -545,9 +541,9 @@ def create_server(
                 encoding_format=data.encoding_format,
                 usage=usage,
             )
-        except ImageCorruption as ex:
+        except (ImageCorruption, MatryoshkaDimError) as ex:
             raise errors.OpenAIException(
-                f"ImageCorruption, could not open {[b if isinstance(b, str) else 'bytes' for b in urls_or_bytes]} -> {ex}",
+                f"{ex.__class__} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except ModelNotDeployedError as ex:
@@ -604,9 +600,9 @@ def create_server(
                 encoding_format=data.encoding_format,
                 usage=usage,
             )
-        except AudioCorruption as ex:
+        except (AudioCorruption, MatryoshkaDimError) as ex:
             raise errors.OpenAIException(
-                f"AudioCorruption, could not open {[b if isinstance(b, str) else 'bytes' for b in urls_or_bytes]} -> {ex}",
+                f"{ex.__class__} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except ModelNotDeployedError as ex:

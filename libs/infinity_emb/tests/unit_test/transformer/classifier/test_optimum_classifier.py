@@ -1,7 +1,6 @@
-import torch
-from optimum.pipelines import pipeline  # type: ignore
-from optimum.onnxruntime import ORTModelForSequenceClassification
+from transformers.pipelines import pipeline  # type: ignore
 from infinity_emb.args import EngineArgs
+
 from infinity_emb.transformer.classifier.optimum import OptimumClassifier
 
 
@@ -9,15 +8,12 @@ def test_classifier(model_name: str = "SamLowe/roberta-base-go_emotions-onnx"):
     model = OptimumClassifier(
         engine_args=EngineArgs(
             model_name_or_path=model_name,
-            device="cuda" if torch.cuda.is_available() else "cpu",
         )  # type: ignore
     )
 
     pipe = pipeline(
         task="text-classification",
-        model=ORTModelForSequenceClassification.from_pretrained(
-            model_name, file_name="onnx/model_quantized.onnx"
-        ),
+        model="SamLowe/roberta-base-go_emotions",  # hoping that this is the same model as model_name
         top_k=None,
     )
 

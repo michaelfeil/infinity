@@ -39,7 +39,7 @@ class OptimumClassifier(BaseClassifer):
             prefer_quantized=("cpu" in provider.lower() or "openvino" in provider.lower()),
         )
 
-        self.model = optimize_model(
+        model = optimize_model(
             model_name_or_path=engine_args.model_name_or_path,
             model_class=ORTModelForSequenceClassification,
             revision=engine_args.revision,
@@ -48,7 +48,7 @@ class OptimumClassifier(BaseClassifer):
             file_name=onnx_file.as_posix(),
             optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False),
         )
-        self.model.use_io_binding = False
+        model.use_io_binding = False
 
         self.tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,
@@ -60,12 +60,11 @@ class OptimumClassifier(BaseClassifer):
 
         self._pipe = pipeline(
             task="text-classification",
-            model=self.model,
+            model=model,
             trust_remote_code=engine_args.trust_remote_code,
             top_k=None,
             revision=engine_args.revision,
             tokenizer=self.tokenizer,
-            device=engine_args.device,
         )
 
     def encode_pre(self, sentences: list[str]):

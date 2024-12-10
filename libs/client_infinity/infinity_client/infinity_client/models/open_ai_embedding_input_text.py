@@ -19,6 +19,7 @@ class OpenAIEmbeddingInputText:
         model (Union[Unset, str]):  Default: 'default/not-specified'.
         encoding_format (Union[Unset, EmbeddingEncodingFormat]):
         user (Union[None, Unset, str]):
+        dimensions (Union[Unset, int]):  Default: 0.
         modality (Union[Unset, OpenAIEmbeddingInputTextModality]):  Default: OpenAIEmbeddingInputTextModality.TEXT.
     """
 
@@ -26,6 +27,7 @@ class OpenAIEmbeddingInputText:
     model: Union[Unset, str] = "default/not-specified"
     encoding_format: Union[Unset, EmbeddingEncodingFormat] = UNSET
     user: Union[None, Unset, str] = UNSET
+    dimensions: Union[Unset, int] = 0
     modality: Union[Unset, OpenAIEmbeddingInputTextModality] = OpenAIEmbeddingInputTextModality.TEXT
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -49,6 +51,8 @@ class OpenAIEmbeddingInputText:
         else:
             user = self.user
 
+        dimensions = self.dimensions
+
         modality: Union[Unset, str] = UNSET
         if not isinstance(self.modality, Unset):
             modality = self.modality.value
@@ -66,6 +70,8 @@ class OpenAIEmbeddingInputText:
             field_dict["encoding_format"] = encoding_format
         if user is not UNSET:
             field_dict["user"] = user
+        if dimensions is not UNSET:
+            field_dict["dimensions"] = dimensions
         if modality is not UNSET:
             field_dict["modality"] = modality
 
@@ -106,6 +112,8 @@ class OpenAIEmbeddingInputText:
 
         user = _parse_user(d.pop("user", UNSET))
 
+        dimensions = d.pop("dimensions", UNSET)
+
         _modality = d.pop("modality", UNSET)
         modality: Union[Unset, OpenAIEmbeddingInputTextModality]
         if isinstance(_modality, Unset):
@@ -118,6 +126,7 @@ class OpenAIEmbeddingInputText:
             model=model,
             encoding_format=encoding_format,
             user=user,
+            dimensions=dimensions,
             modality=modality,
         )
 
