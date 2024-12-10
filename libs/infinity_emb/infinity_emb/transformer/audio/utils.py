@@ -51,13 +51,9 @@ async def resolve_audios(
     CHECK_AIOHTTP.mark_required()
     CHECK_SOUNDFILE.mark_required()
 
-    resolved_audios: list[AudioSingle] = []
     async with aiohttp.ClientSession(trust_env=True) as session:
-        try:
-            resolved_audios = await asyncio.gather(
-                *[resolve_audio(audio, allowed_sampling_rate, session) for audio in audio_urls]
-            )
-        except Exception as e:
-            raise AudioCorruption(f"Failed to resolve audio: {e}")
+        resolved_audios = await asyncio.gather(
+            *[resolve_audio(audio, allowed_sampling_rate, session) for audio in audio_urls]
+        )
 
     return resolved_audios

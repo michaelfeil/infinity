@@ -24,6 +24,7 @@ from pydantic import (  # noqa
     RootModel,
     Tag,
     conlist,
+    conint,
 )
 
 from .data_uri import DataURI  # noqa
@@ -54,7 +55,7 @@ class _OpenAIEmbeddingInput(BaseModel):
     model: str = "default/not-specified"
     encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
     user: Optional[str] = None
-    dimensions: Optional[Annotated[int, Field(strict=True, gt=0, lt=8193)]] = None
+    dimensions: int = 0
 
 
 class _OpenAIEmbeddingInput_Text(_OpenAIEmbeddingInput):

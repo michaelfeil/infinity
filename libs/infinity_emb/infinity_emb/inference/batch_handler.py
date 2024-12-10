@@ -26,6 +26,7 @@ from infinity_emb.primitives import (
     ImageClassType,
     ModelCapabilites,
     ModelNotDeployedError,
+    MatryoshkaDimError,
     OverloadStatus,
     PredictSingle,
     PrioritizedQueueItem,
@@ -59,6 +60,18 @@ class ThreadPoolExecutorReadOnly:
 
     def submit(self, *args, **kwargs):
         return self._tp.submit(*args, **kwargs)
+
+
+def matryososka_slice(
+    embeddings: list[np.ndarray], matryoshka_dim: Optional[int]
+) -> list[np.ndarray]:
+    if matryoshka_dim:
+        if 1 > matryoshka_dim or matryoshka_dim > len(embeddings[0]):
+            raise MatryoshkaDimError(
+                f"matryoshka_dim={matryoshka_dim} is not in a valid range. Select between 1 and {len(embeddings[0])}."
+            )
+        return [e[:matryoshka_dim] for e in embeddings]
+    return embeddings
 
 
 class BatchHandler:
@@ -159,9 +172,7 @@ class BatchHandler:
         input_sentences = [EmbeddingSingle(sentence=s) for s in sentences]
 
         embeddings, usage = await self._schedule(input_sentences)
-        if matryoshka_dim:
-            embeddings = [embedding[:matryoshka_dim] for embedding in embeddings]
-        return embeddings, usage
+        return matryososka_slice(embeddings, matryoshka_dim), usage
 
     async def rerank(
         self,
@@ -267,9 +278,7 @@ class BatchHandler:
 
         items = await resolve_images(images)
         embeddings, usage = await self._schedule(items)
-        if matryoshka_dim:
-            embeddings = [embedding[:matryoshka_dim] for embedding in embeddings]
-        return embeddings, usage
+        return matryososka_slice(embeddings, matryoshka_dim), usage
 
     async def audio_embed(
         self, *, audios: list[Union[str, bytes]], matryoshka_dim: Optional[int] = None
@@ -299,9 +308,7 @@ class BatchHandler:
             getattr(self.model_worker[0]._model, "sampling_rate", -42),
         )
         embeddings, usage = await self._schedule(items)
-        if matryoshka_dim:
-            embeddings = [embedding[:matryoshka_dim] for embedding in embeddings]
-        return embeddings, usage
+        return matryososka_slice(embeddings, matryoshka_dim), usage
 
     async def _schedule(self, list_queueitem: Sequence[AbstractSingle]) -> tuple[list[Any], int]:
         """adds list of items to the queue and awaits until these are completed."""
