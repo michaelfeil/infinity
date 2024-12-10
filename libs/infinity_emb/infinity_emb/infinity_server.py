@@ -130,7 +130,7 @@ def create_server(
         summary=docs.FASTAPI_SUMMARY,
         description=docs.FASTAPI_DESCRIPTION,
         version=infinity_emb.__version__,
-        contact=dict(name="Michael Feil"),
+        contact=dict(name="Michael Feil, Raphael Wirth"),  # codespell:ignore
         docs_url=f"{url_prefix}/docs",
         openapi_url=f"{url_prefix}/openapi.json",
         license_info={
