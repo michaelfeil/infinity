@@ -1,6 +1,4 @@
-import torch
 from transformers.pipelines import pipeline  # type: ignore
-from optimum.onnxruntime import ORTModelForSequenceClassification
 from infinity_emb.args import EngineArgs
 
 from infinity_emb.transformer.classifier.optimum import OptimumClassifier
