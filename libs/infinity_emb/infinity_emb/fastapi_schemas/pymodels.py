@@ -24,7 +24,6 @@ from pydantic import (  # noqa
     RootModel,
     Tag,
     conlist,
-    conint,
 )
 
 from .data_uri import DataURI  # noqa
