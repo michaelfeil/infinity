@@ -380,3 +380,98 @@ def test_args_between_array_and_engine_same(method_name: str):
     assert sorted(array_method.args + array_method.kwonlyargs) == sorted(
         engine_method.args + engine_method.kwonlyargs + ["model"]
     )
+
+
+@pytest.mark.anyio
+async def test_async_api_torch_matryoshka():
+    matryoshka_dim = 64
+
+    sentences = ["Hi", "how"]
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="nomic-ai/nomic-embed-text-v1.5",
+            engine=InferenceEngine.torch,
+            revision="main",
+            device="cpu",
+        )
+    )
+    assert engine.capabilities == {"embed"}
+    async with engine:
+        embeddings, usage = await engine.embed(sentences=sentences, matryoshka_dim=matryoshka_dim)
+        assert isinstance(embeddings, list)
+        assert isinstance(embeddings[0], np.ndarray)
+        embeddings = np.array(embeddings)
+        assert usage == sum([len(s) for s in sentences])
+        assert embeddings.shape[0] == len(sentences)
+        assert embeddings.shape[1] >= 10
+
+        assert len(embeddings[0]) == 64
+
+        # test if model denies classification and reranking
+        with pytest.raises(ModelNotDeployedError):
+            await engine.classify(sentences=sentences)
+        with pytest.raises(ModelNotDeployedError):
+            await engine.rerank(query="dummy", docs=sentences)
+
+
+@pytest.mark.anyio
+async def test_torch_clip_embed_matryoshka():
+    matryoshka_dim = 128
+
+    image_urls = ["http://images.cocodataset.org/val2017/000000039769.jpg"]  # a photo of two cats
+    sentences = [
+        "a photo of two cats",
+        "a photo of a cat",
+        "a photo of a dog",
+        "a photo of a car",
+    ]
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(
+            model_name_or_path="jinaai/jina-clip-v2",
+            engine=InferenceEngine.torch,
+            model_warmup=True,
+        )
+    )
+    async with engine:
+        t1, t2 = (
+            asyncio.create_task(engine.embed(sentences=sentences, matryoshka_dim=matryoshka_dim)),
+            asyncio.create_task(
+                engine.image_embed(images=image_urls, matryoshka_dim=matryoshka_dim)
+            ),
+        )
+        emb_text, usage_text = await t1
+        emb_image, usage_image = await t2
+        emb_text_np = np.array(emb_text)  # type: ignore
+        emb_image_np = np.array(emb_image)  # type: ignore
+
+    assert len(emb_text_np[0]) == matryoshka_dim
+    assert len(emb_image_np[0]) == matryoshka_dim
+
+    # check if cat image and two cats are most similar
+    for i in range(1, len(sentences)):
+        assert np.dot(emb_text_np[0], emb_image_np[0]) > np.dot(emb_text_np[i], emb_image_np[0])
+
+
+@pytest.mark.anyio
+async def test_clap_like_model_matryoshka(audio_sample):
+    matryoshka_dim = 64
+
+    model_name = pytest.DEFAULT_AUDIO_MODEL
+    engine = AsyncEmbeddingEngine.from_args(
+        EngineArgs(model_name_or_path=model_name, dtype="float32")
+    )
+    url = audio_sample[1]
+    bytes_url = audio_sample[0].content
+
+    inputs = ["a sound of a cat", "a sound of a cat"]
+    audios = [url, bytes_url]
+    async with engine:
+        embeddings_text, usage_1 = await engine.embed(
+            sentences=inputs, matryoshka_dim=matryoshka_dim
+        )
+        embeddings_audio, usage_2 = await engine.audio_embed(
+            audios=audios, matryoshka_dim=matryoshka_dim
+        )
+
+    assert len(embeddings_text[0]) == matryoshka_dim
+    assert len(embeddings_audio[0]) == matryoshka_dim

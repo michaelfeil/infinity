@@ -17,7 +17,9 @@ def startup_message(host: str, port: int, prefix: str) -> str:
     return f"""
 
 ♾️  Infinity - Embedding Inference Server
-MIT License; Copyright (c) 2023-now Michael Feil
+MIT License; Copyright (c) 2023-now 
+Infinity OSS-Project: github.com/michaelfeil.infinity
+Maintained by @michaelfeil @wirthual
 Version {__version__}
 
 Open the Docs via Swagger UI:

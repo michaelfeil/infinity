@@ -436,6 +436,10 @@ class ModelNotDeployedError(Exception):
     pass
 
 
+class MatryoshkaDimError(Exception):
+    pass
+
+
 class ImageCorruption(Exception):
     pass
 

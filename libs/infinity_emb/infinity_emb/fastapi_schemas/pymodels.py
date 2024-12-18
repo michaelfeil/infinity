@@ -54,6 +54,7 @@ class _OpenAIEmbeddingInput(BaseModel):
     model: str = "default/not-specified"
     encoding_format: EmbeddingEncodingFormat = EmbeddingEncodingFormat.float
     user: Optional[str] = None
+    dimensions: int = 0
 
 
 class _OpenAIEmbeddingInput_Text(_OpenAIEmbeddingInput):

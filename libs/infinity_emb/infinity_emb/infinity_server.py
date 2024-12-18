@@ -21,6 +21,7 @@ from infinity_emb.primitives import (
     ImageCorruption,
     Modality,
     ModelCapabilites,
+    MatryoshkaDimError,
     ModelNotDeployedError,
 )
 from infinity_emb.telemetry import PostHog, StartupTelemetry, telemetry_log_info
@@ -120,7 +121,7 @@ def create_server(
         summary=docs.FASTAPI_SUMMARY,
         description=docs.FASTAPI_DESCRIPTION,
         version=infinity_emb.__version__,
-        contact=dict(name="Michael Feil"),
+        contact=dict(name="Michael Feil, Raphael Wirth"),  # codespell:ignore
         docs_url=f"{url_prefix}/docs",
         openapi_url=f"{url_prefix}/openapi.json",
         license_info={
@@ -345,21 +346,27 @@ def create_server(
                     "[📝] Received request with %s input texts ",
                     len(input_),  # type: ignore
                 )
-                embedding, usage = await engine.embed(sentences=input_)
+                embedding, usage = await engine.embed(
+                    sentences=input_, matryoshka_dim=data_root.dimensions
+                )
             elif modality == Modality.audio:
                 urls_or_bytes = _resolve_mixed_input(data_root.input)  # type: ignore
                 logger.debug(
                     "[📝] Received request with %s input audios ",
                     len(urls_or_bytes),  # type: ignore
                 )
-                embedding, usage = await engine.audio_embed(audios=urls_or_bytes)
+                embedding, usage = await engine.audio_embed(
+                    audios=urls_or_bytes, matryoshka_dim=data_root.dimensions
+                )
             elif modality == Modality.image:
                 urls_or_bytes = _resolve_mixed_input(data_root.input)  # type: ignore
                 logger.debug(
                     "[📝] Received request with %s input images ",
                     len(urls_or_bytes),  # type: ignore
                 )
-                embedding, usage = await engine.image_embed(images=urls_or_bytes)
+                embedding, usage = await engine.image_embed(
+                    images=urls_or_bytes, matryoshka_dim=data_root.dimensions
+                )
 
             duration = (time.perf_counter() - start) * 1000
             logger.debug("[✅] Done in %s ms", duration)
@@ -375,14 +382,9 @@ def create_server(
                 f"ModelNotDeployedError: model=`{data_root.model}` does not support `embed` for modality `{modality.value}`. Reason: {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
-        except (ImageCorruption, AudioCorruption) as ex:
-            # get urls_or_bytes if not defined
-            try:
-                urls_or_bytes = urls_or_bytes
-            except NameError:
-                urls_or_bytes = []
+        except (ImageCorruption, AudioCorruption, MatryoshkaDimError) as ex:
             raise errors.OpenAIException(
-                f"{modality.value}Corruption, could not open {[b if isinstance(b, str) else 'bytes' for b in urls_or_bytes]} -> {ex}",
+                f"{ex.__class__} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except Exception as ex:
@@ -530,9 +532,9 @@ def create_server(
                 encoding_format=data.encoding_format,
                 usage=usage,
             )
-        except ImageCorruption as ex:
+        except (ImageCorruption, MatryoshkaDimError) as ex:
             raise errors.OpenAIException(
-                f"ImageCorruption, could not open {[b if isinstance(b, str) else 'bytes' for b in urls_or_bytes]} -> {ex}",
+                f"{ex.__class__} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except ModelNotDeployedError as ex:
@@ -589,9 +591,9 @@ def create_server(
                 encoding_format=data.encoding_format,
                 usage=usage,
             )
-        except AudioCorruption as ex:
+        except (AudioCorruption, MatryoshkaDimError) as ex:
             raise errors.OpenAIException(
-                f"AudioCorruption, could not open {[b if isinstance(b, str) else 'bytes' for b in urls_or_bytes]} -> {ex}",
+                f"{ex.__class__} -> {ex}",
                 code=status.HTTP_400_BAD_REQUEST,
             )
         except ModelNotDeployedError as ex:
