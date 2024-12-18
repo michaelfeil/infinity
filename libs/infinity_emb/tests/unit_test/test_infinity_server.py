@@ -7,14 +7,15 @@ from fastapi import FastAPI
 
 from infinity_emb.args import EngineArgs
 from infinity_emb.infinity_server import (
+    create_server,
+)
+
+from infinity_emb.cli import (
     UVICORN_LOG_LEVELS,
     Device,
     Dtype,
     InferenceEngine,
     PoolingMethod,
-    create_server,
-    v1,
-    v2,
 )
 
 

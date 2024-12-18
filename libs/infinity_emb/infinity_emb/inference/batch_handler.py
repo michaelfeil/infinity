@@ -361,13 +361,12 @@ class BatchHandler:
 
     def _publish_towards_model(
         self,
-        # shutdown: ShutdownReadOnly,
-        # queue_prio: "CustomFIFOQueue",
-        # publish_to_model_queue: Queue,
-        # max_batch_size: int,
-        # verbose: bool
     ):
-        """background thread for reading  exits only if shutdown.is_set()"""
+        """worker that moves batches from the priority_queue towards the model.
+        Runs in a separate thread, returns when self._shutdown.is_set().
+        """
+        # max_n_batches: how many batches are set for switching to `max-throughput` mode
+        # in thoughput mode, read the last n-batches
         max_n_batches = 8
         try:
             while not self._shutdown.is_set():
