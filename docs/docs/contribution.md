@@ -10,11 +10,13 @@ cd libs/infinity_emb
 poetry install --extras all --with test
 ```
 
-To ensure your contributions pass the Continuous Integration (CI) checks. The `libs/infinity_emb/Makefile` is a useful entrypoint for this.
+To ensure your contributions pass the Continuous Integration (CI), there are some useful local actions.
+The `libs/infinity_emb/Makefile` is a useful entrypoint for this.
 ```bash
 cd libs/infinity_emb
 make format
 make lint
+make template-docker
 poetry run pytest ./tests
 ```
 

@@ -380,7 +380,7 @@ class BatchHandler:
         Runs in a separate thread, returns when self._shutdown.is_set().
         """
         # max_n_batches: how many batches are set for switching to `max-throughput` mode
-        # in thoughput mode, read the last n-batches
+        # in throughput mode, read the last n-batches
         max_n_batches = 8
         try:
             while not self._shutdown.is_set():

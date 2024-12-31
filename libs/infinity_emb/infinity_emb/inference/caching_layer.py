@@ -23,7 +23,7 @@ if CHECK_DISKCACHE.is_available:
 
 class Cache:
     """wrapper around DiskCache. The Diskcache in infinity `races` against the model inference.
-    
+
     The concept is that with the code be
     """
 
