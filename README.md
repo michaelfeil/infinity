@@ -159,7 +159,7 @@ The cache path inside the docker container is set by the environment variable `H
   Checkout `infinity_emb v2 --help` for all args and validation.
 
   Multiple Model CLI Playbook:                                                                                         
-   - 1. cli options can be repeated e.g. `v2 --model-id model/id1 --model-id/id2 --batch-size 8 --batch-size 4`. This will create two models `model/id1` and `model/id2`
+   - 1. cli options can be repeated e.g. `v2 --model-id model/id1 --model-id model/id2 --batch-size 8 --batch-size 4`. This will create two models `model/id1` and `model/id2`
    - 2. or adapt the defaults by setting ENV Variables separated by `;`: `INFINITY_MODEL_ID="model/id1;model/id2;" && INFINITY_BATCH_SIZE="8;4;"`
    - 3. single items are broadcasted to `--model-id` length,  `v2 --model-id model/id1 --model-id/id2 --batch-size 8` making both models have batch-size 8.
    - 4. Everything is broadcasted to the number of `--model-id` + API requests are routed to the `--served-model-name/--model-id`
