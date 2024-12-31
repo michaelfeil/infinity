@@ -92,7 +92,7 @@ if CHECK_TYPER.is_available:
     import typer
     import uvicorn
 
-    # path the asncio scheduler with uvloop
+    # patch the asyncio scheduler with uvloop
     # which has theoretical speed-ups vs asyncio
     loopname = "auto"
     if sys.version_info < (3, 12):
