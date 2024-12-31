@@ -378,22 +378,23 @@ if CHECK_TYPER.is_available:
             loop=loopname,  # type: ignore
         )
 
-    def cli():
-        CHECK_TYPER.mark_required()
-        if len(sys.argv) == 1 or sys.argv[1] not in [
-            "v1",
-            "v2",
-            "help",
-            "--help",
-            "--show-completion",
-            "--install-completion",
-        ]:
-            logger.critical(
-                "Error: No command given. Please use infinity with the `v2` command. "
-                f"This is deprecated since 0.0.32. You are on {infinity_emb.__version__}"
-                "Usage: `infinity_emb v2 --model-id BAAI/bge-large-en-v1.5"
-            )
-        tp()
+
+def cli():
+    CHECK_TYPER.mark_required()
+    if len(sys.argv) == 1 or sys.argv[1] not in [
+        "v1",
+        "v2",
+        "help",
+        "--help",
+        "--show-completion",
+        "--install-completion",
+    ]:
+        logger.critical(
+            "Error: No command given. Please use infinity with the `v2` command. "
+            f"This is deprecated since 0.0.32. You are on {infinity_emb.__version__}"
+            "Usage: `infinity_emb v2 --model-id BAAI/bge-large-en-v1.5"
+        )
+    tp()
 
 
 if __name__ == "__main__":
