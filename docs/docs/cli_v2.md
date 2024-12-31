@@ -6,13 +6,12 @@ $ infinity_emb v2 --help
 ```
 
 ```
-                 
- Usage: infinity_emb v2 [OPTIONS]                                                                      
-
-
+                                                                                                                        
+ Usage: infinity_emb v2 [OPTIONS]                                                                                       
+                                                                                                                        
  Infinity API ♾️  cli v2. MIT License. Copyright (c) 2023-now Michael Feil                                               
  Multiple Model CLI Playbook:                                                                                           
- - 1. cli options can be overloaded i.e. `v2 --model-id model/id1 --model-id model/id2 --batch-size 8 --batch-size 4`
+ - 1. cli options can be overloaded i.e. `v2 --model-id model/id1 --model-id model/id2 --batch-size 8 --batch-size 4`   
  - 2. or adapt the defaults by setting ENV Variables separated by `;`: INFINITY_MODEL_ID="model/id1;model/id2;" &&      
  INFINITY_BATCH_SIZE="8;4;"                                                                                             
  - 3. single items are broadcasted to `--model-id` length, making `v2 --model-id model/id1 --model-id/id2 --batch-size  

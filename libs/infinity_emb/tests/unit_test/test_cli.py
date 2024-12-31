@@ -11,7 +11,6 @@ from infinity_emb.infinity_server import (
 )
 from infinity_emb.cli import v1, v2
 
-
 from infinity_emb.cli import (
     UVICORN_LOG_LEVELS,
     Device,
