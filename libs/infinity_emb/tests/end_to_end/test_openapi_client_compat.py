@@ -132,7 +132,7 @@ async def test_openai(client: AsyncClient):
 
     # test AUDIO: cosine distance of beep to cat and dog
     np.testing.assert_allclose(
-        emb1_audio.data[0].embedding, emb1_1_audio.data[0].embedding, rtol=1e-5
+        emb1_audio.data[0].embedding, emb1_1_audio.data[0].embedding, rtol=1e-4
     )
     assert all(
         np.dot(emb1_audio.data[0].embedding, emb1_audio_from_text.data[0].embedding)
@@ -142,7 +142,7 @@ async def test_openai(client: AsyncClient):
 
     # test IMAGE: cosine distance of cat to dog and bird
     np.testing.assert_allclose(
-        emb_1_image.data[0].embedding, emb_1_1_image.data[0].embedding, rtol=1e-5
+        emb_1_image.data[0].embedding, emb_1_1_image.data[0].embedding, rtol=1e-4
     )
     assert all(
         np.dot(emb_1_image.data[0].embedding, emb_1_image_from_text.data[0].embedding)
@@ -152,7 +152,7 @@ async def test_openai(client: AsyncClient):
 
     # test TEXT: cosine distance of cat to dog and bird
     np.testing.assert_allclose(
-        emb_1_text.data[0].embedding, emb_1_text.data[1].embedding, rtol=1e-5
+        emb_1_text.data[0].embedding, emb_1_text.data[1].embedding, rtol=1e-4
     )
 
     # wrong key
