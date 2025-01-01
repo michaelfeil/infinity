@@ -94,7 +94,7 @@
 <li class="md-nav__item">
 <a class="md-nav__link" href="..">
 <span class="md-ellipsis">
-    Infinity
+    Home
   </span>
 </a>
 </li>
@@ -240,18 +240,21 @@
 </span><span id="__span-0-3"><a href="#__codelineno-0-3" id="__codelineno-0-3" name="__codelineno-0-3"></a><span class="nb">cd</span><span class="w"> </span>libs/infinity_emb
 </span><span id="__span-0-4"><a href="#__codelineno-0-4" id="__codelineno-0-4" name="__codelineno-0-4"></a>poetry<span class="w"> </span>install<span class="w"> </span>--extras<span class="w"> </span>all<span class="w"> </span>--with<span class="w"> </span><span class="nb">test</span>
 </span></code></pre></div></p>
-<p>To ensure your contributions pass the Continuous Integration (CI) checks:
+<p>To ensure your contributions pass the Continuous Integration (CI), there are some useful local actions.
+The <code>libs/infinity_emb/Makefile</code> is a useful entrypoint for this.
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a><span class="nb">cd</span><span class="w"> </span>libs/infinity_emb
 </span><span id="__span-1-2"><a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a>make<span class="w"> </span>format
 </span><span id="__span-1-3"><a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a>make<span class="w"> </span>lint
-</span><span id="__span-1-4"><a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a>poetry<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>./tests
-</span></code></pre></div>
-As an alternative, you can also use the following command:
+</span><span id="__span-1-4"><a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a>make<span class="w"> </span>template-docker
+</span><span id="__span-1-5"><a href="#__codelineno-1-5" id="__codelineno-1-5" name="__codelineno-1-5"></a>poetry<span class="w"> </span>run<span class="w"> </span>pytest<span class="w"> </span>./tests
+</span></code></pre></div></p>
+<p>As an alternative, you can also use the following command, which bundles a range of the above.
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="nb">cd</span><span class="w"> </span>libs/infinity_emb
 </span><span id="__span-2-2"><a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a>make<span class="w"> </span>precommit
 </span></code></pre></div></p>
 <h2 id="cla">CLA</h2>
-<p>All contributions must be made in a way to be compatible with the MIT License of this repo. </p>
+<p>Infinity is developed as open source project. 
+All contributions must be made in a way to be compatible with the MIT License of this repo. </p>
 </article>
 </div>
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>

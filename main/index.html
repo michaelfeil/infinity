@@ -21,9 +21,6 @@
 <input autocomplete="off" class="md-toggle" data-md-toggle="search" id="__search" type="checkbox"/>
 <label class="md-overlay" for="__drawer"></label>
 <div data-md-component="skip">
-<a class="md-skip" href="#infinity">
-          Skip to content
-        </a>
 </div>
 <div data-md-component="announce">
 </div>
@@ -47,7 +44,7 @@
 <div class="md-header__topic" data-md-component="header-topic">
 <span class="md-ellipsis">
             
-              Infinity
+              Home
             
           </span>
 </div>
@@ -92,64 +89,11 @@
 <ul class="md-nav__list" data-md-scrollfix="">
 <li class="md-nav__item md-nav__item--active">
 <input class="md-nav__toggle md-toggle" id="__toc" type="checkbox"/>
-<label class="md-nav__link md-nav__link--active" for="__toc">
-<span class="md-ellipsis">
-    Infinity
-  </span>
-<span class="md-nav__icon md-icon"></span>
-</label>
 <a class="md-nav__link md-nav__link--active" href=".">
 <span class="md-ellipsis">
-    Infinity
+    Home
   </span>
 </a>
-<nav aria-label="Table of contents" class="md-nav md-nav--secondary">
-<label class="md-nav__title" for="__toc">
-<span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#why-infinity">
-<span class="md-ellipsis">
-      Why Infinity
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#getting-started">
-<span class="md-ellipsis">
-      Getting started
-    </span>
-</a>
-<nav aria-label="Getting started" class="md-nav">
-<ul class="md-nav__list">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#launch-the-cli-using-a-pre-built-docker-container-recommended">
-<span class="md-ellipsis">
-      Launch the CLI using a pre-built docker container (recommended)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#or-launch-the-cli-after-the-pip-install">
-<span class="md-ellipsis">
-      or launch the cli after the pip install
-    </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#launch-faq">
-<span class="md-ellipsis">
-      Launch FAQ
-    </span>
-</a>
-</li>
-</ul>
-</nav>
 </li>
 <li class="md-nav__item">
 <a class="md-nav__link" href="benchmarking/">
@@ -230,145 +174,13 @@
 <div class="md-sidebar__scrollwrap">
 <div class="md-sidebar__inner">
 <nav aria-label="Table of contents" class="md-nav md-nav--secondary">
-<label class="md-nav__title" for="__toc">
-<span class="md-nav__icon md-icon"></span>
-      Table of contents
-    </label>
-<ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#why-infinity">
-<span class="md-ellipsis">
-      Why Infinity
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#getting-started">
-<span class="md-ellipsis">
-      Getting started
-    </span>
-</a>
-<nav aria-label="Getting started" class="md-nav">
-<ul class="md-nav__list">
-<li class="md-nav__item">
-<a class="md-nav__link" href="#launch-the-cli-using-a-pre-built-docker-container-recommended">
-<span class="md-ellipsis">
-      Launch the CLI using a pre-built docker container (recommended)
-    </span>
-</a>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#or-launch-the-cli-after-the-pip-install">
-<span class="md-ellipsis">
-      or launch the cli after the pip install
-    </span>
-</a>
-</li>
-</ul>
-</nav>
-</li>
-<li class="md-nav__item">
-<a class="md-nav__link" href="#launch-faq">
-<span class="md-ellipsis">
-      Launch FAQ
-    </span>
-</a>
-</li>
-</ul>
 </nav>
 </div>
 </div>
 </div>
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
-<h1 id="infinity"><a href="https://github.com/michaelfeil/infinity">Infinity</a></h1>
-<p>Infinity is a high-throughput, low-latency REST API for serving vector embeddings, supporting all sentence-transformer models and frameworks. Infinity is developed under <a href="https://github.com/michaelfeil/infinity/blob/main/LICENSE">MIT License</a>. Infinity powers inference behind <a href="https://gradient.ai">Gradient.ai</a> and other Embedding API providers.</p>
-<h2 id="why-infinity">Why Infinity</h2>
-<p>Infinity provides the following features:</p>
-<ul>
-<li><strong>Deploy any model from MTEB</strong>: deploy the model you know from <a href="https://github.com/UKPLab/sentence-transformers/">SentenceTransformers</a></li>
-<li><strong>Fast inference backends</strong>: The inference server is built on top of <a href="https://github.com/pytorch/pytorch">torch</a>, <a href="https://huggingface.co/docs/optimum/index">optimum(onnx/tensorrt)</a> and <a href="https://github.com/OpenNMT/CTranslate2">CTranslate2</a>, using FlashAttention to get the most out of <strong>CUDA</strong>, <strong>ROCM</strong>, <strong>CPU</strong> or <strong>MPS</strong> device.</li>
-<li><strong>Dynamic batching</strong>: New embedding requests are queued while GPU is busy with the previous ones. New requests are squeezed intro your device as soon as ready. Similar max throughput on GPU as text-embeddings-inference.</li>
-<li><strong>Correct and tested implementation</strong>: Unit and end-to-end tested. Embeddings via infinity are identical to <a href="https://github.com/UKPLab/sentence-transformers/">SentenceTransformers</a> (up to numerical precision). Lets API users create embeddings till infinity and beyond.</li>
-<li><strong>Easy to use</strong>: The API is built on top of <a href="https://fastapi.tiangolo.com/">FastAPI</a>, <a href="https://swagger.io/">Swagger</a> makes it fully documented. API are aligned to <a href="https://platform.openai.com/docs/guides/embeddings/what-are-embeddings">OpenAI's Embedding specs</a>. See below on how to get started.</li>
-</ul>
-<h2 id="getting-started">Getting started</h2>
-<p>Install <code>infinity_emb</code> via pip
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a href="#__codelineno-0-1" id="__codelineno-0-1" name="__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>infinity-emb<span class="o">[</span>all<span class="o">]</span>
-</span></code></pre></div></p>
-<details>
-<summary>Install from source with Poetry</summary>
-
-  Advanced:
-  To install via Poetry use Poetry 1.8.4, Python 3.11 on Ubuntu 22.04
-  <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a href="#__codelineno-1-1" id="__codelineno-1-1" name="__codelineno-1-1"></a>git<span class="w"> </span>clone<span class="w"> </span>https://github.com/michaelfeil/infinity
-</span><span id="__span-1-2"><a href="#__codelineno-1-2" id="__codelineno-1-2" name="__codelineno-1-2"></a><span class="nb">cd</span><span class="w"> </span>infinity
-</span><span id="__span-1-3"><a href="#__codelineno-1-3" id="__codelineno-1-3" name="__codelineno-1-3"></a><span class="nb">cd</span><span class="w"> </span>libs/infinity_emb
-</span><span id="__span-1-4"><a href="#__codelineno-1-4" id="__codelineno-1-4" name="__codelineno-1-4"></a>poetry<span class="w"> </span>install<span class="w"> </span>--extras<span class="w"> </span>all
-</span></code></pre></div>
-</details>
-<h3 id="launch-the-cli-using-a-pre-built-docker-container-recommended">Launch the CLI using a pre-built docker container (recommended)</h3>
-<p><div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a href="#__codelineno-2-1" id="__codelineno-2-1" name="__codelineno-2-1"></a><span class="nv">port</span><span class="o">=</span><span class="m">7997</span>
-</span><span id="__span-2-2"><a href="#__codelineno-2-2" id="__codelineno-2-2" name="__codelineno-2-2"></a><span class="nv">model1</span><span class="o">=</span>michaelfeil/bge-small-en-v1.5
-</span><span id="__span-2-3"><a href="#__codelineno-2-3" id="__codelineno-2-3" name="__codelineno-2-3"></a><span class="nv">model2</span><span class="o">=</span>mixedbread-ai/mxbai-rerank-xsmall-v1
-</span><span id="__span-2-4"><a href="#__codelineno-2-4" id="__codelineno-2-4" name="__codelineno-2-4"></a><span class="nv">volume</span><span class="o">=</span><span class="nv">$PWD</span>/data
-</span><span id="__span-2-5"><a href="#__codelineno-2-5" id="__codelineno-2-5" name="__codelineno-2-5"></a>
-</span><span id="__span-2-6"><a href="#__codelineno-2-6" id="__codelineno-2-6" name="__codelineno-2-6"></a>docker<span class="w"> </span>run<span class="w"> </span>-it<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-7"><a href="#__codelineno-2-7" id="__codelineno-2-7" name="__codelineno-2-7"></a><span class="w"> </span>-v<span class="w"> </span><span class="nv">$volume</span>:/app/.cache<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-8"><a href="#__codelineno-2-8" id="__codelineno-2-8" name="__codelineno-2-8"></a><span class="w"> </span>-p<span class="w"> </span><span class="nv">$port</span>:<span class="nv">$port</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-9"><a href="#__codelineno-2-9" id="__codelineno-2-9" name="__codelineno-2-9"></a><span class="w"> </span>michaelf34/infinity:latest<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-10"><a href="#__codelineno-2-10" id="__codelineno-2-10" name="__codelineno-2-10"></a><span class="w"> </span>v2<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-11"><a href="#__codelineno-2-11" id="__codelineno-2-11" name="__codelineno-2-11"></a><span class="w"> </span>--model-id<span class="w"> </span><span class="nv">$model1</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-12"><a href="#__codelineno-2-12" id="__codelineno-2-12" name="__codelineno-2-12"></a><span class="w"> </span>--model-id<span class="w"> </span><span class="nv">$model2</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-13"><a href="#__codelineno-2-13" id="__codelineno-2-13" name="__codelineno-2-13"></a><span class="w"> </span>--port<span class="w"> </span><span class="nv">$port</span>
-</span></code></pre></div>
-The cache path inside the docker container is set by the environment variable <code>HF_HOME</code>.</p>
-<h3 id="or-launch-the-cli-after-the-pip-install">or launch the cli after the pip install</h3>
-<p>After your pip install, with your venv activate, you can run the CLI directly.
-Check the <code>--help</code> command to get a description for all parameters.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a href="#__codelineno-3-1" id="__codelineno-3-1" name="__codelineno-3-1"></a>infinity_emb<span class="w"> </span>--help
-</span></code></pre></div>
-<h2 id="launch-faq">Launch FAQ</h2>
-<details>
-<summary>What are embedding models?</summary>
-  Embedding models can map any text to a low-dimensional dense vector which can be used for tasks like retrieval, classification, clustering, or semantic search. 
-  And it also can be used in vector databases for LLMs. 
-
-
-  The most know architecture are encoder-only transformers such as BERT, and most popular implementation include [SentenceTransformers](https://github.com/UKPLab/sentence-transformers/).
-</details>
-<details>
-<summary>What models are supported?</summary>
-
-  All models of the sentence transformers org are supported https://huggingface.co/sentence-transformers / sbert.net. 
-  LLM's like LLAMA2-7B are not intended for deployment.
-
-
-  With the command `--engine torch` the model must be compatible with https://github.com/UKPLab/sentence-transformers/.
-    - only models from Huggingface are supported.
-
-
-  With the command `--engine ctranslate2`
-    - only `BERT` models are supported.
-    - only models from Huggingface are supported.
-
-
-  For the latest trends, you might want to check out one of the following models.
-    https://huggingface.co/spaces/mteb/leaderboard
-
-</details>
-<details>
-<summary>Using Langchain with Infinity</summary>
-  Now available under # Python Integrations in the side panel.  
-  ```
-</details>
-<details>
-<summary>Question not answered here?</summary>
-
-  There is a Discussion section on the Github of Infinity:
-  https://github.com/michaelfeil/infinity/discussions
-
-</details>
+<h1>Home</h1>
 </article>
 </div>
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
