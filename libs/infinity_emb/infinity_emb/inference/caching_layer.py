@@ -22,7 +22,10 @@ if CHECK_DISKCACHE.is_available:
 
 
 class Cache:
-    """wrapper around DiskCache"""
+    """wrapper around DiskCache. The Diskcache in infinity `races` against the model inference.
+
+    The concept is that with the code be
+    """
 
     def __init__(self, cache_name: str, shutdown: threading.Event) -> None:
         """
