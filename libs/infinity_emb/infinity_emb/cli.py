@@ -199,7 +199,7 @@ if CHECK_TYPER.is_available:
             **_construct("trust_remote_code"),
             help="if potential remote modeling code from huggingface repo is trusted.",
         ),
-        engine: list["InferenceEngine"] = typer.Option(
+        engine: list[InferenceEngine] = typer.Option(
             **_construct("engine"),
             help="Which backend to use. `torch` uses Pytorch GPU/CPU, optimum uses ONNX on GPU/CPU/NVIDIA-TensorRT, `CTranslate2` uses torch+ctranslate2 on CPU/GPU.",
         ),
@@ -226,11 +226,11 @@ if CHECK_TYPER.is_available:
         dtype: list[Dtype] = typer.Option(
             **_construct("dtype"), help="dtype for the model weights."
         ),
-        embedding_dtype: list["EmbeddingDtype"] = typer.Option(
+        embedding_dtype: list[EmbeddingDtype] = typer.Option(
             **_construct("embedding_dtype"),
             help="dtype post-forward pass. If != `float32`, using Post-Forward Static quantization.",
         ),
-        pooling_method: list["PoolingMethod"] = typer.Option(
+        pooling_method: list[PoolingMethod] = typer.Option(
             **_construct("pooling_method"),
             help="overwrite the pooling method if inferred incorrectly.",
         ),
