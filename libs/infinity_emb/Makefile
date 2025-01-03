@@ -57,6 +57,9 @@ build-trt:
 build-cpu:
 	docker buildx build -t michaelf34/infinity:$(VERSION)-cpu -f Dockerfile.cpu_auto --push .
 
+build-nvidia:
+	docker buildx build -t michaelf34/infinity:$(VERSION) -f Dockerfile.nvidia_auto --push .
+
 # Combined target to build both
 build-all-docker: 
 	docker buildx build -t michaelf34/infinity:$(VERSION)-amd -f Dockerfile.amd_auto --push . & \
