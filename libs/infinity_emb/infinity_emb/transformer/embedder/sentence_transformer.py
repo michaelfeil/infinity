@@ -59,8 +59,8 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         CHECK_SENTENCE_TRANSFORMERS.mark_required()
 
         model_kwargs = {}
-        attemp_bt = check_if_bettertransformer_possible(engine_args)
-        if engine_args.bettertransformer and attemp_bt:
+        attempt_bt = check_if_bettertransformer_possible(engine_args)
+        if engine_args.bettertransformer and attempt_bt:
             model_kwargs["attn_implementation"] = "eager"
 
         ls = engine_args._loading_strategy
@@ -92,7 +92,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         self.eval()
         self.engine_args = engine_args
-        if engine_args.bettertransformer and attemp_bt:
+        if engine_args.bettertransformer and attempt_bt:
             fm.auto_model = to_bettertransformer(
                 fm.auto_model,
                 engine_args,

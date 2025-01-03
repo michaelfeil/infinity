@@ -26,8 +26,8 @@ class SentenceClassifier(BaseClassifer):
     ) -> None:
         CHECK_TRANSFORMERS.mark_required()
         model_kwargs = {}
-        attemp_bt = check_if_bettertransformer_possible(engine_args)
-        if engine_args.bettertransformer and attemp_bt:
+        attempt_bt = check_if_bettertransformer_possible(engine_args)
+        if engine_args.bettertransformer and attempt_bt:
             model_kwargs["attn_implementation"] = "eager"
         ls = engine_args._loading_strategy
         assert ls is not None
@@ -50,7 +50,7 @@ class SentenceClassifier(BaseClassifer):
                 self._pipe.model, engine_args.dtype, device=Device[self._pipe.model.device.type]
             )
 
-        if engine_args.bettertransformer and attemp_bt:
+        if engine_args.bettertransformer and attempt_bt:
             self._pipe.model = to_bettertransformer(
                 self._pipe.model,  # type: ignore
                 engine_args,
