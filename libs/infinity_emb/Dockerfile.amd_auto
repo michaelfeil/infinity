@@ -27,7 +27,7 @@ ENV INFINITY_BETTERTRANSFORMER="0"
 
 WORKDIR /app
 
-FROM base as builder
+FROM base AS builder
 # Set the working directory for the app
 # Define the version of Poetry to install (default is 1.8.4)
 # Define the directory to install Poetry to (default is /opt/poetry)
@@ -86,9 +86,10 @@ else \
     echo "NO GPU_ARCH, skip optium: ${GPU_ARCH}"; \
 fi
 
+# TODO: remove this line
+RUN apt-get install --no-install-recommends -y git && poetry run python -m pip install git+https://github.com/huggingface/transformers.git@42865860ec6dc135972d9555753cb7ee17f51fb4 && rm -rf ~/.cache/ /tmp/*
 
-
-FROM builder as testing
+FROM builder AS testing
 # install lint and test dependencies
 # "RUN poetry install --no-interaction --no-ansi  --extras \"${EXTRAS}\" --with lint,test && poetry cache clear pypi --all"
 COPY requirements_install_from_poetry.sh requirements_install_from_poetry.sh

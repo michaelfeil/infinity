@@ -49,18 +49,19 @@ template_docker:
 
 # Add new targets
 build-amd:
-	docker buildx build -t michaelf34/infinity:$(VERSION)-amd -f Dockerfile.amd_auto --push .
+	docker buildx build --platform linux/amd64 -t michaelf34/infinity:$(VERSION)-amd -f Dockerfile.amd_auto --push .
 
 build-trt:
-	docker buildx build -t michaelf34/infinity:$(VERSION)-trt-onnx -f Dockerfile.trt_onnx_auto --push .
+	docker buildx build --platform linux/amd64 -t michaelf34/infinity:$(VERSION)-trt-onnx -f Dockerfile.trt_onnx_auto --push .
 
 build-cpu:
-	docker buildx build -t michaelf34/infinity:$(VERSION)-cpu -f Dockerfile.cpu_auto --push .
+	docker buildx build --platform linux/amd64 -t michaelf34/infinity:$(VERSION)-cpu -f Dockerfile.cpu_auto --push .
+
+build-nvidia:
+	docker buildx build --platform linux/amd64 -t michaelf34/infinity:$(VERSION) -f Dockerfile.nvidia_auto --push .
 
 # Combined target to build both
-build-all-docker: 
-	docker buildx build -t michaelf34/infinity:$(VERSION)-amd -f Dockerfile.amd_auto --push . & \
-	docker buildx build -t michaelf34/infinity:$(VERSION)-trt-onnx -f Dockerfile.trt_onnx_auto --push .
+build-all-docker: build-nvidia build-cpu build-amd build-trt 
 
 poetry_check:
 	poetry check
