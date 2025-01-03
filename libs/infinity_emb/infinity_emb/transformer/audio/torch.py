@@ -26,6 +26,7 @@ class TorchAudioModel(BaseAudioEmbedModel):
     def __init__(self, *, engine_args: EngineArgs):
         CHECK_TORCH.mark_required()
         CHECK_TRANSFORMERS.mark_required()
+
         self.model = AutoModel.from_pretrained(
             engine_args.model_name_or_path,
             revision=engine_args.revision,
@@ -33,11 +34,6 @@ class TorchAudioModel(BaseAudioEmbedModel):
             # attn_implementation="eager" if engine_args.bettertransformer else None,
         )
 
-        # self.model = to_bettertransformer(
-        #     self.model,
-        #     engine_args,
-        #     logger,
-        # )
         self.processor = AutoProcessor.from_pretrained(
             engine_args.model_name_or_path,
             revision=engine_args.revision,

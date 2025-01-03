@@ -4,12 +4,13 @@
 import os
 from typing import TYPE_CHECKING
 
-from infinity_emb._optional_imports import CHECK_OPTIMUM, CHECK_TORCH
+from infinity_emb._optional_imports import CHECK_OPTIMUM, CHECK_TORCH, CHECK_TRANSFORMERS
 from infinity_emb.primitives import Device
 
 if CHECK_OPTIMUM.is_available:
     from optimum.bettertransformer import (  # type: ignore[import-untyped]
         BetterTransformer,
+        BetterTransformerManager,
     )
 
 if CHECK_TORCH.is_available:
@@ -19,6 +20,9 @@ if CHECK_TORCH.is_available:
         # allow TF32 for better performance
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
+if CHECK_TRANSFORMERS.is_available:
+    from transformers import AutoConfig  # type: ignore[import-untyped]
+
 
 if TYPE_CHECKING:
     from logging import Logger
@@ -26,6 +30,20 @@ if TYPE_CHECKING:
     from transformers import PreTrainedModel  # type: ignore[import-untyped]
 
     from infinity_emb.args import EngineArgs
+
+
+def check_if_bettertransformer_possible(engine_args: "EngineArgs") -> bool:
+    """verifies if attempting conversion to bettertransformers should be checked."""
+    if not engine_args.bettertransformer:
+        return False
+
+    config = AutoConfig.from_pretrained(
+        pretrained_model_name_or_path=engine_args.model_name_or_path,
+        revision=engine_args.revision,
+        trust_remote_code=engine_args.trust_remote_code,
+    )
+
+    return config.model_type in BetterTransformerManager.MODEL_MAPPING
 
 
 def to_bettertransformer(model: "PreTrainedModel", engine_args: "EngineArgs", logger: "Logger"):

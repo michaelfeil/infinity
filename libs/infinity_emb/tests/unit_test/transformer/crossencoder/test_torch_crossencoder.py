@@ -11,7 +11,9 @@ import torch
 
 device = Device.cpu if torch.backends.mps.is_available() else Device.auto
 
-SHOULD_TORCH_COMPILE = sys.platform == "linux" and sys.version_info < (3, 12)
+SHOULD_TORCH_COMPILE = (
+    sys.platform == "linux" and sys.version_info < (3, 12) and torch.cuda.is_available()
+)
 
 
 def test_crossencoder():
@@ -43,7 +45,9 @@ def test_crossencoder():
 def test_patched_crossencoder_vs_sentence_transformers():
     model = CrossEncoderPatched(
         engine_args=EngineArgs(
-            model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1", compile=True, device=device
+            model_name_or_path="mixedbread-ai/mxbai-rerank-xsmall-v1",
+            compile=SHOULD_TORCH_COMPILE,
+            device=device,
         )
     )
     model_unpatched = CrossEncoder("mixedbread-ai/mxbai-rerank-xsmall-v1")

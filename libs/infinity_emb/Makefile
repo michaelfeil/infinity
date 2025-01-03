@@ -73,18 +73,18 @@ spell_fix:
 	poetry run codespell --toml pyproject.toml -w
 
 benchmark_embed: tests/data/benchmark/benchmark_embed.json
-	ab -n 10 -c 10 -l -s 480 \
+	ab -n 50 -c 50 -l -s 480 \
 	-T 'application/json' \
 	-p $< \
 	http://127.0.0.1:7997/embeddings
-	# sudo apt-get apache2-utils
+	# sudo apt-get install apache2-utils
 
 benchmark_embed_vision: tests/data/benchmark/benchmark_embed_image.json
-	ab -n 100 -c 50 -l -s 480 \
+	ab -n 50 -c 50 -l -s 480 \
 	-T 'application/json' \
 	-p $< \
 	http://127.0.0.1:7997/embeddings
-	# sudo apt-get apache2-utils
+	# sudo apt-get install apache2-utils
 
 # Generate CLI v2 documentation
 cli_v2_docs:

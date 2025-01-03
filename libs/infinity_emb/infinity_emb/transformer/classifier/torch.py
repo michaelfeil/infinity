@@ -5,7 +5,10 @@ from infinity_emb._optional_imports import CHECK_TRANSFORMERS, CHECK_TORCH
 from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
 from infinity_emb.transformer.abstract import BaseClassifer
-from infinity_emb.transformer.acceleration import to_bettertransformer
+from infinity_emb.transformer.acceleration import (
+    to_bettertransformer,
+    check_if_bettertransformer_possible,
+)
 from infinity_emb.transformer.quantization.interface import quant_interface
 from infinity_emb.primitives import Device
 
@@ -23,7 +26,8 @@ class SentenceClassifier(BaseClassifer):
     ) -> None:
         CHECK_TRANSFORMERS.mark_required()
         model_kwargs = {}
-        if engine_args.bettertransformer:
+        attempt_bt = check_if_bettertransformer_possible(engine_args)
+        if engine_args.bettertransformer and attempt_bt:
             model_kwargs["attn_implementation"] = "eager"
         ls = engine_args._loading_strategy
         assert ls is not None
@@ -41,15 +45,16 @@ class SentenceClassifier(BaseClassifer):
             model_kwargs=model_kwargs,
         )
 
-        self._pipe.model = to_bettertransformer(
-            self._pipe.model,
-            engine_args,
-            logger,
-        )
-
         if ls.quantization_dtype is not None:
             self._pipe.model = quant_interface(  # TODO: add ls.quantization_dtype and ls.placement
                 self._pipe.model, engine_args.dtype, device=Device[self._pipe.model.device.type]
+            )
+
+        if engine_args.bettertransformer and attempt_bt:
+            self._pipe.model = to_bettertransformer(
+                self._pipe.model,  # type: ignore
+                engine_args,
+                logger,
             )
 
         if engine_args.compile:
