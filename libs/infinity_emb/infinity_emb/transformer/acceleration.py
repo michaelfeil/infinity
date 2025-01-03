@@ -43,10 +43,7 @@ def check_if_bettertransformer_possible(engine_args: "EngineArgs") -> bool:
         trust_remote_code=engine_args.trust_remote_code,
     )
 
-    if config.model_type in BetterTransformerManager.MODEL_MAPPING:
-        return True
-    else:
-        return False
+    return config.model_type in BetterTransformerManager.MODEL_MAPPING
 
 
 def to_bettertransformer(model: "PreTrainedModel", engine_args: "EngineArgs", logger: "Logger"):
