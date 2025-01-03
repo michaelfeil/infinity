@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y build-essential
 {{extra_env_variables | default('')}}
 WORKDIR /app
 
-FROM base as builder
+FROM base AS builder
 # Set the working directory for the app
 # Define the version of Poetry to install (default is 1.8.4)
 # Define the directory to install Poetry to (default is /opt/poetry)
@@ -46,7 +46,7 @@ COPY infinity_emb infinity_emb
 # TODO: remove this line
 RUN apt-get install --no-install-recommends -y git && poetry run python -m pip install git+https://github.com/huggingface/transformers.git@42865860ec6dc135972d9555753cb7ee17f51fb4 && rm -rf ~/.cache/ /tmp/*
 
-FROM builder as testing
+FROM builder AS testing
 # install lint and test dependencies
 {{main_install|replace("--without", "--with")|replace("--no-root","")}}
 # lint 
