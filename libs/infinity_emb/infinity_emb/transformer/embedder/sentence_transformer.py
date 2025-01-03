@@ -16,7 +16,10 @@ from infinity_emb.args import EngineArgs
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device
 from infinity_emb.transformer.abstract import BaseEmbedder
-from infinity_emb.transformer.acceleration import to_bettertransformer
+from infinity_emb.transformer.acceleration import (
+    to_bettertransformer,
+    check_if_bettertransformer_possible,
+)
 from infinity_emb.transformer.quantization.interface import (
     quant_embedding_decorator,
     quant_interface,
@@ -56,7 +59,8 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         CHECK_SENTENCE_TRANSFORMERS.mark_required()
 
         model_kwargs = {}
-        if engine_args.bettertransformer:
+        attemp_bt = check_if_bettertransformer_possible(engine_args)
+        if engine_args.bettertransformer and attemp_bt:
             model_kwargs["attn_implementation"] = "eager"
 
         ls = engine_args._loading_strategy
@@ -88,12 +92,12 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         self._infinity_tokenizer = copy.deepcopy(fm.tokenizer)
         self.eval()
         self.engine_args = engine_args
-
-        fm.auto_model = to_bettertransformer(
-            fm.auto_model,
-            engine_args,
-            logger,
-        )
+        if engine_args.bettertransformer and attemp_bt:
+            fm.auto_model = to_bettertransformer(
+                fm.auto_model,
+                engine_args,
+                logger,
+            )
 
         fm.to(ls.loading_dtype)
 
