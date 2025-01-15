@@ -134,7 +134,7 @@ class BatchHandler:
                 threadpool=ThreadPoolExecutorReadOnly(self._threadpool),
                 input_q=self._publish_to_model_queue,
                 output_q=self._result_queue,
-                verbose=self.batch_delay,
+                verbose=self._verbose,
                 batch_delay=batch_delay,
             )
             for model_replica in model_replicas
