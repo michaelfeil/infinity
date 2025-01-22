@@ -389,11 +389,15 @@ def cli():
         "--show-completion",
         "--install-completion",
     ]:
-        logger.critical(
-            "Error: No command given. Please use infinity with the `v2` command. "
-            f"This is deprecated since 0.0.32. You are on {infinity_emb.__version__}"
-            "Usage: `infinity_emb v2 --model-id BAAI/bge-large-en-v1.5"
-        )
+        if len(sys.argv) == 1 or sys.argv[1] not in ["v1", "v2", "help", "--help"]:
+            logger.error(
+                "Error: No command given. Please use infinity with the `v2` command. "
+                f"This is deprecated since 0.0.32. You are on {infinity_emb.__version__}. "
+                "Usage: `infinity_emb v2 --model-id BAAI/bge-large-en-v1.5. "
+                "defaulting to `v2` since 0.0.75. Please pin your revision for future upgrades."
+            )
+
+            sys.argv.insert(1, "v2")
     tp()
 
 
