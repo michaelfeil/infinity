@@ -1,7 +1,7 @@
 
 [tool.poetry]
 name = "infinity_emb"
-version = "0.0.74"
+version = "0.0.75"
 description = "Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models and clip."
 authors = ["michaelfeil <noreply@michaelfeil.eu>"]
 license = "MIT"
