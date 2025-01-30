@@ -51,7 +51,7 @@ RUN poetry run $PYTHON -m pip install --no-cache-dir flash-attn --no-build-isola
 RUN poetry run $PYTHON -m pip install --no-cache-dir "tensorrt==10.3.0" "tensorrt_lean==10.3.0" "tensorrt_dispatch==10.3.0"
 
 # TODO: remove this line
-RUN apt-get install --no-install-recommends -y git && poetry run python -m pip install git+https://github.com/huggingface/transformers.git@42865860ec6dc135972d9555753cb7ee17f51fb4 && rm -rf ~/.cache/ /tmp/*
+RUN apt-get install --no-install-recommends -y git && poetry run python -m pip install git+https://github.com/huggingface/transformers.git@7547f55e5d93245c0a013b50df976924f2d9e8b0 && rm -rf ~/.cache/ /tmp/*
 
 FROM builder AS testing
 # install lint and test dependencies
