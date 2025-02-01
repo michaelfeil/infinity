@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: "3.10"
           poetry-version: ${{ env.POETRY_VERSION }}
-          cache-key: release
+          cache-key: client-generation
 
       - name: Install infinity
         run: |
@@ -37,7 +37,7 @@ jobs:
       - name: Test Generated Client
         working-directory: libs/client_infinity
         run: |
-          ./run_tets_with_hook.sh
+          ./run_tests_with_hook.sh
 
       - name: Open a PR
         uses: peter-evans/create-pull-request@v7
