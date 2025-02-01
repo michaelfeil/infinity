@@ -1,16 +1,14 @@
----
 name: Auto generate Client Code
 
 on:
   push:
     branches: [main]
 
-
 env:
   POETRY_VERSION: "1.8.4"
 
 jobs:
-  publish-to-pypi:
+  generate-client:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -39,8 +37,8 @@ jobs:
 
       - name: Test Generated Client
         working-directory: libs/client_infinity
-        run:
+        run: |
           ./run_tets_with_hook.sh
 
-    - name: "Open a PR"
-      uses: peter-evans/create-pull-request@v7
+      - name: Open a PR
+        uses: peter-evans/create-pull-request@v7
