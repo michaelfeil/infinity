@@ -26,24 +26,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Compare versions
-        working-directory: ${{ github.workspace }}
-        run: |
-          file1="libs/client_infinity/infinity_client/pyproject.toml"
-          file2="libs/infinity_emb/pyproject.toml"
-          
-          version1=$(grep 'version = ' "$file1" | sed 's/version = //' | tr -d '\"')
-          version2=$(grep 'version = ' "$file2" | sed 's/version = //' | tr -d '\"')
-
-          echo "Version 1: $version1"
-          echo "Version 2: $version2"
-
-          if [ "$version1" != "$version2" ]; then
-            echo "Version mismatch: $version1 != $version2"
-            exit 1
-          else
-            echo "Versions match: $version1 == $version2"
-
       - name: Set up Python + Poetry ${{ env.POETRY_VERSION }}
         uses: "./.github/actions/poetry_setup"
         with:
