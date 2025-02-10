@@ -156,7 +156,7 @@ In order to deploy a local model with a docker container, you need to mount the 
 
 Example:
 ```bash
-git install lfs 
+git lfs install 
 cd /tmp
 mkdir models && cd models && git clone https://huggingface.co/BAAI/bge-small-en-v1.5
 docker run -it   -v /tmp/models:/models  -p 8081:8081  michaelf34/infinity:latest v2  --model-id "/models/bge-small-en-v1.5" --port 8081
