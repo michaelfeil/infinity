@@ -30,7 +30,7 @@ for i in {1..10}; do
 done
 
 # Run the tests
-pip install openapi-python-client==0.21.1
+python -m pip install openapi-python-client==0.21.1 && \
 	 openapi-python-client generate  \
 	  --url http://0.0.0.0:7993/openapi.json \
 	  --config client_config.yaml \
