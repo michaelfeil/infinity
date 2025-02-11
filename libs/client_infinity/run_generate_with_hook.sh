@@ -30,7 +30,7 @@ for i in {1..10}; do
 done
 
 # Run the tests
-pip install openapi-python-client==0.21.1
+python -m pip install openapi-python-client==0.21.1 && \
 	 openapi-python-client generate  \
 	  --url http://0.0.0.0:7993/openapi.json \
 	  --config client_config.yaml \
@@ -38,5 +38,6 @@ pip install openapi-python-client==0.21.1
 	   --custom-template-path=./template
 
 # copy the readme to docs
+cp ./template/vision_client.py ./infinity_client/infinity_client/vision_client.py
 cp ./infinity_client/README.md ./../../docs/docs/client_infinity.md
 # Cleanup will be called due to the trap

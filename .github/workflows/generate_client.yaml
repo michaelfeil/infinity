@@ -1,0 +1,43 @@
+name: Auto generate Client Code
+
+on:
+  push:
+    branches: [main]
+
+env:
+  POETRY_VERSION: "1.8.4"
+
+jobs:
+  generate-client:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python + Poetry ${{ env.POETRY_VERSION }}
+        uses: "./.github/actions/poetry_setup"
+        with:
+          python-version: "3.10"
+          poetry-version: ${{ env.POETRY_VERSION }}
+          cache-key: client-generation
+
+      - name: Install infinity
+        run: |
+          pip install libs/infinity_emb[all]
+
+      - name: Generate Client
+        working-directory: libs/client_infinity
+        run: |
+          ./run_generate_with_hook.sh
+
+      - name: Test Generated Client
+        working-directory: libs/client_infinity
+        run: |
+          ./run_tests_with_hook.sh
+
+      - name: Open a PR
+        uses: peter-evans/create-pull-request@v7
