@@ -1,9 +1,8 @@
-from typing import TYPE_CHECKING, Any, Dict, List, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Type, TypeVar, Union, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.re_rank_result_object import ReRankResultObject
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -22,7 +21,7 @@ class ReRankResult:
         results (List['ReRankObject']):
         model (str):
         usage (Usage):
-        object_ (Union[Unset, ReRankResultObject]):  Default: ReRankResultObject.RERANK.
+        object_ (Union[Literal['rerank'], Unset]):  Default: 'rerank'.
         id (Union[Unset, str]):
         created (Union[Unset, int]):
     """
@@ -30,7 +29,7 @@ class ReRankResult:
     results: List["ReRankObject"]
     model: str
     usage: "Usage"
-    object_: Union[Unset, ReRankResultObject] = ReRankResultObject.RERANK
+    object_: Union[Literal["rerank"], Unset] = "rerank"
     id: Union[Unset, str] = UNSET
     created: Union[Unset, int] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -45,9 +44,7 @@ class ReRankResult:
 
         usage = self.usage.to_dict()
 
-        object_: Union[Unset, str] = UNSET
-        if not isinstance(self.object_, Unset):
-            object_ = self.object_.value
+        object_ = self.object_
 
         id = self.id
 
@@ -88,12 +85,9 @@ class ReRankResult:
 
         usage = Usage.from_dict(d.pop("usage"))
 
-        _object_ = d.pop("object", UNSET)
-        object_: Union[Unset, ReRankResultObject]
-        if isinstance(_object_, Unset):
-            object_ = UNSET
-        else:
-            object_ = ReRankResultObject(_object_)
+        object_ = cast(Union[Literal["rerank"], Unset], d.pop("object", UNSET))
+        if object_ != "rerank" and not isinstance(object_, Unset):
+            raise ValueError(f"object must match const 'rerank', got '{object_}'")
 
         id = d.pop("id", UNSET)
 
