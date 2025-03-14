@@ -59,6 +59,22 @@ def convert_to_sequence_classifier(model_name: str, slice_single_token_list: Non
         label: num for num, label in enumerate(tokens_selected)
     }
     return model_classifier
+
+def upload_mxbai_v2():
+    model_name = "mxbai-rerank-large-v2"
+    model_cls = convert_to_sequence_classifier(f"mixedbread-ai/{model_name}", [15,16])
+    model_cls = model_cls.to(torch.float16)
+    
+    from huggingface_hub import HfApi, snapshot_download
+    snapshot_download(f"mixedbread-ai/{model_name}", local_dir=f"./{model_name}")
+    model_cls.save_pretrained(f"./{model_name}")
+    
+    api = HfApi()
+    api.create_repo(repo_id=f"michaelfeil/{model_name}-seq", exist_ok=True)
+    api.upload_folder(
+        repo_id=f"michaelfeil/{model_name}-seq",
+        folder_path=f"./{model_name}",
+    )
     
 
 def test_mxbai_rerank_v2():
@@ -95,4 +111,5 @@ def test_mxbai_rerank_v2():
             print("done")
 
 if __name__ == "__main__":
-    test_mxbai_rerank_v2()        
+    test_mxbai_rerank_v2()      
+    upload_mxbai_v2()  
