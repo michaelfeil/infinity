@@ -43,6 +43,7 @@ RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --w
 COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package
 RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all
+# nvcc is not installed -> the following might break if the torch version or python version changes.
 RUN poetry run $PYTHON -m pip install --no-cache-dir https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 
 # TODO: remove this line
