@@ -188,6 +188,7 @@ async def test_async_api_torch_lengths_via_tokenize_usage():
             device=device,
             lengths_via_tokenize=True,
             model_warmup=False,
+            bettertransformer=False,
             compile=SHOULD_TORCH_COMPILE,
         )
     )
@@ -324,6 +325,7 @@ async def test_async_api_torch_embedding_quant(embedding_dtype: EmbeddingDtype):
             device=Device[device],
             lengths_via_tokenize=True,
             model_warmup=False,
+            bettertransformer=False,
             compile=SHOULD_TORCH_COMPILE,
             embedding_dtype=embedding_dtype,
         )

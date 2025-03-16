@@ -77,8 +77,10 @@ jinja2 = "*"
 jinja2-cli = "*"
 
 # preferred dev dependencies
-torch = "2.4.1"
+# 2.6.0 is also pinned in docker image with flash-attn build
+torch = "2.6.0" 
 prometheus-fastapi-instrumentator = "7.0.0"
+# sentence-transformers = "3.3.1"
 fastapi = "0.115.2"
 
 [tool.poetry.group.codespell.dependencies]

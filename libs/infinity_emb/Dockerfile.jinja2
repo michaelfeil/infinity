@@ -18,8 +18,9 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HUB_ENABLE_HF_TRANSFER=1 \
     # extras
     EXTRAS="{{poetry_extras | default('all')}}" \
-    PYTHON="{{python_version | default('python3.11')}}"
-RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
+    PYTHON="python3" 
+    # "{{python_version | default('python3')}}"
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON-pip $PYTHON curl
 {{extra_env_variables | default('')}}
 WORKDIR /app
 
