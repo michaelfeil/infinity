@@ -2,7 +2,7 @@
 # This file is generated from Dockerfile.jinja2. Do not edit the Dockerfile.cuda|cpu|amd file directly.
 # Only contribute to the Dockerfile.jinja2 and dockerfile_template.yaml and regenerate the Dockerfile.cuda|cpu|amd
 
-FROM nvidia/cuda:12.1.1-base-ubuntu22.04 AS base
+FROM nvidia/cuda:12.4.1-base-ubuntu22.04 AS base
 
 ENV PYTHONUNBUFFERED=1 \
     # pip
