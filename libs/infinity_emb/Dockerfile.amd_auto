@@ -18,8 +18,9 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HUB_ENABLE_HF_TRANSFER=1 \
     # extras
     EXTRAS="all" \
-    PYTHON="python3.10"
-RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
+    PYTHON="python3" 
+    # "python3.10"
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON-pip $PYTHON curl
 # RUN conda init --reverse --all
 # RUN rm -rf /opt/conda && rm -rf /var/lib/jenkins
 # Bettertransformer is not supported on AMD

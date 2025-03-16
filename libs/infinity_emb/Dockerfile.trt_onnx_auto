@@ -18,8 +18,9 @@ ENV PYTHONUNBUFFERED=1 \
     HF_HUB_ENABLE_HF_TRANSFER=1 \
     # extras
     EXTRAS="all onnxruntime-gpu" \
-    PYTHON="python3.10"
-RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON curl
+    PYTHON="python3" 
+    # "python3.10"
+RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON-pip $PYTHON curl
 # Set default to tensorrt
 ENV LD_LIBRARY_PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
 ENV PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
