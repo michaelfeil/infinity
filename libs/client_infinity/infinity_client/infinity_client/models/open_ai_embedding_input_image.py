@@ -1,10 +1,9 @@
-from typing import Any, Dict, List, Type, TypeVar, Union, cast
+from typing import Any, Dict, List, Literal, Type, TypeVar, Union, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.embedding_encoding_format import EmbeddingEncodingFormat
-from ..models.open_ai_embedding_input_image_modality import OpenAIEmbeddingInputImageModality
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OpenAIEmbeddingInputImage")
@@ -19,7 +18,7 @@ class OpenAIEmbeddingInputImage:
         encoding_format (Union[Unset, EmbeddingEncodingFormat]):
         user (Union[None, Unset, str]):
         dimensions (Union[Unset, int]):  Default: 0.
-        modality (Union[Unset, OpenAIEmbeddingInputImageModality]):  Default: OpenAIEmbeddingInputImageModality.IMAGE.
+        modality (Union[Literal['image'], Unset]):  Default: 'image'.
     """
 
     input_: Union[List[str], str]
@@ -27,7 +26,7 @@ class OpenAIEmbeddingInputImage:
     encoding_format: Union[Unset, EmbeddingEncodingFormat] = UNSET
     user: Union[None, Unset, str] = UNSET
     dimensions: Union[Unset, int] = 0
-    modality: Union[Unset, OpenAIEmbeddingInputImageModality] = OpenAIEmbeddingInputImageModality.IMAGE
+    modality: Union[Literal["image"], Unset] = "image"
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -56,9 +55,7 @@ class OpenAIEmbeddingInputImage:
 
         dimensions = self.dimensions
 
-        modality: Union[Unset, str] = UNSET
-        if not isinstance(self.modality, Unset):
-            modality = self.modality.value
+        modality = self.modality
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -126,12 +123,9 @@ class OpenAIEmbeddingInputImage:
 
         dimensions = d.pop("dimensions", UNSET)
 
-        _modality = d.pop("modality", UNSET)
-        modality: Union[Unset, OpenAIEmbeddingInputImageModality]
-        if isinstance(_modality, Unset):
-            modality = UNSET
-        else:
-            modality = OpenAIEmbeddingInputImageModality(_modality)
+        modality = cast(Union[Literal["image"], Unset], d.pop("modality", UNSET))
+        if modality != "image" and not isinstance(modality, Unset):
+            raise ValueError(f"modality must match const 'image', got '{modality}'")
 
         open_ai_embedding_input_image = cls(
             input_=input_,
