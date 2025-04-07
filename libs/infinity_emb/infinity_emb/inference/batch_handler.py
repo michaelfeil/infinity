@@ -79,6 +79,7 @@ class BatchHandler:
         self,
         model_replicas: list["BaseTypeHint"],
         max_batch_size: int,
+        matryoshka_dim: Optional[int] = None,
         max_queue_wait: int = MANAGER.queue_size,
         batch_delay: float = 5e-3,
         vector_disk_cache_path: str = "",
@@ -92,6 +93,7 @@ class BatchHandler:
         Args:
             model (BaseTransformer): the base class of the model to be used
             max_batch_size (int): max batch size of dynamic batch size
+            matryoshka_dim (int, optional): default dimensions for matryoshka slicing.
             max_queue_wait (int, optional): max items to queue in the batch, default 32_000
             batch_delay (float, optional): sleep in seconds, wait time for pre/post methods.
                 Best result: setting to 1/2 the minimal expected
@@ -112,6 +114,7 @@ class BatchHandler:
         self._result_queue: Queue = Queue(8)
 
         self.max_batch_size = max_batch_size
+        self.matryoshka_dim = matryoshka_dim
         self._verbose = verbose
         self.batch_delay = batch_delay
 
@@ -172,6 +175,7 @@ class BatchHandler:
         input_sentences = [EmbeddingSingle(sentence=s) for s in sentences]
 
         embeddings, usage = await self._schedule(input_sentences)
+        matryoshka_dim = matryoshka_dim if matryoshka_dim else self.matryoshka_dim
         return matryososka_slice(embeddings, matryoshka_dim), usage
 
     async def rerank(
@@ -278,6 +282,7 @@ class BatchHandler:
 
         items = await resolve_images(images)
         embeddings, usage = await self._schedule(items)
+        matryoshka_dim = matryoshka_dim if matryoshka_dim else self.matryoshka_dim
         return matryososka_slice(embeddings, matryoshka_dim), usage
 
     async def audio_embed(
@@ -308,6 +313,7 @@ class BatchHandler:
             getattr(self.model_worker[0]._model, "sampling_rate", -42),
         )
         embeddings, usage = await self._schedule(items)
+        matryoshka_dim = matryoshka_dim if matryoshka_dim else self.matryoshka_dim
         return matryososka_slice(embeddings, matryoshka_dim), usage
 
     async def _schedule(self, list_queueitem: Sequence[AbstractSingle]) -> tuple[list[Any], int]:

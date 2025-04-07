@@ -108,6 +108,12 @@ class __Infinity_EnvManager:
         )
 
     @cached_property
+    def dimensions(self):
+        return self._to_int_multiple(
+            self._optional_infinity_var_multiple("dimensions", default=["0"])
+        )
+
+    @cached_property
     def revision(self):
         return self._optional_infinity_var_multiple("revision", default=[""])
 
