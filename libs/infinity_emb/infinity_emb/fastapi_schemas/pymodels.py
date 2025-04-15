@@ -97,7 +97,23 @@ def get_modality(obj: dict) -> str:
     Function name is used to return error message, keep it explicit
     """
     try:
-        return obj.get("modality", Modality.text.value)
+        modality = obj.get("modality", None)
+        if modality is None:
+            inputs = obj.get("input", [])
+            if len(inputs) > 0:
+                first_input = inputs[0]
+                if first_input.startswith("data:") or first_input.startswith("http://") or first_input.startswith("https://"):
+                    ext = first_input.split(".")[-1]
+                    if ext in ["jpg", "jpeg", "png", "gif", "bmp"]:
+                        modality = Modality.image.value
+                    elif ext in ["wav", "mp3", "ogg", "flac"]:
+                        modality = Modality.audio.value
+                    elif first_input.startswith("data:image/"):
+                        modality = Modality.image.value
+                    elif first_input.startswith("data:audio/"):
+                        modality = Modality.audio.value
+        return modality or Modality.text.value
+        # return obj.get("modality", Modality.text.value)
     except AttributeError:
         # in case a very weird request is sent, validate it against the default
         return Modality.text.value
