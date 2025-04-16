@@ -66,20 +66,21 @@ class TIMM(BaseTIMM):
                 ColPaliProcessor,
                 ColQwen2,
                 ColQwen2Processor,
-                ColQwen2_5,
-                ColQwen2_5_Processor,
+                # TODO: colqwen 2.5 is not supported with colpali-engine 0.3.8
+                # ColQwen2_5,
+                # ColQwen2_5_Processor,
             )
 
             model_cls = {
                 "ColPali": ColPali,
                 "ColQwen2": ColQwen2,
-                "ColQwen2_5": ColQwen2_5,
+                # "ColQwen2_5": ColQwen2_5,
                 "ColIdefics2": ColIdefics2,
             }[config.architectures[0]]
             processor_cls = {
                 "ColPali": ColPaliProcessor,
                 "ColQwen2": ColQwen2Processor,
-                "ColQwen2_5": ColQwen2_5_Processor,
+                # "ColQwen2_5": ColQwen2_5_Processor,
                 "ColIdefics2": ColIdefics2Processor,
             }[config.architectures[0]]
 
