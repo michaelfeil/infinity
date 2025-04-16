@@ -1,9 +1,8 @@
-from typing import TYPE_CHECKING, Any, Dict, List, Type, TypeVar, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Type, TypeVar, Union, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.classify_result_object import ClassifyResultObject
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
@@ -22,7 +21,7 @@ class ClassifyResult:
         data (List[List['ClassifyObject']]):
         model (str):
         usage (Usage):
-        object_ (Union[Unset, ClassifyResultObject]):  Default: ClassifyResultObject.CLASSIFY.
+        object_ (Union[Literal['classify'], Unset]):  Default: 'classify'.
         id (Union[Unset, str]):
         created (Union[Unset, int]):
     """
@@ -30,7 +29,7 @@ class ClassifyResult:
     data: List[List["ClassifyObject"]]
     model: str
     usage: "Usage"
-    object_: Union[Unset, ClassifyResultObject] = ClassifyResultObject.CLASSIFY
+    object_: Union[Literal["classify"], Unset] = "classify"
     id: Union[Unset, str] = UNSET
     created: Union[Unset, int] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -49,9 +48,7 @@ class ClassifyResult:
 
         usage = self.usage.to_dict()
 
-        object_: Union[Unset, str] = UNSET
-        if not isinstance(self.object_, Unset):
-            object_ = self.object_.value
+        object_ = self.object_
 
         id = self.id
 
@@ -97,12 +94,9 @@ class ClassifyResult:
 
         usage = Usage.from_dict(d.pop("usage"))
 
-        _object_ = d.pop("object", UNSET)
-        object_: Union[Unset, ClassifyResultObject]
-        if isinstance(_object_, Unset):
-            object_ = UNSET
-        else:
-            object_ = ClassifyResultObject(_object_)
+        object_ = cast(Union[Literal["classify"], Unset], d.pop("object", UNSET))
+        if object_ != "classify" and not isinstance(object_, Unset):
+            raise ValueError(f"object must match const 'classify', got '{object_}'")
 
         id = d.pop("id", UNSET)
 
