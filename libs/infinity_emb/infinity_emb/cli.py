@@ -113,6 +113,7 @@ if CHECK_TYPER.is_available:
         model_name_or_path: str = MANAGER.model_id[0],
         served_model_name: str = MANAGER.served_model_name[0],
         batch_size: int = MANAGER.batch_size[0],
+        dimensions: int = MANAGER.dimensions[0],
         revision: str = MANAGER.revision[0],
         trust_remote_code: bool = MANAGER.trust_remote_code[0],
         redirect_slash: str = MANAGER.redirect_slash,
@@ -153,6 +154,7 @@ if CHECK_TYPER.is_available:
             model_id=[model_name_or_path],
             served_model_name=[served_model_name],  # type: ignore
             batch_size=[batch_size],
+            dimensions=[dimensions],
             revision=[revision],  # type: ignore
             trust_remote_code=[trust_remote_code],
             engine=[engine],
@@ -191,6 +193,9 @@ if CHECK_TYPER.is_available:
         ),
         batch_size: list[int] = typer.Option(
             **_construct("batch_size"), help="maximum batch size for inference"
+        ),
+        dimensions: list[int] = typer.Option(
+            **_construct("dimensions"), help="default dimensions for inference"
         ),
         revision: list[str] = typer.Option(
             **_construct("revision"), help="huggingface  model repo revision."
@@ -285,6 +290,7 @@ if CHECK_TYPER.is_available:
             Defaults to `INFINITY_MODEL_ID`
         served_model_name, list[str]: "", e.g. ["bge-small-en-v1.5"]
         batch_size, list[int]: batch size for forward pass.
+        dimensions, list[int]: default dimensions for inference.
         revision: list[str]: revision of the model.
         trust_remote_code, list[bool]: trust remote code.
         url_prefix, str: prefix for api. typically "".
@@ -316,6 +322,7 @@ if CHECK_TYPER.is_available:
             length=len(model_id),
             model_name_or_path=model_id,
             batch_size=batch_size,
+            dimensions=dimensions,
             revision=revision,
             trust_remote_code=trust_remote_code,
             engine=engine,

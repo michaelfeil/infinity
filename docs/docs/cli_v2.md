@@ -34,6 +34,11 @@ $ infinity_emb v2 --help
 │                                                                                       [env var:                      │
 │                                                                                       `INFINITY_BATCH_SIZE`]         │
 │                                                                                       [default: 32]                  │
+│ --dimensions                                           INTEGER                        default dimensions for         │
+│                                                                                       inference                      │
+│                                                                                       [env var:                      │
+│                                                                                       `INFINITY_DIMENSIONS`]         │
+│                                                                                       [default: 0]                   │
 │ --revision                                             TEXT                           huggingface  model repo        │
 │                                                                                       revision.                      │
 │                                                                                       [env var: `INFINITY_REVISION`] │
