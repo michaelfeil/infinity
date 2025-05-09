@@ -24,6 +24,7 @@ from infinity_emb.transformer.quantization.interface import (
     quant_embedding_decorator,
     quant_interface,
 )
+from transformers import AutoConfig
 
 if TYPE_CHECKING:
     from torch import Tensor
@@ -60,6 +61,17 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
 
         model_kwargs = {}
         attempt_bt = check_if_bettertransformer_possible(engine_args)
+        
+        config = AutoConfig.from_pretrained(
+            pretrained_model_name_or_path=engine_args.model_name_or_path,
+            revision=engine_args.revision,
+            trust_remote_code=engine_args.trust_remote_code,
+        )
+        if config.model_type == 'modernbert':
+            config_kwargs={}
+            config_kwargs["reference_compile"] = False
+        
+
         if engine_args.bettertransformer and attempt_bt:
             model_kwargs["attn_implementation"] = "eager"
 
@@ -75,6 +87,7 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             trust_remote_code=engine_args.trust_remote_code,
             device=ls.device_placement,
             model_kwargs=model_kwargs,
+            config_kwargs=config_kwargs
         )
         self.to(ls.device_placement)
         # make a copy of the tokenizer,
