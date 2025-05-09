@@ -67,8 +67,8 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
+        config_kwargs = {}
         if config.model_type == 'modernbert':
-            config_kwargs={}
             config_kwargs["reference_compile"] = False
         
 
