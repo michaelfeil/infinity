@@ -66,23 +66,32 @@ class TIMM(BaseTIMM):
                 ColPaliProcessor,
                 ColQwen2,
                 ColQwen2Processor,
-                # TODO: colqwen 2.5 is not supported with colpali-engine 0.3.8
-                # ColQwen2_5,
-                # ColQwen2_5_Processor,
             )
 
-            model_cls = {
+            model_cls_d = {
                 "ColPali": ColPali,
                 "ColQwen2": ColQwen2,
                 # "ColQwen2_5": ColQwen2_5,
                 "ColIdefics2": ColIdefics2,
-            }[config.architectures[0]]
-            processor_cls = {
+            }
+            processor_cls_d = {
                 "ColPali": ColPaliProcessor,
                 "ColQwen2": ColQwen2Processor,
                 # "ColQwen2_5": ColQwen2_5_Processor,
                 "ColIdefics2": ColIdefics2Processor,
-            }[config.architectures[0]]
+            }
+            try:
+                # TODO: colqwen 2.5 is not supported with colpali-engine 0.3.8
+                from colpali_engine.models import ColQwen2_5  # type: ignore
+                from colpali_engine.models import ColQwen2_5_Processor  # type: ignore
+
+                model_cls_d["ColQwen2_5"] = ColQwen2_5
+                processor_cls_d["ColQwen2_5"] = ColQwen2_5_Processor
+            except ImportError:
+                pass
+
+            model_cls = model_cls_d[config.architectures[0]]
+            processor_cls = processor_cls_d[config.architectures[0]]
 
             self.model = model_cls.from_pretrained(
                 **extra_model_args,

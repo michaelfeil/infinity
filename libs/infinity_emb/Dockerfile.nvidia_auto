@@ -47,7 +47,7 @@ RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --without li
 RUN poetry run $PYTHON -m pip install --no-cache-dir https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 
 # TODO: remove this line
-RUN apt-get install --no-install-recommends -y git && poetry run python -m pip install git+https://github.com/huggingface/transformers.git@7547f55e5d93245c0a013b50df976924f2d9e8b0 && rm -rf ~/.cache/ /tmp/*
+RUN poetry run pip install --no-cache-dir transformers==4.50.3 colpali-engine==0.3.9
 
 FROM builder AS testing
 # install lint and test dependencies
