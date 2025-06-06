@@ -35,6 +35,7 @@ jobs:
           - "3.10"
           - "3.11"
           - "3.12"
+          - "3.13"
         coverage_tests: ["unit_test", "end_to_end"]
         exclude:
           # Exclude unit tests on macOS due to compatibility issues
