@@ -6,19 +6,18 @@ from typing import TYPE_CHECKING
 
 from infinity_emb._optional_imports import CHECK_OPTIMUM, CHECK_TORCH, CHECK_TRANSFORMERS
 from infinity_emb.primitives import Device
-from importlib.metadata import version
 
+bettertransformer_available = False
 if CHECK_OPTIMUM.is_available:
+    from importlib.metadata import version
     transformers_version_string = version('transformers')
     transformers_version = tuple([int(number) for number in transformers_version_string.split(".")])
     if transformers_version < (4,49,0):
-        bettertransformer_available = True
         from optimum.bettertransformer import (  # type: ignore[import-untyped]
             BetterTransformer,
             BetterTransformerManager,
         )
-    else:
-        bettertransformer_available = False
+        bettertransformer_available = True
 
 
 if CHECK_TORCH.is_available:
