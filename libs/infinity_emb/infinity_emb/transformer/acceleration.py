@@ -87,7 +87,14 @@ def to_bettertransformer(model: "PreTrainedModel", engine_args: "EngineArgs", lo
     ):
         raise ValueError("BetterTransformer overwrite requires eager attention.")
     CHECK_OPTIMUM.mark_required()
-    logger.info("Adding optimizations via Huggingface optimum. ")
+    CHECK_TORCH.mark_required()
+    logger.info("Adding optimizations via bettertransformer.")
+    if engine_args.compile and torch.__version__ > (2, 5, 0):  # type: ignore
+        raise ValueError(
+            "BetterTransformer + torch.compile is not available for PyTorch >= 2.5.0. "
+            "We recommend turning off torch.compile for better performance anyhow for models supported by BetterTransformer (bert, roberta)"
+            "Since torch 2.5.0, this combination leads to a segfault. Please report if you find this check to be incorrect."
+        )
     try:
         model = BetterTransformer.transform(model)
     except Exception as ex:

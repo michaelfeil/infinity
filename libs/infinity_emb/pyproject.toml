@@ -30,15 +30,15 @@ posthog = {version = "*", optional=true}
 # pin torch to a specific source, but default to pypi. use sed to overwrite.
 torch = {version = ">=2.2.1", source = "pypi", optional=true}
 sentence-transformers = {version = "^3.0.1", optional=true} 
-transformers = {version = ">4.34.0,<=5.0", optional=true, extras=["sentencepiece"]}
-ctranslate2 = {version = "^4.0.0", optional=true}
-optimum = {version = ">=1.23.3", optional=true, extras=["onnxruntime"]}
+transformers = {version = ">=4.47.0,<=5.0", optional=true, extras=["sentencepiece"]}
+ctranslate2 = {version = ">=4.0.0", optional=true}
+optimum = {version = ">=1.24.0", optional=true, extras=["onnxruntime"]}
 hf_transfer = {version=">=0.1.5"}
 einops = {version = "*", optional=true}
 # vision
 pillow = {version = "*", optional=true}
 timm = {version = "*", optional=true}
-colpali-engine = {version="^0.3.1", optional=true}
+colpali-engine = {version="^0.3.8", optional=true}
 # openvino
 # optimum-intel = {version=">=1.20.0", optional=true, extras=["openvino"]}
 # onnxruntime-openvino = {version=">=1.19.0", optional=true}
@@ -77,8 +77,10 @@ jinja2 = "*"
 jinja2-cli = "*"
 
 # preferred dev dependencies
-torch = "2.4.1"
+# 2.6.0 is also pinned in docker image with flash-attn build
+torch = "2.6.0" 
 prometheus-fastapi-instrumentator = "7.0.0"
+# sentence-transformers = "3.3.1"
 fastapi = "0.115.2"
 
 [tool.poetry.group.codespell.dependencies]
