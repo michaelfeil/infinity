@@ -22,6 +22,7 @@ env:
 
 
 jobs:
+  base-job:
   testing-job:
     defaults:
       run:
@@ -69,7 +70,7 @@ jobs:
         with:
           path: |
             ~/.cache/huggingface/hub
-          key: hf-models
+          key: hf-models-${{ matrix.os }}-${{ matrix.coverage_tests }}
 
       - name: Run Pytest Coverage
         if: ${{ inputs.working-directory == 'libs/infinity_emb' }}
@@ -95,6 +96,6 @@ jobs:
         with:
           path: |
             ~/.cache/huggingface/hub
-          key: hf-models
+          key: hf-models-${{ matrix.os }}-${{ matrix.coverage_tests }}
 
 
