@@ -31,6 +31,9 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest] # macos-latest
         python-version:
+          - "3.9"
+          - "3.10"
+          - "3.11"
           - "3.12"
         coverage_tests: ["unit_test", "end_to_end"]
           
@@ -63,13 +66,15 @@ jobs:
         shell: bash
         run: poetry install ${{ inputs.extra_poetry }}
 
-      - name: Restore cached HuggingFace models
-        id: cache-models-restore
-        uses: actions/cache/restore@v4
+      - name: Cached HuggingFace models
+        id: cache-models
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cache/huggingface/hub
-          key: hf-models-${{ matrix.os }}-${{ matrix.coverage_tests }}
+          key: hf-models-${{ matrix.os }}-${{ matrix.coverage_tests }}-${{ github.workspace }}-${{ hashFiles('poetry.lock') }}
+          restore-keys: |
+            hf-models-${{ matrix.os }}-${{ matrix.coverage_tests }}-${{ github.workspace }}
 
       - name: Run Pytest Coverage
         if: ${{ inputs.working-directory == 'libs/infinity_emb' }}
@@ -87,14 +92,5 @@ jobs:
         uses: codecov/codecov-action@v4
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-
-
-      - name: Save HuggingFace models
-        id: cache-models-save
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ~/.cache/huggingface/hub
-          key: hf-models-${{ matrix.os }}-${{ matrix.coverage_tests }}
 
 
