@@ -22,7 +22,6 @@ env:
 
 
 jobs:
-  base-job:
   testing-job:
     defaults:
       run:
