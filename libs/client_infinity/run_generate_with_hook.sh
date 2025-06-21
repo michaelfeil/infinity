@@ -34,7 +34,7 @@ python -m pip install openapi-python-client==0.21.1 && \
 	 openapi-python-client generate  \
 	  --url http://0.0.0.0:7993/openapi.json \
 	  --config client_config.yaml \
-    --meta poetry \
+	  --meta poetry \
 	  --overwrite \
 	  --custom-template-path=./template
 
