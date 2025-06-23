@@ -532,10 +532,10 @@ torch = ">=2.2.0"
 transformers = ">=4.47.0,<4.48.0"
 
 [package.extras]
-all = ["accelerate (>=0.34.0,<1.4.0)", "bitsandbytes", "configue (>=5.0.0)", "datasets (>=2.19.1)", "einops (>=0.8.0,<1.0.0)", "matplotlib (>=3.9.0,<4.0.0)", "mteb (>=1.16.3,<1.17.0)", "pillow (>=10.0.0,<11.1.0)", "pytest (>=8.0.0)", "ruff (>=0.4.0)", "seaborn (>=0.13.2,<1.0.0)", "typer (>=0.15.1)"]
+all = ["accelerate (>=0.34.0,<1.4.0)", "bitsandbytes", "datasets (>=2.19.1)", "einops (>=0.8.0,<1.0.0)", "matplotlib (>=3.9.0,<4.0.0)", "mteb (>=1.16.3,<1.17.0)", "pillow (>=10.0.0,<11.1.0)", "pytest (>=8.0.0)", "ruff (>=0.4.0)", "seaborn (>=0.13.2,<1.0.0)", "typer (>=0.15.1)"]
 dev = ["datasets (>=2.19.1)", "pytest (>=8.0.0)", "ruff (>=0.4.0)"]
 interpretability = ["einops (>=0.8.0,<1.0.0)", "matplotlib (>=3.9.0,<4.0.0)", "seaborn (>=0.13.2,<1.0.0)"]
-train = ["accelerate (>=0.34.0,<1.4.0)", "bitsandbytes", "configue (>=5.0.0)", "datasets (>=2.19.1)", "mteb (>=1.16.3,<1.17.0)", "pillow (>=10.0.0,<11.1.0)", "typer (>=0.15.1)"]
+train = ["accelerate (>=0.34.0,<1.4.0)", "bitsandbytes", "datasets (>=2.19.1)", "mteb (>=1.16.3,<1.17.0)", "pillow (>=10.0.0,<11.1.0)", "typer (>=0.15.1)"]
 
 [[package]]
 name = "coverage"
