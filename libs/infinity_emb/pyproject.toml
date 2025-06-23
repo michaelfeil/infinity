@@ -14,7 +14,7 @@ keywords = ["vector", "embedding", "neural", "search", "sentence-transformers"]
 [tool.poetry.dependencies]
 python = ">=3.9,<4"
 # basics, pin numpy <2 for onnx
-numpy = ">=1.20.0,<2"
+numpy = ">=1.20.0"
 huggingface_hub="*"
 # logging
 rich = {version = "^13", optional=true}
@@ -53,9 +53,22 @@ diskcache = {version = "*", optional=true}
 # gpu
 # https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html:
 # Most combinations of onnxruntime and tensorrt are not compatible, and some are broken.
-onnxruntime-gpu = {version = "1.19.*", optional=true} 
+onnxruntime-gpu = [{version = "1.19.*", optional=true, python = "<3.13"},
+{version = ">=1.21", optional=true, python = ">=3.13"}
+] 
+onnxruntime = [{version = "1.19.*", optional=true, python = "<3.13"},
+{version = ">=1.21", optional=true, python = ">=3.13"}
+]
+onnx = [{version = ">=1.18", optional=true, python = ">=3.13"}
+]  
 tensorrt = {version = "^10.6.0", optional=true}
 soundfile = {version="^0.12.1", optional=true}
+pyarrow = [
+    {version = ">=18.1.0", python = ">=3.13"}
+]
+scipy = [
+    {version = ">=1.15.0", python = ">=3.13"}
+]
 
 
 [tool.poetry.scripts]
@@ -75,6 +88,8 @@ types-requests = "2.28.1"
 openai = "*" # 1.51.0 works
 jinja2 = "*" 
 jinja2-cli = "*"
+
+
 
 # preferred dev dependencies
 # 2.6.0 is also pinned in docker image with flash-attn build
