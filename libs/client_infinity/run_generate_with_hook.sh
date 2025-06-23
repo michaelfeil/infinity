@@ -34,8 +34,9 @@ python -m pip install openapi-python-client==0.21.1 && \
 	 openapi-python-client generate  \
 	  --url http://0.0.0.0:7993/openapi.json \
 	  --config client_config.yaml \
-	   --overwrite \
-	   --custom-template-path=./template
+	  --meta poetry \
+	  --overwrite \
+	  --custom-template-path=./template
 
 # copy the readme to docs
 cp ./template/vision_client.py ./infinity_client/infinity_client/vision_client.py
