@@ -13,8 +13,8 @@ keywords = ["vector", "embedding", "neural", "search", "sentence-transformers"]
 
 [tool.poetry.dependencies]
 python = ">=3.9,<4"
-# basics, pin numpy <2 for onnx
-numpy = ">=1.20.0,<2"
+# basics
+numpy = ">=1.20.0"
 huggingface_hub="*"
 # logging
 rich = {version = "^13", optional=true}

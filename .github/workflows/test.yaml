@@ -103,6 +103,7 @@ jobs:
           - "3.9"
           - "3.10"
           - "3.11"
+          - "3.13"
         coverage_tests: ["unit_test", "end_to_end"]
           
     runs-on: ${{ matrix.os }}
