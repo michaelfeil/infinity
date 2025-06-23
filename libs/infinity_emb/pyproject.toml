@@ -71,7 +71,9 @@ pyarrow = [
 scipy = [
     {version = ">=1.15.0", python = ">=3.13"}
 ]
-
+scikit-learn = [
+    {version = ">=1.6.0", python = ">=3.13"}
+]
 
 [tool.poetry.scripts]
 infinity_emb = "infinity_emb.cli:cli"
