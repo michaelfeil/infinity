@@ -4029,7 +4029,7 @@ description = "A set of python modules for machine learning and data mining"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
-markers = "python_version < \"3.13\" and (extra == \"ct2\" or extra == \"torch\" or extra == \"all\")"
+markers = "python_version < \"3.11\" and (extra == \"ct2\" or extra == \"torch\" or extra == \"all\")"
 files = [
     {file = "scikit_learn-1.5.2-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:299406827fb9a4f862626d0fe6c122f5f87f8910b86fe5daa4c32dcd742139b6"},
     {file = "scikit_learn-1.5.2-cp310-cp310-macosx_12_0_arm64.whl", hash = "sha256:2d4cad1119c77930b235579ad0dc25e65c917e756fe80cab96aa3b9428bd3fb0"},
@@ -4076,7 +4076,7 @@ description = "A set of python modules for machine learning and data mining"
 optional = false
 python-versions = ">=3.10"
 groups = ["main"]
-markers = "python_version >= \"3.13\""
+markers = "python_version >= \"3.11\" and (extra == \"ct2\" or extra == \"torch\" or extra == \"all\") or python_version >= \"3.13\""
 files = [
     {file = "scikit_learn-1.7.0-cp310-cp310-macosx_10_9_x86_64.whl", hash = "sha256:9fe7f51435f49d97bd41d724bb3e11eeb939882af9c29c931a8002c357e8cdd5"},
     {file = "scikit_learn-1.7.0-cp310-cp310-macosx_12_0_arm64.whl", hash = "sha256:d0c93294e1e1acbee2d029b1f2a064f26bd928b284938d51d412c22e0c977eb3"},
@@ -5590,20 +5590,20 @@ test = ["big-O", "importlib-resources ; python_version < \"3.9\"", "jaraco.funct
 type = ["pytest-mypy"]
 
 [extras]
-all = ["colpali-engine", "ctranslate2", "ctranslate2", "diskcache", "einops", "fastapi", "optimum", "orjson", "pillow", "posthog", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "soundfile", "timm", "torch", "torchvision", "typer", "uvicorn"]
+all = ["colpali-engine", "ctranslate2", "ctranslate2", "diskcache", "einops", "fastapi", "optimum", "orjson", "pillow", "posthog", "prometheus-fastapi-instrumentator", "pydantic", "rich", "sentence-transformers", "soundfile", "timm", "torch", "torch", "torchvision", "typer", "uvicorn"]
 audio = ["soundfile"]
 cache = ["diskcache"]
-ct2 = ["ctranslate2", "ctranslate2", "sentence-transformers", "torch", "transformers"]
+ct2 = ["ctranslate2", "ctranslate2", "sentence-transformers", "torch", "torch", "transformers"]
 einops = ["einops"]
 logging = ["rich"]
 onnxruntime-gpu = ["onnxruntime-gpu", "onnxruntime-gpu"]
 optimum = ["optimum"]
 server = ["fastapi", "orjson", "posthog", "prometheus-fastapi-instrumentator", "pydantic", "rich", "typer", "uvicorn"]
 tensorrt = ["tensorrt"]
-torch = ["sentence-transformers", "torch"]
+torch = ["sentence-transformers", "torch", "torch"]
 vision = ["colpali-engine", "pillow", "timm", "torchvision"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.9,<4"
-content-hash = "5736c6514e7a9fe0f21045ffc846545d04e2f02534c0bd5efa4d4691d40ba118"
+content-hash = "8edb487ff3e89143993ea193530355e1223867637f7d0b0133716e2b20ed78d6"
