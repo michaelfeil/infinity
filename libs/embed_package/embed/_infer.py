@@ -158,9 +158,7 @@ class BatchedInference:
         >>> type(rerank_result)
         <class 'concurrent.futures._base.Future'>
         >>> [round(score.relevance_score, 3) for score in sorted(rerank_result.result()[0], key=lambda score: score.index, reverse=False)]
-        x.relevance_score for x in sorted(rankings_objects, key=lambda x: x.index, reverse=False)
-
-        [0.288, 0.742, 0.022]
+        [np.float64(0.288), np.float64(0.742), np.float64(0.022)]
         >>> ei.stop()
         """
         return self._engine_array.rerank(model=model_id, query=query, docs=docs)
