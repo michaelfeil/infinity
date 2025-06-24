@@ -157,7 +157,7 @@ class BatchedInference:
         >>> rerank_result = ei.rerank(model_id="mixedbread-ai/mxbai-rerank-xsmall-v1", query="Where is Paris?", docs=docs)
         >>> type(rerank_result)
         <class 'concurrent.futures._base.Future'>
-        >>> [round(score, 3) for score in rerank_result.result()[0]]
+        >>> [round(score, 3) for score.relevance_score in rerank_result.result()[0]]
         [0.288, 0.742, 0.022]
         >>> ei.stop()
         """
