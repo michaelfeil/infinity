@@ -133,7 +133,7 @@ jobs:
       - name: Install dependencies from local
         # only if source is local
         shell: bash
-        run: poetry install ${{ inputs.extra_poetry }}
+        run: poetry install ${{ inputs.extra_poetry }} -vvv
 
       - name: Cached HuggingFace models
         id: cache-models
