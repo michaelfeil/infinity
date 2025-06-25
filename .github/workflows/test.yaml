@@ -14,7 +14,7 @@ on:
         description: 'Extra poetry commands to run'
         required: false
         type: string
-        default: "--extras all --with test"
+        default: "--extras all --with test -vvv"
 
 
 env:
@@ -133,7 +133,7 @@ jobs:
       - name: Install dependencies from local
         # only if source is local
         shell: bash
-        run: poetry install ${{ inputs.extra_poetry }} -vvv
+        run: poetry install ${{ inputs.extra_poetry }}
 
       - name: Cached HuggingFace models
         id: cache-models
