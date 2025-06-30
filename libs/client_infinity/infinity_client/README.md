@@ -38,12 +38,12 @@ with i_client as client:
 Or use the POST methods:
 
 ```python
-from infinity_client.models import OpenAIEmbeddingInput, OpenAIEmbeddingResult
+from infinity_client.models import OpenAIEmbeddingInputText, OpenAIEmbeddingResult
 from infinity_client.api.default import classify, embeddings, embeddings_image, rerank
 from infinity_client.types import Response
 
 with i_client as client:
-    embeds: OpenAIEmbeddingResult = embeddings.sync(client=client, body=OpenAIEmbeddingInput.from_dict({
+    embeds: OpenAIEmbeddingResult = embeddings.sync(client=client, body=OpenAIEmbeddingInputText.from_dict({
         "input": ["Hello, this is a sentence-to-embed", "Hello, my cat is cute"],
         "model": "michaelfeil/bge-small-en-v1.5",
     }))
