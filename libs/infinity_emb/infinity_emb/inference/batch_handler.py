@@ -443,8 +443,12 @@ class BatchHandler:
                             raise e
                         continue
                 results, batch = post_batch
+
                 for i, item in enumerate(batch):
-                    await item.complete(results[i])
+                    if isinstance(results,Exception):
+                        await item.set_exception(results)
+                    else:
+                        await item.complete(results[i])
 
                 result_queue.task_done()
         except Exception as ex:
@@ -538,7 +542,12 @@ class ModelWorker:
                     time.sleep(self._batch_delay * 2)
 
                 items_for_pre = [item.content.to_input() for item in batch]
-                feat = self._model.encode_pre(items_for_pre)
+                try:
+                    feat = self._model.encode_pre(items_for_pre)
+                except Exception as ex:
+                    logger.exception(ex)
+                    self._output_q.put((ex, batch), timeout=QUEUE_TIMEOUT)
+                    continue
                 if self._verbose:
                     logger.debug(
                         "[🏃->🧠] preprocessed %s requests",
@@ -573,7 +582,12 @@ class ModelWorker:
                 if self._verbose:
                     logger.debug("[🧠] Inference on batch_size=%s", len(batch))
                 self._last_inference = time.perf_counter()
-                embed = self._model.encode_core(feat)
+                try:
+                    embed = self._model.encode_core(feat)
+                except Exception as ex:
+                    logger.exception(ex)
+                    self._output_q.put((ex, batch), timeout=QUEUE_TIMEOUT)
+                    continue
 
                 # while-loop just for shutdown
                 while not self._shutdown.is_set():
@@ -608,7 +622,12 @@ class ModelWorker:
                     # before proceeding
                     time.sleep(self._batch_delay)
                 embed, batch = post_batch
-                results = self._model.encode_post(embed)
+                try:
+                    results = self._model.encode_post(embed)
+                except Exception as ex:
+                    logger.exception(ex)
+                    self._output_q.put((ex, batch), timeout=QUEUE_TIMEOUT)
+                    continue
                 if self._verbose:
                     logger.debug("[🧠->🏁] postprocessed %s requests", len(batch))
                 # while-loop just for shutdown
