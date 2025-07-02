@@ -445,7 +445,7 @@ class BatchHandler:
                 results, batch = post_batch
 
                 for i, item in enumerate(batch):
-                    if isinstance(results,Exception):
+                    if isinstance(results, Exception):
                         await item.set_exception(results)
                     else:
                         await item.complete(results[i])

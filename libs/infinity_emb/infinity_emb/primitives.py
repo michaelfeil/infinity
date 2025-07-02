@@ -358,7 +358,6 @@ class PredictInner(AbstractInner):
         except asyncio.exceptions.InvalidStateError:
             pass
 
-
     async def get_result(self) -> ClassifyReturnType:
         """waits for future to complete and returns result"""
         await self.future
