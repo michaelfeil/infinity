@@ -51,20 +51,15 @@ def quant_interface(model: Any, dtype: Union[Dtype] = Dtype.int8, device: Device
         model.to(device_orig)
     elif device == Device.cuda and dtype in [Dtype.fp8, torch.float8_e5m2]:
         try:
-            from float8_experimental.float8_dynamic_linear import (  # type: ignore
-                Float8DynamicLinear,
-            )
-            from float8_experimental.float8_linear_utils import (  # type: ignore
-                swap_linear_with_float8_linear,
-            )
+            from torchao.quantization import quantize_, float8_dynamic_activation_float8_weight
         except ImportError:
             raise ImportError(
-                "float8_experimental is not installed."
-                "https://github.com/pytorch-labs/float8_experimental "
-                "with commit `88e9e507c56e59c5f17edf513ecbf621b46fc67d`"
+                "FP8 quantization requires torchao. "
+                "Install with: pip install torchao\n"
             )
         logger.info("using dtype=fp8")
-        swap_linear_with_float8_linear(model, Float8DynamicLinear)
+        # Use quantize_ with the float8 configuration
+        quantize_(model, float8_dynamic_activation_float8_weight())
     else:
         raise ValueError(f"Quantization is not supported on {device} with dtype {dtype}.")
     return model
