@@ -1,10 +1,9 @@
 from io import BytesIO
-from typing import Any, Dict, List, Type, TypeVar, Union, cast
+from typing import Any, Dict, List, Literal, Type, TypeVar, Union, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-from ..models.embedding_object_object import EmbeddingObjectObject
 from ..types import UNSET, File, FileJsonType, Unset
 
 T = TypeVar("T", bound="EmbeddingObject")
@@ -16,12 +15,12 @@ class EmbeddingObject:
     Attributes:
         embedding (Union[File, List[List[float]], List[float]]):
         index (int):
-        object_ (Union[Unset, EmbeddingObjectObject]):  Default: EmbeddingObjectObject.EMBEDDING.
+        object_ (Union[Literal['embedding'], Unset]):  Default: 'embedding'.
     """
 
     embedding: Union[File, List[List[float]], List[float]]
     index: int
-    object_: Union[Unset, EmbeddingObjectObject] = EmbeddingObjectObject.EMBEDDING
+    object_: Union[Literal["embedding"], Unset] = "embedding"
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -41,9 +40,7 @@ class EmbeddingObject:
 
         index = self.index
 
-        object_: Union[Unset, str] = UNSET
-        if not isinstance(self.object_, Unset):
-            object_ = self.object_.value
+        object_ = self.object_
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -94,12 +91,9 @@ class EmbeddingObject:
 
         index = d.pop("index")
 
-        _object_ = d.pop("object", UNSET)
-        object_: Union[Unset, EmbeddingObjectObject]
-        if isinstance(_object_, Unset):
-            object_ = UNSET
-        else:
-            object_ = EmbeddingObjectObject(_object_)
+        object_ = cast(Union[Literal["embedding"], Unset], d.pop("object", UNSET))
+        if object_ != "embedding" and not isinstance(object_, Unset):
+            raise ValueError(f"object must match const 'embedding', got '{object_}'")
 
         embedding_object = cls(
             embedding=embedding,
