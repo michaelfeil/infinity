@@ -531,7 +531,7 @@ All contributions must be made in a way to be compatible with the MIT License of
 
 ### 💚 Current contributors <a name="Current contributors"></a>
 
-<a href="https://github.com/michaelfeil/infinity=y/graphs/contributors">
+<a href="https://github.com/michaelfeil/infinity/graphs/contributors">
   <img src="https://contributors-img.web.app/image?repo=michaelfeil/infinity" />
 </a>
 
