@@ -389,7 +389,7 @@ def create_server(
             )
         except Exception as ex:
             raise errors.OpenAIException(
-                f"InternalServerError: {ex}",
+                f"InternalServerError: {type(ex).__name__} {ex}",
                 code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 

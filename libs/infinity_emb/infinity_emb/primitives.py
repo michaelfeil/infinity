@@ -280,6 +280,18 @@ class AbstractInner(ABC, Generic[AbstractInnerType]):
     async def get_result(self) -> AbstractInnerType:
         pass
 
+    async def set_exception(self, exception: Exception) -> None:
+        """marks the future for completion.
+        only call from the same thread as created future."""
+        self.exception = exception
+
+        if self.exception is None:
+            raise ValueError("exception is None")
+        try:
+            self.future.set_exception(self.exception)
+        except asyncio.exceptions.InvalidStateError:
+            pass
+
 
 @dataclass(order=True, **dataclass_args)
 class EmbeddingInner(AbstractInner):
