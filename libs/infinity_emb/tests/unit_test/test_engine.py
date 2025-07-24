@@ -14,6 +14,7 @@ from infinity_emb.primitives import (
     EmbeddingDtype,
     InferenceEngine,
     ModelNotDeployedError,
+    ImageCorruption,
 )
 
 # Only compile on Linux 3.9-3.11 with torch
@@ -237,6 +238,15 @@ async def test_torch_clip_embed():
     # check if cat image and two cats are most similar
     for i in range(1, len(sentences)):
         assert np.dot(emb_text_np[0], emb_image_np[0]) > np.dot(emb_text_np[i], emb_image_np[0])
+
+    async with engine:
+        with pytest.raises(
+            ImageCorruption,
+            match=r"An image in your request is too small for processing \(1, 1\)\. Minimum required size is 3x3\.",
+        ):
+            small_image = Image.new("L", (1, 1))
+            t_small_image = asyncio.create_task(engine.image_embed(images=[small_image]))
+            await t_small_image
 
 
 @pytest.mark.anyio
