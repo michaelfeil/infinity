@@ -12,6 +12,7 @@ if CHECK_TRANSFORMERS.is_available:
 if CHECK_XLA.is_available:
     import torch_xla
 
+
 def _validate_availale_device_ids(
     device: str, available_devices: list[int], desired_device_ids: DeviceID
 ) -> list[str]:
