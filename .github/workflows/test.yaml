@@ -70,6 +70,7 @@ jobs:
           path: |
             ~/.cache/huggingface/hub
           key: hf-models-${{ inputs.working-directory }}-test-${{ matrix.coverage_tests }}
+          enableCrossOsArchive: true
 
 
       - name: Run Pytest Coverage
