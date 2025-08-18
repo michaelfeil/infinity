@@ -15,7 +15,7 @@ keywords = ["vector", "embedding", "neural", "search", "sentence-transformers"]
 python = ">=3.9,<4"
 # basics, pin numpy <2 for onnx
 numpy = ">=1.20.0,<2"
-huggingface_hub="*"
+huggingface_hub= {version = ">=0.32.0", optional=true}
 # logging
 rich = {version = "^13", optional=true}
 # webserver-only
