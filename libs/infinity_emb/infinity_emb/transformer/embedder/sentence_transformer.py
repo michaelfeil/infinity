@@ -69,13 +69,14 @@ class SentenceTransformerPatched(SentenceTransformer, BaseEmbedder):
         if ls.loading_dtype is not None:
             model_kwargs["torch_dtype"] = ls.loading_dtype
 
-        super().__init__(
-            engine_args.model_name_or_path,
+        temp_model = SentenceTransformer(**dict(
+            model_name_or_path=engine_args.model_name_or_path,
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
             device=ls.device_placement,
             model_kwargs=model_kwargs,
-        )
+        ))
+        self.__dict__.update(temp_model.__dict__)
         self.to(ls.device_placement)
         # make a copy of the tokenizer,
         # to be able to could the tokens in another thread
