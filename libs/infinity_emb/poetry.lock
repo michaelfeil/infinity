@@ -1141,7 +1141,7 @@ files = [
 name = "hf-xet"
 version = "1.1.7"
 description = "Fast transfer of large files with the Hugging Face Hub."
-optional = true
+optional = false
 python-versions = ">=3.8"
 files = [
     {file = "hf_xet-1.1.7-cp37-abi3-macosx_10_12_x86_64.whl", hash = "sha256:60dae4b44d520819e54e216a2505685248ec0adbdb2dd4848b17aa85a0375cde"},
@@ -1262,7 +1262,7 @@ zstd = ["zstandard (>=0.18.0)"]
 name = "huggingface-hub"
 version = "0.34.4"
 description = "Client library to download and publish models, datasets and other repos on the huggingface.co hub"
-optional = true
+optional = false
 python-versions = ">=3.8.0"
 files = [
     {file = "huggingface_hub-0.34.4-py3-none-any.whl", hash = "sha256:9b365d781739c93ff90c359844221beef048403f1bc1f1c123c191257c3c890a"},
@@ -5128,4 +5128,4 @@ vision = ["colpali-engine", "pillow", "timm", "torchvision"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.9,<3.14"
-content-hash = "1427205960471964b4bd94987a581d92a74c397b65cbc52a3f05d30f4c682c08"
+content-hash = "f99ad1f68c560fe8e076c9a1d13876fd0104beefbe57f818422d9084f4ebfab8"
