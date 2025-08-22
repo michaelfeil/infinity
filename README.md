@@ -50,7 +50,7 @@ Infinity is a high-throughput, low-latency REST API for serving text-embeddings,
 </p> 
 
 ### Latest News 🔥
-
+- [2025/07] Blackwell support
 - [2024/11] AMD, CPU, ONNX docker images
 - [2024/10] `pip install infinity_client`
 - [2024/07] Inference deployment example via [Modal](./infra/modal/README.md) and a [free GPU deployment](https://infinity.modal.michaelfeil.eu/)

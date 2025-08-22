@@ -14,8 +14,6 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_VIRTUALENVS_CREATE="true" \
     POETRY_VIRTUALENVS_IN_PROJECT="true" \
     POETRY_NO_INTERACTION=1 \
-    # huggingface     
-    HF_HUB_ENABLE_HF_TRANSFER=1 \
     # extras
     EXTRAS="all" \
     PYTHON="python3" 
