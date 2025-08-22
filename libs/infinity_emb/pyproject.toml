@@ -80,6 +80,7 @@ jinja2-cli = "*"
 torch = "2.8.0" 
 prometheus-fastapi-instrumentator = "7.0.0"
 # sentence-transformers = "3.3.1"
+transformers = "4.47.0"
 fastapi = "0.115.2"
 
 [tool.poetry.group.codespell.dependencies]
