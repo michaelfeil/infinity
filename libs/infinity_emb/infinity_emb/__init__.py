@@ -2,10 +2,6 @@
 # Copyright (c) 2023-now michaelfeil
 
 import importlib.metadata
-import huggingface_hub.constants  # type: ignore
-
-huggingface_hub.constants.HF_HUB_DISABLE_PROGRESS_BARS = True
-
 
 from infinity_emb.args import EngineArgs  # noqa: E402
 from infinity_emb.engine import AsyncEmbeddingEngine, AsyncEngineArray  # noqa: E402
