@@ -3,12 +3,15 @@
 # 1. Guide: pip install jinja2 jinja2-cli
 nvidia:
   # 2 .command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s nvidia > Dockerfile.nvidia_auto
-  base_image: "nvidia/cuda:12.4.1-base-ubuntu22.04"
+  base_image: "nvidia/cuda:12.9.0-base-ubuntu22.04"
   main_install: 'RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all'
   python_version: python3.10
   extra_installs_main: |
     # nvcc is not installed -> the following might break if the torch version or python version changes.
-    RUN poetry run $PYTHON -m pip install --no-cache-dir https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+    RUN poetry run $PYTHON -m pip install --no-cache-dir https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+  extra_env_variables: |
+    RUN rm -rf /usr/local/cuda-12.9/compat
+    ENV NVIDIA_DISABLE_REQUIRE=true
 cpu:
   # 2. command: jinja2 Dockerfile.jinja2 Docker.template.yaml --format=yaml -s cpu > Dockerfile.cpu_auto
   base_image: "ubuntu:22.04"
@@ -81,7 +84,7 @@ amd:
     ENV INFINITY_BETTERTRANSFORMER="0"
 
 trt:
-  base_image: nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04
+  base_image: nvidia/cuda:12.9.0-cudnn-devel-ubuntu22.04
   poetry_extras: "all onnxruntime-gpu"
   extra_installs_main: |
     # Install utils for tensorrt
@@ -94,3 +97,6 @@ trt:
     ENV PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
   python_version: python3.10
   main_install: 'RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all'
+  extra_env_variables: |
+    RUN rm -rf /usr/local/cuda-12.9/compat
+    ENV NVIDIA_DISABLE_REQUIRE=true
