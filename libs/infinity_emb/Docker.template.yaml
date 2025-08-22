@@ -95,8 +95,7 @@ trt:
     # Set default to tensorrt
     ENV LD_LIBRARY_PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
     ENV PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
-  python_version: python3.10
-  main_install: 'RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all'
-  extra_env_variables: |
     RUN rm -rf /usr/local/cuda-12.9/compat
     ENV NVIDIA_DISABLE_REQUIRE=true
+  python_version: python3.10
+  main_install: 'RUN poetry install --no-interaction --no-ansi --no-root --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all'    

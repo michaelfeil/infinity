@@ -19,8 +19,12 @@ ENV PYTHONUNBUFFERED=1 \
     PYTHON="python3" 
     # "python3.10"
 RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON-pip $PYTHON curl
+# Set default to tensorrt
+ENV LD_LIBRARY_PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt:/usr/lib/x86_64-linux-gnu:/app/.venv/lib/${PYTHON}/site-packages/tensorrt_libs:${LD_LIBRARY_PATH}
+ENV PATH=/app/.venv/lib/${PYTHON}/site-packages/tensorrt/bin:${PATH}
 RUN rm -rf /usr/local/cuda-12.9/compat
 ENV NVIDIA_DISABLE_REQUIRE=true
+
 WORKDIR /app
 
 FROM base AS builder
