@@ -77,6 +77,8 @@ jobs:
         run: |
           poetry run coverage run -m --source ./infinity_emb pytest tests/${{ matrix.coverage_tests }} 
           poetry run coverage xml
+        env:
+          HF_TOKEN: ${{ secrets.HFTOKEN_NOPERMISSIONS }}
       
       - name: Run Pytest Coverage w/o infinity
         if: ${{ inputs.working-directory != 'libs/infinity_emb' }}
