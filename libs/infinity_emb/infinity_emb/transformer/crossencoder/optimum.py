@@ -2,7 +2,6 @@
 # Copyright (c) 2023-now michaelfeil
 
 import copy
-import os
 
 import numpy as np
 

@@ -2,7 +2,6 @@
 # Copyright (c) 2023-now michaelfeil
 
 import copy
-import os
 
 from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
