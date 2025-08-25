@@ -2,7 +2,7 @@
 # This file is generated from Dockerfile.jinja2. Do not edit the Dockerfile.cuda|cpu|amd file directly.
 # Only contribute to the Dockerfile.jinja2 and dockerfile_template.yaml and regenerate the Dockerfile.cuda|cpu|amd
 
-FROM nvidia/cuda:12.4.1-base-ubuntu22.04 AS base
+FROM nvidia/cuda:12.9.0-base-ubuntu22.04 AS base
 
 ENV PYTHONUNBUFFERED=1 \
     # pip
@@ -14,13 +14,13 @@ ENV PYTHONUNBUFFERED=1 \
     POETRY_VIRTUALENVS_CREATE="true" \
     POETRY_VIRTUALENVS_IN_PROJECT="true" \
     POETRY_NO_INTERACTION=1 \
-    # huggingface     
-    HF_HUB_ENABLE_HF_TRANSFER=1 \
     # extras
     EXTRAS="all" \
     PYTHON="python3" 
     # "python3.10"
 RUN apt-get update && apt-get install --no-install-recommends -y build-essential python3-dev libsndfile1 $PYTHON-venv $PYTHON-pip $PYTHON curl
+RUN rm -rf /usr/local/cuda-12.9/compat
+ENV NVIDIA_DISABLE_REQUIRE=true
 
 WORKDIR /app
 
@@ -44,7 +44,7 @@ COPY infinity_emb infinity_emb
 # Install dependency with infinity_emb package
 RUN poetry install --no-interaction --no-ansi  --extras "${EXTRAS}" --without lint,test && poetry cache clear pypi --all
 # nvcc is not installed -> the following might break if the torch version or python version changes.
-RUN poetry run $PYTHON -m pip install --no-cache-dir https://github.com/Dao-AILab/flash-attention/releases/download/v2.7.4.post1/flash_attn-2.7.4.post1+cu12torch2.6cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
+RUN poetry run $PYTHON -m pip install --no-cache-dir https://github.com/Dao-AILab/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu12torch2.8cxx11abiFALSE-cp310-cp310-linux_x86_64.whl
 
 # TODO: remove this line
 RUN apt-get install --no-install-recommends -y git && poetry run python -m pip install git+https://github.com/huggingface/transformers.git@7547f55e5d93245c0a013b50df976924f2d9e8b0 && rm -rf ~/.cache/ /tmp/*
