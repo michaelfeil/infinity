@@ -68,6 +68,8 @@ class EngineArgs:
     lengths_via_tokenize: bool = MANAGER.lengths_via_tokenize[0]
     embedding_dtype: EmbeddingDtype = EmbeddingDtype[MANAGER.embedding_dtype[0]]
     served_model_name: str = MANAGER.served_model_name[0]
+    onnx_disable_optimize: bool = MANAGER.onnx_disable_optimize[0]
+    onnx_do_not_prefer_quantized: bool = MANAGER.onnx_do_not_prefer_quantized[0]
 
     _loading_strategy: Optional[LoadingStrategy] = None
 
@@ -160,8 +162,10 @@ class EngineArgs:
                 lengths_via_tokenize=lengths_via_tokenize,
                 embedding_dtype=embedding_dtype,
                 served_model_name=served_model_name,
+                onnx_disable_optimize=onnx_disable_optimize,
+                onnx_do_not_prefer_quantized=onnx_do_not_prefer_quantized
             )
-            for model_name_or_path, batch_size, revision, trust_remote_code, engine, model_warmup, device, compile, bettertransformer, dtype, pooling_method, lengths_via_tokenize, embedding_dtype, served_model_name in zip_longest(
+            for model_name_or_path, batch_size, revision, trust_remote_code, engine, model_warmup, device, compile, bettertransformer, dtype, pooling_method, lengths_via_tokenize, embedding_dtype, served_model_name,onnx_disable_optimize,onnx_do_not_prefer_quantized in zip_longest(
                 MANAGER.model_id,
                 MANAGER.batch_size,
                 MANAGER.revision,
@@ -176,5 +180,7 @@ class EngineArgs:
                 MANAGER.lengths_via_tokenize,
                 MANAGER.embedding_dtype,
                 MANAGER.served_model_name,
+                MANAGER.onnx_disable_optimize,
+                MANAGER.onnx_do_not_prefer_quantized
             )
         ]

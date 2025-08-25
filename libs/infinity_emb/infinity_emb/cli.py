@@ -270,6 +270,14 @@ if CHECK_TYPER.is_available:
             **_construct("proxy_root_path"),
             help="Proxy prefix for the application. See: https://fastapi.tiangolo.com/advanced/behind-a-proxy/",
         ),
+        onnx_disable_optimize: list[bool] = typer.Option(
+            **_construct("onnx_disable_optimize"),
+            help="Disable onnx optimization",
+        ),
+        onnx_do_not_prefer_quantized: list[bool] = typer.Option(
+            **_construct("onnx_do_not_prefer_quantized"),
+            help="Do not use quantized onnx models by default if available",
+        ),
     ):
         """Infinity API ♾️  cli v2. MIT License. Copyright (c) 2023-now Michael Feil \n
         \n
@@ -309,6 +317,8 @@ if CHECK_TYPER.is_available:
         permissive_cors, bool: add permissive CORS headers to enable consumption from a browser. Defaults to False.
         api_key, str: optional Bearer token for authentication. Defaults to "", which disables authentication.
         proxy_root_path, str: optional Proxy prefix for the application. See: https://fastapi.tiangolo.com/advanced/behind-a-proxy/
+        onnx_disable_optimize, bool: disable onnx optimization
+        onnx_do_not_prefer_quantized, bool: do not prefer quantized onnx model if its available
         """
         logger.setLevel(log_level.to_int())
         device_id_typed = [DeviceID(d) for d in typer_option_resolve(device_id)]
@@ -330,6 +340,8 @@ if CHECK_TYPER.is_available:
             compile=compile,
             bettertransformer=bettertransformer,
             served_model_name=served_model_name,
+            onnx_disable_optimize=onnx_disable_optimize,
+            onnx_do_not_prefer_quantized=onnx_do_not_prefer_quantized
         )
 
         engine_args = []

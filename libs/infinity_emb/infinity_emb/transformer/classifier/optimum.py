@@ -2,7 +2,6 @@
 # Copyright (c) 2023-now michaelfeil
 
 import copy
-import os
 
 from infinity_emb._optional_imports import CHECK_ONNXRUNTIME, CHECK_TRANSFORMERS
 from infinity_emb.args import EngineArgs
@@ -36,7 +35,7 @@ class OptimumClassifier(BaseClassifer):
             model_name_or_path=engine_args.model_name_or_path,
             revision=engine_args.revision,
             use_auth_token=True,
-            prefer_quantized=("cpu" in provider.lower() or "openvino" in provider.lower()),
+            prefer_quantized=("cpu" in provider.lower() or "openvino" in provider.lower()) and not engine_args.onnx_do_not_prefer_quantized,
         )
 
         model = optimize_model(
@@ -46,7 +45,7 @@ class OptimumClassifier(BaseClassifer):
             trust_remote_code=engine_args.trust_remote_code,
             execution_provider=provider,
             file_name=onnx_file.as_posix(),
-            optimize_model=not os.environ.get("INFINITY_ONNX_DISABLE_OPTIMIZE", False),
+            optimize_model=not engine_args.onnx_disable_optimize
         )
         model.use_io_binding = False
 
