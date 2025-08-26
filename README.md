@@ -50,7 +50,7 @@ Infinity is a high-throughput, low-latency REST API for serving text-embeddings,
 </p> 
 
 ### Latest News 🔥
-
+- [2025/07] Blackwell support
 - [2024/11] AMD, CPU, ONNX docker images
 - [2024/10] `pip install infinity_client`
 - [2024/07] Inference deployment example via [Modal](./infra/modal/README.md) and a [free GPU deployment](https://infinity.modal.michaelfeil.eu/)
@@ -531,7 +531,7 @@ All contributions must be made in a way to be compatible with the MIT License of
 
 ### 💚 Current contributors <a name="Current contributors"></a>
 
-<a href="https://github.com/michaelfeil/infinity=y/graphs/contributors">
+<a href="https://github.com/michaelfeil/infinity/graphs/contributors">
   <img src="https://contributors-img.web.app/image?repo=michaelfeil/infinity" />
 </a>
 
