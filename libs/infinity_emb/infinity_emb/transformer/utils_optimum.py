@@ -144,7 +144,7 @@ def optimize_model(
     files_optimized = list(path_folder.glob(f"**/*{OPTIMIZED_SUFFIX}"))
 
     logger.info(f"files_optimized: {files_optimized}")
-    if files_optimized:
+    if files_optimized and optimize_model:
         file_optimized = files_optimized[-1]
         logger.info(f"Optimized model found at {file_optimized}, skipping optimization")
         return model_class.from_pretrained(
