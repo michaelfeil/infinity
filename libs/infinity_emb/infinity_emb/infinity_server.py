@@ -82,7 +82,7 @@ def create_server(
     async def lifespan(app: FastAPI):
         instrumentator.expose(app)  # type: ignore
         logger.info(
-            f"Creating {len(engine_args_list)}engines: engines={[e.served_model_name for e in engine_args_list]}"
+            f"Creating {len(engine_args_list)} engines: {[e.served_model_name for e in engine_args_list]}"
         )
         telemetry_log_info()
         app.engine_array = AsyncEngineArray.from_args(engine_args_list)  # type: ignore

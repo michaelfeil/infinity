@@ -260,5 +260,15 @@ class __Infinity_EnvManager:
     def embedding_dtype(self) -> list[str]:
         return self._typed_multiple("embedding_dtype", EmbeddingDtype)
 
-
+    @cached_property
+    def onnx_disable_optimize(self):
+        return self._to_bool_multiple(
+            self._optional_infinity_var_multiple("onnx_disable_optimize", default=["false"])
+        )
+    
+    @cached_property
+    def onnx_do_not_prefer_quantized(self):
+        return self._to_bool_multiple(
+            self._optional_infinity_var_multiple("onnx_do_not_prefer_quantized", default=["false"])
+        )
 MANAGER = __Infinity_EnvManager()
