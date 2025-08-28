@@ -100,10 +100,6 @@ black = "^24.10.0"
 types-chardet = "^5.0.4.6"
 mypy-protobuf = "^3.0.0"
 
-
-[tool.poetry.group.dev.dependencies]
-torchao = "^0.11.0"
-
 [tool.poetry.extras]
 ct2=["ctranslate2","sentence-transformers","torch","transformers"]
 optimum=["optimum"]
