@@ -21,6 +21,7 @@ if CHECK_PIL.is_available:
 
 def resolve_from_img_obj(img_obj: "ImageClassType") -> ImageSingle:
     """Resolve an image from a ImageClassType Object."""
+    assert_image_has_valid_size(img_obj)
     return ImageSingle(image=img_obj)
 
 
@@ -34,11 +35,7 @@ async def resolve_from_img_url(img_url: str, session: "aiohttp.ClientSession") -
 
     try:
         img = Image.open(io.BytesIO(downloaded_img))
-        if img.size[0] < 3 or img.size[1] < 3:
-            # https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png
-            raise ImageCorruption(
-                f"An image in your request is too small for processing {img.size}"
-            )
+        assert_image_has_valid_size(img)
         return ImageSingle(image=img)
     except Exception as e:
         raise ImageCorruption(
@@ -46,10 +43,19 @@ async def resolve_from_img_url(img_url: str, session: "aiohttp.ClientSession") -
         )
 
 
+def assert_image_has_valid_size(img: "ImageClassType") -> None:
+    if img.size[0] < 3 or img.size[1] < 3:
+        # https://upload.wikimedia.org/wikipedia/commons/c/ca/1x1.png
+        raise ImageCorruption(
+            f"An image in your request is too small for processing {img.size}. Minimum required size is 3x3."
+        )
+
+
 def resolve_from_img_bytes(bytes_img: bytes) -> ImageSingle:
     """Resolve an image from a Data URI"""
     try:
         img = Image.open(io.BytesIO(bytes_img))
+        assert_image_has_valid_size(img)
         return ImageSingle(image=img)
     except Exception as e:
         raise ImageCorruption(f"error decoding data URI: {e}")
