@@ -61,8 +61,8 @@ onnxruntime-gpu = [{version = "1.19.*", optional=true, python = "<3.13"},
 {version = ">=1.21", optional=true, python = ">=3.13"}
 ] 
 onnxruntime = [
-{version = "<=1.19.2", markers = "extra == 'optimum'", python = "<=3.9.*"},
-{version = ">=1.21", markers = "extra == 'optimum'", python = ">=3.13"}
+{version = "<=1.19.2", markers = "extra == 'optimum' or extra == 'all'", python = "<3.10"},
+{version = ">=1.21", markers = "extra == 'optimum' or extra == 'all'", python = ">=3.13"}
 ]
 onnx = [{version = ">=1.18", optional=true, python = ">=3.13"}
 ]  
