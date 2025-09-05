@@ -59,7 +59,7 @@ class SentenceClassifier(BaseClassifer):
 
         if engine_args.compile:
             logger.info("using torch.compile(dynamic=True)")
-            self._pipe.model = torch.compile(self._pipe.model, dynamic=True)
+            self._pipe.model = torch.compile(self._pipe.model, dynamic=True) #type:ignore
 
         self._infinity_tokenizer = AutoTokenizer.from_pretrained(
             engine_args.model_name_or_path,

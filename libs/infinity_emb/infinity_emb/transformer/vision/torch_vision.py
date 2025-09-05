@@ -43,7 +43,7 @@ class TIMM(BaseTIMM):
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
-        config = AutoConfig.from_pretrained(**base_config)
+        config = AutoConfig.from_pretrained(**base_config) #type: ignore
         self.is_colipali = config.architectures[0] in IMAGE_COL_MODELS
         self.mock_image = Image.new("RGB", (128, 128), color="black")
 
@@ -93,7 +93,7 @@ class TIMM(BaseTIMM):
             )
         else:
             self.model = AutoModel.from_pretrained(
-                **extra_model_args
+                 **extra_model_args #type:ignore
                 # attn_implementation="eager" if engine_args.bettertransformer else None,
             )
 
