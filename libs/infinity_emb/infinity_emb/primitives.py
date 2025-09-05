@@ -109,6 +109,7 @@ class Device(EnumType):
     cuda = "cuda"
     mps = "mps"
     tensorrt = "tensorrt"
+    xla = "xla"
     auto = "auto"
 
     @staticmethod
