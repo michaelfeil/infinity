@@ -8,10 +8,21 @@ from infinity_emb._optional_imports import CHECK_OPTIMUM, CHECK_TORCH, CHECK_TRA
 from infinity_emb.primitives import Device
 
 if CHECK_OPTIMUM.is_available:
-    from optimum.bettertransformer import (  # type: ignore[import-untyped]
-        BetterTransformer,
-        BetterTransformerManager,
-    )
+    try:
+        from optimum.bettertransformer import (  # type: ignore[import-untyped]
+            BetterTransformer,
+            BetterTransformerManager,
+        )
+        BETTERTRANSFORMER_AVAILABLE = True
+    except (ImportError, RuntimeError):
+        # BetterTransformer is deprecated in newer versions of optimum
+        BETTERTRANSFORMER_AVAILABLE = False
+        BetterTransformer = None
+        BetterTransformerManager = None
+else:
+    BETTERTRANSFORMER_AVAILABLE = False
+    BetterTransformer = None
+    BetterTransformerManager = None
 
 if CHECK_TORCH.is_available:
     import torch
@@ -37,6 +48,9 @@ def check_if_bettertransformer_possible(engine_args: "EngineArgs") -> bool:
     if not engine_args.bettertransformer:
         return False
 
+    if not BETTERTRANSFORMER_AVAILABLE:
+        return False
+
     config = AutoConfig.from_pretrained(
         pretrained_model_name_or_path=engine_args.model_name_or_path,
         revision=engine_args.revision,
@@ -48,6 +62,10 @@ def check_if_bettertransformer_possible(engine_args: "EngineArgs") -> bool:
 
 def to_bettertransformer(model: "PreTrainedModel", engine_args: "EngineArgs", logger: "Logger"):
     if not engine_args.bettertransformer:
+        return model
+
+    if not BETTERTRANSFORMER_AVAILABLE:
+        logger.info("BetterTransformer is not available due to version incompatibility. Continuing without optimization.")
         return model
 
     if engine_args.device == Device.mps or (
