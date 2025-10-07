@@ -76,7 +76,7 @@ def as_no_id_yes_id(
     yes: str = "1",
 ) -> tuple[int, int]:
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    no_id_yes_id = [tokenizer(no).input_ids, tokenizer(yes).input_ids]
+    no_id_yes_id = [tokenizer(no, add_special_tokens=False).input_ids, tokenizer(yes, add_special_tokens=False).input_ids]
     assert len(no_id_yes_id[0]) == 1
     assert len(no_id_yes_id[1]) == 1
     return no_id_yes_id[0][0], no_id_yes_id[1][0]
@@ -87,7 +87,7 @@ def only_yes_id(
 ) -> tuple[int]:
     """Get the id of the yes token."""
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    yes_id = tokenizer(yes).input_ids
+    yes_id = tokenizer(yes, add_special_tokens=False).input_ids
     assert len(yes_id) == 1
     return (yes_id[0],)
 
@@ -102,7 +102,7 @@ def upload_and_convert(
     if not uses_no_and_yes:
         no_id_yes_id = only_yes_id(model_name, yes)
     else:
-        no_id_yes_id = as_no_id_yes_id(model_name, yes, no)
+        no_id_yes_id = as_no_id_yes_id(model_name, no, yes)
     split_name = model_name.split("/")[1]
     model_cls = convert_to_sequence_classifier(f"{model_name}", no_id_yes_id)
     model_cls = model_cls.to(torch.float16)
