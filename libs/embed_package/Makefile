@@ -43,10 +43,10 @@ poetry_check:
 	poetry check
 
 spell_check:
-	poetry run codespell --toml pyproject.toml
+	poetry run codespell --toml pyproject.toml --skip="*.lock"
 
 spell_fix:
-	poetry run codespell --toml pyproject.toml -w
+	poetry run codespell --toml pyproject.toml -w --skip="*.lock"
 
 benchmark_embed: tests/data/benchmark/benchmark_embed.json
 	ab -n 10 -c 10 -l -s 480 \

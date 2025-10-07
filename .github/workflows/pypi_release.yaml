@@ -6,7 +6,7 @@ on:
     types: [published]
 
 env:
-  POETRY_VERSION: "1.8.4"
+  POETRY_VERSION: "2.1.3"
 
 jobs:
   publish-to-pypi:
