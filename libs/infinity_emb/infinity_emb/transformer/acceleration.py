@@ -7,11 +7,24 @@ from typing import TYPE_CHECKING
 from infinity_emb._optional_imports import CHECK_OPTIMUM, CHECK_TORCH, CHECK_TRANSFORMERS
 from infinity_emb.primitives import Device
 
-if CHECK_OPTIMUM.is_available:
-    from optimum.bettertransformer import (  # type: ignore[import-untyped]
-        BetterTransformer,
-        BetterTransformerManager,
-    )
+# lazy imports to avoid issues with deprecated BetterTransformer
+BetterTransformer = None
+BetterTransformerManager = None
+
+def _import_bettertransformer():
+    """Lazy import BetterTransformer to avoid import errors when it's not needed."""
+    global BetterTransformer, BetterTransformerManager
+    if BetterTransformer is None and CHECK_OPTIMUM.is_available:
+        try:
+            from optimum.bettertransformer import (  # type: ignore[import-untyped]
+                BetterTransformer as _BetterTransformer,
+                BetterTransformerManager as _BetterTransformerManager,
+            )
+            BetterTransformer = _BetterTransformer
+            BetterTransformerManager = _BetterTransformerManager
+        except Exception:
+            # If import fails, keep them as None
+            pass
 
 if CHECK_TORCH.is_available:
     import torch
@@ -35,6 +48,11 @@ if TYPE_CHECKING:
 def check_if_bettertransformer_possible(engine_args: "EngineArgs") -> bool:
     """verifies if attempting conversion to bettertransformers should be checked."""
     if not engine_args.bettertransformer:
+        return False
+
+    _import_bettertransformer()
+    
+    if BetterTransformerManager is None:
         return False
 
     config = AutoConfig.from_pretrained(
@@ -65,6 +83,15 @@ def to_bettertransformer(model: "PreTrainedModel", engine_args: "EngineArgs", lo
             "INFINITY_DISABLE_OPTIMUM is no longer supported, please use the CLI / ENV for that."
         )
 
+    _import_bettertransformer()
+    
+    if BetterTransformer is None:
+        logger.warning(
+            "BetterTransformer is not available (likely due to transformers version incompatibility). "
+            "Continue without bettertransformer modeling code."
+        )
+        return model
+
     if (
         hasattr(model.config, "_attn_implementation")
         and model.config._attn_implementation != "eager"
@@ -80,7 +107,7 @@ def to_bettertransformer(model: "PreTrainedModel", engine_args: "EngineArgs", lo
             "Since torch 2.5.0, this combination leads to a segfault. Please report if you find this check to be incorrect."
         )
     try:
-        model = BetterTransformer.transform(model)
+        model = BetterTransformer.transform(model) # type: ignore
     except Exception as ex:
         # if level is debug then show the exception
         if logger.level <= 10:
