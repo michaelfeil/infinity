@@ -8,7 +8,7 @@ from infinity_emb._optional_imports import CHECK_OPTIMUM, CHECK_TORCH, CHECK_TRA
 from infinity_emb.primitives import Device
 
 if CHECK_OPTIMUM.is_available:
-    from optimum.bettertransformer import (  # type: ignore[import-untyped]
+    from better_transformer import (  # type: ignore[import-untyped]
         BetterTransformer,
         BetterTransformerManager,
     )
