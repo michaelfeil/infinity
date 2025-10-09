@@ -1,0 +1,121 @@
+[tool.poetry]
+name = "infinity"
+version = "0.0.77"
+description = "Infinity - High-throughput, low-latency REST API for serving embeddings, reranking, and multimodal models"
+authors = ["michaelfeil <noreply@michaelfeil.eu>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/michaelfeil/infinity"
+repository = "https://github.com/michaelfeil/infinity"
+keywords = ["vector", "embedding", "neural", "search", "sentence-transformers", "testing"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.9,<3.14"
+
+[tool.poetry.group.test.dependencies]
+pytest = "^8.0.0"
+pytest-cov = "^6.0.0"
+pytest-mock = "^3.14.0"
+
+[tool.poetry.scripts]
+test = "pytest:main"
+tests = "pytest:main"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+# ===== Pytest Configuration =====
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests", "libs/*/tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Output configuration
+addopts = [
+    "-v",                          # Verbose output
+    "--strict-markers",            # Raise error on unknown markers
+    "--strict-config",             # Raise error on invalid config
+    "--tb=short",                  # Shorter traceback format
+]
+
+# Coverage options (enable by adding --cov flag to pytest command)
+# Examples:
+#   poetry run pytest --cov=libs --cov-report=term-missing --cov-report=html
+#   poetry run pytest --cov=libs --cov-report=xml --cov-fail-under=80
+
+# Custom markers
+markers = [
+    "unit: Unit tests that test individual components in isolation",
+    "integration: Integration tests that test multiple components together",
+    "slow: Tests that take a long time to run (deselect with '-m \"not slow\"')",
+    "performance: Performance and benchmark tests (deselect with '-m \"not performance\"')",
+]
+
+# Test discovery patterns
+norecursedirs = [
+    ".*",
+    "build",
+    "dist",
+    "CVS",
+    "_darcs",
+    "{arch}",
+    "*.egg",
+    "venv",
+    "env",
+    "node_modules",
+]
+
+# ===== Coverage Configuration =====
+[tool.coverage.run]
+source = ["libs"]
+branch = true
+parallel = true
+omit = [
+    "*/tests/*",
+    "*/test_*",
+    "*/__pycache__/*",
+    "*/site-packages/*",
+    "*/distutils/*",
+    "*/.venv/*",
+    "*/venv/*",
+    "*/env/*",
+    "*/.tox/*",
+    "*/conftest.py",
+    "*/__init__.py",
+    "*/setup.py",
+]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "def __str__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "if typing.TYPE_CHECKING:",
+    "@abstractmethod",
+    "@abc.abstractmethod",
+    "class .*\\bProtocol\\):",
+    "pass",
+]
+
+[tool.coverage.html]
+directory = "htmlcov"
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.coverage.paths]
+source = [
+    "libs/",
+    "*/site-packages/",
+]
