@@ -165,3 +165,6 @@ libs/infinity_emb/data/*
 
 # macOS
 .DS_Store
+
+# Claude Code
+.claude/*
