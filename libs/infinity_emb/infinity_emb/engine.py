@@ -52,7 +52,8 @@ class AsyncEmbeddingEngine:
         self._engine_args = EngineArgs(**kwargs)
 
         self.running = False
-        self._running_mutex: Lock = Lock()
+        self._running_lock: Optional[Lock] = None
+        self._running_counter: int = 0
         self._model_replicas, self._min_inference_t, self._max_inference_t = select_model(
             self._engine_args
         )
@@ -81,27 +82,35 @@ class AsyncEmbeddingEngine:
 
     async def astart(self):
         """startup engine"""
-        await self._running_mutex.acquire()
-        if not self.running:
-            self.running = True
-            self._batch_handler = BatchHandler(
-                max_batch_size=self._engine_args.batch_size,
-                model_replicas=self._model_replicas,
-                # batch_delay=self._min_inference_t / 2,
-                vector_disk_cache_path=self._engine_args.vector_disk_cache_path,
-                verbose=logger.level <= 10,
-                lengths_via_tokenize=self._engine_args.lengths_via_tokenize,
-            )
-            await self._batch_handler.spawn()
+        if self._running_lock is None:
+            self._running_lock = Lock()
+        async with self._running_lock:
+            # Counting the number of launches (when using multiple context managers asynchronously)
+            self._running_counter += 1
+            if not self.running:
+                self.running = True
+                self._batch_handler = BatchHandler(
+                    max_batch_size=self._engine_args.batch_size,
+                    model_replicas=self._model_replicas,
+                    # batch_delay=self._min_inference_t / 2,
+                    vector_disk_cache_path=self._engine_args.vector_disk_cache_path,
+                    verbose=logger.level <= 10,
+                    lengths_via_tokenize=self._engine_args.lengths_via_tokenize,
+                )
+                await self._batch_handler.spawn()
 
-    async def astop(self):
+    async def astop(self, *, force: bool = False):
         """stop engine"""
-        if not self._running_mutex.locked():
+        if self._running_lock is None:
             return
-        if self.running:
-            self.running = False
-            await self._batch_handler.shutdown()
-        self._running_mutex.release()
+        async with self._running_lock:
+            if force:
+                self._running_counter = 0
+            if self._running_counter > 0:
+                self._running_counter -= 1
+            if self.running and self._running_counter == 0:
+                self.running = False
+                await self._batch_handler.shutdown()
 
     async def __aenter__(self):
         await self.astart()
