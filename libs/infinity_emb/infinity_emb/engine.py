@@ -2,7 +2,7 @@
 # Copyright (c) 2023-now michaelfeilfeil
 from __future__ import annotations
 
-from asyncio import Semaphore
+from asyncio import Lock
 from typing import Iterable, Iterator, Optional, Union
 
 from infinity_emb.args import EngineArgs
@@ -52,7 +52,7 @@ class AsyncEmbeddingEngine:
         self._engine_args = EngineArgs(**kwargs)
 
         self.running = False
-        self._running_sepamore: Optional[Semaphore] = None
+        self._running_mutex: Lock = Lock()
         self._model_replicas, self._min_inference_t, self._max_inference_t = select_model(
             self._engine_args
         )
@@ -81,29 +81,27 @@ class AsyncEmbeddingEngine:
 
     async def astart(self):
         """startup engine"""
-        if self._running_sepamore is None:
-            self._running_sepamore = Semaphore(1)
-        async with self._running_sepamore:
-            if not self.running:
-                self.running = True
-                self._batch_handler = BatchHandler(
-                    max_batch_size=self._engine_args.batch_size,
-                    model_replicas=self._model_replicas,
-                    # batch_delay=self._min_inference_t / 2,
-                    vector_disk_cache_path=self._engine_args.vector_disk_cache_path,
-                    verbose=logger.level <= 10,
-                    lengths_via_tokenize=self._engine_args.lengths_via_tokenize,
-                )
-                await self._batch_handler.spawn()
+        await self._running_mutex.acquire()
+        if not self.running:
+            self.running = True
+            self._batch_handler = BatchHandler(
+                max_batch_size=self._engine_args.batch_size,
+                model_replicas=self._model_replicas,
+                # batch_delay=self._min_inference_t / 2,
+                vector_disk_cache_path=self._engine_args.vector_disk_cache_path,
+                verbose=logger.level <= 10,
+                lengths_via_tokenize=self._engine_args.lengths_via_tokenize,
+            )
+            await self._batch_handler.spawn()
 
     async def astop(self):
         """stop engine"""
-        if self._running_sepamore is None:
+        if not self._running_mutex.locked():
             return
-        async with self._running_sepamore:
-            if self.running:
-                self.running = False
-                await self._batch_handler.shutdown()
+        if self.running:
+            self.running = False
+            await self._batch_handler.shutdown()
+        self._running_mutex.release()
 
     async def __aenter__(self):
         await self.astart()
