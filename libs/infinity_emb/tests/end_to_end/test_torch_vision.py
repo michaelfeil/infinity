@@ -220,3 +220,24 @@ async def test_vision_fail(client):
         json={"model": MODEL, "input": ["test"]},
     )
     assert response_unsupported.status_code == status.HTTP_400_BAD_REQUEST
+
+
+@pytest.mark.anyio
+async def test_vision_base64_too_small(client, image_sample):
+    response = await client.post(
+        f"{PREFIX}/embeddings_image",
+        json={
+            "model": MODEL,
+            "input": [
+                "data:image/jpeg;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9sXsdrgAAAAASUVORK5CYII=",
+                pytest.IMAGE_SAMPLE_URL,
+            ],
+        },
+    )
+    assert response.status_code == status.HTTP_400_BAD_REQUEST
+    rdata = response.json()
+    message = rdata["error"]["message"]
+    assert (
+        message
+        == "<class 'infinity_emb.primitives.ImageCorruption'> -> error decoding data URI: An image in your request is too small for processing (1, 1). Minimum required size is 3x3."
+    )

@@ -33,10 +33,12 @@ def get_engine_type_from_config(
     else:
         from huggingface_hub import hf_hub_download  # type: ignore[import-untyped]
 
-        config_path = hf_hub_download(
-            engine_args.model_name_or_path,
-            revision=engine_args.revision,
-            filename="config.json",
+        config_path = Path(
+            hf_hub_download(
+                engine_args.model_name_or_path,
+                revision=engine_args.revision,
+                filename="config.json",
+            )
         )
 
     with open(config_path, "r") as f:

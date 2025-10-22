@@ -8,7 +8,7 @@ from transformers import (
     AutoTokenizer,
     AutoModelForSequenceClassification,
 )
-
+BASE_NAME = "michaelfeil"
 
 @torch.no_grad()
 def convert_to_sequence_classifier(
@@ -76,19 +76,33 @@ def as_no_id_yes_id(
     yes: str = "1",
 ) -> tuple[int, int]:
     tokenizer = AutoTokenizer.from_pretrained(model_name)
-    no_id_yes_id = [tokenizer(no).input_ids, tokenizer(yes).input_ids]
+    no_id_yes_id = [tokenizer(no, add_special_tokens=False).input_ids, tokenizer(yes, add_special_tokens=False).input_ids]
     assert len(no_id_yes_id[0]) == 1
     assert len(no_id_yes_id[1]) == 1
     return no_id_yes_id[0][0], no_id_yes_id[1][0]
+
+def only_yes_id(
+    model_name: str = "mixedbread-ai/mxbai-rerank-base-v2",
+    yes: str = "1",
+) -> tuple[int]:
+    """Get the id of the yes token."""
+    tokenizer = AutoTokenizer.from_pretrained(model_name)
+    yes_id = tokenizer(yes, add_special_tokens=False).input_ids
+    assert len(yes_id) == 1
+    return (yes_id[0],)
 
 
 def upload_and_convert(
     model_name: str = "mixedbread-ai/mxbai-rerank-base-v2",
     no: str = "0",
     yes: str = "1",
+    uses_no_and_yes: bool = True,
 ):
     """Upload the converted sequence classifier to the hub."""
-    no_id_yes_id = as_no_id_yes_id(model_name, yes, no)
+    if not uses_no_and_yes:
+        no_id_yes_id = only_yes_id(model_name, yes)
+    else:
+        no_id_yes_id = as_no_id_yes_id(model_name, no, yes)
     split_name = model_name.split("/")[1]
     model_cls = convert_to_sequence_classifier(f"{model_name}", no_id_yes_id)
     model_cls = model_cls.to(torch.float16)
@@ -99,9 +113,9 @@ def upload_and_convert(
     model_cls.save_pretrained(f"./{split_name}")
 
     api = HfApi()
-    api.create_repo(repo_id=f"michaelfeil/{split_name}-seq", exist_ok=True)
+    api.create_repo(repo_id=f"{BASE_NAME}/{split_name}-seq", exist_ok=True)
     api.upload_folder(
-        repo_id=f"michaelfeil/{split_name}-seq",
+        repo_id=f"{BASE_NAME}/{split_name}-seq",
         folder_path=f"./{split_name}",
     )
 
