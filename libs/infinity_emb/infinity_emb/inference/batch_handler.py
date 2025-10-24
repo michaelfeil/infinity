@@ -191,7 +191,7 @@ class BatchHandler:
                 if top_n is None, <= 0 or out of range, all scores are returned
 
         Raises:
-            ModelNotDeployedError: If loaded model does not expose `embed`
+            ModelNotDeployedError: If loaded model does not expose `rerank`
                 capabilities
 
         Returns:
