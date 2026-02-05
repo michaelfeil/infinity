@@ -43,7 +43,7 @@ class TIMM(BaseTIMM):
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
         )
-        config = AutoConfig.from_pretrained(**base_config)
+        config = AutoConfig.from_pretrained(**base_config) #type: ignore
         self.is_colipali = config.architectures[0] in IMAGE_COL_MODELS
         self.mock_image = Image.new("RGB", (128, 128), color="black")
 
@@ -60,8 +60,8 @@ class TIMM(BaseTIMM):
         if self.is_colipali:
             CHECK_COLPALI_ENGINE.mark_required()
             from colpali_engine.models import (  # type: ignore
-                ColIdefics2,
-                ColIdefics2Processor,
+                ColIdefics3,
+                ColIdefics3Processor,
                 ColPali,
                 ColPaliProcessor,
                 ColQwen2,
@@ -75,13 +75,13 @@ class TIMM(BaseTIMM):
                 "ColPali": ColPali,
                 "ColQwen2": ColQwen2,
                 # "ColQwen2_5": ColQwen2_5,
-                "ColIdefics2": ColIdefics2,
+                "ColIdefics3": ColIdefics3,
             }[config.architectures[0]]
             processor_cls = {
                 "ColPali": ColPaliProcessor,
                 "ColQwen2": ColQwen2Processor,
                 # "ColQwen2_5": ColQwen2_5_Processor,
-                "ColIdefics2": ColIdefics2Processor,
+                "ColIdefics3": ColIdefics3Processor,
             }[config.architectures[0]]
 
             self.model = model_cls.from_pretrained(
@@ -93,7 +93,7 @@ class TIMM(BaseTIMM):
             )
         else:
             self.model = AutoModel.from_pretrained(
-                **extra_model_args
+                 **extra_model_args #type:ignore
                 # attn_implementation="eager" if engine_args.bettertransformer else None,
             )
 

@@ -69,7 +69,7 @@ class OptimumClassifier(BaseClassifer):
     def encode_pre(self, sentences: list[str]):
         return sentences
 
-    def encode_core(self, sentences: list[str]) -> dict:
+    def encode_core(self, sentences: list[str]) -> list[dict]:
         outputs = self._pipe(sentences)
         return outputs
 
