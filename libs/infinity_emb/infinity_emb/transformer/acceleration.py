@@ -8,10 +8,19 @@ from infinity_emb._optional_imports import CHECK_OPTIMUM, CHECK_TORCH, CHECK_TRA
 from infinity_emb.primitives import Device
 
 if CHECK_OPTIMUM.is_available:
-    from optimum.bettertransformer import (  # type: ignore[import-untyped]
-        BetterTransformer,
-        BetterTransformerManager,
-    )
+    try:
+        from optimum.bettertransformer import (  # type: ignore[import-untyped]
+            BetterTransformer,
+            BetterTransformerManager,
+        )
+    except (ImportError, ModuleNotFoundError):
+        # optimum.bettertransformer was removed in optimum >= 2.0
+        CHECK_OPTIMUM.mark_dirty(
+            ImportError(
+                "optimum.bettertransformer is not available in this version of optimum. "
+                "BetterTransformer support requires optimum < 2.0."
+            )
+        )
 
 if CHECK_TORCH.is_available:
     import torch

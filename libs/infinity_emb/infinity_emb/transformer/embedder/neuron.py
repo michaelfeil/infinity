@@ -124,7 +124,6 @@ class NeuronOptimumEmbedder(BaseEmbedder):
             padding=True,
             truncation="longest_first",
             return_tensors="pt",
-            return_token_type_ids=False,
         )
         return input_dict
 

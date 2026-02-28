@@ -1,33 +1,106 @@
-# Launch an EC2 Instance on AWS:
+# Running Infinity on AWS Inferentia / Trainium
 
-### Start a EC2 Instance with Huggingface AMI (free AMI image with Neuron Tools/Docker installed)
-- https://aws.amazon.com/marketplace/pp/prodview-gr3e6yiscria2
-- View Purchase Options -> Configure
-- Use `64-Bit AMI`, `20241115 (Nov 18, 2024)`
-- Region, e.g. `us-west-2`
-- Set Instance type `inf2.xlarge` (has two neuron accelerators)
-- Login with username `ubuntu` (using your standard EC2 setup e.g. `ssh ubuntu@ec2-14-11-13-12.us-west-2.compute.amazonaws.com`)
+## Recommended: Use the HuggingFace Neuron AMI (no Docker)
 
-### Optional: build docker image from scratch
+The simplest approach is to run Infinity directly on an EC2 instance with the
+HuggingFace Neuron AMI, which comes with `optimum-neuron`, `optimum`, `transformers`,
+and `sentence-transformers` pre-installed with compatible Neuron SDK versions.
+
+### 1. Launch an EC2 Instance
+
+- Use the **HuggingFace Neuron AMI** (`huggingface-neuron-*`) from the AWS Marketplace
+  - This AMI ships optimum-neuron 0.4.4, neuronx-cc 2.21, Python 3.10 — all compatible
+  - Search for `huggingface-neuron` in the EC2 AMI catalog
+- Instance type: **inf2.xlarge** (2 NeuronCores, 32 GB) or larger
+- Disk: The AMI defaults to 512 GB
+
+### 2. Install Infinity
+
+```bash
+# SSH into the instance
+ssh ubuntu@<your-instance-ip>
+
+# Activate the pre-installed PyTorch environment
+source /opt/aws_neuronx_venv_pytorch_2_8/bin/activate
+
+# Clone and install Infinity from source (don't overwrite Neuron packages)
+git clone https://github.com/michaelfeil/infinity.git ~/infinity
+cd ~/infinity/libs/infinity_emb
+pip install --no-deps .
+
+# Install remaining runtime dependencies (most are already present on the HF AMI)
+pip install uvicorn fastapi orjson typer httptools pydantic posthog \
+    prometheus-fastapi-instrumentator hf_transfer rich
+```
+
+### 3. Run Infinity with Neuron engine
+
+```bash
+infinity_emb v2 --engine neuron --model-id BAAI/bge-small-en-v1.5 --batch-size 4
+```
+
+The first run will compile the model for Neuron (~100 seconds). Subsequent runs use the cached compilation.
+
+### 4. Test it
+
+```bash
+curl http://localhost:7997/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{"input": ["Hello world", "How are you?"], "model": "BAAI/bge-small-en-v1.5"}'
+```
+
+## Performance (inf2.xlarge, bge-small-en-v1.5, batch_size=4)
+
+Tested on HuggingFace Neuron AMI (optimum-neuron 0.4.4, neuronx-cc 2.21, SDK 2.27):
+
+| Metric | Value |
+|--------|-------|
+| Latency (serial, 1 sentence) | ~28 ms |
+| Latency (serial, 4 sentences) | ~28 ms |
+| Throughput (4 concurrent) | ~201 embeddings/sec |
+| Compilation time (first run) | ~99 seconds |
+
+## Tested Stack
+
+| Package | Version |
+|---------|---------|
+| optimum-neuron | 0.4.4 |
+| optimum | 2.0.0 |
+| neuronx-cc | 2.21.33363 |
+| torch-neuronx | 2.8.0.2.10 |
+| torch | 2.8.0 |
+| transformers | 4.57.3 |
+| Python | 3.10.12 |
+
+## Alternative: Docker
+
+### Build from source
+
 ```bash
 git clone https://github.com/michaelfeil/infinity
 cd infinity
-docker buildx build -t michaelf34/infinity:0.0.x-neuron -f ./infra/aws_neuron/Dockerfile.neuron
+docker buildx build -t infinity-neuron -f ./infra/aws_neuron/Dockerfile.neuron .
 ```
 
-### Run the image on EC2
+### Run on EC2
 
 ```bash
-docker run -it --rm --device=/dev/neuron0 michaelf34/infinity:0.0.71-neuron v2 --model-id BAAI/bge-small-en-v1.5 --batch-size 8 --log-level debug
+docker run -it --rm --device=/dev/neuron0 infinity-neuron \
+  v2 --model-id BAAI/bge-small-en-v1.5 --batch-size 8
 ```
 
-### Run task on ECS (Work in progress)
+**Note:** The host must have the Neuron driver installed. The Docker approach is less tested than the direct AMI approach above.
 
-1. Create a AWS ECS Cluster with EC2:
-- Amazon Machine Image (AMI): Amazon Linux 2 - *Neuron*
-- inf2.xlarge as machine type.
+## Limitations
 
-2. Create a Task:
+- The `--engine neuron` flag currently supports **text embeddings only** (no reranking or classification)
+- The Neuron engine requires a **constant batch size** (requests are padded automatically)
+- Models are compiled on first use; compilation can take 60-120 seconds
+
+## ECS Deployment
+
+See the ECS task definition example below for container orchestration:
+
 ```json
 {
     "family": "ecs-infinity-neuron",
@@ -45,10 +118,7 @@ docker run -it --rm --device=/dev/neuron0 michaelf34/infinity:0.0.71-neuron v2 -
     "executionRoleArn": "${YOUR_EXECUTION_ROLE}",
     "containerDefinitions": [
         {
-            "entryPoint": [
-                "infinity_emb",
-                "v2"
-            ],
+            "entryPoint": ["infinity_emb", "v2"],
             "portMappings": [
                 {
                     "hostPort": 7997,
@@ -61,41 +131,19 @@ docker run -it --rm --device=/dev/neuron0 michaelf34/infinity:0.0.71-neuron v2 -
                     {
                         "containerPath": "/dev/neuron0",
                         "hostPath": "/dev/neuron0",
-                        "permissions": [
-                            "read",
-                            "write"
-                        ]
+                        "permissions": ["read", "write"]
                     }
                 ],
                 "capabilities": {
-                    "add": [
-                        "IPC_LOCK"
-                    ]
+                    "add": ["IPC_LOCK"]
                 }
             },
             "cpu": 0,
             "memoryReservation": 1000,
-            "image": "michaelf34/infinity:0.0.71-neuron",
+            "image": "infinity-neuron:latest",
             "essential": true,
             "name": "infinity-neuron"
         }
     ]
 }
-```
-
-You can also add logging:
-```
-            // same indent as "linuxParameters"
-            "logConfiguration": {
-                "logDriver": "awslogs", 
-                "options": {
-                    "awslogs-group": "/ecs/ecs-infinity-neuron", 
-                    "mode": "non-blocking", 
-                    "awslogs-create-group": "true", 
-                    "max-buffer-size": "25m", 
-                    "awslogs-region": "us-west-2", // set correct location.
-                    "awslogs-stream-prefix": "ecs" 
-                },
-                "secretOptions": []
-            }
 ```
