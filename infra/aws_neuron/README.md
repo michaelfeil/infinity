@@ -49,16 +49,30 @@ curl http://localhost:7997/embeddings \
   -d '{"input": ["Hello world", "How are you?"], "model": "BAAI/bge-small-en-v1.5"}'
 ```
 
-## Performance (inf2.xlarge, bge-small-en-v1.5, batch_size=4)
+## Performance (bge-small-en-v1.5, batch_size=4)
 
-Tested on HuggingFace Neuron AMI (optimum-neuron 0.4.4, neuronx-cc 2.21, SDK 2.27):
+### Latency (serial requests, P50)
 
-| Metric | Value |
-|--------|-------|
-| Latency (serial, 1 sentence) | ~28 ms |
-| Latency (serial, 4 sentences) | ~28 ms |
-| Throughput (4 concurrent) | ~201 embeddings/sec |
-| Compilation time (first run) | ~99 seconds |
+| Workload | g5.xlarge (GPU) | inf2.xlarge | trn2.3xlarge |
+|----------|----------------|-------------|--------------|
+| 1 short sentence | 14.2ms | 25.9ms | 18.9ms |
+| 4 short sentences | 16.0ms | 26.5ms | 19.4ms |
+| 4 long sentences | 16.2ms | 27.0ms | 19.9ms |
+
+### Throughput (concurrent requests)
+
+| Workload | g5.xlarge (GPU) | inf2.xlarge | trn2.3xlarge |
+|----------|----------------|-------------|--------------|
+| 4 sentences, 4 concurrent | 421 emb/s | 207 emb/s | 351 emb/s |
+| 4 sentences, 8 concurrent | 536 emb/s | 206 emb/s | 349 emb/s |
+
+**Notes:**
+- g5.xlarge uses `--engine torch`; inf2/trn2 use `--engine neuron`
+- Neuron latency is constant regardless of batch content (padded to compiled batch size)
+- GPU throughput scales with concurrency; Neuron throughput is flat
+- Compilation time: ~60-100 seconds on first run (cached after that)
+
+Tested on HuggingFace Neuron AMI (optimum-neuron 0.4.4, neuronx-cc 2.21, SDK 2.27).
 
 ## Tested Stack
 

@@ -46,6 +46,9 @@ def check_if_bettertransformer_possible(engine_args: "EngineArgs") -> bool:
     if not engine_args.bettertransformer:
         return False
 
+    if not CHECK_OPTIMUM.is_available:
+        return False
+
     config = AutoConfig.from_pretrained(
         pretrained_model_name_or_path=engine_args.model_name_or_path,
         revision=engine_args.revision,
