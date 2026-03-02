@@ -36,12 +36,27 @@ pip install uvicorn fastapi orjson typer httptools pydantic posthog \
 ### 3. Run Infinity with Neuron engine
 
 ```bash
+# Single core (uses one NeuronCore)
 infinity_emb v2 --engine neuron --model-id BAAI/bge-small-en-v1.5 --batch-size 4
 ```
 
 The first run will compile the model for Neuron (~100 seconds). Subsequent runs use the cached compilation.
 
-### 4. Test it
+### 4. Scale across all NeuronCores (data parallelism)
+
+The Neuron runtime is limited to one model per process. To use all NeuronCores,
+run one server process per core, each pinned to a different core:
+
+```bash
+# inf2.xlarge has 2 NeuronCores (cores 0 and 1)
+NEURON_RT_VISIBLE_CORES=0 infinity_emb v2 --engine neuron --model-id BAAI/bge-small-en-v1.5 --batch-size 4 --port 7997 &
+NEURON_RT_VISIBLE_CORES=1 infinity_emb v2 --engine neuron --model-id BAAI/bge-small-en-v1.5 --batch-size 4 --port 7998 &
+```
+
+Then use a load balancer (nginx, HAProxy, etc.) to distribute requests across
+ports. This gives **linear throughput scaling**: 2 cores = 2x throughput, 8 cores = 8x.
+
+### 5. Test it
 
 ```bash
 curl http://localhost:7997/embeddings \
@@ -53,18 +68,18 @@ curl http://localhost:7997/embeddings \
 
 ### Latency (serial requests, P50)
 
-| Workload | g5.xlarge (GPU) | inf2.xlarge | trn2.3xlarge |
-|----------|----------------|-------------|--------------|
-| 1 short sentence | 14.2ms | 25.9ms | 18.9ms |
-| 4 short sentences | 16.0ms | 26.5ms | 19.4ms |
-| 4 long sentences | 16.2ms | 27.0ms | 19.9ms |
+| Workload | g5.xlarge (GPU) | inf2.xlarge (1 core) | inf2.xlarge (2 cores) |
+|----------|----------------|---------------------|----------------------|
+| 1 short sentence | 14.2ms | 25.0ms | 25.0ms |
+| 4 short sentences | 16.0ms | 25.6ms | 25.6ms |
+| 4 long sentences | 16.2ms | 26.0ms | 26.0ms |
 
 ### Throughput (concurrent requests)
 
-| Workload | g5.xlarge (GPU) | inf2.xlarge | trn2.3xlarge |
-|----------|----------------|-------------|--------------|
-| 4 sentences, 4 concurrent | 421 emb/s | 207 emb/s | 351 emb/s |
-| 4 sentences, 8 concurrent | 536 emb/s | 206 emb/s | 349 emb/s |
+| Workload | g5.xlarge (GPU) | inf2.xlarge (1 core) | inf2.xlarge (2 cores) |
+|----------|----------------|---------------------|----------------------|
+| 4 sentences, 4 concurrent | 421 emb/s | 216 emb/s | 425 emb/s |
+| 4 sentences, 8 concurrent | 536 emb/s | 215 emb/s | 424 emb/s |
 
 **Notes:**
 - g5.xlarge uses `--engine torch`; inf2/trn2 use `--engine neuron`

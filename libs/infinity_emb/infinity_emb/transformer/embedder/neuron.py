@@ -97,7 +97,10 @@ class NeuronOptimumEmbedder(BaseEmbedder):
         )
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
 
-        compiler_args = {"num_cores": get_nc_count(), "auto_cast_type": "fp16"}
+        # Compile for a single NeuronCore.  For data-parallel scaling across
+        # multiple cores, run separate server processes pinned to individual
+        # cores via NEURON_RT_VISIBLE_CORES (see README).
+        compiler_args = {"num_cores": 1, "auto_cast_type": "fp16"}
         input_shapes = {
             "batch_size": engine_args.batch_size,
             "sequence_length": (
