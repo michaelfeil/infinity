@@ -11,7 +11,7 @@ and `sentence-transformers` pre-installed with compatible Neuron SDK versions.
 - Use the **HuggingFace Neuron AMI** (`huggingface-neuron-*`) from the AWS Marketplace
   - This AMI ships optimum-neuron 0.4.4, neuronx-cc 2.21, Python 3.10 — all compatible
   - Search for `huggingface-neuron` in the EC2 AMI catalog
-- Instance type: **inf2.xlarge** (2 NeuronCores, 32 GB) or larger
+- Instance type: **inf2.xlarge** (2 NeuronCores, 32 GB), **trn2.3xlarge** (4 NeuronCores, 128 GB), or larger
 - Disk: The AMI defaults to 512 GB
 
 ### 2. Install Infinity
@@ -51,10 +51,16 @@ run one server process per core, each pinned to a different core:
 # inf2.xlarge has 2 NeuronCores (cores 0 and 1)
 NEURON_RT_VISIBLE_CORES=0 infinity_emb v2 --engine neuron --model-id BAAI/bge-small-en-v1.5 --batch-size 4 --port 7997 &
 NEURON_RT_VISIBLE_CORES=1 infinity_emb v2 --engine neuron --model-id BAAI/bge-small-en-v1.5 --batch-size 4 --port 7998 &
+
+# trn2.3xlarge has 4 NeuronCores (cores 0-3)
+NEURON_RT_VISIBLE_CORES=0 infinity_emb v2 --engine neuron --model-id BAAI/bge-small-en-v1.5 --batch-size 4 --port 7997 &
+NEURON_RT_VISIBLE_CORES=1 infinity_emb v2 --engine neuron --model-id BAAI/bge-small-en-v1.5 --batch-size 4 --port 7998 &
+NEURON_RT_VISIBLE_CORES=2 infinity_emb v2 --engine neuron --model-id BAAI/bge-small-en-v1.5 --batch-size 4 --port 7999 &
+NEURON_RT_VISIBLE_CORES=3 infinity_emb v2 --engine neuron --model-id BAAI/bge-small-en-v1.5 --batch-size 4 --port 8000 &
 ```
 
 Then use a load balancer (nginx, HAProxy, etc.) to distribute requests across
-ports. This gives **linear throughput scaling**: 2 cores = 2x throughput, 8 cores = 8x.
+ports. Throughput scales linearly with cores: 2 cores = 2x, 4 cores = 4x.
 
 ### 5. Test it
 
@@ -68,26 +74,31 @@ curl http://localhost:7997/embeddings \
 
 ### Latency (serial requests, P50)
 
-| Workload | g5.xlarge (GPU) | inf2.xlarge (1 core) | inf2.xlarge (2 cores) |
+| Workload | g5.xlarge (GPU) | inf2.xlarge (1 core) | trn2.3xlarge (1 core) |
 |----------|----------------|---------------------|----------------------|
-| 1 short sentence | 14.2ms | 25.0ms | 25.0ms |
-| 4 short sentences | 16.0ms | 25.6ms | 25.6ms |
-| 4 long sentences | 16.2ms | 26.0ms | 26.0ms |
+| 1 short sentence | 14.2ms | 25.0ms | 19.0ms |
+| 4 short sentences | 16.0ms | 25.6ms | 19.5ms |
+| 4 long sentences | 16.2ms | 26.0ms | 20.3ms |
 
-### Throughput (concurrent requests)
+### Throughput (concurrent requests, data parallelism)
 
-| Workload | g5.xlarge (GPU) | inf2.xlarge (1 core) | inf2.xlarge (2 cores) |
-|----------|----------------|---------------------|----------------------|
-| 4 sentences, 4 concurrent | 421 emb/s | 216 emb/s | 425 emb/s |
-| 4 sentences, 8 concurrent | 536 emb/s | 215 emb/s | 424 emb/s |
+| Instance | Cores | Peak emb/s | Concurrency |
+|----------|-------|-----------|-------------|
+| g5.xlarge (GPU) | 1 GPU | 536 | 8 concurrent |
+| inf2.xlarge | 1 core | 216 | 4 concurrent |
+| inf2.xlarge | 2 cores | 427 | 4 concurrent |
+| trn2.3xlarge | 1 core | 348 | 4 concurrent |
+| trn2.3xlarge | 4 cores | 753 | 4 concurrent |
 
 **Notes:**
 - g5.xlarge uses `--engine torch`; inf2/trn2 use `--engine neuron`
 - Neuron latency is constant regardless of batch content (padded to compiled batch size)
-- GPU throughput scales with concurrency; Neuron throughput is flat
+- trn2 has ~30% lower latency per core than inf2 (19ms vs 25ms)
+- Throughput scales linearly with data parallelism (1 process per core)
 - Compilation time: ~60-100 seconds on first run (cached after that)
 
-Tested on HuggingFace Neuron AMI (optimum-neuron 0.4.4, neuronx-cc 2.21, SDK 2.27).
+Tested on HuggingFace Neuron AMI (optimum-neuron 0.4.4, neuronx-cc 2.21, SDK 2.27)
+and Deep Learning AMI Neuron Ubuntu 22.04 (SDK 2.28) for trn2.
 
 ## Tested Stack
 
