@@ -84,11 +84,11 @@ curl http://localhost:7997/embeddings \
 
 | Instance | Cores | Peak emb/s | Concurrency |
 |----------|-------|-----------|-------------|
-| g5.xlarge (GPU) | 1 GPU | 536 | 8 concurrent |
-| inf2.xlarge | 1 core | 216 | 4 concurrent |
-| inf2.xlarge | 2 cores | 427 | 4 concurrent |
-| trn2.3xlarge | 1 core | 348 | 4 concurrent |
-| trn2.3xlarge | 4 cores | 753 | 4 concurrent |
+| g5.xlarge (GPU) | 1 GPU | 536 | 8 |
+| inf2.xlarge | 1 core | 216 | 4 |
+| inf2.xlarge | 2 cores | 427 | 4 |
+| trn2.3xlarge | 1 core | 348 | 4 |
+| trn2.3xlarge | 4 cores | 753 | 4 |
 
 **Notes:**
 - g5.xlarge uses `--engine torch`; inf2/trn2 use `--engine neuron`

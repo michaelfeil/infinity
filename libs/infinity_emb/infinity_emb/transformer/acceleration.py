@@ -46,7 +46,7 @@ def check_if_bettertransformer_possible(engine_args: "EngineArgs") -> bool:
     if not engine_args.bettertransformer:
         return False
 
-    if not CHECK_OPTIMUM.is_available:
+    if "BetterTransformerManager" not in globals():
         return False
 
     config = AutoConfig.from_pretrained(

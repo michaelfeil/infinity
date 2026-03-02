@@ -2,10 +2,7 @@
 # Copyright (c) 2023-now michaelfeil
 
 import copy
-import json
-import subprocess
-from typing import Union
-from functools import cache
+import os
 import numpy as np
 
 from infinity_emb._optional_imports import CHECK_OPTIMUM_NEURON, CHECK_TORCH
@@ -28,22 +25,6 @@ if CHECK_OPTIMUM_NEURON.is_available and CHECK_TORCH.is_available:
 __all__ = [
     "NeuronOptimumEmbedder",
 ]
-
-
-@cache
-def get_nc_count() -> Union[int, None]:
-    """Returns the number of neuron cores on the current instance."""
-    try:
-        cmd = "neuron-ls --json-output"
-        result = subprocess.run(cmd, shell=True, capture_output=True)
-        print("inferring nc_count from `neuron-ls`")
-        print(result.stdout.decode("utf-8"))
-        json_output = json.loads(result.stdout)
-        count = sum([x["nc_count"] for x in json_output])
-        print(f"nc_count={count}")
-        return count
-    except Exception:
-        return None
 
 
 def pad_up_to_size(desired_max_bs: int, input_ids: "torch.Tensor") -> "torch.Tensor":
@@ -97,10 +78,13 @@ class NeuronOptimumEmbedder(BaseEmbedder):
         )
         self._infinity_tokenizer = copy.deepcopy(self.tokenizer)
 
-        # Compile for a single NeuronCore.  For data-parallel scaling across
-        # multiple cores, run separate server processes pinned to individual
-        # cores via NEURON_RT_VISIBLE_CORES (see README).
-        compiler_args = {"num_cores": 1, "auto_cast_type": "fp16"}
+        # Default to 1 NeuronCore (data parallelism).  For large models that
+        # require tensor parallelism across multiple cores, set the
+        # NEURON_NUM_CORES environment variable.  For data-parallel scaling,
+        # run separate server processes pinned to individual cores via
+        # NEURON_RT_VISIBLE_CORES (see infra/aws_neuron/README.md).
+        num_cores = int(os.environ.get("NEURON_NUM_CORES", "1"))
+        compiler_args = {"num_cores": num_cores, "auto_cast_type": "fp16"}
         input_shapes = {
             "batch_size": engine_args.batch_size,
             "sequence_length": (
