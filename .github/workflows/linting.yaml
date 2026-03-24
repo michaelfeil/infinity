@@ -14,7 +14,7 @@ on:
         default: "--extras all --with test,lint,codespell"
 
 env:
-  POETRY_VERSION: "1.8.4"
+  POETRY_VERSION: "2.1.3"
   WORKDIR: ${{ inputs.working-directory == '' && '.' || inputs.working-directory }}
 
   # This env var allows us to get inline annotations when ruff has complaints.
@@ -70,7 +70,7 @@ jobs:
         shell: bash
         working-directory: ${{ inputs.working-directory }}
         run: |
-          poetry lock --check
+          poetry check --lock
 
       - name: Install dependencies
         # Also installs dev/lint/test/typing dependencies, to ensure we have

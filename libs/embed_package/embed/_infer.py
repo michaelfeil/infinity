@@ -2,7 +2,7 @@ from concurrent.futures import Future
 from typing import Collection, Literal, Union
 
 from infinity_emb import EngineArgs, SyncEngineArray  # type: ignore
-from infinity_emb.infinity_server import AutoPadding
+from infinity_emb.cli import AutoPadding
 
 __all__ = ["BatchedInference"]
 
@@ -157,8 +157,8 @@ class BatchedInference:
         >>> rerank_result = ei.rerank(model_id="mixedbread-ai/mxbai-rerank-xsmall-v1", query="Where is Paris?", docs=docs)
         >>> type(rerank_result)
         <class 'concurrent.futures._base.Future'>
-        >>> [round(score, 3) for score in rerank_result.result()[0]]
-        [0.288, 0.742, 0.022]
+        >>> [round(score.relevance_score, 3) for score in sorted(rerank_result.result()[0], key=lambda score: score.index, reverse=False)]
+        [np.float64(0.288), np.float64(0.742), np.float64(0.022)]
         >>> ei.stop()
         """
         return self._engine_array.rerank(model=model_id, query=query, docs=docs)

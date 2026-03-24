@@ -14,7 +14,7 @@ keywords = ["vector", "embedding", "neural", "search", "sentence-transformers"]
 [tool.poetry.dependencies]
 python = ">=3.9,<3.14"
 # basics, pin numpy <2 for onnx
-numpy = ">=1.20.0,<2"
+numpy = ">=1.20.0"
 huggingface_hub= {version = ">=0.32.0"}
 # logging
 rich = {version = "^13", optional=true}
@@ -23,16 +23,21 @@ fastapi = {version = ">=0.103.2", optional=true}
 orjson = {version = ">=3.9.8,!=3.10.0", optional=true} 
 prometheus-fastapi-instrumentator = {version = ">=6.1.0", optional=true}
 uvicorn = {version = "^0.32.0", optional=true, extras = ["standard"]}
-typer = {version = "^0.12.5", optional=true}
+typer = {version = "^0.16.1", optional=true}
 pydantic = {version = ">=2.4.0,<3", optional=true} 
 posthog = {version = "*", optional=true}
 # backend
 # pin torch to a specific source, but default to pypi. use sed to overwrite.
-torch = {version = ">=2.2.1", source = "pypi", optional=true}
+torch = [{version = ">=2.2.1", optional=true},
+{version = ">=2.6.0", optional=true,python = ">=3.13"}
+]
 sentence-transformers = {version = "^3.0.1", optional=true} 
 transformers = {version = ">=4.47.0,<=5.0", optional=true, extras=["sentencepiece"]}
-ctranslate2 = {version = ">=4.0.0", optional=true}
+ctranslate2 = [{version = ">=4.0.0", optional=true, python = "<3.13"},
+{version = ">=4.6.0", optional=true, python = ">=3.13"}
+]
 optimum = {version = ">=1.24.0", optional=true, extras=["onnxruntime"]}
+hf_transfer = {version=">=0.1.5"}
 einops = {version = "*", optional=true}
 # vision
 pillow = {version = "*", optional=true}
@@ -46,16 +51,38 @@ colpali-engine = {version="^0.3.8", optional=true}
 
 
 # pin torchvision to a specific source, but default to pypi. use sed to overwrite.
-torchvision = {version = "*", source = "pypi", optional=true}
+torchvision = {version = "*", optional=true}
 # cache
 diskcache = {version = "*", optional=true}
 # gpu
 # https://onnxruntime.ai/docs/execution-providers/TensorRT-ExecutionProvider.html:
 # Most combinations of onnxruntime and tensorrt are not compatible, and some are broken.
-onnxruntime-gpu = {version = "1.19.*", optional=true} 
+onnxruntime-gpu = [{version = "1.19.*", optional=true, python = "<3.13"},
+{version = ">=1.21", optional=true, python = ">=3.13"}
+] 
+onnxruntime = [
+{version = "<=1.19.2", markers = "extra == 'optimum' or extra == 'all'", python = "<3.10"},
+{version = ">=1.21", markers = "extra == 'optimum' or extra == 'all'", python = ">=3.13"}
+]
+onnx = [{version = ">=1.18", optional=true, python = ">=3.13"}
+]  
 tensorrt = {version = "^10.6.0", optional=true}
 soundfile = {version="^0.12.1", optional=true}
+pyarrow = [
+    {version = ">=18.1.0", python = ">=3.13"}
+]
+scipy = [
+    {version = "*", python = "<=3.9.*"},
+    {version = ">=1.15.0", python = ">=3.13"}
+]
+scikit-learn = [
+    {version = ">=1.6.0", python = ">=3.13"}
+]
 
+#https://github.com/onnx/onnx/issues/7249
+ml_dtypes = [ 
+    {version = ">0.5.0"}
+]
 
 [tool.poetry.scripts]
 infinity_emb = "infinity_emb.cli:cli"
@@ -63,7 +90,7 @@ infinity_emb = "infinity_emb.cli:cli"
 [tool.poetry.group.test.dependencies]
 pytest = "^8.0.0"
 pytest-mock = "*"
-httpx  = "*"
+httpx  = "~0.27.2"
 asgi_lifespan = "*"
 anyio = "*"
 trio = "*"
@@ -144,10 +171,6 @@ all=[
 # non-default gpu
 tensorrt=["tensorrt"]
 onnxruntime-gpu=["onnxruntime-gpu"]
-
-[[tool.poetry.source]]
-name = "pypi"
-priority = "primary"
 
 [[tool.poetry.source]]
 # used for monkey-patching cpu onlu
