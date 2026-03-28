@@ -1,10 +1,9 @@
-from typing import Any, Dict, List, Type, TypeVar, Union, cast
+from typing import Any, Dict, List, Literal, Type, TypeVar, Union, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.embedding_encoding_format import EmbeddingEncodingFormat
-from ..models.open_ai_embedding_input_audio_modality import OpenAIEmbeddingInputAudioModality
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OpenAIEmbeddingInputAudio")
@@ -19,7 +18,7 @@ class OpenAIEmbeddingInputAudio:
         encoding_format (Union[Unset, EmbeddingEncodingFormat]):
         user (Union[None, Unset, str]):
         dimensions (Union[Unset, int]):  Default: 0.
-        modality (Union[Unset, OpenAIEmbeddingInputAudioModality]):  Default: OpenAIEmbeddingInputAudioModality.AUDIO.
+        modality (Union[Literal['audio'], Unset]):  Default: 'audio'.
     """
 
     input_: Union[List[str], str]
@@ -27,7 +26,7 @@ class OpenAIEmbeddingInputAudio:
     encoding_format: Union[Unset, EmbeddingEncodingFormat] = UNSET
     user: Union[None, Unset, str] = UNSET
     dimensions: Union[Unset, int] = 0
-    modality: Union[Unset, OpenAIEmbeddingInputAudioModality] = OpenAIEmbeddingInputAudioModality.AUDIO
+    modality: Union[Literal["audio"], Unset] = "audio"
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -56,9 +55,7 @@ class OpenAIEmbeddingInputAudio:
 
         dimensions = self.dimensions
 
-        modality: Union[Unset, str] = UNSET
-        if not isinstance(self.modality, Unset):
-            modality = self.modality.value
+        modality = self.modality
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -126,12 +123,9 @@ class OpenAIEmbeddingInputAudio:
 
         dimensions = d.pop("dimensions", UNSET)
 
-        _modality = d.pop("modality", UNSET)
-        modality: Union[Unset, OpenAIEmbeddingInputAudioModality]
-        if isinstance(_modality, Unset):
-            modality = UNSET
-        else:
-            modality = OpenAIEmbeddingInputAudioModality(_modality)
+        modality = cast(Union[Literal["audio"], Unset], d.pop("modality", UNSET))
+        if modality != "audio" and not isinstance(modality, Unset):
+            raise ValueError(f"modality must match const 'audio', got '{modality}'")
 
         open_ai_embedding_input_audio = cls(
             input_=input_,

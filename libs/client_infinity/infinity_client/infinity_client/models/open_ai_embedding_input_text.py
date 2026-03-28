@@ -1,10 +1,9 @@
-from typing import Any, Dict, List, Type, TypeVar, Union, cast
+from typing import Any, Dict, List, Literal, Type, TypeVar, Union, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.embedding_encoding_format import EmbeddingEncodingFormat
-from ..models.open_ai_embedding_input_text_modality import OpenAIEmbeddingInputTextModality
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="OpenAIEmbeddingInputText")
@@ -20,7 +19,7 @@ class OpenAIEmbeddingInputText:
         encoding_format (Union[Unset, EmbeddingEncodingFormat]):
         user (Union[None, Unset, str]):
         dimensions (Union[Unset, int]):  Default: 0.
-        modality (Union[Unset, OpenAIEmbeddingInputTextModality]):  Default: OpenAIEmbeddingInputTextModality.TEXT.
+        modality (Union[Literal['text'], Unset]):  Default: 'text'.
     """
 
     input_: Union[List[str], str]
@@ -28,7 +27,7 @@ class OpenAIEmbeddingInputText:
     encoding_format: Union[Unset, EmbeddingEncodingFormat] = UNSET
     user: Union[None, Unset, str] = UNSET
     dimensions: Union[Unset, int] = 0
-    modality: Union[Unset, OpenAIEmbeddingInputTextModality] = OpenAIEmbeddingInputTextModality.TEXT
+    modality: Union[Literal["text"], Unset] = "text"
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -53,9 +52,7 @@ class OpenAIEmbeddingInputText:
 
         dimensions = self.dimensions
 
-        modality: Union[Unset, str] = UNSET
-        if not isinstance(self.modality, Unset):
-            modality = self.modality.value
+        modality = self.modality
 
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -114,12 +111,9 @@ class OpenAIEmbeddingInputText:
 
         dimensions = d.pop("dimensions", UNSET)
 
-        _modality = d.pop("modality", UNSET)
-        modality: Union[Unset, OpenAIEmbeddingInputTextModality]
-        if isinstance(_modality, Unset):
-            modality = UNSET
-        else:
-            modality = OpenAIEmbeddingInputTextModality(_modality)
+        modality = cast(Union[Literal["text"], Unset], d.pop("modality", UNSET))
+        if modality != "text" and not isinstance(modality, Unset):
+            raise ValueError(f"modality must match const 'text', got '{modality}'")
 
         open_ai_embedding_input_text = cls(
             input_=input_,
