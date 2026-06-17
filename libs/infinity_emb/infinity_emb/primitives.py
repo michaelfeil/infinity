@@ -22,6 +22,7 @@ from typing import (
     Any,
     Generic,
     Literal,
+    NamedTuple,
     Optional,
     Type,
     TypedDict,
@@ -223,16 +224,49 @@ class EmbeddingSingle(AbstractSingle):
         return self.sentence
 
 
+class RerankLimits(NamedTuple):
+    """Effective per-pair token budgets for one rerank request.
+
+    Applied per (query, document) pair before scoring so the backend does not blow up on
+    oversized inputs. The per-axis caps (query, doc) are head truncations that protect the
+    split; ``max_pair_tokens`` is the hard ceiling on the joined sequence length (i.e. on
+    model cost). ``None`` disables a given limit.
+
+    These are the already-resolved values for a single request: the engine clamps the
+    client-requested budgets to the model's startup ceilings (``EngineArgs.max_*``) before
+    building this tuple. There is no global default any more — a sensible ceiling depends
+    on the model, so it is configured per model at startup.
+    """
+
+    max_query_tokens: Optional[int] = None
+    max_tokens_per_doc: Optional[int] = None
+    max_pair_tokens: Optional[int] = None
+
+
 @dataclass(**dataclass_args)
 class ReRankSingle(AbstractSingle):
     query: str
     document: str
+    # Effective token budgets for this pair; the query and document are each head-truncated
+    # and the joined pair is capped. Already resolved against the model's startup ceilings;
+    # an all-None RerankLimits means no truncation.
+    limits: RerankLimits = RerankLimits()
 
     def str_repr(self) -> str:
-        return self.query + self.document
+        # The limits change the tokenised pair, so they must be part of the cache key
+        # (vector_disk_cache keys on str_repr); otherwise a capped result could be served
+        # for a later uncapped request for the same pair. Keep the no-limit path byte-for-byte
+        # identical to avoid perturbing length estimation and existing cache entries.
+        if self.limits == RerankLimits():
+            return self.query + self.document
+        return (
+            f"{self.query}{self.document}"
+            f"|rerank_limits={self.limits.max_query_tokens},"
+            f"{self.limits.max_tokens_per_doc},{self.limits.max_pair_tokens}"
+        )
 
-    def to_input(self) -> tuple[str, str]:
-        return self.query, self.document
+    def to_input(self) -> tuple[str, str, RerankLimits]:
+        return self.query, self.document, self.limits
 
 
 @dataclass(**dataclass_args)

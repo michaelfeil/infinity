@@ -278,6 +278,18 @@ if CHECK_TYPER.is_available:
             **_construct("onnx_do_not_prefer_quantized"),
             help="Do not use quantized onnx models by default if available",
         ),
+        max_query_tokens: list[int] = typer.Option(
+            **_construct("max_query_tokens"),
+            help="Rerank ceiling: head-truncate the query to at most N tokens before scoring. A client may request fewer. Unset disables the limit.",
+        ),
+        max_tokens_per_doc: list[int] = typer.Option(
+            **_construct("max_tokens_per_doc"),
+            help="Rerank ceiling: head-truncate each document to at most N tokens before scoring. A client may request fewer. Unset disables the limit.",
+        ),
+        max_pair_tokens: list[int] = typer.Option(
+            **_construct("max_pair_tokens"),
+            help="Rerank ceiling on the joined (query, document) pair, in tokens. A client may request fewer. Unset disables the limit.",
+        ),
     ):
         """Infinity API ♾️  cli v2. MIT License. Copyright (c) 2023-now Michael Feil \n
         \n
@@ -341,7 +353,10 @@ if CHECK_TYPER.is_available:
             bettertransformer=bettertransformer,
             served_model_name=served_model_name,
             onnx_disable_optimize=onnx_disable_optimize,
-            onnx_do_not_prefer_quantized=onnx_do_not_prefer_quantized
+            onnx_do_not_prefer_quantized=onnx_do_not_prefer_quantized,
+            max_query_tokens=max_query_tokens,
+            max_tokens_per_doc=max_tokens_per_doc,
+            max_pair_tokens=max_pair_tokens,
         )
 
         engine_args = []

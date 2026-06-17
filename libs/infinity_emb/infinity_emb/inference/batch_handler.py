@@ -30,6 +30,7 @@ from infinity_emb.primitives import (
     OverloadStatus,
     PredictSingle,
     PrioritizedQueueItem,
+    RerankLimits,
     RerankReturnType,
     ReRankSingle,
     get_inner_item,
@@ -180,8 +181,14 @@ class BatchHandler:
         docs: list[str],
         raw_scores: bool = False,
         top_n: Optional[int] = None,
+        max_query_tokens: Optional[int] = None,
+        max_tokens_per_doc: Optional[int] = None,
+        max_pair_tokens: Optional[int] = None,
     ) -> tuple[list[RerankReturnType], int]:
         """Schedule a query to be reranked with documents. Awaits until reranked.
+
+        The token budgets here are already resolved (the engine has clamped them to the
+        model's startup ceilings); ``None`` disables the corresponding limit.
 
         Args:
             query (str): query for reranking
@@ -189,6 +196,10 @@ class BatchHandler:
             raw_scores (bool): return raw scores instead of sigmoid
             top_n (Optional[int]): number of top scores to return after reranking
                 if top_n is None, <= 0 or out of range, all scores are returned
+            max_query_tokens (Optional[int]): head-truncate the query to N tokens.
+            max_tokens_per_doc (Optional[int]): head-truncate each document to N tokens.
+            max_pair_tokens (Optional[int]): cap the joined (query, document) pair to N
+                tokens, trimming the longest side first.
 
         Raises:
             ModelNotDeployedError: If loaded model does not expose `rerank`
@@ -202,7 +213,12 @@ class BatchHandler:
             raise ModelNotDeployedError(
                 "the loaded moded cannot fullyfill `rerank`. " f"Options are {self.capabilities}."
             )
-        rerankables = [ReRankSingle(query=query, document=doc) for doc in docs]
+        limits = RerankLimits(
+            max_query_tokens=max_query_tokens,
+            max_tokens_per_doc=max_tokens_per_doc,
+            max_pair_tokens=max_pair_tokens,
+        )
+        rerankables = [ReRankSingle(query=query, document=doc, limits=limits) for doc in docs]
         scores, usage = await self._schedule(rerankables)
 
         if not raw_scores:

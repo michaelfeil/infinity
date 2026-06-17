@@ -423,6 +423,9 @@ def create_server(
                 docs=data.documents,
                 raw_scores=data.raw_scores,
                 top_n=data.top_n,
+                max_query_tokens=data.max_query_tokens,
+                max_tokens_per_doc=data.max_tokens_per_doc,
+                max_pair_tokens=data.max_pair_tokens,
             )
 
             duration = (time.perf_counter() - start) * 1000
