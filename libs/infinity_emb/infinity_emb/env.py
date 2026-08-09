@@ -194,6 +194,12 @@ class __Infinity_EnvManager:
         return size
 
     @cached_property
+    def request_timeout(self) -> float:
+        timeout = float(self._optional_infinity_var("request_timeout", default="0"))
+        assert timeout >= 0, "INFINITY_REQUEST_TIMEOUT must not be negative"
+        return timeout
+
+    @cached_property
     def max_client_batch_size(self) -> int:
         size = int(self._optional_infinity_var("max_client_batch_size", default="2048"))
         assert size > 0, "INFINITY_MAX_CLIENT_BATCH_SIZE must be a positive number"
