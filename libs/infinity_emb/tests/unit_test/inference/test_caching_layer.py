@@ -42,3 +42,39 @@ async def test_cache():
     finally:
         INFINITY_CACHE_VECTORS = False
         shutdown.set()
+
+
+@pytest.mark.anyio
+async def test_consumer_survives_failed_write(monkeypatch):
+    """a raising `_cache.add` must not kill the only queue consumer.
+
+    Before the fix, the exception escaped `_consume_queue`, ended the single writer
+    thread, and was swallowed by the never-retrieved Future from `_threadpool.submit`.
+    `_add_q` then had no consumer at all and grew for the lifetime of the process.
+    """
+    shutdown = threading.Event()
+    try:
+        c = caching_layer.Cache(cache_name="pytest_write_error", shutdown=shutdown)
+        seen: list[str] = []
+        real_add = c._cache.add
+
+        def flaky(**kwargs):
+            seen.append(kwargs["key"])
+            if kwargs["key"] == "boom":
+                raise RuntimeError("simulated disk failure")
+            return real_add(**kwargs)
+
+        monkeypatch.setattr(c._cache, "add", flaky)
+        c._add_q.put(("boom", [1.0]))
+        c._add_q.put(("fine", [2.0]))
+
+        for _ in range(100):
+            await asyncio.sleep(0.05)
+            if seen == ["boom", "fine"]:
+                break
+
+        # the writer processed the item *after* the one that raised
+        assert seen == ["boom", "fine"]
+        assert c._get("fine") == [2.0]
+    finally:
+        shutdown.set()
