@@ -8,6 +8,7 @@ from typing import Optional
 from copy import deepcopy
 
 
+from infinity_emb import oci
 from infinity_emb._optional_imports import CHECK_PYDANTIC
 from infinity_emb.env import MANAGER
 from infinity_emb.primitives import (
@@ -74,6 +75,19 @@ class EngineArgs:
     _loading_strategy: Optional[LoadingStrategy] = None
 
     def __post_init__(self):
+        # A CNCF ModelPack artifact is pulled through an llmman daemon and
+        # extracted to a local directory, which every engine then loads exactly
+        # as it would a local path. Done first so the rest of this method, and
+        # the loading strategy, only ever see a local path.
+        if oci.is_oci_ref(self.model_name_or_path):
+            if not self.served_model_name:
+                # Keep the reference the user typed as the served name; the
+                # resolved path is an implementation detail of the store.
+                object.__setattr__(self, "served_model_name", self.model_name_or_path)
+            object.__setattr__(
+                self, "model_name_or_path", oci.resolve(self.model_name_or_path)
+            )
+
         # convert the following strings to enums
         # so they don't need to be exported to the external interface
         if not isinstance(self.engine, InferenceEngine):
