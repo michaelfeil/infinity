@@ -105,6 +105,11 @@ def optimize_model(
         revision (Optional[str], optional): The revision to use. Defaults to None.
         trust_remote_code (bool, optional): Whether to trust the remote code. Defaults to True.
     """
+    # optimum-onnx (optimum>=2) requires `file_name` to be a bare file name and the
+    # directory to be passed via `subfolder`. Older optimum versions accept both styles.
+    subfolder = Path(file_name).parent.as_posix()
+    subfolder = "" if subfolder == "." else subfolder
+    file_name = Path(file_name).name
 
     ## If there is no need for optimization
     if execution_provider == "TensorrtExecutionProvider":
@@ -114,6 +119,7 @@ def optimize_model(
             trust_remote_code=trust_remote_code,
             provider=execution_provider,
             file_name=file_name,
+            subfolder=subfolder,
             provider_options={
                 "trt_fp16_enable": True,
                 "trt_layer_norm_fp32_fallback": True,
@@ -133,6 +139,7 @@ def optimize_model(
             trust_remote_code=trust_remote_code,
             provider=execution_provider,
             file_name=file_name,
+            subfolder=subfolder,
         )
 
     ## path to find if model has been optimized
@@ -161,6 +168,7 @@ def optimize_model(
         trust_remote_code=trust_remote_code,
         provider=execution_provider,
         file_name=file_name,
+        subfolder=subfolder,
     )
     if not optimize_model or execution_provider == "TensorrtExecutionProvider":
         return unoptimized_model
@@ -174,7 +182,9 @@ def optimize_model(
         )
         optimization_config = OptimizationConfig(
             optimization_level=99,
-            optimize_with_onnxruntime_only=False,
+            # `optimize_with_onnxruntime_only=False` was the (deprecated) alias of this
+            # default and got removed in optimum-onnx.
+            enable_transformers_specific_optimizations=True,
             optimize_for_gpu=is_gpu,
             fp16=is_gpu,
             # enable_gelu_approximation=True,
@@ -193,7 +203,7 @@ def optimize_model(
             revision=revision,
             trust_remote_code=trust_remote_code,
             provider=execution_provider,
-            file_name=Path(file_name).name.replace(".onnx", OPTIMIZED_SUFFIX),
+            file_name=file_name.replace(".onnx", OPTIMIZED_SUFFIX),
         )
     except Exception as e:
         logger.warning(f"Optimization failed with {e}. Going to use the unoptimized model.")
