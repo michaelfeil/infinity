@@ -6,6 +6,7 @@ IMAGE_COL_MODELS = [
     "ColQwen2",
     "ColQwen2_5",
     "ColIdefics2",
+    "ColIdefics3",
 ]
 
 IMAGE_MODELS = ["Clip"] + IMAGE_COL_MODELS
