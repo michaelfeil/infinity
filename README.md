@@ -239,6 +239,7 @@ Click on the sections below to find tasks and **validated example models**.
   - [jinaai/jina-embeddings-v3](nomic-ai/nomic-embed-text-v1.5)
   - [BAAI/bge-m3, no sparse](https://huggingface.co/BAAI/bge-m3)
   - decoder-based models. Keep in mind that they are ~20-100x larger (&slower) than bert-small models:
+    - [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B), also 4B and 8B variants (requires `transformers>=4.51.0`, `--engine torch`)
     - [Alibaba-NLP/gte-Qwen2-1.5B-instruct](https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct/discussions/20)
     - [Salesforce/SFR-Embedding-2_R](https://huggingface.co/Salesforce/SFR-Embedding-2_R/discussions/6)
     - [Alibaba-NLP/gte-Qwen2-7B-instruct](https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct/discussions/39)
@@ -260,6 +261,7 @@ Click on the sections below to find tasks and **validated example models**.
   - [BAAI/bge-reranker-large](https://huggingface.co/BAAI/bge-reranker-large)
   - [BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)
   - [jinaai/jina-reranker-v1-turbo-en](https://huggingface.co/jinaai/jina-reranker-v1-turbo-en)
+  - [tomaarsen/Qwen3-Reranker-0.6B-seq-cls](https://huggingface.co/tomaarsen/Qwen3-Reranker-0.6B-seq-cls), a `Qwen3ForSequenceClassification` conversion of [Qwen/Qwen3-Reranker-0.6B](https://huggingface.co/Qwen/Qwen3-Reranker-0.6B) (requires `transformers>=4.51.0`, `--engine torch`)
 
   Other reranking models:
   - Reranking Models supported by infinity are bert-style classification Models with one category.
