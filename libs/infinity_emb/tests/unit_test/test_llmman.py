@@ -7,7 +7,10 @@ the NDJSON streaming contract is genuinely tested.
 import http.server
 import json
 import socketserver
+import subprocess
+import sys
 import threading
+from unittest import mock
 
 import pytest
 
@@ -26,6 +29,8 @@ class _FakeDaemon:
         self.pull_body = _ndjson({"status": "success"})
         self.pull_status = 200
         self.last_request = None
+        self.stall = None  # "headers": never answer, "stream": answer then go quiet
+        self.release = threading.Event()
         daemon = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -41,11 +46,21 @@ class _FakeDaemon:
                 self.wfile.write(raw)
 
             def do_GET(self):
+                if daemon.stall == "headers":
+                    return daemon.release.wait(10)
                 self._send(200, json.dumps(daemon.version), "application/json")
 
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
                 daemon.last_request = json.loads(self.rfile.read(length))
+                if daemon.stall == "headers":
+                    return daemon.release.wait(10)
+                if daemon.stall == "stream":
+                    self.send_response(200)
+                    self.send_header("Content-Length", "1000")
+                    self.end_headers()
+                    self.wfile.write(_ndjson({"status": "pulling manifest"}).encode())
+                    return daemon.release.wait(10)
                 self._send(daemon.pull_status, daemon.pull_body, "application/x-ndjson")
 
         self._server = socketserver.TCPServer(("127.0.0.1", 0), Handler)
@@ -53,6 +68,7 @@ class _FakeDaemon:
         threading.Thread(target=self._server.serve_forever, daemon=True).start()
 
     def close(self):
+        self.release.set()
         self._server.shutdown()
         self._server.server_close()
 
@@ -115,3 +131,48 @@ def test_reports_a_non_ok_status(daemon):
 def test_tolerates_a_non_json_diagnostic_line(daemon):
     daemon.pull_body = "not json\n" + _ndjson({"status": "success"})
     llmman.pull(daemon.url, "ref")
+
+
+@pytest.fixture
+def fast_timeouts(monkeypatch):
+    monkeypatch.setattr(llmman, "PROBE_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(llmman, "PULL_STALL_TIMEOUT_SECONDS", 0.3)
+
+
+def test_gives_up_on_a_stalled_probe(daemon, fast_timeouts):
+    daemon.stall = "headers"
+    with pytest.raises(RuntimeError, match="llmman serve"):
+        llmman.check_daemon(daemon.url)
+
+
+@pytest.mark.parametrize("stall", ["headers", "stream"])
+def test_pull_gives_up_on_a_stalled_daemon(daemon, fast_timeouts, stall):
+    daemon.stall = stall
+    with pytest.raises(RuntimeError, match="timed out"):
+        llmman.pull(daemon.url, "ref")
+
+
+def test_resolve_bounds_the_subprocess():
+    hang = subprocess.TimeoutExpired("llmman", 1)
+    with mock.patch.object(llmman.subprocess, "run", side_effect=hang) as run:
+        with pytest.raises(RuntimeError, match="timed out"):
+            llmman.resolve("ref", binary="llmman")
+    assert run.call_args.kwargs["timeout"] == llmman.RESOLVE_TIMEOUT_SECONDS
+
+
+def test_a_missing_binary_fails_before_the_pull(daemon, monkeypatch, tmp_path):
+    monkeypatch.setenv(llmman.HOST_ENV, daemon.url)
+    monkeypatch.setenv(llmman.BIN_ENV, str(tmp_path / "no-such-llmman"))
+    with pytest.raises(RuntimeError, match="not found"):
+        llmman.pull_and_resolve("ref")
+    assert daemon.last_request is None
+
+
+def test_pull_and_resolve_pulls_then_resolves(daemon, monkeypatch, tmp_path):
+    monkeypatch.setenv(llmman.HOST_ENV, daemon.url)
+    monkeypatch.setenv(llmman.BIN_ENV, sys.executable)
+    done = subprocess.CompletedProcess([], 0, stdout=json.dumps({"path": str(tmp_path)}))
+    with mock.patch.object(llmman.subprocess, "run", return_value=done) as run:
+        assert llmman.pull_and_resolve("ref") == str(tmp_path)
+    assert daemon.last_request == {"model": "ref"}
+    assert run.call_args.args[0] == [sys.executable, "resolve", "--no-pull", "ref"]

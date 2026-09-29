@@ -16,6 +16,7 @@ Contract (from llmman's src/cmd/serve.rs and src/daemon.rs):
   - ``llmman resolve --no-pull <ref>`` -> one line of JSON carrying ``path``.
 """
 
+import contextlib
 import ipaddress
 import json
 import logging
@@ -24,6 +25,7 @@ import shutil
 import subprocess
 import urllib.error
 import urllib.request
+from typing import Any, Iterator, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +36,10 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 17434
 
 PROBE_TIMEOUT_SECONDS = 5
+# Pulls run for hours, so bound silence on the stream, not total time.
+PULL_STALL_TIMEOUT_SECONDS = 300
+# Extracting a large model into the cache can be slow.
+RESOLVE_TIMEOUT_SECONDS = 1800
 
 
 def _connectable_host(host: str) -> str:
@@ -48,13 +54,16 @@ def _connectable_host(host: str) -> str:
 
 
 def endpoint() -> str:
-    """The http origin of the llmman daemon, honouring LLMMAN_HOST."""
+    """The http(s) origin of the llmman daemon, honouring LLMMAN_HOST."""
     raw = os.getenv(HOST_ENV, "").strip().strip("\"'")
     if not raw:
         return f"http://{DEFAULT_HOST}:{DEFAULT_PORT}"
 
+    scheme = "http"
     if "://" in raw:
-        raw = raw.split("://", 1)[1]
+        given, raw = raw.split("://", 1)
+        if given.lower() == "https":
+            scheme = "https"
     raw = raw.split("/", 1)[0]
 
     host, port = raw, DEFAULT_PORT
@@ -74,7 +83,7 @@ def endpoint() -> str:
     resolved = _connectable_host(host)
     if ":" in resolved and not resolved.startswith("["):
         resolved = f"[{resolved}]"
-    return f"http://{resolved}:{port}"
+    return f"{scheme}://{resolved}:{port}"
 
 
 def llmman_bin() -> str:
@@ -82,25 +91,46 @@ def llmman_bin() -> str:
     return os.getenv(BIN_ENV, "").strip() or "llmman"
 
 
+@contextlib.contextmanager
+def _open(
+    what: str, url: str, timeout: float, payload: Optional[dict] = None, hint: str = ""
+) -> Iterator[Any]:
+    """Open ``url`` (JSON POST if ``payload``); any transport failure is a RuntimeError."""
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={"Content-Type": "application/json"} if data else {},
+        method="GET" if data is None else "POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            yield resp
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError(f"{what}: HTTP {exc.code}{hint}") from exc
+    except OSError as exc:  # refused, timed out, reset
+        raise RuntimeError(f"{what}: {getattr(exc, 'reason', exc)}{hint}") from exc
+
+
 def check_daemon(base: str) -> None:
     """Confirm an llmman daemon is listening and is actually llmman."""
-    url = base + "/api/version"
-    try:
-        with urllib.request.urlopen(url, timeout=PROBE_TIMEOUT_SECONDS) as resp:
-            if resp.status != 200:
-                raise RuntimeError(
-                    f"llmman daemon at {base} answered /api/version with HTTP {resp.status}"
-                )
+    hint = f". Start one with `llmman serve`, or point {HOST_ENV} at an existing daemon."
+    with _open(
+        f"no llmman daemon reachable at {base}",
+        base + "/api/version",
+        PROBE_TIMEOUT_SECONDS,
+        hint=hint,
+    ) as resp:
+        if resp.status != 200:
+            raise RuntimeError(
+                f"llmman daemon at {base} answered /api/version with HTTP {resp.status}"
+            )
+        try:
             payload = json.loads(resp.read().decode("utf-8"))
-    except urllib.error.URLError as exc:
-        raise RuntimeError(
-            f"no llmman daemon reachable at {base} ({exc.reason}). Start one with "
-            f"`llmman serve`, or point {HOST_ENV} at an existing daemon."
-        ) from exc
-    except json.JSONDecodeError as exc:
-        raise RuntimeError(
-            f"the server at {base} is not an llmman daemon (unparseable /api/version)"
-        ) from exc
+        except ValueError as exc:
+            raise RuntimeError(
+                f"the server at {base} is not an llmman daemon (unparseable /api/version)"
+            ) from exc
 
     if not isinstance(payload, dict) or not payload.get("version"):
         raise RuntimeError(
@@ -113,45 +143,34 @@ def pull(base: str, reference: str, progress=None) -> None:
 
     ``progress`` receives ``(status, completed, total)``. An error can arrive
     in-band at HTTP 200, and a stream that ends without ``success`` is also a
-    failure -- neither is treated as a completed pull.
+    failure -- neither is treated as a completed pull. A stream silent for
+    ``PULL_STALL_TIMEOUT_SECONDS`` is abandoned.
     """
-    body = json.dumps({"model": reference}).encode("utf-8")
-    req = urllib.request.Request(
-        base + "/api/pull",
-        data=body,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-
+    what = f"llmman pull of {reference!r} failed"
     succeeded = False
-    try:
-        with urllib.request.urlopen(req) as resp:
-            if resp.status != 200:
-                raise RuntimeError(f"llmman pull of {reference!r} failed: HTTP {resp.status}")
-            for raw_line in resp:
-                line = raw_line.decode("utf-8").strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    # Tolerate a non-JSON diagnostic rather than aborting a
-                    # pull that may still be progressing.
-                    continue
-                if not isinstance(obj, dict):
-                    continue
-                if obj.get("error"):
-                    raise RuntimeError(f"llmman pull of {reference!r} failed: {obj['error']}")
-                status = obj.get("status")
-                if status == "success":
-                    succeeded = True
-                    continue
-                if progress is not None and status:
-                    progress(status, obj.get("completed", 0), obj.get("total", 0))
-    except urllib.error.HTTPError as exc:
-        raise RuntimeError(f"llmman pull of {reference!r} failed: HTTP {exc.code}") from exc
-    except urllib.error.URLError as exc:
-        raise RuntimeError(f"llmman pull of {reference!r} failed: {exc.reason}") from exc
+    with _open(what, base + "/api/pull", PULL_STALL_TIMEOUT_SECONDS, {"model": reference}) as resp:
+        if resp.status != 200:
+            raise RuntimeError(f"{what}: HTTP {resp.status}")
+        for raw_line in resp:
+            line = raw_line.decode("utf-8").strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                # Tolerate a non-JSON diagnostic rather than aborting a
+                # pull that may still be progressing.
+                continue
+            if not isinstance(obj, dict):
+                continue
+            if obj.get("error"):
+                raise RuntimeError(f"{what}: {obj['error']}")
+            status = obj.get("status")
+            if status == "success":
+                succeeded = True
+                continue
+            if progress is not None and status:
+                progress(status, obj.get("completed", 0), obj.get("total", 0))
 
     if not succeeded:
         raise RuntimeError(f"llmman pull of {reference!r} ended without reporting success")
@@ -184,12 +203,8 @@ def parse_resolve_output(stdout: str, reference: str) -> str:
     return path
 
 
-def resolve(reference: str) -> str:
-    """Ask the CLI where the daemon's pull left the model on disk.
-
-    ``--no-pull`` guarantees this only reports on bytes ``/api/pull`` already
-    fetched, so the daemon stays the only thing that touches the network.
-    """
+def require_bin() -> str:
+    """The llmman executable, or a RuntimeError saying how to get it."""
     binary = llmman_bin()
     if shutil.which(binary) is None and not os.path.isfile(binary):
         raise RuntimeError(
@@ -197,18 +212,31 @@ def resolve(reference: str) -> str:
             "(https://github.com/llmmanorg/llmman) and put it on PATH, or set "
             f"{BIN_ENV} to its location."
         )
+    return binary
 
-    completed = subprocess.run(
-        [binary, "resolve", "--no-pull", reference],
-        capture_output=True,
-        stdin=subprocess.DEVNULL,
-        text=True,
-        check=False,
-    )
+
+def resolve(reference: str, binary: Optional[str] = None) -> str:
+    """Ask the CLI where the daemon's pull left the model on disk.
+
+    ``--no-pull`` guarantees this only reports on bytes ``/api/pull`` already
+    fetched, so the daemon stays the only thing that touches the network.
+    """
+    binary = binary or require_bin()
+    cmd = f"`{binary} resolve --no-pull {reference}`"
+    try:
+        completed = subprocess.run(
+            [binary, "resolve", "--no-pull", reference],
+            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            check=False,
+            timeout=RESOLVE_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"{cmd} timed out after {RESOLVE_TIMEOUT_SECONDS}s") from exc
     if completed.returncode != 0:
         raise RuntimeError(
-            f"`{binary} resolve --no-pull {reference}` failed with exit code "
-            f"{completed.returncode}: {completed.stderr.strip()}"
+            f"{cmd} failed with exit code {completed.returncode}: {completed.stderr.strip()}"
         )
     return parse_resolve_output(completed.stdout, reference)
 
@@ -217,6 +245,7 @@ def pull_and_resolve(reference: str, progress=None) -> str:
     """Full acquisition: probe the daemon, pull through it, report the path."""
     base = endpoint()
     check_daemon(base)
+    binary = require_bin()  # fail before a multi-gigabyte pull, not after
     logger.info("Pulling %s via llmman daemon at %s", reference, base)
     pull(base, reference, progress)
-    return resolve(reference)
+    return resolve(reference, binary)

@@ -64,6 +64,10 @@ def test_hands_the_bare_reference_to_the_daemon():
         # A wildcard bind is meaningful to the server but not to a client.
         ("0.0.0.0:9999", "http://127.0.0.1:9999"),
         ("[::]:9999", "http://[::1]:9999"),
+        # A configured scheme is kept, so a TLS daemon is not downgraded.
+        ("https://example.com:9999", "https://example.com:9999"),
+        ("HTTPS://1.2.3.4", "https://1.2.3.4:17434"),
+        ("http://1.2.3.4:9999/", "http://1.2.3.4:9999"),
     ],
 )
 def test_endpoint_parsing(host, want):
