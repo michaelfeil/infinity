@@ -21,7 +21,21 @@
 ![Docker pulls](https://img.shields.io/docker/pulls/michaelf34/infinity)
 
 
-Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models, clip, clap and colpali. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE).
+Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models, clip, clap and colpali. The Python implementation is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE).
+
+## Projects in this repository
+
+| Project | Implementation | Status | Getting started |
+| --- | --- | --- | --- |
+| Infinity (CLI v2) | Python | Available as `infinity_emb` and `michaelf34/infinity` | [Python README](libs/infinity_emb/README.md) |
+| Infinity v3 | Rust, based on the TEI fork | Planned; source import and releases will follow | [v3 project plan](libs/infinity_v3/README.md) |
+
+Infinity v3 is a separate project in this repository, with its own Cargo workspace,
+executable, container images, documentation, and release lifecycle. The existing
+`infinity_emb v2` command refers to the Python CLI.
+
+See [project boundaries and releases](docs/docs/projects.md) for the repository
+layout and release conventions. The usage guide below covers Python Infinity.
 
 ## Why Infinity
 * **Deploy any model from HuggingFace**: deploy any embedding, reranking, clip and sentence-transformer model from [HuggingFace]( https://huggingface.co/models?other=text-embeddings-inference&sort=trending)

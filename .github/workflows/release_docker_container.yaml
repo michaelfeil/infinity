@@ -12,6 +12,15 @@ on:
         required: true
         type: string
         description: "Name of the image to build"
+      version:
+        required: true
+        type: string
+        description: "Version from the triggering release tag (optional leading v)"
+      publish_latest:
+        required: false
+        type: boolean
+        default: true
+        description: "Also update the latest image alias for a stable release"
       appendix_tag:
         required: false
         type: string
@@ -51,14 +60,19 @@ jobs:
           large-packages: false
           docker-images: false
           swap-storage: false
-      - name: Get git tag
-        uses: actions-ecosystem/action-get-latest-tag@v1
-        id: get-latest-tag
-      - name: Set docker tag
+      - name: Set Docker tags
+        id: tags
         env:
-          VERSION: ${{ steps.get-latest-tag.outputs.tag }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          IMAGE: ${{ inputs.image }}
+          PUBLISH_LATEST: ${{ inputs.publish_latest }}
         run: |
-          echo "VERSION_TAG=${{ inputs.image }}:${VERSION#v}" >> $GITHUB_ENV
+          VERSION_TAG="${IMAGE}:${RELEASE_VERSION#v}${APPENDIX_TAG}"
+          if [ "$PUBLISH_LATEST" = "true" ]; then
+            echo "tags=${VERSION_TAG},${IMAGE}:latest${APPENDIX_TAG}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=${VERSION_TAG}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -93,5 +107,5 @@ jobs:
           # linux/amd64 and linux/arm64
           # cache-from: type=registry,ref=${{ env.LATEST_TAG }}
           platforms: ${{ inputs.platforms }}
-          tags: ${{ env.LATEST_TAG }}${{ env.APPENDIX_TAG }},${{ env.VERSION_TAG }}${{ env.APPENDIX_TAG }}
+          tags: ${{ steps.tags.outputs.tags }}
           push: true

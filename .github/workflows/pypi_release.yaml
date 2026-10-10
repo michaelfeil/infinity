@@ -10,6 +10,7 @@ env:
 
 jobs:
   publish-to-pypi:
+    if: startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     strategy:
       matrix:
         package:
@@ -34,12 +35,6 @@ jobs:
           working-directory: ${{ matrix.package.workdir }}
           cache-key: release
 
-      - name: Copy readme
-        if: matrix.package.workdir == 'libs/infinity_emb'
-        id: readme-copy
-        run: |
-          cp ../../README.md .
-
       - name: Build project for distribution
         run: poetry build
 
@@ -56,6 +51,9 @@ jobs:
           print-hash: true
     
   modal-deploy:
+    if: ${{ !github.event.release.prerelease && (startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')) }}
     needs: publish-to-pypi
     uses: ./.github/workflows/release_modal_com.yaml
+    with:
+      version: ${{ github.event.release.tag_name }}
     secrets: inherit

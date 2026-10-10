@@ -32,6 +32,7 @@ env:
 
 jobs:
   lint-infinity_emb:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     uses:
       ./.github/workflows/linting.yaml
     with:
@@ -39,6 +40,7 @@ jobs:
     secrets: inherit
 
   lint-embed_package:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     uses:
       ./.github/workflows/linting.yaml
     with:
@@ -47,6 +49,7 @@ jobs:
     secrets: inherit
 
   test-infinity_emb:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     uses:
       ./.github/workflows/test.yaml
     with:
@@ -55,6 +58,7 @@ jobs:
     secrets: inherit
   
   test-embed_package:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     uses:
       ./.github/workflows/test.yaml
     with:
