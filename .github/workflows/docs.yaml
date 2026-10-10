@@ -10,6 +10,7 @@ permissions:
   contents: write
 jobs:
   deploy:
+    if: github.event_name == 'push' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-python@v5
@@ -41,9 +42,15 @@ jobs:
       - name: Build and Deploy Release
         # only if the release is published
         if: github.event_name == 'release' && github.event.action == 'published'
+        env:
+          PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           cd docs
-          mike deploy --push --update-aliases $INFINITY_VERSION latest --alias-type=redirect
+          if [ "$PRERELEASE" = "true" ]; then
+            mike deploy --push "$INFINITY_VERSION"
+          else
+            mike deploy --push --update-aliases "$INFINITY_VERSION" latest --alias-type=redirect
+          fi
       - name: Build and Deploy Dev/main
         # only if dev/main branch is pushed
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

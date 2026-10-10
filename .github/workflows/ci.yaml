@@ -2,18 +2,30 @@
 name: libs/infinity_emb CI
 
 on:
-  release:
-    types: [published]
   push:
     branches:
     - main
     - dev
+    paths:
+    - 'libs/infinity_emb/**'
+    - 'libs/embed_package/**'
+    - '.github/workflows/ci.yaml'
+    - '.github/workflows/linting.yaml'
+    - '.github/workflows/test.yaml'
+    - '.github/actions/poetry_setup/**'
+    - '.github/actions/disk_cleanup/**'
   pull_request:
     branches:
     - main
     - dev
-  schedule: # nightly
-    - cron: '0 0 * * *'
+    paths:
+    - 'libs/infinity_emb/**'
+    - 'libs/embed_package/**'
+    - '.github/workflows/ci.yaml'
+    - '.github/workflows/linting.yaml'
+    - '.github/workflows/test.yaml'
+    - '.github/actions/poetry_setup/**'
+    - '.github/actions/disk_cleanup/**'
   workflow_dispatch:  # Allows to trigger the workflow manually in GitHub UI
 
 # If another push to the same PR or branch happens while this workflow is still running,

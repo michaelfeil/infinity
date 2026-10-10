@@ -5,10 +5,10 @@ name: release_modal_com
 on:
   workflow_call:
     inputs:
-      unused:
-        required: false
+      version:
+        required: true
         type: string
-        description: "To be replaced."
+        description: "Python version from the triggering release tag (optional leading v)"
 
 jobs:
   modal:
@@ -29,9 +29,6 @@ jobs:
           large-packages: false
           docker-images: false
           swap-storage: false
-      - name: Get git tag
-        uses: actions-ecosystem/action-get-latest-tag@v1
-        id: get-latest-tag
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -44,5 +41,7 @@ jobs:
           modal token set --token-id ${{ secrets.MODAL_TOKEN_ID }} --token-secret ${{ secrets.MODAL_TOKEN_SECRET }}
 
       - name: Modal Deploy
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
         run: |
-          VERSION_INF=${{ steps.get-latest-tag.outputs.tag }} CI_DEPLOY_INF=true modal deploy --tag ${{ steps.get-latest-tag.outputs.tag }}-github-ci --env prod infra.modal.webserver
+          VERSION_INF="${RELEASE_VERSION#v}" CI_DEPLOY_INF=true modal deploy --tag "${RELEASE_VERSION}-github-ci" --env prod infra.modal.webserver
