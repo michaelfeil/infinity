@@ -1,0 +1,65 @@
+name: Poetry setup
+
+on:
+  push:
+    branches: [main, dev]
+    paths:
+      - '.github/actions/poetry_setup/**'
+      - '.github/workflows/poetry_setup.yaml'
+  pull_request:
+    branches: [main, dev]
+    paths:
+      - '.github/actions/poetry_setup/**'
+      - '.github/workflows/poetry_setup.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-test:
+    name: Python ${{ matrix.python-version }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.9', '3.12']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/poetry_setup
+        with:
+          python-version: ${{ matrix.python-version }}
+          poetry-version: '1.8.4'
+          working-directory: .github/actions/poetry_setup
+          cache-key: poetry-setup-smoke
+      - name: Verify Poetry and the project interpreter
+        shell: bash
+        env:
+          EXPECTED_PYTHON: ${{ matrix.python-version }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+
+          assert sys.prefix == sys.base_prefix, "Poetry setup must not shadow the selected Python"
+          assert subprocess.check_output(["poetry", "--version"], text=True).strip() == "Poetry (version 1.8.4)"
+          project = Path(os.environ["RUNNER_TEMP"]) / "poetry-smoke"
+          project.mkdir(exist_ok=True)
+          (project / "pyproject.toml").write_text(
+              '[tool.poetry]\nname = "setup-smoke"\nversion = "0.1.0"\n'
+              'description = ""\nauthors = []\npackage-mode = false\n'
+              '[tool.poetry.dependencies]\npython = ">=3.9,<4"\n',
+              encoding="utf-8",
+          )
+          subprocess.run(["poetry", "env", "use", sys.executable], cwd=project, check=True)
+          subprocess.run(["poetry", "install", "--no-interaction"], cwd=project, check=True)
+          subprocess.run(
+              ["poetry", "run", "python", "-c",
+               "import os, sys; assert '.'.join(map(str, sys.version_info[:2])) == os.environ['EXPECTED_PYTHON']"],
+              cwd=project,
+              check=True,
+          )
+          PY
