@@ -5,7 +5,7 @@ reranking, classification, and image/audio embeddings. It provides a FastAPI
 server and a Python API, with dynamic batching and multiple model backends.
 
 This package contains the Python implementation, launched with `infinity_emb v2`.
-[Infinity v3](https://github.com/michaelfeil/infinity/tree/main/libs/infinity_v3)
+[Infinity v3](https://github.com/michaelfeil/infinity/blob/main/docs/docs/projects.md)
 is a separate, planned Rust project in the same repository.
 
 ## Install and run

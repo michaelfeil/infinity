@@ -17,8 +17,8 @@ release such as `v3/0.1.0-alpha.1`.
 
 ## Python releases
 
-Keep the existing Python release tag convention. Python publishing and release
-CI jobs accept tags beginning with `0.` or `v0.`. Other tag namespaces, including
+Keep the existing Python release tag convention. Python publishing jobs accept
+tags beginning with `0.` or `v0.`. Other tag namespaces, including
 `v3/`, do not trigger Python package/image publishing, Modal deployment, or a
 Python documentation release. A future Python major version will require an
 explicit update to these release conditions.
@@ -30,8 +30,7 @@ prereleases publish versioned images and documentation without updating those
 aliases or deploying the Modal demo.
 
 The Python package's PyPI description comes from `libs/infinity_emb/README.md`.
-The root README introduces the repository's projects and retains the existing
-Python usage guide.
+The root README retains the existing Python usage guide and links to the v3 plan.
 
 ## Infinity v3 releases
 
@@ -51,11 +50,15 @@ to the v3 project. Its workflows must live in the root `.github/workflows/`.
 
 ## Shared repository assets
 
-The root README links to both projects. The existing documentation site covers
+The existing documentation site covers
 Python Infinity and these repository conventions; v3 documentation will live
 with the Rust project until its own publishing workflow is introduced.
 
-Python CI continues to run for pull requests, pushes, scheduled checks, and
-manual dispatches. Rust checks will be added separately. Client generation is
+Python CI runs automatically on pushes and pull requests that change
+`libs/infinity_emb/`, `libs/embed_package/`, or their CI workflows and shared
+actions. Changes only to v3, documentation, or other infrastructure do not start
+Python CI. Manual runs remain available; nightly and release-triggered CI runs
+are removed so automatic runs depend on relevant changes. Rust checks will be
+added separately. Client generation is
 scoped to the Python server, client generator, and their workflow inputs; v3 API
 compatibility will be assessed when the Rust source is imported.
