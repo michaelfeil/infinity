@@ -32,52 +32,6 @@ runs:
       with:
         python-version: ${{ inputs.python-version }}
 
-    - uses: actions/cache@v4
-      id: cache-bin-poetry
-      name: Cache Poetry binary - Python ${{ inputs.python-version }}
-      env:
-        SEGMENT_DOWNLOAD_TIMEOUT_MIN: "1"
-      with:
-        path: |
-          /opt/pipx/venvs/poetry
-        # This step caches the poetry installation, so make sure it's keyed on the poetry version as well.
-        key: bin-poetry-${{ runner.os }}-${{ runner.arch }}-py-${{ inputs.python-version }}-${{ inputs.poetry-version }}
-
-    - name: Refresh shell hashtable and fixup softlinks
-      if: steps.cache-bin-poetry.outputs.cache-hit == 'true'
-      shell: bash
-      env:
-        POETRY_VERSION: ${{ inputs.poetry-version }}
-        PYTHON_VERSION: ${{ inputs.python-version }}
-      run: |
-        set -eux
-
-        # Refresh the shell hashtable, to ensure correct `which` output.
-        hash -r
-
-        # `actions/cache@v3` doesn't always seem able to correctly unpack softlinks.
-        # Delete and recreate the softlinks pipx expects to have.
-        rm /opt/pipx/venvs/poetry/bin/python
-        cd /opt/pipx/venvs/poetry/bin
-        ln -s "$(which "python$PYTHON_VERSION")" python
-        chmod +x python
-        cd /opt/pipx_bin/
-        ln -s /opt/pipx/venvs/poetry/bin/poetry poetry
-        chmod +x poetry
-
-        # Ensure everything got set up correctly.
-        /opt/pipx/venvs/poetry/bin/python --version
-        /opt/pipx_bin/poetry --version
-
-    - name: Install poetry
-      if: steps.cache-bin-poetry.outputs.cache-hit != 'true'
-      shell: bash
-      env:
-        POETRY_VERSION: ${{ inputs.poetry-version }}
-        PYTHON_VERSION: ${{ inputs.python-version }}
-      # Install poetry using the python version installed by setup-python step.
-      run: pipx install "poetry==$POETRY_VERSION" --python '${{ steps.setup-python.outputs.python-path }}' --verbose
-
     - name: Restore pip and poetry cached dependencies
       uses: actions/cache@v4
       env:
@@ -91,3 +45,39 @@ runs:
           ~/.cache/pypoetry/artifacts
           ${{ env.WORKDIR }}/.venv
         key: py-deps-${{ runner.os }}-${{ runner.arch }}-py-${{ inputs.python-version }}-poetry-${{ inputs.poetry-version }}-${{ inputs.cache-key }}-${{ hashFiles(format('{0}/**/poetry.lock', env.WORKDIR)) }}
+
+    - name: Install Poetry in an isolated environment
+      shell: bash
+      env:
+        POETRY_VERSION: ${{ inputs.poetry-version }}
+        POETRY_PYTHON: ${{ steps.setup-python.outputs.python-path }}
+      run: |
+        "$POETRY_PYTHON" - <<'PY'
+        import os
+        from pathlib import Path
+        import shutil
+        import subprocess
+        import venv
+
+        # Give Poetry its own pip for this Python version. pipx's shared pip can
+        # require a newer Python than the interpreter selected by the CI matrix.
+        environment = Path(os.environ["RUNNER_TEMP"]) / "infinity-poetry"
+        venv.EnvBuilder(with_pip=True, clear=True).create(environment)
+        scripts = environment / ("Scripts" if os.name == "nt" else "bin")
+        python = scripts / ("python.exe" if os.name == "nt" else "python")
+        subprocess.run(
+            [str(python), "-m", "pip", "install", "--disable-pip-version-check",
+             f"poetry=={os.environ['POETRY_VERSION']}"],
+            check=True,
+        )
+        subprocess.run([str(python), "-m", "poetry", "--version"], check=True)
+
+        # Expose only Poetry, so python/pip still refer to setup-python's
+        # interpreter. The generated launcher retains its absolute venv path.
+        commands = Path(os.environ["RUNNER_TEMP"]) / "infinity-poetry-bin"
+        commands.mkdir(exist_ok=True)
+        launcher = "poetry.exe" if os.name == "nt" else "poetry"
+        shutil.copy2(scripts / launcher, commands / launcher)
+        with open(os.environ["GITHUB_PATH"], "a", encoding="utf-8") as path_file:
+            path_file.write(f"{commands}\n")
+        PY
