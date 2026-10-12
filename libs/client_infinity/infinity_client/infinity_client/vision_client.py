@@ -115,7 +115,9 @@ class InfinityVisionAPI:
 
 
 def test_colpali():
+    """example usage"""
     colpali = InfinityVisionAPI()
+    assert colpali.health()
     future = colpali.embed("michaelfeil/colqwen2-v0.1", ["test"])
     embeddings, total_tokens = future.result()
     print(embeddings, total_tokens)
