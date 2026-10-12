@@ -262,3 +262,29 @@ async def test_equal_image_ignores_metadata_order(isolated_cache, monkeypatch):
     second.image.info.update({"dpi": (96, 96), "comment": "example"})
     assert await lookup_or_infer(isolated_cache, first, 1.0, monkeypatch) == 1.0
     assert await lookup_or_infer(isolated_cache, second, 2.0, monkeypatch) == 1.0
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "make_content",
+    [
+        lambda text: EmbeddingSingle(sentence=text),
+        lambda text: PredictSingle(sentence=text),
+        lambda text: ReRankSingle(query=text, document="fixed"),
+        lambda text: ReRankSingle(query="fixed", document=text),
+    ],
+    ids=["embedding", "classification", "rerank-query", "rerank-document"],
+)
+@pytest.mark.parametrize(
+    "first, second",
+    [("\U0001f600", "\ud83d\ude00"), ("\ud83d", "\\ud83d"), ("\ud83d", "\ude00")],
+    ids=["non-bmp-surrogate-pair", "surrogate-escape", "lone-surrogates"],
+)
+async def test_cache_preserves_unicode_codepoints(
+    isolated_cache, monkeypatch, make_content, first, second
+):
+    assert first != second
+    assert await lookup_or_infer(isolated_cache, make_content(first), 1.0, monkeypatch) == 1.0
+    assert await lookup_or_infer(isolated_cache, make_content(second), 2.0, monkeypatch) == 2.0
+    assert await lookup_or_infer(isolated_cache, make_content(first), 3.0, monkeypatch) == 1.0
+    assert await lookup_or_infer(isolated_cache, make_content(second), 4.0, monkeypatch) == 2.0

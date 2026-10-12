@@ -66,8 +66,8 @@ class Cache:
         """
         state: Any = content
         if isinstance(content, (EmbeddingSingle, ReRankSingle)):
-            # JSON preserves query/document boundaries without pickle string memoization.
-            state = (type(content), json.dumps(content.to_input()))
+            # Keep string boundaries and code points without pickle string memoization.
+            state = (type(content), json.dumps(content.to_input(), ensure_ascii=False))
         elif isinstance(content, ImageSingle):
             image = content.image
             # Pillow's own pickle state uses an RGB palette and loses palette alpha.
