@@ -286,11 +286,10 @@ class AsyncEngineArray:
     """EngineArray is a collection of AsyncEmbeddingEngine objects."""
 
     def __init__(self, engines: Iterable["AsyncEmbeddingEngine"]):
+        engines = tuple(engines)
         if not engines:
             raise ValueError("Engines cannot be empty")
-        if len(list(engines)) != len(
-            set(engine.engine_args.served_model_name for engine in engines)
-        ):
+        if len(engines) != len(set(engine.engine_args.served_model_name for engine in engines)):
             raise ValueError("Engines must have unique model names")
         self.engines_dict = {engine.engine_args.served_model_name: engine for engine in engines}
 
