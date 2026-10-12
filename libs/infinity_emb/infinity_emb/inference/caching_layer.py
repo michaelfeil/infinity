@@ -6,16 +6,26 @@ which may reduce latency.
 """
 
 import asyncio
+import hashlib
+import json
+import pickle
 import queue
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, Union
+from typing import Any
 
 from infinity_emb._optional_imports import CHECK_DISKCACHE
 from infinity_emb.env import MANAGER
 from infinity_emb.inference.threading_asyncio import to_thread
 from infinity_emb.log_handler import logger
-from infinity_emb.primitives import EmbeddingReturnType, QueueItemInner
+from infinity_emb.primitives import (
+    AbstractSingle,
+    AudioSingle,
+    EmbeddingSingle,
+    ImageSingle,
+    QueueItemInner,
+    ReRankSingle,
+)
 
 if CHECK_DISKCACHE.is_available:
     import diskcache as dc  # type: ignore[import-untyped]
@@ -48,9 +58,36 @@ class Cache:
             self._threadpool.submit(self._consume_queue)
 
     @staticmethod
-    def _pre_hash(key: Union[str, Any]) -> str:
-        """create a hashable item out of key.__str__"""
-        return str(key)
+    def _pre_hash(content: AbstractSingle) -> bytes:
+        """Hash the input type and full content, including image/audio metadata.
+
+        Scheduling strings only estimate input lengths and are not cache identities.
+        Byte keys also avoid reusing entries written with the old string keys.
+        """
+        state: Any = content
+        if isinstance(content, (EmbeddingSingle, ReRankSingle)):
+            # JSON preserves query/document boundaries without pickle string memoization.
+            state = (type(content), json.dumps(content.to_input()))
+        elif isinstance(content, ImageSingle):
+            image = content.image
+            # Pillow's own pickle state uses an RGB palette and loses palette alpha.
+            state = (
+                type(content),
+                image.mode,
+                image.size,
+                image.tobytes(),
+                image.getpalette("RGBA"),
+                dict(sorted(image.info.items())),
+            )
+        elif isinstance(content, AudioSingle):
+            state = (
+                type(content),
+                content.sampling_rate,
+                content.audio.dtype.str,
+                content.audio.shape,
+                content.audio.tobytes(),
+            )
+        return b"content-v1:" + hashlib.sha256(pickle.dumps(state, protocol=4)).digest()
 
     def _consume_queue(self) -> None:
         while not self._shutdown.is_set():
@@ -60,18 +97,18 @@ class Cache:
                 continue
             if item is not None:
                 k, v = item
-                self._cache.add(key=self._pre_hash(k), value=v, expire=86400)
+                self._cache.add(key=k, value=v, expire=86400)
             self._add_q.task_done()
         self._threadpool.shutdown(wait=True)
 
-    def _get(self, sentence: str) -> Union[None, EmbeddingReturnType, list[float]]:
-        """sets the item.complete() and sets embedding, if in cache."""
-        return self._cache.get(key=self._pre_hash(sentence))
+    def _get(self, content: AbstractSingle) -> tuple[bytes, Any]:
+        """Compute the key once, off the event loop, and look up the cached result."""
+        key = self._pre_hash(content)
+        return key, self._cache.get(key=key)
 
     async def aget_complete(self, item: QueueItemInner) -> None:
         """sets the item.complete() and sets embedding, if in cache."""
-        item_as_str = item.content.str_repr()
-        result = await to_thread(self._get, self._threadpool, item_as_str)
+        key, result = await to_thread(self._get, self._threadpool, item.content)
         if result is not None:
             # update item with cached result
             if not item.future.done():
@@ -80,4 +117,4 @@ class Cache:
             # result is not in cache yet, lets wait for it and add it
             result_new = await item.get_result()
             await asyncio.sleep(1e-3)
-            self._add_q.put((item_as_str, result_new))
+            self._add_q.put((key, result_new))
