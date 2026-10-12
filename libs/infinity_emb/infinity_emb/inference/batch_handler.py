@@ -66,11 +66,12 @@ def matryososka_slice(
     embeddings: list[np.ndarray], matryoshka_dim: Optional[int]
 ) -> list[np.ndarray]:
     if matryoshka_dim:
-        if 1 > matryoshka_dim or matryoshka_dim > len(embeddings[0]):
+        embedding_dim = embeddings[0].shape[-1]
+        if 1 > matryoshka_dim or matryoshka_dim > embedding_dim:
             raise MatryoshkaDimError(
-                f"matryoshka_dim={matryoshka_dim} is not in a valid range. Select between 1 and {len(embeddings[0])}."
+                f"matryoshka_dim={matryoshka_dim} is not in a valid range. Select between 1 and {embedding_dim}."
             )
-        return [e[:matryoshka_dim] for e in embeddings]
+        return [e[..., :matryoshka_dim] for e in embeddings]
     return embeddings
 
 
