@@ -145,10 +145,13 @@ class EngineArgs:
 
     @classmethod
     def from_env(cls) -> list["EngineArgs"]:
-        """Create EngineArgs from environment variables using the CLI's length rules.
+        """Create EngineArgs, broadcasting the environment fields passed below.
 
-        Singleton options are shared by all configured models. Other option lists
-        must have one entry per model.
+        For these fields, singleton values are shared by all models and other
+        lists must match the model count, following the CLI's length rules.
+        device_id uses the first environment entry for every model without
+        per-model length validation; vector_disk_cache_path keeps its default.
+        Construct EngineArgs explicitly to configure either field per model.
         """
         options = AutoPadding(
             length=len(MANAGER.model_id),

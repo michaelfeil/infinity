@@ -140,9 +140,16 @@ Example models:
 ## Configure multiple engines from environment variables
 
 `EngineArgs.from_env()` creates one configuration per semicolon-separated
-`INFINITY_MODEL_ID`. Like the v2 CLI, singleton options (including defaults)
-apply to every model. A list with multiple option values must have exactly one
-value per model; other lengths raise `ValueError`.
+`INFINITY_MODEL_ID`. For fields passed through this factory, such as
+`INFINITY_BATCH_SIZE`, `INFINITY_DEVICE` and `INFINITY_DTYPE`, singleton values
+(including defaults) apply to every model. Multiple values must match the model
+count or raise `ValueError`, following the v2 CLI's length rules.
+
+The factory does not forward every CLI environment option. `INFINITY_DEVICE_ID`
+uses its first entry for every model, without per-model length validation.
+`INFINITY_VECTOR_DISK_CACHE` is not forwarded, so `vector_disk_cache_path` keeps
+its default empty value. Construct `EngineArgs` explicitly to configure per-model
+device IDs or cache paths.
 
 ```python
 # Set these before importing infinity_emb:
