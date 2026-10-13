@@ -136,3 +136,20 @@ Example models:
 - [ProsusAI/finbert](https://huggingface.co/ProsusAI/finbert)
 - [SamLowe/roberta-base-go_emotions](https://huggingface.co/SamLowe/roberta-base-go_emotions)
 
+
+## Configure multiple engines from environment variables
+
+`EngineArgs.from_env()` creates one configuration per semicolon-separated
+`INFINITY_MODEL_ID`. Like the v2 CLI, singleton options (including defaults)
+apply to every model. A list with multiple option values must have exactly one
+value per model; other lengths raise `ValueError`.
+
+```python
+# Set these before importing infinity_emb:
+# INFINITY_MODEL_ID="model/first;model/second"
+# INFINITY_BATCH_SIZE="8;16"
+# INFINITY_DEVICE="cpu"
+from infinity_emb import AsyncEngineArray, EngineArgs
+
+array = AsyncEngineArray.from_args(EngineArgs.from_env())
+```
