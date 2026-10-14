@@ -90,15 +90,16 @@ docker run --rm --gpus all -p 7997:80 \
 ```
 
 The build pins Torch 2.14.1 and CUDA 13.0.2. Python installs the C++ SDK in the
-builder; the runtime contains native shared libraries and their notices. Use
-`--build-arg BUILD_JOBS=16` on a host with sufficient RAM to speed up compilation.
+builder; the runtime contains native shared libraries and their notices.
+Cargo dependency notices are included under `/usr/share/licenses/infinity_v3/cargo/`.
+Use `--build-arg BUILD_JOBS=16` on a host with sufficient RAM to speed up compilation.
 The default is four jobs. Supported SM targets and resolved SDK dependencies
 are recorded under `/usr/share/infinity_v3/` inside the image.
 
 GitHub Actions publishes NVIDIA images as
 `ghcr.io/michaelfeil/infinity_v3:nvidia-<version>` when a `v3.*` tag is pushed.
 Prerelease versions retain the full suffix, for example
-`nvidia-3.0.0-alpha.1`, without replacing the rolling `latest` tags. Main and tag
+`nvidia-3.0.0-alpha.2`, without replacing the rolling `latest` tags. Main and tag
 builds publish the NVIDIA and CPU variants; manual workflow runs can select `nvidia`
 alone or `all` variants.
 

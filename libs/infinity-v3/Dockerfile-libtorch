@@ -35,11 +35,12 @@ set -eu
 export LD_LIBRARY_PATH="$(find /opt/torch-sdk/lib/python3.12/site-packages/nvidia -type d -name lib -printf '%p:')$LIBTORCH/lib:/usr/local/cuda/lib64"
 export LIBRARY_PATH="$LD_LIBRARY_PATH"
 cargo build --locked --release -p infinity_v3-router \
-    --no-default-features --features libtorch,http --message-format=json \
+    --no-default-features --features libtorch,http --message-format=json-render-diagnostics \
     > /tmp/cargo-build.jsonl
 python3 scripts/package-libtorch-runtime.py \
     /tmp/cargo-build.jsonl /opt/torch-sdk/lib/python3.12/site-packages /opt/infinity
 sh scripts/collect-license-notices.sh /opt/infinity/licenses
+python3 scripts/collect-cargo-notices.py /tmp/cargo-build.jsonl /opt/infinity/licenses/cargo
 BUILD
 
 FROM nvidia/cuda:13.0.2-base-ubuntu24.04 AS runtime
