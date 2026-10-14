@@ -8,7 +8,7 @@ use axum::{
 use infinity_v3_backend::{DecisionInput, DecisionOutput};
 use infinity_v3_core::input::ModelInput;
 use infinity_v3_core::{infer::Infer, tokenization::ValidEncoding};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{json, Map, Value};
 use std::{
     collections::{HashMap, HashSet},
@@ -18,9 +18,43 @@ use std::{
 };
 use tokenizers::Tokenizer;
 
+/// Text or structured JSON data. Objects containing `messages` are reserved for
+/// Infinity's native conversation extension and validated as `MessageInput`.
+#[derive(Deserialize, utoipa::ToSchema)]
+#[serde(untagged)]
+#[allow(dead_code)] // Documents the wire shape; adapters continue using ModelInput.
+pub enum SystemOneState {
+    Text(String),
+    Object(Map<String, Value>),
+    Array(Vec<Value>),
+}
+
+fn deserialize_state<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ModelInput, D::Error> {
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::String(text) => Ok(ModelInput::Text(text)),
+        Value::Object(ref object) if object.contains_key("messages") => {
+            serde_json::from_value(value).map_err(serde::de::Error::custom)
+        }
+        Value::Object(_) | Value::Array(_) => Ok(ModelInput::Text(render(&value))),
+        _ => Err(serde::de::Error::custom(
+            "state must be a string, object or array",
+        )),
+    }
+}
+
+fn instructions(value: Option<&Value>) -> Result<String, String> {
+    match value {
+        Some(value @ (Value::String(_) | Value::Object(_) | Value::Array(_))) => Ok(render(value)),
+        _ => Err("Question instructions must be a string, object or array".into()),
+    }
+}
+
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SystemOneRequest {
+    #[serde(deserialize_with = "deserialize_state")]
+    #[schema(value_type = SystemOneState)]
     pub state: ModelInput,
     pub questions: Map<String, Value>,
     pub model: Option<String>,
@@ -255,10 +289,7 @@ impl Laya {
                     "noul" => 2,
                     _ => return Err("Question type must be choice, score, or noul".into()),
                 };
-                let instructions = q
-                    .get("instructions")
-                    .and_then(Value::as_str)
-                    .ok_or("Question instructions must be a string")?;
+                let instructions = instructions(q.get("instructions"))?;
                 if kind != "noul" && q.get("labels").is_some() {
                     return Err("labels is only supported for noul".into());
                 }
@@ -836,6 +867,59 @@ pub(crate) async fn systemone_inner(
 mod tests {
     use super::*;
 
+    fn request(state: Value) -> Result<SystemOneRequest, serde_json::Error> {
+        serde_json::from_value(json!({"state":state,"questions":{}}))
+    }
+
+    #[test]
+    fn structured_state_is_rendered_without_changing_text_or_order() {
+        for state in [
+            json!("hello"),
+            json!({"z":"a,b:c","a":["é",false]}),
+            json!([1,{"text":"hello"}]),
+        ] {
+            let expected = render(&state);
+            let parsed = request(state).unwrap();
+            assert!(matches!(parsed.state, ModelInput::Text(text) if text == expected));
+            assert!(parsed.model.is_none());
+        }
+        for state in [Value::Null, json!(true), json!(42)] {
+            assert!(request(state).is_err());
+        }
+    }
+
+    #[test]
+    fn native_messages_are_never_silently_flattened() {
+        assert!(matches!(
+            request(json!({"messages":[{"role":"user","content":"hello"}]}))
+                .unwrap()
+                .state,
+            ModelInput::Messages(_)
+        ));
+        for state in [
+            json!({"messages":"bad"}),
+            json!({"messages":[{"role":"invalid","content":"hello"}]}),
+            json!({"messages":[],"extra":true}),
+        ] {
+            assert!(request(state).is_err());
+        }
+    }
+
+    #[test]
+    fn structured_instructions_reject_invalid_scalars() {
+        for value in [
+            json!("question"),
+            json!({"question":"Which?","context":[1,2]}),
+            json!(["Which?",{"context":true}]),
+        ] {
+            assert_eq!(instructions(Some(&value)).unwrap(), render(&value));
+        }
+        for value in [Value::Null, json!(true), json!(1)] {
+            assert!(instructions(Some(&value)).is_err());
+        }
+        assert!(instructions(None).is_err());
+    }
+
     fn service() -> Laya {
         use tokenizers::models::wordlevel::WordLevel;
         let tokenizer = Tokenizer::new(
@@ -858,6 +942,48 @@ mod tests {
             sep: 2,
             mask: 3,
         }
+    }
+
+    #[test]
+    fn laya_structured_content_matches_explicit_json_text() {
+        let mut model = service();
+        let state = json!({"ticket":{"message":"hello","priority":2}});
+        let instructions = json!({"question":"Is it true?","context":["hello"]});
+        model.tokenizer = Tokenizer::new(
+            tokenizers::models::wordlevel::WordLevel::builder()
+                .vocab(
+                    [
+                        ("[UNK]".into(), 0),
+                        (render(&state), 4),
+                        (format!("choice question: {}", render(&instructions)), 5),
+                        (" hello: hello".into(), 6),
+                    ]
+                    .into_iter()
+                    .collect(),
+                )
+                .unk_token("[UNK]".into())
+                .build()
+                .unwrap(),
+        );
+        let make = |state, instructions| {
+            serde_json::from_value(json!({
+                "state": state,
+                "questions": {"ticket-check": {"type":"choice", "instructions":instructions, "criteria":{"hello":"hello"}}}
+            }))
+            .unwrap()
+        };
+        let structured = model
+            .prepare(make(state.clone(), instructions.clone()))
+            .unwrap();
+        let text = model
+            .prepare(make(json!(render(&state)), json!(render(&instructions))))
+            .unwrap();
+        assert_eq!(structured[0].id, "ticket-check");
+        for token in [4, 5, 6] {
+            assert!(structured[0].encoding.input_ids.contains(&token));
+        }
+        assert_eq!(structured[0].encoding.input_ids, text[0].encoding.input_ids);
+        assert_eq!(structured[0].compute_chars, text[0].compute_chars);
     }
 
     #[test]

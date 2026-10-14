@@ -971,6 +971,8 @@ impl ModelConfig {
             matches!(
                 arch.as_str(),
                 "LlamaForSequenceClassification"
+                    | "UltrabertForSequenceClassification"
+                    | "UltrabertForTokenClassification"
                     | "Qwen2ForSequenceClassification"
                     | "Qwen3ForSequenceClassification"
                     | "Qwen3MoeForSequenceClassification"
@@ -1414,6 +1416,8 @@ mod auto_dtype_tests {
     fn decoder_classifiers_resolve_hf_default_and_explicit_labels() {
         for (arch, model_type) in [
             ("LlamaForSequenceClassification", "llama"),
+            ("UltrabertForSequenceClassification", "ultrabert"),
+            ("UltrabertForTokenClassification", "ultrabert"),
             ("Qwen2ForSequenceClassification", "qwen2"),
             ("Qwen3ForSequenceClassification", "qwen3"),
             ("Qwen3MoeForSequenceClassification", "qwen3_moe"),

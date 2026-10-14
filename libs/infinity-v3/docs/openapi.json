@@ -3036,10 +3036,26 @@
             "additionalProperties": {}
           },
           "state": {
-            "$ref": "#/components/schemas/ModelInput"
+            "$ref": "#/components/schemas/SystemOneState"
           }
         },
         "additionalProperties": false
+      },
+      "SystemOneState": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          {
+            "type": "array",
+            "items": {}
+          }
+        ],
+        "description": "Text or structured JSON data. Objects containing `messages` are reserved for\nInfinity's native conversation extension and validated as `MessageInput`."
       }
     }
   },

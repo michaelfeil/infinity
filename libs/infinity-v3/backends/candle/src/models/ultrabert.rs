@@ -30,6 +30,10 @@ pub struct UltraBertConfig {
     #[serde(default)]
     mlp_bias: bool,
     max_position_embeddings: Option<usize>,
+    #[serde(default)]
+    architectures: Vec<String>,
+    num_labels: Option<usize>,
+    id2label: Option<HashMap<String, String>>,
 }
 
 impl UltraBertConfig {
@@ -67,6 +71,7 @@ pub struct UltraBertModel {
     rotary: Vec<(Tensor, Tensor)>,
     pool: Pool,
     device: Device,
+    classifier: Option<(crate::layers::Linear, bool)>,
 }
 
 impl UltraBertModel {
@@ -93,9 +98,37 @@ impl UltraBertModel {
         {
             candle::bail!("Invalid UltraBERT head geometry or per-layer attention configuration");
         }
-        let pool = match model_type {
-            ModelType::Embedding(pool @ (Pool::Cls | Pool::Mean | Pool::LastToken)) => pool,
-            _ => candle::bail!("UltraBERT supports CLS, mean, and last-token embeddings"),
+        let (pool, classifier) = match model_type {
+            ModelType::Embedding(pool @ (Pool::Cls | Pool::Mean | Pool::LastToken)) => (pool, None),
+            ModelType::Classifier => {
+                let token_classifier = match config.architectures.as_slice() {
+                    [arch] if arch == "UltrabertForSequenceClassification" => false,
+                    [arch] if arch == "UltrabertForTokenClassification" => true,
+                    _ => candle::bail!("UltraBERT classification requires a sequence or token classification checkpoint"),
+                };
+                let labels = config
+                    .id2label
+                    .as_ref()
+                    .map(HashMap::len)
+                    .or(config.num_labels)
+                    .unwrap_or(2);
+                if labels == 0 || config.num_labels.is_some_and(|n| n != labels) {
+                    candle::bail!("UltraBERT num_labels and id2label must agree and be nonzero");
+                }
+                let head = crate::layers::Linear::new(
+                    vb.pp("classifier")
+                        .get((labels, config.hidden_size), "weight")?,
+                    Some(vb.pp("classifier").get(labels, "bias")?),
+                    None,
+                );
+                (Pool::Cls, Some((head, token_classifier)))
+            }
+            _ => candle::bail!("UltraBERT supports embeddings and sequence/token classification"),
+        };
+        let vb = if vb.contains_tensor("ultrabert.embed_tokens.weight") {
+            vb.pp("ultrabert")
+        } else {
+            vb
         };
         let embeddings = Embedding::new(
             vb.pp("embed_tokens")
@@ -131,13 +164,14 @@ impl UltraBertModel {
             rotary,
             pool,
             device: vb.device().clone(),
+            classifier,
         })
     }
 }
 
-impl Model for UltraBertModel {
-    fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
-        let (ids, compact) = CompactUnfoldTensors::from_batch(&batch, &self.device)?;
+impl UltraBertModel {
+    fn forward_hidden(&self, batch: &Batch) -> Result<Tensor> {
+        let (ids, compact) = CompactUnfoldTensors::from_batch(batch, &self.device)?;
         let mut hidden = self.embeddings.forward(&ids)?.contiguous()?;
         let offsets = Tensor::new(batch.cumulative_seq_lengths.as_slice(), &self.device)?;
         #[cfg(feature = "fa4")]
@@ -167,7 +201,33 @@ impl Model for UltraBertModel {
             residual = Some(r);
         }
         let (hidden, _) = self.norm.forward(&hidden, residual.as_ref())?;
-        let outputs = compact.scatter_unfold(&hidden)?;
+        compact.scatter_unfold(&hidden)
+    }
+}
+
+impl Model for UltraBertModel {
+    fn predict(&self, batch: Batch) -> Result<Tensor> {
+        let Some((head, _)) = &self.classifier else {
+            candle::bail!("UltraBERT prediction requires a classification checkpoint");
+        };
+        // Generic classifier health/warmup uses this path for token heads too.
+        let states = self.forward_hidden(&batch)?;
+        let indices = Tensor::new(&batch.cumulative_seq_lengths[..batch.len()], &self.device)?;
+        head.forward(&index_select(&states, &indices, 0)?)
+    }
+
+    fn predict_tokens(&self, batch: Batch) -> Result<Tensor> {
+        let Some((head, true)) = &self.classifier else {
+            candle::bail!("UltraBERT token prediction requires a token classification checkpoint");
+        };
+        head.forward(&self.forward_hidden(&batch)?)
+    }
+
+    fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
+        if self.classifier.is_some() {
+            candle::bail!("UltraBERT embedding requests require an embedding checkpoint");
+        }
+        let outputs = self.forward_hidden(&batch)?;
         let select = |indices: Vec<u32>| -> Result<Tensor> {
             index_select(&outputs, &Tensor::new(indices, &self.device)?, 0)
         };
@@ -210,5 +270,38 @@ impl Model for UltraBertModel {
             )?)
         };
         Ok((pooled, raw))
+    }
+}
+
+#[cfg(test)]
+mod classification_tests {
+    use super::*;
+    use candle::DType;
+
+    #[test]
+    fn classifiers_require_consistent_labels_and_saved_heads() -> Result<()> {
+        let device = Device::Cpu;
+        let vb = VarBuilder::from_tensors(HashMap::new(), DType::F32, &device);
+        let mut value = serde_json::json!({
+            "vocab_size":64,"hidden_size":16,"intermediate_size":24,"num_hidden_layers":1,
+            "num_attention_heads":2,"num_key_value_heads":2,"head_dim":8,"hidden_act":"silu",
+            "rms_norm_eps":1e-6,"rope_theta":[10000.],"attention_windows":[null],
+            "architectures":["UltrabertForSequenceClassification"],"num_labels":2,
+            "id2label":{"0":"negative","1":"positive"}
+        });
+        let config = serde_json::from_value(value.clone()).unwrap();
+        let error = UltraBertModel::load(vb.clone(), &config, ModelType::Classifier)
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("classifier.weight"));
+        for labels in [0, 3] {
+            value["num_labels"] = labels.into();
+            let config = serde_json::from_value(value.clone()).unwrap();
+            let error = UltraBertModel::load(vb.clone(), &config, ModelType::Classifier)
+                .err()
+                .unwrap();
+            assert!(error.to_string().contains("num_labels"));
+        }
+        Ok(())
     }
 }
