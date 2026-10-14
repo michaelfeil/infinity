@@ -21,11 +21,13 @@ fn main() {
     println!("cargo:rerun-if-changed=../candle/src/kernels/gemma4_moe.cu");
     println!("cargo:rerun-if-changed=../candle/src/kernels/gemma4_moe_kernels.cuh");
     println!("cargo:rerun-if-changed=../candle/extensions/candle-gemma4-moe/kernels");
+    println!("cargo:rerun-if-env-changed=ENV_VAR_BASE");
     let torch = PathBuf::from(env::var_os("LIBTORCH").expect(
         "Set LIBTORCH to the root of a LibTorch 2.14.1 C++ distribution (include/, lib/, share/)",
     ));
     let mut config = cmake::Config::new("cpp");
     config.define("CMAKE_PREFIX_PATH", &torch);
+    config.define("ENV_VAR_BASE", infinity_v3_config::ENV_VAR_BASE);
     // Distribution builds must not silently target only the build host's GPU.
     // Use a separate override so Candle's single-device CUDA_COMPUTE_CAP does
     // not narrow the LibTorch package when the backends are built together.

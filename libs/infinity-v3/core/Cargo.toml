@@ -8,6 +8,7 @@ authors.workspace = true
 homepage.workspace = true
 
 [dependencies]
+infinity-v3-config = { workspace = true }
 serde = { workspace = true }
 base64 = "0.22.1"
 reqwest = { version = "0.12.5", default-features = false, features = ["rustls-tls"] }

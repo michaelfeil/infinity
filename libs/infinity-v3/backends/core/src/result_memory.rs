@@ -70,7 +70,7 @@ static GLOBAL: OnceLock<Result<Arc<ResultPool>, String>> = OnceLock::new();
 pub fn global_pool() -> Result<Arc<ResultPool>, BackendError> {
     GLOBAL
         .get_or_init(|| {
-            let limit = std::env::var("INFINITY_HOST_RESULTS_MAX_BYTES")
+            let limit = std::env::var(infinity_v3_config::infinity_env!("HOST_RESULTS_MAX_BYTES"))
                 .map(|v| v.parse::<usize>().map_err(|e| e.to_string()))
                 .unwrap_or(Ok(512 << 20))?;
             ResultPool::new(limit).map_err(|e| e.to_string())

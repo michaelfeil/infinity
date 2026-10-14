@@ -286,12 +286,14 @@ fn main() {
         ("8x512 prefix384", vec![512; 8], 384),
         ("32x512 prefix256", vec![512; 32], 256),
     ];
-    let graph_requested = std::env::var("INFINITY_TORCH_CUDA_GRAPHS")
+    let graph_requested = std::env::var(infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPHS"))
         .is_ok_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
-    let graph_max: usize = std::env::var("INFINITY_TORCH_CUDA_GRAPH_MAX_TOKENS")
-        .unwrap_or_else(|_| "4096".into())
-        .parse()
-        .unwrap();
+    let graph_max: usize = std::env::var(infinity_v3_config::infinity_env!(
+        "TORCH_CUDA_GRAPH_MAX_TOKENS"
+    ))
+    .unwrap_or_else(|_| "4096".into())
+    .parse()
+    .unwrap();
     let mut rows = Vec::new();
     for (workload_index, (label, lengths, prefix)) in workloads.into_iter().enumerate() {
         let full = batch(&lengths, prefix, vocab_size, bos, eos, 0);
@@ -421,7 +423,7 @@ fn main() {
         );
     }
     let mut report = serde_json::json!({"model_path":path,"dtype":dtype,"checkpoint_revision":checkpoint_revision,"vocab_size":vocab_size,"bos_token_id":bos,"eos_token_id":eos,"pad_token_id":pad,"input_pattern":"synthetic valid vocabulary IDs with configured BOS/EOS; real shared prefixes and distinct suffixes; no padding",
-        "pooling":pooling,"iterations_per_backend":iterations,"torch_gpu":torch_gpu,"candle_gpu":candle_gpu,"torch_cuda_graph_count":torch.lock().unwrap().cuda_graph_count(),"torch_cuda_graph_max_tokens":std::env::var("INFINITY_TORCH_CUDA_GRAPH_MAX_TOKENS").unwrap_or_else(|_| "4096".into()), "torch_cudnn_varlen_requested":std::env::var("INFINITY_TORCH_CUDNN_VARLEN").is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true")),"torch_cuda_graphs_requested":std::env::var("INFINITY_TORCH_CUDA_GRAPHS").is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true")),"measurement_mode":"parallel separate GPUs; both backends radix-folded; pooled timings; raw parity outside timings","warmup_per_backend":20,
+        "pooling":pooling,"iterations_per_backend":iterations,"torch_gpu":torch_gpu,"candle_gpu":candle_gpu,"torch_cuda_graph_count":torch.lock().unwrap().cuda_graph_count(),"torch_cuda_graph_max_tokens":std::env::var(infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPH_MAX_TOKENS")).unwrap_or_else(|_| "4096".into()), "torch_cudnn_varlen_requested":std::env::var(infinity_v3_config::infinity_env!("TORCH_CUDNN_VARLEN")).is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true")),"torch_cuda_graphs_requested":std::env::var(infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPHS")).is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true")),"measurement_mode":"parallel separate GPUs; both backends radix-folded; pooled timings; raw parity outside timings","warmup_per_backend":20,
         "torch_load_seconds":torch_load,"candle_load_seconds":candle_load,"workloads":rows});
     if fp8_dynamic {
         report["dynamic_fp8_requested"] = true.into();

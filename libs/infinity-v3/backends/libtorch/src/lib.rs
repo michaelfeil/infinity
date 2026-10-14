@@ -593,71 +593,80 @@ impl LibtorchBackend {
         {
             return Err(start("Pplx and Clef heads require Qwen3.5"));
         }
-        options["_cuda_graphs"] = std::env::var("INFINITY_TORCH_CUDA_GRAPHS")
-            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-            .into();
-        options["_media_cuda_graphs"] = std::env::var("INFINITY_TORCH_MEDIA_CUDA_GRAPHS")
-            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-            .into();
-        let graph_max_tokens = std::env::var("INFINITY_TORCH_CUDA_GRAPH_MAX_TOKENS")
-            .map(|value| value.parse::<i64>().map_err(start))
-            .unwrap_or(Ok(4096))?;
+        options["_cuda_graphs"] =
+            std::env::var(infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPHS"))
+                .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+                .into();
+        options["_media_cuda_graphs"] =
+            std::env::var(infinity_v3_config::infinity_env!("TORCH_MEDIA_CUDA_GRAPHS"))
+                .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+                .into();
+        let graph_max_tokens = std::env::var(infinity_v3_config::infinity_env!(
+            "TORCH_CUDA_GRAPH_MAX_TOKENS"
+        ))
+        .map(|value| value.parse::<i64>().map_err(start))
+        .unwrap_or(Ok(4096))?;
         if graph_max_tokens <= 0 {
             return Err(start("CUDA graph maximum tokens must be positive"));
         }
         options["_cuda_graph_max_tokens"] = graph_max_tokens.into();
         for (env, key, default, minimum) in [
             (
-                "INFINITY_TORCH_TRANSIENT_MAX_BYTES",
+                infinity_v3_config::infinity_env!("TORCH_TRANSIENT_MAX_BYTES"),
                 "_transient_max_bytes",
                 8i64 << 30,
                 1,
             ),
             (
-                "INFINITY_TORCH_DEVICE_MEMORY_HEADROOM_BYTES",
+                infinity_v3_config::infinity_env!("TORCH_DEVICE_MEMORY_HEADROOM_BYTES"),
                 "_device_memory_headroom_bytes",
                 1i64 << 30,
                 1,
             ),
             (
-                "INFINITY_TORCH_RETAINED_WORKSPACE_MAX_BYTES",
+                infinity_v3_config::infinity_env!("TORCH_RETAINED_WORKSPACE_MAX_BYTES"),
                 "_retained_workspace_max_bytes",
                 512i64 << 20,
                 1,
             ),
             (
-                "INFINITY_TORCH_INPUT_UPLOAD_MAX_BYTES",
+                infinity_v3_config::infinity_env!("TORCH_INPUT_UPLOAD_MAX_BYTES"),
                 "_input_upload_max_bytes",
                 512 << 20,
                 1,
             ),
             (
-                "INFINITY_TORCH_OUTPUT_STAGING_MAX_BYTES",
+                infinity_v3_config::infinity_env!("TORCH_OUTPUT_STAGING_MAX_BYTES"),
                 "_output_staging_max_bytes",
                 512 << 20,
                 1,
             ),
             (
-                "INFINITY_TORCH_CUDA_GRAPH_ENTRIES",
+                infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPH_ENTRIES"),
                 "_cuda_graph_entries",
                 4,
                 0,
             ),
             (
-                "INFINITY_TORCH_ATTENTION_BIAS_MAX_BYTES",
+                infinity_v3_config::infinity_env!("TORCH_ATTENTION_BIAS_MAX_BYTES"),
                 "_attention_bias_max_bytes",
                 512 << 20,
                 1,
             ),
-            ("INFINITY_TORCH_CUDA_GRAPH_REUSE", "_cuda_graph_reuse", 3, 1),
             (
-                "INFINITY_TORCH_CUDA_GRAPH_MAX_BYTES",
+                infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPH_REUSE"),
+                "_cuda_graph_reuse",
+                3,
+                1,
+            ),
+            (
+                infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPH_MAX_BYTES"),
                 "_cuda_graph_max_bytes",
                 512 << 20,
                 1,
             ),
             (
-                "INFINITY_TORCH_CUDA_GRAPH_MAX_CAPTURES",
+                infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPH_MAX_CAPTURES"),
                 "_cuda_graph_max_captures",
                 8,
                 0,
@@ -671,9 +680,10 @@ impl LibtorchBackend {
             }
             options[key] = value.into();
         }
-        options["_cudnn_varlen"] = std::env::var("INFINITY_TORCH_CUDNN_VARLEN")
-            .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-            .into();
+        options["_cudnn_varlen"] =
+            std::env::var(infinity_v3_config::infinity_env!("TORCH_CUDNN_VARLEN"))
+                .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+                .into();
         if family == "llama_bidirec" {
             options["use_bidirectional_attention"] = true.into();
         }
@@ -879,9 +889,11 @@ impl LibtorchBackend {
         let device = CString::new(device).map_err(start)?;
         // SAFETY: config and device stay valid during creation, and the bridge copies them.
         let host_result_pool = text_embeddings_backend_core::result_memory::global_pool()?;
-        let host_output_max_bytes = std::env::var("INFINITY_TORCH_HOST_OUTPUT_MAX_BYTES")
-            .map(|value| value.parse::<usize>().map_err(start))
-            .unwrap_or(Ok(512 << 20))?;
+        let host_output_max_bytes = std::env::var(infinity_v3_config::infinity_env!(
+            "TORCH_HOST_OUTPUT_MAX_BYTES"
+        ))
+        .map(|value| value.parse::<usize>().map_err(start))
+        .unwrap_or(Ok(512 << 20))?;
         if host_output_max_bytes == 0 {
             return Err(start("Host output memory budget must be positive"));
         }
@@ -1120,9 +1132,10 @@ fn pack_output(
 impl LibtorchBackend {
     fn check_host_output(&self, bytes: usize) -> Result<(), BackendError> {
         if bytes > self.host_output_max_bytes {
-            return Err(BackendError::Overloaded(
-                "Host output exceeds INFINITY_TORCH_HOST_OUTPUT_MAX_BYTES".into(),
-            ));
+            return Err(BackendError::Overloaded(format!(
+                "Host output exceeds {}",
+                infinity_v3_config::infinity_env!("TORCH_HOST_OUTPUT_MAX_BYTES")
+            )));
         }
         Ok(())
     }

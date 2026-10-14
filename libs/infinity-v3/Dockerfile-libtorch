@@ -21,6 +21,7 @@ ENV LIBTORCH=/opt/torch-sdk/lib/python3.12/site-packages/torch \
     RUSTFLAGS="-C target-cpu=x86-64"
 ARG LIBTORCH_CUDA_ARCHITECTURES="80;86;89;90;100;120"
 ARG BUILD_JOBS=4
+ARG ENV_VAR_BASE=INFINITY
 ARG GIT_SHA
 ARG DOCKER_LABEL
 ENV LIBTORCH_CUDA_ARCHITECTURES=$LIBTORCH_CUDA_ARCHITECTURES \
@@ -54,7 +55,8 @@ COPY --from=builder /opt/infinity/cuda-architectures.txt /usr/share/infinity_v3/
 COPY --from=builder /opt/infinity/sdk-requirements.txt /usr/share/infinity_v3/sdk-requirements.txt
 RUN echo /opt/infinity/lib > /etc/ld.so.conf.d/infinity-v3.conf && ldconfig \
     && infinity_v3 --help > /dev/null
-ENV INFINITY_BACKEND=libtorch \
+# The CLI accepts unprefixed defaults for any compiled environment base.
+ENV BACKEND=libtorch \
     HUGGINGFACE_HUB_CACHE=/data \
     PORT=80
 EXPOSE 80

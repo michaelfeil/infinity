@@ -37,7 +37,8 @@ impl MemoryAdmission {
         anyhow::ensure!(
             (64 * 1024..=u32::MAX as usize).contains(&output_limit)
                 && output_limit <= Semaphore::MAX_PERMITS,
-            "INFINITY_HTTP_OUTPUT_MAX_BYTES must be between 65536 and {} bytes",
+            "{} must be between 65536 and {} bytes",
+            infinity_v3_config::infinity_env!("HTTP_OUTPUT_MAX_BYTES"),
             (u32::MAX as usize).min(Semaphore::MAX_PERMITS)
         );
         anyhow::ensure!(

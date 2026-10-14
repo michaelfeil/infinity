@@ -98,7 +98,7 @@ struct Args {
     /// The aliases `pplx-decider-v1.1-27b` and `d3` select their native decision protocols.
     #[clap(
         long,
-        env = "INFINITY_MODEL_ID",
+        env = infinity_v3_config::infinity_env!("MODEL_ID"),
         required = true,
         value_delimiter = ';'
     )]
@@ -106,25 +106,25 @@ struct Args {
     model_id: Vec<String>,
 
     /// Public model names. Repeat per model; defaults to the checkpoint ID.
-    #[clap(long, env = "INFINITY_SERVED_MODEL_NAME", value_delimiter = ';', value_parser = optional_string)]
+    #[clap(long, env = infinity_v3_config::infinity_env!("SERVED_MODEL_NAME"), value_delimiter = ';', value_parser = optional_string)]
     served_model_name: Vec<Optional<String>>,
 
     /// The actual revision of the model if you're referring to a model
     /// on the hub. You can use a specific commit id or a branch like `refs/pr/2`.
-    #[clap(long, env = "INFINITY_REVISION", value_parser = optional_string, value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("REVISION"), value_parser = optional_string, value_delimiter = ';')]
     revision: Vec<Optional<String>>,
 
     /// Optionally control the number of tokenizer workers used for payload tokenization, validation
     /// and truncation.
     /// Defaults to CPU cores minus one. Values are clamped to 1–16.
-    #[clap(long, env = "INFINITY_TOKENIZATION_WORKERS", value_parser = optional_usize, value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("TOKENIZATION_WORKERS"), value_parser = optional_usize, value_delimiter = ';')]
     tokenization_workers: Vec<Optional<usize>>,
 
     /// Maximum waiting tokenizer jobs, independent of worker count. Counts individual inputs,
     /// not HTTP requests. When full, producers wait for space.
     #[clap(
         long,
-        env = "INFINITY_TOKENIZATION_QUEUE_CAPACITY",
+        env = infinity_v3_config::infinity_env!("TOKENIZATION_QUEUE_CAPACITY"),
         default_value = "1024",
         value_delimiter = ';'
     )]
@@ -133,7 +133,7 @@ struct Args {
     /// Model dtype. Auto selects bfloat16 from model config when supported, otherwise the backend default.
     #[clap(
         long,
-        env = "INFINITY_DTYPE",
+        env = infinity_v3_config::infinity_env!("DTYPE"),
         value_enum,
         default_value = "auto",
         value_delimiter = ';'
@@ -143,7 +143,7 @@ struct Args {
     /// Inference runtime (requires the matching Cargo feature). Candle is deprecated; use libtorch for supported models.
     #[clap(
         long,
-        env = "INFINITY_BACKEND",
+        env = infinity_v3_config::infinity_env!("BACKEND"),
         value_enum,
         default_value = "candle",
         value_delimiter = ';'
@@ -153,7 +153,7 @@ struct Args {
     /// LibTorch accelerator family. Auto selects CUDA when available, otherwise CPU.
     #[clap(
         long,
-        env = "INFINITY_TORCH_DEVICE",
+        env = infinity_v3_config::infinity_env!("TORCH_DEVICE"),
         value_enum,
         default_value = "auto",
         value_delimiter = ';'
@@ -166,21 +166,21 @@ struct Args {
     /// model `1_Pooling/config.json` configuration.
     ///
     /// If `pooling` is set, it will override the model pooling configuration
-    #[clap(long, env = "INFINITY_POOLING", value_parser = optional_pool, value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("POOLING"), value_parser = optional_pool, value_delimiter = ';')]
     pooling: Vec<Optional<infinity_v3_backend::Pool>>,
 
     /// Serve a decision model with its trained prompt on /v1/systemone.
-    #[clap(long, env = "INFINITY_DECISION_PROTOCOL", value_parser = optional_protocol, value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("DECISION_PROTOCOL"), value_parser = optional_protocol, value_delimiter = ';')]
     decision_protocol: Vec<Optional<infinity_v3_router::DecisionProtocol>>,
 
     /// Exact HTTPS hostnames allowed for image downloads. Empty permits inline data URLs only.
-    #[clap(long, env = "INFINITY_IMAGE_ALLOWED_HOSTS", value_delimiter = ',')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("IMAGE_ALLOWED_HOSTS"), value_delimiter = ',')]
     image_allowed_hosts: Vec<String>,
 
     /// Memory budget for encoded images, CPU processing and prepared image patches, in MiB.
     #[clap(
         long,
-        env = "INFINITY_IMAGE_MEMORY_BUDGET_MIB",
+        env = infinity_v3_config::infinity_env!("IMAGE_MEMORY_BUDGET_MIB"),
         default_value = "512",
         value_delimiter = ';'
     )]
@@ -192,7 +192,7 @@ struct Args {
     #[clap(
         default_value = "512",
         long,
-        env = "INFINITY_MAX_CONCURRENT_REQUESTS",
+        env = infinity_v3_config::infinity_env!("MAX_CONCURRENT_REQUESTS"),
         value_delimiter = ';'
     )]
     max_concurrent_requests: Vec<usize>,
@@ -211,18 +211,18 @@ struct Args {
     #[clap(
         default_value = "16384",
         long,
-        env = "INFINITY_MAX_BATCH_TOKENS",
+        env = infinity_v3_config::infinity_env!("MAX_BATCH_TOKENS"),
         value_delimiter = ';'
     )]
     max_batch_tokens: Vec<usize>,
 
     /// Optionally control the maximum number of individual requests in a batch
-    #[clap(long, env = "INFINITY_MAX_BATCH_REQUESTS", value_parser = optional_usize, value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("MAX_BATCH_REQUESTS"), value_parser = optional_usize, value_delimiter = ';')]
     max_batch_requests: Vec<Optional<usize>>,
 
     /// Experimental calibration-free FP8 MLPs (Ada/Hopper/Blackwell FP16/BF16 dense decoder and BERT/ModernBERT encoders).
     /// Bundled in official SM89/90/100/120 images; disabled by default. May change embedding, reranking, and decision accuracy.
-    #[clap(long, env = "INFINITY_ENABLE_FP8_DYNAMIC", action = clap::ArgAction::Append, num_args = 0..=1, default_missing_value = "true", default_value = "false", value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("ENABLE_FP8_DYNAMIC"), action = clap::ArgAction::Append, num_args = 0..=1, default_missing_value = "true", default_value = "false", value_delimiter = ';')]
     enable_fp8_dynamic: Vec<bool>,
 
     /// RadixMLP threshold.
@@ -230,14 +230,14 @@ struct Args {
     /// Set the threshold for RadixMLP.
     /// If the compression ratio is lower than the threshold, RadixMLP will be used.
     /// The default is 0.92 for most models, and 0.0 (force disabled) for bidirectional models.
-    #[clap(long, env = "INFINITY_RADIX_MLP_THRESHOLD", default_value = "0.92", value_parser = pct_parser, value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("RADIX_MLP_THRESHOLD"), default_value = "0.92", value_parser = pct_parser, value_delimiter = ';')]
     radix_mlp_threshold: Vec<f32>,
 
     /// Control the maximum number of inputs that a client can send in a single request
     #[clap(
         default_value = "32",
         long,
-        env = "INFINITY_MAX_CLIENT_BATCH_SIZE",
+        env = infinity_v3_config::infinity_env!("MAX_CLIENT_BATCH_SIZE"),
         value_delimiter = ';'
     )]
     max_client_batch_size: Vec<usize>,
@@ -247,14 +247,14 @@ struct Args {
     #[clap(
         default_value = "512",
         long,
-        env = "INFINITY_MAX_DECISION_QUESTIONS",
+        env = infinity_v3_config::infinity_env!("MAX_DECISION_QUESTIONS"),
         value_delimiter = ';'
     )]
     max_decision_questions: Vec<std::num::NonZeroUsize>,
 
     /// Automatically truncate inputs that are longer than the maximum supported size
     ///
-    #[clap(long, env = "INFINITY_AUTO_TRUNCATE", action = clap::ArgAction::Append, num_args = 0..=1, default_missing_value = "true", default_value = "false", value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("AUTO_TRUNCATE"), action = clap::ArgAction::Append, num_args = 0..=1, default_missing_value = "true", default_value = "false", value_delimiter = ';')]
     auto_truncate: Vec<bool>,
 
     /// The name of the prompt that should be used by default for encoding. If not set, no prompt
@@ -269,7 +269,7 @@ struct Args {
     ///
     /// The argument '--default-prompt-name <DEFAULT_PROMPT_NAME>' cannot be used with
     /// '--default-prompt <DEFAULT_PROMPT>`
-    #[clap(long, env = "INFINITY_DEFAULT_PROMPT_NAME", value_parser = optional_string, value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("DEFAULT_PROMPT_NAME"), value_parser = optional_string, value_delimiter = ';')]
     default_prompt_name: Vec<Optional<String>>,
 
     /// The prompt that should be used by default for encoding. If not set, no prompt
@@ -281,7 +281,7 @@ struct Args {
     ///
     /// The argument '--default-prompt <DEFAULT_PROMPT>' cannot be used with
     /// '--default-prompt-name <DEFAULT_PROMPT_NAME>`
-    #[clap(long, env = "INFINITY_DEFAULT_PROMPT", value_parser = optional_string)]
+    #[clap(long, env = infinity_v3_config::infinity_env!("DEFAULT_PROMPT"), value_parser = optional_string)]
     default_prompt: Vec<Optional<String>>,
 
     /// Optionally, define the path to the Dense module required for some embedding models.
@@ -295,63 +295,63 @@ struct Args {
     /// Note that this argument is optional, only required to be set if there is no `modules.json`
     /// file or when you want to override a single Dense module path, only when running with the
     /// `candle` backend.
-    #[clap(long, env = "INFINITY_DENSE_PATH", value_parser = optional_string, value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("DENSE_PATH"), value_parser = optional_string, value_delimiter = ';')]
     dense_path: Vec<Optional<String>>,
 
     /// Use one explicit accelerator device. CUDA otherwise uses all visible devices.
-    #[clap(long, env = "INFINITY_DEVICE_ID", value_parser = optional_usize, value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("DEVICE_ID"), value_parser = optional_usize, value_delimiter = ';')]
     device_id: Vec<Optional<usize>>,
 
     /// Visible CUDA ordinals for data-parallel replicas, e.g. 0,1, or auto.
-    #[clap(long, env = "INFINITY_BACKEND_DEVICE_IDS", value_parser = optional_string, value_delimiter = ';')]
+    #[clap(long, env = infinity_v3_config::infinity_env!("BACKEND_DEVICE_IDS"), value_parser = optional_string, value_delimiter = ';')]
     backend_device_ids: Vec<Optional<String>>,
 
     /// [DEPRECATED IN FAVOR OF `--hf-token`] Your Hugging Face Hub token
-    #[clap(long, env = "INFINITY_HF_API_TOKEN", hide = true)]
+    #[clap(long, env = infinity_v3_config::infinity_env!("HF_API_TOKEN"), hide = true)]
     #[redact(partial)]
     hf_api_token: Option<String>,
 
     /// Your Hugging Face Hub token
-    #[clap(long, env = "INFINITY_HF_TOKEN", conflicts_with = "hf_api_token")]
+    #[clap(long, env = infinity_v3_config::infinity_env!("HF_TOKEN"), conflicts_with = "hf_api_token")]
     #[redact(partial)]
     hf_token: Option<String>,
 
     /// The IP address to listen on
-    #[clap(default_value = "0.0.0.0", long, env = "INFINITY_HOSTNAME")]
+    #[clap(default_value = "0.0.0.0", long, env = infinity_v3_config::infinity_env!("HOSTNAME"))]
     hostname: String,
 
     /// The port to listen on.
-    #[clap(default_value = "3000", long, short, env = "INFINITY_PORT")]
+    #[clap(default_value = "3000", long, short, env = infinity_v3_config::infinity_env!("PORT"))]
     port: u16,
 
     /// The location of the huggingface hub cache.
     /// Used to override the location if you want to provide a mounted disk for instance
-    #[clap(long, env = "INFINITY_HUGGINGFACE_HUB_CACHE")]
+    #[clap(long, env = infinity_v3_config::infinity_env!("HUGGINGFACE_HUB_CACHE"))]
     huggingface_hub_cache: Option<String>,
 
     /// Payload size limit in bytes
     ///
     /// Default is 2MB
-    #[clap(default_value = "2000000", long, env = "INFINITY_PAYLOAD_LIMIT")]
+    #[clap(default_value = "2000000", long, env = infinity_v3_config::infinity_env!("PAYLOAD_LIMIT"))]
     payload_limit: usize,
 
     /// Set an api key for request authorization.
     ///
     /// By default the server responds to every request. With an api key set, the requests must have the Authorization header set with the api key as Bearer token.
-    #[clap(long, env = "INFINITY_API_KEY")]
+    #[clap(long, env = infinity_v3_config::infinity_env!("API_KEY"))]
     api_key: Option<String>,
 
     /// Outputs the logs in JSON format (useful for telemetry)
-    #[clap(long, env = "INFINITY_JSON_OUTPUT")]
+    #[clap(long, env = infinity_v3_config::infinity_env!("JSON_OUTPUT"))]
     json_output: bool,
 
     // Whether or not to include the log trace through spans
-    #[clap(long, env = "INFINITY_DISABLE_SPANS")]
+    #[clap(long, env = infinity_v3_config::infinity_env!("DISABLE_SPANS"))]
     disable_spans: bool,
 
     /// The grpc endpoint for opentelemetry. Telemetry is sent to this endpoint as OTLP over gRPC.
     /// e.g. `http://localhost:4317`
-    #[clap(long, env = "INFINITY_OTLP_ENDPOINT")]
+    #[clap(long, env = infinity_v3_config::infinity_env!("OTLP_ENDPOINT"))]
     otlp_endpoint: Option<String>,
 
     /// The service name for opentelemetry.
@@ -359,15 +359,15 @@ struct Args {
     #[clap(
         default_value = "infinity_v3.server",
         long,
-        env = "INFINITY_OTLP_SERVICE_NAME"
+        env = infinity_v3_config::infinity_env!("OTLP_SERVICE_NAME")
     )]
     otlp_service_name: String,
 
     /// The Prometheus port to listen on.
-    #[clap(default_value = "9000", long, env = "INFINITY_PROMETHEUS_PORT")]
+    #[clap(default_value = "9000", long, env = infinity_v3_config::infinity_env!("PROMETHEUS_PORT"))]
     prometheus_port: u16,
 
-    #[clap(long, env = "INFINITY_CORS_ALLOW_ORIGIN")]
+    #[clap(long, env = infinity_v3_config::infinity_env!("CORS_ALLOW_ORIGIN"))]
     cors_allow_origin: Option<Vec<String>>,
 }
 
@@ -466,7 +466,7 @@ fn command_with_environment() -> clap::Command {
         .get_arguments()
         .filter_map(|arg| {
             let env = arg.get_env()?.to_str()?;
-            let legacy = env.strip_prefix("INFINITY_")?;
+            let legacy = env.strip_prefix(infinity_v3_config::infinity_env!(""))?;
             if std::env::var_os(env).is_none() && std::env::var_os(legacy).is_some() {
                 Some((arg.get_id().to_string(), legacy.to_owned()))
             } else {
@@ -636,9 +636,48 @@ mod tests {
             Args::try_parse_from(["infinity_v3", "--model-id", "a;b;c", "--device-id", "0;1"])
                 .unwrap();
         assert!(mismatch.models().is_err());
+        // Verify that help and environment parsing use the same compiled names.
+        let help = Args::command().render_long_help().to_string();
+        assert!(help.contains(infinity_v3_config::infinity_env!("MODEL_ID")));
+        let model_env = infinity_v3_config::infinity_env!("MODEL_ID");
+        let previous = std::env::var_os(model_env);
+        let previous_legacy = std::env::var_os("MODEL_ID");
+        std::env::set_var("MODEL_ID", "legacy-model");
+        std::env::remove_var(model_env);
+        let matches = command_with_environment()
+            .try_get_matches_from(["infinity_v3"])
+            .unwrap();
+        assert_eq!(
+            args_from_matches(&matches).unwrap().model_id,
+            vec!["legacy-model"]
+        );
+        std::env::set_var(model_env, "prefixed-model");
+        let matches = command_with_environment()
+            .try_get_matches_from(["infinity_v3"])
+            .unwrap();
+        assert_eq!(
+            args_from_matches(&matches).unwrap().model_id,
+            vec!["prefixed-model"]
+        );
+        let matches = command_with_environment()
+            .try_get_matches_from(["infinity_v3", "--model-id", "cli-model"])
+            .unwrap();
+        assert_eq!(
+            args_from_matches(&matches).unwrap().model_id,
+            vec!["cli-model"]
+        );
+        for (key, value) in [(model_env, previous), ("MODEL_ID", previous_legacy)] {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
         // This binary has one test, so environment changes do not race other tests.
-        let original_prompt = std::env::var_os("INFINITY_DEFAULT_PROMPT");
-        std::env::set_var("INFINITY_DEFAULT_PROMPT", r#"["first; prompt",null]"#);
+        let original_prompt = std::env::var_os(infinity_v3_config::infinity_env!("DEFAULT_PROMPT"));
+        std::env::set_var(
+            infinity_v3_config::infinity_env!("DEFAULT_PROMPT"),
+            r#"["first; prompt",null]"#,
+        );
         let matches = Args::command()
             .try_get_matches_from(["infinity_v3", "--model-id", "a;b"])
             .unwrap();
@@ -659,8 +698,10 @@ mod tests {
             .iter()
             .all(|model| model.default_prompt.as_deref() == Some("[literal; prompt]")));
         match original_prompt {
-            Some(value) => std::env::set_var("INFINITY_DEFAULT_PROMPT", value),
-            None => std::env::remove_var("INFINITY_DEFAULT_PROMPT"),
+            Some(value) => {
+                std::env::set_var(infinity_v3_config::infinity_env!("DEFAULT_PROMPT"), value)
+            }
+            None => std::env::remove_var(infinity_v3_config::infinity_env!("DEFAULT_PROMPT")),
         }
     }
 }

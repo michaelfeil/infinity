@@ -292,7 +292,7 @@ fn main() {
         serde_json::to_string_pretty(&serde_json::json!({"model_path":path,"dtype":dtype,"checkpoint_dtype":config["dtype"],"model_type":config["model_type"],
         "pooling":if qwen_vl {"last_token"} else {"mean"},"dense_paths":dense_paths,"iterations_per_backend":iterations,"torch_gpu":torch_gpu,"candle_gpu":candle_gpu,"measurement_mode":"parallel separate GPUs","warmup_per_backend":20,
         "torch_cuda_graph_count":torch.lock().unwrap().cuda_graph_count(),
-        "torch_cuda_graph_max_tokens":std::env::var("INFINITY_TORCH_CUDA_GRAPH_MAX_TOKENS").unwrap_or_else(|_| "4096".into()),
+        "torch_cuda_graph_max_tokens":std::env::var(infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPH_MAX_TOKENS")).unwrap_or_else(|_| "4096".into()),
         "torch_load_seconds":torch_load,"candle_load_seconds":candle_load,"workloads":rows}))
         .unwrap()
     );

@@ -1,0 +1,8 @@
+[package]
+name = "infinity-v3-config"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+authors.workspace = true
+
+[dependencies]
