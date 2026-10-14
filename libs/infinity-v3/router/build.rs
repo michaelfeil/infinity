@@ -2,6 +2,8 @@ use std::error::Error;
 use vergen::EmitBuilder;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    println!("cargo:rerun-if-env-changed=GIT_SHA");
+    println!("cargo:rerun-if-env-changed=DOCKER_LABEL");
     #[cfg(feature = "libtorch")]
     {
         let bridge = std::env::var("DEP_INFINITY_BACKEND_TORCH_LIB_DIR")?;

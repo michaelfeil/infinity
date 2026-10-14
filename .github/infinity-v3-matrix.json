@@ -56,6 +56,12 @@
     "dockerfile": "libs/infinity-v3/Dockerfile-cuda-all"
   },
   {
+    "name": "nvidia",
+    "imageNamePrefix": "nvidia-",
+    "sccache": false,
+    "dockerfile": "libs/infinity-v3/Dockerfile-libtorch"
+  },
+  {
     "name": "cpu",
     "imageNamePrefix": "cpu-",
     "sccache": true,

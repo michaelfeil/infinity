@@ -1,5 +1,28 @@
-cmake_minimum_required(VERSION 3.18)
+cmake_minimum_required(VERSION 3.25)
 project(tei_torch LANGUAGES CXX)
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES "80;86;89;90;100;120" CACHE STRING
+      "CUDA architectures for portable LibTorch kernel distributions")
+endif()
+# Torch probes architectures before our override below. Use the same targets
+# here so a narrowed build also works with older CUDA toolkits, independently
+# of the build host's GPU or an inherited TORCH_CUDA_ARCH_LIST.
+set(TORCH_CUDA_ARCH_LIST "")
+foreach(arch IN LISTS CMAKE_CUDA_ARCHITECTURES)
+  if(arch MATCHES "^([0-9]+)([0-9])([a-z]?)(-real|-virtual)?$")
+    set(torch_arch "${CMAKE_MATCH_1}.${CMAKE_MATCH_2}${CMAKE_MATCH_3}")
+    if(CMAKE_MATCH_4 STREQUAL "-virtual")
+      string(APPEND torch_arch "+PTX")
+    endif()
+    list(APPEND TORCH_CUDA_ARCH_LIST "${torch_arch}")
+  else()
+    # CMake resolves special values such as all/native itself. Torch only
+    # needs a baseline probe; its generated flags are removed below.
+    set(TORCH_CUDA_ARCH_LIST "8.0")
+    break()
+  endif()
+endforeach()
+list(REMOVE_DUPLICATES TORCH_CUDA_ARCH_LIST)
 set(TEI_REQUESTED_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
 find_package(Torch 2.14.1 EXACT REQUIRED)
 # Torch appends its own gencode flags and disables CMake architecture selection.

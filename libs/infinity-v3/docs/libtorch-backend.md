@@ -70,10 +70,44 @@ storage. Cache hits, misses and eviction have different serving costs.
 
 ## Build and run
 
+### NVIDIA Docker image
+
+The LibTorch NVIDIA image targets SM80, SM86, SM89, SM90, SM100, and SM120 in
+one image and selects device kernels at runtime. It defaults to the LibTorch
+backend. SM75 is unsupported. The image uses CUDA 13.0 and requires a compatible
+NVIDIA driver and NVIDIA Container Toolkit on the host.
+
+Build from the Infinity repository root; a GPU is not required for compilation:
+
+```bash
+docker build -f libs/infinity-v3/Dockerfile-libtorch \
+  -t infinity-v3:nvidia-local libs/infinity-v3
+docker run --rm infinity-v3:nvidia-local --help
+docker run --rm --gpus all -p 7997:80 \
+  -v "$PWD/model:/models/model:ro" \
+  infinity-v3:nvidia-local --model-id /models/model \
+  --torch-device cuda --dtype bfloat16
+```
+
+The build pins Torch 2.14.1 and CUDA 13.0.2. Python installs the C++ SDK in the
+builder; the runtime contains native shared libraries and their notices. Use
+`--build-arg BUILD_JOBS=16` on a host with sufficient RAM to speed up compilation.
+The default is four jobs. Supported SM targets and resolved SDK dependencies
+are recorded under `/usr/share/infinity_v3/` inside the image.
+
+GitHub Actions publishes NVIDIA images as
+`ghcr.io/michaelfeil/infinity_v3:nvidia-<version>` when a `v3.*` tag is pushed.
+Prerelease versions retain the full suffix, for example
+`nvidia-3.0.0-alpha.1`, without replacing the rolling `latest` tags. Main and tag
+builds publish the NVIDIA and CPU variants; manual workflow runs can select `nvidia`
+alone or `all` variants.
+
+### Native build
+
 Install the [LibTorch C++ distribution](https://docs.pytorch.org/cppdocs/installing.html)
 for **2.14.1**, choosing CPU or a CUDA build compatible with your GPU driver.
 Set `LIBTORCH` to its root (containing `include/`, `lib/` and `share/`). Building
-requires CMake and a C++20 compiler. CUDA distributions require a CUDA toolkit to compile the native packed operators.
+requires CMake 3.25 or newer and a C++20 compiler. CUDA distributions require a CUDA toolkit to compile the native packed operators.
 
 ```bash
 export LIBTORCH=/opt/libtorch
@@ -98,6 +132,29 @@ For CPU, use `--torch-device cpu --dtype float32` and omit replica selection.
 To build without Candle, replace build features with
 `--no-default-features --features libtorch,http`, and select `--backend libtorch`
 when starting the server. Existing Candle builds do not require LibTorch.
+
+CUDA builds default to a multi-architecture native library targeting SM80,
+SM86, SM89, SM90, SM100, and SM120. SM75 is outside the supported baseline.
+Each target includes native code and PTX.
+The separate SM90a MoE optimization is selected only on Hopper; other GPUs use
+the portable path. The bundled LibTorch distribution must also support the target
+GPU, and individual operations and dtypes retain their hardware requirements.
+The full target list requires a CUDA toolkit supporting SM100 and SM120;
+older toolkits require a narrower explicit architecture list.
+
+`LIBTORCH_CUDA_ARCHITECTURES` accepts a semicolon-separated CMake architecture
+list. Candle's `CUDA_COMPUTE_CAP` setting no longer narrows LibTorch builds.
+Distribution builds can pin the full target list explicitly:
+
+```bash
+LIBTORCH_CUDA_ARCHITECTURES='80;86;89;90;100;120' \
+  cargo build --release -p infinity_v3-router \
+  --no-default-features --features libtorch,http
+```
+
+Use `LIBTORCH_CUDA_ARCHITECTURES=90` for a faster H100-only development build.
+Multi-architecture compilation takes more time and produces a larger library;
+compilation coverage does not replace runtime qualification on each GPU family.
 
 CMake handles LibTorch's compiler/ABI flags. The bridge is a small shared library;
 the server's build rpath points to its Cargo output directory. When moving the
@@ -272,7 +329,7 @@ equally. It checks embedding cosine agreement before measuring each workload.
 Use an optimized build for both backends:
 
 ```bash
-CUDA_COMPUTE_CAP=90 CARGO_PROFILE_RELEASE_LTO=false \
+CUDA_COMPUTE_CAP=90 LIBTORCH_CUDA_ARCHITECTURES=90 CARGO_PROFILE_RELEASE_LTO=false \
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
   cargo build --release -p infinity-backend-libtorch \
     --features benchmark-cuda --example compare_bert
@@ -280,7 +337,7 @@ CUDA_COMPUTE_CAP=90 CARGO_PROFILE_RELEASE_LTO=false \
 target/release/examples/compare_bert /path/to/bert-model 100 0 1 > bert-results.json
 ```
 
-Set `CUDA_COMPUTE_CAP` for your GPU (90 for H100, 86 for A10). Each workload uses
+Set both architecture overrides for your GPU (90 for H100, 86 for A10). Each workload uses
 20 warmups per runtime and a synchronized start for parallel measurements. GPU
 ordinals are configurable; swap them to check hardware bias. The JSON includes P50/P95 latency, token throughput at P50 and output
 agreement. These are synchronous backend measurements, not HTTP throughput or

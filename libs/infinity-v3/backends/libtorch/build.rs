@@ -2,7 +2,7 @@ use std::{env, path::PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-env-changed=LIBTORCH");
-    println!("cargo:rerun-if-env-changed=CUDA_COMPUTE_CAP");
+    println!("cargo:rerun-if-env-changed=LIBTORCH_CUDA_ARCHITECTURES");
     println!("cargo:rerun-if-changed=cpp");
     println!("cargo:rerun-if-changed=cpp/vendor/torch_flash_attention");
     println!("cargo:rerun-if-changed=cpp/kernels/torch_flash_fma.cpp");
@@ -26,9 +26,12 @@ fn main() {
     ));
     let mut config = cmake::Config::new("cpp");
     config.define("CMAKE_PREFIX_PATH", &torch);
-    if let Some(compute_cap) = env::var_os("CUDA_COMPUTE_CAP") {
-        config.define("CMAKE_CUDA_ARCHITECTURES", compute_cap);
-    }
+    // Distribution builds must not silently target only the build host's GPU.
+    // Use a separate override so Candle's single-device CUDA_COMPUTE_CAP does
+    // not narrow the LibTorch package when the backends are built together.
+    let architectures =
+        env::var_os("LIBTORCH_CUDA_ARCHITECTURES").unwrap_or_else(|| "80;86;89;90;100;120".into());
+    config.define("CMAKE_CUDA_ARCHITECTURES", architectures);
     let dst = config.build();
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=dylib=tei_torch");
