@@ -42,8 +42,8 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 namespace tei {
 namespace {
-template<class T, int Width> void launch(layer_norm::FwdParams& p, cudaStream_t stream) {
-  using Traits = layer_norm::Kernel_traits<T,T,T,T,float,int,Width,1,4,1,16>;
+template<class T, int Width, int Rows=4> void launch(layer_norm::FwdParams& p, cudaStream_t stream) {
+  using Traits = layer_norm::Kernel_traits<T,T,T,T,float,int,Width,1,Rows,1,16>;
   // Occupancy depends only on this template, column geometry, and device.
   // Avoid a CUDA driver query at every one of a deep encoder's norms.
   struct Occupancy {int full=-1,tail=-1;};
@@ -70,7 +70,10 @@ template<class T> void dispatch(layer_norm::FwdParams& p,cudaStream_t stream) {
     case 256:launch<T,256>(p,stream);break;
     case 512:launch<T,512>(p,stream);break;
     case 768:launch<T,768>(p,stream);break;
-    case 1024:launch<T,1024>(p,stream);break;
+    case 1024:
+      if(p.rows>=4096)launch<T,1024,8>(p,stream);
+      else launch<T,1024>(p,stream);
+      break;
     case 1280:launch<T,1280>(p,stream);break;
     case 1536:launch<T,1536>(p,stream);break;
     default:TORCH_CHECK(false,"Unsupported exact encoder normalization width");

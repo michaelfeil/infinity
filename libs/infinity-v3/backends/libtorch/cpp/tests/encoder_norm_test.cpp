@@ -8,6 +8,21 @@ int main(int argc,char** argv) {
   c10::InferenceMode inference;
   for(auto dtype:{at::kHalf,at::kBFloat16}) {
     auto opts=at::TensorOptions().device(c10::Device(argc>1?argv[1]:"cuda:0")).dtype(dtype);
+    {
+      auto x=at::randn({4097,1024},opts),residual=at::randn_like(x);
+      auto weight=at::randn({1024},opts),bias=at::randn_like(weight);
+      auto actual=tei::encoder_layer_norm(x,weight,1e-5,residual,bias,true);
+      auto a=tei::encoder_layer_norm(x.narrow(0,0,4095),weight,1e-5,residual.narrow(0,0,4095),bias,true);
+      auto b=tei::encoder_layer_norm(x.narrow(0,4095,2),weight,1e-5,residual.narrow(0,4095,2),bias,true);
+      TORCH_CHECK(at::equal(actual.first.view(at::kByte),at::cat({a.first,b.first},0).view(at::kByte)),
+        "Large norm row grouping changes the original per-row reduction bits");
+      TORCH_CHECK(at::equal(actual.second,residual+x),"Large norm residual mismatch");
+      auto scratch=at::empty_like(x),owned=residual.clone();
+      auto reused=tei::encoder_layer_norm_update_residual_scratch(x,weight,1e-5,owned,scratch);
+      auto expected=tei::encoder_layer_norm(x,weight,1e-5,residual);
+      TORCH_CHECK(at::equal(reused.first.view(at::kByte),expected.first.view(at::kByte))&&
+        at::equal(reused.second,expected.second),"Large norm scratch update changes output");
+    }
     auto base=at::full({2,768},32,opts);
     auto delta=(at::arange(768,opts.dtype(at::kFloat)).remainder(2)*.008-.004).to(dtype).repeat({2,1});
     auto gamma=at::ones({768},opts),beta=at::full({768},.25,opts);

@@ -41,7 +41,7 @@ def flatten(value, prefix=''):
 
 
 class Native:
-    def __init__(self, library, model, graphs):
+    def __init__(self, library, model, graphs, transient_max_bytes=8 << 30, fp8=False):
         self.lib = lib = C.CDLL(str(library.resolve()))
         lib.tei_error.restype = C.c_char_p
         lib.tei_create.argtypes = [C.POINTER(Config), C.c_char_p, C.c_int32]
@@ -67,7 +67,7 @@ class Native:
         cfg.update(_decision={'kind': 'laya', 'config': json.loads((model / 'rl_agent_config.json').read_text())},
                    _cuda_graphs=graphs, _cuda_graph_max_tokens=32768, _cuda_graph_entries=8,
                    _cuda_graph_max_bytes=2 << 30, _pooling='decision', _dense_count=0,
-                   _cudnn_varlen=False, _fp8_dynamic=False)
+                   _cudnn_varlen=False, _fp8_dynamic=fp8, _transient_max_bytes=transient_max_bytes)
         for key, value in flatten(cfg):
             self.check(lib.tei_option(self.handle, key.encode(), value.encode()))
         file = model / 'model.safetensors'
@@ -120,7 +120,7 @@ class Native:
         self.lib.tei_destroy(self.handle)
 
 
-def cases(fixture):
+def cases(fixture, extended=False):
     original = json.loads(fixture.read_text())['cases']
     seed_rows = original[0]['sequences']
     result = []
@@ -142,6 +142,25 @@ def cases(fixture):
             base = result[(i % 5)*6]['sequences'][0]
             seq.append(dict(base, question_type=i % 3))
         result.append(dict(name=f'ragged100-500-batch{batch}', sequences=seq, controlled=True))
+    if extended:
+        for batch, total in [(20, 5500), (40, 12000)]:
+            rows = [seed_rows[i % len(seed_rows)] for i in range(batch)]
+            lengths = [len(s['ids']) for s in rows]
+            difference = total - sum(lengths)
+            for i in range(abs(difference)):
+                lengths[i % batch] += 1 if difference > 0 else -1
+            sequences = []
+            for source, length in zip(rows, lengths):
+                assert max(source['markers']) < length - 1
+                body = source['ids'][1:-1]
+                ids = [source['ids'][0]] + (body * ((length + len(body)) // len(body)))[:length-2] + [source['ids'][-1]]
+                sequences.append(dict(source, ids=ids))
+            result.append(dict(name=f'target-batch{batch}-tokens{total}', sequences=sequences, controlled=True))
+        for length in [100, 200, 300, 400, 500]:
+            template = next(c for c in result if c['name'] == f'length{length}-batch32')
+            for batch in [40, 48, 64]:
+                result.append(dict(name=f'length{length}-batch{batch}',
+                                   sequences=[template['sequences'][i % 32] for i in range(batch)], controlled=True))
     return result + [dict(c, controlled=False) for c in original]
 
 
@@ -156,13 +175,30 @@ def main():
     p.add_argument('--graphs', action='store_true')
     p.add_argument('--profile', action='store_true')
     p.add_argument('--case', default='')
+    p.add_argument('--extended', action='store_true', help='Include exact latency targets and batches 40/48/64')
+    p.add_argument('--extended-only', action='store_true', help='Measure only added larger batches and exact targets')
+    p.add_argument('--transient-max-bytes', type=int, default=8 << 30,
+                   help='Native transient allocation admission budget (increase for larger shape studies)')
+    p.add_argument('--tune-gemm', type=int, default=0,
+                   help='Experimentally tune this many cuBLASLt heuristic candidates before measuring')
+    p.add_argument('--fp8', action='store_true', help='Evaluate existing dynamic FP8 encoder MLP; changes precision')
     args = p.parse_args()
     assert args.iterations >= 20 and args.repeats >= 1
     args.output.mkdir(parents=True, exist_ok=True)
     torch.set_num_threads(1)
     torch.set_num_interop_threads(1)
+    if args.tune_gemm:
+        torch.cuda.tunable.set_filename(str(args.output / 'gemm-tuning.csv'))
+        torch.cuda.tunable.set_cublaslt_requested_algo_count(args.tune_gemm)
+        torch.cuda.tunable.set_max_tuning_duration(30)
+        torch.cuda.tunable.set_max_tuning_iterations(100)
+        torch.cuda.tunable.enable(True)
+        torch.cuda.tunable.tuning_enable(True)
     rng = random.Random(1927)
-    workload = cases(args.fixture)
+    workload = cases(args.fixture, args.extended or args.extended_only)
+    if args.extended_only:
+        workload = [c for c in workload if c['name'].startswith('target-') or
+                    c['name'].split('-')[-1] in ('batch40', 'batch48', 'batch64')]
     if args.case:
         workload = [c for c in workload if c['name'] == args.case]
         assert workload, args.case
@@ -172,9 +208,12 @@ def main():
                     library_sha256=hashlib.sha256(args.library.read_bytes()).hexdigest(),
                     model_metadata=json.loads((args.model / 'checkpoint_metadata.json').read_text()),
                     graphs=args.graphs, iterations=args.iterations, repeats=args.repeats,
+                    transient_max_bytes=args.transient_max_bytes,
+                    gemm_heuristic_candidates=args.tune_gemm,
+                    fp8_mlp=args.fp8,
                     measurement='synchronous native C ABI; includes input upload, encoder, head and host outputs; excludes HTTP/tokenization; BF16; exact packed tokens')
     (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2))
-    engine = Native(args.library, args.model, args.graphs)
+    engine = Native(args.library, args.model, args.graphs, args.transient_max_bytes, args.fp8)
     rows = []
     try:
         for repeat in range(args.repeats):
@@ -197,11 +236,14 @@ def main():
                            samples_ms=samples, p50_ms=float(np.median(samples)), p95_ms=float(np.percentile(samples,95)),
                            peak_allocated_bytes=torch.cuda.max_memory_allocated(), reserved_bytes=torch.cuda.memory_reserved(),
                            graph_count=engine.lib.tei_graph_count(engine.handle), logits=ref_logits.tolist(), actions=ref_actions.tolist())
+                row['tokens_per_second'] = sum(row['lengths']) * 1000 / row['p50_ms']
+                row['questions_per_second'] = len(row['lengths']) * 1000 / row['p50_ms']
                 rows.append(row)
                 (args.output / 'results.json').write_text(json.dumps(rows, indent=2))
                 print(json.dumps({k:v for k,v in row.items() if k not in ('samples_ms','logits','actions')}), flush=True)
         if args.profile:
-            for name in ['length100-batch1','length300-batch8','length500-batch32']:
+            for name in ['length100-batch1','length300-batch8','length500-batch32',
+                         'target-batch20-tokens5500', 'target-batch40-tokens12000']:
                 case = next((c for c in workload if c['name'] == name), None)
                 if case is None:
                     continue
