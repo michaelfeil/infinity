@@ -32,7 +32,7 @@ ARG SCCACHE_GHA_ENABLED
 
 # Refresh the base image's trust store before contacting the Intel repository.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates build-essential pkg-config libssl-dev protobuf-compiler \
+    ca-certificates build-essential pkg-config libssl-dev protobuf-compiler python3 \
     && update-ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
@@ -65,13 +65,17 @@ COPY LICENSE ./
 COPY NOTICE LICENSING.md THIRD_PARTY_NOTICES.md ./
 COPY LICENSES LICENSES
 COPY scripts/collect-license-notices.sh scripts/collect-license-notices.sh
+COPY scripts/collect-cargo-notices.py scripts/collect-cargo-notices.py
 RUN sh scripts/collect-license-notices.sh /usr/src/distribution-licenses
 
 FROM builder AS http-builder
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    cargo build --release --bin infinity_v3 --features candle,mkl,static-linking,http --no-default-features && sccache -s
+    cargo build --release --bin infinity_v3 --features candle,mkl,static-linking,http --no-default-features \
+      --message-format=json-render-diagnostics > /tmp/cargo-build.jsonl \
+    && python3 scripts/collect-cargo-notices.py /tmp/cargo-build.jsonl /usr/src/distribution-licenses/cargo \
+    && sccache -s
 
 FROM debian:bookworm-slim AS base
 
@@ -106,7 +110,7 @@ FROM base AS http
 
 COPY --from=http-builder /usr/src/target/release/infinity_v3 /usr/local/bin/infinity_v3
 
-COPY --from=builder /usr/src/distribution-licenses/ /usr/share/licenses/infinity_v3/
+COPY --from=http-builder /usr/src/distribution-licenses/ /usr/share/licenses/infinity_v3/
 
 ENTRYPOINT ["infinity_v3"]
 CMD ["--json-output"]
