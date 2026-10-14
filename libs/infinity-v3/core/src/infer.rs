@@ -31,6 +31,23 @@ pub struct Infer {
     _lifetime: Arc<PipelineLifetime>,
 }
 
+// Every admitted input must release its preparation count and wake the worker,
+// including failed or canceled tokenization. Waiting for all client inputs can
+// deadlock when the client batch is larger than the admission semaphore.
+struct BatchPreparation<'a> {
+    remaining: Option<&'a AtomicUsize>,
+    notify: &'a Notify,
+}
+
+impl Drop for BatchPreparation<'_> {
+    fn drop(&mut self) {
+        if let Some(remaining) = self.remaining {
+            remaining.fetch_sub(1, Ordering::SeqCst);
+        }
+        self.notify.notify_one();
+    }
+}
+
 impl Infer {
     pub async fn decide(
         &self,
@@ -39,6 +56,10 @@ impl Infer {
         tokenization: Duration,
         batch_counter: Arc<AtomicUsize>,
     ) -> Result<DecisionInferResponse, TextEmbeddingsError> {
+        let preparation = BatchPreparation {
+            remaining: Some(batch_counter.as_ref()),
+            notify: &self.notify_batching_task,
+        };
         if self.backend.model_type != ModelType::Decision {
             return Err(TextEmbeddingsError::Validation(
                 "Loaded model does not support typed decisions".into(),
@@ -61,9 +82,7 @@ impl Infer {
                 encoding,
             })
             .await;
-        if batch_counter.fetch_sub(1, Ordering::SeqCst) == 1 {
-            self.notify_batching_task.notify_one();
-        }
+        drop(preparation);
         match response_rx.await.map_err(|_| BackendError::Unhealthy)?? {
             InferResult::Decision(output) => {
                 retain_for_request(output.metadata.memory.clone());
@@ -418,6 +437,10 @@ impl Infer {
         _permit: OwnedSemaphorePermit,
         batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<InferResult, TextEmbeddingsError> {
+        let preparation = BatchPreparation {
+            remaining: batch_counter.as_deref(),
+            notify: &self.notify_batching_task,
+        };
         if !matches!(self.backend.model_type, ModelType::Embedding(_)) {
             let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "model_type");
             counter.increment(1);
@@ -440,12 +463,6 @@ impl Infer {
                 let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "tokenization");
                 counter.increment(1);
                 tracing::error!("{err}");
-                // Failed inputs must finish their part of client-batch preparation too.
-                if let Some(counter) = &batch_counter {
-                    if counter.fetch_sub(1, Ordering::SeqCst) == 1 {
-                        self.notify_batching_task.notify_one();
-                    }
-                }
                 err
             })?;
 
@@ -470,14 +487,7 @@ impl Infer {
             })
             .await;
 
-        match batch_counter {
-            None => self.notify_batching_task.notify_one(),
-            Some(counter) => {
-                if counter.fetch_sub(1, Ordering::SeqCst) == 1 {
-                    self.notify_batching_task.notify_one();
-                }
-            }
-        }
+        drop(preparation);
 
         let response = response_rx
             .await
@@ -505,6 +515,10 @@ impl Infer {
         _permit: OwnedSemaphorePermit,
         batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<ClassificationInferResponse, TextEmbeddingsError> {
+        let preparation = BatchPreparation {
+            remaining: batch_counter.as_deref(),
+            notify: &self.notify_batching_task,
+        };
         if !self.is_classifier() {
             let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "model_type");
             counter.increment(1);
@@ -552,14 +566,7 @@ impl Infer {
             })
             .await;
 
-        match batch_counter {
-            None => self.notify_batching_task.notify_one(),
-            Some(counter) => {
-                if counter.fetch_sub(1, Ordering::SeqCst) == 1 {
-                    self.notify_batching_task.notify_one();
-                }
-            }
-        }
+        drop(preparation);
 
         let response = response_rx
             .await
@@ -633,6 +640,10 @@ impl Infer {
         _permit: OwnedSemaphorePermit,
         batch_counter: Option<Arc<AtomicUsize>>,
     ) -> Result<TokenClassificationInferResponse, TextEmbeddingsError> {
+        let preparation = BatchPreparation {
+            remaining: batch_counter.as_deref(),
+            notify: &self.notify_batching_task,
+        };
         if !self.is_classifier() {
             let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "model_type");
             counter.increment(1);
@@ -677,14 +688,7 @@ impl Infer {
             })
             .await;
 
-        match batch_counter {
-            None => self.notify_batching_task.notify_one(),
-            Some(counter) => {
-                if counter.fetch_sub(1, Ordering::SeqCst) == 1 {
-                    self.notify_batching_task.notify_one();
-                }
-            }
-        }
+        drop(preparation);
 
         let response = response_rx
             .await
@@ -1106,6 +1110,110 @@ pub struct AllEmbeddingsInferResponse {
 #[cfg(test)]
 mod completion_tests {
     use super::*;
+
+    #[tokio::test]
+    async fn partial_client_batch_dispatches_before_next_admission() {
+        let notify = Arc::new(Notify::new());
+        let remaining = Arc::new(AtomicUsize::new(2));
+        let admission = Arc::new(Semaphore::new(1));
+        let queue = Queue::new(16, Some(1), 0.0, 1);
+        let worker = async {
+            for _ in 0..2 {
+                notify.notified().await;
+                let (entries, _) = queue.next_batch().await.unwrap();
+                for entry in entries {
+                    entry
+                        .response_tx
+                        .send(Err(BackendError::Inference("test reply".into())))
+                        .unwrap();
+                }
+            }
+        };
+        let input = || {
+            let queue = queue.clone();
+            let notify = notify.clone();
+            let remaining = remaining.clone();
+            let admission = admission.clone();
+            async move {
+                let _permit = admission.acquire_owned().await.unwrap();
+                let preparation = BatchPreparation {
+                    remaining: Some(&remaining),
+                    notify: &notify,
+                };
+                let (response_tx, response) = oneshot::channel();
+                queue
+                    .append(Entry {
+                        encoding: crate::tokenization::ValidEncoding {
+                            multimodal: None,
+                            input_ids: vec![1],
+                            token_type_ids: vec![0],
+                            position_ids: vec![0],
+                            tokens: vec![],
+                            offsets: vec![],
+                        },
+                        metadata: Metadata {
+                            input_memory: None,
+                            decision: None,
+                            client_batch: Some(remaining.clone()),
+                            response_tx,
+                            tokenization: Duration::ZERO,
+                            queue_time: Instant::now(),
+                            prompt_tokens: 1,
+                            pooling: true,
+                            token_classification: false,
+                        },
+                    })
+                    .await;
+                drop(preparation);
+                assert!(response.await.unwrap().is_err());
+            }
+        };
+        tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(worker, input(), input());
+        })
+        .await
+        .expect("admitted inputs must run before the full client batch is ready");
+        assert_eq!(remaining.load(Ordering::SeqCst), 0);
+        assert_eq!(admission.available_permits(), 1);
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn failed_and_canceled_preparation_wakes_siblings() {
+        let notify = Arc::new(Notify::new());
+        let remaining = Arc::new(AtomicUsize::new(2));
+        let fail = || -> Result<(), ()> {
+            let _preparation = BatchPreparation {
+                remaining: Some(&remaining),
+                notify: &notify,
+            };
+            Err(())
+        };
+        assert!(fail().is_err());
+        tokio::time::timeout(Duration::from_secs(2), notify.notified())
+            .await
+            .unwrap();
+        assert_eq!(remaining.load(Ordering::SeqCst), 1);
+
+        let worker_notify = notify.clone();
+        let worker_remaining = remaining.clone();
+        let (started, ready) = oneshot::channel();
+        let task = tokio::spawn(async move {
+            let _preparation = BatchPreparation {
+                remaining: Some(&worker_remaining),
+                notify: &worker_notify,
+            };
+            started.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        ready.await.unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(Duration::from_secs(2), notify.notified())
+            .await
+            .unwrap();
+        assert_eq!(remaining.load(Ordering::SeqCst), 0);
+    }
 
     #[test]
     fn direct_token_response_owns_results_until_drop() {
