@@ -231,8 +231,10 @@ for each live graph and at most one additional trial stream per device. No globa
 allocator cleanup runs per request. Set entries or attempts to zero to disable capture.
 Cache teardown drains pending replay before releasing graph workspaces and streams.
 The default capture limit is 4096 tokens; `INFINITY_TORCH_CUDA_GRAPH_MAX_TOKENS` accepts
-a positive override. Unsupported capture operations run eagerly. Media capture
-requires the additional experimental flag described below.
+a positive override. Unsupported capture operations run eagerly. Text-only
+requests on dense Qwen3-VL and Qwen3.5 families can capture with this flag alone,
+including conversations carrying three-axis rotary position metadata. Requests
+containing images or audio require the additional experimental flag below.
 
 `INFINITY_TORCH_CUDNN_VARLEN=1` enables experimental packed cuDNN attention for eligible
 BERT and eligible decoder requests on supported GPUs and cuDNN versions.
