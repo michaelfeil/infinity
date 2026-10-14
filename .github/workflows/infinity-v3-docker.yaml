@@ -1,0 +1,109 @@
+name: Infinity v3 Docker
+
+on:
+  push:
+    branches: [main]
+    tags: ['v3.*']
+    paths:
+      - 'libs/infinity-v3/**'
+      - '.github/workflows/infinity-v3-docker.yaml'
+      - '.github/infinity-v3-matrix.json'
+  pull_request:
+    paths:
+      - 'libs/infinity-v3/**'
+      - '.github/workflows/infinity-v3-docker.yaml'
+      - '.github/infinity-v3-matrix.json'
+  workflow_dispatch:
+    inputs:
+      variants:
+        description: Image variants to build (CUDA builds require substantial disk and time)
+        type: choice
+        options: [cpu, all]
+        default: cpu
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select image variants
+        id: matrix
+        env:
+          VARIANTS: ${{ github.event_name == 'pull_request' && 'cpu' || inputs.variants || 'all' }}
+        run: |
+          matrix=$(jq -c --arg variants "$VARIANTS" '{include: [.[] | select($variants == "all" or .name == "cpu")]}' .github/infinity-v3-matrix.json)
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.matrix.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Free build space
+        uses: ./.github/actions/disk_cleanup
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/infinity_v3
+          flavor: latest=false
+          tags: |
+            type=semver,pattern=${{ matrix.imageNamePrefix }}{{version}}
+            type=semver,pattern=${{ matrix.imageNamePrefix }}{{major}}.{{minor}}
+            type=raw,value=${{ matrix.imageNamePrefix }}latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=${{ matrix.imageNamePrefix }}sha-
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./libs/infinity-v3
+          file: ${{ matrix.dockerfile }}
+          push: ${{ github.event_name != 'pull_request' }}
+          load: true
+          platforms: linux/amd64
+          build-args: |
+            SCCACHE_GHA_ENABLED=false
+            CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
+            GIT_SHA=${{ github.sha }}
+            DOCKER_LABEL=sha-${{ github.sha }}
+            ${{ matrix.extraBuildArgs }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=infinity-v3-${{ matrix.name }}
+          cache-to: type=gha,scope=infinity-v3-${{ matrix.name }},mode=max
+      - name: Check CPU image starts
+        if: matrix.name == 'cpu'
+        env:
+          IMAGE: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+        run: docker run --rm "$IMAGE" --help

@@ -1,0 +1,15 @@
+Text Embeddings Inference fork
+
+This repository is a fork of huggingface/text-embeddings-inference:
+https://github.com/huggingface/text-embeddings-inference
+
+Upstream attribution:
+Copyright 2022 Hugging Face
+Copyright 2023, 2024, 2025 The HuggingFace Team. All rights reserved.
+
+The fork contains modifications to upstream Text Embeddings Inference.
+Existing file-level copyright, attribution, and license notices are retained.
+Bundled third-party components retain their respective terms; see
+THIRD_PARTY_NOTICES.md and the notices in their source directories.
+
+This NOTICE records attribution. It does not amend the license terms.

@@ -1,0 +1,158 @@
+# Modified by Infinity Core Contributors: package license adoption and retained notices.
+FROM nvidia/cuda:12.9.0-devel-ubuntu22.04 AS base-builder
+
+ENV SCCACHE=0.10.0
+ENV RUSTC_WRAPPER=/usr/local/bin/sccache
+ENV PATH="/root/.cargo/bin:${PATH}"
+# aligned with `cargo-chef` version in `lukemathwalker/cargo-chef:latest-rust-1.85-bookworm`
+ENV CARGO_CHEF=0.1.71
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    curl \
+    git \
+    libssl-dev \
+    pkg-config \
+    && rm -rf /var/lib/apt/lists/*
+
+# Donwload and configure sccache
+RUN curl -fsSL https://github.com/mozilla/sccache/releases/download/v$SCCACHE/sccache-v$SCCACHE-x86_64-unknown-linux-musl.tar.gz | tar -xzv --strip-components=1 -C /usr/local/bin sccache-v$SCCACHE-x86_64-unknown-linux-musl/sccache && \
+    chmod +x /usr/local/bin/sccache
+
+COPY rust-toolchain.toml rust-toolchain.toml
+COPY scripts/cargo-static-cuda.sh /usr/local/bin/cargo-static-cuda
+RUN curl https://sh.rustup.rs -sSf | bash -s -- -y
+RUN cargo install cargo-chef --version $CARGO_CHEF --locked
+
+FROM base-builder AS fa4-builder
+ARG CUDA_COMPUTE_CAP=80
+COPY backends/candle/Cargo.toml /tmp/candle-deps.toml
+COPY --chmod=755 scripts/build-fa4-native.sh /usr/local/bin/build-fa4-native
+RUN --mount=type=cache,target=/root/.cache/pip \
+    mkdir -p /opt/fa4 && \
+    if [ "$CUDA_COMPUTE_CAP" = 80 ] || [ "$CUDA_COMPUTE_CAP" = 86 ] || [ "$CUDA_COMPUTE_CAP" = 89 ] || [ "$CUDA_COMPUTE_CAP" = 90 ] || [ "$CUDA_COMPUTE_CAP" = 120 ]; then \
+        apt-get update && apt-get install -y --no-install-recommends python3-venv python3-pip && \
+        build-fa4-native /tmp/candle-deps.toml /opt/fa4 "$CUDA_COMPUTE_CAP"; \
+    fi
+
+FROM base-builder AS planner
+
+WORKDIR /usr/src
+
+COPY backends backends
+COPY core core
+COPY router router
+COPY Cargo.toml ./
+COPY Cargo.lock ./
+COPY LICENSE ./
+
+RUN cargo chef prepare  --recipe-path recipe.json
+
+FROM base-builder AS builder
+COPY --from=fa4-builder /opt/fa4 /opt/fa4
+ENV FA4_NATIVE_LIB_DIR=/opt/fa4
+
+# Portable host CPU baseline; do not inherit AVX-512 from the build machine.
+ARG RUSTFLAGS="-C target-cpu=x86-64-v3"
+ENV RUSTFLAGS=${RUSTFLAGS}
+
+ARG CUDA_COMPUTE_CAP=80
+
+# Limit parallelism
+ARG RAYON_NUM_THREADS
+ARG CARGO_BUILD_JOBS
+ARG CARGO_BUILD_INCREMENTAL
+
+# Keep compiler artifacts across source and release changes on this builder.
+# Cargo targets stay in layers: sharing their mutable output risks stale kernels.
+ENV SCCACHE_DIR=/var/cache/sccache
+ENV SCCACHE_CACHE_SIZE=20G
+ARG SCCACHE_GHA_ENABLED=false
+
+WORKDIR /usr/src
+
+RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
+    then  \
+        nvprune --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    elif [ ${CUDA_COMPUTE_CAP} -ge 80 -a ${CUDA_COMPUTE_CAP} -lt 90 ]; \
+    then  \
+        nvprune --generate-code code=sm_80 --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    elif [ ${CUDA_COMPUTE_CAP} -eq 90 ]; \
+    then  \
+        nvprune --generate-code code=sm_90 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    elif [ ${CUDA_COMPUTE_CAP} -eq 100 ]; \
+    then  \
+        nvprune --generate-code code=sm_100 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    elif [ ${CUDA_COMPUTE_CAP} -eq 120 ]; \
+    then  \
+        nvprune --generate-code code=sm_120 /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
+    else  \
+        echo "cuda compute cap ${CUDA_COMPUTE_CAP} is not supported"; exit 1; \
+    fi;
+
+COPY --from=planner /usr/src/recipe.json recipe.json
+COPY LICENSE ./
+
+RUN --mount=type=cache,id=tei-sccache-cuda12.9-sm${CUDA_COMPUTE_CAP},target=/var/cache/sccache,sharing=shared \
+    --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
+    then \
+        cargo-static-cuda chef cook --release --bin infinity_v3 --features http --features candle-cuda-turing --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
+    else \
+        cargo-static-cuda chef cook --release --bin infinity_v3 --features http --features candle-cuda $(case "$CUDA_COMPUTE_CAP" in 90) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 120) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 89) printf %s --features=fa4,experimental-fp8 ;; 100) printf %s --features=experimental-fp8 ;; 80|86) printf %s --features=fa4 ;; esac) --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
+    fi;
+
+COPY backends backends
+COPY core core
+COPY router router
+COPY Cargo.toml ./
+COPY Cargo.lock ./
+COPY LICENSE ./
+COPY NOTICE LICENSING.md THIRD_PARTY_NOTICES.md ./
+COPY LICENSES LICENSES
+COPY scripts/collect-license-notices.sh scripts/collect-license-notices.sh
+RUN sh scripts/collect-license-notices.sh /usr/src/distribution-licenses
+
+FROM builder AS http-builder
+
+ARG GIT_SHA
+ARG DOCKER_LABEL
+
+RUN --mount=type=cache,id=tei-sccache-cuda12.9-sm${CUDA_COMPUTE_CAP},target=/var/cache/sccache,sharing=shared \
+    --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
+    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
+    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
+    then \
+        cargo-static-cuda build --release --bin infinity_v3 -F candle-cuda-turing -F static-linking -F http --no-default-features && sccache -s; \
+    else \
+        cargo-static-cuda build --release --bin infinity_v3 -F candle-cuda $(case "$CUDA_COMPUTE_CAP" in 90) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 120) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 89) printf %s --features=fa4,experimental-fp8 ;; 100) printf %s --features=experimental-fp8 ;; 80|86) printf %s --features=fa4 ;; esac) -F static-linking -F http --no-default-features && sccache -s; \
+    fi;
+
+FROM nvidia/cuda:12.9.0-base-ubuntu22.04 AS base
+COPY --from=fa4-builder /opt/fa4 /opt/fa4
+ENV LD_LIBRARY_PATH=/opt/fa4:${LD_LIBRARY_PATH}
+
+ARG DEFAULT_USE_FLASH_ATTENTION=True
+
+ENV HUGGINGFACE_HUB_CACHE=/data \
+    PORT=80 \
+    USE_FLASH_ATTENTION=$DEFAULT_USE_FLASH_ATTENTION
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+    ca-certificates \
+    libssl-dev \
+    curl \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+FROM base
+
+COPY --from=http-builder /usr/src/target/release/infinity_v3 /usr/local/bin/infinity_v3
+
+COPY --from=builder /usr/src/distribution-licenses/ /usr/share/licenses/infinity_v3/
+
+ENTRYPOINT ["infinity_v3"]
+RUN apt-get update && apt-get install -y python3 && rm -rf /var/lib/apt/lists/*
+CMD ["--json-output"]

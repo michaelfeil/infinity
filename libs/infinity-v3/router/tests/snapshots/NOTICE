@@ -1,0 +1,33 @@
+Vendored Text Embeddings Inference regression-test snapshots
+
+The .snap files listed below are vendored from Hugging Face Text Embeddings
+Inference (TEI) for comparison in Infinity's regression tests. They contain
+expected model outputs used by the snapshot assertions in the parent test
+modules. Their contents are unchanged from the pinned upstream revisions.
+
+Source repository:
+https://github.com/huggingface/text-embeddings-inference
+
+License: Apache-2.0
+Complete license text: ../../../LICENSES/Apache-2.0.txt
+Upstream copyright and project attribution: ../../../NOTICE
+
+These inherited fixtures retain their Apache-2.0 license, as recorded in
+../../../LICENSE. This notice records provenance; it does not amend
+their license or assign terms to other files or future fixtures.
+
+Fork revision checked: 093b9d783bcebc12c9f7a92a5cdf06130f8d005d
+The revisions below identify verified upstream content and its Apache-2.0
+license, not necessarily the original import revision. Hashes are full Git
+blob SHA-1 values, including the Git blob header, rather than raw-file SHA-1.
+
+Keep this attribution when updating inherited fixtures. Mark changed files
+and update this provenance record when regenerating or replacing baselines.
+
+Upstream revision: 069ceab366d7cab14cfd40dbcb0d58c93f892583
+Source directory: https://github.com/huggingface/text-embeddings-inference/tree/069ceab366d7cab14cfd40dbcb0d58c93f892583/router/tests/snapshots
+Upstream license: https://github.com/huggingface/text-embeddings-inference/blob/069ceab366d7cab14cfd40dbcb0d58c93f892583/LICENSE
+
+Git blob SHA-1                            Snapshot file
+dca6b9b10142b084c81df7de17921686d0b9a407 test_http_embed__mrl_embeddings_batch.snap
+19b56322315ccba1c1a5df1f25fa558e2f7c3295 test_http_embed__mrl_embeddings_single.snap

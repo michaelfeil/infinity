@@ -1,0 +1,63 @@
+name: Infinity v3 CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'libs/infinity-v3/**'
+      - '.github/workflows/infinity-v3-ci.yaml'
+  pull_request:
+    paths:
+      - 'libs/infinity-v3/**'
+      - '.github/workflows/infinity-v3-ci.yaml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: libs/infinity-v3
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cpu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read Rust toolchain
+        id: toolchain
+        run: |
+          python3 - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          import tomllib
+          with open('rust-toolchain.toml', 'rb') as file:
+              print('version=' + tomllib.load(file)['toolchain']['channel'])
+          PYTHON
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          components: rustfmt, clippy
+          rust-src-dir: libs/infinity-v3
+          cache-workspaces: libs/infinity-v3
+          # Keep local and CI warning behavior aligned.
+          rustflags: ''
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Build default CPU server
+        run: cargo build --locked
+      - name: Build without default features
+        run: cargo build --locked --no-default-features --features candle,http
+      - name: Compile CPU integration tests
+        run: cargo test --locked --no-run
+      - name: Run CPU unit tests
+        run: cargo test --locked --lib
+      - name: Check lints
+        run: cargo clippy --locked --lib --bins

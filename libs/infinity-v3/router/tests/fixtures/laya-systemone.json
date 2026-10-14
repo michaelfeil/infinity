@@ -1,0 +1,246 @@
+{
+  "reference": {
+    "model": "convaiinnovations/laya-typed-decisions",
+    "implementation": "https://github.com/NandhaKishorM/laya",
+    "commit": "9d955671415fc19f069b9cc998928075c1f255ec",
+    "device": "CPU float32",
+    "max_len": 1024,
+    "head_max_len": 256
+  },
+  "request": {
+    "state": "I was billed twice. Please refund the extra charge.",
+    "questions": {
+      "team": {
+        "type": "choice",
+        "instructions": "Which team?",
+        "criteria": {
+          "billing": "billing and payments",
+          "support": "technical support"
+        }
+      },
+      "urgency": {
+        "type": "score",
+        "instructions": "How urgent is this request?",
+        "criteria": [
+          "low",
+          "medium",
+          "high"
+        ]
+      },
+      "refund": {
+        "type": "noul",
+        "instructions": "The customer requests a refund."
+      }
+    }
+  },
+  "sequences": [
+    {
+      "id": "team",
+      "ids": [
+        50281,
+        22122,
+        1953,
+        27,
+        6758,
+        2285,
+        32,
+        50282,
+        50284,
+        33484,
+        27,
+        33484,
+        285,
+        10762,
+        50284,
+        1329,
+        27,
+        7681,
+        1329,
+        50282,
+        42,
+        369,
+        47045,
+        7019,
+        15,
+        7764,
+        23005,
+        253,
+        4465,
+        4179,
+        15,
+        50282
+      ],
+      "markers": [
+        8,
+        14
+      ],
+      "logits": [
+        1.8866417407989502,
+        -0.953544557094574
+      ],
+      "action_probability": 1.0
+    },
+    {
+      "id": "urgency",
+      "ids": [
+        50281,
+        18891,
+        1953,
+        27,
+        1359,
+        21007,
+        310,
+        436,
+        2748,
+        32,
+        50282,
+        50284,
+        1268,
+        470,
+        27,
+        1698,
+        50284,
+        1268,
+        337,
+        27,
+        4646,
+        50284,
+        1268,
+        374,
+        27,
+        1029,
+        50282,
+        42,
+        369,
+        47045,
+        7019,
+        15,
+        7764,
+        23005,
+        253,
+        4465,
+        4179,
+        15,
+        50282
+      ],
+      "markers": [
+        11,
+        16,
+        21
+      ],
+      "logits": [
+        -0.7896353602409363,
+        0.47182416915893555,
+        2.048919439315796
+      ],
+      "action_probability": 1.0
+    },
+    {
+      "id": "refund",
+      "ids": [
+        50281,
+        79,
+        3941,
+        1953,
+        27,
+        380,
+        7731,
+        9762,
+        247,
+        23005,
+        15,
+        50282,
+        50284,
+        3221,
+        27,
+        642,
+        13,
+        253,
+        3908,
+        1057,
+        417,
+        2186,
+        50284,
+        2032,
+        27,
+        4754,
+        13,
+        253,
+        3908,
+        6556,
+        50282,
+        42,
+        369,
+        47045,
+        7019,
+        15,
+        7764,
+        23005,
+        253,
+        4465,
+        4179,
+        15,
+        50282
+      ],
+      "markers": [
+        12,
+        22
+      ],
+      "logits": [
+        -1.7150423526763916,
+        0.19707943499088287
+      ],
+      "action_probability": 1.0
+    }
+  ],
+  "response": {
+    "model": "laya-rl-agent",
+    "answers": {
+      "team": {
+        "type": "choice",
+        "choice": "billing",
+        "probabilities": {
+          "billing": 0.8161,
+          "support": 0.1839
+        },
+        "confidence": 0.3114,
+        "answer_confidence": 0.8161,
+        "action": {
+          "act_probability": 1.0
+        }
+      },
+      "urgency": {
+        "type": "score",
+        "score": 1.6463,
+        "legend": {
+          "0": "low",
+          "1": "medium",
+          "2": "high"
+        },
+        "probabilities": {
+          "0": 0.0746,
+          "1": 0.2044,
+          "2": 0.7209
+        },
+        "confidence": 0.3136,
+        "answer_confidence": 0.7209,
+        "action": {
+          "act_probability": 1.0
+        }
+      },
+      "refund": {
+        "type": "noul",
+        "noul": 0.7239,
+        "confidence": 0.7239,
+        "answer_confidence": 0.7239,
+        "action": {
+          "act_probability": 1.0
+        }
+      }
+    },
+    "usage": {
+      "input_tokens": 114,
+      "output_tokens": 0
+    }
+  }
+}

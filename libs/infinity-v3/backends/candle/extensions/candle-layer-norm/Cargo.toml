@@ -1,0 +1,16 @@
+[package]
+name = "candle-layer-norm"
+version = "0.0.1"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+[dependencies]
+candle = { workspace = true, features = ["cuda"] }
+half = { workspace = true }
+[build-dependencies]
+anyhow = "1"
+bindgen_cuda = "0.1.1"
+num_cpus = "1.15"
+rayon = "1.7"
+[dev-dependencies]
+anyhow = "1"
+candle-nn = { workspace = true }

@@ -1,0 +1,78 @@
+[workspace]
+members = [
+    "backends",
+    "backends/candle",
+    "backends/candle-bench",
+    "backends/core",
+    "backends/libtorch",
+    "core",
+    "router",
+]
+default-members = [
+    "backends",
+    "backends/candle",
+    "backends/core",
+    "core",
+    "router",
+]
+resolver = "2"
+
+[workspace.package]
+# Fork license adoption; inherited and third-party grants remain in LICENSE.
+license-file = "LICENSE"
+version = "1.8.18-rc.0"
+edition = "2021"
+authors = ["infinity authors"]
+homepage = "https://github.com/michaelfeil/infinity"
+
+[workspace.dependencies]
+anyhow = "1.0.75"
+clap = { version = "4.1", features = ["derive", "env"] }
+hf-hub = { version = "0.4", features = ["tokio"], default-features = false }
+metrics = "0.23"
+nohash-hasher = "0.2"
+num_cpus = "1.16.0"
+tokenizers = { version = "0.21.0", default-features = false, features = ["onig", "esaxx_fast"] }
+tokio = { version = "1.25", features = ["rt", "rt-multi-thread", "parking_lot", "sync", "signal"] }
+tracing = "0.1"
+serde = { version = "1.0", features = ["serde_derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+rand = "0.9"
+serial_test = "2.0.0"
+cudarc = { version = "=0.19.8", features = ["cuda-version-from-build-system"], default-features = false }
+intel-mkl-src = { version = "0.8", default-features = false }
+candle = { version = "0.11", package = "candle-core" }
+candle-nn = { version = "0.11" }
+candle-transformers = { version = "0.11" }
+candle-flash-attn = { version = "0.11" }
+# CUDA extensions ported from huggingface/candle-extensions at
+# e287dd09535ab5d7631c0f2ae0a93d7ec168cb86; upstream licenses are retained.
+candle-cublaslt = { path = "backends/candle/extensions/candle-cublaslt" }
+candle-layer-norm = { path = "backends/candle/extensions/candle-layer-norm" }
+candle-index-select-cu = { path = "backends/candle/extensions/candle-index-select-cu" }
+candle-rotary = { path = "backends/candle/extensions/candle-rotary" }
+candle-flash-attn-v1 = { path = "backends/candle/extensions/candle-flash-attn-v1" }
+half = { version = "2.3.1", features = ["num-traits"] }
+radix_mlp = { version = "0.0.2" }
+
+[patch.crates-io]
+candle = { git = "https://github.com/michaelfeil/candle", rev = "036f39e44015e78ba18d716d73dfdc2e78730c44", package = "candle-core" }
+candle-nn = { git = "https://github.com/michaelfeil/candle", rev = "036f39e44015e78ba18d716d73dfdc2e78730c44", package = "candle-nn" }
+candle-transformers = { git = "https://github.com/michaelfeil/candle", rev = "036f39e44015e78ba18d716d73dfdc2e78730c44", package = "candle-transformers" }
+candle-flash-attn = { git = "https://github.com/michaelfeil/candle", rev = "036f39e44015e78ba18d716d73dfdc2e78730c44", package = "candle-flash-attn" }
+
+[profile.release]
+debug = 0
+lto = "fat"
+opt-level = 3
+codegen-units = 1
+strip = "symbols"
+panic = "abort"
+
+[profile.release-debug]
+inherits = "release"
+debug = 1
+lto = "thin"
+codegen-units = 16
+strip = "none"

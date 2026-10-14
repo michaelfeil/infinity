@@ -1,0 +1,121 @@
+{
+  "torch_repository_revision": "5c4886908584029761b579af026dcfb627c84070",
+  "flash_attention_submodule_revision": "14c377950125c70b7a9dabf9c561fca53715ac7d",
+  "compile_contract": "UNFUSE_FMA undefined; --use_fast_math; nativeTorch source, actual packed tokens",
+  "files": {
+    "alibi.h": "ba61a17e2d3a22d81a27e6f69302d27c887f79f369b288ab1fa1c6ff8a02450d",
+    "block_info.h": "89cb30fd392372f0313db50cde8a93632ae8dc8c02a5902a245d985fc3fa609b",
+    "dropout.h": "a1d14c0c10227d67bfd36bada415565f4deefa604e6eb1863d7dcc0fd8f12098",
+    "flash.h": "44cf722b1913873b3e5cd0700ddfc3db4714e3e1c10039f21885fd17225c6b2a",
+    "flash_fwd_kernel.h": "9b31cdff4009fcd0e1bc52f9b97907d226442db24e0a150d8dfed0711ee64dda",
+    "flash_fwd_launch_template.h": "ff0695a64800db7ba75056170ec68417bb4d03d915c1016df03eee0ef2fd703d",
+    "hardware_info.h": "deef803b86266ec3f3c6f3f3a4c414ad91cc92d637ba9be02eec520db712cfe3",
+    "kernel_traits.h": "880a6f432613dc01979a605d304da75985f9ed34ff66f1f4ded85fc90b7047ac",
+    "mask.h": "4ea99928f81a7861894a6fbeb9ab127abccce49fdb81fdca0b8e570b3f6f1a22",
+    "namespace_config.h": "2f50a22748285224426a7d374715fc63123ad4b4153e1f46b455a87a8a07f4a5",
+    "philox.cuh": "81ef706f740783b4e035b8a78d7f579ee5750d4defdb2068781b3b7cb027abee",
+    "philox_unpack.cuh": "6ba5317ef1f8956983ec83e1d5cbca70aec3446e290ca7f24896c670af9d24d8",
+    "rotary.h": "f000eba29dade79f629849ed5dbce654d475d61826142a0f94011506be3d2427",
+    "softmax.h": "77e70b8d0dbe72f459ced29199a554a0d1e0559cad2370a2e5b5f1fa5faf73f1",
+    "static_switch.h": "52da74dec74f8b9a26ef34bf4a311950c28c0c77b73eab8b9a169f8e65ae1616",
+    "utils.h": "abc6d4c73522af35f6c31be3938830b9474f620d7c8083168d80dab226a0fdc9",
+    "LICENSE": "8c9ccb96c065e706135b6cbad279b721da6156e51f3a5f27c6b3329af9416d73",
+    "AUTHORS": "f3bf4144826a62841b7f9aebc5057f75da2d32a652a573edc67250ec94a377a7"
+  },
+  "license": "BSD-3-Clause",
+  "torch_build_contract_difference": "Torch sets UNFUSE_FMA; these unmodified upstream headers are compiled without it to retain fused softmax arithmetic.",
+  "private_compile_definitions": [
+    "FLASHATTENTION_DISABLE_DROPOUT",
+    "FLASHATTENTION_DISABLE_BACKWARD",
+    "FLASHATTENTION_DISABLE_SOFTCAP"
+  ],
+  "private_compile_scope": "Forward inference only; zero dropout; no softcap. ALiBi is enabled for the separate FP16 noncausal global head32 specialization and the isolated JinaCode FP16/BF16 noncausal global head64 specialization. All specializations consume actual packed token rows without token padding. Per-specialization compile definitions and restrictions are recorded below.",
+  "head512_specialization": {
+    "traits": "Flash_fwd_kernel_traits<512,64,32,4,false,false,cutlass::bfloat16_t>",
+    "dynamic_shared_memory_bytes": 131072,
+    "architecture": "SM90 with sufficient optin shared memory",
+    "dtype": "BF16",
+    "mask": "causal or noncausal global only",
+    "fallback": "unsupported geometry/dtype/architecture retains native efficient attention",
+    "token_padding": false
+  },
+  "private_specialization_compile_definitions": {
+    "head32_alibi": [
+      "FLASHATTENTION_DISABLE_DROPOUT",
+      "FLASHATTENTION_DISABLE_BACKWARD",
+      "FLASHATTENTION_DISABLE_SOFTCAP",
+      "FLASHATTENTION_DISABLE_UNEVEN_K"
+    ],
+    "head64_128_256_512": [
+      "FLASHATTENTION_DISABLE_DROPOUT",
+      "FLASHATTENTION_DISABLE_BACKWARD",
+      "FLASHATTENTION_DISABLE_SOFTCAP",
+      "FLASHATTENTION_DISABLE_ALIBI",
+      "FLASHATTENTION_DISABLE_UNEVEN_K"
+    ],
+    "head72": [
+      "FLASHATTENTION_DISABLE_DROPOUT",
+      "FLASHATTENTION_DISABLE_BACKWARD",
+      "FLASHATTENTION_DISABLE_SOFTCAP",
+      "FLASHATTENTION_DISABLE_ALIBI"
+    ],
+    "head64_alibi": [
+      "FLASHATTENTION_DISABLE_DROPOUT",
+      "FLASHATTENTION_DISABLE_BACKWARD",
+      "FLASHATTENTION_DISABLE_SOFTCAP",
+      "FLASHATTENTION_DISABLE_UNEVEN_K"
+    ]
+  },
+  "head32_specialization": {
+    "source": "kernels/torch_flash_fma_32.cu",
+    "architecture": "SM80 or newer",
+    "dtype": "FP16",
+    "mask": "noncausal global only",
+    "alibi": "one contiguous FP32 slope per head, original Jina slope order",
+    "fallback": "unsupported family/geometry/dtype/architecture retains existing attention",
+    "token_padding": false
+  },
+  "head72_specialization": {
+    "traits": "Internal head96 traits with actual params.d=72 and uneven-K masking enabled",
+    "architecture": "SM90 with at least 48 KiB optin shared memory",
+    "dtype": "BF16",
+    "mask": "noncausal global only",
+    "token_padding": false
+  },
+  "head64_alibi_specialization": {
+    "sources": [
+      "kernels/torch_flash_alibi64.cpp",
+      "kernels/torch_flash_alibi64.cu",
+      "kernels/torch_flash_alibi64.h"
+    ],
+    "adapter_source_sha256": {
+      "kernels/torch_flash_alibi64.cpp": "5016e68f1c098e16773d379efdfe913fbf511cd4fcfca3d5f1103520de40241d",
+      "kernels/torch_flash_alibi64.cu": "3997c0a137af36e2c35dd499cda88f1414cb874a8a77ac18e512ac62f24cb1b8",
+      "kernels/torch_flash_alibi64.h": "901fd35668f0f1a95130457e7df1c28622e087ff0564c6017a8a4e4ba2a3dfd3"
+    },
+    "namespace": "tei_torch_flash_alibi64",
+    "architecture": "SM80 or newer; build must include the target architecture",
+    "dtypes": [
+      "FP16",
+      "BF16"
+    ],
+    "head_dimension": 64,
+    "family": "JinaCode",
+    "mask": "noncausal global only",
+    "alibi": "one contiguous FP32 slope per head, original JinaCode slope order",
+    "compile_options": [
+      "--use_fast_math",
+      "--expt-relaxed-constexpr",
+      "--expt-extended-lambda"
+    ],
+    "compile_definitions": [
+      "FLASHATTENTION_DISABLE_DROPOUT",
+      "FLASHATTENTION_DISABLE_BACKWARD",
+      "FLASHATTENTION_DISABLE_SOFTCAP",
+      "FLASHATTENTION_DISABLE_UNEVEN_K"
+    ],
+    "source_macro_contract": "FLASH_NAMESPACE=tei_torch_flash_alibi64 in both adapters; UNFUSE_FMA and FLASHATTENTION_DISABLE_ALIBI undefined in the CUDA specialization",
+    "fallback": "unsupported family/geometry/dtype/architecture retains existing attention",
+    "token_padding": false
+  }
+}
