@@ -17,6 +17,7 @@ name = "infinity_v3"
 path = "src/main.rs"
 
 [dependencies]
+infinity-v3-config = { workspace = true }
 anyhow = { workspace = true }
 infinity_v3-backend = { path = "../backends", features = ["clap"] }
 infinity_v3-core = { path = "../core" }

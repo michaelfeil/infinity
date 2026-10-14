@@ -62,3 +62,11 @@ jobs:
         run: cargo test --locked --lib
       - name: Check lints
         run: cargo clippy --locked --lib --bins
+      - name: Check CLI environment names and precedence
+        run: cargo test --locked -p infinity_v3-router --bin infinity_v3
+      - name: Check renamed environment base
+        env:
+          ENV_VAR_BASE: ACME
+        run: |
+          cargo test --locked -p infinity-v3-config
+          cargo test --locked -p infinity_v3-router --bin infinity_v3

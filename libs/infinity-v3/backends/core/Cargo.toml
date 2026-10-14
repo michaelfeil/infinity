@@ -8,6 +8,7 @@ authors.workspace = true
 homepage.workspace = true
 
 [dependencies]
+infinity-v3-config = { workspace = true }
 tokio = { workspace = true }
 thiserror = { workspace = true }
 clap = { workspace = true, optional = true }

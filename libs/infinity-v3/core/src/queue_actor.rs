@@ -24,9 +24,12 @@ fn early_dispatch_tokens(value: Option<&str>) -> Option<usize> {
         None => Some(5_000),
         Some("") => None,
         Some(value) => {
-            let tokens = value
-                .parse::<usize>()
-                .expect("INFINITY_EARLY_DISPATCH_TOKENS must be a nonnegative integer or empty");
+            let tokens = value.parse::<usize>().unwrap_or_else(|_| {
+                panic!(
+                    "{} must be a nonnegative integer or empty",
+                    infinity_v3_config::infinity_env!("EARLY_DISPATCH_TOKENS")
+                )
+            });
             (tokens != 0).then_some(tokens)
         }
     }
@@ -125,11 +128,15 @@ impl Queue {
         model_name: String,
     ) -> Self {
         // Validate on the caller's thread before spawning the detached worker.
-        let configured_target = match std::env::var("INFINITY_EARLY_DISPATCH_TOKENS") {
-            Ok(value) => Some(value),
-            Err(std::env::VarError::NotPresent) => None,
-            Err(err) => panic!("Invalid INFINITY_EARLY_DISPATCH_TOKENS: {err}"),
-        };
+        let configured_target =
+            match std::env::var(infinity_v3_config::infinity_env!("EARLY_DISPATCH_TOKENS")) {
+                Ok(value) => Some(value),
+                Err(std::env::VarError::NotPresent) => None,
+                Err(err) => panic!(
+                    "Invalid {}: {err}",
+                    infinity_v3_config::infinity_env!("EARLY_DISPATCH_TOKENS")
+                ),
+            };
         let early_dispatch_tokens = if replicas > 1 || configured_target.is_some() {
             early_dispatch_tokens(configured_target.as_deref())
         } else {

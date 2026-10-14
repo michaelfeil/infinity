@@ -40,6 +40,7 @@ WORKDIR /usr/src
 
 COPY backends backends
 COPY core core
+COPY config config
 COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
@@ -106,6 +107,7 @@ RUN --mount=type=cache,id=tei-sccache-cuda12.9-sm${CUDA_COMPUTE_CAP},target=/var
 
 COPY backends backends
 COPY core core
+COPY config config
 COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
@@ -117,6 +119,7 @@ RUN sh scripts/collect-license-notices.sh /usr/src/distribution-licenses
 
 FROM builder AS http-builder
 
+ARG ENV_VAR_BASE=INFINITY
 ARG GIT_SHA
 ARG DOCKER_LABEL
 

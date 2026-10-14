@@ -15,6 +15,7 @@ FROM chef AS planner
 
 COPY backends backends
 COPY core core
+COPY config config
 COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./
@@ -24,6 +25,7 @@ RUN cargo chef prepare  --recipe-path recipe.json
 
 FROM chef AS builder
 
+ARG ENV_VAR_BASE=INFINITY
 ARG GIT_SHA
 ARG DOCKER_LABEL
 
@@ -58,6 +60,7 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
 
 COPY backends backends
 COPY core core
+COPY config config
 COPY router router
 COPY Cargo.toml ./
 COPY Cargo.lock ./

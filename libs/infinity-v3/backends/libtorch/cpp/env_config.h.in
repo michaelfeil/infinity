@@ -1,0 +1,3 @@
+// Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
+#pragma once
+#define INFINITY_ENV(suffix) "@ENV_VAR_BASE@" "_" suffix

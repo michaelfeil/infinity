@@ -617,7 +617,7 @@ fn mpnet_cuda_varlen_matches_cpu() {
     .unwrap();
     let expected = cpu.embed(batch()).unwrap();
     let mut got = gpu.embed(batch()).unwrap();
-    if std::env::var("INFINITY_TORCH_CUDA_GRAPHS")
+    if std::env::var(infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPHS"))
         .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
     {
         // The default admission policy captures after three identical requests.

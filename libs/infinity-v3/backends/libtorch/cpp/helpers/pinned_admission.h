@@ -1,3 +1,4 @@
+#include "env_config.h"
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include <ATen/ATen.h>
@@ -29,7 +30,7 @@ struct PinnedAdmissionState {
   size_t bytes = 0;
   size_t max_bytes = 512ULL << 20;
   PinnedAdmissionState() {
-    if (const auto* value = std::getenv("INFINITY_TORCH_PINNED_STAGING_MAX_BYTES")) {
+    if (const auto* value = std::getenv(INFINITY_ENV("TORCH_PINNED_STAGING_MAX_BYTES"))) {
       const auto* end = value + std::strlen(value);
       size_t parsed = 0;
       const auto result = std::from_chars(value, end, parsed);

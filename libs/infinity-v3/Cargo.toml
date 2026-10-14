@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "config",
     "backends",
     "backends/candle",
     "backends/candle-bench",
@@ -26,6 +27,7 @@ authors = ["infinity authors"]
 homepage = "https://github.com/michaelfeil/infinity"
 
 [workspace.dependencies]
+infinity-v3-config = { path = "config" }
 anyhow = "1.0.75"
 clap = { version = "4.1", features = ["derive", "env"] }
 hf-hub = { version = "0.4", features = ["tokio"], default-features = false }

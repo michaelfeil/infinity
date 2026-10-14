@@ -1,3 +1,4 @@
+#include "env_config.h"
 #include "helpers/attention.h"
 #include "helpers/modern_cpu_math.h"
 #include "models/encoder_models.h"
@@ -103,7 +104,7 @@ struct Encoder final : Model {
     // Nomic dense/gated checkpoint-layout selection and fused dispatch checks.
     if (nomic && activation == "gelu_pytorch_tanh") activation = "gelu";
     exact_moe=nomic&&o.integer("num_experts",0)>0;
-    const char* norm_mode=std::getenv("INFINITY_TORCH_EXACT_ENCODER_NORM");
+    const char* norm_mode=std::getenv(INFINITY_ENV("TORCH_EXACT_ENCODER_NORM"));
     // Preserve Candle normalization and rounded residuals for deep rotary encoders.
     // An explicit zero opts into the ATen diagnostic path.
     exact_norm=f==Family::Modern && (!norm_mode||std::string(norm_mode)=="1"||std::string(norm_mode)=="true");
