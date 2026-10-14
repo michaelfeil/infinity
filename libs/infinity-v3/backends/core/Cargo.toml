@@ -1,0 +1,18 @@
+[package]
+# Fork license adoption; see the scoped workspace license bundle.
+license-file.workspace = true
+name = "infinity_v3-backend-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+tokio = { workspace = true }
+thiserror = { workspace = true }
+clap = { workspace = true, optional = true }
+nohash-hasher = { workspace = true }
+serde = { workspace = true }
+
+[features]
+clap = ["dep:clap"]

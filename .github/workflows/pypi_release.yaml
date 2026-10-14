@@ -10,6 +10,7 @@ env:
 
 jobs:
   publish-to-pypi:
+    if: startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     strategy:
       matrix:
         package:

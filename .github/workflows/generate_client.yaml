@@ -3,6 +3,11 @@ name: Auto generate Client Code
 on:
   push:
     branches: [main]
+    paths:
+      - 'libs/client_infinity/**'
+      - 'libs/infinity_emb/**'
+      - '.github/workflows/generate_client.yaml'
+      - '.github/actions/poetry_setup/**'
 
 env:
   POETRY_VERSION: "1.8.4"
@@ -23,6 +28,7 @@ jobs:
         with:
           python-version: "3.10"
           poetry-version: ${{ env.POETRY_VERSION }}
+          working-directory: libs/client_infinity
           cache-key: client-generation
 
       - name: Install infinity

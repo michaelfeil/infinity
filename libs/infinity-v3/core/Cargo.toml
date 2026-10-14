@@ -1,0 +1,38 @@
+[package]
+# Fork license adoption; see the scoped workspace license bundle.
+license-file.workspace = true
+name = "infinity_v3-core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+homepage.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+base64 = "0.22.1"
+reqwest = { version = "0.12.5", default-features = false, features = ["rustls-tls"] }
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+fast_image_resize = "=6.1.0"
+rustfft = "6.4"
+tempfile = "3"
+utoipa = { version = "4.2", optional = true }
+async-channel = "^2.3"
+hf-hub = { workspace = true }
+metrics = { workspace = true }
+serde_json = { workspace = true }
+infinity_v3-backend = { path = "../backends" }
+thiserror = { workspace = true }
+tokenizers = { workspace = true }
+basetenkenizer = { version = "=0.2.9", default-features = false }
+tracing = { workspace = true }
+tokio = { workspace = true, features = ["net", "time", "process", "io-util"] }
+radix_mlp = {workspace = true}
+
+sha2 = "0.10"
+bytemuck = "1"
+
+[dev-dependencies]
+hf-hub = { workspace = true, features = ["ureq"] }
+
+[features]
+openapi = ["dep:utoipa"]

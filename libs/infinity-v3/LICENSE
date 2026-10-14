@@ -1,0 +1,1003 @@
+infinity_v3 -- Dual-License Adoption Notice
+
+Licensors: Infinity Core Contributors. This describes the individual rights
+holders and their authorized licensors, identified by source notices and
+contribution records. It is not a separate legal entity, an assignment of
+copyright, or authority to license another contributor's work. Each grants
+only rights they own or are authorized to license.
+Commercial license-text author: Michael Feil. The PolyForm license text is
+published by the PolyForm Project and reproduced without modification.
+Authorship of license terms does not confer ownership of others' software.
+
+Offered alternatives (recipient's choice for covered rights):
+  - Infinity License 1.0 for Commercial Use; OR
+  - PolyForm Noncommercial License 1.0.0 (PolyForm-Noncommercial-1.0.0).
+
+Recipients may rely independently on either applicable alternative.
+PolyForm is offered without additional conditions. The commercial license's
+platform blacklist, rewrite restriction, source-disclosure requirements, and
+dual-license redistribution requirements do not apply to uses independently
+permitted by PolyForm. PolyForm's own text defines its permitted purposes,
+including its Noncommercial Organizations provision. This notice identifies
+scope and licensors; it does not narrow PolyForm's permissions.
+INFOIL is not a third alternative for newly covered contributions.
+
+Effective event and first covered version:
+This adoption takes effect when this notice is first merged into the
+mf/faster-tei integration branch. That merge commit identifies the first
+covered source version and its merge date is the effective date.
+Pre-adoption integration base: ec11d07f4a0c354279366c616ac9184cc0c84850.
+No earlier proposal or draft constitutes this adoption.
+
+Covered material and rights:
+The alternatives cover original fork contributions and copyrightable fork
+modifications in the application, shared libraries, build tools, and
+documentation, and the contributors' rights in the derivative distribution
+as a whole, to the extent the applicable rights holders authorize this
+adoption. This includes existing fork contributions for which a rights
+holder authorizes the additional alternatives, and later contributions
+intentionally submitted and accepted under both alternatives. Michael Feil
+adopts these alternatives for the fork rights he owns or is authorized to
+license. Other holders' earlier INFOIL-only contributions remain under
+INFOIL unless those holders separately authorize these alternatives.
+
+Excluded material and independent grants:
+Inherited Hugging Face Text Embeddings Inference code retains Apache-2.0.
+Previously Apache-licensed fork contributions retain their existing grants.
+Bundled and external third-party components retain their own licenses and
+attribution, including separately licensed Candle extensions and native
+vendor code. Model weights, datasets, and dependencies do not become covered
+by either alternative merely through use or inclusion. See NOTICE,
+THIRD_PARTY_NOTICES.md, and retained file-level and component notices.
+
+This adoption adds permissions within the authorized scope; it does not
+revoke earlier Apache, INFOIL, or other grants, even for source published
+without a public binary or container release. Those grants continue to
+apply only to the material and rights they cover, not later contributions
+first offered solely under these alternatives. Retaining a license text or
+acting as a maintainer does not authorize relicensing another holder's work.
+
+These are source-available licenses with use restrictions, not unrestricted
+open-source licenses. New contributions intentionally submitted to this
+repository for inclusion are offered under both alternatives unless different
+terms are expressly agreed before inclusion. Ownership
+stays with contributors. No automatic right to later license versions or
+blanket authority to issue exceptions for others' contributions is granted.
+
+The complete alternatives, fixed platform list, and unchanged historical
+INFOIL/Apache bundle follow for standalone packages and native installations.
+Separate texts are in LICENSES; LICENSING.md explains the choices and scope.
+
+=======================================================================
+COMMERCIAL ALTERNATIVE -- COVERED RIGHTS ONLY
+=======================================================================
+
+Infinity License 1.0 for Commercial Use
+License author: Michael Feil
+Licensors: Infinity Core Contributors, each for rights they own or control.
+
+This is a custom source-available license. The applicable Adoption Notice
+identifies the covered rights and effective version. It is offered as an
+alternative to PolyForm Noncommercial License 1.0.0. These terms do not
+limit rights independently granted under that alternative.
+
+1. PERMISSION
+
+By accepting these terms, you may use, copy, modify, and distribute the
+covered code and documentation, including modifications and binaries,
+for commercial purposes, worldwide and without royalties for the duration
+of the contributors' rights. Each contributor grants only rights they
+control. Existing Apache,
+INFOIL, and third-party grants remain intact. No ownership, trademarks, or
+rights over model weights or outputs are transferred.
+
+2. COMMERCIAL USE TERMS
+
+Commercial use, including ordinary enterprise use, is allowed on your own
+hardware or capacity supplied by an unlisted provider, subject to the
+restrictions below.
+
+You must not deploy or run the software commercially on the platforms
+listed in Appendix A, their rented capacity, or as part of their services.
+This applies to operators and customers, including private endpoints,
+rented GPUs, and single-customer deployments, regardless of billing unit.
+Commercial use includes business operations and product or service
+development, even before revenue.
+
+The list covers each named operator's hosting and compute platforms. Amazon
+Bedrock alone is listed, not AWS generally. AWS infrastructure (such as
+EC2), Microsoft Azure, Baseten, Google Cloud / AI Studio, Oracle Cloud,
+private hardware, and unlisted platforms are allowed. Listing follows a
+renamed operator or continuing service, not an acquirer's unrelated
+businesses. The list is fixed: no revenue test or automatic additions
+apply.
+
+The named permitted providers may operate their own deployments on hardware
+leased from listed operators if they actually manage serving. This does not
+permit deployment inside a listed service, including Bedrock. Routing,
+reselling, or relabeling cannot bypass the ban. Buying hardware,
+downloading models, storage, DNS, transit, and unrelated API calls alone
+are not deployment.
+
+3. NO REWRITES FOR PROHIBITED DEPLOYMENTS
+
+You must not use the covered source, documentation, or design obtained from
+them to create, commission, or assist a replacement for a listed platform's
+commercial service or another prohibited deployment. This includes manual
+rewrites, coding agents, contractors, subprocessors, intermediate design
+specifications, and ports to C, Go, or any language, even before
+deployment.
+
+Employees and others acting for an operator also must not develop, test, or
+adapt the software toward a prohibited deployment. Employment alone does
+not restrict independent personal projects. General ideas, algorithms,
+independent development without these materials, independently licensed
+rights, and nonwaivable legal rights remain unaffected.
+
+4. SHARING AND CONTRIBUTIONS
+
+Distributions under this commercial license must retain this license,
+Appendix A, PolyForm Noncommercial License 1.0.0, the adoption notice, and
+third-party notices; identify changes; and offer covered modifications under
+both this license and PolyForm Noncommercial License 1.0.0 so recipients
+retain the same choice. Supply editable source
+and build/install instructions with the distribution, or through a free
+download available for at least three years after the last corresponding
+distribution. Credentials, customer data, separately licensed weights,
+independent applications, and standard tools are excluded from that source
+obligation. These distribution requirements do not apply when relying
+solely on the independent PolyForm alternative.
+
+Private modifications and network access alone do not require publication.
+API clients may retain their own licenses. Contributions intentionally
+submitted to this repository for inclusion are offered under both this
+license and PolyForm Noncommercial License 1.0.0 unless otherwise agreed;
+ownership stays with contributors. Relicensing or exceptions require
+the applicable rights holders' authorization, including for existing
+INFOIL-only contributions.
+
+5. PATENTS, TERMINATION, AND LIABILITY
+
+Contributors license controlled patent claims necessarily practiced by
+their contributions, alone or in their submitted combination, to make, use,
+sell, offer for sale, and import the software for permitted uses. This
+patent grant ends if you bring a patent claim alleging the software
+infringes.
+
+Copyright permissions terminate on breach. A first breach cured within 30
+days of learning of it restores them; later reinstatement requires the
+affected rights holders' permission. Compliant recipients retain rights. To
+the extent law permits, the software is provided as is, without warranty,
+and contributors are not liable for resulting losses. Unenforceable terms
+do not invalidate the rest. Later versions do not change existing grants.
+
+APPENDIX A -- EXHAUSTIVE PLATFORMS PROHIBITED FOR COMMERCIAL DEPLOYMENT
+
+Snapshot source: https://openrouter.ai/providers
+Provider identifiers: https://openrouter.ai/api/v1/providers
+Retrieved: 2026-10-13 UTC. The names below, not the live websites, control.
+Identifiers disambiguate service names; they are not a ban on unrelated
+software projects, purchased hardware, or independently licensed models.
+
+- AionLabs (aion-labs)
+- AkashML (akashml)
+- Alibaba Cloud Int. (alibaba)
+- Amazon Bedrock (amazon-bedrock)
+- Anthropic (anthropic)
+- Arcee AI (arcee-ai)
+- AssemblyAI (assemblyai)
+- AtlasCloud (atlas-cloud)
+- Baidu Qianfan (baidu)
+- Black Forest Labs (black-forest-labs)
+- Cerebras (cerebras)
+- Chutes (chutes)
+- Claude Platform on AWS (claude-on-aws)
+- Cloudflare (cloudflare)
+- Cohere (cohere)
+- CoreWeave (coreweave)
+- Crusoe (crusoe)
+- Darkbloom (darkbloom)
+- Decart (decart)
+- Deepgram (deepgram)
+- DeepInfra (deepinfra)
+- DeepSeek (deepseek)
+- DekaLLM (dekallm)
+- DigitalOcean (digitalocean)
+- ElevenLabs (elevenlabs)
+- Fireworks (fireworks)
+- Fish Audio (fish-audio)
+- Friendli (friendli)
+- GMICloud (gmicloud)
+- Groq (groq)
+- HeyGen (heygen)
+- Inception (inception)
+- Inceptron (inceptron)
+- inference.net (inference-net)
+- io.net (io-net)
+- Ionstream (ionstream)
+- Krea (krea)
+- Liquid (liquid)
+- Makora (makora)
+- Mancer (mancer)
+- MARA (mara)
+- Meta (meta)
+- MiniMax (minimax)
+- Mistral (mistral)
+- Modal (modal)
+- ModelRun [by Modular] (modelrun)
+- Moonshot AI (moonshotai)
+- Morph (morph)
+- NEAR AI (near-ai)
+- Nebius Token Factory (nebius)
+- Nex AGI (nex-agi)
+- NextBit (nextbit)
+- NovitaAI (novita)
+- NVIDIA (nvidia)
+- Open Inference (open-inference)
+- OpenAI (openai)
+- Parasail (parasail)
+- Perceptron (perceptron)
+- Perplexity (perplexity)
+- Phala (phala)
+- Poolside (poolside)
+- Prime Intellect (primeintellect)
+- Recraft (recraft)
+- Reka AI (reka)
+- Relace (relace)
+- Respan (respan)
+- Runway (runway)
+- Sail Research (sail-research)
+- Sakana (sakana)
+- SambaNova (sambanova)
+- ScaleDown (scaledown)
+- Seed (seed)
+- SiliconFlow (siliconflow)
+- Sourceful (sourceful)
+- SpaceXAI (xai)
+- StepFun (stepfun)
+- StreamLake (streamlake)
+- Tencent Cloud (tencent)
+- Tenstorrent (tenstorrent)
+- Thinking Machines (thinkingmachines)
+- Together (together)
+- TypeSafe (typesafe)
+- Unbiased (unbiased)
+- Upstage (upstage)
+- Venice (venice)
+- Voyage AI by MongoDB (voyageai)
+- Wafer (wafer)
+- Xiaomi (xiaomi)
+- Z.ai (z-ai)
+
+=======================================================================
+POLYFORM ALTERNATIVE -- UNMODIFIED STANDARD TERMS FOR COVERED RIGHTS
+=======================================================================
+
+# PolyForm Noncommercial License 1.0.0
+
+<https://polyformproject.org/licenses/noncommercial/1.0.0>
+
+## Acceptance
+
+In order to get any license under these terms, you must agree
+to them as both strict obligations and conditions to all
+your licenses.
+
+## Copyright License
+
+The licensor grants you a copyright license for the
+software to do everything you might do with the software
+that would otherwise infringe the licensor's copyright
+in it for any permitted purpose.  However, you may
+only distribute the software according to [Distribution
+License](#distribution-license) and make changes or new works
+based on the software according to [Changes and New Works
+License](#changes-and-new-works-license).
+
+## Distribution License
+
+The licensor grants you an additional copyright license
+to distribute copies of the software.  Your license
+to distribute covers distributing the software with
+changes and new works permitted by [Changes and New Works
+License](#changes-and-new-works-license).
+
+## Notices
+
+You must ensure that anyone who gets a copy of any part of
+the software from you also gets a copy of these terms or the
+URL for them above, as well as copies of any plain-text lines
+beginning with `Required Notice:` that the licensor provided
+with the software.  For example:
+
+> Required Notice: Copyright Yoyodyne, Inc. (http://example.com)
+
+## Changes and New Works License
+
+The licensor grants you an additional copyright license to
+make changes and new works based on the software for any
+permitted purpose.
+
+## Patent License
+
+The licensor grants you a patent license for the software that
+covers patent claims the licensor can license, or becomes able
+to license, that you would infringe by using the software.
+
+## Noncommercial Purposes
+
+Any noncommercial purpose is a permitted purpose.
+
+## Personal Uses
+
+Personal use for research, experiment, and testing for
+the benefit of public knowledge, personal study, private
+entertainment, hobby projects, amateur pursuits, or religious
+observance, without any anticipated commercial application,
+is use for a permitted purpose.
+
+## Noncommercial Organizations
+
+Use by any charitable organization, educational institution,
+public research organization, public safety or health
+organization, environmental protection organization,
+or government institution is use for a permitted purpose
+regardless of the source of funding or obligations resulting
+from the funding.
+
+## Fair Use
+
+You may have "fair use" rights for the software under the
+law. These terms do not limit them.
+
+## No Other Rights
+
+These terms do not allow you to sublicense or transfer any of
+your licenses to anyone else, or prevent the licensor from
+granting licenses to anyone else.  These terms do not imply
+any other licenses.
+
+## Patent Defense
+
+If you make any written claim that the software infringes or
+contributes to infringement of any patent, your patent license
+for the software granted under these terms ends immediately. If
+your company makes such a claim, your patent license ends
+immediately for work on behalf of your company.
+
+## Violations
+
+The first time you are notified in writing that you have
+violated any of these terms, or done anything with the software
+not covered by your licenses, your licenses can nonetheless
+continue if you come into full compliance with these terms,
+and take practical steps to correct past violations, within
+32 days of receiving notice.  Otherwise, all your licenses
+end immediately.
+
+## No Liability
+
+***As far as the law allows, the software comes as is, without
+any warranty or condition, and the licensor will not be liable
+to you for any damages arising out of these terms or the use
+or nature of the software, under any kind of legal claim.***
+
+## Definitions
+
+The **licensor** is the individual or entity offering these
+terms, and the **software** is the software the licensor makes
+available under these terms.
+
+**You** refers to the individual or entity agreeing to these
+terms.
+
+**Your company** is any legal entity, sole proprietorship,
+or other kind of organization that you work for, plus all
+organizations that have control over, are under the control of,
+or are under common control with that organization.  **Control**
+means ownership of substantially all the assets of an entity,
+or the power to direct its management and policies by vote,
+contract, or otherwise.  Control can be direct or indirect.
+
+**Your licenses** are all the licenses granted to you for the
+software under these terms.
+
+**Use** means anything you do with the software requiring one
+of your licenses.
+
+=======================================================================
+RETAINED HISTORICAL INFOIL ADOPTION AND APACHE LICENSE
+Earlier grants only; not a third alternative for new contributions.
+=======================================================================
+
+infinity_v3 -- INFOIL 1.0 Adoption Notice
+
+Licensor: Infinity Core Contributors. This is a collective description of the
+individual copyright holders and their authorized licensors, identified by
+applicable source notices and contribution records. It is not a separate
+legal entity, an assignment of copyright, or a claim that any contributor
+owns or may relicense another contributor's work. Each grants only rights
+that they own or are authorized to license.
+
+License: Infinity Optimized Inference License, INFOIL 1.0.
+Effective date: 2026-10-12.
+First covered source release: infinity_v3-infoil-1.0 (Git tag).
+Pre-adoption base: 9486dd9ee89575442fda1a491c381046b37e116e.
+
+Covered material and rights:
+INFOIL is the license offered for original fork contributions and
+copyrightable fork modifications first distributed under this adoption,
+and later contributions intentionally submitted and accepted on that basis,
+in this repository's application, shared libraries, build tools, and
+documentation. It is also the offered license for those contributors'
+rights in the derivative distribution as a whole. The included INFOIL text
+sets the conditions for those rights; the scope and exclusions in this
+notice govern which material and independently held rights it covers.
+
+Excluded material and independent grants:
+Inherited Hugging Face Text Embeddings Inference code retains Apache-2.0.
+Previously Apache-licensed fork contributions retain their existing grants.
+Bundled and external third-party components retain their own licenses and
+attribution, including separately licensed Candle extensions and native
+vendor code. Model weights, datasets, and dependencies do not become
+INFOIL-covered merely through use or inclusion. See NOTICE,
+THIRD_PARTY_NOTICES.md, and retained file-level and component notices.
+
+This adoption does not revoke earlier grants, even for previously published
+source without a public binary or container release. Someone relying on an
+independent Apache or other grant for the material it covers may continue
+to exercise that grant. It does not confer rights to later INFOIL-only
+contributions. Retained upstream notices identify the inherited material;
+new covered fork modifications must carry notices identifying the change
+and referring to this adoption scope.
+
+INFOIL is source-available with provider and infrastructure restrictions,
+including private, single-customer endpoints and GPU-hour billing. It is
+not an unrestricted open-source license. Baseten deployments are expressly
+permitted under INFOIL Section 4. This exception does not make Baseten the
+Licensor or copyright owner of others' contributions.
+
+The complete INFOIL terms and retained original Apache license follow so
+this file can accompany standalone packages and native installations.
+Separate copies are in LICENSES/INFOIL-1.0.txt and
+LICENSES/Apache-2.0.txt. LICENSING.md explains the adoption and examples.
+
+=======================================================================
+INFOIL 1.0 -- TERMS FOR COVERED RIGHTS
+=======================================================================
+
+INFINITY OPTIMIZED INFERENCE LICENSE
+INFOIL 1.0
+
+Application of this License is defined by the applicable Adoption Notice.
+The adoption notice for infinity_v3 appears at the start of its root LICENSE.
+
+1. SCOPE AND DEFINITIONS
+
+1.1 Adoption Notice means an express notice issued by a rights holder or
+authorized representative identifying: the Licensor; the code and rights
+offered under INFOIL; the applicable license version; the first covered
+release or full commit identifier and effective date; and any exclusions or
+separately licensed material. A proposal, roadmap, or copy of license terms without an express
+adoption notice is not an Adoption Notice.
+
+1.2 Licensor means the person or legal entity identified in the Adoption
+Notice that owns, or is authorized to license, the applicable rights.
+Contributor means a rights holder that intentionally supplies a contribution
+under this License. Neither designation assigns ownership of another
+person's work or makes a promise about rights that person has not granted.
+
+1.3 Software means the code and accompanying material expressly designated
+as covered in the Adoption Notice, together with covered contributions and
+Modifications. Third-Party Material means code or other material governed
+by an independent license, including inherited upstream code and separately
+licensed dependencies. It is excluded from the INFOIL designation to the
+extent governed by its separate license. References to Software in Sections
+2 through 11 include Modifications unless stated otherwise.
+
+1.4 Modifications means changes or additions that are derivative works of
+the covered Software under applicable copyright law. Separate applications
+that merely call its API do not become Modifications for that reason alone.
+
+1.5 You means the person or legal entity exercising the rights granted here.
+Acting through an employee, contractor, agent, or intermediary does not
+change which entity is responsible for a deployment on its behalf.
+
+1.6 Inference means executing a machine-learning model to produce results,
+including generated text, embeddings, rankings, classifications, audio,
+images, video, or other model outputs. It is not limited to text generation
+or services that count or bill tokens.
+
+1.7 Commercial Inference Services means a business offering to external
+customers any of the following for direct or indirect compensation:
+
+  (a) access to Inference through an API or other service interface;
+  (b) deployment, operation, or management of model-serving endpoints or
+      environments; or
+  (c) material assistance in deploying or operating Inference on computing
+      capacity the business supplies, controls, leases, or resells.
+
+For paragraph (c), material assistance includes customer-specific endpoint
+setup, installation or configuration of model-serving software, deployment
+engineering, or ongoing operational support. Merely publishing general
+documentation or supplying generic hardware support does not, by itself,
+constitute material assistance.
+
+One external customer is sufficient. The customer may supply its own models,
+operate the resulting endpoint, or have exclusive access to the capacity.
+Compensation includes token or request charges, GPU-hour or other computing
+charges, reserved-capacity payments, subscriptions, support fees, and amounts
+included in a bundled contract. Neither a public marketplace, a shared API,
+nor a separate charge specifically for Inference is required. Free trials
+and promotional tiers forming part of such a business are included.
+
+An entity does not provide Commercial Inference Services merely by using
+Inference for its own internal operations, or by selling an application
+whose customers receive application-specific functionality without access
+to a general-purpose Inference or model-deployment service. A nominal UI,
+API wrapper, or intermediary does not establish this application exception
+when the service in substance supplies such general-purpose access.
+
+1.8 Restricted Provider means:
+
+  (a) an entity operating the businesses or platforms known as Fireworks AI,
+      Modal, Together AI, CoreWeave, or Nebius;
+  (b) any other entity carrying on a business of Commercial Inference
+      Services; or
+  (c) a renamed operator, successor operator, or controlled affiliate to the
+      extent it operates or supports a business described in (a) or (b).
+
+Control means ownership of more than half the voting rights or the power
+to direct an entity's management. The named providers in (a) are expressly
+included; they are not an exhaustive list. Once an entity qualifies as a
+Restricted Provider, the execution restrictions below also apply to its
+internal, research, evaluation, and unpaid deployments.
+
+1.9 Restricted Infrastructure means computing capacity or an execution
+environment supplied, operated, managed, leased to customers, or resold by
+a Restricted Provider. It includes dedicated machines, rented GPUs,
+reserved clusters, virtual machines, containers, serverless execution, and
+customer-specific or privately accessible endpoints. A customer account,
+reseller, isolated network, or dedicated tenancy does not change that status.
+Capacity remains Restricted Infrastructure when passed through an
+intermediary, except as expressly permitted in Section 4.
+
+Incidental network transit, DNS, payment processing, storage that does not
+execute the Software, and unrelated external API calls do not alone mean
+that the Software executes on Restricted Infrastructure.
+
+1.10 Baseten means Baseten Labs, Inc. and entities it controls when acting
+as operators of Baseten's inference platform. A change of name of the same
+legal entity does not remove this designation. Acquiring Baseten does not
+automatically extend it to the acquirer's other businesses or platforms.
+
+1.11 Baseten Deployment means execution on capacity owned or leased and
+operated by Baseten, or execution in a customer environment where Baseten
+actually operates and manages the model-serving deployment as a Baseten
+service. Buying a Baseten subscription, routing traffic through Baseten, or
+using its tooling alone does not qualify a deployment operated elsewhere
+by another provider or customer.
+
+1.12 Corresponding Source means the editable source for the exact covered
+Software distributed, including Modifications and the scripts and
+configuration reasonably needed to build and install it. It excludes
+credentials, customer data, model weights not themselves covered by this
+License, separate applications, and generally available tools or system
+dependencies. Third-Party Material remains subject to its own requirements.
+
+2. RIGHTS GRANTED
+
+2.1 By relying on the permissions in this License, You accept its conditions.
+Subject to those conditions, each Contributor permits You, without a royalty,
+to use, copy, modify, display, perform, and distribute the copyrightable
+material it contributes, worldwide and for the duration of those rights.
+These permissions include source and compiled forms. Rights terminate only
+as provided in Section 9; there is no discretionary revocation right here.
+
+2.2 Each Contributor also permits You to make, have made, use, import, sell,
+and offer to sell the Software under patent claims it can license that are
+necessarily practiced by its contribution, alone or in the combination to
+which it was contributed. This grant does not cover claims arising only
+from Your subsequent changes or other combinations.
+
+2.3 These grants allow personal, research, educational, internal business,
+and commercial application uses that comply with Sections 3 and 4. Those
+uses are not general exceptions to the provider or infrastructure limits.
+No permission is granted for an act prohibited by this License.
+
+3. PROVIDER AND INFRASTRUCTURE RESTRICTIONS
+
+Except under Section 4 or a separate license under Section 7, You must not:
+
+  (a) execute, deploy, host, or operate the Software as a Restricted
+      Provider, or on behalf of or under the direction of one;
+  (b) execute, deploy, host, or operate the Software on Restricted
+      Infrastructure, including for Your own private use;
+  (c) use the Software to provide Commercial Inference Services; or
+  (d) knowingly supply, configure, arrange, or manage a deployment of the
+      Software for any operation prohibited by (a), (b), or (c).
+
+These limits apply to production, development, testing, demonstrations,
+research, and free deployments. They apply to one or many customers,
+private or public endpoints, shared or dedicated capacity, and token-based
+or other billing. Delivering requests through OpenRouter, a reseller, an
+API gateway, or a separate legal entity does not remove the limits.
+
+Publishing a source repository or general documentation, without knowingly
+arranging a prohibited deployment, does not alone violate paragraph (d).
+This section does not prohibit merely reading or inspecting source code.
+
+4. BASETEN DEPLOYMENT EXCEPTION
+
+4.1 Notwithstanding Section 3, Baseten, its contractors acting on its behalf,
+and its customers may execute, deploy, host, and operate the Software within
+a Baseten Deployment. This includes providing and consuming Commercial
+Inference Services within that deployment, even when a customer is itself
+a Restricted Provider. Baseten may exercise the rights in Section 2 to
+develop, test, maintain, and supply the Software for that deployment on
+systems it operates.
+
+4.2 The exception includes underlying capacity Baseten leases from a
+Restricted Provider when Baseten actually operates and manages the
+model-serving deployment. It permits the underlying capacity supplier to
+provide infrastructure and infrastructure support for that Baseten
+Deployment; it does not authorize that supplier to operate a separate
+model-serving offering with the Software.
+
+4.3 This exception does not authorize execution outside the qualifying
+Baseten Deployment by a Restricted Provider or on Restricted Infrastructure.
+Baseten acting only as a billing intermediary, sales channel, traffic
+router, or software supplier is insufficient. Copies taken out of a Baseten
+Deployment remain subject to the ordinary restrictions.
+
+4.4 Sections 5 through 11 still apply. This exception neither assigns
+copyright to Baseten nor represents that Baseten is the Licensor. It grants
+no rights in Third-Party Material beyond those granted by its owners.
+
+5. REDISTRIBUTION AND SOURCE AVAILABILITY
+
+5.1 When distributing the covered Software, including inside a binary,
+container, appliance, or larger product, You must:
+
+  (a) supply this License, the applicable Adoption Notice, and retained
+      copyright, attribution, patent, and third-party license notices;
+  (b) mark modified files and provide a reasonable description of changes;
+  (c) offer Your covered Modifications to recipients under this same
+      version of INFOIL, including its Baseten exception, without terms
+      that take away the permissions granted here; and
+  (d) supply Corresponding Source alongside the distribution, or a clearly
+      identified download of that source at no additional charge.
+
+If using a source download, keep it available for at least three years
+after Your last distribution of the corresponding version. You may use a
+patch against an identified, obtainable source version if the recipient
+can obtain the complete Corresponding Source and reconstruct the version
+You distributed without an additional charge.
+
+5.2 Every recipient receives the applicable Contributors' INFOIL grants
+subject to these terms. You cannot grant rights You do not control, remove
+the use restrictions, or claim that a different license replaces INFOIL
+for another Contributor's INFOIL-only contribution.
+
+5.3 You need not publish private Modifications merely because You make or
+run them. Remote interaction with a running service, without transfer of a
+copy of covered Software, does not by itself trigger Section 5.1. The
+execution restrictions in Section 3 still apply to that service.
+
+5.4 Separate applications that communicate with the Software through its
+API may retain their own licenses. Including the Software in a larger
+product does not exempt the covered portions from these requirements.
+You may charge for permitted distribution, support, or other permitted
+services, subject to the source-access requirement and Section 3.
+
+6. EXISTING LICENSES AND THIRD-PARTY MATERIAL
+
+6.1 This License grants rights only within each Contributor's authority.
+Separately identified upstream and third-party material keeps its existing
+terms. Retain and comply with those terms, including applicable Apache,
+MIT, BSD, and other notices. Merely bundling that material with INFOIL code
+does not relicense it or confer ownership on the Licensor.
+
+6.2 Rights previously granted under Apache-2.0 or another license remain
+available under that license. Removing old branches, tags, releases,
+repositories, or downloads does not withdraw such grants. This includes
+previously distributed source, even if no binary or container was released.
+
+6.3 An act independently authorized by another applicable license does not
+require permission under INFOIL. Conversely, a prior grant for older code
+does not authorize use of later INFOIL-only contributions. The Adoption
+Notice must distinguish the rights and material offered under INFOIL from
+independent licenses and previously granted rights.
+
+6.4 No model weights, datasets, dependencies, infrastructure services, or
+outputs are licensed by this document merely because the Software uses or
+produces them.
+
+7. SEPARATE PERMISSIONS AND CONTRIBUTIONS
+
+7.1 A separate written agreement may authorize an otherwise restricted
+deployment or other terms. It must identify the covered code, permitted
+deployment or use, and parties granting the needed rights. Permission is
+effective only for rights those parties own or are authorized to license.
+A maintainer's title or this License alone does not grant authority to
+relicense another Contributor's work.
+
+7.2 Unless a different written arrangement is expressly accepted,
+contributions intentionally submitted for inclusion in INFOIL-covered
+Software are offered under this version of INFOIL. A submission clearly
+marked as not offered for inclusion is not such a contribution. A separate
+contributor agreement governs any additional rights it expressly grants.
+
+7.3 Contributors retain ownership. This License alone neither assigns
+copyright nor grants the Licensor a blanket right to issue commercial
+exceptions for others' contributions. The Baseten permission in Section 4
+is an express part of the license every INFOIL Contributor grants; it does
+not depend on such a separate commercial exception.
+
+8. ATTRIBUTION, MARKS, AND OUTPUTS
+
+8.1 Reasonable attribution and identification of origin are permitted.
+No trademark rights or endorsement are granted, including by naming a
+provider or Baseten in this License. Do not misrepresent authorship,
+ownership, sponsorship, or the scope of permissions.
+
+8.2 Contributors claim no rights over inference outputs solely because
+their Software produced them. This does not resolve rights in inputs,
+model weights, or output content arising from another source.
+
+9. TERMINATION AND REINSTATEMENT
+
+9.1 Rights granted under this License terminate upon Your breach of its
+conditions. Stop the prohibited activity and cure the breach. For Your
+first breach, rights are automatically reinstated if You complete the cure
+within thirty days after first learning of it or receiving written notice,
+whichever occurs first. Other reinstatement requires written permission
+from the affected rights holders. Reinstatement does not erase liability
+for conduct during the breach.
+
+9.2 If You bring a patent claim alleging infringement by the Software or a
+contribution to it, including by counterclaim, Your patent grants under
+Section 2.2 terminate upon bringing that claim. The automatic cure in
+Section 9.1 does not reinstate those patent grants.
+
+9.3 Termination of Your rights does not terminate grants to recipients who
+comply with this License, or rights independently held under another
+license. Provisions concerning attribution, existing rights, disclaimers,
+liability, and the effects of termination continue to apply as relevant.
+
+10. WARRANTY AND LIABILITY
+
+10.1 To the extent the law allows, Contributors supply the Software without
+promises or warranties about quality, performance, suitability, security,
+accuracy, ownership, or noninfringement. You bear the risk of selecting and
+operating it, including evaluating its model outputs and deployments.
+
+10.2 To the extent the law allows, Contributors are not liable for losses
+caused by the Software or its use, including direct, indirect, incidental,
+special, or consequential loss; lost revenue or data; and interruption of
+operations. This exclusion does not displace liability that applicable law
+does not permit the parties to exclude.
+
+10.3 If You offer support, warranties, or other commitments, You do so on
+Your own behalf and cannot bind another Contributor without its agreement.
+
+11. LICENSE VERSIONS AND INTERPRETATION
+
+11.1 INFOIL 1.0 grants no automatic right to elect a later version. Changes
+to a website, FAQ, provider list, or subsequent license text do not amend
+the terms attached to a copy already licensed under this version. A
+separate valid agreement may change terms for parties to that agreement.
+
+11.2 If a provision cannot be enforced under applicable law, the remaining
+provisions continue to the extent they can operate independently. A delay
+in enforcing a term does not alone waive it. Nothing here excludes rights
+that applicable law makes nonwaivable.
+
+END OF INFOIL 1.0 TERMS
+
+
+=======================================================================
+APACHE-2.0 -- RETAINED UPSTREAM LICENSE AND ATTRIBUTION
+=======================================================================
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright 2022 Hugging Face
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.

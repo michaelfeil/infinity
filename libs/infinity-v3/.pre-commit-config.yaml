@@ -1,0 +1,31 @@
+files: ^libs/infinity-v3/
+repos:
+-   repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+    -   id: check-yaml
+    -   id: end-of-file-fixer
+        # Preserve upstream bytes recorded in retained source provenance.
+        exclude: ^libs/infinity-v3/backends/libtorch/cpp/(vendor/torch_flash_attention/|tests/fixtures/[^/]+/LICENSE(?:[.-][^/]+)?$)
+    -   id: trailing-whitespace
+        exclude: ^libs/infinity-v3/(docs/source/basic_tutorials/launcher\.md$|backends/libtorch/cpp/vendor/torch_flash_attention/)
+-   repo: local
+    hooks:
+    -   id: fmt
+        name: V3 Rust formatting
+        entry: bash -c 'cd libs/infinity-v3 && cargo fmt --all -- --check'
+        language: system
+        types: [rust]
+        pass_filenames: false
+    -   id: cargo-check
+        name: V3 Cargo check
+        entry: bash -c 'cd libs/infinity-v3 && cargo check --locked'
+        language: system
+        types: [rust]
+        pass_filenames: false
+    -   id: clippy
+        name: V3 Clippy
+        entry: bash -c 'cd libs/infinity-v3 && cargo clippy --locked --lib --bins'
+        language: system
+        types: [rust]
+        pass_filenames: false

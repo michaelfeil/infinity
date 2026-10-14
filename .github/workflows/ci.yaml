@@ -8,10 +8,26 @@ on:
     branches:
     - main
     - dev
+    paths:
+      - 'libs/infinity_emb/**'
+      - 'libs/embed_package/**'
+      - '.github/workflows/ci.yaml'
+      - '.github/workflows/linting.yaml'
+      - '.github/workflows/test.yaml'
+      - '.github/workflows/poetry_setup.yaml'
+      - '.github/actions/**'
   pull_request:
     branches:
     - main
     - dev
+    paths:
+      - 'libs/infinity_emb/**'
+      - 'libs/embed_package/**'
+      - '.github/workflows/ci.yaml'
+      - '.github/workflows/linting.yaml'
+      - '.github/workflows/test.yaml'
+      - '.github/workflows/poetry_setup.yaml'
+      - '.github/actions/**'
   schedule: # nightly
     - cron: '0 0 * * *'
   workflow_dispatch:  # Allows to trigger the workflow manually in GitHub UI
@@ -32,6 +48,7 @@ env:
 
 jobs:
   lint-infinity_emb:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     uses:
       ./.github/workflows/linting.yaml
     with:
@@ -39,6 +56,7 @@ jobs:
     secrets: inherit
 
   lint-embed_package:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     uses:
       ./.github/workflows/linting.yaml
     with:
@@ -47,6 +65,7 @@ jobs:
     secrets: inherit
 
   test-infinity_emb:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     uses:
       ./.github/workflows/test.yaml
     with:
@@ -55,6 +74,7 @@ jobs:
     secrets: inherit
   
   test-embed_package:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     uses:
       ./.github/workflows/test.yaml
     with:

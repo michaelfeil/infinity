@@ -1,0 +1,476 @@
+use crate::flash_attn::flash_attn_varlen;
+use crate::layers::rotary::apply_packed_rotary;
+use crate::layers::MlpLinear;
+use crate::layers::{
+    get_cos_sin, get_inv_freqs, index_select, CompactUnfoldTensors, HiddenAct, Linear, RMSNorm,
+};
+use crate::models::{Model, Qwen2Config};
+use candle::{Device, IndexOp, Result, Tensor};
+use candle_nn::{Embedding, Module, VarBuilder};
+use infinity_v3_backend_core::{Batch, ModelType, Pool};
+
+struct Qwen2Attention {
+    qkv_linear: Linear,
+    o_proj: Linear,
+
+    num_attention_heads: usize,
+    num_key_value_heads: usize,
+    attention_head_size: usize,
+
+    softmax_scale: f32,
+    is_causal: bool,
+
+    span: tracing::Span,
+}
+
+impl Qwen2Attention {
+    pub fn load(vb: VarBuilder, config: &Qwen2Config) -> Result<Self> {
+        if config.use_sliding_window {
+            candle::bail!("Sliding window is not supported for Qwen2",);
+        }
+
+        let num_attention_heads = config.num_attention_heads;
+        let attention_head_size = config.hidden_size / config.num_attention_heads;
+        let num_key_value_heads = config.num_key_value_heads;
+        let hidden_size = config.hidden_size;
+
+        let query_weight = vb.pp("q_proj").get((hidden_size, hidden_size), "weight")?;
+        let query_bias = vb.pp("q_proj").get(hidden_size, "bias")?;
+
+        let key_weight = vb.pp("k_proj").get(
+            (num_key_value_heads * attention_head_size, hidden_size),
+            "weight",
+        )?;
+        let key_bias = vb
+            .pp("k_proj")
+            .get(num_key_value_heads * attention_head_size, "bias")?;
+
+        let value_weight = vb.pp("v_proj").get(
+            (num_key_value_heads * attention_head_size, hidden_size),
+            "weight",
+        )?;
+        let value_bias = vb
+            .pp("v_proj")
+            .get(num_key_value_heads * attention_head_size, "bias")?;
+
+        let qkv_weight = Tensor::cat(&[&query_weight, &key_weight, &value_weight], 0)?;
+        let qkv_bias = Tensor::cat(&[&query_bias, &key_bias, &value_bias], 0)?;
+        let qkv_linear = Linear::new(qkv_weight, Some(qkv_bias), None);
+
+        let o_proj_weight = vb.pp("o_proj").get((hidden_size, hidden_size), "weight")?;
+
+        let o_proj = Linear::new(o_proj_weight, None, None);
+
+        let softmax_scale = (1. / (attention_head_size as f64).sqrt()) as f32;
+
+        Ok(Self {
+            qkv_linear,
+            o_proj,
+            num_attention_heads,
+            num_key_value_heads,
+            attention_head_size,
+            softmax_scale,
+            is_causal: config.is_causal,
+            span: tracing::span!(tracing::Level::TRACE, "attention"),
+        })
+    }
+
+    pub fn forward(
+        &self,
+        hidden_states: &Tensor,
+        cu_seqlens: &Tensor,
+        cos: &Tensor,
+        sin: &Tensor,
+        max_s: usize,
+        compact_tensors: &CompactUnfoldTensors,
+    ) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let qkv = self.qkv_linear.forward(hidden_states)?;
+
+        // Reshape to [tokens, heads, head_size]
+        let mut new_qkv_shape = qkv.dims().to_vec();
+        new_qkv_shape.pop();
+        new_qkv_shape.push(self.num_attention_heads + 2 * self.num_key_value_heads);
+        new_qkv_shape.push(self.attention_head_size);
+
+        let qkv = qkv.reshape(new_qkv_shape)?;
+
+        // Split qkv tensor
+        let q = qkv.narrow(1, 0, self.num_attention_heads)?;
+        let k = qkv.narrow(1, self.num_attention_heads, self.num_key_value_heads)?;
+        let v = qkv.narrow(
+            1,
+            self.num_attention_heads + self.num_key_value_heads,
+            self.num_key_value_heads,
+        )?;
+
+        let (q, k) = apply_packed_rotary(&q, &k, cos, sin)?;
+
+        // Expand Q, K, V to ORIGINAL layout for attention
+        let q = compact_tensors.scatter_unfold(&q)?;
+        let k = compact_tensors.scatter_unfold(&k)?;
+        let v = compact_tensors.scatter_unfold(&v)?;
+
+        let attention = flash_attn_varlen(
+            &q,
+            &k,
+            &v,
+            None,
+            cu_seqlens,
+            cu_seqlens,
+            max_s,
+            max_s,
+            self.softmax_scale,
+            self.is_causal,
+            None,
+            None,
+        )?;
+        let attention = attention.flatten_from(candle::D::Minus2)?;
+
+        // Compact attention output back to COMPACT layout before o_proj
+        let attention = compact_tensors.fold_gather(&attention)?;
+
+        self.o_proj.forward(&attention)
+    }
+}
+
+struct Qwen2MLP {
+    gate_up_proj: MlpLinear,
+    down_proj: MlpLinear,
+
+    act: HiddenAct,
+
+    span: tracing::Span,
+}
+
+impl Qwen2MLP {
+    pub fn load(vb: VarBuilder, config: &Qwen2Config, enable_fp8_dynamic: bool) -> Result<Self> {
+        let intermediate_size = config.intermediate_size;
+
+        let gate_proj_weight = vb
+            .pp("gate_proj")
+            .get((intermediate_size, config.hidden_size), "weight")?;
+
+        let up_proj_weight = vb
+            .pp("up_proj")
+            .get((intermediate_size, config.hidden_size), "weight")?;
+
+        let gate_up_proj_weight = Tensor::cat(&[&gate_proj_weight, &up_proj_weight], 0)?;
+        let gate_up_proj = MlpLinear::new(gate_up_proj_weight, enable_fp8_dynamic)?;
+
+        let down_proj_weight = vb
+            .pp("down_proj")
+            .get((config.hidden_size, intermediate_size), "weight")?;
+        let down_proj = MlpLinear::new(down_proj_weight, enable_fp8_dynamic)?;
+
+        Ok(Self {
+            gate_up_proj,
+            down_proj,
+            act: config.hidden_act.clone(),
+            span: tracing::span!(tracing::Level::TRACE, "mlp"),
+        })
+    }
+
+    pub fn forward(&self, hidden_states: &Tensor) -> Result<Tensor> {
+        let _enter = self.span.enter();
+
+        let gate_up_states = self.gate_up_proj.forward(hidden_states)?;
+        self.down_proj.forward_gated(&gate_up_states, &self.act)
+    }
+}
+
+struct Qwen2Layer {
+    attention: Qwen2Attention,
+    mlp: Qwen2MLP,
+    input_layer_norm: RMSNorm,
+    post_attention_layer_norm: RMSNorm,
+
+    span: tracing::Span,
+}
+
+impl Qwen2Layer {
+    pub fn load(vb: VarBuilder, config: &Qwen2Config, enable_fp8_dynamic: bool) -> Result<Self> {
+        let attention = Qwen2Attention::load(vb.pp("self_attn"), config)?;
+        let mlp = Qwen2MLP::load(vb.pp("mlp"), config, enable_fp8_dynamic)?;
+
+        let input_layer_norm = RMSNorm::load(
+            vb.pp("input_layernorm"),
+            config.hidden_size,
+            config.rms_norm_eps,
+        )?;
+        let post_attention_layer_norm = RMSNorm::load(
+            vb.pp("post_attention_layernorm"),
+            config.hidden_size,
+            config.rms_norm_eps,
+        )?;
+
+        Ok(Self {
+            attention,
+            mlp,
+            input_layer_norm,
+            post_attention_layer_norm,
+            span: tracing::span!(tracing::Level::TRACE, "layer"),
+        })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn forward(
+        &self,
+        hidden_states: &Tensor,
+        residual: Option<&Tensor>,
+        cu_seqlens: &Tensor,
+        cos: &Tensor,
+        sin: &Tensor,
+        max_s: usize,
+        compact_tensors: &CompactUnfoldTensors,
+    ) -> Result<(Tensor, Tensor)> {
+        let _enter = self.span.enter();
+
+        let (normed_hidden_states, res) = self.input_layer_norm.forward(hidden_states, residual)?;
+        let attn_output = self.attention.forward(
+            &normed_hidden_states,
+            cu_seqlens,
+            cos,
+            sin,
+            max_s,
+            compact_tensors,
+        )?;
+        let (normed_attn_res_output, attn_res) = self
+            .post_attention_layer_norm
+            .forward(&attn_output, Some(&res))?;
+        let mlp_output = self.mlp.forward(&normed_attn_res_output)?;
+
+        Ok((mlp_output, attn_res))
+    }
+}
+
+pub struct FlashQwen2Model {
+    embeddings: Embedding,
+    layers: Vec<Qwen2Layer>,
+    norm: RMSNorm,
+    cos_cache: Tensor,
+    sin_cache: Tensor,
+    pool: Pool,
+    is_causal: bool,
+    pub device: Device,
+
+    span: tracing::Span,
+}
+
+impl FlashQwen2Model {
+    pub fn load(
+        vb: VarBuilder,
+        config: &Qwen2Config,
+        model_type: ModelType,
+        enable_fp8_dynamic: bool,
+    ) -> Result<Self> {
+        crate::flash_attn::validate_packed_device(&vb)?;
+
+        let pool = match model_type {
+            ModelType::Decision => candle::bail!("Typed decisions require a Laya checkpoint"),
+            ModelType::Classifier => {
+                candle::bail!("`classifier` model type is not supported for Qwen2")
+            }
+            ModelType::Embedding(pool) => pool,
+        };
+
+        // Pushing the prefix for `model` is apparently only required if the model architecture is
+        // ForCausalLM as it contains the `lm_head`, other than that, the `model` key won't be
+        // present e.g. a model without the `model` key as it's a `Qwen2Model` instance not a
+        // `Qwen2ModelForCausalLM` is https://huggingface.co/mims-harvard/ToolRAG-T1-GTE-Qwen2-1.5B
+        let vb = if vb.contains_tensor("model.embed_tokens.weight") {
+            vb.pp("model")
+        } else {
+            vb
+        };
+
+        let embeddings = Embedding::new(
+            vb.pp("embed_tokens")
+                .get((config.vocab_size, config.hidden_size), "weight")?,
+            config.hidden_size,
+        );
+
+        let layers = (0..config.num_hidden_layers)
+            .map(|index| {
+                Qwen2Layer::load(vb.pp(format!("layers.{index}")), config, enable_fp8_dynamic)
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        let norm = RMSNorm::load(vb.pp("norm"), config.hidden_size, config.rms_norm_eps)?;
+
+        let inv_freqs = get_inv_freqs(
+            layers[0].attention.attention_head_size,
+            config.rope_theta,
+            vb.device(),
+            None,
+        )?;
+        let (cos_cache, sin_cache) = get_cos_sin(
+            config.max_position_embeddings,
+            &inv_freqs,
+            vb.dtype(),
+            false,
+        )?;
+
+        Ok(Self {
+            embeddings,
+            layers,
+            norm,
+            cos_cache,
+            sin_cache,
+            pool,
+            is_causal: config.is_causal,
+            device: vb.device().clone(),
+            span: tracing::span!(tracing::Level::TRACE, "model"),
+        })
+    }
+
+    pub fn forward(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
+        let _enter = self.span.enter();
+
+        let batch_size = batch.cumulative_seq_lengths.len() - 1;
+
+        // Create compact/unfold tensors and get embeddings
+        let (input_ids, compact_tensors) = CompactUnfoldTensors::from_batch(&batch, &self.device)?;
+        let mut hidden_states = self.embeddings.forward(&input_ids)?.contiguous()?;
+
+        let cu_seqlens = Tensor::from_vec(
+            batch.cumulative_seq_lengths.clone(),
+            batch_size + 1,
+            &self.device,
+        )?;
+        #[cfg(feature = "fa4")]
+        let _fa4_batch =
+            crate::fa4_native::prepare_batch(&cu_seqlens, &batch.cumulative_seq_lengths)?;
+
+        // sin and cos are applied on the compact formation, therefore should be on the compact array
+        let cos = index_select(&self.cos_cache, &compact_tensors.position_ids_compact, 0)?;
+        let sin = index_select(&self.sin_cache, &compact_tensors.position_ids_compact, 0)?;
+
+        let mut residual = None;
+        for layer in &self.layers {
+            let (h, r) = layer.forward(
+                &hidden_states,
+                residual.as_ref(),
+                &cu_seqlens,
+                &cos,
+                &sin,
+                batch.max_length as usize,
+                &compact_tensors,
+            )?;
+            hidden_states = h;
+            residual = Some(r);
+        }
+
+        let (outputs, _) = self.norm.forward(&hidden_states, residual.as_ref())?;
+
+        // Expand final outputs to original layout for pooling/raw extraction
+        let outputs = compact_tensors.scatter_unfold(&outputs)?;
+
+        let has_pooling_requests = !batch.pooled_indices.is_empty();
+        let has_raw_requests = !batch.raw_indices.is_empty();
+
+        let pooled_embeddings = if has_pooling_requests {
+            match self.pool {
+                // CLS and LastToken pooling
+                Pool::Cls | Pool::LastToken => {
+                    if batch_size > 1 {
+                        // Get token indices form cu_seqlens
+                        let mut indices = match self.pool {
+                            Pool::Cls => cu_seqlens.narrow(0, 0, batch_size)?,
+                            Pool::LastToken => {
+                                let end = cu_seqlens.narrow(0, 1, batch_size)?;
+                                (&end - &end.ones_like()?)?
+                            }
+                            _ => unreachable!(),
+                        };
+
+                        // If raw_indices is empty, we don't need to do anything with
+                        // the pooled_indices
+                        if has_raw_requests {
+                            // We need the pooled indices to select the correct cls indices
+                            let pooled_indices = Tensor::from_vec(
+                                batch.pooled_indices.clone(),
+                                batch.pooled_indices.len(),
+                                &self.device,
+                            )?;
+
+                            // Only select indices that requires pooling
+                            indices = index_select(&indices, &pooled_indices, 0)?
+                        }
+
+                        // Select tokens
+                        Some(index_select(&outputs, &indices, 0)?)
+                    } else {
+                        Some(
+                            match self.pool {
+                                Pool::Cls => outputs.i(0)?,
+                                Pool::LastToken => {
+                                    outputs.i(batch.cumulative_seq_lengths[1] as usize - 1)?
+                                }
+                                _ => unreachable!(),
+                            }
+                            .unsqueeze(0)?,
+                        )
+                    }
+                }
+                // Mean pooling
+                Pool::Mean => Some(crate::layers::mean_pool(
+                    &outputs,
+                    &batch.cumulative_seq_lengths,
+                    &batch.pooled_indices,
+                )?),
+                Pool::Splade => {
+                    unreachable!();
+                }
+            }
+        } else {
+            None
+        };
+
+        let raw_embeddings = if has_raw_requests {
+            if batch_size > 1
+                && (has_pooling_requests
+                    || batch.raw_indices.iter().copied().ne(0..batch_size as u32))
+            {
+                let shape = batch.input_ids.len();
+                // Create indexing vector for the embeddings
+                let mut final_indices: Vec<u32> = Vec::with_capacity(shape);
+                for i in batch.raw_indices.into_iter() {
+                    let i = i as usize;
+                    // Get start/end token index of this specific member of the batch
+                    let start = batch.cumulative_seq_lengths[i];
+                    let end = batch.cumulative_seq_lengths[i + 1];
+
+                    for j in start..end {
+                        // Add indices for the tokens of this specific member of the batch
+                        final_indices.push(j);
+                    }
+                }
+
+                let final_indices_length = final_indices.len();
+                let final_indices =
+                    Tensor::from_vec(final_indices, final_indices_length, &self.device)?;
+
+                // Select the tokens with final indices
+                Some(index_select(&outputs, &final_indices, 0)?)
+            } else {
+                Some(outputs)
+            }
+        } else {
+            None
+        };
+
+        Ok((pooled_embeddings, raw_embeddings))
+    }
+}
+
+impl Model for FlashQwen2Model {
+    fn supports_radix_mlp(&self) -> bool {
+        !self.is_causal
+    }
+
+    fn embed(&self, batch: Batch) -> Result<(Option<Tensor>, Option<Tensor>)> {
+        self.forward(batch)
+    }
+}
