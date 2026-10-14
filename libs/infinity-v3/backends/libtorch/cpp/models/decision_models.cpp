@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 // Ports the typed head contracts in Candle models/laya.rs and models/clef.rs.
 #include "models/decision_models.h"
+#include "helpers/transient_memory.h"
+#ifdef TEI_TORCH_CUDA_KERNELS
+#include "kernels/laya_features.h"
+#endif
 #include <ATen/ops/_flash_attention_forward.h>
 #include <cmath>
 #include <algorithm>
@@ -54,6 +58,17 @@ struct Attention {
   }
   return out(attended.contiguous().view({n,width}));
  }
+ at::Tensor packed_self(const at::Tensor& x,const PackedInput& input) const {
+  auto tokens=x.size(0),width=x.size(1),dim=width/heads;
+  TORCH_CHECK(x.is_cuda()&&(x.scalar_type()==at::kHalf||x.scalar_type()==at::kBFloat16)
+    &&dim%8==0&&dim<=256,"Packed decision attention requires CUDA FP16/BF16");
+  auto projected=at::linear(x,qkv,bias).view({tokens,3,heads,dim});
+  auto attended=std::get<0>(at::_flash_attention_forward(
+   projected.select(1,0),projected.select(1,1),projected.select(1,2),
+   input.cumulative,input.cumulative,input.max_sequence,input.max_sequence,
+   0.,false,false,1./std::sqrt(double(dim))));
+  return out(attended.contiguous().view({tokens,width}));
+ }
 };
 at::Tensor span(const at::Tensor& x,std::pair<int64_t,int64_t> interval) {
  auto [a,b]=interval;TORCH_CHECK(a>=0&&a<b&&b<=x.size(0),"Invalid decision token span");
@@ -88,6 +103,15 @@ struct OptionHead final:DecisionHead {
   for(size_t j=0;j<request.token_ids.size();++j)TORCH_CHECK(request.token_ids[j]>=0&&request.token_ids[j]<weights.size(0)&&(!external||request.token_ids[j]==int64_t(j)),"Invalid option-token/readout-row metadata");
   return request.token_ids.size();
  }
+ size_t transient_memory(const TeiDecision* requests,size_t count,const int32_t*,size_t limit)const override {
+  TransientMemoryBudget cost(limit);const auto width=positive_memory_dimension(weights.size(1));
+  for(size_t i=0;i<count;++i) {
+   const auto rows=requests[i].kind==3?size_t(1):requests[i].token_count;
+   cost.add({rows,width,8,sizeof(float)});cost.add({rows,8,sizeof(float)});cost.add({rows,4,sizeof(int64_t)});
+   // D3 projects all FP32 readout rows before selecting requested codes.
+   if(d3)cost.add({positive_memory_dimension(weights.size(0)),2,sizeof(float)});
+  }return cost.bytes();
+ }
  std::vector<DecisionResult> forward(const at::Tensor& hidden,const PackedInput& input,const std::vector<DecisionRequest>& requests) const override {
   validate(hidden,input,requests);TORCH_CHECK(hidden.size(1)==weights.size(1),"Decision hidden width mismatch");std::vector<DecisionResult> result;
   for(int64_t i=0;i<input.batch;++i){const auto& request=requests[i];auto ids=request.token_ids;
@@ -109,6 +133,10 @@ struct LayaLayer {
  Norm n1,n2;Attention attention;Linear ff1,ff2;
  LayaLayer(const Weights& w,const std::string& p,int64_t h):n1(w,p+".norm1",h),n2(w,p+".norm2",h),attention(w,p+".self_attn",h,std::max(int64_t(1),h/64),true),ff1(w,p+".linear1",h,4*h),ff2(w,p+".linear2",4*h,h){}
  at::Tensor operator()(const at::Tensor& x)const{auto n=n1(x);auto y=x+attention(n,n);return y+ff2(at::relu(ff1(n2(y))));}
+ at::Tensor packed(const at::Tensor& x,const PackedInput& input)const{
+  auto y=x+attention.packed_self(n1(x),input);
+  return y+ff2(at::relu(ff1(n2(y))));
+ }
 };
 struct LayaHead final:DecisionHead {
  at::Tensor types;std::vector<LayaLayer> layers;Norm scorer_norm;Linear scorer1,scorer2,action1,action2;int64_t width;
@@ -121,8 +149,67 @@ struct LayaHead final:DecisionHead {
   TORCH_CHECK(request.kind==DecisionRequest::Kind::Laya&&request.question_type>=0&&request.question_type<3&&!request.markers.empty(),"Invalid Laya metadata");
   return request.markers.size();
  }
+ size_t transient_memory(const TeiDecision* requests,size_t count,const int32_t* cumulative,size_t limit)const override {
+  TransientMemoryBudget cost(limit);const auto h=positive_memory_dimension(width),heads=std::max(size_t(1),h/64);
+  for(size_t i=0;i<count;++i) {
+   const auto length=positive_memory_dimension(int64_t(cumulative[i+1])-cumulative[i]);
+   const auto markers=requests[i].kind==3?size_t(1):requests[i].marker_count;
+   cost.add({length,h,32,sizeof(float)});cost.add({length,h,4,8,sizeof(float)});
+   cost.add({markers,h,32,sizeof(float)});cost.add({markers,8,sizeof(float)});
+   // Packed CUDA head uploads one type index per token and absolute marker indices.
+   if(types.is_cuda()){cost.add({length,sizeof(int64_t)});cost.add({markers,sizeof(int64_t)});}
+   if(!layers.empty()&&types.device().is_cpu())cost.add({length,length,heads,8,sizeof(float)});
+  }return cost.bytes();
+ }
+ std::vector<DecisionResult> forward_packed(const at::Tensor& hidden,const PackedInput& input,
+   const std::vector<DecisionRequest>& requests)const {
+  std::vector<int64_t> token_types(hidden.size(0)),marker_rows,marker_offsets{0};
+  for(int64_t i=0;i<input.batch;++i){
+   const auto& request=requests[i];const bool warmup=request.kind==DecisionRequest::Kind::Warmup;
+   TORCH_CHECK(warmup||request.kind==DecisionRequest::Kind::Laya,"Expected Laya marker metadata");
+   auto type=warmup?0:request.question_type;
+   TORCH_CHECK(type>=0&&type<3&&(warmup||!request.markers.empty()),"Invalid Laya question type or markers");
+   auto start=input.offsets[i],end=input.offsets[i+1];
+   TORCH_CHECK(start>=0&&end<=hidden.size(0),"Laya sequence outside packed hidden states");
+   std::fill(token_types.begin()+start,token_types.begin()+end,type);
+   if(warmup)marker_rows.push_back(start);
+   else for(auto marker:request.markers){
+    TORCH_CHECK(marker>=0&&marker<end-start,"Laya marker outside sequence");
+    marker_rows.push_back(start+marker);
+   }
+   marker_offsets.push_back(marker_rows.size());
+  }
+  auto indices_options=hidden.options().dtype(at::kLong);
+  auto h=hidden+types.index_select(0,at::tensor(token_types,indices_options));
+  for(const auto& layer:layers)h=layer.packed(h,input);
+  auto selected=h.index_select(0,at::tensor(marker_rows,indices_options));
+  auto all_logits=scorer2(at::gelu(scorer1(scorer_norm(selected)),"none")).flatten().to(at::kFloat);
+  #ifdef TEI_TORCH_CUDA_KERNELS
+  auto features=laya_action_features(all_logits,at::tensor(marker_offsets,indices_options)).to(hidden.scalar_type());
+  auto pooled=h.index_select(0,input.cumulative.narrow(0,0,input.batch));
+  auto actions=at::softmax(action2(at::gelu(action1(at::cat({pooled,features},1)),"none")).to(at::kFloat),-1).select(1,0);
+  std::vector<DecisionResult> result;result.reserve(input.batch);
+  for(int64_t i=0;i<input.batch;++i)result.push_back({all_logits.narrow(0,marker_offsets[i],marker_offsets[i+1]-marker_offsets[i]),actions.select(0,i)});
+  return result;
+  #else
+  std::vector<DecisionResult> result;result.reserve(input.batch);
+  for(int64_t i=0;i<input.batch;++i){
+   auto count=marker_offsets[i+1]-marker_offsets[i];
+   auto logits=all_logits.narrow(0,marker_offsets[i],count);
+   auto probabilities=at::softmax(logits,0),sorted=std::get<0>(probabilities.sort(0,true));
+   auto top1=sorted.select(0,0),top2=count>1?sorted.select(0,1):at::zeros_like(top1);
+   auto entropy=-(probabilities*probabilities.clamp_min(1e-9).log()).sum()/std::log(double(std::max(int64_t(2),count)));
+   auto normalized_count=at::full({},double(std::max(int64_t(2),count))/255.,logits.options());
+   auto features=at::stack({top1,top1-top2,entropy,normalized_count}).to(hidden.scalar_type());
+   auto action=at::softmax(action2(at::gelu(action1(at::cat({h.select(0,input.offsets[i]),features}).unsqueeze(0)),"none")).to(at::kFloat),-1).select(0,0).select(0,0);
+   result.push_back({logits,action});
+  }
+  return result;
+  #endif
+ }
  std::vector<DecisionResult> forward(const at::Tensor& hidden,const PackedInput& input,const std::vector<DecisionRequest>& requests)const override{
   validate(hidden,input,requests);TORCH_CHECK(hidden.size(1)==width,"Laya hidden width mismatch");std::vector<DecisionResult> result;
+  if(hidden.is_cuda())return forward_packed(hidden,input,requests);
   for(int64_t i=0;i<input.batch;++i){auto request=requests[i];if(request.kind==DecisionRequest::Kind::Warmup){request.question_type=0;request.markers={0};}else TORCH_CHECK(request.kind==DecisionRequest::Kind::Laya,"Expected Laya marker metadata");
    auto length=input.offsets[i+1]-input.offsets[i];TORCH_CHECK(request.question_type>=0&&request.question_type<3&&!request.markers.empty(),"Invalid Laya question type or markers");
    for(auto marker:request.markers)TORCH_CHECK(marker>=0&&marker<length,"Laya marker outside sequence");
@@ -153,8 +240,10 @@ struct FieldDecoder {
 struct ClefHead final:DecisionHead {
  Norm hidden_norm,summary_norm,field_norm,option_norm;std::vector<Linear> projections;at::Tensor types,words;
  std::vector<Routing> routing;std::vector<FieldDecoder> decoder;Linear scorer1,scorer2;double prior_scale,joint_scale,gate;int64_t width;
+ int64_t memory_linear=0,memory_heads=0;
  ClefHead(const Options&cfg,const Options&backbone,const Weights&w,const Weights&bw,int64_t h):hidden_norm(w,"hidden_norm",h),summary_norm(w,"option_summary_norm",cfg.integer("width")),field_norm(w,"field_norm",cfg.integer("width")),option_norm(w,"option_norm",cfg.integer("width")),types(weight(w,"type_embedding.weight")),words(lexical(backbone,bw)),scorer1(w,"residual_scorer.0",4*cfg.integer("width"),cfg.integer("width")),scorer2(w,"residual_scorer.3",cfg.integer("width"),1),width(cfg.integer("width")){
   auto heads=cfg.integer("heads"),ff=cfg.integer("feedforward");TORCH_CHECK(cfg.integer("hidden_size")==h&&width>0&&heads>0&&width%heads==0&&ff>0&&types.sizes()==at::IntArrayRef({3,width}),"Invalid Clef configuration");
+  memory_linear=std::max(width,transient_linear_width(w));memory_heads=heads;
   for(auto name:{"memory_projection","question_projection","option_question_projection","global_projection","option_context_projection","option_lexical_projection"})projections.emplace_back(w,name,h,width,false);
   for(int64_t i=0;i<cfg.integer("routing_layers");++i)routing.emplace_back(w,"evidence_layers."+std::to_string(i),width,heads,ff);
   for(int64_t i=0;i<cfg.integer("layers");++i)decoder.emplace_back(w,"layers."+std::to_string(i),width,heads,ff);
@@ -187,6 +276,26 @@ struct ClefHead final:DecisionHead {
    auto features=at::cat({f,option,f*option,(f-option).abs()},1);auto residual=scorer2(at::gelu(scorer1(features),"none")).squeeze(1);
    logits.push_back(prior+(cosine*joint_scale+residual)*gate);
   }return at::cat(logits).to(at::kFloat);
+ }
+ size_t transient_memory(const TeiDecision* requests,size_t count,const int32_t* cumulative,size_t limit)const override {
+  TransientMemoryBudget cost(limit);const auto h=positive_memory_dimension(width),
+    linear=positive_memory_dimension(memory_linear),heads=positive_memory_dimension(memory_heads),
+    lexical=positive_memory_dimension(words.size(1));
+  for(size_t i=0;i<count;++i) {
+   const auto length=positive_memory_dimension(int64_t(cumulative[i+1])-cumulative[i]);
+   const bool warm=requests[i].kind==3;const auto fields=warm?size_t(1):requests[i].field_count;
+   cost.add({length,h,32,sizeof(float)});cost.add({length,lexical,32,sizeof(float)});
+   cost.add({fields,h,32,sizeof(float)});cost.add({fields,linear,8,sizeof(float)});
+   if(types.device().is_cpu()&&!decoder.empty()) {
+    cost.add({fields,fields,heads,8,sizeof(float)});cost.add({fields,length,heads,8,sizeof(float)});
+   }
+   for(size_t j=0;j<fields;++j) {
+    const auto options=warm?size_t(1):requests[i].fields[j].option_count;
+    cost.add({options,h,32,sizeof(float)});cost.add({options,linear,8,sizeof(float)});
+    cost.add({options,lexical,32,sizeof(float)});cost.add({options,8,sizeof(float)});
+    if(types.device().is_cpu()&&!routing.empty())cost.add({options,length,heads,8,sizeof(float)});
+   }
+  }return cost.bytes();
  }
  std::vector<DecisionResult> forward(const at::Tensor&hidden,const PackedInput&input,const std::vector<DecisionRequest>&requests)const override{
   validate(hidden,input,requests);std::vector<DecisionResult> result;

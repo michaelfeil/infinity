@@ -185,6 +185,20 @@ int main(int argc, char** argv) {
       alias_model->ready();
       auto alias_output = alias_model->forward({ids,types,positions,cu,offsets,2,5});
       TORCH_CHECK(at::equal(packed,alias_output),"Nomic GELU alias changed checkpoint layout or outputs");
+      for(int every:{0,1}) {
+        auto dense=o;dense.values["num_experts"]="8";dense.values["n_inner"]="48";
+        dense.values["moe_every_n_layers"]=std::to_string(every);
+        if(every)dense.values["moe_top_k"]="2";
+        auto dense_model=tei::create_encoder(dense,w,device,dtype);dense_model->ready();
+        const auto profile=dense_model->transient_memory_profile();
+        TORCH_CHECK(profile&&profile->experts==0&&profile->top_k==1,
+          "Dense Nomic expert metadata activated a nonexistent routed layer");
+        TORCH_CHECK(tei::estimate_transient_memory(*profile,8,2,5,0,2*H,nullptr,0,nullptr,0,512UL<<20)>0,
+          "Supported dense Nomic configuration failed transient admission");
+        auto actual=dense_model->forward({ids,types,positions,cu,offsets,2,5});
+        TORCH_CHECK(actual.sizes()==packed.sizes()&&at::isfinite(actual).all().item<bool>(),
+          "Dense Nomic expert metadata rejected valid inference");
+      }
     }
     if (std::string(type) == "new" || std::string(type) == "jina") {
       // The backbone has root keys. Classifier pooler selection is a separate

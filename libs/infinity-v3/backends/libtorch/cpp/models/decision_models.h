@@ -23,6 +23,9 @@ class DecisionHead {
 public:
  virtual ~DecisionHead()=default;
  virtual int64_t output_count(const DecisionRequest&) const=0;
+ virtual size_t transient_memory(const TeiDecision*,size_t,const int32_t*,size_t) const {
+  TORCH_CHECK(false,"Unknown native typed decision transient tensor profile");
+ }
  virtual std::vector<DecisionResult> forward(const at::Tensor& packed_hidden,
   const PackedInput&,const std::vector<DecisionRequest>&) const=0;
 };

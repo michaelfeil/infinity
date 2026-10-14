@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 #include "helpers/admission_error.h"
+#include "helpers/device_admission.h"
 #include <ATen/ATen.h>
 #include "helpers/pinned_admission.h"
 #include <algorithm>
@@ -49,6 +50,7 @@ class OutputLease {
   at::Device device;
   size_t input_cursor = 0;
   bool output_started = false;
+  std::shared_ptr<DeviceMemoryPermit> memory_permit;
   // Called under the pool lock, before allocating replacement storage.
   void make_room(size_t bytes, size_t replaced, bool shrink_output = false) {
     require_memory_admission(bytes <= pool->max_bytes, "Native output staging exceeds its memory budget");
@@ -111,6 +113,7 @@ public:
     catch (...) { /* CUDA failures are reported by submit/wait. */ }
 #endif
     slot->gpu.clear();
+    memory_permit.reset();
     { std::lock_guard lock(pool->mutex);
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (!recorded) {
@@ -147,6 +150,7 @@ public:
       slot->device_output = at::empty({capacity},
           at::TensorOptions().dtype(at::kFloat).device(device));
   }
+  void admit_memory(std::shared_ptr<DeviceMemoryPermit> permit) { memory_permit=std::move(permit); }
   at::Tensor upload(const at::Tensor& host) {
     TORCH_CHECK(host.device().is_cpu() && host.is_contiguous(), "Invalid staged input");
     std::unique_lock lock(pool->mutex);
@@ -189,6 +193,7 @@ public:
     ready.synchronize();
     finished = true;
 #endif
+    memory_permit.reset();
     return slot->host.data_ptr<float>();
   }
 };

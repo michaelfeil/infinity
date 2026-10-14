@@ -10,6 +10,22 @@ int main(int argc,char** argv) {
   c10::InferenceMode guard;
   const c10::Device device(argc>1?argv[1]:"cuda:0");
   at::set_num_threads(1);at::manual_seed(42261);
+  // Unselected MoE experts have no rows. Their activation must be a valid
+  // empty tensor and must not poison the next nonempty CUDA operation.
+  for(bool gelu:{false,true}) {
+    auto options=at::TensorOptions().device(device).dtype(at::kBFloat16);
+    for(auto shape:{std::vector<int64_t>{0,12},std::vector<int64_t>{3,0}}) {
+      auto input=at::empty(shape,options);
+      auto gated=tei::gemma_gated_cuda(input,gelu);
+      TORCH_CHECK(gated.size(0)==shape[0]&&gated.size(1)==shape[1]/2&&gated.numel()==0
+        &&gated.device()==device&&gated.scalar_type()==at::kBFloat16,"Empty expert gate changed its tensor contract");
+      auto unary=tei::gemma_activation_cuda(input,gelu);
+      TORCH_CHECK(unary.sizes()==input.sizes()&&unary.device()==device
+        &&unary.scalar_type()==at::kBFloat16,"Empty expert activation changed its tensor contract");
+    }
+    auto valid=tei::gemma_gated_cuda(at::ones({1,12},options),gelu);
+    TORCH_CHECK(at::isfinite(valid).all().item<bool>(),"Empty expert activation poisoned nonempty recovery");
+  }
   for(int64_t width:{4,64,768,2048}) {
     auto input=at::randn({7,3,width},at::TensorOptions().device(device).dtype(at::kBFloat16));
     auto scale=at::randn({width},input.options()).to(at::kFloat);

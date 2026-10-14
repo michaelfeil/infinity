@@ -26,6 +26,8 @@ mod mistral;
 mod modernbert;
 mod mpnet;
 mod nomic;
+mod ultrabert;
+pub use ultrabert::{UltraBertConfig, UltraBertModel};
 mod qwen2;
 mod qwen3;
 mod qwen3_moe;

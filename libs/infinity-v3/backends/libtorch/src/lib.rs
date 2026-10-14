@@ -608,6 +608,24 @@ impl LibtorchBackend {
         options["_cuda_graph_max_tokens"] = graph_max_tokens.into();
         for (env, key, default, minimum) in [
             (
+                "INFINITY_TORCH_TRANSIENT_MAX_BYTES",
+                "_transient_max_bytes",
+                8i64 << 30,
+                1,
+            ),
+            (
+                "INFINITY_TORCH_DEVICE_MEMORY_HEADROOM_BYTES",
+                "_device_memory_headroom_bytes",
+                1i64 << 30,
+                1,
+            ),
+            (
+                "INFINITY_TORCH_RETAINED_WORKSPACE_MAX_BYTES",
+                "_retained_workspace_max_bytes",
+                512i64 << 20,
+                1,
+            ),
+            (
                 "INFINITY_TORCH_INPUT_UPLOAD_MAX_BYTES",
                 "_input_upload_max_bytes",
                 512 << 20,
@@ -1434,7 +1452,7 @@ impl LibtorchBackend {
                         .map_or(std::ptr::null(), |radix| radix),
                 )
             })
-            .ok_or_else(|| native_failure())?;
+            .ok_or_else(native_failure)?;
             let output = NativeOutput { handle, size };
             return Ok(Inference::Deferred(Box::new(move || {
                 let mut result =

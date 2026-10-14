@@ -410,7 +410,10 @@ async fn initialize_model(
     let mut st_config: Option<STConfig> = None;
     for name in ST_CONFIG_NAMES {
         // New multimodal ST files describe modalities rather than max_seq_length.
-        if matches!(config.model_type.as_str(), "qwen3_vl" | "embedding_gemma2") {
+        if matches!(
+            config.model_type.as_str(),
+            "qwen3_vl" | "embedding_gemma2" | "ultrabert"
+        ) {
             break;
         }
         let config_path = model_root.join(name);
@@ -998,6 +1001,10 @@ impl ModelConfig {
     }
 
     fn resolve_text_config(&mut self) -> anyhow::Result<()> {
+        // UltraBERT omits this field; its published tokenizer supports 32K.
+        if self.model_type == "ultrabert" && self.max_position_embeddings == 0 {
+            self.max_position_embeddings = 32768;
+        }
         if matches!(
             self.model_type.as_str(),
             "gemma4"
@@ -1388,6 +1395,20 @@ mod libtorch_auto_dtype_tests {
 ))]
 mod auto_dtype_tests {
     use super::*;
+
+    #[test]
+    fn ultrabert_resolves_released_context_limit_and_preserves_overrides() {
+        for (limit, expected) in [(None, 32768), (Some(8192), 8192)] {
+            let mut value =
+                serde_json::json!({"model_type":"ultrabert", "architectures":["UltrabertModel"]});
+            if let Some(limit) = limit {
+                value["max_position_embeddings"] = limit.into();
+            }
+            let mut config: ModelConfig = serde_json::from_value(value).unwrap();
+            config.resolve_text_config().unwrap();
+            assert_eq!(config.max_position_embeddings, expected);
+        }
+    }
 
     #[test]
     fn decoder_classifiers_resolve_hf_default_and_explicit_labels() {

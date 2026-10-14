@@ -4,6 +4,8 @@
 #include "helpers/options.h"
 #include "helpers/fp8_linear.h"
 #include "helpers/attention.h"
+#include "helpers/vendor_error.h"
+#include "helpers/workspace_admission.h"
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #include "kernels/encoder_norm.h"
@@ -55,7 +57,8 @@ struct Bert : tei::Model {
   };
   // All projections execute serially on the model's stream. Keep one stable
   // allocation for every plan, including addresses retained by CUDA graphs.
-  at::Tensor classifier_workspace;
+  mutable std::shared_ptr<tei::WorkspaceMemoryPermit> classifier_workspace_permit;
+  mutable at::Tensor classifier_workspace;
   mutable std::map<std::array<int64_t,5>,std::unique_ptr<ClassifierPlan>> classifier_plans;
 #endif
   Bert(TeiConfig cfg, c10::Device dev, at::ScalarType type): config(cfg), device(dev), dtype(type) {}
@@ -74,7 +77,7 @@ struct Bert : tei::Model {
         && matrix.size(1)==x.size(1)
         && (matrix.size(0)%16==0 || (!gelu && matrix.size(0)==1)) && x.size(1)%16==0
         && bias.dim()==1 && bias.numel()==matrix.size(0)
-        && at::cuda::getCUDABlasLtWorkspaceSize()<=static_cast<size_t>(classifier_workspace.numel())
+        && (!classifier_workspace.defined() || at::cuda::getCUDABlasLtWorkspaceSize()<=static_cast<size_t>(classifier_workspace.numel()))
         && reinterpret_cast<uintptr_t>(x.const_data_ptr())%256==0
         && reinterpret_cast<uintptr_t>(matrix.const_data_ptr())%256==0
         && reinterpret_cast<uintptr_t>(bias.const_data_ptr())%256==0) {
@@ -109,9 +112,20 @@ struct Bert : tei::Model {
       }
       if(found!=classifier_plans.end() && found->second->valid) {
         auto& plan=*found->second;auto pointer=bias.const_data_ptr();
+        if(plan.bytes>0 && !classifier_workspace.defined()) {
+          auto permit=tei::reserve_workspace_memory(device.index(),limit);
+          // Keep supported descriptors retryable while another model owns the
+          // credit. The stable tensor and permit outlive all captured uses.
+          if(!permit)return gelu?at::_addmm_activation(bias,x,matrix.t(),1,1,true):at::linear(x,matrix,bias);
+          auto workspace=at::empty({static_cast<int64_t>(limit)},x.options().dtype(at::kByte));
+          classifier_workspace=std::move(workspace);
+          classifier_workspace_permit=std::move(permit);
+        }
         if(cublasLtMatmulDescSetAttribute(plan.operation,CUBLASLT_MATMUL_DESC_BIAS_POINTER,&pointer,sizeof(pointer))==CUBLAS_STATUS_SUCCESS) {
           auto output=at::empty({m,n},x.options());const float alpha=1.f,beta=0.f;
           auto status=cublasLtMatmul(at::cuda::getCurrentCUDABlasLtHandle(),plan.operation,&alpha,matrix.const_data_ptr(),plan.weight,x.const_data_ptr(),plan.input,&beta,output.const_data_ptr(),plan.output,output.mutable_data_ptr(),plan.output,&plan.algorithm,plan.bytes?classifier_workspace.mutable_data_ptr():nullptr,plan.bytes,at::cuda::getCurrentCUDAStream());
+          if(status==CUBLAS_STATUS_ALLOC_FAILED)
+            throw tei::VendorAllocationError{"BERT classifier cublasLtMatmul",static_cast<int32_t>(status)};
           if(status==CUBLAS_STATUS_SUCCESS)return output;
         }
         // Match ATen's retry policy and stop resubmitting this failed plan.
@@ -165,7 +179,10 @@ struct Bert : tei::Model {
   void check(const std::string& name, std::initializer_list<int64_t> shape) const {
     TORCH_CHECK(w(name).sizes() == at::IntArrayRef(shape), "Invalid shape for ", name);
   }
+  int64_t transient_linear=0,transient_vocabulary=0;
   void ready() override {
+    const auto checkpoint_profile=tei::transient_profile(weights,config.hidden,config.heads,dtype,device.is_cpu());
+    transient_linear=checkpoint_profile.linear;transient_vocabulary=checkpoint_profile.vocab;
     TORCH_CHECK(device.is_cpu() || device.is_cuda(),
       "LibTorch 2.14.1 varlen Flash Attention requires CUDA. CPU supports an unpadded reference path; MPS/XPU are not implemented.");
     if (device.is_cuda()) {
@@ -202,9 +219,6 @@ struct Bert : tei::Model {
       && classification_width()>0
       && !options.boolean("_fp8_dynamic",false)
       && at::globalContext().blasPreferredBackend()==at::BlasBackend::Cublaslt;
-    if(cached_classifier_gemm)
-      classifier_workspace=at::empty({static_cast<int64_t>(at::cuda::getCUDABlasLtWorkspaceSize())},
-                                    at::TensorOptions().device(device).dtype(at::kByte));
 #endif
 #ifdef TEI_TORCH_CUDA_KERNELS
     // BERT and its aliases share Candle's biased LayerNorm primitive: residual
@@ -313,6 +327,11 @@ struct Bert : tei::Model {
       bias = tei::weight(weights, "cls.predictions.bias");
     }
     return at::log1p(head_activation(transformed, matrix, bias, 2));
+  }
+  std::optional<tei::TransientMemoryProfile> transient_memory_profile() const override {
+    auto p=tei::transient_profile(weights,config.hidden,config.heads,dtype,device.is_cpu());
+    p.linear=std::max(p.linear,transient_linear);p.vocab=std::max(p.vocab,transient_vocabulary);
+    return p;
   }
   int64_t output_width() const override { return config.hidden; }
   at::Tensor forward(const tei::PackedInput& input) const override {

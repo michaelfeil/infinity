@@ -2,6 +2,7 @@
 #include "batching/radix.h"
 #include "models/decoder_models.h"
 #include "kernels/fast_kernels.h"
+#include "helpers/vendor_error.h"
 #include <ATen/ops/_fused_rms_norm.h>
 #include <ATen/ops/_flash_attention_forward.h>
 #include <c10/core/InferenceMode.h>
@@ -50,6 +51,39 @@ public:
    TORCH_CHECK(false,"Injected warmup allocation failure");
   }
   TORCH_CHECK(queued.query(),"Fallback began before failed warmup work drained");
+  return input.ids.to(at::kFloat).unsqueeze(1);
+ }
+};
+class VendorFailure final:public Model {
+ const bool during_capture;
+ mutable int calls=0;
+ mutable bool injected=false;
+ mutable at::cuda::CUDAEvent queued;
+public:
+ explicit VendorFailure(bool capture):during_capture(capture){}
+ void ready() override{}
+ at::Tensor forward(const PackedInput& input) const override {
+  ++calls;
+  const auto stream=c10::cuda::getCurrentCUDAStream(input.ids.get_device());
+  cudaStreamCaptureStatus status;
+  TORCH_CHECK(cudaStreamIsCapturing(stream.stream(),&status)==cudaSuccess,"Unable to inspect vendor failure stream");
+  if(!injected && (!during_capture || status==cudaStreamCaptureStatusActive)) {
+   injected=true;
+   if(!during_capture) {
+    TORCH_CHECK(cudaLaunchHostFunc(stream.stream(),[](void*) {
+     std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    },nullptr)==cudaSuccess,"Unable to enqueue vendor warmup work");
+    queued.record(stream);
+   } else {
+    TORCH_CHECK(calls==4,"Vendor capture failure must follow all three warmups");
+    auto pending=input.ids.to(at::kFloat).unsqueeze(1);
+   }
+   throw VendorAllocationError("Injected numeric vendor allocation failure",3);
+  }
+  if(injected) {
+   TORCH_CHECK(status==cudaStreamCaptureStatusNone,"Vendor fallback left capture active");
+   if(!during_capture)TORCH_CHECK(queued.query(),"Vendor fallback began before warmup drained");
+  }
   return input.ids.to(at::kFloat).unsqueeze(1);
  }
 };
@@ -404,6 +438,14 @@ int main(){c10::InferenceMode guard;admission_test();retired_output_pool_test();
  }
  TORCH_CHECK(failed_cache.size()==0 && failed_cache.stats().attempts==1,
    "Failed warmup was retained or repeatedly captured");
+ for(bool during_capture:{false,true}) {
+  VendorFailure vendor_failure(during_capture);CudaGraphCache vendor_cache(1,4096,1);
+  for(int repeat=0;repeat<2;++repeat)
+   TORCH_CHECK(at::equal(vendor_cache.forward(vendor_failure,input),input.ids.to(at::kFloat).unsqueeze(1)),
+     "Typed vendor allocation failure changed eager recovery output");
+  TORCH_CHECK(vendor_cache.size()==0 && vendor_cache.stats().attempts==1,
+    "Typed vendor allocation failure retained or repeatedly captured a graph");
+ }
  Uncapturable unsupported;CudaGraphCache fallback(4,4096,1);
  for(int i=0;i<2;++i){auto actual=fallback.forward(unsupported,input);TORCH_CHECK(actual[0][0].item<float>()==12,"Graph fallback changed result");}
  TORCH_CHECK(fallback.size()==0,"Unsupported model unexpectedly captured");

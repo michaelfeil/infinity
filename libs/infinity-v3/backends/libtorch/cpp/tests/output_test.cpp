@@ -11,8 +11,8 @@
 #include <iostream>
 #include <utility>
 
-// Exercise the production C ABI catch and error-unwind path with a real CUDA
-// allocator rejection. The large payload is never transferred or read.
+// Exercise quota-aware request admission without reading the large payload,
+// classify an actual startup CUDA OOM, and check bounded pinned staging.
 void native_allocator_error_test(const at::Device& device,int pressure=0) {
   const bool bounded_staging=pressure==1;
   TeiConfig cfg{16,2,2,24,32,32,1,1e-6,0};
@@ -104,16 +104,42 @@ void native_allocator_error_test(const at::Device& device,int pressure=0) {
     const auto* unread=reinterpret_cast<const int64_t*>(uintptr_t(1));int32_t huge[]={0,4000000};
     std::unique_ptr<void,decltype(&tei_output_destroy)> rejected(tei_forward_submit(engine.get(),unread,unread,
       unread,huge,1,4000000,0,nullptr,0,&row,1,64000000,nullptr,nullptr,0,nullptr,0,nullptr),tei_output_destroy);
-    TORCH_CHECK(!rejected&&tei_last_error_kind()==3,"Actual allocator OOM was not classified as recoverable memory pressure");
-    // Reuse the other slot's small output allocation. Real host input is
-    // required here: failure happens in forward_radix's upload, after the
-    // outer submit operation has created its lease and copied the input pin.
+    TORCH_CHECK(!rejected&&tei_last_error_kind()==2,"Allocator quota did not reject before output allocation/upload");
     std::vector<int64_t> real_input(4000000,0);
     std::unique_ptr<void,decltype(&tei_output_destroy)> upload_rejected(tei_forward_submit(engine.get(),
       real_input.data(),real_input.data(),real_input.data(),huge,1,4000000,0,nullptr,0,nullptr,0,0,
       nullptr,nullptr,0,nullptr,0,nullptr),tei_output_destroy);
-    TORCH_CHECK(!upload_rejected&&tei_last_error_kind()==3,
-      "Nested forward allocation failure lost its recoverable classification");
+    TORCH_CHECK(!upload_rejected&&tei_last_error_kind()==2,
+      "Allocator quota did not reject before nested upload");
+    // Weight upload is a startup C ABI path, outside serving admission. Use
+    // real readable host data to preserve an actual allocator-OOM check.
+    // Inactive graph/cache segments can be reclaimed during allocation.
+    // Bound against active bytes so reclamation cannot make this probe fit.
+    C10_CUDA_CHECK(cudaDeviceSynchronize());
+    c10::cuda::CUDACachingAllocator::emptyCache();
+    const auto stats=c10::cuda::CUDACachingAllocator::getDeviceStats(device.index());
+    const auto active=stats.allocated_bytes[0].current;
+    const auto reserved=stats.reserved_bytes[0].current;
+    TORCH_CHECK(active>=0&&reserved>=active,"Invalid allocator geometry for startup OOM injection");
+    TORCH_CHECK(uint64_t(reserved)<=uint64_t(INT64_MAX)-(2<<20)-2,
+      "Startup OOM probe dimension overflow");
+    const auto startup_quota=active+(1<<20);
+    const int64_t elements=(reserved+(2<<20))/2+1;
+    const auto target_bytes=elements*2;
+    TORCH_CHECK(target_bytes>reserved+(1<<20),"Startup probe could fit a retained cached block");
+    size_t current_free=0,current_total=0;C10_CUDA_CHECK(cudaMemGetInfo(&current_free,&current_total));
+    TORCH_CHECK(size_t(target_bytes)<current_free/2,"Insufficient physical headroom for bounded quota probe");
+    std::vector<float> startup_input(static_cast<size_t>(elements),0.f);int64_t shape[]={elements};
+    std::cout<<"startup quota probe active="<<active<<" reserved="<<reserved
+      <<" quota="<<startup_quota<<" target_bytes="<<target_bytes<<" driver_free="<<current_free<<"\n";
+    c10::cuda::CUDACachingAllocator::setMemoryFraction(double(startup_quota)/current_total,device.index());
+    const auto weight_status=tei_weight(engine.get(),"__quota_recovery_probe",
+      reinterpret_cast<const uint8_t*>(startup_input.data()),shape,1,0);
+    const auto oom_after=c10::cuda::CUDACachingAllocator::getDeviceStats(device.index()).num_ooms;
+    TORCH_CHECK(weight_status!=0&&tei_last_error_kind()==3&&oom_after>stats.num_ooms,
+      "Actual startup allocator OOM lost its recoverable classification: status=",weight_status,
+      " kind=",tei_last_error_kind()," CUDA_ooms_before=",stats.num_ooms," after=",oom_after,
+      " diagnostic=",tei_error());
   } catch (...) {c10::cuda::CUDACachingAllocator::setMemoryFraction(original,device.index());throw;}
   c10::cuda::CUDACachingAllocator::setMemoryFraction(original,device.index());valid();
 }

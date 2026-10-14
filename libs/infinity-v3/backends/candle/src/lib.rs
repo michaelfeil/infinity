@@ -93,6 +93,8 @@ impl<'de> Deserialize<'de> for BertConfigWrapper {
 #[derive(Deserialize)]
 #[serde(tag = "model_type", rename_all = "kebab-case")]
 enum Config {
+    #[serde(rename = "ultrabert")]
+    UltraBert(models::UltraBertConfig),
     #[cfg(feature = "experimental-deberta")]
     #[serde(rename = "deberta-v2")]
     Deberta(crate::models::DebertaConfig),
@@ -392,6 +394,9 @@ impl CandleBackend {
         };
 
         let model: Result<Box<dyn Model + Send>, BackendError> = match config {
+            Config::UltraBert(config) => Ok(Box::new(
+                models::UltraBertModel::load(vb, &config, model_type).s()?,
+            )),
             #[cfg(feature = "experimental-deberta")]
             Config::Deberta(config) => Ok(Box::new(
                 models::DebertaModel::load(vb, &config, model_type).s()?,

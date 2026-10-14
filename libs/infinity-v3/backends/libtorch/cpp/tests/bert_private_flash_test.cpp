@@ -1,10 +1,73 @@
 #include "bridge.h"
+#include "models/bert_model.h"
+#include "batching/cuda_graph.h"
 #include <ATen/ATen.h>
 #include <cmath>
 #include <iostream>
 #include <map>
 #include <vector>
 static void check(int32_t code) { TORCH_CHECK(code==0,tei_error()); }
+static void classifier_workspace_recovery(const TeiConfig& cfg,const std::map<std::string,at::Tensor>& source,const c10::Device& device) {
+  if(at::cuda::getDeviceProperties(device.index())->major!=9) return;
+  struct RestoreBackend {
+    at::BlasBackend prior=at::globalContext().blasPreferredBackend();
+    ~RestoreBackend(){at::globalContext().setBlasPreferredBackend(prior);}
+  } restore;
+  at::globalContext().setBlasPreferredBackend(at::BlasBackend::Cublaslt);
+  auto state=tei::workspace_admission_state(device.index());
+  auto retained=[&]{std::lock_guard lock(state->mutex);return state->retained;};
+  const auto baseline=retained();
+  auto wide_cfg=cfg;wide_cfg.intermediate=3072;
+  auto gpu_options=at::TensorOptions().device(device).dtype(at::kHalf);
+  auto intermediate=at::randn({3072,cfg.hidden},gpu_options)*.03;
+  auto intermediate_bias=at::zeros({3072},gpu_options);
+  auto down=at::randn({cfg.hidden,3072},gpu_options)*.03;
+  auto build=[&]{
+    const auto before_ready=retained();
+    auto model=std::make_unique<Bert>(wide_cfg,device,at::kHalf);
+    model->options.values["model_type"]="bert";
+    for(const auto& [name,tensor]:source)model->weights[name]=tensor.to(device);
+    model->weights["encoder.layer.0.intermediate.dense.weight"]=intermediate;
+    model->weights["encoder.layer.0.intermediate.dense.bias"]=intermediate_bias;
+    model->weights["encoder.layer.0.output.dense.weight"]=down;
+    model->weights["classifier.weight"]=at::randn({16,cfg.hidden},model->weights.begin()->second.options())*.03;
+    model->weights["classifier.bias"]=at::zeros({16},model->weights.begin()->second.options());
+    model->ready();TORCH_CHECK(model->cached_classifier_gemm,"Eligible BERT classifier fixture did not select cached GEMM");TORCH_CHECK(retained()==before_ready,"BERT ready allocated retained classifier workspace");return model;
+  };
+  bool exercised=false;
+  for(const bool gelu:{false,true}) {
+  for(int64_t rows:{32,128,512}) {
+    auto x=at::randn({rows,gelu?cfg.hidden:int64_t(3072)},at::TensorOptions().device(device).dtype(at::kHalf));
+    auto reference_model=build();auto matrix=reference_model->w(gelu?"encoder.layer.0.intermediate.dense.weight":"encoder.layer.0.output.dense.weight");
+    auto bias=reference_model->w(gelu?"encoder.layer.0.intermediate.dense.bias":"encoder.layer.0.output.dense.bias");
+    auto reference=reference_model->classifier_projection(x,matrix,bias,gelu).cpu();
+    for(const auto& [key,plan]:reference_model->classifier_plans)
+      std::cout<<"BERT classifier natural plan rows="<<rows<<" input="<<x.size(1)<<" output="<<matrix.size(0)<<" valid="<<plan->valid<<" bytes="<<plan->bytes<<"\n";
+    exercised=retained()>baseline;reference_model.reset();
+    TORCH_CHECK(retained()==baseline,"BERT destruction retained classifier workspace credit");
+    if(!exercised)continue;
+    size_t available;{std::lock_guard lock(state->mutex);available=(state->limit?state->limit:size_t(512)<<20)-state->retained;}
+    auto pressure=tei::reserve_workspace_memory(device.index(),available);TORCH_CHECK(pressure,"Unable to saturate BERT classifier workspace credit");
+    auto model=build();auto fallback=model->classifier_projection(x,matrix,bias,gelu).cpu();
+    TORCH_CHECK(at::isfinite(fallback).all().item<bool>()&&retained()==baseline+available,
+      "BERT classifier fallback allocated an uncredited workspace");
+    pressure.reset();auto recovered=model->classifier_projection(x,matrix,bias,gelu).cpu();
+    TORCH_CHECK(retained()>baseline&&at::equal(reference,recovered)&&at::equal(recovered,model->classifier_projection(x,matrix,bias,gelu).cpu()),
+      "BERT same-shape workspace retry changed full projection outputs");
+    std::array<int32_t,2> offsets{0,32};auto ids=at::arange(32,at::TensorOptions().device(device).dtype(at::kLong));
+    auto types=at::zeros_like(ids),positions=ids;auto cumulative=at::tensor({0,32},at::TensorOptions().device(device).dtype(at::kInt));
+    tei::PackedInput input{ids,types,positions,cumulative,offsets.data(),1,32};
+    auto expected=model->forward(input).cpu();
+    {tei::CudaGraphCache graphs(1,4096,1);
+      for(int repeat=0;repeat<2;++repeat)TORCH_CHECK(at::equal(expected,graphs.forward(*model,input).cpu()),"Captured BERT classifier workspace changed full outputs");
+      TORCH_CHECK(graphs.size()==1,"BERT classifier workspace control did not capture");}
+    model.reset();TORCH_CHECK(retained()==baseline,"BERT graph/model teardown retained classifier workspace credit");
+    std::cout<<"BERT classifier workspace credit/retry/full-output/capture recovery rows="<<rows<<" passed\n";break;
+  }
+  if(exercised)break;
+  }
+  TORCH_CHECK(exercised,"BERT classifier workspace regression did not exercise a supported workspace plan");
+}
 int main(int argc,char** argv) {
   at::manual_seed(321);const char* device=argc>1?argv[1]:"cuda:0";
   TeiConfig cfg{768,12,1,64,64,256,2,1e-5,0};
@@ -61,5 +124,5 @@ int main(int argc,char** argv) {
   TORCH_CHECK(!at::equal(first.narrow(0,0,1),changed.narrow(0,0,1)),"Graph replay ignored changed input");
   TORCH_CHECK(at::equal(changed.narrow(0,0,1),changed.narrow(0,2,1)),"Repeated pooled request changed output");
   ids=original;TORCH_CHECK(at::equal(first,run()),"Restored inputs changed graph output");
-  tei_destroy(engine);std::cout<<"BERT head64 mixed pooled/raw independent reference, packed isolation and changed-input graph replay passed\n";
+  tei_destroy(engine);classifier_workspace_recovery(cfg,weights,c10::Device(device));std::cout<<"BERT head64 mixed pooled/raw independent reference, packed isolation and changed-input graph replay passed\n";
 }

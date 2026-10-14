@@ -1,6 +1,7 @@
 #pragma once
 #include <ATen/ATen.h>
 #include "batching/packed_input.h"
+#include "helpers/transient_memory.h"
 
 namespace tei {
 class Model {
@@ -28,5 +29,7 @@ public:
     TORCH_CHECK(false, "This model does not implement classification");
   }
   virtual bool supports_radix() const { return false; }
+  // Exposed only after ready(); unknown implementations cannot bypass admission.
+  virtual std::optional<TransientMemoryProfile> transient_memory_profile() const { return std::nullopt; }
 };
 }

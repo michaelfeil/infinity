@@ -357,3 +357,35 @@ table construction against this limit. Requests that exceed the limit fail befor
 these buffers are allocated; their token lengths and model math are unchanged.
 This is a limit for these attention buffers, not a total activation, workspace or
 CUDA allocator reservation budget.
+
+The native bridge also applies `INFINITY_TORCH_TRANSIENT_MAX_BYTES` (8 GiB by default) before request uploads and deferred output allocation. It caches a profile of the ready model’s actual matrix dimensions, model dtype, attention geometry, routed experts and media towers. Its conservative tensor estimate includes residual/QKV/FFN intermediates, F32 conversion buffers, dense or packed attention bias and relative buckets, recurrent states, retained shared KV tensors, image/audio processing and requested outputs. SPLADE charges its full token-by-vocabulary tensor. Unknown model or requested media profiles are rejected. Inputs are not padded or truncated.
+
+CUDA requests additionally reserve that estimate against current driver free
+memory, shared across native models using the same device in this process.
+`INFINITY_TORCH_DEVICE_MEMORY_HEADROOM_BYTES` reserves a positive allowance, 1 GiB by
+default, beyond outstanding request estimates. This allowance is a policy for
+unestimated allocations, not a proven upper bound on vendor workspaces.
+Admission uses the smaller of driver free memory and the configured Torch
+allocator quota minus all allocator reserved bytes. Allocator reserved-but-inactive
+memory is not counted as available memory. Nondefault quotas require native
+allocator accounting; unsupported accounting rejects before request allocation.
+Reservations remain live until GPU completion, including cancellation and
+error cleanup. Synchronous calls drain their stream before releasing admission;
+deferred calls use their existing output completion event and lease.
+
+This does not control foreign processes or other allocators racing after the
+free-memory query, or establish
+an upper bound on private graph pools, retained vendor workspaces and every
+model's actual tensor peak. Those limits require separate accounting.
+
+`INFINITY_TORCH_RETAINED_WORKSPACE_MAX_BYTES` separately bounds the retained custom
+OrdinaryLinearExecutor, Gemma and Qwen3.5 radix-projection CUDA workspaces per device
+within this process, at 512 MiB by default. Models sharing a device use the
+most restrictive configured allowance. Admission happens before allocation;
+when the allowance is occupied, these optimizations use their existing ATen
+fallback and retry the same supported plan after workspace credit is released.
+Cached plans retain the reservation with their exact workspace
+allocation, including old generations. This cap does not include ATen-owned
+cuBLAS/cuDNN workspaces or temporary routed-MoE scratch.
+
+This estimate is a per-request tensor admission limit. It does not account for vendor workspace internals, allocator rounding or reserved memory, model weights, graph pools retained from earlier requests, or simultaneous requests on the same device. Those require separate available-memory and concurrency admission; this setting alone is not a guarantee against OOM.

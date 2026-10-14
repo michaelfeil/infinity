@@ -314,6 +314,7 @@ at::Tensor gemma_activation_cuda(const at::Tensor& value,bool gelu) {
   c10::cuda::CUDAGuard guard(value.device());
   TORCH_CHECK(value.scalar_type()==at::kBFloat16,"Gemma precise activation requires BF16");
   auto x=value.contiguous(),out=at::empty_like(x);
+  if(out.numel()==0)return out;
   auto stream=at::cuda::getCurrentCUDAStream();
   auto input=reinterpret_cast<const __nv_bfloat16*>(x.data_ptr());
   auto output=reinterpret_cast<__nv_bfloat16*>(out.data_ptr());
@@ -326,6 +327,7 @@ at::Tensor gemma_gated_cuda(const at::Tensor& x,bool gelu) {
   TORCH_CHECK(x.scalar_type()==at::kBFloat16 && x.is_contiguous() && x.dim()==2 && x.size(1)%2==0,"Gemma precise GLU requires contiguous packed BF16 projection");
   auto width=x.size(1)/2;
   auto out=at::empty({x.size(0),width},x.options());
+  if(out.numel()==0)return out;
   auto stream=at::cuda::getCurrentCUDAStream(x.device().index());
   auto input=reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr());
   auto output=reinterpret_cast<__nv_bfloat16*>(out.mutable_data_ptr());

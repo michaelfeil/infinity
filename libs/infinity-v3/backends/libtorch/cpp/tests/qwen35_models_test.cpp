@@ -1,8 +1,87 @@
 #include "models/qwen35_models.h"
 #include "models/decision_models.h"
 #include "batching/radix.h"
+#include "helpers/workspace_admission.h"
+#include "batching/cuda_graph.h"
+#ifdef TEI_TORCH_CUDA_KERNELS
+#include <ATen/cuda/CUDAContext.h>
+#endif
 #include <iostream>
 using namespace tei;
+void radix_workspace_recovery_test(const c10::Device& device) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+  const auto* properties=at::cuda::getDeviceProperties(device.index());
+  if(properties->major!=9 || properties->minor!=0) {
+    std::cout<<"Qwen3.5 shared workspace fixture skipped: production path requires SM 9.0\n";
+    return;
+  }
+  struct RestoreBlasBackend {
+    at::BlasBackend prior=at::globalContext().blasPreferredBackend();
+    ~RestoreBlasBackend(){at::globalContext().setBlasPreferredBackend(prior);}
+  } restore;
+  at::globalContext().setBlasPreferredBackend(at::BlasBackend::Cublaslt);
+#else
+  return;
+#endif
+  Options cfg;cfg.values={{"model_type","qwen3_5_moe"},{"hidden_size","2048"},
+    {"num_attention_heads","32"},{"num_key_value_heads","2"},{"head_dim","128"},
+    {"num_hidden_layers","1"},{"max_position_embeddings","1024"},
+    {"rope_parameters.partial_rotary_factor",".5"},{"layer_types.0","full_attention"},
+    {"num_experts","128"},{"num_experts_per_tok","8"}};
+  auto options=at::TensorOptions().device(device).dtype(at::kBFloat16);Weights checkpoint;
+  auto put=[&](const std::string& name,std::initializer_list<int64_t> dimensions,bool norm=false) {
+    checkpoint["model."+name]=norm?at::ones(dimensions,options):
+      (at::randn(dimensions,options.dtype(at::kFloat))*.003).to(at::kBFloat16);
+  };
+  put("embed_tokens.weight",{64,2048});put("norm.weight",{2048},true);
+  const std::string layer="layers.0.";
+  put(layer+"input_layernorm.weight",{2048},true);put(layer+"post_attention_layernorm.weight",{2048},true);
+  put(layer+"self_attn.q_proj.weight",{8192,2048});put(layer+"self_attn.k_proj.weight",{256,2048});
+  put(layer+"self_attn.v_proj.weight",{256,2048});put(layer+"self_attn.o_proj.weight",{2048,4096});
+  put(layer+"self_attn.q_norm.weight",{128},true);put(layer+"self_attn.k_norm.weight",{128},true);
+  put(layer+"mlp.gate.weight",{128,2048});put(layer+"mlp.experts.gate_up_proj",{128,128,2048});
+  put(layer+"mlp.experts.down_proj",{128,2048,64});
+  put(layer+"mlp.shared_expert.gate_proj.weight",{12,2048});put(layer+"mlp.shared_expert.up_proj.weight",{12,2048});
+  put(layer+"mlp.shared_expert.down_proj.weight",{2048,12});put(layer+"mlp.shared_expert_gate.weight",{1,2048});
+  auto build=[&]{auto weights=checkpoint;auto model=create_qwen35(cfg,weights,device,at::kBFloat16);model->ready();return model;};
+  auto state=workspace_admission_state(device.index());
+  auto retained=[&]{std::lock_guard lock(state->mutex);return state->retained;};
+  const auto baseline=retained();bool exercised=false;
+  for(int32_t length:{32,128,512}) {
+    std::array<int32_t,2> offsets{0,length};auto ids=at::arange(length,at::kLong).remainder(64);
+    auto positions=at::arange(length,at::kLong);auto types=at::zeros_like(ids);
+    auto cumulative=at::tensor({0,length},at::kInt);
+    PackedInput input{ids,types,positions,cumulative,offsets.data(),1,length};
+    input.compact_ids=ids;input.compact_positions=positions;input.compact_types=types;
+    input.scatter_unfold=positions;input.fold_gather=positions;validate_radix(input,true);
+    for(auto* tensor:{&input.ids,&input.types,&input.positions,&input.cumulative,&input.compact_ids,
+        &input.compact_positions,&input.compact_types,&input.scatter_unfold,&input.fold_gather})
+      *tensor=tensor->to(device);
+    at::Tensor reference;
+    {auto model=build();reference=model->forward(input).cpu();exercised=retained()>baseline;}
+    TORCH_CHECK(retained()==baseline,"Qwen3.5 model destruction retained workspace credit");
+    if(!exercised)continue;
+    size_t available;{std::lock_guard lock(state->mutex);available=(state->limit?state->limit:size_t(512)<<20)-state->retained;}
+    auto pressure=reserve_workspace_memory(device.index(),available);TORCH_CHECK(pressure,"Unable to hold Qwen3.5 workspace credit");
+    auto model=build();auto fallback=model->forward(input).cpu();
+    TORCH_CHECK(at::isfinite(fallback).all().item<bool>()&&retained()==baseline+available,
+      "Qwen3.5 fallback allocated an uncredited custom workspace");
+    pressure.reset();auto recovered=model->forward(input).cpu();
+    TORCH_CHECK(retained()>baseline,"Released credit did not retry the cached Qwen3.5 supported plan");
+    TORCH_CHECK(at::equal(reference,recovered)&&at::equal(recovered,model->forward(input).cpu()),
+      "Qwen3.5 workspace recovery changed full supported-plan output coordinates");
+    {
+      CudaGraphCache graphs(1,4096,1);
+      for(int repeat=0;repeat<2;++repeat)TORCH_CHECK(at::equal(graphs.forward(*model,input).cpu(),reference),
+        "Qwen3.5 captured workspace generation changed full outputs");
+      TORCH_CHECK(graphs.size()==1,"Qwen3.5 workspace recovery control did not capture");
+    }
+    model.reset();TORCH_CHECK(retained()==baseline,"Qwen3.5 graph/model teardown retained workspace credit");
+    std::cout<<"Qwen3.5 shared workspace fallback/release/full recovery tokens="<<length<<" passed\n";
+    break;
+  }
+  TORCH_CHECK(exercised,"Qwen3.5 workspace regression did not exercise a workspace-requiring supported plan");
+}
 int main(int argc,char** argv) {
   at::manual_seed(1451);
   Options cfg;
@@ -36,6 +115,21 @@ int main(int argc,char** argv) {
     auto loader=source;return create_qwen35(options,loader,device,dtype);
   };
   auto model=build(cfg,weights,c10::Device("cpu"),at::kFloat);model->ready();
+  TORCH_CHECK(model->transient_memory_profile()->recurrent_heads==1,
+    "Mixed Qwen3.5 attention must retain its actual recurrent state estimate");
+  auto full_cfg=cfg;full_cfg.values["layer_types.0"]="full_attention";
+  auto full_weights=weights;
+  for(const auto& [name,value]:weights) {
+    const std::string from="model.layers.1.self_attn.";
+    if(name.rfind(from,0)==0)
+      full_weights["model.layers.0.self_attn."+name.substr(from.size())]=value.clone();
+  }
+  auto full_model=build(full_cfg,full_weights,c10::Device("cpu"),at::kFloat);
+  TORCH_CHECK(full_model->transient_memory_profile()->recurrent_heads==0,
+    "Full-attention Qwen3.5 must not charge unused DeltaNet metadata before ready");
+  full_model->ready();
+  TORCH_CHECK(full_model->transient_memory_profile()->recurrent_heads==0,
+    "Full-attention Qwen3.5 must not charge unused DeltaNet metadata after ready");
   std::vector<int32_t> offsets={0,3,5},one={0,3},two={0,2};
   auto make=[](const std::vector<int64_t>& ids,const std::vector<int32_t>& ends) {
     auto tokens=at::from_blob(const_cast<int64_t*>(ids.data()),{static_cast<int64_t>(ids.size())},at::TensorOptions().dtype(at::kLong)).clone();
@@ -46,6 +140,8 @@ int main(int argc,char** argv) {
     auto cu=at::from_blob(const_cast<int32_t*>(ends.data()),{static_cast<int64_t>(ends.size())},at::TensorOptions().dtype(at::kInt)).clone();
     return PackedInput{tokens,at::zeros_like(tokens),pos,cu,ends.data(),static_cast<int64_t>(ends.size()-1),max};
   };
+  TORCH_CHECK(at::isfinite(full_model->forward(make({1,2,3,4,5},offsets))).all().item<bool>(),
+    "Full-attention Qwen3.5 profile must preserve valid packed inference");
   auto output=model->forward(make({1,2,3,4,5},offsets));
   auto independent=at::cat({model->forward(make({1,2,3},one)),model->forward(make({4,5},two))},0);
   Weights owned_loader;
@@ -128,5 +224,9 @@ int main(int argc,char** argv) {
     auto reference=cpu->forward(host).to(at::kFloat),actual=cuda->forward(dev).cpu().to(at::kFloat);
     TORCH_CHECK(at::allclose(reference,actual,.025,.025),"Qwen3.5 native CUDA DeltaNet disagrees with CPU recurrence, maxabs=",(reference-actual).abs().max().item<float>());
     std::cout<<"Qwen3.5 CUDA DeltaNet/CPU reference parity maxabs="<<(reference-actual).abs().max().item<float>()<<"\n";
+    const auto prior_backend=at::globalContext().blasPreferredBackend();
+    radix_workspace_recovery_test(device);
+    TORCH_CHECK(at::globalContext().blasPreferredBackend()==prior_backend,
+      "Qwen3.5 workspace fixture did not restore the prior BLAS backend");
   }
 }

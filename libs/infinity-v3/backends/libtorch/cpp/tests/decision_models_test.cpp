@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "models/decision_models.h"
 #include "batching/input_validation.h"
+#include "helpers/admission_error.h"
 #include <c10/core/InferenceMode.h>
 #include <ATen/Parallel.h>
 #include <iostream>
@@ -11,6 +12,16 @@ void reject(const std::function<void()>&run){bool failed=false;try{run();}catch(
 void norm(Weights&w,const std::string&p,int64_t n){w[p+".weight"]=at::ones({n});w[p+".bias"]=at::zeros({n});}
 void linear(Weights&w,const std::string&p,int64_t in,int64_t out,bool bias=true){w[p+".weight"]=at::zeros({out,in});if(bias)w[p+".bias"]=at::zeros({out});}
 void attention(Weights&w,const std::string&p,int64_t n){w[p+".in_proj_weight"]=at::zeros({3*n,n});w[p+".in_proj_bias"]=at::zeros({3*n});linear(w,p+".out_proj",n,n);}
+void head_admission_test(const DecisionHead& head,int32_t kind) {
+ TeiDecisionField field{};field.options=reinterpret_cast<const int64_t*>(uintptr_t(1));field.option_count=1<<20;
+ TeiDecision request{};request.kind=kind;request.token_ids=request.markers=field.options;
+ request.marker_count=request.token_count=1<<20;request.fields=&field;request.field_count=1;
+ int32_t cumulative[]={0,3};bool rejected=false;
+ try{head.transient_memory(&request,1,cumulative,1<<20);}catch(const MemoryAdmissionError&){rejected=true;}
+ TORCH_CHECK(rejected,"Typed head selected rows escaped transient admission before metadata payload read");
+ request.marker_count=request.token_count=field.option_count=1;
+ TORCH_CHECK(head.transient_memory(&request,1,cumulative,1<<20)>0,"Valid typed head rejected after large row selection");
+}
 struct Input {
  std::vector<int32_t> offsets{0,3,5};PackedInput input;
  Input(){auto ids=at::tensor({1,2,3,4,5},at::TensorOptions().dtype(at::kLong));input={ids,at::zeros_like(ids),at::tensor({0,1,2,0,1},ids.options()),at::tensor({0,3,5},ids.options().dtype(at::kInt)),offsets.data(),2,3};}
@@ -20,6 +31,7 @@ void options_test(){
  Weights backbone;backbone["lm_head.weight"]=at::arange(128).view({8,16}).to(at::kFloat)*.001;
  Options cfg;cfg.values={{"hidden_size","16"},{"model_type","qwen3_5"}};
  auto head=create_decision_head("option_tokens",{},cfg,{},backbone);backbone.clear();
+ head_admission_test(*head,1);
  DecisionRequest first{DecisionRequest::Kind::OptionTokens},second{DecisionRequest::Kind::Warmup};first.token_ids={4,1};
  auto result=head->forward(hidden,in.input,{first,second});
  auto expectedweights=at::arange(128).view({8,16}).to(at::kFloat)*.001;
@@ -41,11 +53,51 @@ Weights laya_weights(){Weights w;w["type_emb.weight"]=at::zeros({3,16});norm(w,"
  auto p=std::string("head.layers.0");norm(w,p+".norm1",16);norm(w,p+".norm2",16);attention(w,p+".self_attn",16);linear(w,p+".linear1",16,64);linear(w,p+".linear2",64,16);return w;}
 void laya_test(){Input in;Options cfg,backbone;cfg.values={{"head_layers","1"},{"max_len","32"},{"head_max_len","32"}};backbone.values["hidden_size"]="16";
  auto weights=laya_weights();auto head=create_decision_head("laya",cfg,backbone,weights,{});weights.clear();
+ head_admission_test(*head,0);
  DecisionRequest first{DecisionRequest::Kind::Laya},second{DecisionRequest::Kind::Warmup};first.question_type=2;first.markers={0,2};
  auto hidden=at::sin(at::arange(80).view({5,16}).to(at::kFloat));auto out=head->forward(hidden,in.input,{first,second});close(out[0].logits,at::zeros({2}));close(out[1].logits,at::zeros({1}));
  close(out[0].action_probability,at::sigmoid(at::gelu(at::tensor(1.5),"none")));close(out[1].action_probability,at::sigmoid(at::gelu(at::tensor(1.),"none")));
  TORCH_CHECK(head->output_count(first)==2&&head->output_count(second)==1,"Wrong Laya output count");first.markers={3};reject([&]{head->forward(hidden,in.input,{first,second});});first.question_type=3;reject([&]{head->output_count(first);});
  std::cout<<"Laya head, learned action top1/entropy features, warmup and marker validation passed\n";
+}
+void laya_packed_cuda_test(){
+ for(auto dtype:{at::kBFloat16,at::kHalf}){
+ Input in;Options cfg,backbone;cfg.values={{"head_layers","1"},{"max_len","32"},{"head_max_len","32"}};backbone.values["hidden_size"]="16";
+ auto weights=laya_weights();auto device=c10::Device("cuda:0");
+ // Nonzero attention/FFN/scorer weights expose cross-sequence leakage. The
+ // existing feature-dependent action weights keep probabilities nonsaturated.
+ for(auto& [name,value]:weights){
+  if(name=="type_emb.weight"||name.starts_with("head.layers.0.self_attn")||name.starts_with("head.layers.0.linear")||name=="scorer.1.weight"||name=="scorer.3.weight")
+   value=at::sin(at::arange(value.numel()).reshape(value.sizes()).to(at::kFloat)*.17)*.04;
+  value=value.to(device,dtype);
+ }
+ auto head=create_decision_head("laya",cfg,backbone,weights,{});
+ in.input.ids=in.input.ids.to(device);in.input.types=in.input.types.to(device);
+ in.input.positions=in.input.positions.to(device);in.input.cumulative=in.input.cumulative.to(device);
+ auto hidden=at::sin(at::arange(80).reshape({5,16}).to(at::kFloat)*.13).to(device,dtype);
+ DecisionRequest first{DecisionRequest::Kind::Laya},second{DecisionRequest::Kind::Warmup};first.question_type=2;first.markers={2,0,2};
+ auto output=head->forward(hidden,in.input,{first,second});
+ TORCH_CHECK(output[0].action_probability.item<float>()>.05&&output[0].action_probability.item<float>()<.95,"Action regression must be nonsaturated");
+ for(int64_t i=0;i<2;++i){
+  auto start=in.offsets[i],length=in.offsets[i+1]-start;
+  int32_t offsets[]={0,static_cast<int32_t>(length)};PackedInput single{
+   in.input.ids.narrow(0,start,length),in.input.types.narrow(0,start,length),in.input.positions.narrow(0,start,length),
+   at::tensor({0,length},in.input.cumulative.options()),offsets,1,length};
+  auto reference=head->forward(hidden.narrow(0,start,length),single,{i?second:first});
+  close(output[i].logits,reference[0].logits,.006);
+  close(output[i].action_probability,reference[0].action_probability,.001);
+ }
+ auto changed=hidden.clone();changed.narrow(0,3,2).fill_(17.);
+ auto isolated=head->forward(changed,in.input,{first,second});
+ close(output[0].logits,isolated[0].logits,.00001);
+ close(output[0].action_probability,isolated[0].action_probability,.00001);
+ first.question_type=1;first.markers={1};auto updated=head->forward(hidden,in.input,{first,second});
+ TORCH_CHECK(updated[0].logits.numel()==1&&updated[1].logits.numel()==1,"Packed head retained old marker metadata");
+ first.markers={3};reject([&]{head->forward(hidden,in.input,{first,second});});
+ first.markers={0};auto invalid=in.input;int32_t invalid_offsets[]={-1,3,5};invalid.offsets=invalid_offsets;
+ reject([&]{head->forward(hidden,invalid,{first,second});});
+ }
+ std::cout<<"Laya CUDA packed head FP16/BF16: nonsaturated action, repeated/unsorted markers, singleton warmup, changed metadata and sequence isolation passed\n";
 }
 Weights clef_weights(){Weights w;for(auto p:{"hidden_norm","option_summary_norm","field_norm","option_norm"})norm(w,p,16);
  for(auto p:{"memory_projection","question_projection","option_question_projection","global_projection","option_context_projection","option_lexical_projection"})linear(w,p,16,16,false);
@@ -56,6 +108,7 @@ Weights clef_weights(){Weights w;for(auto p:{"hidden_norm","option_summary_norm"
 void clef_test(){Input in;Options cfg,backbone;cfg.values={{"hidden_size","16"},{"width","16"},{"heads","2"},{"feedforward","32"},{"routing_layers","1"},{"layers","1"}};backbone.values={{"hidden_size","16"},{"model_type","qwen3_5"}};
  auto weights=clef_weights();Weights bw;bw["lm_head.weight"]=at::cos(at::arange(128).view({8,16}).to(at::kFloat)*.13);auto lexical=bw["lm_head.weight"];
  auto head=create_decision_head("clef",cfg,backbone,weights,bw);weights.clear();bw.clear();
+ head_admission_test(*head,2);
  DecisionRequest first{DecisionRequest::Kind::Clef},second{DecisionRequest::Kind::Warmup};first.fields={{0,{0,1},{{1,2},{2,3}}},{2,{1,2},{{0,2}}}};
  auto hidden=at::sin(at::arange(80).view({5,16}).to(at::kFloat)*.17);auto out=head->forward(hidden,in.input,{first,second});
  auto normalized=at::layer_norm(hidden.narrow(0,0,3),{16},at::ones({16}),at::zeros({16}),1e-5);std::vector<at::Tensor> expected;
@@ -118,6 +171,10 @@ void d3_test(){
  Weights readout;readout["weight"]=at::sin(at::arange(255*16).view({255,16}).to(at::kFloat)*.017);
  auto hidden=(at::cos(at::arange(80).view({5,16}).to(at::kFloat)*.13)).to(at::kBFloat16);
  auto head=create_decision_head("d3",cfg,backbone,readout,{});
+ head_admission_test(*head,1);
+ TeiDecision warmup{};warmup.kind=3;int32_t one_row[]={0,3};
+ TORCH_CHECK(head->transient_memory(&warmup,1,one_row,1<<20)>=255*2*sizeof(float),
+   "D3 warmup admission omitted the full FP32 readout projection");
  DecisionRequest first{DecisionRequest::Kind::OptionTokens},second{DecisionRequest::Kind::Warmup};first.token_ids={0,1,2};
  auto result=head->forward(hidden,in.input,{first,second});
  auto full=at::linear(hidden[2].to(at::kFloat).unsqueeze(0),readout["weight"]);
@@ -130,4 +187,4 @@ void d3_test(){
  readout["weight"]=readout["weight"].to(at::kBFloat16);reject([&]{create_decision_head("d3",cfg,backbone,readout,{});});
  std::cout<<"D3 FP32 full readout, last-token selection, warmup and checkpoint validation passed\n";
 }
-int main(){c10::InferenceMode inference;at::set_num_threads(1);options_test();d3_test();laya_test();clef_test();}
+int main(int argc,char** argv){c10::InferenceMode inference;at::set_num_threads(1);options_test();d3_test();laya_test();clef_test();if(argc>1&&std::string(argv[1])=="--cuda")laya_packed_cuda_test();}

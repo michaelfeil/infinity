@@ -89,6 +89,7 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 */
 #include <ATen/ATen.h>
+#include "helpers/vendor_error.h"
 #include <ATen/Context.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -157,6 +158,8 @@ class CachedNoBiasLt {
   auto workspace=at::cuda::getCUDABlasLtWorkspace();if(!workspace)return fallback();
   const float alpha=1.f,beta=0.f;
   auto result=cublasLtMatmul(at::cuda::getCurrentCUDABlasLtHandle(),plan->operation,&alpha,weight.const_data_ptr(),plan->a,x.const_data_ptr(),plan->b,&beta,output.const_data_ptr(),plan->c,output.mutable_data_ptr(),plan->c,&plan->algorithm,workspace,limit,stream);
+  if(result==CUBLAS_STATUS_ALLOC_FAILED)
+   throw VendorAllocationError{"Cached decoder cublasLtMatmul",static_cast<int32_t>(result)};
   if(result!=CUBLAS_STATUS_SUCCESS) {
    // Retire only this generation. Other callers may still own the immutable
    // plan; a negative entry prevents repeatedly retrying a rejected algorithm.
