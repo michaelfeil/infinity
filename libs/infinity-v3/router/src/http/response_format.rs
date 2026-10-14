@@ -159,10 +159,9 @@ fn conversion_error(writer: &super::memory::ReservedWriter) -> ConversionError {
     }
 }
 
-// Check permission only: positive q values do not rank formats. A specific
-// q=0 exclusion overrides a wildcard that would otherwise allow the media type.
-fn allows(headers: &HeaderMap, media_type: &str) -> bool {
-    let mut matched = (0, false);
+// More specific ranges override wildcards, including explicit q=0 exclusions.
+fn preference(headers: &HeaderMap, media_type: &str) -> Option<(u16, u8)> {
+    let mut matched = None;
     for value in headers.get_all(header::ACCEPT) {
         let Ok(value) = value.to_str() else { continue };
         for range in value.split(',') {
@@ -182,43 +181,47 @@ fn allows(headers: &HeaderMap, media_type: &str) -> bool {
             } else {
                 continue;
             };
-            let mut allowed = true;
+            let mut quality = 1000;
             for parameter in parts {
                 if let Some((name, value)) = parameter.trim().split_once('=') {
                     if name.trim().eq_ignore_ascii_case("q") {
-                        allowed = value
+                        quality = value
                             .trim()
                             .parse::<f32>()
-                            .is_ok_and(|q| q > 0.0 && q <= 1.0);
+                            .ok()
+                            .filter(|q| q.is_finite() && (0.0..=1.0).contains(q))
+                            .map_or(0, |q| (q * 1000.0).round() as u16);
                     }
                 }
             }
-            matched = matched.max((specificity, allowed));
+            matched = Some(matched.unwrap_or((0, 0)).max((specificity, quality)));
         }
     }
-    matched.1
+    matched.map(|(specificity, quality)| (quality, specificity))
 }
 
 fn select(headers: &HeaderMap, native: Option<&str>) -> Option<Format> {
     if !headers.contains_key(header::ACCEPT) {
         return Some(Format::Native);
     }
-    // MessagePack wins whenever allowed, regardless of header order or weights.
+    // Prefer the native representation on ties. Binary conversion requires a
+    // higher quality or a more specific match than the native/JSON fallback.
+    let mut selected = None;
+    let mut best = (0, 0);
     for (format, media_type) in [
+        (Format::Native, native.unwrap_or("application/json")),
+        (Format::Json, "application/json"),
         (Format::MessagePack, "application/msgpack"),
         (Format::LegacyMessagePack, "application/x-msgpack"),
     ] {
-        if allows(headers, media_type) {
-            return Some(format);
+        if let Some(rank) = preference(headers, media_type) {
+            if rank.0 > 0 && rank > best {
+                best = rank;
+                selected = Some(format);
+            }
         }
     }
-    if native.is_some_and(|mime| allows(headers, mime)) {
-        Some(Format::Native)
-    } else if allows(headers, "application/json") {
-        Some(Format::Json)
-    } else {
-        None
-    }
+    selected
 }
 
 pub(crate) async fn negotiate(request: Request, next: Next) -> Response {
@@ -444,18 +447,18 @@ mod tests {
     }
 
     #[test]
-    fn messagepack_wins_when_allowed() {
+    fn accept_preferences_preserve_native_defaults() {
         for (accept, expected) in [
-            ("*/*", Some(Format::MessagePack)),
-            ("application/*", Some(Format::MessagePack)),
+            ("*/*", Some(Format::Native)),
+            ("application/*", Some(Format::Native)),
             (
                 "application/json,application/msgpack;q=0.1",
-                Some(Format::MessagePack),
+                Some(Format::Native),
             ),
             ("APPLICATION/X-MSGPACK", Some(Format::LegacyMessagePack)),
             (
                 "application/msgpack;q=0,application/x-msgpack;q=0,application/*",
-                Some(Format::Json),
+                Some(Format::Native),
             ),
             ("application/xml", None),
         ] {
@@ -466,10 +469,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn browser_and_generic_accept_headers_preserve_native_bodies() {
+        for accept in ["*/*", "text/html,*/*;q=0.1"] {
+            let response = call("/docs", Some(accept)).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(response.headers()[header::CONTENT_TYPE]
+                .to_str()
+                .unwrap()
+                .starts_with("text/html"));
+            assert_eq!(
+                to_bytes(response.into_body(), 1024).await.unwrap(),
+                "<html>docs</html>"
+            );
+        }
+        for accept in [
+            "*/*",
+            "application/*",
+            "application/json,application/msgpack;q=0.1",
+        ] {
+            let response = call("/info", Some(accept)).await;
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json");
+            serde_json::from_slice::<Payload>(&to_bytes(response.into_body(), 1024).await.unwrap())
+                .unwrap();
+        }
+        let response = call("/info", Some("application/json;q=0,*/*;q=1")).await;
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/msgpack"
+        );
+        let response = call(
+            "/info",
+            Some("application/msgpack;q=0,application/x-msgpack;q=0,application/json;q=0,*/*"),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::NOT_ACCEPTABLE);
+    }
+
+    #[tokio::test]
     async fn typed_responses_preserve_numeric_types_and_request_isolation() {
         let (json, msgpack, alias) = tokio::join!(
             call("/info", None),
-            call("/info", Some("application/json,application/msgpack;q=0.1")),
+            call("/info", Some("application/json;q=0.1,application/msgpack")),
             call("/info", Some("application/x-msgpack"))
         );
         assert_eq!(json.headers()[header::CONTENT_TYPE], "application/json");
@@ -533,8 +573,7 @@ mod tests {
         );
         let encoded = call("/metrics", Some("*/*")).await;
         assert_eq!(
-            rmp_serde::from_slice::<String>(&to_bytes(encoded.into_body(), 1024).await.unwrap())
-                .unwrap(),
+            to_bytes(encoded.into_body(), 1024).await.unwrap(),
             "requests 1\n"
         );
         assert!(
@@ -545,7 +584,7 @@ mod tests {
         );
         assert_eq!(
             call("/docs", Some("text/html,*/*;q=0.1")).await.headers()[header::CONTENT_TYPE],
-            "application/msgpack"
+            "text/html; charset=utf-8"
         );
         let health = call("/health", Some("application/msgpack")).await;
         assert_eq!(

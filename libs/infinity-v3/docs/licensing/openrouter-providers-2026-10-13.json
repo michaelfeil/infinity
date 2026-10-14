@@ -832,6 +832,6 @@
       "slug": "switchpoint"
     }
   ],
-  "fixed_list_note": "Only the platforms named in the draft Appendix A are restricted for commercial deployment, including deployment by their customers. API-only entries and future OpenRouter additions are not automatically included. No revenue test or automatic expansion applies.",
+  "fixed_list_note": "Only the platforms named in the adopted Appendix A are restricted for commercial deployment, including deployment by their customers. API-only entries and future OpenRouter additions are not automatically included. No revenue test or automatic expansion applies.",
   "aws_scope_note": "The Amazon Bedrock entry restricts that platform, not AWS infrastructure generally. The platform ban applies both to customers deploying Infinity there and to the platform operator; the noncommercial research exception remains available."
 }

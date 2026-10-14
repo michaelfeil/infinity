@@ -1,7 +1,7 @@
 # Experimental native LibTorch model coverage
 
 This lists implemented model paths, not a general accuracy or performance
-qualification. Detailed checkpoint benchmarks are deferred to a follow-up PR.
+qualification.
 All inference preserves actual token counts; CUDA uses packed attention or
 exact-length biased attention without padded token activations.
 

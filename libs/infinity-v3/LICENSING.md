@@ -92,9 +92,9 @@ and rights they cover, including to later recipients. They do not license
 new contributions first offered solely under this dual-license adoption.
 INFOIL is not a third choice for those new contributions.
 
-The [historical INFOIL adoption notice](LICENSES/INFOIL-1.0-Adoption-Notice.txt),
-[INFOIL 1.0 text](LICENSES/INFOIL-1.0.txt), and
-[Apache-2.0 text](LICENSES/Apache-2.0.txt) are preserved. The original INFOIL
+The historical INFOIL adoption notice and complete terms remain in the
+[license bundle](LICENSE), alongside the retained
+[Apache-2.0 text](LICENSES/Apache-2.0.txt). The original INFOIL
 transition was effective on 2026-10-12, at `infinity_v3-infoil-1.0`, with
 pre-adoption base `9486dd9ee89575442fda1a491c381046b37e116e`.
 
