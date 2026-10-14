@@ -37,5 +37,22 @@ infinity_v3 --backend candle --model-id dmis-lab/UltraBERT-Embed-150M \
 Use `prompt_name: "query"` for retrieval queries; documents use the empty
 `document` prompt. Mean and last-token pooling overrides and raw token
 embeddings are supported. CPU supports FP32/FP16; CUDA SM80+ supports FP16/BF16.
-Its attention geometry uses FA2 even with `ATTN_BACKEND=fa4`. Native LibTorch,
-Metal, and classification heads are unsupported for this checkpoint.
+Its attention geometry uses FA2 even with `ATTN_BACKEND=fa4`. Native LibTorch
+and Metal are unsupported for this checkpoint.
+
+UltraBERT sequence classification checkpoints with a saved trained classifier
+head use `/predict`; trained single-label rerankers also use `/rerank`.
+`UltrabertForTokenClassification` checkpoints use `/predict_tokens`. These
+heads share the embedding encoder's CPU and CUDA support. Base masked-LM
+weights require a fine-tuned classifier head before serving classification.
+
+## Structured decision inputs
+
+`/v1/systemone` accepts text, JSON objects, or arrays in `state`. Laya question
+`instructions` accepts the same forms. Ordinary structured content is rendered
+as JSON before tokenization. Objects containing `messages` use the native
+conversation format and retain its validation; Laya rejects native messages.
+D3 retains its separate JSON-state and media contract.
+
+`model` is optional with one loaded model and required with multiple models.
+Model routing and backend response extensions retain their existing behavior.

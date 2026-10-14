@@ -249,6 +249,7 @@ pub(crate) async fn negotiate(request: Request, next: Next) -> Response {
     if parts.status == StatusCode::NO_CONTENT
         || parts.status == StatusCode::NOT_MODIFIED
         || parts.status.is_informational()
+        || parts.status.is_redirection()
     {
         return Response::from_parts(parts, body);
     }
@@ -465,6 +466,47 @@ mod tests {
             let mut headers = HeaderMap::new();
             headers.insert(header::ACCEPT, accept.parse().unwrap());
             assert_eq!(select(&headers, None), expected, "{accept}");
+        }
+    }
+
+    #[tokio::test]
+    async fn swagger_redirect_and_assets_preserve_browser_accept_headers() {
+        let app = Router::new()
+            .merge(
+                utoipa_swagger_ui::SwaggerUi::new("/docs")
+                    .url("/api-doc/openapi.json", utoipa::openapi::OpenApi::default()),
+            )
+            .layer(axum::middleware::from_fn(negotiate));
+        for (path, accept, expected_type) in [
+            ("/docs", "text/html", None),
+            ("/docs/", "text/html", Some("text/html")),
+            ("/docs/swagger-ui.css", "text/css", Some("text/css")),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(path)
+                        .header(header::ACCEPT, accept)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            if let Some(expected_type) = expected_type {
+                assert_eq!(response.status(), StatusCode::OK, "{path}");
+                assert!(response.headers()[header::CONTENT_TYPE]
+                    .to_str()
+                    .unwrap()
+                    .starts_with(expected_type));
+                assert!(!to_bytes(response.into_body(), 1024 * 1024)
+                    .await
+                    .unwrap()
+                    .is_empty());
+            } else {
+                assert!(response.status().is_redirection());
+                assert_eq!(response.headers()[header::LOCATION], "/docs/");
+            }
         }
     }
 
