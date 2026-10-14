@@ -17,19 +17,14 @@ limitations under the License.
 <!-- Fork contribution policy added by Infinity Core Contributors under the scope in LICENSE. -->
 # Contribute to infinity_v3
 
-New original fork contributions and covered modifications are offered under
-both [Infinity License 1.0 for Commercial Use](LICENSES/Infinity-License-1.0-for-Commercial-Use.txt)
-and [PolyForm Noncommercial License 1.0.0](LICENSES/PolyForm-Noncommercial-1.0.0.txt),
-so recipients may choose either alternative, subject to the
-[adoption scope](LICENSE). Contributors retain ownership; this does not
-assign copyright or grant blanket authority to issue exceptions for their
-work. Identify separately licensed material and obtain agreement on different
-inbound terms before inclusion. Earlier INFOIL-only contributions require
-the applicable rights holders' authorization for the new alternatives.
-Preserve inherited notices and prominently identify modified files and the
-applicable fork license scope. This is the policy for contributions submitted
-to this repository, not an additional condition on using or redistributing
-software under PolyForm alone. See [LICENSING.md](LICENSING.md).
+New covered contributions are offered under both
+[Infinity License 1.0 for Commercial Use](LICENSES/Infinity-License-1.0-for-Commercial-Use.txt)
+and [PolyForm Noncommercial 1.0.0](LICENSES/PolyForm-Noncommercial-1.0.0.txt),
+unless different terms are agreed before inclusion. Contributors retain
+ownership and grant only rights they own or are authorized to license.
+Preserve inherited and third-party notices; independently licensed material
+retains its applicable terms. See [LICENSING.md](LICENSING.md) and the
+[license scope](LICENSE).
 
 Everyone is welcome to contribute, and we value everybody's contribution. Code
 contributions are not the only way to help the community. Answering questions, helping
@@ -147,7 +142,7 @@ If there is a new feature you'd like to see in infinity_v3, please open an issue
 
 If your issue is well written we're already 80% of the way there by the time you create it.
 
-We have added [templates](.github/ISSUE_TEMPLATE)
+We have added [templates](../../.github/ISSUE_TEMPLATE)
 to help you get started with your issue.
 
 ## Do you want to implement a new model?
