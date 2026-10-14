@@ -29,9 +29,6 @@ jobs:
           large-packages: false
           docker-images: false
           swap-storage: false
-      - name: Get git tag
-        uses: actions-ecosystem/action-get-latest-tag@v1
-        id: get-latest-tag
       - name: Set up Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -44,5 +41,7 @@ jobs:
           modal token set --token-id ${{ secrets.MODAL_TOKEN_ID }} --token-secret ${{ secrets.MODAL_TOKEN_SECRET }}
 
       - name: Modal Deploy
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
-          VERSION_INF=${{ steps.get-latest-tag.outputs.tag }} CI_DEPLOY_INF=true modal deploy --tag ${{ steps.get-latest-tag.outputs.tag }}-github-ci --env prod infra.modal.webserver
+          VERSION_INF="$RELEASE_TAG" CI_DEPLOY_INF=true modal deploy --tag "${RELEASE_TAG}-github-ci" --env prod infra.modal.webserver

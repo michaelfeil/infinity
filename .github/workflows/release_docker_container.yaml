@@ -51,12 +51,9 @@ jobs:
           large-packages: false
           docker-images: false
           swap-storage: false
-      - name: Get git tag
-        uses: actions-ecosystem/action-get-latest-tag@v1
-        id: get-latest-tag
       - name: Set docker tag
         env:
-          VERSION: ${{ steps.get-latest-tag.outputs.tag }}
+          VERSION: ${{ github.event.release.tag_name }}
         run: |
           echo "VERSION_TAG=${{ inputs.image }}:${VERSION#v}" >> $GITHUB_ENV
 

@@ -6,10 +6,15 @@ on:
   push:
     branches:
     - main
+    paths:
+      - 'docs/**'
+      - 'libs/infinity_emb/**'
+      - '.github/workflows/docs.yaml'
 permissions:
   contents: write
 jobs:
   deploy:
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/setup-python@v5

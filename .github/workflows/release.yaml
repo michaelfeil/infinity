@@ -12,6 +12,7 @@ env:
 
 jobs:
   docker-container-push-nvidia:
+    if: startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     uses:
       ./.github/workflows/release_docker_container.yaml
     with:
@@ -23,6 +24,7 @@ jobs:
     secrets: inherit
   
   docker-container-push-cpu:
+    if: startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     uses:
       ./.github/workflows/release_docker_container.yaml
     with:
