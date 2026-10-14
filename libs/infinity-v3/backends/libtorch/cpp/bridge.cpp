@@ -167,6 +167,8 @@ struct Engine {
         native_moe_graphs=tei::native_hopper_moe_available(device);
     }
 #endif
+    // Multimodal families can capture text independently of media capture.
+    // The request-level guards below keep image/audio inputs eager by default.
     if (device.is_cuda() && options.boolean("_cuda_graphs", false)
         && (native_moe_graphs || (options.integer("num_experts", options.integer("text_config.num_experts", 0)) == 0
         && options.integer("moe_every_n_layers", options.integer("text_config.moe_every_n_layers", 0)) == 0
@@ -176,7 +178,7 @@ struct Engine {
         || family == "mpnet" || family == "deberta-v2" || family == "gte" || family == "nomic_bert" || family == "llama" || family == "mistral"
         || family == "qwen2" || family == "qwen3" || family == "gemma3" || family == "gemma3_text"
         || family == "gemma4" || family == "gemma4_text" || family == "embedding_gemma2"
-        || (media_graphs && (family == "qwen3_vl" || family == "qwen3_vl_text" || family == "qwen3_5" || family == "qwen3_5_text")))))) {
+        || family == "qwen3_vl" || family == "qwen3_vl_text" || family == "qwen3_5" || family == "qwen3_5_text")))) {
       auto entries=options.integer("_cuda_graph_entries",4), reuse=options.integer("_cuda_graph_reuse",3);
       auto bytes=options.integer("_cuda_graph_max_bytes",512LL<<20), captures=options.integer("_cuda_graph_max_captures",8);
       TORCH_CHECK(entries>=0 && reuse>0 && bytes>0 && captures>=0,"Invalid CUDA graph admission budgets");
@@ -453,7 +455,7 @@ int32_t tei_decide_radix(void* handle,const int64_t* ids,const int64_t* types,co
   TORCH_CHECK((logits||!expected)&&actions,"Missing decision output buffer");
   auto packed=packed_input(engine,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audios,audio_count);
   attach_radix(engine,packed,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audio_count,radix);
-  const bool use_graph=engine.graphs&&engine.graph_policy_ready()&&(engine.media_graphs||(!image_count&&!audio_count&&!media_positions));
+  const bool use_graph=engine.graphs&&engine.graph_policy_ready()&&(engine.media_graphs||(!image_count&&!audio_count));
   if(!use_graph)engine.model->prepare_input(packed);
   auto hidden=use_graph?engine.graphs->forward(*engine.model,packed):engine.model->forward(packed);
   auto results=engine.decision->forward(hidden,packed,converted);TORCH_CHECK(results.size()==size_t(batch),"Decision head output count mismatch");
@@ -497,7 +499,7 @@ static int32_t forward_radix(void* handle, const int64_t* ids, const int64_t* ty
       media_positions,images,image_count,audios,audio_count,completion);
     auto upload=[&](const at::Tensor& host){return completion?completion->upload(host):host.to(model.device);};
     attach_radix(model,packed,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audio_count,radix,completion);
-    const bool graph_eligible = model.graphs && model.graph_policy_ready() && (model.media_graphs || (!image_count && !audio_count && !media_positions));
+    const bool graph_eligible = model.graphs && model.graph_policy_ready() && (model.media_graphs || (!image_count && !audio_count));
     if(!graph_eligible)model.model->prepare_input(packed);
     auto h = graph_eligible ? model.graphs->forward(*model.model, packed, pool >= 4 ? (pool == 5 ? 2 : 1) : 0)
       : pool >= 4 ? model.model->predict(packed, pool == 5) : model.model->forward(packed);

@@ -1,6 +1,7 @@
 // Native actual-length image/deepstack regression; no Python or token padding.
 #include "models/qwen3_vl_models.h"
 #include "models/qwen35_models.h"
+#include "bridge.h"
 #include <c10/core/InferenceMode.h>
 #include <ATen/Parallel.h>
 #include <iostream>
@@ -9,6 +10,71 @@
 #include <c10/cuda/CUDACachingAllocator.h>
 #endif
 using namespace tei;
+#ifdef TEI_TORCH_CUDA_KERNELS
+// Exercise the bridge policy: a multimodal family can capture text without
+// opting image/audio requests into capture, including when those requests are
+// interleaved with a resident text graph.
+void text_graph_policy_test(const Options& options,const Weights& weights,
+                            const PackedInput& media,const std::string& device) {
+  TeiConfig cfg{16,2,2,24,32,32,1,1e-6,0};
+  auto load=[&](bool capture) {
+    const auto dtype=options.string("model_type")=="qwen3_5"?2:1;
+    std::unique_ptr<void,decltype(&tei_destroy)> handle(tei_create(&cfg,device.c_str(),dtype),tei_destroy);
+    TORCH_CHECK(handle,tei_error());
+    for(const auto& [key,value]:options.values)
+      TORCH_CHECK(tei_option(handle.get(),key.c_str(),value.c_str())==0,tei_error());
+    TORCH_CHECK(tei_option(handle.get(),"_cuda_graphs",capture?"true":"false")==0,tei_error());
+    TORCH_CHECK(tei_option(handle.get(),"_media_cuda_graphs","false")==0,tei_error());
+    TORCH_CHECK(tei_option(handle.get(),"_cuda_graph_reuse","1")==0,tei_error());
+    for(const auto& [name,value]:weights) {
+      auto host=value.to(at::kCPU,at::kFloat).contiguous();
+      TORCH_CHECK(tei_weight(handle.get(),name.c_str(),reinterpret_cast<const uint8_t*>(host.const_data_ptr()),
+        host.sizes().data(),host.dim(),0)==0,tei_error());
+    }
+    TORCH_CHECK(tei_ready(handle.get())==0,tei_error());return handle;
+  };
+  auto eager=load(false),graph=load(true);
+  auto ids=media.ids.clone(),types=media.types.contiguous(),positions=media.positions.clone();
+  auto text_rotary=positions.unsqueeze(0).repeat({3,1});
+  int64_t rows[]={0,1};
+  auto run=[&](void* handle,bool with_image) {
+    const auto& source=media.images.at(0);auto pixels=source.pixels.to(at::kCPU,at::kFloat).contiguous();
+    TeiImage image{};image.pixels=pixels.const_data_ptr<float>();image.rows=pixels.size(0);image.patch_dim=pixels.size(1);
+    for(int i=0;i<3;++i)image.grid[i]=source.grid_thw[i];
+    image.merge_size=source.merge_size;image.token_start=source.token_start;
+    image.token_count=source.token_count;image.sequence_start=source.sequence_start;
+    auto output=at::empty({ids.numel(),16},at::TensorOptions().dtype(at::kFloat));
+    // Text conversations also carry three-axis rotary positions through the
+    // router; position metadata alone must not opt the request out of capture.
+    auto rotary=with_image?media.multimodal_positions:text_rotary;
+    TORCH_CHECK(tei_forward(handle,ids.const_data_ptr<int64_t>(),types.const_data_ptr<int64_t>(),positions.const_data_ptr<int64_t>(),
+      media.offsets,2,4,0,nullptr,0,rows,2,output.data_ptr<float>(),output.numel(),
+      rotary.const_data_ptr<int64_t>(),with_image?&image:nullptr,with_image?1:0,nullptr,0)==0,tei_error());
+    return output;
+  };
+  auto compare=[&](bool image) {
+    auto expected=run(eager.get(),image),actual=run(graph.get(),image);
+    TORCH_CHECK(at::allclose(expected,actual,.003,.003),"Text-only graph policy changed eager outputs");return actual;
+  };
+  auto first=compare(false);ids.add_(3);auto changed=compare(false);
+  TORCH_CHECK(!at::equal(first,changed),"Text graph retained stale token IDs");
+  text_rotary.select(0,1).select(0,1).add_(5);
+  text_rotary.select(0,2).select(0,2).add_(7);
+  auto moved=compare(false);
+  TORCH_CHECK(!at::equal(changed,moved),"Rotary position fixture did not affect text output");
+  uint64_t before[7]{},after[7]{};
+  TORCH_CHECK(tei_graph_stats(graph.get(),before,7)==0,tei_error());
+  TORCH_CHECK(before[2]==1&&before[0]>=1,"Text-only multimodal family did not capture and replay");
+  compare(true);
+  TORCH_CHECK(tei_graph_stats(graph.get(),after,7)==0,tei_error());
+  TORCH_CHECK(std::equal(std::begin(before),std::end(before),std::begin(after)),"Image request entered text-only graph cache");
+  compare(false);
+  TORCH_CHECK(tei_graph_stats(graph.get(),after,7)==0&&after[0]>before[0]&&after[2]==1,
+    "Image request disturbed the resident text graph");
+  std::cout<<options.string("model_type")<<" "<<options.string("text_config.layer_types.0","full_attention")
+    <<" bridge text-only capture/replay, changed IDs/rotary positions, eager image parity and interleaving passed\n";
+}
+#endif
 int main(int argc,char** argv) {
   c10::InferenceMode inference;at::set_num_threads(1);at::manual_seed(712);
   Options cfg;
@@ -102,6 +168,23 @@ int main(int argc,char** argv) {
     TORCH_CHECK(at::allclose(expected,actual,.03,.03),"Qwen3-VL CUDA/CPU image parity mismatch: ",(expected-actual).abs().max().item<float>());
     std::cout<<"Qwen3-VL CUDA/CPU float16 parity maxabs="<<(expected-actual).abs().max().item<float>()<<"\n";
 #ifdef TEI_TORCH_CUDA_KERNELS
+    text_graph_policy_test(cfg,weights,input,device.str());
+    text_graph_policy_test(q35cfg,q35weights,input,device.str());
+    auto mixed_cfg=q35cfg;auto mixed_weights=q35weights;
+    mixed_cfg.values["text_config.layer_types.0"]="linear_attention";
+    mixed_cfg.values["text_config.linear_num_key_heads"]="1";
+    mixed_cfg.values["text_config.linear_num_value_heads"]="1";
+    auto linear=tp+"layers.0.linear_attn.";
+    auto delta_weight=[&](const char* name,std::initializer_list<int64_t> shape) {
+      mixed_weights[linear+name]=at::randn(shape)*.05;
+    };
+    delta_weight("in_proj_qkv.weight",{384,16});delta_weight("in_proj_z.weight",{128,16});
+    delta_weight("in_proj_a.weight",{1,16});delta_weight("in_proj_b.weight",{1,16});
+    delta_weight("conv1d.weight",{384,1,4});delta_weight("A_log",{1});delta_weight("dt_bias",{1});
+    mixed_weights[linear+"norm.weight"]=at::ones({128});delta_weight("out_proj.weight",{16,128});
+    text_graph_policy_test(mixed_cfg,mixed_weights,input,device.str());
+    mixed_cfg.values["decision_attention_mode"]="noncausal_full_attention";
+    text_graph_policy_test(mixed_cfg,mixed_weights,input,device.str());
     // Actual 64x64 patch grid: two heads make each original F32 score
     // tensor 128 MiB, exercising production query chunking rather than the
     // unchanged small-image branch. These are synthetic functional weights,
