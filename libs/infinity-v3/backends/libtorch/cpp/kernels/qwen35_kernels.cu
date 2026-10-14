@@ -7,6 +7,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
+#include "kernels/bf16_compat.cuh"
 #include "../../../candle/src/kernels/qwen35_gdn.cu"
 #include "../../../candle/src/kernels/gemma_rms_norm.cu"
 

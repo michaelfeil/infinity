@@ -99,6 +99,28 @@ To build without Candle, replace build features with
 `--no-default-features --features libtorch,http`, and select `--backend libtorch`
 when starting the server. Existing Candle builds do not require LibTorch.
 
+CUDA builds default to a multi-architecture native library targeting SM75, SM80,
+SM86, SM89, SM90, SM100, and SM120. Each target includes native code and PTX.
+The separate SM90a MoE optimization is selected only on Hopper; other GPUs use
+the portable path. The bundled LibTorch distribution must also support the target
+GPU, and individual operations and dtypes retain their hardware requirements.
+The full target list requires a CUDA toolkit supporting SM100 and SM120;
+older toolkits require a narrower explicit architecture list.
+
+`LIBTORCH_CUDA_ARCHITECTURES` accepts a semicolon-separated CMake architecture
+list. Candle's `CUDA_COMPUTE_CAP` setting no longer narrows LibTorch builds.
+Distribution builds can pin the full target list explicitly:
+
+```bash
+LIBTORCH_CUDA_ARCHITECTURES='75;80;86;89;90;100;120' \
+  cargo build --release -p infinity_v3-router \
+  --no-default-features --features libtorch,http
+```
+
+Use `LIBTORCH_CUDA_ARCHITECTURES=90` for a faster H100-only development build.
+Multi-architecture compilation takes more time and produces a larger library;
+compilation coverage does not replace runtime qualification on each GPU family.
+
 CMake handles LibTorch's compiler/ABI flags. The bridge is a small shared library;
 the server's build rpath points to its Cargo output directory. When moving the
 server to another machine, ship `libtei_torch.so` from that build alongside the
@@ -272,7 +294,7 @@ equally. It checks embedding cosine agreement before measuring each workload.
 Use an optimized build for both backends:
 
 ```bash
-CUDA_COMPUTE_CAP=90 CARGO_PROFILE_RELEASE_LTO=false \
+CUDA_COMPUTE_CAP=90 LIBTORCH_CUDA_ARCHITECTURES=90 CARGO_PROFILE_RELEASE_LTO=false \
   CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16 \
   cargo build --release -p infinity-backend-libtorch \
     --features benchmark-cuda --example compare_bert
@@ -280,7 +302,7 @@ CUDA_COMPUTE_CAP=90 CARGO_PROFILE_RELEASE_LTO=false \
 target/release/examples/compare_bert /path/to/bert-model 100 0 1 > bert-results.json
 ```
 
-Set `CUDA_COMPUTE_CAP` for your GPU (90 for H100, 86 for A10). Each workload uses
+Set both architecture overrides for your GPU (90 for H100, 86 for A10). Each workload uses
 20 warmups per runtime and a synchronized start for parallel measurements. GPU
 ordinals are configurable; swap them to check hardware bias. The JSON includes P50/P95 latency, token throughput at P50 and output
 agreement. These are synchronous backend measurements, not HTTP throughput or

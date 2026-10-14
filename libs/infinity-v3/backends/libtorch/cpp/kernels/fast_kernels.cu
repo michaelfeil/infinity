@@ -6,6 +6,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
 #include <cuda_bf16.h>
+#include "kernels/bf16_compat.cuh"
 #include <cuda_fp16.h>
 #include <cstdint>
 #include <cmath>

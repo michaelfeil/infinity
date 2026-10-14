@@ -1,5 +1,14 @@
 cmake_minimum_required(VERSION 3.18)
 project(tei_torch LANGUAGES CXX)
+if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
+  set(CMAKE_CUDA_ARCHITECTURES "75;80;86;89;90;100;120" CACHE STRING
+      "CUDA architectures for portable LibTorch kernel distributions")
+endif()
+# Avoid build-host GPU detection during Torch's configure-time probe, including
+# standalone native builds on GPU-less image builders.
+if(NOT DEFINED TORCH_CUDA_ARCH_LIST AND NOT DEFINED ENV{TORCH_CUDA_ARCH_LIST})
+  set(TORCH_CUDA_ARCH_LIST "7.5;8.0;8.6;8.9;9.0;10.0;12.0")
+endif()
 set(TEI_REQUESTED_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
 find_package(Torch 2.14.1 EXACT REQUIRED)
 # Torch appends its own gencode flags and disables CMake architecture selection.
@@ -136,6 +145,11 @@ if(INFINITY_BUILD_NATIVE_TESTS)
     target_compile_definitions(qwen35_models_test PRIVATE TEI_TORCH_CUDA_KERNELS)
   endif()
   if(TARGET torch_cuda AND INFINITY_RUN_CUDA_TESTS)
+    add_executable(bf16_compat_test tests/bf16_compat_test.cu)
+    target_include_directories(bf16_compat_test PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_target_properties(bf16_compat_test PROPERTIES CUDA_STANDARD 20)
+    target_link_libraries(bf16_compat_test PRIVATE CUDA::cudart)
+    add_test(NAME bf16_compat_cuda COMMAND bf16_compat_test)
     foreach(test output bert_private_flash qwen35_reference fp8_linear decoder_fp8 fast_kernels encoder_activation encoder_norm decoder_norm cuda_graph gemma_vision_kernels gemma_rotary packed_pool packed_alibi packed_relative_bias moe_kernels moe_cuda_graph torch_flash_fma laya_features)
       add_executable(${test}_test tests/${test}_test.cpp)
       target_compile_features(${test}_test PRIVATE cxx_std_20)
