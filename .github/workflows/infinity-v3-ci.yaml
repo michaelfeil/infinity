@@ -45,8 +45,9 @@ jobs:
           components: rustfmt, clippy
           rust-src-dir: libs/infinity-v3
           cache-workspaces: libs/infinity-v3
-          # Keep local and CI warning behavior aligned.
-          rustflags: ''
+          # Cached proc-macros run on different GitHub runner CPUs. Override
+          # the project's native CPU flags so cached artifacts remain portable.
+          rustflags: '-C target-cpu=x86-64'
       - name: Install build dependencies
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
       - name: Check formatting

@@ -216,6 +216,20 @@ bool Qwen3VL::supports_images() const {return true;}
 
 at::Tensor Qwen3VL::image_features(const ImageInput& image) const {return vision(image).first;}
 
+TowerMemoryProfile Qwen3VL::vision_memory_profile() const {
+  int64_t saved=0;
+  for(int64_t i=0;cfg.values.count("vision_config.deepstack_visual_indexes."+std::to_string(i));++i) {
+    const auto layer=cfg.integer("vision_config.deepstack_visual_indexes."+std::to_string(i));
+    TORCH_CHECK(layer>=0&&layer<depth,"Invalid vision deepstack layer index");++saved;
+  }
+  TowerMemoryProfile p{hidden,heads,std::max(hidden,transient_linear_width(visual_weights)),saved,0};
+  p.per_frame_attention=true;p.tiled_scores=exact_vision;
+  p.efficient_scores=device.is_cuda()&&!exact_vision;return p;
+}
+std::optional<TransientMemoryProfile> Qwen3VL::transient_memory_profile() const {
+  if(!text)return std::nullopt;
+  auto p=text->transient_memory_profile();if(p)p->vision=vision_memory_profile();return p;
+}
 int64_t Qwen3VL::output_width() const {return text->output_width();}
 
 at::Tensor Qwen3VL::forward(const PackedInput& input) const {

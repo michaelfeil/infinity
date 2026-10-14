@@ -23,3 +23,19 @@ checkpoint and selected backend.
 
 Open `/docs` on the running server for interactive API documentation. The API
 schema is available at `/api-doc/openapi.json`.
+
+## UltraBERT embeddings
+
+`dmis-lab/UltraBERT-Embed-150M` uses the Candle backend and produces
+768-dimensional CLS embeddings with a 32,768-token context:
+
+```sh
+infinity_v3 --backend candle --model-id dmis-lab/UltraBERT-Embed-150M \
+  --max-batch-tokens 32768
+```
+
+Use `prompt_name: "query"` for retrieval queries; documents use the empty
+`document` prompt. Mean and last-token pooling overrides and raw token
+embeddings are supported. CPU supports FP32/FP16; CUDA SM80+ supports FP16/BF16.
+Its attention geometry uses FA2 even with `ATTN_BACKEND=fa4`. Native LibTorch,
+Metal, and classification heads are unsupported for this checkpoint.

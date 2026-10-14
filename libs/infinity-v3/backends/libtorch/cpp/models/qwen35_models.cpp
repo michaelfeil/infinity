@@ -1,4 +1,6 @@
 #include "helpers/attention.h"
+#include "helpers/vendor_error.h"
+#include "helpers/workspace_admission.h"
 // Native adaptation of Candle Qwen3.5. Upstream notices retained in LICENSE/NOTICE.
 #include "models/qwen35_models.h"
 #include "models/qwen3_vl_models.h"
@@ -26,6 +28,7 @@ namespace {
 class Qwen35 final : public Model {
   Options cfg;
   Weights weights;
+  int64_t transient_linear=0,transient_vocabulary=0;
   c10::Device device;
   at::ScalarType dtype;
   std::string prefix;
@@ -49,6 +52,7 @@ class Qwen35 final : public Model {
     cublasLtMatmulAlgo_t algorithm{};
     size_t workspace_bytes{};
     // Captured GEMMs retain this allocation even when a later policy grows it.
+    std::shared_ptr<WorkspaceMemoryPermit> memory_permit;
     at::Tensor workspace;
     bool valid=false;
     ~RadixLinearPlan(){if(output)cublasLtMatrixLayoutDestroy(output);if(input)cublasLtMatrixLayoutDestroy(input);if(weight)cublasLtMatrixLayoutDestroy(weight);if(operation)cublasLtMatmulDescDestroy(operation);}
@@ -57,6 +61,7 @@ class Qwen35 final : public Model {
   // and the ATen workspace policy. Plans are shared by identical layer shapes.
   using RadixLinearKey=std::array<int64_t,15>;
   mutable std::map<RadixLinearKey,std::unique_ptr<RadixLinearPlan>> radix_linear_plans;
+  mutable std::shared_ptr<WorkspaceMemoryPermit> radix_linear_memory_permit;
   mutable at::Tensor radix_linear_workspace;
 #endif
   at::Tensor linear_radix_projection(const at::Tensor& x,const std::string& name,const PackedInput& packed) const {
@@ -104,19 +109,35 @@ class Qwen35 final : public Model {
             valid=cublasLtMatmulAlgoCheck(handle,plan->operation,plan->weight,plan->input,plan->output,plan->output,&plan->algorithm,&check)==CUBLAS_STATUS_SUCCESS && check.state==CUBLAS_STATUS_SUCCESS && check.workspaceSize<=limit;
             plan->workspace_bytes=check.workspaceSize;
           }
-          if(valid && plan->workspace_bytes>0 && (!radix_linear_workspace.defined() || static_cast<size_t>(radix_linear_workspace.numel())<plan->workspace_bytes))
-            radix_linear_workspace=at::empty({static_cast<int64_t>(limit)},x.options().dtype(at::kByte));
-          if(valid && plan->workspace_bytes>0)plan->workspace=radix_linear_workspace;
           plan->valid=valid;
           found=radix_linear_plans.emplace(key,std::move(plan)).first;
         }
         if(found!=radix_linear_plans.end() && found->second->valid) {
           auto& plan=*found->second;
+          bool admitted=true;
+          if(plan.workspace_bytes>0 && !plan.workspace.defined()) {
+            if(!radix_linear_workspace.defined() || static_cast<size_t>(radix_linear_workspace.numel())<plan.workspace_bytes) {
+              auto permit=reserve_workspace_memory(device.index(),limit);
+              if(!permit)admitted=false;
+              else {
+                auto workspace=at::empty({static_cast<int64_t>(limit)},x.options().dtype(at::kByte));
+                radix_linear_workspace=std::move(workspace);
+                radix_linear_memory_permit=std::move(permit);
+              }
+            }
+            if(admitted){plan.workspace=radix_linear_workspace;plan.memory_permit=radix_linear_memory_permit;}
+          }
+          // Supported descriptors survive transient credit denial. Retain the
+          // exact workspace generation with each plan for captured addresses.
+          if(admitted) {
           auto output=at::empty({m,n},x.options());
           const float alpha=1.f,beta=0.f;
           auto status=cublasLtMatmul(at::cuda::getCurrentCUDABlasLtHandle(),plan.operation,&alpha,matrix.const_data_ptr(),plan.weight,x.const_data_ptr(),plan.input,&beta,output.const_data_ptr(),plan.output,output.mutable_data_ptr(),plan.output,&plan.algorithm,plan.workspace_bytes?plan.workspace.mutable_data_ptr():nullptr,plan.workspace_bytes,c10::cuda::getCurrentCUDAStream(device.index()).stream());
+          if(status==CUBLAS_STATUS_ALLOC_FAILED)
+            throw VendorAllocationError{"Qwen3.5 packed projection cublasLtMatmul",static_cast<int32_t>(status)};
           TORCH_CHECK(status==CUBLAS_STATUS_SUCCESS,"Qwen3.5 packed attention output projection failed: ",static_cast<int>(status));
           return output;
+          }
         }
       }
     }
@@ -272,9 +293,23 @@ class Qwen35 final : public Model {
       if(weights.count(std::string(p)+"embed_tokens.weight")) { prefix=p; break; }
     if(cfg.integer("vision_config.depth",0)>0)visual=std::make_unique<Qwen3VL>(cfg,weights,device,cfg.string("_decision.kind")=="d3"?at::kBFloat16:at::kHalf,true);
   }
+  std::optional<TransientMemoryProfile> transient_memory_profile() const override {
+    auto p=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
+    p.linear=std::max(p.linear,transient_linear);p.vocab=std::max(p.vocab,transient_vocabulary);
+    p.experts=integer("num_experts",0);p.top_k=p.experts?integer("num_experts_per_tok",8):1;
+    bool recurrent=false;
+    for(int64_t i=0;i<layer_count;++i)
+      recurrent=recurrent || string("layer_types."+std::to_string(i))=="linear_attention";
+    p.recurrent_heads=recurrent?integer("linear_num_value_heads",0):0;
+    p.recurrent_key=integer("linear_key_head_dim",128);p.recurrent_value=integer("linear_value_head_dim",128);
+    if(visual)p.vision=visual->vision_memory_profile();return p;
+  }
   int64_t output_width() const override { return hidden; }
   bool supports_images() const override {return bool(visual);}
   void ready() override {
+    // Retain scalar dimensions before inference caches erase checkpoint tensors.
+    const auto checkpoint_profile=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
+    transient_linear=checkpoint_profile.linear;transient_vocabulary=checkpoint_profile.vocab;
     TORCH_CHECK(hidden>0 && heads>0 && kv_heads>0 && heads%kv_heads==0 && dim>0 && rotary>0 && rotary<=dim && rotary%2==0 && layer_count>0,"Invalid Qwen3.5 attention geometry");
     TORCH_CHECK(integer("linear_key_head_dim",128)==128 && integer("linear_value_head_dim",128)==128,"Qwen3.5 DeltaNet requires head dimension128");
     TORCH_CHECK(device.is_cpu() || device.is_cuda(),"Native Qwen3.5 supports CPU/CUDA");

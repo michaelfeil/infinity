@@ -14,6 +14,7 @@ struct MistralAttention {
     o_proj: Linear,
 
     window_size_left: Option<usize>,
+    window_size_right: Option<usize>,
     use_bidirectional_attention: bool,
 
     num_attention_heads: usize,
@@ -71,6 +72,7 @@ impl MistralAttention {
             qkv_linear,
             o_proj,
             window_size_left,
+            window_size_right: None,
             use_bidirectional_attention,
             num_attention_heads,
             num_key_value_heads,
@@ -134,7 +136,7 @@ impl MistralAttention {
             self.softmax_scale,
             !self.use_bidirectional_attention,
             self.window_size_left,
-            None,
+            self.window_size_right,
         )?;
         let attention = attention.flatten_from(candle::D::Minus2)?;
 
@@ -190,7 +192,7 @@ impl MistralMLP {
     }
 }
 
-struct MistralLayer {
+pub(crate) struct MistralLayer {
     attention: MistralAttention,
     mlp: MistralMLP,
     input_layer_norm: RMSNorm,
@@ -200,6 +202,11 @@ struct MistralLayer {
 }
 
 impl MistralLayer {
+    pub(crate) fn with_symmetric_window(mut self) -> Self {
+        self.attention.window_size_right = self.attention.window_size_left;
+        self
+    }
+
     pub fn load(vb: VarBuilder, config: &MistralConfig, enable_fp8_dynamic: bool) -> Result<Self> {
         let attention = MistralAttention::load(vb.pp("self_attn"), config)?;
         let mlp = MistralMLP::load(vb.pp("mlp"), config, enable_fp8_dynamic)?;

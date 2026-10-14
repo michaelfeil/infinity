@@ -4,6 +4,8 @@
 #include "models/gemma_models.h"
 #include "helpers/image_feature_cache.h"
 #include "helpers/fp8_linear.h"
+#include "helpers/workspace_admission.h"
+#include "helpers/vendor_error.h"
 #include "batching/radix.h"
 #include "models/decoder_models.h"
 #include "kernels/qwen35_kernels.h"
@@ -69,6 +71,7 @@ class Gemma final : public Model {
     size_t workspace_bytes{};
     // Captured graphs retain this allocation address even when a later plan
     // grows the shared workspace. Keep each cached plan's generation alive.
+    std::shared_ptr<WorkspaceMemoryPermit> memory_permit;
     at::Tensor workspace;
     bool valid=false;
     ~RadixLinearPlan(){if(output)cublasLtMatrixLayoutDestroy(output);if(input)cublasLtMatrixLayoutDestroy(input);if(weight)cublasLtMatrixLayoutDestroy(weight);if(operation)cublasLtMatmulDescDestroy(operation);}
@@ -77,6 +80,7 @@ class Gemma final : public Model {
   // and the ATen workspace policy. Plans are shared by identical layer shapes.
   using RadixLinearKey=std::array<int64_t,15>;
   mutable std::map<RadixLinearKey,std::unique_ptr<RadixLinearPlan>> radix_linear_plans;
+  mutable std::shared_ptr<WorkspaceMemoryPermit> radix_linear_memory_permit;
   mutable at::Tensor radix_linear_workspace;
 #endif
   at::Tensor linear_radix_projection(const at::Tensor& x,const std::string& name,const PackedInput& packed,const at::Tensor& supplied=at::Tensor{}) const {
@@ -130,21 +134,34 @@ class Gemma final : public Model {
             valid=cublasLtMatmulAlgoCheck(handle,plan->operation,plan->weight,plan->input,plan->output,plan->output,&plan->algorithm,&check)==CUBLAS_STATUS_SUCCESS && check.state==CUBLAS_STATUS_SUCCESS && check.workspaceSize<=limit;
             plan->workspace_bytes=check.workspaceSize;
           }
-          if(valid && plan->workspace_bytes>0) {
-            if(!radix_linear_workspace.defined() || static_cast<size_t>(radix_linear_workspace.numel())<plan->workspace_bytes)
-              radix_linear_workspace=at::empty({static_cast<int64_t>(limit)},x.options().dtype(at::kByte));
-            plan->workspace=radix_linear_workspace;
-          }
           plan->valid=valid;
           found=radix_linear_plans.emplace(key,std::move(plan)).first;
         }
         if(found!=radix_linear_plans.end() && found->second->valid) {
           auto& plan=*found->second;
+          bool admitted=true;
+          if(plan.workspace_bytes>0 && !plan.workspace.defined()) {
+            // Cache a supported tactic even when shared credit is temporarily
+            // unavailable. Preserve existing plan generations/captured addresses.
+            if(!radix_linear_workspace.defined() || static_cast<size_t>(radix_linear_workspace.numel())<plan.workspace_bytes) {
+              auto permit=reserve_workspace_memory(x.get_device(),limit);
+              if(!permit)admitted=false;
+              else {
+                radix_linear_workspace=at::empty({static_cast<int64_t>(limit)},x.options().dtype(at::kByte));
+                radix_linear_memory_permit=std::move(permit);
+              }
+            }
+            if(admitted){plan.workspace=radix_linear_workspace;plan.memory_permit=radix_linear_memory_permit;}
+          }
+          if(admitted) {
           auto output=at::empty({m,n},x.options());
           const float alpha=1.f,beta=0.f;
           auto status=cublasLtMatmul(at::cuda::getCurrentCUDABlasLtHandle(),plan.operation,&alpha,matrix.const_data_ptr(),plan.weight,x.const_data_ptr(),plan.input,&beta,output.const_data_ptr(),plan.output,output.mutable_data_ptr(),plan.output,&plan.algorithm,plan.workspace_bytes?plan.workspace.mutable_data_ptr():nullptr,plan.workspace_bytes,c10::cuda::getCurrentCUDAStream(device.index()).stream());
+          if(status==CUBLAS_STATUS_ALLOC_FAILED)
+            throw VendorAllocationError{"Gemma4 packed projection cublasLtMatmul",static_cast<int32_t>(status)};
           TORCH_CHECK(status==CUBLAS_STATUS_SUCCESS,"Gemma4 packed projection failed: ",static_cast<int>(status));
           return output;
+          }
         }
       }
     }
@@ -671,6 +688,40 @@ class Gemma final : public Model {
   }
   bool supports_images() const override { return !legacy && cfg.integer("vision_config.num_hidden_layers",0)>0; }
   bool supports_audio() const override { return embedding2 && cfg.integer("audio_config.hidden_size",0)>0; }
+  std::optional<TransientMemoryProfile> transient_memory_profile() const override {
+    auto p=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
+    for(const auto& layer:stack)if(layer.store){
+      TORCH_CHECK(layer.kv>0&&layer.dim>0&&layer.kv<=std::numeric_limits<int64_t>::max()/layer.dim,
+        "Invalid retained attention KV dimensions");
+      p.retained_kv_width=std::max(p.retained_kv_width,layer.kv*layer.dim);++p.retained_kv_layers;
+    }
+    p.experts=boolean("enable_moe_block",false)?integer("num_experts",0):0;
+    p.top_k=p.experts?integer("top_k_experts",8):1;
+    if(supports_images()) {
+      p.vision=TowerMemoryProfile{cfg.integer("vision_config.hidden_size",0),
+        cfg.integer("vision_config.num_attention_heads",0),p.linear,cfg.integer("vision_config.num_hidden_layers",0),0};
+      p.vision->efficient_scores=device.is_cuda();
+      p.retained_vision_bytes=64UL<<20;
+    }
+    if(supports_audio()) {
+      int64_t width=0,convolution=0,converted=0;
+      for(const auto& [name,value]:weights)if(name.find("audio")!=std::string::npos&&value.defined()) {
+        if(value.dim()==2)width=std::max(width,value.size(0));
+        if(value.dim()==3||value.dim()==4)converted=std::max(converted,value.numel());
+        if(value.dim()==4&&value.size(0)>0)convolution=std::max({convolution,value.numel()/value.size(0),value.size(0)});
+      }
+      p.audio=TowerMemoryProfile{width,cfg.integer("audio_config.num_attention_heads",cfg.integer("audio_config.conf_num_attention_heads",8)),p.linear,0,convolution,converted};
+      const auto chunk=cfg.integer("audio_config.attention_chunk_size",12),left=cfg.integer("audio_config.attention_context_left",13),
+        future=cfg.integer("audio_config.attention_context_right",0);
+      TORCH_CHECK(left>0,"Invalid audio left attention context");const auto past=left-1;
+      TORCH_CHECK(chunk>0&&past>=0&&future>=0&&chunk<=std::numeric_limits<int64_t>::max()-past&&
+        future<=std::numeric_limits<int64_t>::max()-chunk-past,"Invalid audio relative attention geometry");
+      p.audio->relative_span=(chunk+past+future)/2+1;
+      p.audio->attention_chunk=chunk;
+      p.audio->attention_window=chunk+past+future;
+    }
+    return p;
+  }
   int64_t output_width() const override { return embedding2 ? integer("embedding_dim", hidden) : hidden; }
   int64_t classification_width() const override {
     auto score=weights.find("score.weight");

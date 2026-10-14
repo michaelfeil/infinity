@@ -1,4 +1,5 @@
 #include "helpers/fp8_linear.h"
+#include "helpers/workspace_admission.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
@@ -25,6 +26,23 @@ int main() {
       auto w=at::randn({2304,768},options)*.05;
       auto expected=at::linear(x,w);
       c10::cuda::getCurrentCUDAStream().synchronize();
+      {
+        tei::OrdinaryLinearExecutor retry;
+        auto state=tei::workspace_admission_state(0);
+        size_t available;
+        { std::lock_guard lock(state->mutex);
+          available=(state->limit?state->limit:size_t(512)<<20)-state->retained;
+        }
+        auto pressure=tei::reserve_workspace_memory(0,available);
+        TORCH_CHECK(pressure,"Workspace pressure fixture failed to reserve remaining allowance");
+        auto session=retry.prepare(x);
+        TORCH_CHECK(!retry.forward(x,w,session).defined(),"Workspace cap pressure was ignored");
+        pressure.reset();
+        auto recovered=retry.forward(x,w,session);
+        TORCH_CHECK(recovered.defined()&&at::equal(recovered,expected),
+          "Released workspace allowance did not restore the cached supported plan");
+        c10::cuda::getCurrentCUDAStream().synchronize();
+      }
       at::Tensor retained;
       auto streams=std::array<c10::cuda::CUDAStream,2>{
         c10::cuda::getStreamFromPool(),c10::cuda::getStreamFromPool()};

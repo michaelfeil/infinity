@@ -43,6 +43,7 @@ class Decoder final : public Model {
     return at::linear(x,w,b);
   }
   Options options;
+  int64_t transient_linear=0,transient_vocabulary=0;
   Weights weights;
   c10::Device device;
   at::ScalarType dtype;
@@ -355,6 +356,9 @@ public:
     if (family == "qwen2" || cfg.values.count("is_causal")) causal = cfg.boolean("is_causal", true);
   }
   void ready() override {
+    // Retain scalar dimensions before inference caches erase checkpoint tensors.
+    const auto checkpoint_profile=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
+    transient_linear=checkpoint_profile.linear;transient_vocabulary=checkpoint_profile.vocab;
     fp8_dynamic=options.boolean("_fp8_dynamic",false);
     if(fp8_dynamic) {
       TORCH_CHECK(device.is_cuda()&&(dtype==at::kHalf||dtype==at::kBFloat16),
@@ -508,6 +512,13 @@ public:
     weights.clear();
   }
   bool supports_radix() const override {return causal;}
+  std::optional<TransientMemoryProfile> transient_memory_profile() const override {
+    auto p=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
+    p.linear=std::max(p.linear,transient_linear);p.vocab=std::max(p.vocab,transient_vocabulary);
+    for(const auto& layer:layers)if(layer.router.defined())p.experts=std::max(p.experts,layer.router.size(0));
+    p.top_k=p.experts?top_k:1;
+    return p;
+  }
   int64_t output_width() const override { return projection.defined() ? projection.size(0) : hidden; }
   int64_t classification_width() const override {return score.defined()?score.size(0):0;}
   at::Tensor predict(const PackedInput& input,bool tokenwise) const override {

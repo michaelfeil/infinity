@@ -1,4 +1,6 @@
 #include "helpers/fp8_linear.h"
+#include "helpers/workspace_admission.h"
+#include "helpers/vendor_error.h"
 #include <ATen/ops/_scaled_mm.h>
 #include <string>
 #include <mutex>
@@ -112,6 +114,7 @@ struct OrdinaryLinearExecutor::Impl {
     cublasLtMatmulDesc_t operation{};
     cublasLtMatrixLayout_t a{}, b{}, c{}, d{};
     cublasLtMatmulAlgo_t algorithm{};
+    std::shared_ptr<WorkspaceMemoryPermit> memory_permit;
     at::Tensor workspace;
     bool rejected=false;
     ~Plan() {
@@ -128,6 +131,7 @@ struct OrdinaryLinearExecutor::Impl {
     std::thread::id thread;
     cudaStream_t stream;
     cublasLtHandle_t handle;
+    std::shared_ptr<WorkspaceMemoryPermit> memory_permit;
     at::Tensor workspace;
   };
   struct Entry {
@@ -252,7 +256,7 @@ at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x,const at::Tensor&
   }
   if(lane==cache.lanes.size()) {
     if(lane==Impl::max_lanes)return {};
-    cache.lanes.push_back({x.get_device(),context,thread,stream.stream(),handle,{}});
+    cache.lanes.push_back({x.get_device(),context,thread,stream.stream(),handle,{},{}});
   }
   Impl::Plan* plan=nullptr;
   for(auto& entry:cache.entries)if(entry.lane==lane && entry.workspace_bytes==workspace_bytes &&
@@ -296,13 +300,20 @@ at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x,const at::Tensor&
     if(!ok(cublasLtMatmulAlgoConfigGetAttribute(&heuristic.algo,CUBLASLT_ALGO_CONFIG_ID,
       &id,sizeof(id),&written)) || written!=sizeof(id) || id!=66)return {};
     plan->algorithm=heuristic.algo; // Original first tactic, not a custom search.
-    auto& workspace=cache.lanes[lane].workspace;
-    if(workspace_bytes && !workspace.defined())
-      workspace=at::empty({static_cast<int64_t>(Impl::max_workspace)},x.options().dtype(at::kByte));
-    plan->workspace=workspace; // Keep this exact allocation alive independently.
     plan->rejected=false;
   }
   if(plan->rejected)return {};
+  // A supported plan remains cached when another executor temporarily owns
+  // the shared workspace allowance. Retry admission without repeating setup.
+  auto& workspace=cache.lanes[lane].workspace;
+  if(workspace_bytes && !workspace.defined()) {
+    auto permit=reserve_workspace_memory(x.get_device(),Impl::max_workspace);
+    if(!permit)return {}; // Preserve the existing ATen fallback.
+    workspace=at::empty({static_cast<int64_t>(Impl::max_workspace)},x.options().dtype(at::kByte));
+    cache.lanes[lane].memory_permit=std::move(permit);
+  }
+  plan->workspace=workspace; // Keep this exact allocation alive independently.
+  plan->memory_permit=cache.lanes[lane].memory_permit;
   auto output=at::empty({m,n},x.options().dtype(output_dtype));
   if(!aligned(output))return {};
   if(plan->workspace.defined())c10::cuda::CUDACachingAllocator::recordStream(
@@ -313,7 +324,9 @@ at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x,const at::Tensor&
     output.const_data_ptr(),plan->c,output.mutable_data_ptr(),plan->d,
     &plan->algorithm,workspace_bytes?plan->workspace.mutable_data_ptr():nullptr,
     workspace_bytes,stream.stream());
-  // Preserve ATen’s retry through cuBLAS after any failed cuBLASLt attempt.
+  if(status==CUBLAS_STATUS_ALLOC_FAILED)
+    throw VendorAllocationError{"Ordinary packed projection cublasLtMatmul",static_cast<int32_t>(status)};
+  // Other failed tactics retain ATen's fallback through cuBLAS.
   if(status!=CUBLAS_STATUS_SUCCESS) { plan->rejected=true;return {}; }
   return output;
 #else
