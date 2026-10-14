@@ -18,7 +18,7 @@ on:
       variants:
         description: Image variants to build (CUDA builds require substantial disk and time)
         type: choice
-        options: [cpu, all]
+        options: [cpu, nvidia, all]
         default: cpu
 
 permissions:
@@ -38,9 +38,9 @@ jobs:
       - name: Select image variants
         id: matrix
         env:
-          VARIANTS: ${{ github.event_name == 'pull_request' && 'cpu' || inputs.variants || 'all' }}
+          VARIANTS: ${{ github.event_name == 'pull_request' && 'cpu' || inputs.variants || 'release' }}
         run: |
-          matrix=$(jq -c --arg variants "$VARIANTS" '{include: [.[] | select($variants == "all" or .name == "cpu")]}' .github/infinity-v3-matrix.json)
+          matrix=$(jq -c --arg variants "$VARIANTS" '{include: [.[] | select($variants == "all" or .name == $variants or ($variants == "release" and (.name == "cpu" or .name == "nvidia")))]}' .github/infinity-v3-matrix.json)
           echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
 
   build:
@@ -80,8 +80,8 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/infinity_v3
           flavor: latest=false
           tags: |
-            type=semver,pattern=${{ matrix.imageNamePrefix }}{{version}}
-            type=semver,pattern=${{ matrix.imageNamePrefix }}{{major}}.{{minor}}
+            type=semver,pattern={{version}},prefix=${{ matrix.imageNamePrefix }}
+            type=semver,pattern={{major}}.{{minor}},prefix=${{ matrix.imageNamePrefix }}
             type=raw,value=${{ matrix.imageNamePrefix }}latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=${{ matrix.imageNamePrefix }}sha-
       - name: Build and push
@@ -107,3 +107,10 @@ jobs:
         env:
           IMAGE: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
         run: docker run --rm "$IMAGE" --help
+      - name: Check NVIDIA image starts without a GPU
+        if: matrix.name == 'nvidia'
+        env:
+          IMAGE: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+        run: |
+          docker run --rm "$IMAGE" --help
+          docker run --rm --entrypoint cat "$IMAGE" /usr/share/infinity_v3/cuda-architectures.txt
