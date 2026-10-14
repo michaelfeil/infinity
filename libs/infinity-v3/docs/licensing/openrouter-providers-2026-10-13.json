@@ -1,0 +1,837 @@
+{
+  "status": "Fixed platform snapshot for Infinity License 1.0 for Commercial Use; adoption scope and effective version are defined in the root LICENSE",
+  "retrieved_date_utc": "2026-10-13",
+  "directory_url": "https://openrouter.ai/providers",
+  "provider_metadata_url": "https://openrouter.ai/api/v1/providers",
+  "directory_provider_count": 93,
+  "restricted_provider_count": 89,
+  "permitted_directory_provider_count": 4,
+  "selection_rule": "Every provider entry in the retrieved public directory except Azure, Baseten, Google Vertex, and Google AI Studio. General AWS infrastructure such as EC2 and Oracle Cloud remain permitted; Amazon Bedrock is expressly restricted as a platform for commercial deployment. The public directory controls membership; the API only resolves identifiers and operator references.",
+  "claude_on_aws_note": "This entry points to Anthropic commercial terms and represents an Anthropic-operated service, not generic AWS capacity. It is included alongside Anthropic. AWS capacity remains expressly permitted.",
+  "providers": [
+    {
+      "directory_name": "AionLabs",
+      "api_name": "AionLabs",
+      "slug": "aion-labs",
+      "terms_of_service_url": "https://www.aionlabs.ai/terms/",
+      "privacy_policy_url": "https://www.aionlabs.ai/privacy-policy/",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "AkashML",
+      "api_name": "AkashML",
+      "slug": "akashml",
+      "terms_of_service_url": "https://akashml.com/terms",
+      "privacy_policy_url": "https://akashml.com/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Alibaba Cloud Int.",
+      "api_name": "Alibaba",
+      "slug": "alibaba",
+      "terms_of_service_url": "https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-product-terms-of-service-v-3-8-0",
+      "privacy_policy_url": "https://www.alibabacloud.com/help/en/legal/latest/alibaba-cloud-international-website-privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Amazon Bedrock",
+      "api_name": "Amazon Bedrock",
+      "slug": "amazon-bedrock",
+      "terms_of_service_url": "https://aws.amazon.com/service-terms/",
+      "privacy_policy_url": "https://aws.amazon.com/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Anthropic",
+      "api_name": "Anthropic",
+      "slug": "anthropic",
+      "terms_of_service_url": "https://www.anthropic.com/legal/commercial-terms",
+      "privacy_policy_url": "https://www.anthropic.com/legal/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Arcee AI",
+      "api_name": "Arcee AI",
+      "slug": "arcee-ai",
+      "terms_of_service_url": null,
+      "privacy_policy_url": null,
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "AssemblyAI",
+      "api_name": "AssemblyAI",
+      "slug": "assemblyai",
+      "terms_of_service_url": "https://www.assemblyai.com/legal/terms-of-service",
+      "privacy_policy_url": "https://www.assemblyai.com/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "AtlasCloud",
+      "api_name": "AtlasCloud",
+      "slug": "atlas-cloud",
+      "terms_of_service_url": null,
+      "privacy_policy_url": "https://www.atlascloud.ai/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Azure",
+      "api_name": "Azure",
+      "slug": "azure",
+      "terms_of_service_url": "https://www.microsoft.com/en-us/legal/terms-of-use?oneroute=true",
+      "privacy_policy_url": "https://www.microsoft.com/en-us/privacy/privacystatement",
+      "treatment": "permitted"
+    },
+    {
+      "directory_name": "Baidu Qianfan",
+      "api_name": "Baidu",
+      "slug": "baidu",
+      "terms_of_service_url": "https://intl.cloud.baidu.com/en/doc/Agreements/s/bmesahnjh-intl-en",
+      "privacy_policy_url": "https://intl.cloud.baidu.com/en/doc/Agreements/s/Plr0fi68q-intl-en",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Baseten",
+      "api_name": "BaseTen",
+      "slug": "baseten",
+      "terms_of_service_url": "https://www.baseten.co/terms-and-conditions",
+      "privacy_policy_url": "https://www.baseten.co/privacy-policy",
+      "treatment": "permitted"
+    },
+    {
+      "directory_name": "Black Forest Labs",
+      "api_name": "Black Forest Labs",
+      "slug": "black-forest-labs",
+      "terms_of_service_url": "https://bfl.ai/legal/terms-of-service",
+      "privacy_policy_url": "https://bfl.ai/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Cerebras",
+      "api_name": "Cerebras",
+      "slug": "cerebras",
+      "terms_of_service_url": "https://www.cerebras.ai/terms-of-service",
+      "privacy_policy_url": "https://www.cerebras.ai/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Chutes",
+      "api_name": "Chutes",
+      "slug": "chutes",
+      "terms_of_service_url": "https://chutes.ai/tos",
+      "privacy_policy_url": "https://chutes.ai/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Claude Platform on AWS",
+      "api_name": "Claude Platform on AWS",
+      "slug": "claude-on-aws",
+      "terms_of_service_url": "https://www.anthropic.com/legal/commercial-terms",
+      "privacy_policy_url": "https://www.anthropic.com/legal/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Cloudflare",
+      "api_name": "Cloudflare",
+      "slug": "cloudflare",
+      "terms_of_service_url": "https://www.cloudflare.com/service-specific-terms-developer-platform/#developer-platform-terms",
+      "privacy_policy_url": "https://developers.cloudflare.com/workers-ai/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Cohere",
+      "api_name": "Cohere",
+      "slug": "cohere",
+      "terms_of_service_url": "https://cohere.com/terms-of-use",
+      "privacy_policy_url": "https://cohere.com/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "CoreWeave",
+      "api_name": "CoreWeave",
+      "slug": "coreweave",
+      "terms_of_service_url": "https://docs.coreweave.com/policies/terms-of-service",
+      "privacy_policy_url": "https://docs.coreweave.com/policies/terms-of-service/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Crusoe",
+      "api_name": "Crusoe",
+      "slug": "crusoe",
+      "terms_of_service_url": "https://legal.crusoe.ai/open-router#managed-inference-tos-open-router",
+      "privacy_policy_url": "https://legal.crusoe.ai/open-router#cloud-privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Darkbloom",
+      "api_name": "Darkbloom",
+      "slug": "darkbloom",
+      "terms_of_service_url": "https://www.darkbloom.dev/terms.html",
+      "privacy_policy_url": "https://www.darkbloom.dev/privacy.html",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Decart",
+      "api_name": "Decart",
+      "slug": "decart",
+      "terms_of_service_url": "https://cogito.decart.ai/legal/terms",
+      "privacy_policy_url": "https://cogito.decart.ai/legal/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Deepgram",
+      "api_name": "Deepgram",
+      "slug": "deepgram",
+      "terms_of_service_url": "https://deepgram.com/terms",
+      "privacy_policy_url": "https://deepgram.com/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "DeepInfra",
+      "api_name": "DeepInfra",
+      "slug": "deepinfra",
+      "terms_of_service_url": "https://deepinfra.com/terms",
+      "privacy_policy_url": "https://deepinfra.com/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "DeepSeek",
+      "api_name": "DeepSeek",
+      "slug": "deepseek",
+      "terms_of_service_url": "https://chat.deepseek.com/downloads/DeepSeek%20Terms%20of%20Use.html",
+      "privacy_policy_url": "https://chat.deepseek.com/downloads/DeepSeek%20Privacy%20Policy.html",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "DekaLLM",
+      "api_name": "DekaLLM",
+      "slug": "dekallm",
+      "terms_of_service_url": "https://docs.cloudeka.ai/service-portal-ai/end-user-license-agreement",
+      "privacy_policy_url": "https://www.cloudeka.id/id/privacy-policy/",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "DigitalOcean",
+      "api_name": "DigitalOcean",
+      "slug": "digitalocean",
+      "terms_of_service_url": "https://www.digitalocean.com/legal/terms-of-service-agreement",
+      "privacy_policy_url": "https://www.digitalocean.com/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "ElevenLabs",
+      "api_name": "ElevenLabs",
+      "slug": "elevenlabs",
+      "terms_of_service_url": "https://elevenlabs.io/terms-of-use",
+      "privacy_policy_url": "https://elevenlabs.io/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Fireworks",
+      "api_name": "Fireworks",
+      "slug": "fireworks",
+      "terms_of_service_url": "https://fireworks.ai/terms-of-service",
+      "privacy_policy_url": "https://fireworks.ai/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Fish Audio",
+      "api_name": "Fish Audio",
+      "slug": "fish-audio",
+      "terms_of_service_url": "https://fish.audio/terms",
+      "privacy_policy_url": "https://fish.audio/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Friendli",
+      "api_name": "Friendli",
+      "slug": "friendli",
+      "terms_of_service_url": "https://friendli.ai/terms-of-service",
+      "privacy_policy_url": "https://friendli.ai/privacypolicy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "GMICloud",
+      "api_name": "GMICloud",
+      "slug": "gmicloud",
+      "terms_of_service_url": "https://www.gmicloud.ai/terms-and-conditions",
+      "privacy_policy_url": "https://docs.gmicloud.ai/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Google AI Studio",
+      "api_name": "Google AI Studio",
+      "slug": "google-ai-studio",
+      "terms_of_service_url": "https://cloud.google.com/terms/",
+      "privacy_policy_url": "https://cloud.google.com/terms/cloud-privacy-notice",
+      "treatment": "permitted"
+    },
+    {
+      "directory_name": "Google Vertex",
+      "api_name": "Google",
+      "slug": "google-vertex",
+      "terms_of_service_url": "https://cloud.google.com/terms/",
+      "privacy_policy_url": "https://cloud.google.com/terms/cloud-privacy-notice",
+      "treatment": "permitted"
+    },
+    {
+      "directory_name": "Groq",
+      "api_name": "Groq",
+      "slug": "groq",
+      "terms_of_service_url": "https://groq.com/terms-of-use/",
+      "privacy_policy_url": "https://groq.com/privacy-policy/",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "HeyGen",
+      "api_name": "HeyGen",
+      "slug": "heygen",
+      "terms_of_service_url": "https://www.heygen.com/terms",
+      "privacy_policy_url": "https://www.heygen.com/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Inception",
+      "api_name": "Inception",
+      "slug": "inception",
+      "terms_of_service_url": "https://www.inceptionlabs.ai/terms",
+      "privacy_policy_url": "https://www.inceptionlabs.ai/terms#privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Inceptron",
+      "api_name": "Inceptron",
+      "slug": "inceptron",
+      "terms_of_service_url": "https://www.inceptron.io/termsofservice",
+      "privacy_policy_url": "https://www.inceptron.io/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "inference.net",
+      "api_name": "InferenceNet",
+      "slug": "inference-net",
+      "terms_of_service_url": "https://inference.net/terms-of-service",
+      "privacy_policy_url": "https://inference.net/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "io.net",
+      "api_name": "Io Net",
+      "slug": "io-net",
+      "terms_of_service_url": "https://io.net/terms",
+      "privacy_policy_url": "https://io.net/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Ionstream",
+      "api_name": "Ionstream",
+      "slug": "ionstream",
+      "terms_of_service_url": "https://ionstream.ai/terms-and-conditions/",
+      "privacy_policy_url": "https://ionstream.ai/privacy-policy/",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Krea",
+      "api_name": "Krea",
+      "slug": "krea",
+      "terms_of_service_url": "https://www.krea.ai/terms",
+      "privacy_policy_url": "https://www.krea.ai/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Liquid",
+      "api_name": "Liquid",
+      "slug": "liquid",
+      "terms_of_service_url": "https://www.liquid.ai/terms-conditions",
+      "privacy_policy_url": "https://www.liquid.ai/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Makora",
+      "api_name": "Makora",
+      "slug": "makora",
+      "terms_of_service_url": null,
+      "privacy_policy_url": null,
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Mancer",
+      "api_name": "Mancer 2",
+      "slug": "mancer",
+      "terms_of_service_url": "https://mancer.tech/terms",
+      "privacy_policy_url": "https://mancer.tech/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "MARA",
+      "api_name": "Mara",
+      "slug": "mara",
+      "terms_of_service_url": "https://www.mara.com/mara-legals/ai-policies#cloud-toc",
+      "privacy_policy_url": "https://www.mara.com/mara-legals/ai-policies#cloud-pp",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Meta",
+      "api_name": "Meta",
+      "slug": "meta",
+      "terms_of_service_url": "https://ai.developer.meta.com/legal/terms-of-service",
+      "privacy_policy_url": "https://www.facebook.com/privacy/policy/",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "MiniMax",
+      "api_name": "Minimax",
+      "slug": "minimax",
+      "terms_of_service_url": "https://www.minimax.io/platform/protocol/terms-of-service",
+      "privacy_policy_url": "https://www.minimax.io/platform/protocol/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Mistral",
+      "api_name": "Mistral",
+      "slug": "mistral",
+      "terms_of_service_url": "https://mistral.ai/terms/#terms-of-use",
+      "privacy_policy_url": "https://mistral.ai/terms/#privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Modal",
+      "api_name": "Modal",
+      "slug": "modal",
+      "terms_of_service_url": "https://modal.com/legal/terms",
+      "privacy_policy_url": "https://modal.com/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "ModelRun [by Modular]",
+      "api_name": "ModelRun",
+      "slug": "modelrun",
+      "terms_of_service_url": "https://www.modular.com/legal/terms",
+      "privacy_policy_url": "https://www.modular.com/legal/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Moonshot AI",
+      "api_name": "Moonshot AI",
+      "slug": "moonshotai",
+      "terms_of_service_url": "https://platform.moonshot.ai/docs/agreement/modeluse",
+      "privacy_policy_url": "https://platform.moonshot.ai/docs/agreement/userprivacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Morph",
+      "api_name": "Morph",
+      "slug": "morph",
+      "terms_of_service_url": "https://www.morphllm.com/privacy/tos",
+      "privacy_policy_url": "https://morphllm.com/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "NEAR AI",
+      "api_name": "Near AI",
+      "slug": "near-ai",
+      "terms_of_service_url": "https://near.ai/terms-of-service",
+      "privacy_policy_url": "https://near.ai/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Nebius Token Factory",
+      "api_name": "Nebius",
+      "slug": "nebius",
+      "terms_of_service_url": "https://docs.nebius.com/legal/studio/terms-of-use/",
+      "privacy_policy_url": "https://docs.nebius.com/legal/studio/privacy/",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Nex AGI",
+      "api_name": "Nex AGI",
+      "slug": "nex-agi",
+      "terms_of_service_url": null,
+      "privacy_policy_url": "https://api.nex-agi.cn/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "NextBit",
+      "api_name": "NextBit",
+      "slug": "nextbit",
+      "terms_of_service_url": "https://www.nextbit256.com/docs/terms-of-service",
+      "privacy_policy_url": "https://www.nextbit256.com/docs/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "NovitaAI",
+      "api_name": "Novita",
+      "slug": "novita",
+      "terms_of_service_url": "https://novita.ai/legal/terms-of-service",
+      "privacy_policy_url": "https://novita.ai/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "NVIDIA",
+      "api_name": "Nvidia",
+      "slug": "nvidia",
+      "terms_of_service_url": "https://assets.ngc.nvidia.com/products/api-catalog/legal/NVIDIA%20API%20Trial%20Terms%20of%20Service.pdf",
+      "privacy_policy_url": "https://www.nvidia.com/en-us/about-nvidia/privacy-policy/",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Open Inference",
+      "api_name": "OpenInference",
+      "slug": "open-inference",
+      "terms_of_service_url": "https://www.openinference.ai/terms",
+      "privacy_policy_url": "https://www.openinference.ai/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "OpenAI",
+      "api_name": "OpenAI",
+      "slug": "openai",
+      "terms_of_service_url": "https://openai.com/policies/row-terms-of-use/",
+      "privacy_policy_url": "https://openai.com/policies/privacy-policy/",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Parasail",
+      "api_name": "Parasail",
+      "slug": "parasail",
+      "terms_of_service_url": "https://parasail.io/legal/terms-of-service",
+      "privacy_policy_url": "https://www.parasail.io/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Perceptron",
+      "api_name": "Perceptron",
+      "slug": "perceptron",
+      "terms_of_service_url": "https://www.perceptron.inc/terms-of-use",
+      "privacy_policy_url": "https://www.perceptron.inc/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Perplexity",
+      "api_name": "Perplexity",
+      "slug": "perplexity",
+      "terms_of_service_url": "https://www.perplexity.ai/hub/legal/perplexity-api-terms-of-service",
+      "privacy_policy_url": "https://www.perplexity.ai/hub/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Phala",
+      "api_name": "Phala",
+      "slug": "phala",
+      "terms_of_service_url": "https://redpill.ai/terms",
+      "privacy_policy_url": "https://redpill.ai/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Poolside",
+      "api_name": "Poolside",
+      "slug": "poolside",
+      "terms_of_service_url": "http://poolside.ai/legal",
+      "privacy_policy_url": "https://poolside.ai/legal/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Prime Intellect",
+      "api_name": "PrimeIntellect",
+      "slug": "primeintellect",
+      "terms_of_service_url": null,
+      "privacy_policy_url": null,
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Recraft",
+      "api_name": "Recraft",
+      "slug": "recraft",
+      "terms_of_service_url": null,
+      "privacy_policy_url": null,
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Reka AI",
+      "api_name": "Reka",
+      "slug": "reka",
+      "terms_of_service_url": "https://reka.ai/legal/terms-of-use",
+      "privacy_policy_url": "https://reka.ai/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Relace",
+      "api_name": "Relace",
+      "slug": "relace",
+      "terms_of_service_url": "https://www.relace.ai/terms-of-use",
+      "privacy_policy_url": "https://www.relace.ai/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Respan",
+      "api_name": "Respan",
+      "slug": "respan",
+      "terms_of_service_url": "https://respan.ai/legal/terms-of-use",
+      "privacy_policy_url": "https://respan.ai/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Runway",
+      "api_name": "Runway",
+      "slug": "runway",
+      "terms_of_service_url": "https://runwayml.com/terms-of-use",
+      "privacy_policy_url": "https://runwayml.com/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Sail Research",
+      "api_name": "Sail Research",
+      "slug": "sail-research",
+      "terms_of_service_url": "https://www.sailresearch.com/terms",
+      "privacy_policy_url": "https://www.sailresearch.com/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Sakana",
+      "api_name": "Sakana AI",
+      "slug": "sakana",
+      "terms_of_service_url": "https://console.sakana.ai/terms-of-service",
+      "privacy_policy_url": "https://console.sakana.ai/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "SambaNova",
+      "api_name": "SambaNova",
+      "slug": "sambanova",
+      "terms_of_service_url": "https://sambanova.ai/terms-and-conditions",
+      "privacy_policy_url": "https://sambanova.ai/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "ScaleDown",
+      "api_name": "ScaleDown",
+      "slug": "scaledown",
+      "terms_of_service_url": "https://scaledown.ai/terms",
+      "privacy_policy_url": "https://scaledown.ai/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Seed",
+      "api_name": "Seed",
+      "slug": "seed",
+      "terms_of_service_url": "https://docs.byteplus.com/en/docs/legal/docs-terms-of-service",
+      "privacy_policy_url": "https://docs.byteplus.com/en/docs/legal/docs-privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "SiliconFlow",
+      "api_name": "SiliconFlow",
+      "slug": "siliconflow",
+      "terms_of_service_url": "https://docs.siliconflow.com/en/legals/terms-of-service",
+      "privacy_policy_url": "https://docs.siliconflow.com/en/legals/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Sourceful",
+      "api_name": "Sourceful",
+      "slug": "sourceful",
+      "terms_of_service_url": "https://www.sourceful.com/legal/spring-terms-of-use",
+      "privacy_policy_url": "https://www.sourceful.com/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "SpaceXAI",
+      "api_name": "xAI",
+      "slug": "xai",
+      "terms_of_service_url": "https://x.ai/legal/terms-of-service-enterprise",
+      "privacy_policy_url": "https://x.ai/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "StepFun",
+      "api_name": "StepFun",
+      "slug": "stepfun",
+      "terms_of_service_url": "https://platform.stepfun.ai/docs/en/agreement/userservice",
+      "privacy_policy_url": null,
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "StreamLake",
+      "api_name": "StreamLake",
+      "slug": "streamlake",
+      "terms_of_service_url": "https://www.streamlake.ai/document/DOC/mgkchnd89grpt1961fw",
+      "privacy_policy_url": "https://www.streamlake.ai/document/DOC/mgkci47q13qr66h9i54",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Tencent Cloud",
+      "api_name": "Tencent",
+      "slug": "tencent",
+      "terms_of_service_url": "https://www.tencentcloud.com/en/document/product/301/78869",
+      "privacy_policy_url": "https://www.tencentcloud.com/en/document/product/1300/78952",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Tenstorrent",
+      "api_name": "Tenstorrent",
+      "slug": "tenstorrent",
+      "terms_of_service_url": "https://console.tenstorrent.com/terms",
+      "privacy_policy_url": "https://tenstorrent.com/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Thinking Machines",
+      "api_name": "Thinking Machines",
+      "slug": "thinkingmachines",
+      "terms_of_service_url": "https://thinkingmachines.ai/legal/tml-free-research-api-tier-terms-of-service.pdf",
+      "privacy_policy_url": "https://thinkingmachines.ai/legal/tml-free-research-api-tier-privacy-notice.pdf",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Together",
+      "api_name": "Together",
+      "slug": "together",
+      "terms_of_service_url": "https://www.together.ai/terms-of-service",
+      "privacy_policy_url": "https://www.together.ai/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "TypeSafe",
+      "api_name": "TypeSafe",
+      "slug": "typesafe",
+      "terms_of_service_url": "https://typesafe.ai/legal/terms",
+      "privacy_policy_url": "https://typesafe.ai/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Unbiased",
+      "api_name": "Unbiased",
+      "slug": "unbiased",
+      "terms_of_service_url": "https://unbiased.ai/terms/",
+      "privacy_policy_url": "https://unbiased.ai/terms/#privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Upstage",
+      "api_name": "Upstage",
+      "slug": "upstage",
+      "terms_of_service_url": "https://www.upstage.ai/terms-of-service",
+      "privacy_policy_url": "https://www.upstage.ai/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Venice",
+      "api_name": "Venice",
+      "slug": "venice",
+      "terms_of_service_url": "https://venice.ai/legal/tos",
+      "privacy_policy_url": "https://venice.ai/legal/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Voyage AI by MongoDB",
+      "api_name": "VoyageAI by MongoDB",
+      "slug": "voyageai",
+      "terms_of_service_url": "https://www.voyageai.com/tos",
+      "privacy_policy_url": "https://www.voyageai.com/privacy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Wafer",
+      "api_name": "Wafer",
+      "slug": "wafer",
+      "terms_of_service_url": "https://www.wafer.ai/terms",
+      "privacy_policy_url": "https://www.wafer.ai/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Xiaomi",
+      "api_name": "Xiaomi",
+      "slug": "xiaomi",
+      "terms_of_service_url": "https://platform.xiaomimimo.com/#/docs/terms/user-agreement",
+      "privacy_policy_url": "https://platform.xiaomimimo.com/#/docs/terms/privacy-policy",
+      "treatment": "restricted"
+    },
+    {
+      "directory_name": "Z.ai",
+      "api_name": "Z.AI",
+      "slug": "z-ai",
+      "terms_of_service_url": "https://chat.z.ai/legal-agreement/terms-of-service",
+      "privacy_policy_url": "https://chat.z.ai/legal-agreement/privacy-policy",
+      "treatment": "restricted"
+    }
+  ],
+  "api_only_entries_not_in_directory": [
+    {
+      "name": "AI21",
+      "slug": "ai21"
+    },
+    {
+      "name": "Amazon Nova",
+      "slug": "amazon-nova"
+    },
+    {
+      "name": "Ambient",
+      "slug": "ambient"
+    },
+    {
+      "name": "Avian",
+      "slug": "avian"
+    },
+    {
+      "name": "Cirrascale",
+      "slug": "cirrascale"
+    },
+    {
+      "name": "Clarifai",
+      "slug": "clarifai"
+    },
+    {
+      "name": "Cosine",
+      "slug": "cosine"
+    },
+    {
+      "name": "Crucible",
+      "slug": "crucible"
+    },
+    {
+      "name": "Databricks",
+      "slug": "databricks"
+    },
+    {
+      "name": "FakeProvider",
+      "slug": "fake-provider"
+    },
+    {
+      "name": "Featherless",
+      "slug": "featherless"
+    },
+    {
+      "name": "Inferact vLLM",
+      "slug": "inferact-vllm"
+    },
+    {
+      "name": "Infermatic",
+      "slug": "infermatic"
+    },
+    {
+      "name": "Inflection",
+      "slug": "inflection"
+    },
+    {
+      "name": "Modular",
+      "slug": "modular"
+    },
+    {
+      "name": "Ollama",
+      "slug": "ollama"
+    },
+    {
+      "name": "Quiver",
+      "slug": "quiver"
+    },
+    {
+      "name": "Stealth",
+      "slug": "stealth"
+    },
+    {
+      "name": "Switchpoint",
+      "slug": "switchpoint"
+    }
+  ],
+  "fixed_list_note": "Only the platforms named in the draft Appendix A are restricted for commercial deployment, including deployment by their customers. API-only entries and future OpenRouter additions are not automatically included. No revenue test or automatic expansion applies.",
+  "aws_scope_note": "The Amazon Bedrock entry restricts that platform, not AWS infrastructure generally. The platform ban applies both to customers deploying Infinity there and to the platform operator; the noncommercial research exception remains available."
+}

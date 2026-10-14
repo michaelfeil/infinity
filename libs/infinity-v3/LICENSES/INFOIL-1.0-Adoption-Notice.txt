@@ -1,0 +1,51 @@
+infinity_v3 -- INFOIL 1.0 Adoption Notice
+
+Licensor: Infinity Core Contributors. This is a collective description of the
+individual copyright holders and their authorized licensors, identified by
+applicable source notices and contribution records. It is not a separate
+legal entity, an assignment of copyright, or a claim that any contributor
+owns or may relicense another contributor's work. Each grants only rights
+that they own or are authorized to license.
+
+License: Infinity Optimized Inference License, INFOIL 1.0.
+Effective date: 2026-10-12.
+First covered source release: infinity_v3-infoil-1.0 (Git tag).
+Pre-adoption base: 9486dd9ee89575442fda1a491c381046b37e116e.
+
+Covered material and rights:
+INFOIL is the license offered for original fork contributions and
+copyrightable fork modifications first distributed under this adoption,
+and later contributions intentionally submitted and accepted on that basis,
+in this repository's application, shared libraries, build tools, and
+documentation. It is also the offered license for those contributors'
+rights in the derivative distribution as a whole. The included INFOIL text
+sets the conditions for those rights; the scope and exclusions in this
+notice govern which material and independently held rights it covers.
+
+Excluded material and independent grants:
+Inherited Hugging Face Text Embeddings Inference code retains Apache-2.0.
+Previously Apache-licensed fork contributions retain their existing grants.
+Bundled and external third-party components retain their own licenses and
+attribution, including separately licensed Candle extensions and native
+vendor code. Model weights, datasets, and dependencies do not become
+INFOIL-covered merely through use or inclusion. See NOTICE,
+THIRD_PARTY_NOTICES.md, and retained file-level and component notices.
+
+This adoption does not revoke earlier grants, even for previously published
+source without a public binary or container release. Someone relying on an
+independent Apache or other grant for the material it covers may continue
+to exercise that grant. It does not confer rights to later INFOIL-only
+contributions. Retained upstream notices identify the inherited material;
+new covered fork modifications must carry notices identifying the change
+and referring to this adoption scope.
+
+INFOIL is source-available with provider and infrastructure restrictions,
+including private, single-customer endpoints and GPU-hour billing. It is
+not an unrestricted open-source license. Baseten deployments are expressly
+permitted under INFOIL Section 4. This exception does not make Baseten the
+Licensor or copyright owner of others' contributions.
+
+The complete INFOIL terms and retained original Apache license follow so
+this file can accompany standalone packages and native installations.
+Separate copies are in LICENSES/INFOIL-1.0.txt and
+LICENSES/Apache-2.0.txt. LICENSING.md explains the adoption and examples.
