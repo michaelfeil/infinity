@@ -10,6 +10,34 @@
 
 
 // Media attention retains true head width72 and distinct query/key lengths.
+static void large_local_spans(const c10::Device& device) {
+  auto options=at::TensorOptions().device(device).dtype(at::kBFloat16);
+  for(bool grouped:{false,true})for(int window:{-1,0,2,64}) {
+    std::vector<int32_t> offsets{0};int maximum=0;
+    for(int i=0;i<32;++i){int n=97+(i%5)*17;offsets.push_back(offsets.back()+n);maximum=std::max(maximum,n);}
+    const int heads=4,key_heads=grouped?2:4;
+    auto combined=at::randn({offsets.back(),heads+2*key_heads,64},options);
+    auto q=combined.narrow(1,0,heads),k=combined.narrow(1,heads,key_heads),v=combined.narrow(1,heads+key_heads,key_heads);
+    auto cumulative=at::tensor(offsets,at::TensorOptions().dtype(at::kInt)).to(device);
+    auto output=tei::torch_flash_fma(q,k,v,cumulative,maximum,1./8.,false,window,window);
+    for(size_t row=0;row+1<offsets.size();++row) {
+      const int start=offsets[row],n=offsets[row+1]-start;
+      auto cpu=[&](const at::Tensor& x){return x.narrow(0,start,n).cpu().to(at::kDouble).transpose(0,1);};
+      auto qr=cpu(q),kr=cpu(k),vr=cpu(v);
+      if(grouped){kr=kr.repeat_interleave(2,0);vr=vr.repeat_interleave(2,0);}
+      auto index=at::arange(n,at::kLong),delta=index.unsqueeze(0)-index.unsqueeze(1);
+      auto allowed=window<0?at::ones({n,n},at::kBool):delta.abs()<=window;
+      auto probability=at::softmax((at::matmul(qr,kr.transpose(1,2))/8.).masked_fill(allowed.logical_not(),-INFINITY),-1);
+      auto expected=at::matmul(probability,vr).transpose(0,1);
+      TORCH_CHECK((output.narrow(0,start,n).cpu().to(at::kDouble)-expected).abs().max().item<double>()<.04,
+        "Large local tiled attention differs from independent masked FP64 oracle");
+    }
+    auto changed=v.clone();changed.narrow(0,0,offsets[1]).add_(20);
+    auto isolated=tei::torch_flash_fma(q,k,changed,cumulative,maximum,1./8.,false,window,window);
+    TORCH_CHECK(at::equal(output.narrow(0,offsets[1],offsets.back()-offsets[1]),
+      isolated.narrow(0,offsets[1],offsets.back()-offsets[1])),"Large local attention leaks across sequences");
+  }
+}
 static void media_spans(const c10::Device& device) {
   auto options=at::TensorOptions().device(device).dtype(at::kBFloat16);
   auto probe=at::zeros({3,4,72},options);
@@ -105,6 +133,7 @@ int main(int argc,char** argv) {
   c10::InferenceMode guard;
   const c10::Device device(argc>1 ? argv[1] : "cuda:0");
   media_spans(device);
+  large_local_spans(device);
   at::manual_seed(9917);at::set_num_threads(1);
   alibi32_spans(device);
   for(auto dtype:{at::kHalf,at::kBFloat16})for(int64_t dim:{32,64,128,256})

@@ -28,6 +28,13 @@ public:
  }
  virtual std::vector<DecisionResult> forward(const at::Tensor& packed_hidden,
   const PackedInput&,const std::vector<DecisionRequest>&) const=0;
+ // Request-owned metadata may be uploaded before the encoder starts, avoiding
+ // blocking host uploads between dependent GPU stages. Other heads need none.
+ virtual at::Tensor prepare(const PackedInput&,const std::vector<DecisionRequest>&) const {return {};}
+ virtual std::vector<DecisionResult> forward_prepared(const at::Tensor& hidden,
+  const PackedInput& input,const std::vector<DecisionRequest>& requests,const at::Tensor&) const {
+  return forward(hidden,input,requests);
+ }
 };
 // kind: laya, clef, pplx, option_tokens. Head config is the matching sidecar
 // config, unprefixed. Weights are separate maps; tensors are cached, never moved.

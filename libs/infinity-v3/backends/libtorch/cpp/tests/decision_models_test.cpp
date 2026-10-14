@@ -77,6 +77,12 @@ void laya_packed_cuda_test(){
  auto hidden=at::sin(at::arange(80).reshape({5,16}).to(at::kFloat)*.13).to(device,dtype);
  DecisionRequest first{DecisionRequest::Kind::Laya},second{DecisionRequest::Kind::Warmup};first.question_type=2;first.markers={2,0,2};
  auto output=head->forward(hidden,in.input,{first,second});
+ auto metadata=head->prepare(in.input,{first,second});
+ auto staged=head->forward_prepared(hidden,in.input,{first,second},metadata);
+ for(size_t i=0;i<output.size();++i){
+  TORCH_CHECK(at::equal(staged[i].logits,output[i].logits),"Prepared logits changed");
+  TORCH_CHECK(at::equal(staged[i].action_probability,output[i].action_probability),"Prepared actions changed");
+ }
  TORCH_CHECK(output[0].action_probability.item<float>()>.05&&output[0].action_probability.item<float>()<.95,"Action regression must be nonsaturated");
  for(int64_t i=0;i<2;++i){
   auto start=in.offsets[i],length=in.offsets[i+1]-start;
@@ -92,6 +98,10 @@ void laya_packed_cuda_test(){
  close(output[0].logits,isolated[0].logits,.00001);
  close(output[0].action_probability,isolated[0].action_probability,.00001);
  first.question_type=1;first.markers={1};auto updated=head->forward(hidden,in.input,{first,second});
+ auto changed_metadata=head->prepare(in.input,{first,second});
+ auto prepared_update=head->forward_prepared(hidden,in.input,{first,second},changed_metadata);
+ TORCH_CHECK(at::equal(prepared_update[0].logits,updated[0].logits),"Updated prepared logits changed");
+ TORCH_CHECK(at::equal(prepared_update[0].action_probability,updated[0].action_probability),"Updated prepared actions changed");
  TORCH_CHECK(updated[0].logits.numel()==1&&updated[1].logits.numel()==1,"Packed head retained old marker metadata");
  first.markers={3};reject([&]{head->forward(hidden,in.input,{first,second});});
  first.markers={0};auto invalid=in.input;int32_t invalid_offsets[]={-1,3,5};invalid.offsets=invalid_offsets;

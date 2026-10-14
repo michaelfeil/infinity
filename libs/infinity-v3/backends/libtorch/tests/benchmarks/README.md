@@ -45,3 +45,17 @@ samples, outputs, peak allocator memory, library/checkpoint identity and optiona
 operator traces. Timings include input upload, encoder, decision head and host
 outputs; they exclude HTTP and tokenization. `--case length300-batch8` selects a
 single matrix workload for focused profiling.
+
+`--extended-only` adds exact 20-question/5,500-token and
+40-question/12,000-token targets plus batches 40, 48 and 64 at each sequence
+length. Target inputs resize the supplied tokenized fixture and retain its
+markers and question types; they are controlled workloads. The report includes
+tokens and questions per second. On sufficiently large GPUs, increase the
+admission budget with `--transient-max-bytes 17179869184` for the largest shapes;
+the default native budget remains unchanged.
+
+`--tune-gemm 32` experimentally benchmarks cuBLASLt heuristic choices using
+Torch's tunable operator support before latency measurement and retains the
+device-specific tuning cache. It requires a Torch build exposing that API.
+`--fp8` evaluates the existing dynamic FP8 encoder MLP separately; it changes
+precision and requires an independent accuracy comparison before use.

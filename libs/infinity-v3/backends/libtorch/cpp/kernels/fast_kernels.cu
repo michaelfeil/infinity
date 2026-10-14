@@ -282,6 +282,31 @@ template<class T> __global__ void gated_kernel(const T* x,T* out,int64_t count,i
 // Eight model-dtype lanes use one aligned 128-bit load for FP16/BF16.
 // The four-lane and scalar fallbacks preserve exact arithmetic for other views.
 template<class T,int Lanes> struct alignas(sizeof(T)*Lanes) GatedVector {T value[Lanes];};
+template<class Pair> __device__ Pair model_pair(float value);
+template<> __device__ __half2 model_pair(float value){return __float2half2_rn(value);}
+template<> __device__ __nv_bfloat162 model_pair(float value){return __float2bfloat162_rn(value);}
+template<class Pair> __device__ Pair model_pair_tanh(Pair value);
+template<> __device__ __half2 model_pair_tanh(__half2 value){return __floats2half2_rn(tanhf(__low2float(value)),tanhf(__high2float(value)));}
+template<> __device__ __nv_bfloat162 model_pair_tanh(__nv_bfloat162 value){return __floats2bfloat162_rn(tanhf(__low2float(value)),tanhf(__high2float(value)));}
+template<class Pair,class Index> __global__ void gated_gelu_pairs_kernel(const Pair* x,Pair* out,Index count,Index width,bool gate_first) {
+  const Index index=Index(blockIdx.x)*blockDim.x+threadIdx.x;
+  if(index>=count/4)return;
+  const auto vectors_per_row=width/4,row=index/vectors_per_row,col=index%vectors_per_row;
+  const auto* input=reinterpret_cast<const GatedVector<Pair,4>*>(x);
+  const auto gate=input[row*2*vectors_per_row+col+(gate_first?0:vectors_per_row)];
+  const auto up=input[row*2*vectors_per_row+col+(gate_first?vectors_per_row:0)];
+  GatedVector<Pair,4> result;
+#pragma unroll
+  for(int lane=0;lane<4;++lane) {
+    const auto value=gate.value[lane];
+    const auto cube=__hmul2(__hmul2(value,value),value);
+    const auto alpha=__hfma2(model_pair<Pair>(.044715f),cube,value);
+    const auto tangent=model_pair_tanh(__hmul2(model_pair<Pair>(.7978845608028654f),alpha));
+    const auto activated=__hmul2(__hmul2(model_pair<Pair>(.5f),value),__hadd2(model_pair<Pair>(1.f),tangent));
+    result.value[lane]=__hmul2(activated,up.value[lane]);
+  }
+  reinterpret_cast<GatedVector<Pair,4>*>(out)[index]=result;
+}
 template<class T,class Index,int Lanes> __global__ void gated_vector_kernel(const T* x,T* out,Index count,Index width,int activation,bool gate_first) {
   Index index=Index(blockIdx.x)*blockDim.x+threadIdx.x;if(index>=count/Lanes)return;
   auto vectors_per_row=width/Lanes,row=index/vectors_per_row,col=index%vectors_per_row;
@@ -334,6 +359,29 @@ template<class T> __global__ void paired_rotary_kernel(const T* q,const T* k,con
     output[row*dim+lane]=T(float(T(a*c))-float(T(b*s)));
     output[row*dim+lane+half]=T(float(T(b*c))+float(T(a*s)));
   }
+}
+// Process two adjacent rotary pairs with packed half arithmetic. Each product
+// still rounds to model dtype before the fused multiply-add, as in the scalar path.
+template<class Pair,class Index,bool Indexed> __global__ void encoder_rotary_pairs_kernel(Pair* q,Pair* k,const Pair* cosine,const Pair* sine,
+ Index qheads,Index kheads,Index qstride,Index kstride,Index tokens,Index dim,Index half,
+ const int64_t* positions,Index table_rows) {
+  const Index index=Index(blockIdx.x)*blockDim.x+threadIdx.x;
+  if(index>=tokens*(qheads+kheads)*half)return;
+  const auto row=index/half,lane=index%half;
+  const bool isq=row<tokens*qheads;
+  const auto r=isq?row:row-tokens*qheads,heads=isq?qheads:kheads;
+  const auto token=r/heads,head=r%heads;
+  Pair* x=isq?q:k;
+  const auto offset=token*(isq?qstride:kstride)+head*dim+lane;
+  Index frequency=token;
+  if constexpr(Indexed) {
+    const int64_t position=positions[token];
+    CUDA_KERNEL_ASSERT(position>=0 && uint64_t(position)<uint64_t(table_rows));
+    frequency=Index(position);
+  }
+  const auto a=x[offset],b=x[offset+half],c=cosine[frequency*half+lane],s=sine[frequency*half+lane];
+  x[offset]=__hfma2(a,c,__hneg2(__hmul2(b,s)));
+  x[offset+half]=__hfma2(b,c,__hmul2(a,s));
 }
 template<class T,class Index,bool Indexed> __global__ void encoder_rotary_inplace_kernel(T* q,T* k,const T* cosine,const T* sine,
  Index qheads,Index kheads,Index qstride,Index kstride,Index tokens,Index dim,Index half,
@@ -440,6 +488,14 @@ at::Tensor fused_gated_activation(const at::Tensor& x,int32_t activation,bool ga
   TORCH_CHECK(activation>=0&&activation<=5,"Unsupported fused gated activation");
   c10::cuda::CUDAGuard guard(x.device());auto shape=x.sizes().vec();shape.back()/=2;auto output=at::empty(shape,x.options());if(output.numel()==0)return output;
   auto stream=at::cuda::getCurrentCUDAStream(x.device().index());
+  if(activation==4 && (x.scalar_type()==at::kHalf || x.scalar_type()==at::kBFloat16) && shape.back()%8==0 &&
+      reinterpret_cast<uintptr_t>(x.const_data_ptr())%16==0) {
+#define TEI_GATE_PAIRS(T,I) gated_gelu_pairs_kernel<T,I><<<(output.numel()/8+255)/256,256,0,stream>>>(reinterpret_cast<const T*>(x.const_data_ptr()),reinterpret_cast<T*>(output.mutable_data_ptr()),I(output.numel()/2),I(shape.back()/2),gate_first)
+    if(x.scalar_type()==at::kHalf){if(x.numel()<=UINT32_MAX){TEI_GATE_PAIRS(__half2,uint32_t);}else{TEI_GATE_PAIRS(__half2,uint64_t);}}
+    else {if(x.numel()<=UINT32_MAX){TEI_GATE_PAIRS(__nv_bfloat162,uint32_t);}else{TEI_GATE_PAIRS(__nv_bfloat162,uint64_t);}}
+#undef TEI_GATE_PAIRS
+    C10_CUDA_KERNEL_LAUNCH_CHECK();return output;
+  }
 #define TEI_GATE(T) do { \
   if(x.element_size()==2 && shape.back()%8==0 && reinterpret_cast<uintptr_t>(x.const_data_ptr())%16==0) { \
     if(x.numel()<=UINT32_MAX) gated_vector_kernel<T,uint32_t,8><<<(output.numel()/8+255)/256,256,0,stream>>>(reinterpret_cast<const T*>(x.const_data_ptr()),reinterpret_cast<T*>(output.mutable_data_ptr()),output.numel(),shape.back(),activation,gate_first); \
@@ -489,6 +545,18 @@ static void encoder_rotary_dispatch(const at::Tensor& q,const at::Tensor& k,cons
   auto stream=at::cuda::getCurrentCUDAStream(q.device().index());
   const bool narrow=count<=UINT32_MAX && uint64_t(q.size(0))*q.stride(0)<=UINT32_MAX &&
     uint64_t(k.size(0))*k.stride(0)<=UINT32_MAX && uint64_t(cosine.numel())<=UINT32_MAX;
+  const auto aligned=[](const at::Tensor& t){return reinterpret_cast<uintptr_t>(t.const_data_ptr())%4==0;};
+  const bool pairs=(q.scalar_type()==at::kHalf || q.scalar_type()==at::kBFloat16) &&
+    q.size(2)%2==0 && cosine.size(-1)%2==0 &&
+    q.stride(0)%2==0 && k.stride(0)%2==0 && aligned(q)&&aligned(k)&&aligned(cosine)&&aligned(sine);
+#define TEI_ENCODER_PAIRS(T,I,P) encoder_rotary_pairs_kernel<T,I,P><<<(count/2+255)/256,256,0,stream>>>(reinterpret_cast<T*>(q.mutable_data_ptr()),reinterpret_cast<T*>(k.mutable_data_ptr()),reinterpret_cast<const T*>(cosine.const_data_ptr()),reinterpret_cast<const T*>(sine.const_data_ptr()),I(q.size(1)),I(k.size(1)),I(q.stride(0)/2),I(k.stride(0)/2),I(q.size(0)),I(q.size(2)/2),I(cosine.size(-1)/2),indexed?positions.const_data_ptr<int64_t>():nullptr,I(cosine.size(0)))
+#define TEI_ENCODER_PAIRS_WIDTH(T) if(indexed){if(narrow){TEI_ENCODER_PAIRS(T,uint32_t,true);}else{TEI_ENCODER_PAIRS(T,uint64_t,true);}}else{if(narrow){TEI_ENCODER_PAIRS(T,uint32_t,false);}else{TEI_ENCODER_PAIRS(T,uint64_t,false);}}
+  if(pairs) {
+    if(q.scalar_type()==at::kHalf){TEI_ENCODER_PAIRS_WIDTH(__half2);}else{TEI_ENCODER_PAIRS_WIDTH(__nv_bfloat162);}
+    C10_CUDA_KERNEL_LAUNCH_CHECK();return;
+  }
+#undef TEI_ENCODER_PAIRS_WIDTH
+#undef TEI_ENCODER_PAIRS
 #define TEI_ENCODER_ROPE(T,I,P) encoder_rotary_inplace_kernel<T,I,P><<<(count+255)/256,256,0,stream>>>(reinterpret_cast<T*>(q.mutable_data_ptr()),reinterpret_cast<T*>(k.mutable_data_ptr()),reinterpret_cast<const T*>(cosine.const_data_ptr()),reinterpret_cast<const T*>(sine.const_data_ptr()),I(q.size(1)),I(k.size(1)),I(q.stride(0)),I(k.stride(0)),I(q.size(0)),I(q.size(2)),I(cosine.size(-1)),indexed?positions.const_data_ptr<int64_t>():nullptr,I(cosine.size(0)))
 #define TEI_ENCODER_ROPE_WIDTH(T) if(indexed){if(narrow){TEI_ENCODER_ROPE(T,uint32_t,true);}else{TEI_ENCODER_ROPE(T,uint64_t,true);}}else{if(narrow){TEI_ENCODER_ROPE(T,uint32_t,false);}else{TEI_ENCODER_ROPE(T,uint64_t,false);}}
   if(q.scalar_type()==at::kHalf){TEI_ENCODER_ROPE_WIDTH(__half);}else if(q.scalar_type()==at::kBFloat16){TEI_ENCODER_ROPE_WIDTH(__nv_bfloat16);}else if(q.scalar_type()==at::kFloat){TEI_ENCODER_ROPE_WIDTH(float);}else TORCH_CHECK(false,"Unsupported encoder rotary dtype");

@@ -529,9 +529,10 @@ int32_t tei_decide_radix(void* handle,const int64_t* ids,const int64_t* types,co
   auto packed=packed_input(engine,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audios,audio_count);
   attach_radix(engine,packed,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audio_count,radix);
   const bool use_graph=engine.graphs&&engine.graph_policy_ready()&&(engine.media_graphs||(!image_count&&!audio_count&&!media_positions));
+  auto prepared_decision=engine.decision->prepare(packed,converted);
   if(!use_graph)engine.model->prepare_input(packed);
   auto hidden=use_graph?engine.graphs->forward(*engine.model,packed):engine.model->forward(packed);
-  auto results=engine.decision->forward(hidden,packed,converted);TORCH_CHECK(results.size()==size_t(batch),"Decision head output count mismatch");
+  auto results=engine.decision->forward_prepared(hidden,packed,converted,prepared_decision);TORCH_CHECK(results.size()==size_t(batch),"Decision head output count mismatch");
   std::vector<at::Tensor> values;for(size_t i=0;i<results.size();++i){TORCH_CHECK(results[i].logits.numel()==engine.decision->output_count(converted[i]),"Decision head output width mismatch");values.push_back(results[i].logits.flatten());}
   std::vector<at::Tensor> action_values;for(const auto& result:results)action_values.push_back(result.action_probability);
   values.push_back(at::stack(action_values));auto output=at::cat(values).to(at::kFloat).to(at::kCPU).contiguous();

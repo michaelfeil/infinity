@@ -161,16 +161,18 @@ struct LayaHead final:DecisionHead {
    if(!layers.empty()&&types.device().is_cpu())cost.add({length,length,heads,8,sizeof(float)});
   }return cost.bytes();
  }
- std::vector<DecisionResult> forward_packed(const at::Tensor& hidden,const PackedInput& input,
-   const std::vector<DecisionRequest>& requests)const {
-  std::vector<int64_t> token_types(hidden.size(0)),marker_rows,marker_offsets{0};
+ struct Metadata {std::vector<int64_t> token_types,marker_rows,marker_offsets{0};};
+ Metadata metadata(const PackedInput& input,const std::vector<DecisionRequest>& requests)const {
+  TORCH_CHECK(input.batch>0&&int64_t(requests.size())==input.batch&&input.offsets,"Invalid packed Laya metadata");
+  Metadata value;value.token_types.resize(input.ids.numel());
+  auto& token_types=value.token_types;auto& marker_rows=value.marker_rows;auto& marker_offsets=value.marker_offsets;
   for(int64_t i=0;i<input.batch;++i){
    const auto& request=requests[i];const bool warmup=request.kind==DecisionRequest::Kind::Warmup;
    TORCH_CHECK(warmup||request.kind==DecisionRequest::Kind::Laya,"Expected Laya marker metadata");
    auto type=warmup?0:request.question_type;
    TORCH_CHECK(type>=0&&type<3&&(warmup||!request.markers.empty()),"Invalid Laya question type or markers");
    auto start=input.offsets[i],end=input.offsets[i+1];
-   TORCH_CHECK(start>=0&&end<=hidden.size(0),"Laya sequence outside packed hidden states");
+   TORCH_CHECK(start>=0&&end>start&&end<=input.ids.numel(),"Laya sequence outside packed hidden states");
    std::fill(token_types.begin()+start,token_types.begin()+end,type);
    if(warmup)marker_rows.push_back(start);
    else for(auto marker:request.markers){
@@ -179,13 +181,35 @@ struct LayaHead final:DecisionHead {
    }
    marker_offsets.push_back(marker_rows.size());
   }
-  auto indices_options=hidden.options().dtype(at::kLong);
-  auto h=hidden+types.index_select(0,at::tensor(token_types,indices_options));
+  return value;
+ }
+ at::Tensor upload_metadata(const Metadata& value)const {
+  auto combined=value.token_types;
+  combined.insert(combined.end(),value.marker_rows.begin(),value.marker_rows.end());
+  combined.insert(combined.end(),value.marker_offsets.begin(),value.marker_offsets.end());
+  return at::tensor(combined,types.options().dtype(at::kLong));
+ }
+ at::Tensor prepare(const PackedInput& input,const std::vector<DecisionRequest>& requests)const override {
+  return types.is_cuda()?upload_metadata(metadata(input,requests)):at::Tensor();
+ }
+ std::vector<DecisionResult> forward_prepared(const at::Tensor& hidden,const PackedInput& input,
+   const std::vector<DecisionRequest>& requests,const at::Tensor& prepared)const override {
+  validate(hidden,input,requests);TORCH_CHECK(hidden.size(1)==width,"Laya hidden width mismatch");
+  return hidden.is_cuda()?forward_packed(hidden,input,requests,prepared):forward(hidden,input,requests);
+ }
+ std::vector<DecisionResult> forward_packed(const at::Tensor& hidden,const PackedInput& input,
+   const std::vector<DecisionRequest>& requests,const at::Tensor& prepared=at::Tensor())const {
+  auto value=metadata(input,requests);const auto& marker_offsets=value.marker_offsets;
+  auto indices=prepared.defined()?prepared:upload_metadata(value);
+  const int64_t tokens=value.token_types.size(),markers=value.marker_rows.size();
+  TORCH_CHECK(indices.device()==hidden.device()&&indices.scalar_type()==at::kLong&&indices.is_contiguous()&&
+    indices.dim()==1&&indices.numel()==tokens+markers+int64_t(marker_offsets.size()),"Invalid prepared Laya metadata");
+  auto h=hidden+types.index_select(0,indices.narrow(0,0,tokens));
   for(const auto& layer:layers)h=layer.packed(h,input);
-  auto selected=h.index_select(0,at::tensor(marker_rows,indices_options));
+  auto selected=h.index_select(0,indices.narrow(0,tokens,markers));
   auto all_logits=scorer2(at::gelu(scorer1(scorer_norm(selected)),"none")).flatten().to(at::kFloat);
   #ifdef TEI_TORCH_CUDA_KERNELS
-  auto features=laya_action_features(all_logits,at::tensor(marker_offsets,indices_options)).to(hidden.scalar_type());
+  auto features=laya_action_features(all_logits,indices.narrow(0,tokens+markers,marker_offsets.size())).to(hidden.scalar_type());
   auto pooled=h.index_select(0,input.cumulative.narrow(0,0,input.batch));
   auto actions=at::softmax(action2(at::gelu(action1(at::cat({pooled,features},1)),"none")).to(at::kFloat),-1).select(1,0);
   std::vector<DecisionResult> result;result.reserve(input.batch);
