@@ -2479,6 +2479,7 @@ dependencies = [
  "infinity-v3-config",
  "nohash-hasher",
  "serde",
+ "serde_json",
  "thiserror 1.0.69",
  "tokio",
 ]

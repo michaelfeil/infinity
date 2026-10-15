@@ -20,6 +20,7 @@ pub struct Onejev {
     token_ids: Vec<u32>,
     max_input_length: usize,
     images: Option<Qwen3VlProcessor>,
+    block_attention: bool,
 }
 
 impl Onejev {
@@ -28,6 +29,8 @@ impl Onejev {
         mut tokenizer: Tokenizer,
         max_input_length: usize,
     ) -> anyhow::Result<Self> {
+        let block_attention = infinity_v3_backend::block_attention_config::block_attention(path)
+            .map_err(anyhow::Error::msg)?;
         tokenizer.with_padding(None);
         tokenizer
             .with_truncation(None)
@@ -83,6 +86,7 @@ impl Onejev {
             token_ids,
             max_input_length,
             images: None,
+            block_attention,
         })
     }
 
@@ -172,6 +176,9 @@ impl Onejev {
         images: PreparedQwenImages,
         max_len: Option<usize>,
     ) -> Result<(), String> {
+        if self.block_attention {
+            return Err("OneJev block attention currently supports text only".into());
+        }
         let image_id = self
             .tokenizer
             .token_to_id("<|image_pad|>")
@@ -317,12 +324,24 @@ impl Onejev {
             for i in 1..=image_count {
                 prompt = prompt.replace(&format!("<image:{i}>"), "<|vision_start|><|image_pad|><|vision_end|>");
             }
-            let ids = self.tokenizer.encode(prompt.as_str(), false).map_err(|e| e.to_string())?.get_ids().to_vec();
+            let encoded = self.tokenizer.encode(prompt.as_str(), false).map_err(|e| e.to_string())?;
+            let ids = encoded.get_ids().to_vec();
+            let prefix_length = if self.block_attention {
+                // Derive the boundary in the fully rendered prompt; do not tokenize a
+                // separate prefix, since a BPE token can straddle the block boundary.
+                let suffix = format!("{header} {instructions}\n\nOptions:\n{options}\n\nAnswer with one {word}: {}.", self.codes[..n].join(", "));
+                let boundary = prompt.rfind(&suffix).ok_or("OneJev question missing from rendered template")?;
+                let prefix = encoded.get_offsets().iter().take_while(|(_, end)| *end <= boundary).count();
+                if prefix == 0 || prefix >= ids.len() { return Err("Invalid OneJev prefix boundary".into()); }
+                prefix
+            } else { 0 };
             if ids.is_empty() || ids.len() > limit { return Err(format!("OneJev prompt has {} tokens, exceeding max_len {limit}; prompts are never truncated", ids.len())); }
             let length = ids.len();
             Ok(Question { id, kind: kind.into(), labels, criteria, compute_chars: prompt.chars().count(),
                 encoding: ValidEncoding { multimodal: None, input_ids: ids, token_type_ids: vec![0; length], position_ids: (0..length as u32).collect(), tokens: vec![], offsets: vec![] },
-                input: DecisionInput::OptionTokens { token_ids: self.token_ids[..n].to_vec() } })
+                input: if self.block_attention {
+                    DecisionInput::BlockOptionTokens { token_ids: self.token_ids[..n].to_vec(), prefix_length }
+                } else { DecisionInput::OptionTokens { token_ids: self.token_ids[..n].to_vec() } } })
         }).collect()
     }
 }
@@ -383,6 +402,43 @@ mod tests {
             }
             assert!(Onejev::image_sources(&mut serde_json::from_value(invalid).unwrap()).is_err());
         }
+    }
+
+    #[test]
+    #[ignore = "requires ONEJEV_BLOCK_REFERENCE generated with a trained checkpoint"]
+    fn block_prompt_boundaries_match_transformers() -> anyhow::Result<()> {
+        let reference: Value =
+            serde_json::from_slice(&std::fs::read(std::env::var("ONEJEV_BLOCK_REFERENCE")?)?)?;
+        let path = Path::new(reference["model"].as_str().unwrap());
+        let tokenizer = Tokenizer::from_file(path.join("tokenizer.json"))
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let model = Onejev::load(path, tokenizer, 32768)?;
+        for case in reference["cases"].as_array().unwrap() {
+            let request = serde_json::from_value(
+                json!({"state":case["state"],"questions":{"q":{"type":"noul","instructions":case["question"]}}}),
+            )?;
+            let questions = model.prepare(request).map_err(anyhow::Error::msg)?;
+            assert_eq!(
+                questions[0].encoding.input_ids,
+                serde_json::from_value::<Vec<u32>>(case["input_ids"].clone())?
+            );
+            let DecisionInput::BlockOptionTokens {
+                token_ids,
+                prefix_length,
+            } = &questions[0].input
+            else {
+                panic!("Missing block metadata")
+            };
+            assert_eq!(
+                *prefix_length,
+                case["prefix_length"].as_u64().unwrap() as usize
+            );
+            assert_eq!(
+                *token_ids,
+                serde_json::from_value::<Vec<u32>>(case["token_ids"].clone())?
+            );
+        }
+        Ok(())
     }
 
     #[test]

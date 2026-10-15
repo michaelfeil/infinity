@@ -484,3 +484,39 @@ Combine their JSON arrays into one file and set
 Set `INFINITY_TORCH_CUDA_GRAPHS=1` when running `ultrabert_cuda_graphs_capture`.
 Native CPU tests additionally cover local-window boundaries, per-layer rotary
 bases, independent attention width, ragged isolation and malformed configurations.
+
+### OneJev block attention
+
+Dense Qwen3.5 decision checkpoints declare their attention and readout in
+`config.json`:
+
+```json
+"baseten_modeling_overrides": {
+  "attention": {"full_attention": "block_bidirectional", "linear_attention": "causal"},
+  "readout": "slot_lm"
+}
+```
+
+This enables bidirectional attention inside the complete shared prefix and inside
+each question suffix. Prefix tokens cannot attend to a suffix. Gated DeltaNet
+layers remain causal.
+
+Serve a local checkpoint with `--backend libtorch --dtype bfloat16
+--decision-protocol onejev --model-id /path/to/checkpoint`. The `/v1/systemone`
+request and answer-letter scoring format are unchanged. Attention and readout
+metadata are loaded exclusively from `baseten_modeling_overrides`.
+
+Within each backend batch, identical complete prefixes share full-attention KV,
+FP32 recurrent states and convolution history. Prefix tokens, positions and the
+block boundary must all match. Suffixes execute independently from immutable
+prefix snapshots. Caches are released after the group finishes; batches split by
+token limits or assigned to different replicas recompute their prefixes.
+Partial-prefix reuse, persistent cross-request caches, CUDA graph capture for
+this mode, image inputs and learned pointer readout heads are not supported.
+
+Independent full-sequence reference fixtures can be generated with Transformers
+5.19.0 using `scripts/onejev-block-reference.py --output /tmp/onejev-reference`.
+This creates a small random hybrid model without downloading weights. Add
+`--model /path/to/checkpoint --device cuda --dtype bfloat16` to validate a trained
+checkpoint. Run `onejev_block_parity` with `ONEJEV_BLOCK_REFERENCE` pointing to
+`reference.json`; set `ONEJEV_DEVICE=cuda:0 ONEJEV_DTYPE=bfloat16` for GPU checks.

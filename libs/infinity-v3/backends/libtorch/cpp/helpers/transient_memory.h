@@ -20,7 +20,7 @@ struct TowerMemoryProfile {
 struct TransientMemoryProfile {
   int64_t hidden=0,heads=0,linear=0,element=0,vocab=0,top_k=1,experts=0;
   int64_t retained_kv_width=0,retained_kv_layers=0;
-  int64_t recurrent_heads=0,recurrent_key=0,recurrent_value=0;
+  int64_t recurrent_heads=0,recurrent_key=0,recurrent_value=0,retained_recurrent_layers=0,retained_conv_width=0,retained_conv_length=0;
   int64_t relative_bins=0;
   size_t retained_vision_bytes=0;
   bool dense_attention=false,packed_bias=false,relative_buckets=false;
@@ -116,6 +116,10 @@ inline size_t estimate_transient_memory(const TransientMemoryProfile& p,int64_t 
     TORCH_CHECK(t<=std::numeric_limits<size_t>::max()-63,"Native recurrent chunk count overflow");
     cost.add({(t+63)/64+b,positive_memory_dimension(p.recurrent_heads),
       positive_memory_dimension(p.recurrent_key),positive_memory_dimension(p.recurrent_value),8,sizeof(float)});
+  }
+  if(p.retained_recurrent_layers>0) {
+    cost.add({positive_memory_dimension(p.retained_recurrent_layers),positive_memory_dimension(p.recurrent_heads),positive_memory_dimension(p.recurrent_key),positive_memory_dimension(p.recurrent_value),sizeof(float)});
+    cost.add({positive_memory_dimension(p.retained_recurrent_layers),positive_memory_dimension(p.retained_conv_width),positive_memory_dimension(p.retained_conv_length),element});
   }
   if(pool==3)cost.add({t,positive_memory_dimension(p.vocab),4,std::max(element,size_t(4))});
   auto tower=[&](const TowerMemoryProfile& v,size_t rows,size_t emitted,bool audio,size_t features,size_t frame_rows) {

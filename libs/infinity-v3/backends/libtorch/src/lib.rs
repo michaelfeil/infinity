@@ -122,6 +122,14 @@ impl OwnedDecision {
                 result.kind = 1;
                 result.token_ids = collect_fallible(token_ids.iter().map(|&n| i64::from(n)))?;
             }
+            DecisionInput::BlockOptionTokens {
+                token_ids,
+                prefix_length,
+            } => {
+                result.kind = 4;
+                result.question_type = i64::try_from(*prefix_length).map_err(inference)?;
+                result.token_ids = collect_fallible(token_ids.iter().map(|&n| i64::from(n)))?;
+            }
             DecisionInput::Clef { fields } => {
                 result.kind = 2;
                 result.fields = reserved_vec(fields.len())?;
@@ -528,6 +536,21 @@ impl LibtorchBackend {
         } else {
             None
         };
+        if text_embeddings_backend_core::block_attention_config::block_attention(path)
+            .map_err(start)?
+        {
+            if decision_kind != Some("option_tokens")
+                || !matches!(
+                    options["model_type"].as_str(),
+                    Some("qwen3_5" | "qwen3_5_text")
+                )
+            {
+                return Err(start(
+                    "Block attention requires a dense Qwen3.5 decision model",
+                ));
+            }
+            options["_decision_attention_mode"] = "block_bidirectional".into();
+        }
         if decision_kind == Some("d3") && dtype != "bfloat16" {
             return Err(start(
                 "D3 requires bfloat16 for its backbone and vision tower",

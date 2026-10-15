@@ -10,6 +10,7 @@
 #include "kernels/torch_flash_fma.h"
 #include "kernels/moe_kernels.h"
 #include <ATen/ops/_efficient_attention_forward.h>
+#include <ATen/ops/_flash_attention_forward.h>
 #include <cmath>
 #include "batching/radix.h"
 #include <array>
@@ -26,6 +27,8 @@ namespace tei {
 namespace {
 // Adapted from Candle qwen3_vl/vision.rs; upstream Apache-2.0 notices retained.
 class Qwen35 final : public Model {
+  struct BlockCache {at::Tensor key,value,state,history;};
+  bool block_attention() const {return cfg.string("_decision_attention_mode")=="block_bidirectional";}
   Options cfg;
   Weights weights;
   int64_t transient_linear=0,transient_vocabulary=0;
@@ -192,7 +195,7 @@ class Qwen35 final : public Model {
     } else {cos=cos_cache.index_select(0,radix_positions(input)).unsqueeze(1);sin=sin_cache.index_select(0,radix_positions(input)).unsqueeze(1);}
     return at::cat({at::cat({a*cos-b*sin,b*cos+a*sin},-1),x.narrow(-1,rotary,dim-rotary)},-1).contiguous();
   }
-  at::Tensor full_attention(const at::Tensor& x,const std::string& p,const PackedInput& input) const {
+  at::Tensor full_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false) const {
     auto tokens=x.size(0);
     auto qg=linear(x,p+"q_proj").view({tokens,heads,2*dim});
     auto q=rotate(norm(qg.narrow(-1,0,dim),p+"q_norm"),input);
@@ -204,6 +207,20 @@ class Qwen35 final : public Model {
     auto causal=mode!="noncausal_full_attention" && !cfg.boolean("use_bidirectional_attention",false);
     const bool reference=integer("num_experts",0)>0 && device.is_cuda() && dtype==at::kBFloat16;
     at::Tensor attention;
+    if(cache) {
+      if(prefill) {cache->key=k;cache->value=v;}
+      else {k=at::cat({cache->key,k},0);v=at::cat({cache->value,v},0);}
+      if(device.is_cuda()) {
+        auto cuq=at::tensor({int32_t(0),int32_t(q.size(0))},input.cumulative.options());
+        auto cuk=at::tensor({int32_t(0),int32_t(k.size(0))},input.cumulative.options());
+        attention=std::get<0>(at::_flash_attention_forward(q,k,v,cuq,cuk,q.size(0),k.size(0),0.,false,false,1./std::sqrt(double(dim))));
+      } else {
+        auto qq=q.transpose(0,1).unsqueeze(0);
+        auto kk=at::repeat_interleave(k,heads/kv_heads,1).transpose(0,1).unsqueeze(0);
+        auto vv=at::repeat_interleave(v,heads/kv_heads,1).transpose(0,1).unsqueeze(0);
+        attention=at::scaled_dot_product_attention(qq,kk,vv).squeeze(0).transpose(0,1).contiguous();
+      }
+    } else
 #ifdef TEI_TORCH_CUDA_KERNELS
     if(reference && torch_flash_fma_supported(q,k,v))
       attention=torch_flash_fma(q,k,v,input.cumulative,input.max_sequence,1./std::sqrt(static_cast<double>(dim)),causal);
@@ -216,7 +233,7 @@ class Qwen35 final : public Model {
     auto gated=(a*gate).reshape({tokens,heads*dim});
     return radix_enabled(input)?linear_radix_projection(gated,p+"o_proj",input):linear(gated,p+"o_proj");
   }
-  at::Tensor delta_cpu(const at::Tensor& qkv,const at::Tensor& z,const at::Tensor& ab,const std::string& p,const PackedInput& input) const {
+  at::Tensor delta_cpu(const at::Tensor& qkv,const at::Tensor& z,const at::Tensor& ab,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false) const {
     // Exact-length reference recurrence. No sequence padding and no persistent state.
     auto kh=integer("linear_num_key_heads"),vh=integer("linear_num_value_heads");
     auto channels=(2*kh+vh)*128;
@@ -226,12 +243,15 @@ class Qwen35 final : public Model {
     std::vector<at::Tensor> outputs;
     for(int64_t row=0;row<input.batch;++row) {
       auto start=input.offsets[row],length=input.offsets[row+1]-start;
+      auto history=cache&&!prefill?cache->history:at::Tensor();
+      const auto previous=history.defined()?history.size(0):0;
+      auto raw=history.defined()?at::cat({history,qkv.narrow(0,start,length)},0):qkv.narrow(0,start,length);
       std::vector<at::Tensor> convolved;
       for(int64_t t=0;t<length;++t) {
         auto sum=at::zeros({channels},qkv.options().dtype(at::kFloat));
         for(int64_t j=0;j<kernel;++j) {
-          auto source=t+j-kernel+1;
-          if(source>=0) sum=sum+qkv.select(0,start+source).to(at::kFloat)*conv.select(1,j).to(at::kFloat);
+          auto source=previous+t+j-kernel+1;
+          if(source>=0) sum=sum+raw.select(0,source).to(at::kFloat)*conv.select(1,j).to(at::kFloat);
         }
         convolved.push_back(at::silu(sum.to(dtype)).to(dtype));
       }
@@ -245,7 +265,7 @@ class Qwen35 final : public Model {
       auto alpha=ab.narrow(0,start,length).narrow(-1,0,vh).to(at::kFloat)+dt;
       auto decay=at::exp(-at::exp(alog)*at::softplus(alpha));
       auto beta=at::sigmoid(ab.narrow(0,start,length).narrow(-1,vh,vh).to(at::kFloat)).to(dtype).to(at::kFloat);
-      auto state=at::zeros({vh,128,128},q.options());
+      auto state=cache&&!prefill?cache->state.clone():at::zeros({vh,128,128},q.options());
       for(int64_t t=0;t<length;++t) {
         auto kt=k.select(0,t),qt=q.select(0,t);
         state=state*decay.select(0,t).view({vh,1,1});
@@ -258,10 +278,11 @@ class Qwen35 final : public Model {
         out=(out*w(p+"norm.weight")).to(dtype);
         outputs.push_back((out.to(at::kFloat)*at::silu(z.select(0,start+t).view({vh,128}).to(at::kFloat))).to(dtype).reshape({vh*128}));
       }
+      if(cache&&prefill)cache->state=state;
     }
     return at::stack(outputs,0);
   }
-  at::Tensor delta_attention(const at::Tensor& x,const std::string& p,const PackedInput& input) const {
+  at::Tensor delta_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false) const {
     auto qkv=linear(x,p+"in_proj_qkv").contiguous(),z=linear(x,p+"in_proj_z").contiguous();
     auto ab=at::cat({linear(x,p+"in_proj_a"),linear(x,p+"in_proj_b")},-1).contiguous();
     qkv=radix_unfold(qkv,input);z=radix_unfold(z,input);ab=radix_unfold(ab,input);
@@ -275,13 +296,51 @@ class Qwen35 final : public Model {
           integer("linear_num_key_heads"),integer("linear_num_value_heads"),epsilon);
       else
         output=qwen35_delta_cuda(qkv,z,ab,conv,alog,dt,w(p+"norm.weight"),input,
-          integer("linear_num_key_heads"),integer("linear_num_value_heads"),epsilon);
+          integer("linear_num_key_heads"),integer("linear_num_value_heads"),epsilon,
+          cache&&!prefill?cache->state:at::Tensor(),cache&&prefill?&cache->state:nullptr,cache&&!prefill?cache->history:at::Tensor());
 #else
       TORCH_CHECK(false,"Qwen3.5 requires the native DeltaNet CUDA kernel build");
 #endif
-    } else output=delta_cpu(qkv,z,ab,p,input);
+    } else output=delta_cpu(qkv,z,ab,p,input,cache,prefill);
+    if(cache&&prefill) {
+      auto n=std::min(qkv.size(0),w(p+"conv1d.weight").size(-1)-1);
+      cache->history=qkv.narrow(0,qkv.size(0)-n,n).clone();
+    }
     auto compact=radix_fold(output,input);
     return radix_enabled(input)?linear_radix_projection(compact,p+"out_proj",input):linear(compact,p+"out_proj");
+  }
+  at::Tensor block_forward(const PackedInput& input) const {
+    TORCH_CHECK(input.images.empty()&&input.audios.empty()&&!radix_enabled(input)&&
+      input.block_prefix_lengths.size()==size_t(input.batch)&&input.block_prefix_sources.size()==size_t(input.batch),"Missing OneJev block boundaries");
+    std::vector<at::Tensor> results(input.batch);
+    auto run=[&](int64_t start,int64_t count,std::vector<BlockCache>& caches,bool prefill) {
+      std::vector<int32_t> offsets{0,int32_t(count)};
+      auto cumulative=at::tensor(offsets,input.cumulative.options());
+      PackedInput part{input.ids.narrow(0,start,count),input.types.narrow(0,start,count),input.positions.narrow(0,start,count),cumulative,offsets.data(),1,count};
+      auto h=at::embedding(w("embed_tokens.weight"),part.ids);
+      for(int64_t layer=0;layer<layer_count;++layer) {
+        const auto p="layers."+std::to_string(layer)+".";
+        auto x=norm(h,p+"input_layernorm");
+        auto attention=string("layer_types."+std::to_string(layer))=="linear_attention"?
+          delta_attention(x,p+"linear_attn.",part,&caches[layer],prefill):full_attention(x,p+"self_attn.",part,&caches[layer],prefill);
+        h=h+attention;h=h+feed_forward(norm(h,p+"post_attention_layernorm"),layer);
+      }
+      return norm(h,"norm");
+    };
+    for(int64_t source=0;source<input.batch;++source) {
+      if(input.block_prefix_sources[source]!=source)continue;
+      const auto prefix_length=input.block_prefix_lengths[source];
+      TORCH_CHECK(prefix_length>0&&prefix_length<=input.offsets[source+1]-input.offsets[source],"Invalid OneJev prefix length");
+      std::vector<BlockCache> caches(layer_count);
+      auto prefix_hidden=run(input.offsets[source],prefix_length,caches,true);
+      for(int64_t row=source;row<input.batch;++row)if(input.block_prefix_sources[row]==source) {
+        const auto count=input.offsets[row+1]-input.offsets[row]-prefix_length;
+        TORCH_CHECK(input.block_prefix_lengths[row]==prefix_length&&count>=0,"Invalid shared OneJev prefix");
+        results[row]=count?at::cat({prefix_hidden,run(input.offsets[row]+prefix_length,count,caches,false)},0):prefix_hidden;
+      }
+    }
+    for(const auto& result:results)TORCH_CHECK(result.defined(),"Invalid OneJev prefix representative");
+    return at::cat(results,0);
   }
  public:
   Qwen35(const Options& config,Weights& tensors,c10::Device dev,at::ScalarType type)
@@ -302,11 +361,23 @@ class Qwen35 final : public Model {
       recurrent=recurrent || string("layer_types."+std::to_string(i))=="linear_attention";
     p.recurrent_heads=recurrent?integer("linear_num_value_heads",0):0;
     p.recurrent_key=integer("linear_key_head_dim",128);p.recurrent_value=integer("linear_value_head_dim",128);
+    if(block_attention()) {
+      p.retained_kv_width=kv_heads*dim;
+      for(int64_t i=0;i<layer_count;++i) {
+        if(string("layer_types."+std::to_string(i))=="linear_attention")++p.retained_recurrent_layers;
+        else ++p.retained_kv_layers;
+      }
+      // Retain each GDN layer's prefix state and convolution history until all
+      // suffixes in the group finish.
+      p.retained_conv_width=(2*integer("linear_num_key_heads")+integer("linear_num_value_heads"))*128;
+      p.retained_conv_length=integer("linear_conv_kernel_dim",4);
+    }
     if(visual)p.vision=visual->vision_memory_profile();return p;
   }
   int64_t output_width() const override { return hidden; }
   bool supports_images() const override {return bool(visual);}
   void ready() override {
+    TORCH_CHECK(!block_attention()||integer("num_experts",0)==0,"OneJev block attention currently requires a dense Qwen3.5 model");
     // Retain scalar dimensions before inference caches erase checkpoint tensors.
     const auto checkpoint_profile=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
     transient_linear=checkpoint_profile.linear;transient_vocabulary=checkpoint_profile.vocab;
@@ -380,9 +451,10 @@ class Qwen35 final : public Model {
   }
   bool supports_radix() const override {
     auto mode=cfg.string("_decision_attention_mode",cfg.string("decision_attention_mode","causal"));
-    return mode!="noncausal_full_attention" && !cfg.boolean("use_bidirectional_attention",false);
+    return !block_attention()&&mode!="noncausal_full_attention" && !cfg.boolean("use_bidirectional_attention",false);
   }
   at::Tensor forward(const PackedInput& input) const override {
+    if(block_attention())return block_forward(input);
     TORCH_CHECK(!radix_enabled(input)||supports_radix(),"Noncausal Qwen3.5 attention does not support radix folding");
     TORCH_CHECK(!radix_enabled(input)||input.audios.empty(),"Qwen3.5 radix audio is not supported");
     auto states=at::embedding(w("embed_tokens.weight"),input.images.empty()?radix_ids(input):input.ids);
