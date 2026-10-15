@@ -189,7 +189,7 @@ struct Engine {
         && (family == "bert" || family == "roberta"
         || family == "xlm-roberta" || family == "camembert" || family == "distilbert" || family == "modernbert"
         || family == "mpnet" || family == "deberta-v2" || family == "gte" || family == "nomic_bert" || family == "llama" || family == "mistral"
-        || family == "qwen2" || family == "qwen3" || family == "gemma3" || family == "gemma3_text"
+        || family == "ultrabert" || family == "qwen2" || family == "qwen3" || family == "gemma3" || family == "gemma3_text"
         || family == "gemma4" || family == "gemma4_text" || family == "embedding_gemma2"
         || (media_graphs && (family == "qwen3_vl" || family == "qwen3_vl_text" || family == "qwen3_5" || family == "qwen3_5_text")))))) {
       auto entries=options.integer("_cuda_graph_entries",4), reuse=options.integer("_cuda_graph_reuse",3);
