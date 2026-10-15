@@ -54,6 +54,11 @@ pub enum DecisionInput {
     OptionTokens {
         token_ids: Vec<u32>,
     },
+    /// OneJev block attention: prefix tokens followed by one question block.
+    BlockOptionTokens {
+        token_ids: Vec<u32>,
+        prefix_length: usize,
+    },
     Clef {
         fields: Vec<ClefField>,
     },

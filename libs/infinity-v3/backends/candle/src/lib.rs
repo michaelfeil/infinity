@@ -174,6 +174,24 @@ impl CandleBackend {
                 "Dynamic FP8 requires an experimental-fp8 build".into(),
             ));
         }
+        if model_path.join("readout.json").exists() {
+            let readout: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(model_path.join("readout.json"))
+                    .map_err(|e| BackendError::Start(e.to_string()))?,
+            )
+            .map_err(|e| BackendError::Start(e.to_string()))?;
+            if !readout.is_object()
+                || ["attention", "readout"]
+                    .iter()
+                    .any(|key| readout.get(key).is_some_and(|v| !v.is_string()))
+                || readout["attention"].as_str().unwrap_or("causal") != "causal"
+                || readout["readout"].as_str().unwrap_or("slot_lm") != "slot_lm"
+            {
+                return Err(BackendError::Start(
+                    "This OneJev readout requires the LibTorch backend".into(),
+                ));
+            }
+        }
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
         let default_pytorch = model_path.join("pytorch_model.bin");

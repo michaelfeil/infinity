@@ -96,5 +96,7 @@ struct PackedInput {
   // Radix maps share only actual token rows with identical causal prefixes.
   at::Tensor compact_ids{}, compact_positions{}, compact_types{};
   at::Tensor scatter_unfold{}, fold_gather{};
+  // Complete prefix boundaries and exact-match representatives, request-local only.
+  std::vector<int64_t> block_prefix_lengths{}, block_prefix_sources{};
 };
 }

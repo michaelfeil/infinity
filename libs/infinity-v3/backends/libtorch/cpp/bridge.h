@@ -35,6 +35,7 @@ struct TeiDecisionField {
   size_t option_count;
 };
 struct TeiDecision {
+  // kind 4 is block option-token scoring; question_type holds its prefix length.
   int32_t kind;
   int64_t question_type;
   const int64_t* markers;

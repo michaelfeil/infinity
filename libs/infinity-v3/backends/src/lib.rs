@@ -816,6 +816,7 @@ enum BackendCommand {
 }
 
 async fn download_decision_sidecars(api: &ApiRepo) -> Result<(), ApiError> {
+    let _ = api.get("readout.json").await;
     // These sidecars select optional decision heads. Missing cached probes
     // must also be tolerated offline; a discovered head's companion is required.
     if api.get("rl_agent_config.json").await.is_ok() {

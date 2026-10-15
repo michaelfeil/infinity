@@ -192,6 +192,29 @@ int main(int argc,char** argv) {
   TORCH_CHECK((bi.select(0,0)-future.select(0,0)).abs().max().item<float>()>1e-5,"Qwen3.5 noncausal full attention ignored future tokens");
   TORCH_CHECK(at::allclose(bi.narrow(0,3,2),future.narrow(0,3,2),1e-5,1e-6),"Noncausal Qwen3.5 crossed packed sequence boundaries");
   std::cout<<"Qwen3.5 noncausal-full attention decision mode and sequence isolation passed\n";
+  {
+    auto block_cfg=cfg;block_cfg.values["_decision_attention_mode"]="block_bidirectional";block_cfg.values["num_hidden_layers"]="4";
+    block_cfg.values["layer_types.2"]="linear_attention";block_cfg.values["layer_types.3"]="full_attention";
+    auto block_weights=weights;
+    for(const auto& [name,value]:weights)for(int i=0;i<2;++i) {
+      auto prefix="model.layers."+std::to_string(i)+".";
+      if(name.starts_with(prefix))block_weights["model.layers."+std::to_string(i+2)+"."+name.substr(prefix.size())]=value;
+    }
+    auto blocks=build(block_cfg,block_weights,c10::Device("cpu"),at::kFloat);blocks->ready();
+    TORCH_CHECK(!blocks->supports_radix()&&blocks->transient_memory_profile()->retained_recurrent_layers==2,"Block cache policy/profile missing");
+    std::vector<int32_t> ends{0,5,9};
+    auto packed=make({1,2,3,4,5,1,2,7,8},ends);packed.block_prefix_lengths={2,2};packed.block_prefix_sources={0,0};
+    auto cached=blocks->forward(packed);packed.block_prefix_sources={0,1};
+    TORCH_CHECK(at::allclose(cached,blocks->forward(packed),1e-5,1e-6),"Whole-prefix state reuse changed outputs");
+    auto changed=make({1,2,3,4,31,1,2,7,8},ends);changed.block_prefix_lengths={2,2};changed.block_prefix_sources={0,0};
+    auto future=blocks->forward(changed);
+    TORCH_CHECK(at::allclose(cached.narrow(0,0,2),future.narrow(0,0,2),1e-5,1e-6),"Prefix attended to question suffix");
+    TORCH_CHECK((cached.select(0,2)-future.select(0,2)).abs().max().item<float>()>1e-5,"Suffix lost bidirectional attention");
+    TORCH_CHECK(at::allclose(cached.narrow(0,5,4),future.narrow(0,5,4),1e-5,1e-6),"Question mutated shared GDN state");
+    bool missing=false;try{blocks->forward(make({1,2,3},one));}catch(const c10::Error&){missing=true;}
+    TORCH_CHECK(missing,"Block mode silently accepted missing boundary metadata");
+    std::cout<<"Qwen3.5 block prefix isolation, bidirectional suffix and immutable GDN cache passed\n";
+  }
   auto moe_cfg=cfg;moe_cfg.values["num_experts"]="3";moe_cfg.values["num_experts_per_tok"]="2";
   auto moe_weights=weights;
   for(int i=0;i<2;++i) {

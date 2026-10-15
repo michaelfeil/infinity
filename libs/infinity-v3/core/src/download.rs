@@ -110,6 +110,7 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
             download_file(api, "preprocessor_config.json").await?;
         }
     }
+    let _ = download_file(api, "readout.json").await;
     let path = download_file(api, "tokenizer.json").await?;
     // Optional native conversation artifacts, using the same pinned repository revision.
     for name in ["tokenizer_config.json", "chat_template.jinja"] {

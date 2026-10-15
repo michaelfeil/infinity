@@ -391,8 +391,8 @@ void attach_radix(Engine& model,tei::PackedInput& packed,const int64_t* ids,cons
 }
 std::vector<tei::DecisionRequest> decision_requests(const TeiDecision* requests,size_t count) {
  TORCH_CHECK(requests||!count,"Missing decision metadata buffer");std::vector<tei::DecisionRequest> result;result.reserve(count);
- for(size_t i=0;i<count;++i){const auto& request=requests[i];TORCH_CHECK(request.kind>=0&&request.kind<=3,"Invalid decision metadata kind");
-  tei::DecisionRequest converted{static_cast<tei::DecisionRequest::Kind>(request.kind)};converted.question_type=request.question_type;
+ for(size_t i=0;i<count;++i){const auto& request=requests[i];TORCH_CHECK(request.kind>=0&&request.kind<=4,"Invalid decision metadata kind");
+  tei::DecisionRequest converted{static_cast<tei::DecisionRequest::Kind>(request.kind==4?1:request.kind)};converted.question_type=request.question_type;
   TORCH_CHECK((!request.marker_count||request.markers)&&(!request.token_count||request.token_ids)&&(!request.field_count||request.fields),"Missing decision metadata values");
   if(request.marker_count)converted.markers.assign(request.markers,request.markers+request.marker_count);
   if(request.token_count)converted.token_ids.assign(request.token_ids,request.token_ids+request.token_count);
@@ -531,7 +531,22 @@ int32_t tei_decide_radix(void* handle,const int64_t* ids,const int64_t* types,co
   SynchronousMemoryAdmission admission(engine,total_cost.bytes());
   auto packed=packed_input(engine,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audios,audio_count);
   attach_radix(engine,packed,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audio_count,radix);
-  const bool use_graph=engine.graphs&&engine.graph_policy_ready()&&(engine.media_graphs||(!image_count&&!audio_count&&!media_positions));
+  const bool blocks=engine.options.string("_decision_attention_mode")=="block_bidirectional";
+  if(blocks) {
+    TORCH_CHECK(!image_count&&!audio_count&&!media_positions&&!radix,"OneJev block attention requires text without radix folding");
+    for(int64_t row=0;row<batch;++row) {
+      const auto length=int64_t(cumulative[row+1]-cumulative[row]);
+      const auto boundary=requests[row].kind==3?length:requests[row].question_type;
+      TORCH_CHECK((requests[row].kind==4||requests[row].kind==3)&&boundary>0&&boundary<=length,
+        "OneJev block attention requires an explicit valid prefix boundary");
+      int64_t source=row;
+      for(int64_t prev=0;prev<row;++prev)if(packed.block_prefix_lengths[prev]==boundary &&
+        std::equal(ids+cumulative[row],ids+cumulative[row]+boundary,ids+cumulative[prev]) &&
+        std::equal(positions+cumulative[row],positions+cumulative[row]+boundary,positions+cumulative[prev])) {source=packed.block_prefix_sources[prev];break;}
+      packed.block_prefix_lengths.push_back(boundary);packed.block_prefix_sources.push_back(source);
+    }
+  } else for(int64_t row=0;row<batch;++row)TORCH_CHECK(requests[row].kind!=4,"Block decision metadata requires a block-attention checkpoint");
+  const bool use_graph=!blocks&&engine.graphs&&engine.graph_policy_ready()&&(engine.media_graphs||(!image_count&&!audio_count&&!media_positions));
   auto prepared_decision=engine.decision->prepare(packed,converted);
   if(!use_graph)engine.model->prepare_input(packed);
   auto hidden=use_graph?engine.graphs->forward(*engine.model,packed):engine.model->forward(packed);

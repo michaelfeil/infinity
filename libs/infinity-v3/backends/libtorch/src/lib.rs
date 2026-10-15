@@ -122,6 +122,14 @@ impl OwnedDecision {
                 result.kind = 1;
                 result.token_ids = collect_fallible(token_ids.iter().map(|&n| i64::from(n)))?;
             }
+            DecisionInput::BlockOptionTokens {
+                token_ids,
+                prefix_length,
+            } => {
+                result.kind = 4;
+                result.question_type = i64::try_from(*prefix_length).map_err(inference)?;
+                result.token_ids = collect_fallible(token_ids.iter().map(|&n| i64::from(n)))?;
+            }
             DecisionInput::Clef { fields } => {
                 result.kind = 2;
                 result.fields = reserved_vec(fields.len())?;
@@ -528,6 +536,36 @@ impl LibtorchBackend {
         } else {
             None
         };
+        if path.join("readout.json").exists() {
+            let readout = read_config("readout.json")?;
+            if !readout.is_object()
+                || ["attention", "readout"]
+                    .iter()
+                    .any(|key| readout.get(key).is_some_and(|v| !v.is_string()))
+            {
+                return Err(start("Invalid OneJev readout.json"));
+            }
+            let attention = readout["attention"].as_str().unwrap_or("causal");
+            let head = readout["readout"].as_str().unwrap_or("slot_lm");
+            if !matches!(attention, "causal" | "noncausal") || head != "slot_lm" {
+                return Err(start(
+                    "Unsupported OneJev readout.json; expected causal/noncausal slot_lm",
+                ));
+            }
+            if attention == "noncausal" {
+                if decision_kind != Some("option_tokens")
+                    || !matches!(
+                        options["model_type"].as_str(),
+                        Some("qwen3_5" | "qwen3_5_text")
+                    )
+                {
+                    return Err(start(
+                        "OneJev block attention requires a dense Qwen3.5 decision model",
+                    ));
+                }
+                options["_decision_attention_mode"] = "block_bidirectional".into();
+            }
+        }
         if decision_kind == Some("d3") && dtype != "bfloat16" {
             return Err(start(
                 "D3 requires bfloat16 for its backbone and vision tower",
