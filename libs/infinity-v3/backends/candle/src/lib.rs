@@ -174,6 +174,13 @@ impl CandleBackend {
                 "Dynamic FP8 requires an experimental-fp8 build".into(),
             ));
         }
+        if infinity_v3_backend_core::block_attention_config::block_attention(model_path)
+            .map_err(BackendError::Start)?
+        {
+            return Err(BackendError::Start(
+                "Block attention requires the LibTorch backend".into(),
+            ));
+        }
         // Default files
         let default_safetensors = model_path.join("model.safetensors");
         let default_pytorch = model_path.join("pytorch_model.bin");

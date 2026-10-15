@@ -14,7 +14,7 @@ use tracing::{instrument, Span};
 use serde::Deserialize;
 
 pub use crate::dtype::DType;
-pub use infinity_v3_backend_core::result_memory;
+pub use infinity_v3_backend_core::{block_attention_config, result_memory};
 pub use infinity_v3_backend_core::{
     AudioFeatures, BackendError, Batch, ClefField, DecisionInput, DecisionOutput, Embedding,
     Embeddings, ImagePatches, ModelType, MultimodalEncoding, Pool, Predictions, TokenPredictions,
