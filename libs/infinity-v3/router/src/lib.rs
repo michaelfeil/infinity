@@ -7,7 +7,7 @@ mod replicas;
 mod http;
 
 #[cfg(feature = "http")]
-use ::http::HeaderMap;
+use ::http::{HeaderMap, HeaderName, HeaderValue};
 
 mod shutdown;
 
@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::fs;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use tokenizers::processors::sequence::Sequence;
 use tokenizers::processors::template::TemplateProcessing;
@@ -787,6 +788,7 @@ pub async fn run_models(
     prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
+    billing_input_tokens_header()?;
     model_registry::validate_configs(&configs)?;
     let mut models = Vec::with_capacity(configs.len());
     let multiple = configs.len() > 1;
@@ -1236,6 +1238,24 @@ impl From<TextEmbeddingsError> for ErrorResponse {
     }
 }
 
+static BILLING_INPUT_TOKENS: OnceLock<Result<Option<HeaderName>, String>> = OnceLock::new();
+
+// Called at startup to validate and freeze the process-wide header configuration.
+fn billing_input_tokens_header() -> Result<&'static Option<HeaderName>> {
+    const ENV: &str = infinity_v3_config::infinity_env!("BILLING_HEADERS");
+    BILLING_INPUT_TOKENS
+        .get_or_init(|| match std::env::var(ENV) {
+            Ok(prefix) if prefix.is_empty() => Ok(None),
+            Ok(prefix) => HeaderName::from_bytes(format!("{prefix}-input-tokens").as_bytes())
+                .map(Some)
+                .map_err(|_| format!("{ENV} must be empty or a valid HTTP header-name prefix")),
+            Err(std::env::VarError::NotPresent) => Ok(None),
+            Err(std::env::VarError::NotUnicode(_)) => Err(format!("{ENV} must be valid Unicode")),
+        })
+        .as_ref()
+        .map_err(|error| anyhow!(error.clone()))
+}
+
 struct ResponseMetadata {
     compute_chars: usize,
     compute_tokens: usize,
@@ -1292,6 +1312,9 @@ impl From<ResponseMetadata> for HeaderMap {
     fn from(value: ResponseMetadata) -> Self {
         // Headers
         let mut headers = HeaderMap::new();
+        if let Some(Ok(Some(name))) = BILLING_INPUT_TOKENS.get() {
+            headers.insert(name.clone(), HeaderValue::from(value.compute_tokens));
+        }
         headers.insert("x-compute-type", "gpu+optimized".parse().unwrap());
         headers.insert(
             "x-compute-time",
