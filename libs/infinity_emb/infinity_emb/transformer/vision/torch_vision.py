@@ -32,13 +32,36 @@ if CHECK_PIL.is_available:
     from PIL import Image
 
 
+def _resolve_colpali_classes(architecture: str) -> tuple[Any, Any]:
+    """Look up model and processor classes in colpali_engine by architecture name.
+
+    The set of available classes differs between colpali-engine releases
+    (e.g. `ColIdefics2` was removed and `ColQwen2_5` was added in 0.3.9+),
+    so classes are resolved lazily instead of being imported unconditionally.
+    """
+    import colpali_engine.models as colpali_models  # type: ignore
+
+    model_cls = getattr(colpali_models, architecture, None)
+    # colpali-engine is inconsistent: `ColQwen2Processor` but `ColQwen2_5_Processor`
+    processor_cls = getattr(colpali_models, f"{architecture}Processor", None) or getattr(
+        colpali_models, f"{architecture}_Processor", None
+    )
+    if model_cls is None or processor_cls is None:
+        raise ValueError(
+            f"Architecture `{architecture}` is not available in the installed version of "
+            "`colpali-engine`. Please upgrade/downgrade `colpali-engine` to a version that "
+            f"provides `{architecture}`."
+        )
+    return model_cls, processor_cls
+
+
 class TIMM(BaseTIMM):
     """CrossEncoder with .encode_core() and no microbatching"""
 
     def __init__(self, *, engine_args: "EngineArgs"):
         CHECK_TORCH.mark_required()
         CHECK_TRANSFORMERS.mark_required()
-        base_config = dict(
+        base_config: dict[str, Any] = dict(
             pretrained_model_name_or_path=engine_args.model_name_or_path,
             revision=engine_args.revision,
             trust_remote_code=engine_args.trust_remote_code,
@@ -59,30 +82,7 @@ class TIMM(BaseTIMM):
 
         if self.is_colipali:
             CHECK_COLPALI_ENGINE.mark_required()
-            from colpali_engine.models import (  # type: ignore
-                ColIdefics2,
-                ColIdefics2Processor,
-                ColPali,
-                ColPaliProcessor,
-                ColQwen2,
-                ColQwen2Processor,
-                # TODO: colqwen 2.5 is not supported with colpali-engine 0.3.8
-                # ColQwen2_5,
-                # ColQwen2_5_Processor,
-            )
-
-            model_cls = {
-                "ColPali": ColPali,
-                "ColQwen2": ColQwen2,
-                # "ColQwen2_5": ColQwen2_5,
-                "ColIdefics2": ColIdefics2,
-            }[config.architectures[0]]
-            processor_cls = {
-                "ColPali": ColPaliProcessor,
-                "ColQwen2": ColQwen2Processor,
-                # "ColQwen2_5": ColQwen2_5_Processor,
-                "ColIdefics2": ColIdefics2Processor,
-            }[config.architectures[0]]
+            model_cls, processor_cls = _resolve_colpali_classes(config.architectures[0])
 
             self.model = model_cls.from_pretrained(
                 **extra_model_args,

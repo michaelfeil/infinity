@@ -2,10 +2,13 @@
 # Copyright (c) 2023-now michaelfeil
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 
 from infinity_emb._optional_imports import CHECK_OPTIMUM, CHECK_TORCH, CHECK_TRANSFORMERS
+from infinity_emb.log_handler import logger
 from infinity_emb.primitives import Device
+
+BETTERTRANSFORMER_UNAVAILABLE_REASON: Optional[str] = None
 
 if CHECK_OPTIMUM.is_available:
     try:
@@ -15,12 +18,16 @@ if CHECK_OPTIMUM.is_available:
         )
     except (ImportError, ModuleNotFoundError):
         # optimum.bettertransformer was removed in optimum >= 2.0
-        CHECK_OPTIMUM.mark_dirty(
-            ImportError(
-                "optimum.bettertransformer is not available in this version of optimum. "
-                "BetterTransformer support requires optimum < 2.0."
-            )
+        BETTERTRANSFORMER_UNAVAILABLE_REASON = (
+            "optimum.bettertransformer is not available in this version of optimum. "
+            "BetterTransformer support requires optimum < 2.0."
         )
+    except RuntimeError as ex:
+        # optimum 1.25 - 1.27 raise a RuntimeError on import if transformers >= 4.49 is installed:
+        # `BetterTransformer requires transformers<4.49 but found ...`
+        BETTERTRANSFORMER_UNAVAILABLE_REASON = f"optimum.bettertransformer is not compatible with the installed transformers version: {ex}"
+    if BETTERTRANSFORMER_UNAVAILABLE_REASON is not None:
+        CHECK_OPTIMUM.mark_dirty(ImportError(BETTERTRANSFORMER_UNAVAILABLE_REASON))
 
 if CHECK_TORCH.is_available:
     import torch
@@ -47,6 +54,12 @@ def check_if_bettertransformer_possible(engine_args: "EngineArgs") -> bool:
         return False
 
     if "BetterTransformerManager" not in globals():
+        logger.warning(
+            "BetterTransformer is not available in this environment, "
+            "continuing with the default attention implementation of transformers. "
+            "Set `--no-bettertransformer` to silence this warning. "
+            f"Reason: {BETTERTRANSFORMER_UNAVAILABLE_REASON or 'optimum is not installed.'}"
+        )
         return False
 
     config = AutoConfig.from_pretrained(
