@@ -322,7 +322,81 @@ void multimodal_test(){
  std::cout<<"Qwen3 external embeddings, multimodal RoPE and deepstack packed isolation passed\n";
 }
 }
+// Explicit scores/masks independently check the per-layer RoPE and local endpoints.
+at::Tensor ultrabert_reference(const Options& cfg,const Weights& weights,const std::vector<int64_t>& ids) {
+  auto opts=at::TensorOptions().dtype(at::kFloat);
+  auto x=at::embedding(weights.at("model.embed_tokens.weight"),at::tensor(ids,at::TensorOptions().dtype(at::kLong)));
+  const auto n=int64_t(ids.size()),heads=cfg.integer("num_attention_heads"),kv=cfg.integer("num_key_value_heads"),d=cfg.integer("head_dim");
+  auto norm=[&](const at::Tensor& t,const std::string& key){return t*at::rsqrt(t.square().mean(-1,true)+1e-6)*weights.at(key);};
+  for(int64_t layer=0;layer<2;++layer) {
+    auto prefix="model.layers."+std::to_string(layer)+".";
+    auto h=norm(x,prefix+"input_layernorm.weight");
+    auto inv=at::pow(layer?2560000.:10000.,-at::arange(0,d,2,opts)/d);
+    auto angle=at::arange(n,opts).unsqueeze(1)*inv.unsqueeze(0);
+    auto cosine=at::cat({angle,angle},-1).cos().unsqueeze(1),sine=at::cat({angle,angle},-1).sin().unsqueeze(1);
+    auto project=[&](const char* name,int64_t count){return at::linear(h,weights.at(prefix+"self_attn."+name+".weight")).view({n,count,d});};
+    auto rotate=[&](const at::Tensor& t){return t*cosine+at::cat({-t.narrow(-1,d/2,d/2),t.narrow(-1,0,d/2)},-1)*sine;};
+    auto q=rotate(project("q_proj",heads)).transpose(0,1);
+    auto k=at::repeat_interleave(rotate(project("k_proj",kv)),heads/kv,1).transpose(0,1);
+    auto v=at::repeat_interleave(project("v_proj",kv),heads/kv,1).transpose(0,1);
+    auto scores=at::matmul(q,k.transpose(-1,-2))/std::sqrt(double(d));
+    if(layer==0) {
+      auto positions=at::arange(n,at::TensorOptions().dtype(at::kLong));
+      scores=scores.masked_fill((positions.unsqueeze(1)-positions.unsqueeze(0)).abs()>2,-INFINITY);
+    }
+    auto attended=at::matmul(scores.softmax(-1),v).transpose(0,1).contiguous().view({n,heads*d});
+    x=x+at::linear(attended,weights.at(prefix+"self_attn.o_proj.weight"));
+    h=norm(x,prefix+"post_attention_layernorm.weight");
+    x=x+at::linear(at::silu(at::linear(h,weights.at(prefix+"mlp.gate_proj.weight")))*at::linear(h,weights.at(prefix+"mlp.up_proj.weight")),weights.at(prefix+"mlp.down_proj.weight"));
+  }
+  return norm(x,"model.norm.weight");
+}
+void ultrabert_test() {
+  auto cfg=config("ultrabert");cfg.values["rope_theta"]="[10000,2560000]";cfg.values["attention_windows"]="[2,null]";
+  for(bool independent:{false,true}) {
+    if(independent){cfg.values["num_attention_heads"]="3";cfg.values["num_key_value_heads"]="1";}
+    auto original=weights(cfg);
+    if(independent)for(int64_t i=0;i<2;++i){
+      auto prefix="model.layers."+std::to_string(i)+".self_attn.";
+      original[prefix+"q_proj.weight"]=original[prefix+"q_proj.weight"].narrow(0,0,12).contiguous();
+      for(auto name:{"k_proj","v_proj"})original[prefix+name+".weight"]=original[prefix+name+".weight"].narrow(0,0,4).contiguous();
+      original[prefix+"o_proj.weight"]=original[prefix+"o_proj.weight"].narrow(1,0,12).contiguous();
+    }
+    for(const auto* arch:{"UltrabertModel","UltrabertForSequenceClassification","UltrabertForTokenClassification"}) {
+      const bool classified=std::string(arch)!="UltrabertModel";
+      auto c=cfg;c.values["architectures.0"]=arch;c.values["_classifier"]=classified?"true":"false";c.values["num_labels"]="3";
+      Weights loaded;for(const auto& [name,value]:original)loaded[(classified?"ultrabert.":"")+name.substr(6)]=value;
+      auto score=at::arange(48,at::TensorOptions().dtype(at::kFloat)).view({3,16})/64.,bias=at::tensor({.1f,-.2f,.3f});
+      if(classified){loaded["classifier.weight"]=score;loaded["classifier.bias"]=bias;}
+      auto model=create_decoder(c,loaded,c10::Device("cpu"),at::kFloat);model->ready();
+      TORCH_CHECK(!model->supports_radix(),"UltraBERT advertised causal prefix reuse");
+      check_close(run(*model,{3,4,5,6,7,8,9},{0,7}),ultrabert_reference(cfg,original,{3,4,5,6,7,8,9}));
+      auto expected=at::cat({ultrabert_reference(cfg,original,{3,4,5}),ultrabert_reference(cfg,original,{6,7,8,9})});
+      check_close(run(*model,{3,4,5,6,7,8,9},{0,3,7}),expected);
+      TORCH_CHECK((run(*model,{3,4},{0,2})-run(*model,{3,4,5},{0,3}).narrow(0,0,2)).abs().max().item<float>()>1e-5,"UltraBERT became causal");
+      if(classified) {
+        auto opts=at::TensorOptions().dtype(at::kLong);
+        auto ids=at::tensor({3,4,5,6,7,8,9},opts),positions=at::tensor({0,1,2,0,1,2,3},opts);
+        std::vector<int32_t> offsets{0,3,7};auto cumulative=at::tensor(offsets,opts.dtype(at::kInt));
+        PackedInput input{ids,at::zeros({7},opts),positions,cumulative,offsets.data(),2,4};
+        auto starts=at::tensor({0,3},opts);
+        check_close(model->predict(input,false),at::linear(expected.index_select(0,starts),score,bias));
+        if(std::string(arch)=="UltrabertForTokenClassification")check_close(model->predict(input,true),at::linear(expected,score,bias));
+        else {bool rejected=false;try{model->predict(input,true);}catch(const c10::Error&){rejected=true;}TORCH_CHECK(rejected,"Sequence head accepted token prediction");}
+      }
+    }
+  }
+  auto rejects=[&](Options bad,Weights w){bool rejected=false;try{auto m=create_decoder(bad,w,c10::Device("cpu"),at::kFloat);m->ready();}catch(const std::exception&){rejected=true;}TORCH_CHECK(rejected,"Invalid UltraBERT configuration accepted");};
+  cfg.values["num_attention_heads"]="4";cfg.values["num_key_value_heads"]="2";
+  for(const auto* key:{"rope_theta","attention_windows"})for(const auto* value:{"[]","[1]","[1,2,3]","[1,]","[1,-2]"}){auto bad=cfg;bad.values[key]=value;rejects(bad,weights(cfg));}
+  for(const auto* key:{"attention_bias","mlp_bias","is_causal"}){auto bad=cfg;bad.values[key]="true";rejects(bad,weights(cfg));}
+  for(const auto* value:{"[0,10000]","[nan,10000]","[inf,10000]"}){auto bad=cfg;bad.values["rope_theta"]=value;rejects(bad,weights(cfg));}
+  {auto bad=cfg;bad.values["_pooling"]="splade";rejects(bad,weights(cfg));}
+  {auto bad=cfg;bad.values["_classifier"]="true";rejects(bad,weights(cfg));}
+  std::cout<<"UltraBERT rotary/window reference, ragged GQA, classification and validation passed\n";
+}
 int main(){c10::InferenceMode inference;at::set_num_threads(1);
+ ultrabert_test();
  {
   auto surviving_policy=configure_workspace_admission(0,256);
   auto policy=configure_workspace_admission(0,128);auto state=workspace_admission_state(0);

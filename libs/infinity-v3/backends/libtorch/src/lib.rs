@@ -687,6 +687,9 @@ impl LibtorchBackend {
         if family == "llama_bidirec" {
             options["use_bidirectional_attention"] = true.into();
         }
+        if family == "ultrabert" && options["max_position_embeddings"].is_null() {
+            options["max_position_embeddings"] = 32768.into();
+        }
         let text = options.get("text_config").unwrap_or(&options);
         let integer = |key: &str, alias: &str, fallback: i64| {
             let nomic_alias = match key {
@@ -721,7 +724,12 @@ impl LibtorchBackend {
                 "max_position_embeddings",
                 i64::MAX,
             ),
-            type_vocab_size: integer("type_vocab_size", "type_vocab_size", 1),
+            // UltraBERT ignores segment IDs, but reranking tokenizers still emit 0/1.
+            type_vocab_size: integer(
+                "type_vocab_size",
+                "type_vocab_size",
+                if family == "ultrabert" { 2 } else { 1 },
+            ),
             layer_norm_eps: text
                 .get("layer_norm_eps")
                 .and_then(serde_json::Value::as_f64)
@@ -784,6 +792,7 @@ impl LibtorchBackend {
                 | "qwen3_5_moe_text"
                 | "mistral3"
                 | "ministral3"
+                | "ultrabert"
         ) && text
             .get("head_dim")
             .and_then(serde_json::Value::as_i64)

@@ -453,3 +453,34 @@ Builds can change the application environment-variable base using
 
 See [Ministral 3 multimodal embeddings](ministral-3-multimodal.md) for the public
 Mistral3/Pixtral checkpoint and independent reference validation.
+
+### UltraBERT
+
+UltraBERT uses packed bidirectional GQA with a separate RoPE base and symmetric
+attention window for each layer. A `null` window selects full attention; positive
+windows include both endpoints. The backend accepts base or `ultrabert.` weight
+prefixes and defaults to a 32K position limit when the checkpoint omits it.
+CLS, mean and last-token pooling, sequence classification/reranking, and token
+classification are supported. Bias-enabled projections and SPLADE are rejected.
+CUDA graph capture is available for text requests; bidirectional prefix folding
+is disabled.
+
+Generate independent reference fixtures from the public model's Hugging Face
+implementation (requires its compatible Transformers version and custom code):
+
+```sh
+python scripts/ultrabert-reference.py --model /path/to/UltraBERT-Embed-150M \
+  --device cuda --output /tmp/ultrabert-reference.json
+ULTRABERT_MODEL=/path/to/UltraBERT-Embed-150M \
+ULTRABERT_REFERENCE=/tmp/ultrabert-reference.json \
+ULTRABERT_DEVICE=cuda:0 ULTRABERT_DTYPE=bfloat16 \
+  cargo test -p infinity-backend-libtorch --test ultrabert_parity \
+  ultrabert_matches_hf -- --ignored --nocapture
+```
+
+Use `--head sequence` or `--head token` to generate classification references.
+Combine their JSON arrays into one file and set
+`ULTRABERT_CLASSIFICATION_REFERENCE` for `ultrabert_classifiers_match_hf`.
+Set `INFINITY_TORCH_CUDA_GRAPHS=1` when running `ultrabert_cuda_graphs_capture`.
+Native CPU tests additionally cover local-window boundaries, per-layer rotary
+bases, independent attention width, ragged isolation and malformed configurations.

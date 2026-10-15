@@ -19,10 +19,13 @@
 #include <algorithm>
 #include <sstream>
 #include <unordered_set>
+#include <map>
+#include <cctype>
 
 namespace tei {
 namespace {
 struct DecoderLayer {
+  int64_t rotary_index=-1,left_window=-1,right_window=-1;
   at::Tensor qkv, qkv_bias, out, out_bias, input_norm, post_norm, q_norm, k_norm;
   at::Tensor gate_up, gate_up_bias, down, down_bias, router;
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -51,6 +54,9 @@ class Decoder final : public Model {
   int64_t hidden, heads, kvheads, head_dim, intermediate, layer_count;
   double epsilon;
   bool causal, renormalize;
+  bool token_classifier=false;
+  std::vector<std::pair<at::Tensor,at::Tensor>> rotary_caches;
+  std::vector<int64_t> rotary_indices,attention_windows;
   bool cudnn_varlen = false;
   bool fp8_dynamic = false;
   bool qwen_half_exact = false;
@@ -124,6 +130,44 @@ class Decoder final : public Model {
     auto a = x.narrow(-1, 0, half), b = x.narrow(-1, half, half);
     return at::cat({a * cos - b * sin, b * cos + a * sin}, -1);
   }
+  std::vector<std::string> array_items(const std::string& key) const {
+    auto value=options.string(key);
+    value.erase(std::remove_if(value.begin(),value.end(),[](unsigned char c){return std::isspace(c);}),value.end());
+    TORCH_CHECK(value.size()>=2&&value.front()=='['&&value.back()==']',"UltraBERT requires per-layer ",key);
+    std::vector<std::string> items;std::istringstream stream(value.substr(1,value.size()-2));std::string item;
+    while(std::getline(stream,item,',')) {TORCH_CHECK(!item.empty(),"Invalid UltraBERT ",key);items.push_back(item);}
+    TORCH_CHECK(items.size()==static_cast<size_t>(layer_count)&&value[value.size()-2]!=',',"UltraBERT ",key," must have one entry per layer");
+    return items;
+  }
+  void load_ultrabert_attention() {
+    TORCH_CHECK(!options.boolean("attention_bias",false)&&!options.boolean("mlp_bias",false),"UltraBERT requires bias-free projections");
+    TORCH_CHECK(!options.boolean("is_causal",false),"UltraBERT requires bidirectional attention");
+    auto bases=array_items("rope_theta"),windows=array_items("attention_windows");
+    auto maximum=options.integer("max_position_embeddings",32768);
+    TORCH_CHECK(maximum>0,"UltraBERT position limit must be positive");
+    std::map<double,int64_t> indices;
+    auto cpu=at::TensorOptions().dtype(at::kFloat);
+    for(int64_t i=0;i<layer_count;++i) {
+      size_t used=0;auto theta=std::stod(bases[i],&used);
+      TORCH_CHECK(used==bases[i].size()&&std::isfinite(theta)&&theta>0,"Invalid UltraBERT rotary base");
+      auto it=indices.find(theta);
+      if(it==indices.end()) {
+        std::vector<float> inverse(head_dim/2);
+        for(int64_t j=0;j<head_dim/2;++j)inverse[j]=1.f/std::pow(static_cast<float>(theta),static_cast<float>(2*j)/head_dim);
+        auto inv=at::from_blob(inverse.data(),{head_dim/2},cpu).clone().to(device);
+        auto angles=at::arange(maximum,inv.options()).unsqueeze(1)*inv.unsqueeze(0);
+        it=indices.emplace(theta,rotary_caches.size()).first;
+        rotary_caches.emplace_back(angles.cos().to(dtype),angles.sin().to(dtype));
+      }
+      rotary_indices.push_back(it->second);
+      int64_t window=-1;
+      if(windows[i]!="null") {
+        used=0;window=std::stoll(windows[i],&used);
+        TORCH_CHECK(used==windows[i].size()&&window>0,"UltraBERT attention windows must be positive or null");
+      }
+      attention_windows.push_back(window);
+    }
+  }
   void load_rope() {
     auto theta = options.real("rope_theta", 10000.0);
     auto scale = options.real("rope_scaling.factor", 1.0);
@@ -186,7 +230,7 @@ class Decoder final : public Model {
       query_scale = (1 + beta * at::log1p(at::floor(at::arange(maximum, inv.options()) / original))).to(dtype);
     }
   }
-  at::Tensor attend_full(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v, const PackedInput& input) const {
+  at::Tensor attend_full(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v, const PackedInput& input,int64_t left_window,int64_t right_window) const {
     if (device.is_cuda()) {
 #ifdef TEI_TORCH_CUDA_KERNELS
       if(exact_decoder_math()&&torch_flash_fma_supported(q,k,v,causal,left_window,right_window))
@@ -225,10 +269,10 @@ class Decoder final : public Model {
     }
     return at::cat(outputs, 0);
   }
-  at::Tensor attend(const at::Tensor& q,const at::Tensor& k,const at::Tensor& v,const PackedInput& input) const {
-    if(!radix_enabled(input))return attend_full(q,k,v,input);
+  at::Tensor attend(const at::Tensor& q,const at::Tensor& k,const at::Tensor& v,const PackedInput& input,const DecoderLayer& layer) const {
+    if(!radix_enabled(input))return attend_full(q,k,v,input,layer.left_window,layer.right_window);
     auto unfolded=radix_unfold_qkv(q,k,v,input);
-    auto full=attend_full(unfolded[0],unfolded[1],unfolded[2],input);
+    auto full=attend_full(unfolded[0],unfolded[1],unfolded[2],input,layer.left_window,layer.right_window);
     return radix_fold(full,input);
   }
   at::Tensor mlp(const at::Tensor& x, const DecoderLayer& layer) const {
@@ -359,6 +403,7 @@ public:
       layer_count(cfg.integer("num_hidden_layers", 0)), epsilon(cfg.real("rms_norm_eps", 1e-6)),
       causal(!cfg.boolean("use_bidirectional_attention", false)), renormalize(cfg.boolean("norm_topk_prob", true)),
       top_k(cfg.integer("num_experts_per_tok", 0)) {
+    if (family == "ultrabert") causal=false;
     if (family == "ministral3") family = "mistral";
     if (family == "llama_bidirec") family = "llama";
     // An explicit saved flag applies to every decoder family, including
@@ -406,7 +451,8 @@ public:
         &&at::detail::getCUDAHooks().versionRuntimeCuDNN()>=91800;
     }
 #endif
-    prefix = weights.count("model.embed_tokens.weight") ? "model." : "";
+    prefix = family=="ultrabert"&&weights.count("ultrabert.embed_tokens.weight")?"ultrabert.":weights.count("model.embed_tokens.weight") ? "model." : "";
+    if(family=="ultrabert")load_ultrabert_attention();
     embedding = checked_weight("embed_tokens.weight", {options.integer("vocab_size", 0), hidden});
     final_norm = checked_weight("norm.weight", {hidden});
     auto window = options.integer("sliding_window", -1);
@@ -426,6 +472,8 @@ public:
     for (int64_t i = 0; i < layer_count; ++i) {
       auto p = "layers." + std::to_string(i) + ".";
       DecoderLayer layer;
+      layer.left_window=left_window;layer.right_window=right_window;
+      if(family=="ultrabert") {layer.rotary_index=rotary_indices[i];layer.left_window=layer.right_window=attention_windows[i];}
       layer.input_norm = checked_weight(p + "input_layernorm.weight", {hidden});
       layer.post_norm = checked_weight(p + "post_attention_layernorm.weight", {hidden});
       std::vector<at::Tensor> qkv, bias;
@@ -481,6 +529,7 @@ public:
         }
 #endif
       }
+      if(family=="ultrabert")TORCH_CHECK(!layer.qkv_bias.defined()&&!layer.out_bias.defined()&&!layer.gate_up_bias.defined()&&!layer.down_bias.defined(),"Unexpected UltraBERT projection bias");
       if (!layer.expert_gate_up.empty() && device.is_cuda() && dtype == at::kBFloat16 && hidden%8==0 && layer.expert_down[0].size(-1)%8==0) {
         if (!layer.grouped_gate_up.defined()) {
           layer.grouped_gate_up = at::stack(layer.expert_gate_up).transpose(-2, -1);
@@ -517,7 +566,23 @@ public:
       TORCH_CHECK(labels>0&&(!options.values.count("num_labels")||options.integer("num_labels")==labels)&&score.sizes()==at::IntArrayRef({labels,hidden}),"Invalid decoder classifier label dimensions");
       auto bias=weights.find("score.bias");if(bias!=weights.end()){score_bias=bias->second;TORCH_CHECK(score_bias.sizes()==at::IntArrayRef({labels}),"Invalid decoder score.bias");}
     }
-    load_rope();
+    if(family=="ultrabert") {
+      auto arch=options.string("architectures.0");
+      const bool sequence=arch=="UltrabertForSequenceClassification",token=arch=="UltrabertForTokenClassification";
+      TORCH_CHECK(!options.boolean("_classifier",false)||(sequence||token),"UltraBERT classification requires a sequence or token classification checkpoint");
+      TORCH_CHECK(!(sequence||token)||options.boolean("_classifier",false),"UltraBERT embedding requests require an embedding checkpoint");
+      TORCH_CHECK(options.string("_pooling")!="splade","UltraBERT does not support SPLADE pooling");
+      if(sequence||token) {
+        TORCH_CHECK(!options.values.count("architectures.1"),"Ambiguous UltraBERT classifier architecture");
+        auto w=weights.find("classifier.weight"),b=weights.find("classifier.bias");
+        int64_t mapped=0;for(const auto& [key,value]:options.values)if(key.starts_with("id2label."))++mapped;
+        auto labels=mapped?mapped:options.integer("num_labels",2);
+        TORCH_CHECK(labels>0&&(!options.values.count("num_labels")||options.integer("num_labels")==labels),"UltraBERT num_labels and id2label must agree and be nonzero");
+        TORCH_CHECK(w!=weights.end()&&b!=weights.end(),"Missing UltraBERT classifier weight or bias");
+        score=w->second;score_bias=b->second;token_classifier=token;
+        TORCH_CHECK(score.sizes()==at::IntArrayRef({labels,hidden})&&score_bias.sizes()==at::IntArrayRef({labels}),"Invalid UltraBERT classifier dimensions");
+      }
+    } else load_rope();
     // All runtime weights are captured in layers; release unfused checkpoint tensors.
     weights.clear();
   }
@@ -532,10 +597,15 @@ public:
   int64_t output_width() const override { return projection.defined() ? projection.size(0) : hidden; }
   int64_t classification_width() const override {return score.defined()?score.size(0):0;}
   at::Tensor predict(const PackedInput& input,bool tokenwise) const override {
-    TORCH_CHECK(!tokenwise,"Decoder sequence classifier does not implement token classification");
+    TORCH_CHECK(!tokenwise||token_classifier,"Decoder sequence classifier does not implement token classification");
     TORCH_CHECK(score.defined(),"Decoder checkpoint has no supported sequence classification score head");
     for(int64_t row=0;row<input.batch;++row)TORCH_CHECK(input.offsets[row+1]>input.offsets[row],"Sequence classification requires nonempty inputs");
     auto hidden_states=forward(input);
+    if(family=="ultrabert") {
+      if(tokenwise)return at::linear(hidden_states,score,score_bias);
+      auto starts=input.cumulative.narrow(0,0,input.batch).to(at::kLong);
+      return at::linear(hidden_states.index_select(0,starts),score,score_bias);
+    }
 #ifdef TEI_TORCH_CUDA_KERNELS
     if((dtype==at::kBFloat16||qwen_half_exact)&&family=="qwen2"&&hidden==896&&head_dim==64&&hidden_states.is_cuda()) {
       TORCH_CHECK(hidden_states.size(-1)==score.size(1),"Classifier backbone output projection has incompatible width");
@@ -560,6 +630,7 @@ public:
   at::Tensor forward(const PackedInput& input) const override {
     TORCH_CHECK(!radix_enabled(input)||supports_radix(),"Radix folding currently requires a causal text decoder");
     const auto& positions=radix_positions(input);
+    if(family=="ultrabert")return forward_states(input,at::embedding(embedding,input.ids),{},{});
     auto compact=forward_states(input,at::embedding(embedding,radix_ids(input)),
       cos_cache.index_select(0,positions).unsqueeze(1),sin_cache.index_select(0,positions).unsqueeze(1));
     return radix_unfold(compact,input);
@@ -586,8 +657,13 @@ public:
   at::Tensor forward_states(const PackedInput& input,at::Tensor h,const at::Tensor& cosine,
     const at::Tensor& sine,const at::Tensor& visual_indices=at::Tensor(),const std::vector<at::Tensor>& deepstack={}) const {
     at::Tensor residual;
+    std::vector<std::pair<at::Tensor,at::Tensor>> selected_rotary;
+    for(const auto& cache:rotary_caches)selected_rotary.emplace_back(
+      cache.first.index_select(0,input.positions).unsqueeze(1),cache.second.index_select(0,input.positions).unsqueeze(1));
     size_t layer_index=0;
     for (const auto& layer : layers) {
+      const auto& layer_cosine=layer.rotary_index<0?cosine:selected_rotary[layer.rotary_index].first;
+      const auto& layer_sine=layer.rotary_index<0?sine:selected_rotary[layer.rotary_index].second;
       at::Tensor normalized;
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (h.is_cuda()&&!transformers_math()) {
@@ -600,7 +676,7 @@ public:
       auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, kvheads), v = qkv.narrow(1, heads + kvheads, kvheads);
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (q.is_cuda() && layer.q_norm.defined() && head_dim==128) {
-        auto pair=fused_qk_norm_rope(q,k,layer.q_norm,layer.k_norm,cosine,sine,epsilon);
+        auto pair=fused_qk_norm_rope(q,k,layer.q_norm,layer.k_norm,layer_cosine,layer_sine,epsilon);
         q=pair.first;k=pair.second;
       } else
 #endif
@@ -613,15 +689,15 @@ public:
         if((dtype==at::kBFloat16||qwen_half_exact)&&family=="qwen2"&&hidden==896&&head_dim==64) {
           // The fresh packed QKV projection gives disjoint Q/K/V views.
           // Preserve original model-dtype HFMA and leave V unchanged.
-          encoder_rotary_inplace(q,k,cosine,sine);
-        } else {auto pair=fused_rotary(q,k,cosine,sine,family=="llama"||exact_mistral_math());q=pair.first;k=pair.second;}}
+          encoder_rotary_inplace(q,k,layer_cosine,layer_sine);
+        } else {auto pair=fused_rotary(q,k,layer_cosine,layer_sine,family=="llama"||exact_mistral_math());q=pair.first;k=pair.second;}}
 
         else
 #endif
-        {q = rotate(q, cosine, sine); k = rotate(k, cosine, sine);}
+        {q = rotate(q, layer_cosine, layer_sine); k = rotate(k, layer_cosine, layer_sine);}
       }
       if (query_scale.defined()) q = q * query_scale.index_select(0, radix_positions(input)).view({-1, 1, 1});
-      auto attended = attend(q, k, v, input).contiguous().view({h.size(0), heads * head_dim});
+      auto attended = attend(q, k, v, input,layer).contiguous().view({h.size(0), heads * head_dim});
       auto projected=cached_linear(attended,layer.out,layer.out_bias);
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (h.is_cuda()&&!transformers_math()) {
@@ -707,7 +783,7 @@ at::Tensor decoder_multimodal_forward(const Model& model,const PackedInput& inpu
 }
 std::unique_ptr<Model> create_decoder(const Options& cfg, Weights& weights, c10::Device device, at::ScalarType dtype) {
   auto kind = cfg.string("model_type", "");
-  if (kind != "llama" && kind != "mistral" && kind != "qwen2" && kind != "qwen3" && kind != "qwen3_moe" && kind != "ministral3" && kind != "llama_bidirec") return nullptr;
+  if (kind != "llama" && kind != "mistral" && kind != "qwen2" && kind != "qwen3" && kind != "qwen3_moe" && kind != "ministral3" && kind != "llama_bidirec" && kind != "ultrabert") return nullptr;
   return std::make_unique<Decoder>(cfg, weights, device, dtype);
 }
 }

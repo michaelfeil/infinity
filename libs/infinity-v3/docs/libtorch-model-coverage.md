@@ -12,6 +12,7 @@ exact-length biased attention without padded token activations.
 | DistilBERT | Packed encoder, SPLADE projection |
 | GTE / New | Packed rotary encoder, gated MLP and classifier |
 | ModernBERT | Packed local/global rotary attention, gated MLP and heads |
+| UltraBERT | Bidirectional packed GQA, per-layer RoPE bases and symmetric windows, embedding and sequence/token classification heads |
 | Nomic BERT | Packed rotary encoder, dense/MoE MLP |
 | Jina BERT / JinaCode | Packed encoder, one Torch efficient varlen ALiBi call per layer |
 | Llama / Llama bidirectional | Packed GQA, RoPE, RMSNorm, fused projections |
