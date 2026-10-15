@@ -17,3 +17,6 @@ pub use embedding_gemma2::EmbeddingGemma2Processor;
 
 mod d3;
 pub use d3::{D3MediaProcessor, PreparedD3Media};
+
+mod mistral3;
+pub use mistral3::Mistral3Processor;

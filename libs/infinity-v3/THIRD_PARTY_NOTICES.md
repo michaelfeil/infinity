@@ -35,3 +35,7 @@ The native Nomic eight-expert router in `backends/libtorch/cpp/kernels/fast_kern
 derives its strict bitonic ordering from Candle `sort.cu` at revision
 `036f39e44015e78ba18d716d73dfdc2e78730c44`, adapted upstream from llama.cpp.
 The selected MIT permission notice is retained beside the derived kernel.
+
+Mistral3/Pixtral model equations and processor behavior are adapted from
+Hugging Face Transformers 5.12.1 (Apache-2.0). The retained license and source
+attribution are in `backends/libtorch/cpp/vendor/transformers_pixtral/`.

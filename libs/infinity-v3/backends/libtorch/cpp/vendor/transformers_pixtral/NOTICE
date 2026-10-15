@@ -1,0 +1,12 @@
+Mistral3/Pixtral reference implementation
+
+Hugging Face Transformers 5.12.1
+Copyright the Hugging Face team and the Mistral AI team.
+Source: https://github.com/huggingface/transformers/tree/v5.12.1/src/transformers/models
+Licensed under the Apache License, Version 2.0 (see LICENSE in this directory).
+
+Native model equations and Rust image/token preparation are adapted from the
+public Mistral3, Ministral3 and Pixtral implementations. Infinity Core
+Contributors modified the implementation for packed inference, bounded image
+preparation and embedding serving. Repository licensing applies to covered
+fork modifications; inherited Apache permissions and notices remain intact.
