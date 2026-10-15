@@ -18,6 +18,7 @@
 #include <c10/cuda/CUDACachingAllocator.h>
 #endif
 #include "models/decoder_models.h"
+#include "models/mistral3_models.h"
 #include "kernels/moe_kernels.h"
 #include "models/decision_models.h"
 #include "models/dense_models.h"
@@ -134,6 +135,7 @@ struct Engine {
       }
     }
     model = tei::create_encoder(options, weights, device, dtype);
+    if (!model) model = tei::create_mistral3(options, weights, device, dtype);
     if (!model) model = tei::create_decoder(options, weights, device, dtype);
     if (!model) model = tei::create_gemma(options, weights, device, dtype);
     if (!model) model = tei::create_qwen35(options, weights, device, dtype);
@@ -598,7 +600,7 @@ static int32_t forward_radix(void* handle, const int64_t* ids, const int64_t* ty
     std::vector<at::Tensor> outputs;
     bool mean_pooled=false;
 #ifdef TEI_TORCH_CUDA_KERNELS
-    if(pool==1&&pooled_count&&h.is_cuda()&&h.is_contiguous()
+    if(pool==1&&pooled_count&&!model.model->model_dtype_mean_pool()&&h.is_cuda()&&h.is_contiguous()
        &&(h.scalar_type()==at::kHalf||h.scalar_type()==at::kBFloat16)&&pooled_count<=65535) {
       std::vector<int32_t> spans;spans.reserve(pooled_count*2);
       for(size_t i=0;i<pooled_count;++i) {

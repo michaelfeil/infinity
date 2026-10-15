@@ -71,7 +71,14 @@ class Decoder final : public Model {
     TORCH_CHECK(tensor.sizes() == at::IntArrayRef(shape), "Invalid decoder tensor dimensions: ", prefix, name);
     return tensor;
   }
+  at::Tensor separate_linear(const at::Tensor& x,const at::Tensor& weight,const at::Tensor& bias,std::initializer_list<int64_t> widths) const {
+    std::vector<at::Tensor> parts;int64_t start=0;
+    for(auto width:widths){parts.push_back(at::linear(x,weight.narrow(0,start,width),bias.defined()?bias.narrow(0,start,width):at::Tensor()));start+=width;}
+    return at::cat(parts,-1);
+  }
+  bool transformers_math() const {return options.boolean("_transformers_math",false);}
   at::Tensor norm(const at::Tensor& x, const at::Tensor& w) const {
+    if(transformers_math()) {auto f=x.to(at::kFloat);return (f*at::rsqrt(f.square().mean(-1,true)+epsilon)).to(x.scalar_type())*w;}
     if (x.is_cuda()) return std::get<0>(at::_fused_rms_norm(x.contiguous(), {w.numel()}, w, epsilon));
     return at::rms_norm(x, {w.numel()}, w, epsilon);
   }
@@ -80,7 +87,7 @@ class Decoder final : public Model {
     // The original Candle RMS launcher registers BF16 width 3072 with a
     // 1x4 warp layout. Learned causal Mistral operands independently prove
     // its residual statistics, rotary HFMA and fused softmax contracts.
-    return dtype==at::kBFloat16&&family=="mistral"&&causal&&hidden==3072;
+    return !transformers_math()&&dtype==at::kBFloat16&&family=="mistral"&&causal&&hidden==3072;
   }
   bool exact_decoder_math() const {
     // Registered BF16 width 2048 Llama uses the same Candle RMS and fused
@@ -228,13 +235,14 @@ class Decoder final : public Model {
     if (!layer.router.defined()) {
 #ifdef TEI_TORCH_CUDA_KERNELS
       auto both = layer.fp8_gate_up ? layer.fp8_gate_up->forward(x,layer.gate_up_bias)
+        : transformers_math()?separate_linear(x,layer.gate_up,layer.gate_up_bias,{intermediate,intermediate})
         : cached_linear(x,layer.gate_up,layer.gate_up_bias);
 #else
       auto both = at::linear(x,layer.gate_up,layer.gate_up_bias);
 #endif
       auto width = both.size(-1) / 2;
 #ifdef TEI_TORCH_CUDA_KERNELS
-      if(both.is_cuda()) {
+      if(both.is_cuda()&&!transformers_math()) {
         int code=activation=="silu"||activation=="swish"?5:activation=="relu"?3:4;
         auto activated=fused_gated_activation(both,code);
         return layer.fp8_down ? layer.fp8_down->forward(activated,layer.down_bias)
@@ -353,6 +361,8 @@ public:
       top_k(cfg.integer("num_experts_per_tok", 0)) {
     if (family == "ministral3") family = "mistral";
     if (family == "llama_bidirec") family = "llama";
+    // An explicit saved flag applies to every decoder family, including
+    // bidirectional Ministral3 embedding fine-tunes, after family normalization.
     if (family == "qwen2" || cfg.values.count("is_causal")) causal = cfg.boolean("is_causal", true);
   }
   void ready() override {
@@ -557,7 +567,7 @@ public:
   at::Tensor multimodal_forward(const PackedInput& input,const at::Tensor& indices,const at::Tensor& visual,
     const at::Tensor& cosine,const at::Tensor& sine,const std::vector<at::Tensor>& deepstack) const {
     TORCH_CHECK(!radix_enabled(input),"Multimodal radix folding is not supported");
-    TORCH_CHECK(family=="qwen3","Multimodal decoder hook currently requires Qwen3 text layers");
+    TORCH_CHECK(family=="qwen3"||family=="mistral","Unsupported multimodal text family");
     auto h=at::embedding(embedding,input.ids);
     TORCH_CHECK(cosine.numel()==input.ids.numel()*(head_dim/2)&&sine.sizes()==cosine.sizes(),"Invalid multimodal RoPE geometry");
     TORCH_CHECK(cosine.device()==device&&sine.device()==device&&cosine.scalar_type()==dtype&&sine.scalar_type()==dtype,"Multimodal RoPE must match decoder device and dtype");
@@ -570,6 +580,9 @@ public:
     }
     return forward_states(input,h,cosine.view({input.ids.numel(),1,head_dim/2}),sine.view({input.ids.numel(),1,head_dim/2}),indices,deepstack);
   }
+  at::Tensor visual_forward(const PackedInput& input,const at::Tensor& indices,const at::Tensor& visual) const {
+    return multimodal_forward(input,indices,visual,cos_cache.index_select(0,input.positions).unsqueeze(1),sin_cache.index_select(0,input.positions).unsqueeze(1),{});
+  }
   at::Tensor forward_states(const PackedInput& input,at::Tensor h,const at::Tensor& cosine,
     const at::Tensor& sine,const at::Tensor& visual_indices=at::Tensor(),const std::vector<at::Tensor>& deepstack={}) const {
     at::Tensor residual;
@@ -577,13 +590,13 @@ public:
     for (const auto& layer : layers) {
       at::Tensor normalized;
 #ifdef TEI_TORCH_CUDA_KERNELS
-      if (h.is_cuda()) {
+      if (h.is_cuda()&&!transformers_math()) {
         auto pair=residual_norm(h,residual,layer.input_norm);
         normalized=pair.first;residual=pair.second;
       } else
 #endif
       normalized=norm(h,layer.input_norm);
-      auto qkv = at::linear(normalized, layer.qkv, layer.qkv_bias).view({h.size(0), heads + 2 * kvheads, head_dim});
+      auto qkv = (transformers_math()?separate_linear(normalized,layer.qkv,layer.qkv_bias,{heads*head_dim,kvheads*head_dim,kvheads*head_dim}):at::linear(normalized, layer.qkv, layer.qkv_bias)).view({h.size(0), heads + 2 * kvheads, head_dim});
       auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, kvheads), v = qkv.narrow(1, heads + kvheads, kvheads);
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (q.is_cuda() && layer.q_norm.defined() && head_dim==128) {
@@ -594,7 +607,7 @@ public:
       {
         if (layer.q_norm.defined()) { q = norm(q, layer.q_norm); k = norm(k, layer.k_norm); }
 #ifdef TEI_TORCH_CUDA_KERNELS
-        if(q.is_cuda()) {// Candle contracts one modeldtype product into HFMA.
+        if(q.is_cuda()&&!transformers_math()) {// Candle contracts one modeldtype product into HFMA.
         // Preserve Llama's path; learned causal BF16 Mistral operands prove
         // the same contract with the registered exact RMS geometry.
         if((dtype==at::kBFloat16||qwen_half_exact)&&family=="qwen2"&&hidden==896&&head_dim==64) {
@@ -611,7 +624,7 @@ public:
       auto attended = attend(q, k, v, input).contiguous().view({h.size(0), heads * head_dim});
       auto projected=cached_linear(attended,layer.out,layer.out_bias);
 #ifdef TEI_TORCH_CUDA_KERNELS
-      if (h.is_cuda()) {
+      if (h.is_cuda()&&!transformers_math()) {
         auto pair=residual_norm(projected,residual,layer.post_norm);
         residual=pair.second;h=mlp(pair.first,layer);
       } else
@@ -629,7 +642,7 @@ public:
       ++layer_index;
     }
 #ifdef TEI_TORCH_CUDA_KERNELS
-    if (h.is_cuda()) h=residual_norm(h,residual,final_norm).first;
+    if (h.is_cuda()&&!transformers_math()) h=residual_norm(h,residual,final_norm).first;
     else
 #endif
     h = norm(h, final_norm);
@@ -679,6 +692,11 @@ at::Tensor decoder_moe_dispatch(const at::Tensor& x,const at::Tensor& gate_up,
   result.index_add_(0,tokens,output.to(routing.scalar_type())*routing.index_select(0,tokens).gather(1,slots.unsqueeze(1)));
  }
  return result;
+}
+at::Tensor decoder_visual_forward(const Model& model,const PackedInput& input,const at::Tensor& indices,const at::Tensor& visual) {
+  const auto* decoder=dynamic_cast<const Decoder*>(&model);
+  TORCH_CHECK(decoder,"Visual embeddings require a dense text decoder");
+  return decoder->visual_forward(input,indices,visual);
 }
 at::Tensor decoder_multimodal_forward(const Model& model,const PackedInput& input,
  const at::Tensor& indices,const at::Tensor& visual,const at::Tensor& cosine,const at::Tensor& sine,

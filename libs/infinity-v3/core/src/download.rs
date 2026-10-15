@@ -83,7 +83,7 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
         } else if serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|config| {
             matches!(
                 config["model_type"].as_str(),
-                Some("gemma4" | "embedding_gemma2")
+                Some("gemma4" | "embedding_gemma2" | "mistral3")
             ) && (config["vision_config"].is_object() || config["audio_config"].is_object())
         }) {
             download_file(api, "processor_config.json").await?;

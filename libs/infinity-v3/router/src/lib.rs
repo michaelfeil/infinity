@@ -310,9 +310,9 @@ async fn initialize_model(
         "Clef, Pplx and D3 require a dense Qwen3.5 model"
     );
     anyhow::ensure!(
-        config.model_type != "qwen3_vl"
+        !matches!(config.model_type.as_str(), "qwen3_vl" | "mistral3")
             || (default_prompt.is_none() && default_prompt_name.is_none()),
-        "Qwen3-VL uses its native chat template; default prompt overrides are unsupported"
+        "This multimodal model uses its native chat template; default prompt overrides are unsupported"
     );
 
     // Set model type from config
@@ -542,6 +542,23 @@ async fn initialize_model(
     } else {
         None
     };
+    let mistral3 = if config.model_type == "mistral3" {
+        anyhow::ensure!(
+            backend_kind == infinity_v3_backend::BackendKind::Libtorch,
+            "Mistral3 multimodal support requires the LibTorch backend"
+        );
+        Some(
+            infinity_v3_core::multimodal::Mistral3Processor::load(
+                &model_root,
+                tokenizer.clone(),
+                max_input_length,
+                multimodal_config.clone(),
+            )
+            .map_err(|e| anyhow!(e.to_string()))?,
+        )
+    } else {
+        None
+    };
     let embedding_gemma2 = if config.model_type == "embedding_gemma2" {
         Some(
             infinity_v3_core::multimodal::EmbeddingGemma2Processor::load(
@@ -580,6 +597,10 @@ async fn initialize_model(
         None => tokenization,
     };
 
+    let tokenization = match mistral3 {
+        Some(p) => tokenization.with_mistral3(p),
+        None => tokenization,
+    };
     let tokenization = match embedding_gemma2 {
         Some(processor) => tokenization.with_embedding_gemma2(processor),
         None => tokenization,
@@ -888,6 +909,12 @@ fn get_backend_model_type(
                     Pool::try_from(config)?
                 }
                 Err(err) => {
+                    if config.model_type == "mistral3" && err.kind() == std::io::ErrorKind::NotFound
+                    {
+                        return Ok(infinity_v3_backend::ModelType::Embedding(
+                            infinity_v3_backend::Pool::LastToken,
+                        ));
+                    }
                     if !config.model_type.to_lowercase().contains("bert") {
                         return Err(err).context("The `--pooling` arg is not set and we could not find a pooling configuration (`1_Pooling/config.json`) for this model.");
                     }
@@ -1017,6 +1044,7 @@ impl ModelConfig {
                 | "qwen3_5"
                 | "qwen3_5_text"
                 | "qwen3_vl"
+                | "mistral3"
         ) {
             if self.max_position_embeddings == 0 {
                 self.max_position_embeddings = self
@@ -1518,6 +1546,17 @@ mod auto_dtype_tests {
             assert_eq!(config.max_position_embeddings, 262144);
             assert_eq!(config.dtype.as_deref(), Some("bfloat16"));
         }
+    }
+
+    #[test]
+    fn mistral3_context_length_is_nested() {
+        let mut config:ModelConfig=serde_json::from_value(serde_json::json!({"architectures":["Mistral3ForConditionalGeneration"],"model_type":"mistral3","dtype":"bfloat16","text_config":{"max_position_embeddings":262144,"vocab_size":131072}})).unwrap();
+        config.resolve_text_config().unwrap();
+        assert_eq!(config.max_position_embeddings, 262144);
+        assert_eq!(
+            resolve_libtorch_dtype(None, config.dtype.as_deref(), "mistral3", false),
+            DType::Bfloat16
+        );
     }
 
     #[test]

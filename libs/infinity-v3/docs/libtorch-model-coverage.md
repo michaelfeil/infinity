@@ -16,6 +16,7 @@ exact-length biased attention without padded token activations.
 | Jina BERT / JinaCode | Packed encoder, one Torch efficient varlen ALiBi call per layer |
 | Llama / Llama bidirectional | Packed GQA, RoPE, RMSNorm, fused projections |
 | Mistral / Ministral3 | Packed GQA, sliding windows, YaRN |
+| Mistral3 / Ministral 3 multimodal | Pixtral vision, 2D rotary positions, spatial patch merger/projector, packed Ministral text |
 | Qwen2 | Packed GQA with projection biases |
 | Qwen3 / Qwen3 MoE | Packed Q/K norm, GQA, dense/routed MLP and optional projection |
 | Gemma3 text | Packed local/global attention, Gemma norm semantics |

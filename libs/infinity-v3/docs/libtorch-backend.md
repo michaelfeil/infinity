@@ -450,3 +450,6 @@ This estimate is a per-request tensor admission limit. It does not account for v
 
 Builds can change the application environment-variable base using
 [`ENV_VAR_BASE`](build-configuration.md), including Docker build arguments.
+
+See [Ministral 3 multimodal embeddings](ministral-3-multimodal.md) for the public
+Mistral3/Pixtral checkpoint and independent reference validation.

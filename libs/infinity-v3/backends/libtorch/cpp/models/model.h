@@ -20,6 +20,7 @@ public:
   virtual at::Tensor mean_pool(const at::Tensor& value) const {
     return value.mean(0, true, at::kFloat);
   }
+  virtual bool model_dtype_mean_pool() const { return false; }
   // Optional pooled-output transform; token-level projections belong in forward().
   virtual at::Tensor project_pooled(const at::Tensor& value) const { return value; }
   virtual at::Tensor token_scores(const at::Tensor&) const {

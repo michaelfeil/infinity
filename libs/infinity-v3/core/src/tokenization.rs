@@ -22,6 +22,7 @@ pub const DEFAULT_TOKENIZATION_QUEUE_CAPACITY: usize = 1024;
 pub struct Tokenization {
     workers: Arc<TokenizerWorkers>,
     multimodal: Option<crate::multimodal::Qwen3VlProcessor>,
+    mistral3: Option<crate::multimodal::Mistral3Processor>,
     embedding_gemma2: Option<crate::multimodal::EmbeddingGemma2Processor>,
     token_input_vocab_size: Option<usize>,
     max_input_length: usize,
@@ -143,6 +144,7 @@ impl Tokenization {
             }),
             sender,
             multimodal: None,
+            mistral3: None,
             embedding_gemma2: None,
             token_input_vocab_size: None,
             max_input_length,
@@ -153,6 +155,11 @@ impl Tokenization {
     /// Use the model's embedding vocabulary, which may differ from the tokenizer's.
     pub fn with_token_input_vocab_size(mut self, vocab_size: Option<usize>) -> Self {
         self.token_input_vocab_size = vocab_size;
+        self
+    }
+
+    pub fn with_mistral3(mut self, processor: crate::multimodal::Mistral3Processor) -> Self {
+        self.mistral3 = Some(processor);
         self
     }
 
@@ -211,6 +218,20 @@ impl Tokenization {
                     offsets: vec![],
                 });
             }
+        }
+        if let Some(processor) = &self.mistral3 {
+            let prepared = processor
+                .prepare(inputs, truncate, truncation_direction, prompt_name)
+                .await?;
+            let length = prepared.input_ids.len();
+            return Ok(ValidEncoding {
+                multimodal: Some(prepared.media),
+                input_ids: prepared.input_ids,
+                token_type_ids: vec![0; length],
+                position_ids: (0..length as u32).collect(),
+                tokens: vec![],
+                offsets: vec![],
+            });
         }
         if let Some(processor) = &self.multimodal {
             if inputs.is_empty() {
@@ -1037,6 +1058,7 @@ mod fast_embedding_tests {
         let (sender, receiver) = async_channel::bounded(1);
         let tokenization = Tokenization {
             multimodal: None,
+            mistral3: None,
             embedding_gemma2: None,
             token_input_vocab_size: None,
             max_input_length: 16,
