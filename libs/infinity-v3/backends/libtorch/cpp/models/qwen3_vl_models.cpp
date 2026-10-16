@@ -93,36 +93,8 @@ std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const ImageInput& 
       auto q=rotate(qkv.select(1,0)),k=rotate(qkv.select(1,1)),v=qkv.select(1,2).to(at::kFloat);
 
       at::Tensor attention;
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if(exact_vision) {
-        std::vector<at::Tensor> outputs;
-        for(int64_t t=0;t<frames;++t){auto slice=[&](const at::Tensor& x){return x.narrow(0,t*height*width,height*width).transpose(0,1).contiguous().unsqueeze(0);};
-          auto qframe=slice(q),kframe=slice(k),vframe=slice(v);
-          // Bound each F32 score/probability tensor to 16 MiB (or one
-          // complete query row). Every query still sees every real key;
-          // only independent query rows are chunked, without token padding.
-          constexpr int64_t score_elements=(16LL*1024*1024)/sizeof(float);
-          const auto patches=qframe.size(2);
-          const auto rows=std::max<int64_t>(1,std::min<int64_t>(patches,score_elements/heads/patches));
-          if(rows==patches) {
-            // Preserve the original small-image GEMM shapes and operators.
-            auto scaled=at::matmul(qframe,kframe.transpose(2,3))*(1./std::sqrt(double(dim)));
-            auto probs=qwen35_vision_softmax(scaled.contiguous());
-            outputs.push_back(at::matmul(probs,vframe).squeeze(0).transpose(0,1));
-          } else {
-            auto frame=at::empty({patches,heads,dim},qframe.options());
-            const auto transposed_keys=kframe.transpose(2,3);
-            for(int64_t start=0;start<patches;start+=rows) {
-              const auto count=std::min<int64_t>(rows,patches-start);
-              auto scaled=at::matmul(qframe.narrow(2,start,count),transposed_keys)*(1./std::sqrt(double(dim)));
-              auto probs=qwen35_vision_softmax(scaled.contiguous());
-              frame.narrow(0,start,count).copy_(at::matmul(probs,vframe).squeeze(0).transpose(0,1));
-            }
-            outputs.push_back(frame);
-          }}
-        attention=at::cat(outputs,0);
-      } else
-#endif
+      // Preserve FP32 Q/K/V and independent frame boundaries without
+      // materializing quadratic score and probability tensors.
       if(device.is_cuda()) {
         attention=std::get<0>(at::_efficient_attention_forward(q.unsqueeze(0),k.unsqueeze(0),v.unsqueeze(0),
           std::nullopt,cu,cu,height*width,height*width,0.,0,false,1./std::sqrt(double(dim)))).squeeze(0);
@@ -223,8 +195,8 @@ TowerMemoryProfile Qwen3VL::vision_memory_profile() const {
     TORCH_CHECK(layer>=0&&layer<depth,"Invalid vision deepstack layer index");++saved;
   }
   TowerMemoryProfile p{hidden,heads,std::max(hidden,transient_linear_width(visual_weights)),saved,0};
-  p.per_frame_attention=true;p.tiled_scores=exact_vision;
-  p.efficient_scores=device.is_cuda()&&!exact_vision;return p;
+  p.per_frame_attention=true;
+  p.efficient_scores=device.is_cuda();return p;
 }
 std::optional<TransientMemoryProfile> Qwen3VL::transient_memory_profile() const {
   if(!text)return std::nullopt;
