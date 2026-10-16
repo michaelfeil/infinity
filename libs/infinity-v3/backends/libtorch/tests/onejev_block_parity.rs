@@ -73,8 +73,14 @@ fn block_decisions_match_full_transformers() -> Result<(), Box<dyn std::error::E
         assert_eq!(actual.len(), expected.len());
         // BF16 full-sequence and split-prefix GEMMs/recurrent reductions have
         // different rounding. Bound raw logits and probabilities independently.
-        let tolerance = if dtype == "float32" { 0.001 } else { 0.1 };
         for (a, b) in actual.iter().zip(expected) {
+            // Packed GEMM shapes change BF16 rounding. Retain a separate
+            // probability bound below, since logit scale alone is insufficient.
+            let tolerance = if dtype == "float32" {
+                0.001
+            } else {
+                0.1 + 0.01 * b.abs()
+            };
             assert!(
                 a.is_finite() && (a - b).abs() <= tolerance,
                 "{dtype}: actual={a}, reference={b}, delta={}",
@@ -87,10 +93,26 @@ fn block_decisions_match_full_transformers() -> Result<(), Box<dyn std::error::E
             let sum: f32 = values.iter().sum();
             values.into_iter().map(|v| v / sum).collect::<Vec<_>>()
         };
-        for (a, b) in softmax(actual).iter().zip(softmax(expected)) {
+        let actual_p = softmax(actual);
+        let expected_p = softmax(expected);
+        let probability_tolerance = if dtype == "float32" { 0.001 } else { 0.02 };
+        for (a, b) in actual_p.iter().zip(&expected_p) {
             assert!(
-                (a - b).abs() < if dtype == "float32" { 0.001 } else { 0.02 },
+                (a - b).abs() < probability_tolerance,
                 "Probability drift: {a} vs {b}"
+            );
+        }
+        let mut order: Vec<_> = (0..expected_p.len()).collect();
+        order.sort_by(|&a, &b| expected_p[b].total_cmp(&expected_p[a]));
+        if order.len() > 1
+            && expected_p[order[0]] - expected_p[order[1]] > 2. * probability_tolerance
+        {
+            let best = (0..actual_p.len())
+                .max_by(|&a, &b| actual_p[a].total_cmp(&actual_p[b]))
+                .unwrap();
+            assert_eq!(
+                best, order[0],
+                "Changed a well-separated reference decision"
             );
         }
     };
@@ -110,10 +132,7 @@ fn block_decisions_match_full_transformers() -> Result<(), Box<dyn std::error::E
                 compare(&result.logits, cached);
             }
             let single = backend.decide(batch(&[case]), metadata(&[case]))?;
-            assert_eq!(
-                result.logits, single[0].logits,
-                "Whole-prefix sharing changed native outputs"
-            );
+            compare(&result.logits, &single[0].logits);
             eprintln!(
                 "tokens={} prefix={} logits={:?}",
                 case.input_ids.len(),

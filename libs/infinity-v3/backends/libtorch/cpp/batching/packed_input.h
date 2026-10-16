@@ -97,5 +97,7 @@ struct PackedInput {
   at::Tensor scatter_unfold{}, fold_gather{};
   // Complete prefix boundaries and exact-match representatives, request-local only.
   std::vector<int64_t> block_prefix_lengths{}, block_prefix_sources{};
+  // Packed suffix rows select immutable prefix KV/recurrent/conv snapshots.
+  at::Tensor block_cache_sources{};
 };
 }

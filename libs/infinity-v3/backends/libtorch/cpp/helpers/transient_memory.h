@@ -118,8 +118,10 @@ inline size_t estimate_transient_memory(const TransientMemoryProfile& p,int64_t 
       positive_memory_dimension(p.recurrent_key),positive_memory_dimension(p.recurrent_value),8,sizeof(float)});
   }
   if(p.retained_recurrent_layers>0) {
-    cost.add({positive_memory_dimension(p.retained_recurrent_layers),positive_memory_dimension(p.recurrent_heads),positive_memory_dimension(p.recurrent_key),positive_memory_dimension(p.recurrent_value),sizeof(float)});
-    cost.add({positive_memory_dimension(p.retained_recurrent_layers),positive_memory_dimension(p.retained_conv_width),positive_memory_dimension(p.retained_conv_length),element});
+    // Packed block execution retains every distinct prefix concurrently. Charge
+    // one snapshot per logical sequence (an upper bound when prefixes share).
+    cost.add({b,positive_memory_dimension(p.retained_recurrent_layers),positive_memory_dimension(p.recurrent_heads),positive_memory_dimension(p.recurrent_key),positive_memory_dimension(p.recurrent_value),sizeof(float)});
+    cost.add({b,positive_memory_dimension(p.retained_recurrent_layers),positive_memory_dimension(p.retained_conv_width),positive_memory_dimension(p.retained_conv_length),element});
   }
   if(pool==3)cost.add({t,positive_memory_dimension(p.vocab),4,std::max(element,size_t(4))});
   auto tower=[&](const TowerMemoryProfile& v,size_t rows,size_t emitted,bool audio,size_t features,size_t frame_rows) {
