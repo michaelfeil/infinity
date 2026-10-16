@@ -83,3 +83,66 @@ std::pair<at::Tensor,at::Tensor> decoder_exact_rms_norm(const at::Tensor& x,
  return exact_norm<4096,1,4>(x,residual,w,epsilon);
 }
 }
+
+namespace tei {
+namespace {
+template<class T>
+__global__ void transformers_square_kernel(const T* input,float* squared,
+ int64_t width,int64_t heads,int64_t stride0,int64_t stride1) {
+  const int64_t row=blockIdx.x,base=(row/heads)*stride0+(row%heads)*stride1;
+  for(int64_t column=threadIdx.x;column<width;column+=blockDim.x) {
+    const float value=float(input[base+column]);
+    squared[row*width+column]=__fmul_rn(value,value);
+  }
+}
+template<class T,bool UnitOffset>
+__global__ void transformers_norm_kernel(const T* input,const T* weight,const float* variance,T* output,
+ int64_t width,int64_t heads,int64_t stride0,int64_t stride1,float epsilon) {
+  const int64_t row=blockIdx.x,base=(row/heads)*stride0+(row%heads)*stride1;
+  const float adjusted=__fadd_rn(variance[row],epsilon);
+  const float inverse=UnitOffset?__fdiv_rn(1.f,__fsqrt_rn(adjusted)):rsqrtf(adjusted);
+  for(int64_t column=threadIdx.x;column<width;column+=blockDim.x) {
+    const float normalized=__fmul_rn(float(input[base+column]),inverse);
+    const float gamma=float(weight[column]);
+    output[row*width+column]=UnitOffset?
+      T(__fmul_rn(normalized,__fadd_rn(1.f,gamma))):
+      T(__fmul_rn(float(T(normalized)),gamma));
+  }
+}
+}
+at::Tensor transformers_rms_norm(const at::Tensor& input,const at::Tensor& weight,
+ double epsilon,bool unit_offset) {
+  TORCH_CHECK(input.is_cuda()&&(input.scalar_type()==at::kBFloat16||input.scalar_type()==at::kHalf)
+    &&(input.dim()==2||input.dim()==3)&&input.stride(-1)==1,"Invalid Transformers RMS input");
+  const auto width=input.size(-1),heads=input.dim()==3?input.size(1):1;
+  TORCH_CHECK(width>0&&width<=8192&&weight.device()==input.device()
+    &&weight.scalar_type()==input.scalar_type()&&weight.dim()==1&&weight.numel()==width
+    &&weight.is_contiguous(),"Invalid Transformers RMS weight");
+  const auto rows=input.numel()/width;
+  TORCH_CHECK(rows<=INT32_MAX,"Transformers RMS row count exceeds CUDA grid limit");
+  c10::cuda::CUDAGuard guard(input.device());
+  auto output=at::empty(input.sizes(),input.options());
+  if(!rows)return output;
+  const auto stride0=input.stride(0),stride1=input.dim()==3?input.stride(1):0;
+  const auto stream=at::cuda::getCurrentCUDAStream();
+  auto squared=at::empty(input.sizes(),input.options().dtype(at::kFloat));
+#define TEI_TRANSFORMERS_SQUARE(T) transformers_square_kernel<T><<<rows,256,0,stream>>>( \
+  reinterpret_cast<const T*>(input.const_data_ptr()),squared.mutable_data_ptr<float>(),width,heads,stride0,stride1)
+  if(input.scalar_type()==at::kBFloat16){TEI_TRANSFORMERS_SQUARE(__nv_bfloat16);}else{TEI_TRANSFORMERS_SQUARE(__half);}
+#undef TEI_TRANSFORMERS_SQUARE
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  // Keep ATen's reduction tree: changing the tree can flip BF16 rounding in
+  // decision models even when the FP32 statistics differ by only one ULP.
+  auto variance=squared.mean(-1,true);
+#define TEI_TRANSFORMERS_NORM(T,OFFSET) transformers_norm_kernel<T,OFFSET><<<rows,256,0,stream>>>( \
+  reinterpret_cast<const T*>(input.const_data_ptr()),reinterpret_cast<const T*>(weight.const_data_ptr()), \
+  variance.const_data_ptr<float>(),reinterpret_cast<T*>(output.mutable_data_ptr()),width,heads,stride0,stride1,float(epsilon))
+  if(input.scalar_type()==at::kBFloat16) {
+    if(unit_offset){TEI_TRANSFORMERS_NORM(__nv_bfloat16,true);}else{TEI_TRANSFORMERS_NORM(__nv_bfloat16,false);}
+  } else {
+    if(unit_offset){TEI_TRANSFORMERS_NORM(__half,true);}else{TEI_TRANSFORMERS_NORM(__half,false);}
+  }
+#undef TEI_TRANSFORMERS_NORM
+  C10_CUDA_KERNEL_LAUNCH_CHECK();return output;
+}
+}

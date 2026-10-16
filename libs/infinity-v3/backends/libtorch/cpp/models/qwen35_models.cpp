@@ -17,6 +17,7 @@
 #include <map>
 #include <memory>
 #ifdef TEI_TORCH_CUDA_KERNELS
+#include "kernels/decoder_norm.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAStream.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -179,6 +180,9 @@ class Qwen35 final : public Model {
     // original Candle reduction tree before casting the normalized value.
     if(integer("num_experts",0)>0 && device.is_cuda() && dtype==at::kBFloat16)
       return qwen35_reference_norm_cuda(x,w(name+".weight"),epsilon);
+    if(device.is_cuda()&&(dtype==at::kBFloat16||dtype==at::kHalf)
+      &&x.stride(-1)==1&&x.size(-1)<=8192)
+      return transformers_rms_norm(x,w(name+".weight"),epsilon,true);
 #endif
     auto f=x.to(at::kFloat);
     return (f*at::reciprocal(at::sqrt(f.square().mean(-1,true)+epsilon))*(w(name+".weight").to(at::kFloat)+1.)).to(x.scalar_type());

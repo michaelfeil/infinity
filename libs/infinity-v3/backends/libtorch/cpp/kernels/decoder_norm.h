@@ -16,3 +16,10 @@ namespace tei {
 at::Tensor decoder_half_moe_probabilities(const at::Tensor& logits);
 at::Tensor decoder_half_moe_route_weights(const at::Tensor& selected,bool renormalize);
 }
+
+namespace tei {
+// Transformers RMS rounding: Mistral rounds the normalized value before
+// multiplying gamma; Qwen3.5 multiplies (1 + gamma) in FP32 before rounding.
+at::Tensor transformers_rms_norm(const at::Tensor& input,
+ const at::Tensor& weight,double epsilon,bool unit_offset=false);
+}

@@ -3,6 +3,9 @@
 #include "models/mistral3_models.h"
 #include "models/decoder_models.h"
 #include <ATen/ops/scaled_dot_product_attention.h>
+#ifdef TEI_TORCH_CUDA_KERNELS
+#include "kernels/decoder_norm.h"
+#endif
 #include <cmath>
 #include <algorithm>
 
@@ -13,6 +16,11 @@ class Mistral3 final : public Model {
   int64_t hidden,heads,dim,depth,patch,merge,feature_layer;
   const at::Tensor& w(const std::string& name) const {return weight(weights,name);}
   at::Tensor rms(const at::Tensor& x,const at::Tensor& scale,double eps) const {
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if(x.is_cuda()&&(x.scalar_type()==at::kBFloat16||x.scalar_type()==at::kHalf)
+      &&x.stride(-1)==1&&x.size(-1)<=8192)
+      return transformers_rms_norm(x,scale,eps);
+#endif
     auto f=x.to(at::kFloat);
     return (f*at::rsqrt(f.square().mean(-1,true)+eps)).to(x.scalar_type())*scale;
   }

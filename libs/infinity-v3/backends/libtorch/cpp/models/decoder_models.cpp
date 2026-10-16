@@ -84,7 +84,13 @@ class Decoder final : public Model {
   }
   bool transformers_math() const {return options.boolean("_transformers_math",false);}
   at::Tensor norm(const at::Tensor& x, const at::Tensor& w) const {
-    if(transformers_math()) {auto f=x.to(at::kFloat);return (f*at::rsqrt(f.square().mean(-1,true)+epsilon)).to(x.scalar_type())*w;}
+    if(transformers_math()) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+      if(x.is_cuda()&&(x.scalar_type()==at::kBFloat16||x.scalar_type()==at::kHalf)
+        &&(x.dim()==2||x.dim()==3)&&x.stride(-1)==1&&x.size(-1)<=8192)
+        return transformers_rms_norm(x,w,epsilon);
+#endif
+      auto f=x.to(at::kFloat);return (f*at::rsqrt(f.square().mean(-1,true)+epsilon)).to(x.scalar_type())*w;}
     if (x.is_cuda()) return std::get<0>(at::_fused_rms_norm(x.contiguous(), {w.numel()}, w, epsilon));
     return at::rms_norm(x, {w.numel()}, w, epsilon);
   }
