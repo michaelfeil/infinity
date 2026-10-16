@@ -18,12 +18,11 @@ inline ImageUploadLayout image_upload_layout(const at::Tensor& host) {
  TORCH_CHECK(host.dim()==2,"Native image upload requires a matrix");
  return {host.const_data_ptr(),host.scalar_type(),host.size(0),host.size(1),host.stride(0),host.stride(1)};
 }
-// Gemma normalizes F32 pixels first; D3 must never round through FP16.
+// Gemma normalizes F32 pixels first; other towers receive the model dtype directly.
 inline at::Tensor upload_image_pixels(const at::Tensor& pixels, const c10::Device& device,
- at::ScalarType dtype, std::string_view family, bool d3) {
+ at::ScalarType dtype, std::string_view family) {
  if(family=="gemma4"||family=="gemma4_text"||family=="embedding_gemma2")return pixels;
- const auto image_dtype=d3?at::kBFloat16:family.starts_with("qwen3_5")?at::kHalf:dtype;
- return pixels.to(device).to(image_dtype);
+ return pixels.to(device).to(dtype);
 }
 
 // The caller's pixels are immutable for one native request. Keep this cache local

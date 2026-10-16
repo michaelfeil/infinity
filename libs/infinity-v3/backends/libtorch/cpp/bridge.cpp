@@ -214,7 +214,7 @@ size_t validate_request_input(Engine& model,const int64_t* ids,const int64_t* ty
  const bool gemma=family=="gemma4"||family=="gemma4_text"||family=="embedding_gemma2";
  const auto tokens=tei::validate_input_descriptors(ids,types,positions,cumulative,batch,max_sequence,
    media_positions,images,image_count,audios,audio_count,gemma);
- const auto image_dtype=family.starts_with("qwen3_5")?at::kHalf:model.dtype;
+ const auto image_dtype=model.dtype;
  return tei::validate_input_upload_budget(tokens,batch,media_positions,images,image_count,audios,audio_count,
    radix,c10::elementSize(image_dtype),input_upload_limit(model),gemma,model.options.string("_decision.kind")=="d3");
 }
@@ -304,7 +304,7 @@ tei::PackedInput packed_input(Engine& model,const int64_t* ids,const int64_t* ty
  tei::RequestImageUploads shared_images;
  for(size_t i=0;i<image_count;++i){const auto& item=images[i];
   auto host_pixels=at::from_blob(const_cast<float*>(item.pixels),{item.rows,item.patch_dim},options.dtype(at::kFloat));
-  auto upload=[&]{return tei::upload_image_pixels(host_pixels,model.device,model.dtype,family,d3);};
+  auto upload=[&]{return tei::upload_image_pixels(host_pixels,model.device,model.dtype,family);};
   auto pixels=d3?shared_images.get(host_pixels,upload):upload();
   packed.images.push_back({pixels,{item.grid[0],item.grid[1],item.grid[2]},item.merge_size,item.token_start,item.token_count,item.sequence_start});
   std::copy_n(item.feature_key,32,packed.images.back().feature_key.begin());
@@ -446,10 +446,6 @@ int32_t tei_weight(void* handle, const char* name, const uint8_t* data,
       && ((key.find("subsample_conv_projection.") != std::string::npos && key.ends_with(".conv.weight"))
         || key.ends_with(".lconv1d.depthwise_conv1d.weight"));
     auto target_dtype = key.ends_with(".A_log") || key.ends_with(".dt_bias") || fp32_audio_filter ? at::kFloat : model.dtype;
-    const auto family = model.options.string("model_type");
-    if ((key.starts_with("model.visual.") || key.starts_with("visual.")) && family.starts_with("qwen3_5")) {
-      target_dtype = model.options.string("_decision.kind")=="d3" ? at::kBFloat16 : at::kHalf;
-    }
     if(key.starts_with("__tei_decision.")) {
       auto kind=model.options.string("_decision.kind");
       if(kind=="pplx")target_dtype=at::kBFloat16;
