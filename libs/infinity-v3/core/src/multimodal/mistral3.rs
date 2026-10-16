@@ -42,9 +42,7 @@ struct State {
     patch: usize,
     merge: usize,
     edge: u32,
-    mean: [f32; 3],
-    std: [f32; 3],
-    scale: f32,
+    normalized: [[f32; 256]; 3],
     ids: [u32; 3],
 }
 impl Mistral3Processor {
@@ -165,9 +163,10 @@ impl Mistral3Processor {
                 patch,
                 merge,
                 edge,
-                mean,
-                std,
-                scale,
+                // Preserve the reference arithmetic order for every possible U8 value.
+                normalized: std::array::from_fn(|c| {
+                    std::array::from_fn(|v| (v as f32 * scale - mean[c]) / std[c])
+                }),
                 ids,
             }),
             resolver,
@@ -225,18 +224,24 @@ impl Mistral3Processor {
                 }
             }
         }
+        let waiting = std::time::Instant::now();
         let worker = self
             .workers
             .clone()
             .acquire_owned()
             .await
             .map_err(|_| invalid("Image workers closed"))?;
+        metrics::histogram!("infinity_image_worker_wait_duration", "processor" => "mistral3")
+            .record(waiting.elapsed().as_secs_f64());
         let state = self.state.clone();
         let (tx, rx) = tokio::sync::oneshot::channel();
         tokio::task::spawn_blocking(move || {
             let _worker = worker;
+            let started = std::time::Instant::now();
             let result =
                 state.prepare_cpu(messages, resolved, truncate, direction, || tx.is_closed());
+            metrics::histogram!("infinity_image_preprocessing_duration", "processor" => "mistral3")
+                .record(started.elapsed().as_secs_f64());
             let _ = tx.send(result);
         });
         rx.await.map_err(|_| invalid("Image worker failed"))?
@@ -346,7 +351,7 @@ impl State {
                 .ok_or_else(|| invalid("Image allocation overflow"))?;
             sizes.push((rw, rh));
         }
-        let memory = self.budget.reserve(bytes)?;
+        let mut memory = self.budget.reserve(bytes)?;
         let prompt = self.chat.render_native(&messages, false).map_err(invalid)?;
         if prompt.chars().count() > self.max_tokens.saturating_mul(250) {
             return Err(invalid("Rendered conversation exceeds the character limit"));
@@ -396,9 +401,7 @@ impl State {
                                 let index =
                                     ((y * self.patch + py) * w as usize + x * self.patch + px) * 3
                                         + c;
-                                pixels.push(
-                                    (rgb[index] as f32 * self.scale - self.mean[c]) / self.std[c],
-                                );
+                                pixels.push(self.normalized[c][rgb[index] as usize]);
                             }
                         }
                     }
@@ -440,6 +443,17 @@ impl State {
         if ids.is_empty() {
             return Err(invalid("Empty model input"));
         }
+        // Decode/resize buffers are gone. Keep charging patches and their upload
+        // copies while queued/in flight, without retaining the CPU scratch budget.
+        drop(resolved);
+        let retained_bytes: usize = spans
+            .iter()
+            .map(|(_, image)| image.pixels.capacity() * std::mem::size_of::<f32>() * 2)
+            .sum();
+        let release = memory
+            .num_permits()
+            .saturating_sub(retained_bytes.div_ceil(1024));
+        drop(memory.split(release));
         let positions = (0..ids.len() as u32).collect::<Vec<_>>();
         Ok(PreparedMultimodal {
             input_ids: ids,
