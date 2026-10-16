@@ -27,7 +27,10 @@ namespace tei {
 namespace {
 // Adapted from Candle qwen3_vl/vision.rs; upstream Apache-2.0 notices retained.
 class Qwen35 final : public Model {
-  struct BlockCache {at::Tensor key,value,state,history;};
+  struct BlockCache {
+    at::Tensor key,value,state,history,history_cumulative;
+    std::vector<int32_t> offsets,history_offsets;
+  };
   bool block_attention() const {return cfg.string("_decision_attention_mode")=="block_bidirectional";}
   Options cfg;
   Weights weights;
@@ -208,17 +211,35 @@ class Qwen35 final : public Model {
     const bool reference=integer("num_experts",0)>0 && device.is_cuda() && dtype==at::kBFloat16;
     at::Tensor attention;
     if(cache) {
+      std::vector<int32_t> kv_offsets{0};
+      int64_t max_kv=input.max_sequence;
       if(prefill) {cache->key=k;cache->value=v;}
-      else {k=at::cat({cache->key,k},0);v=at::cat({cache->value,v},0);}
+      else {
+        std::vector<at::Tensor> keys,values;
+        for(int64_t row=0;row<input.batch;++row) {
+          const auto source=input.block_prefix_sources[row];
+          const auto start=cache->offsets[source],length=cache->offsets[source+1]-start;
+          const auto suffix_start=input.offsets[row],suffix_length=input.offsets[row+1]-suffix_start;
+          keys.insert(keys.end(),{cache->key.narrow(0,start,length),k.narrow(0,suffix_start,suffix_length)});
+          values.insert(values.end(),{cache->value.narrow(0,start,length),v.narrow(0,suffix_start,suffix_length)});
+          kv_offsets.push_back(kv_offsets.back()+length+suffix_length);
+          max_kv=std::max(max_kv,int64_t(length+suffix_length));
+        }
+        k=at::cat(keys,0);v=at::cat(values,0);
+      }
       if(device.is_cuda()) {
-        auto cuq=at::tensor({int32_t(0),int32_t(q.size(0))},input.cumulative.options());
-        auto cuk=at::tensor({int32_t(0),int32_t(k.size(0))},input.cumulative.options());
-        attention=std::get<0>(at::_flash_attention_forward(q,k,v,cuq,cuk,q.size(0),k.size(0),0.,false,false,1./std::sqrt(double(dim))));
+        auto cuk=prefill?input.cumulative:at::tensor(kv_offsets,input.cumulative.options());
+        attention=std::get<0>(at::_flash_attention_forward(q,k,v,input.cumulative,cuk,input.max_sequence,max_kv,0.,false,false,1./std::sqrt(double(dim))));
       } else {
-        auto qq=q.transpose(0,1).unsqueeze(0);
-        auto kk=at::repeat_interleave(k,heads/kv_heads,1).transpose(0,1).unsqueeze(0);
-        auto vv=at::repeat_interleave(v,heads/kv_heads,1).transpose(0,1).unsqueeze(0);
-        attention=at::scaled_dot_product_attention(qq,kk,vv).squeeze(0).transpose(0,1).contiguous();
+        std::vector<at::Tensor> rows;
+        const auto* offsets=prefill?input.offsets:kv_offsets.data();
+        for(int64_t row=0;row<input.batch;++row) {
+          auto qq=q.narrow(0,input.offsets[row],input.offsets[row+1]-input.offsets[row]).transpose(0,1).unsqueeze(0);
+          auto kk=at::repeat_interleave(k.narrow(0,offsets[row],offsets[row+1]-offsets[row]),heads/kv_heads,1).transpose(0,1).unsqueeze(0);
+          auto vv=at::repeat_interleave(v.narrow(0,offsets[row],offsets[row+1]-offsets[row]),heads/kv_heads,1).transpose(0,1).unsqueeze(0);
+          rows.push_back(at::scaled_dot_product_attention(qq,kk,vv).squeeze(0).transpose(0,1).contiguous());
+        }
+        attention=at::cat(rows,0);
       }
     } else
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -241,9 +262,11 @@ class Qwen35 final : public Model {
     auto kernel=conv.size(-1);
     auto alog=w(p+"A_log").to(at::kFloat),dt=w(p+"dt_bias").to(at::kFloat);
     std::vector<at::Tensor> outputs;
+    std::vector<at::Tensor> states;
     for(int64_t row=0;row<input.batch;++row) {
       auto start=input.offsets[row],length=input.offsets[row+1]-start;
-      auto history=cache&&!prefill?cache->history:at::Tensor();
+      const auto source=cache&&!prefill?input.block_prefix_sources[row]:row;
+      auto history=cache&&!prefill?cache->history.narrow(0,cache->history_offsets[source],cache->history_offsets[source+1]-cache->history_offsets[source]):at::Tensor();
       const auto previous=history.defined()?history.size(0):0;
       auto raw=history.defined()?at::cat({history,qkv.narrow(0,start,length)},0):qkv.narrow(0,start,length);
       std::vector<at::Tensor> convolved;
@@ -265,7 +288,7 @@ class Qwen35 final : public Model {
       auto alpha=ab.narrow(0,start,length).narrow(-1,0,vh).to(at::kFloat)+dt;
       auto decay=at::exp(-at::exp(alog)*at::softplus(alpha));
       auto beta=at::sigmoid(ab.narrow(0,start,length).narrow(-1,vh,vh).to(at::kFloat)).to(dtype).to(at::kFloat);
-      auto state=cache&&!prefill?cache->state.clone():at::zeros({vh,128,128},q.options());
+      auto state=cache&&!prefill?cache->state.select(0,source).clone():at::zeros({vh,128,128},q.options());
       for(int64_t t=0;t<length;++t) {
         auto kt=k.select(0,t),qt=q.select(0,t);
         state=state*decay.select(0,t).view({vh,1,1});
@@ -278,8 +301,9 @@ class Qwen35 final : public Model {
         out=(out*w(p+"norm.weight")).to(dtype);
         outputs.push_back((out.to(at::kFloat)*at::silu(z.select(0,start+t).view({vh,128}).to(at::kFloat))).to(dtype).reshape({vh*128}));
       }
-      if(cache&&prefill)cache->state=state;
+      if(cache&&prefill)states.push_back(state);
     }
+    if(cache&&prefill)cache->state=at::stack(states,0);
     return at::stack(outputs,0);
   }
   at::Tensor delta_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false) const {
@@ -294,17 +318,31 @@ class Qwen35 final : public Model {
       if(integer("num_experts",0)>0)
         output=qwen35_reference_delta_cuda(qkv,z,ab,conv,alog,dt,w(p+"norm.weight"),input,
           integer("linear_num_key_heads"),integer("linear_num_value_heads"),epsilon);
-      else
+      else {
+        // Qualified on H100: wide chunk scans amortize their setup for multiple
+        // long prefills. Keep short/single sequences on the faster recurrence.
+        const auto* properties=at::cuda::getDeviceProperties(device.index());
+        const bool chunks=properties->major==9&&properties->sharedMemPerBlockOptin>=163840&&
+          input.batch>=4&&qkv.size(0)/input.batch>=1024&&integer("linear_num_value_heads")>=32;
         output=qwen35_delta_cuda(qkv,z,ab,conv,alog,dt,w(p+"norm.weight"),input,
           integer("linear_num_key_heads"),integer("linear_num_value_heads"),epsilon,
-          cache&&!prefill?cache->state:at::Tensor(),cache&&prefill?&cache->state:nullptr,cache&&!prefill?cache->history:at::Tensor());
+          cache&&!prefill?cache->state:at::Tensor(),cache&&prefill?&cache->state:nullptr,cache&&!prefill?cache->history:at::Tensor(),
+          cache&&!prefill?cache->history_cumulative:at::Tensor(),chunks);
+      }
 #else
       TORCH_CHECK(false,"Qwen3.5 requires the native DeltaNet CUDA kernel build");
 #endif
     } else output=delta_cpu(qkv,z,ab,p,input,cache,prefill);
     if(cache&&prefill) {
-      auto n=std::min(qkv.size(0),w(p+"conv1d.weight").size(-1)-1);
-      cache->history=qkv.narrow(0,qkv.size(0)-n,n).clone();
+      std::vector<at::Tensor> histories;
+      cache->history_offsets={0};
+      for(int64_t row=0;row<input.batch;++row) {
+        auto n=std::min(int64_t(input.offsets[row+1]-input.offsets[row]),w(p+"conv1d.weight").size(-1)-1);
+        histories.push_back(qkv.narrow(0,input.offsets[row+1]-n,n));
+        cache->history_offsets.push_back(cache->history_offsets.back()+n);
+      }
+      cache->history=at::cat(histories,0);
+      cache->history_cumulative=at::tensor(cache->history_offsets,input.cumulative.options());
     }
     auto compact=radix_fold(output,input);
     return radix_enabled(input)?linear_radix_projection(compact,p+"out_proj",input):linear(compact,p+"out_proj");
@@ -312,11 +350,37 @@ class Qwen35 final : public Model {
   at::Tensor block_forward(const PackedInput& input) const {
     TORCH_CHECK(input.images.empty()&&input.audios.empty()&&!radix_enabled(input)&&
       input.block_prefix_lengths.size()==size_t(input.batch)&&input.block_prefix_sources.size()==size_t(input.batch),"Missing OneJev block boundaries");
-    std::vector<at::Tensor> results(input.batch);
-    auto run=[&](int64_t start,int64_t count,std::vector<BlockCache>& caches,bool prefill) {
-      std::vector<int32_t> offsets{0,int32_t(count)};
-      auto cumulative=at::tensor(offsets,input.cumulative.options());
-      PackedInput part{input.ids.narrow(0,start,count),input.types.narrow(0,start,count),input.positions.narrow(0,start,count),cumulative,offsets.data(),1,count};
+    // Structural packing is host-side; projections, MLPs, attention and GDN run
+    // once per layer over actual rows. No activation/sequence padding is added.
+    std::vector<int64_t> representatives,source_index(input.batch,-1),suffix_rows;
+    std::vector<int32_t> prefix_offsets{0},suffix_offsets{0};
+    std::vector<int64_t> suffix_sources;
+    std::vector<at::Tensor> prefix_ids,prefix_types,prefix_positions,suffix_ids,suffix_types,suffix_positions;
+    int64_t max_prefix=0,max_suffix=0;
+    for(int64_t row=0;row<input.batch;++row) {
+      const int64_t prefix=input.block_prefix_lengths[row],length=input.offsets[row+1]-input.offsets[row];
+      const auto source=input.block_prefix_sources[row];
+      TORCH_CHECK(prefix>0&&prefix<=length&&source>=0&&source<=row&&
+        input.block_prefix_sources[source]==source&&input.block_prefix_lengths[source]==prefix,
+        "Invalid shared OneJev prefix");
+      if(source==row) {
+        source_index[row]=representatives.size();representatives.push_back(row);
+        prefix_ids.push_back(input.ids.narrow(0,input.offsets[row],prefix));
+        prefix_types.push_back(input.types.narrow(0,input.offsets[row],prefix));
+        prefix_positions.push_back(input.positions.narrow(0,input.offsets[row],prefix));
+        prefix_offsets.push_back(prefix_offsets.back()+prefix);max_prefix=std::max(max_prefix,prefix);
+      }
+      if(length>prefix) {
+        suffix_rows.push_back(row);suffix_sources.push_back(source_index[source]);
+        suffix_ids.push_back(input.ids.narrow(0,input.offsets[row]+prefix,length-prefix));
+        suffix_types.push_back(input.types.narrow(0,input.offsets[row]+prefix,length-prefix));
+        suffix_positions.push_back(input.positions.narrow(0,input.offsets[row]+prefix,length-prefix));
+        suffix_offsets.push_back(suffix_offsets.back()+length-prefix);max_suffix=std::max(max_suffix,length-prefix);
+      }
+    }
+    std::vector<BlockCache> caches(layer_count);
+    for(auto& cache:caches)cache.offsets=prefix_offsets;
+    auto run=[&](const PackedInput& part,bool prefill) {
       auto h=at::embedding(w("embed_tokens.weight"),part.ids);
       for(int64_t layer=0;layer<layer_count;++layer) {
         const auto p="layers."+std::to_string(layer)+".";
@@ -327,19 +391,27 @@ class Qwen35 final : public Model {
       }
       return norm(h,"norm");
     };
-    for(int64_t source=0;source<input.batch;++source) {
-      if(input.block_prefix_sources[source]!=source)continue;
-      const auto prefix_length=input.block_prefix_lengths[source];
-      TORCH_CHECK(prefix_length>0&&prefix_length<=input.offsets[source+1]-input.offsets[source],"Invalid OneJev prefix length");
-      std::vector<BlockCache> caches(layer_count);
-      auto prefix_hidden=run(input.offsets[source],prefix_length,caches,true);
-      for(int64_t row=source;row<input.batch;++row)if(input.block_prefix_sources[row]==source) {
-        const auto count=input.offsets[row+1]-input.offsets[row]-prefix_length;
-        TORCH_CHECK(input.block_prefix_lengths[row]==prefix_length&&count>=0,"Invalid shared OneJev prefix");
-        results[row]=count?at::cat({prefix_hidden,run(input.offsets[row]+prefix_length,count,caches,false)},0):prefix_hidden;
-      }
+    PackedInput prefixes{at::cat(prefix_ids,0),at::cat(prefix_types,0),at::cat(prefix_positions,0),
+      at::tensor(prefix_offsets,input.cumulative.options()),prefix_offsets.data(),int64_t(representatives.size()),max_prefix};
+    auto prefix_hidden=run(prefixes,true);
+    at::Tensor suffix_hidden;
+    if(!suffix_rows.empty()) {
+      PackedInput suffixes{at::cat(suffix_ids,0),at::cat(suffix_types,0),at::cat(suffix_positions,0),
+        at::tensor(suffix_offsets,input.cumulative.options()),suffix_offsets.data(),int64_t(suffix_rows.size()),max_suffix};
+      suffixes.block_prefix_sources=suffix_sources;
+      suffixes.block_cache_sources=at::tensor(suffix_sources,input.ids.options());
+      suffix_hidden=run(suffixes,false);
     }
-    for(const auto& result:results)TORCH_CHECK(result.defined(),"Invalid OneJev prefix representative");
+    std::vector<at::Tensor> results;
+    size_t suffix_row=0;
+    for(int64_t row=0;row<input.batch;++row) {
+      const auto source=source_index[input.block_prefix_sources[row]];
+      auto prefix=prefix_hidden.narrow(0,prefix_offsets[source],prefix_offsets[source+1]-prefix_offsets[source]);
+      if(suffix_row<suffix_rows.size()&&suffix_rows[suffix_row]==row) {
+        results.push_back(at::cat({prefix,suffix_hidden.narrow(0,suffix_offsets[suffix_row],suffix_offsets[suffix_row+1]-suffix_offsets[suffix_row])},0));
+        ++suffix_row;
+      } else results.push_back(prefix);
+    }
     return at::cat(results,0);
   }
  public:

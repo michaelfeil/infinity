@@ -4,6 +4,7 @@
 #include "kernels/qwen35_kernels.h"
 #include "kernels/gemma2_norm.h"
 #include "kernels/qwen35_recurrent.h"
+#include "kernels/qwen35_chunk.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
@@ -620,17 +621,41 @@ __global__ void exact_vision_pool(const __nv_bfloat16*x,float*out,int height,int
 }
 at::Tensor gemma_vision_pool_cuda(const at::Tensor&x,int64_t height,int64_t width,int64_t kernel){c10::cuda::CUDAGuard guard(x.device());TORCH_CHECK(x.scalar_type()==at::kBFloat16&&x.is_contiguous()&&x.dim()==2&&height>0&&width>0&&kernel>0&&height<=INT32_MAX/width&&height*width==x.size(0)&&height%kernel==0&&width%kernel==0&&x.size(1)>0&&x.numel()<=INT32_MAX,"Invalid packed Gemma vision spatial pool geometry");auto out=at::empty({height*width/(kernel*kernel),x.size(1)},x.options().dtype(at::kFloat));exact_vision_pool<<<(out.numel()+255)/256,256,0,at::cuda::getCurrentCUDAStream()>>>(reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),out.mutable_data_ptr<float>(),height,width,x.size(1),kernel,float(1./double(kernel*kernel)),float(sqrt(double(x.size(1)))));C10_CUDA_KERNEL_LAUNCH_CHECK();return out;}
 
+// Each packed suffix reads the convolution tail of its own immutable prefix.
+// Historical rows are packed too; prefixes shorter than kernel-1 need no padding.
+__global__ void packed_cached_conv(const __nv_bfloat16* x,const __nv_bfloat16* weight,
+ const uint32_t* cu,const int64_t* sources,const __nv_bfloat16* history,
+ const int32_t* history_cu,__nv_bfloat16* out,int tokens,int channels,int kernel,int sequences) {
+ const auto index=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;
+ if(index>=int64_t(tokens)*channels)return;
+ const int token=index/channels,column=index%channels;
+ int lo=0,hi=sequences;
+ while(lo+1<hi){int mid=(lo+hi)/2;if(cu[mid]<=token)lo=mid;else hi=mid;}
+ const auto source=sources[lo];
+ const int previous=history_cu[source+1]-history_cu[source];
+ float sum=0;
+ for(int j=0;j<kernel;++j) {
+   int t=token-int(cu[lo])+j-kernel+1;
+   if(t>=0)sum+=__bfloat162float(x[int64_t(cu[lo]+t)*channels+column])*__bfloat162float(weight[column*kernel+j]);
+   else if(t>=-previous)sum+=__bfloat162float(history[int64_t(history_cu[source+1]+t)*channels+column])*__bfloat162float(weight[column*kernel+j]);
+ }
+ sum=__bfloat162float(__float2bfloat16_rn(sum));
+ out[index]=__float2bfloat16_rn(sum/(1.f+expf(-sum)));
+}
+
 // SPDX-License-Identifier: MIT
 // Adapted from Candle qwen35_gdn_recurrent above; snapshot the complete prefix state.
 extern "C" __global__ void qwen35_gdn_cached(const __nv_bfloat16 *qkv, const float *qk,
                                                 const float *decay_beta, const uint32_t *cu,
-                                                __nv_bfloat16 *out, int kh, int vh, const float* initial, float* final_state) {
+                                                __nv_bfloat16 *out, int kh, int vh, const float* initial, float* final_state,
+                                                const int64_t* sources) {
     const int seq = blockIdx.x, head = blockIdx.y, col = blockIdx.z * 8 + threadIdx.x / 32,
               lane = threadIdx.x % 32;
     const int qhead = head / (vh / kh), channels = (2 * kh + vh) * 128;
     // One warp owns one state column. Four FP32 entries per lane, no state in HBM.
     float state[4] = {0, 0, 0, 0};
-    if(initial) for(int i=0;i<4;++i) state[i]=initial[(int64_t(head)*128+lane+i*32)*128+col];
+    const auto source=initial?sources[seq]:seq;
+    if(initial) for(int i=0;i<4;++i) state[i]=initial[((source*vh+head)*128+lane+i*32)*128+col];
     for (uint32_t t = cu[seq]; t < cu[seq + 1]; ++t) {
         float decay = decay_beta[uint64_t(t) * 2 * vh + head],
               beta = decay_beta[uint64_t(t) * 2 * vh + vh + head];
@@ -654,14 +679,15 @@ extern "C" __global__ void qwen35_gdn_cached(const __nv_bfloat16 *qkv, const flo
         if (lane == 0)
             out[(uint64_t(t) * vh + head) * 128 + col] = __float2bfloat16_rn(sum);
     }
-    if(final_state) for(int i=0;i<4;++i) final_state[(int64_t(head)*128+lane+i*32)*128+col]=state[i];
+    if(final_state) for(int i=0;i<4;++i) final_state[((int64_t(seq)*vh+head)*128+lane+i*32)*128+col]=state[i];
 }
 
 at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
   const at::Tensor& ab, const at::Tensor& conv, const at::Tensor& a_log,
   const at::Tensor& dt_bias, const at::Tensor& norm, const PackedInput& input,
   int64_t key_heads, int64_t value_heads, double epsilon,
-  const at::Tensor& initial, at::Tensor* final_state, const at::Tensor& history) {
+  const at::Tensor& initial, at::Tensor* final_state, const at::Tensor& history,
+  const at::Tensor& history_cumulative,bool chunk_prefill) {
   c10::cuda::CUDAGuard guard(qkv.device());
   TORCH_CHECK(qkv.scalar_type()==at::kBFloat16 && z.scalar_type()==at::kBFloat16 &&
     ab.scalar_type()==at::kBFloat16 && conv.scalar_type()==at::kBFloat16 &&
@@ -683,20 +709,28 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
   auto mut=[](at::Tensor& t) { return reinterpret_cast<__nv_bfloat16*>(t.mutable_data_ptr()); };
   auto cu=reinterpret_cast<const uint32_t*>(input.cumulative.const_data_ptr<int32_t>());
   if(history.defined()) {
-    TORCH_CHECK(input.batch==1&&history.device()==qkv.device()&&history.scalar_type()==qkv.scalar_type()&&history.is_contiguous()&&history.dim()==2&&history.size(1)==channels&&history.size(0)<conv.size(-1)&&tokens+history.size(0)<=INT32_MAX&&(tokens+history.size(0))*channels<=UINT32_MAX,"Invalid cached GDN convolution history");
-    auto joined=at::cat({history,qkv},0),joined_out=at::empty_like(joined);
-    auto offsets=at::tensor({int32_t(0),int32_t(joined.size(0))},input.cumulative.options());
-    qwen35_conv_bf16<<<(joined.numel()+255)/256,256,0,stream>>>(bf(joined),bf(conv),reinterpret_cast<const uint32_t*>(offsets.const_data_ptr<int32_t>()),mut(joined_out),joined.size(0),channels,conv.size(-1),1);
-    convolution=joined_out.narrow(0,history.size(0),tokens).contiguous();
+    TORCH_CHECK(history.device()==qkv.device()&&history.scalar_type()==qkv.scalar_type()&&history.is_contiguous()&&history.dim()==2&&history.size(1)==channels&&
+      history_cumulative.device()==qkv.device()&&history_cumulative.scalar_type()==at::kInt&&history_cumulative.is_contiguous()&&
+      history_cumulative.dim()==1&&history_cumulative.numel()>1&&input.block_prefix_sources.size()==size_t(input.batch)&&
+      input.block_cache_sources.device()==qkv.device()&&input.block_cache_sources.scalar_type()==at::kLong&&input.block_cache_sources.is_contiguous()&&input.block_cache_sources.numel()==input.batch,
+      "Invalid packed GDN convolution history");
+    for(const auto source:input.block_prefix_sources)TORCH_CHECK(source>=0&&source<history_cumulative.numel()-1,"Invalid packed GDN prefix source");
+    packed_cached_conv<<<(tokens*channels+255)/256,256,0,stream>>>(bf(qkv),bf(conv),cu,input.block_cache_sources.const_data_ptr<int64_t>(),bf(history),history_cumulative.const_data_ptr<int32_t>(),mut(convolution),tokens,channels,conv.size(-1),input.batch);
   } else qwen35_conv_bf16<<<(tokens*channels+255)/256,256,0,stream>>>(bf(qkv),bf(conv),cu,mut(convolution),tokens,channels,conv.size(-1),input.batch);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   qwen35_gdn_prepare<<<tokens*key_heads,128,0,stream>>>(bf(convolution),bf(ab),a_log.const_data_ptr<float>(),dt_bias.const_data_ptr<float>(),qk.mutable_data_ptr<float>(),decay.mutable_data_ptr<float>(),tokens,key_heads,value_heads);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
-  if(initial.defined()||final_state) {
-    TORCH_CHECK(input.batch==1,"Cached GDN requires one prefix or suffix");
-    if(initial.defined())TORCH_CHECK(initial.device()==qkv.device()&&initial.scalar_type()==at::kFloat&&initial.is_contiguous()&&initial.sizes()==at::IntArrayRef({value_heads,128,128}),"Invalid cached GDN state");
-    if(final_state)*final_state=at::empty({value_heads,128,128},qkv.options().dtype(at::kFloat));
-    qwen35_gdn_cached<<<dim3(1,value_heads,16),256,0,stream>>>(bf(convolution),qk.const_data_ptr<float>(),decay.const_data_ptr<float>(),cu,mut(recurrence),key_heads,value_heads,initial.defined()?initial.const_data_ptr<float>():nullptr,final_state?final_state->mutable_data_ptr<float>():nullptr);
+  if(initial.defined()) {
+    TORCH_CHECK(history.defined()&&initial.device()==qkv.device()&&initial.scalar_type()==at::kFloat&&initial.is_contiguous()&&initial.dim()==4&&initial.size(0)==history_cumulative.numel()-1&&initial.size(1)==value_heads&&initial.size(2)==128&&initial.size(3)==128,"Invalid packed cached GDN state");
+  }
+  // Prefill benefits from chunk-parallel work; short question suffixes keep the
+  // register-resident recurrent path. Both consume/produce the same FP32 state.
+  if(chunk_prefill&&input.max_sequence>=256) {
+    qwen35_chunk_delta_cuda(convolution,qk,decay,input,recurrence,key_heads,value_heads,initial,final_state);
+  } else if(initial.defined()||final_state) {
+    if(final_state)*final_state=at::empty({input.batch,value_heads,128,128},qkv.options().dtype(at::kFloat));
+    qwen35_gdn_cached<<<dim3(input.batch,value_heads,16),256,0,stream>>>(bf(convolution),qk.const_data_ptr<float>(),decay.const_data_ptr<float>(),cu,mut(recurrence),key_heads,value_heads,initial.defined()?initial.const_data_ptr<float>():nullptr,final_state?final_state->mutable_data_ptr<float>():nullptr,
+      initial.defined()?input.block_cache_sources.const_data_ptr<int64_t>():nullptr);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   } else if(qwen35_recurrent_supported(qkv.device(),key_heads,value_heads))
     qwen35_recurrent_cuda(convolution,qk,decay,input,recurrence,key_heads,value_heads,true);

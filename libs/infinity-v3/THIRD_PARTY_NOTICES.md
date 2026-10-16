@@ -39,3 +39,7 @@ The selected MIT permission notice is retained beside the derived kernel.
 Mistral3/Pixtral model equations and processor behavior are adapted from
 Hugging Face Transformers 5.12.1 (Apache-2.0). The retained license and source
 attribution are in `backends/libtorch/cpp/vendor/transformers_pixtral/`.
+
+The packed CUDA Gated DeltaNet chunkwise transform is adapted from
+Hugging Face Transformers 5.19.0 (Apache-2.0). The retained license, source hash,
+and adaptation notice are in `backends/libtorch/cpp/vendor/transformers_gdn/`.

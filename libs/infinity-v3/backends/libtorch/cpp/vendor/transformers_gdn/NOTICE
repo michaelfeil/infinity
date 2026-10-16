@@ -1,0 +1,16 @@
+Gated DeltaNet chunkwise reference equations
+
+Hugging Face Transformers 5.19.0
+Copyright 2025 The Qwen Team and The HuggingFace Inc. team. All rights reserved.
+Source: https://github.com/huggingface/transformers/blob/v5.19.0/src/transformers/models/qwen3_5/modeling_qwen3_5.py
+Function: torch_chunk_gated_delta_rule
+Source SHA-256: aac2a1bcca88829afc6dbdf83f97155ebf64d800ee9d703af3802a9aebcfcd18
+Licensed under the Apache License, Version 2.0 (see LICENSE in this directory).
+
+Infinity Core Contributors adapted the chunkwise triangular transform and state
+scan to native packed CUDA inference in kernels/qwen35_chunk.cu. The adaptation
+uses exact-length chunk tails, FP32 state, and immutable per-sequence initial
+states. Products of decays replace cumulative-log subtraction so a zero decay
+does not produce an infinity-minus-infinity NaN. No Python, Triton, or FLA
+runtime is linked by the native implementation. Retained Apache permissions
+and notices remain intact.

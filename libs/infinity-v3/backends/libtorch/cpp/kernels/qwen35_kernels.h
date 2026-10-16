@@ -17,5 +17,6 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
   const at::Tensor& ab, const at::Tensor& conv, const at::Tensor& a_log,
   const at::Tensor& dt_bias, const at::Tensor& norm, const PackedInput& input,
   int64_t key_heads, int64_t value_heads, double epsilon,
-  const at::Tensor& initial={}, at::Tensor* final_state=nullptr, const at::Tensor& history={});
+  const at::Tensor& initial={}, at::Tensor* final_state=nullptr, const at::Tensor& history={},
+  const at::Tensor& history_cumulative={},bool chunk_prefill=true);
 }

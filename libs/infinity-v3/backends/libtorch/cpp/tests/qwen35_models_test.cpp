@@ -221,6 +221,21 @@ int main(int argc,char** argv) {
       TORCH_CHECK(at::allclose(cached.narrow(0,0,2),future.narrow(0,0,2),1e-5,1e-6),"Prefix attended to question suffix");
       TORCH_CHECK((cached.select(0,2)-future.select(0,2)).abs().max().item<float>()>1e-5,"Suffix lost bidirectional attention");
       TORCH_CHECK(at::allclose(cached.narrow(0,5,4),future.narrow(0,5,4),1e-5,1e-6),"Question mutated shared GDN state");
+      // Distinct ragged prefixes, shared siblings, a prefix shorter than the
+      // convolution history, and a row with no suffix all coexist in one batch.
+      std::vector<int32_t> mixed_ends{0,5,9,11,16,18};
+      std::vector<int64_t> mixed_ids{1,2,3,4,5,1,2,7,8,9,10,6,7,8,9,10,1,2};
+      auto mixed=make(mixed_ids,mixed_ends);
+      mixed.block_prefix_lengths={2,2,1,3,2};mixed.block_prefix_sources={0,0,2,3,0};to_device(mixed);
+      auto mixed_hidden=blocks->forward(mixed);
+      for(size_t row=0;row+1<mixed_ends.size();++row) {
+        std::vector<int32_t> single_ends{0,mixed_ends[row+1]-mixed_ends[row]};
+        auto single=make(std::vector<int64_t>(mixed_ids.begin()+mixed_ends[row],mixed_ids.begin()+mixed_ends[row+1]),single_ends);
+        single.block_prefix_lengths={mixed.block_prefix_lengths[row]};single.block_prefix_sources={0};to_device(single);
+        const auto tolerance=block_device.is_cpu()?1e-5:1e-2;
+        TORCH_CHECK(at::allclose(mixed_hidden.narrow(0,mixed_ends[row],single_ends[1]),blocks->forward(single),tolerance,tolerance),
+          "Packed block rows crossed prefix, convolution, or recurrent boundaries on ",block_device," row=",row);
+      }
       bool missing=false;try{blocks->forward(make({1,2,3},one));}catch(const c10::Error&){missing=true;}
       TORCH_CHECK(missing,"Block mode silently accepted missing boundary metadata");
       std::cout<<"Qwen3.5 block prefix isolation, bidirectional suffix and immutable GDN cache passed on "<<block_device<<"\n";
