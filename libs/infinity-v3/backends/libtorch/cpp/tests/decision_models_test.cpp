@@ -132,13 +132,13 @@ void clef_test(){Input in;Options cfg,backbone;cfg.values={{"hidden_size","16"},
 void d3_test(){
  // Values straddling a BF16 midpoint expose FP32->FP16->BF16 double rounding.
  auto pixels=at::tensor({1.0038f,1.00395f,-1.0038f,-1.00395f},at::TensorOptions().dtype(at::kFloat));
- auto uploaded=upload_image_pixels(pixels,c10::Device(at::kCPU),at::kBFloat16,"qwen3_5",true);
+ auto uploaded=upload_image_pixels(pixels,c10::Device(at::kCPU),at::kBFloat16,"qwen3_5");
  TORCH_CHECK(at::equal(uploaded,pixels.to(at::kBFloat16)),"D3 image upload must cast directly to BF16");
  TORCH_CHECK(!at::equal(uploaded,pixels.to(at::kHalf).to(at::kBFloat16)),"D3 fixture must distinguish double rounding");
- TORCH_CHECK(at::equal(upload_image_pixels(pixels,c10::Device(at::kCPU),at::kBFloat16,"qwen3_5",false),pixels.to(at::kHalf)),"Non-D3 Qwen3.5 must retain FP16 upload");
+ TORCH_CHECK(at::equal(upload_image_pixels(pixels,c10::Device(at::kCPU),at::kHalf,"qwen3_5"),pixels.to(at::kHalf)),"Explicit FP16 image upload must retain its requested dtype");
  // One prepared image is shared by all questions, with one media reservation.
  RequestImageUploads uploads;int upload_calls=0;
- auto upload=[&]{++upload_calls;return upload_image_pixels(pixels,c10::Device(at::kCPU),at::kBFloat16,"qwen3_5",true);};
+ auto upload=[&]{++upload_calls;return upload_image_pixels(pixels,c10::Device(at::kCPU),at::kBFloat16,"qwen3_5");};
  auto first_upload=uploads.get(pixels,upload),second_upload=uploads.get(pixels,upload);
  TORCH_CHECK(upload_calls==1&&first_upload.unsafeGetTensorImpl()==second_upload.unsafeGetTensorImpl(),"Shared D3 pixels uploaded once per request");
  auto reshaped=pixels.view({2,2});uploads.get(reshaped,[&]{++upload_calls;return reshaped.to(at::kBFloat16);});
