@@ -806,15 +806,20 @@ impl LibtorchBackend {
         }
         // These decoders project explicitly sized attention heads; their
         // attention width need not equal the residual stream width.
+        // Match normalized families: Ministral3 uses the Mistral decoder.
         // Encoder families still require hidden_size to divide into heads.
         let independent_attention_width = matches!(
             config.model_type.as_str(),
-            "qwen3_5"
+            "llama"
+                | "mistral"
+                | "qwen2"
+                | "qwen3"
+                | "qwen3_moe"
+                | "qwen3_5"
                 | "qwen3_5_text"
                 | "qwen3_5_moe"
                 | "qwen3_5_moe_text"
                 | "mistral3"
-                | "ministral3"
                 | "ultrabert"
         ) && text
             .get("head_dim")
