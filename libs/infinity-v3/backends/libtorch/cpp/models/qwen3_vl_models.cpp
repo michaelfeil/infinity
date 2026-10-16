@@ -9,6 +9,7 @@
 #include "kernels/torch_flash_fma.h"
 #include "kernels/moe_kernels.h"
 #include <ATen/ops/_efficient_attention_forward.h>
+#include <ATen/ops/_flash_attention_forward.h>
 #include <cmath>
 #include <algorithm>
 
@@ -93,9 +94,12 @@ std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const ImageInput& 
       auto q=rotate(qkv.select(1,0)),k=rotate(qkv.select(1,1)),v=qkv.select(1,2).to(at::kFloat);
 
       at::Tensor attention;
-      // Preserve FP32 Q/K/V and independent frame boundaries without
-      // materializing quadratic score and probability tensors.
-      if(device.is_cuda()) {
+      // Round rotary Q/K back to BF16 before attention, matching the
+      // model dtype, and keep frames independent through cu_seqlens.
+      if(device.is_cuda() && dtype==at::kBFloat16) {
+        attention=std::get<0>(at::_flash_attention_forward(q.to(dtype).contiguous(),k.to(dtype).contiguous(),v.to(dtype).contiguous(),
+          cu,cu,height*width,height*width,0.,false,false,1./std::sqrt(double(dim))));
+      } else if(device.is_cuda()) {
         attention=std::get<0>(at::_efficient_attention_forward(q.unsqueeze(0),k.unsqueeze(0),v.unsqueeze(0),
           std::nullopt,cu,cu,height*width,height*width,0.,0,false,1./std::sqrt(double(dim)))).squeeze(0);
       } else {
