@@ -960,10 +960,6 @@ fn resolve_dtype(requested: Option<DType>, model_dtype: Option<&str>, model_type
                 return DType::Bfloat16;
             }
             #[cfg(all(feature = "candle", not(any(feature = "mkl", feature = "accelerate"))))]
-            if model_type == "qwen3_vl" {
-                return DType::Float16;
-            }
-            #[cfg(all(feature = "candle", not(any(feature = "mkl", feature = "accelerate"))))]
             if model_dtype == Some("bfloat16") {
                 return DType::Bfloat16;
             }
@@ -1503,12 +1499,14 @@ mod auto_dtype_tests {
 
     #[test]
     fn auto_selects_bf16_unless_overridden() {
-        for field in ["dtype", "torch_dtype"] {
-            let json = format!(
-                r#"{{"architectures":[],"model_type":"qwen3","max_position_embeddings":512,"{field}":"bfloat16"}}"#
-            );
-            assert_eq!(from_config(&json, Some(DType::Auto)), DType::Bfloat16);
-            assert_eq!(from_config(&json, Some(DType::Float16)), DType::Float16);
+        for model_type in ["qwen3", "qwen3_vl", "qwen3_5"] {
+            for field in ["dtype", "torch_dtype"] {
+                let json = format!(
+                    r#"{{"architectures":[],"model_type":"{model_type}","max_position_embeddings":512,"{field}":"bfloat16"}}"#
+                );
+                assert_eq!(from_config(&json, Some(DType::Auto)), DType::Bfloat16);
+                assert_eq!(from_config(&json, Some(DType::Float16)), DType::Float16);
+            }
         }
     }
 
