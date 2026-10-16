@@ -350,7 +350,7 @@ class Qwen35 final : public Model {
     rotary=static_cast<int64_t>(dim*real("rope_parameters.partial_rotary_factor",1.));
     for(const auto& p:{"model.language_model.","language_model.","model.",""})
       if(weights.count(std::string(p)+"embed_tokens.weight")) { prefix=p; break; }
-    if(cfg.integer("vision_config.depth",0)>0)visual=std::make_unique<Qwen3VL>(cfg,weights,device,cfg.string("_decision.kind")=="d3"?at::kBFloat16:at::kHalf,true);
+    if(cfg.integer("vision_config.depth",0)>0)visual=std::make_unique<Qwen3VL>(cfg,weights,device,dtype,true);
   }
   std::optional<TransientMemoryProfile> transient_memory_profile() const override {
     auto p=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
