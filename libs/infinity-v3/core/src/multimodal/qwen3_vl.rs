@@ -40,7 +40,9 @@ impl Default for MultimodalConfig {
             max_image_bytes: 20 * 1024 * 1024,
             max_decoded_pixels: 16_777_216,
             memory_budget_bytes: 512 * 1024 * 1024,
-            workers: 2,
+            workers: std::thread::available_parallelism()
+                .map(|cpus| cpus.get().min(8))
+                .unwrap_or(2),
             download_concurrency: 8,
             timeout: Duration::from_secs(30),
         }

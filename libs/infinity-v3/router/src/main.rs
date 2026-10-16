@@ -177,6 +177,11 @@ struct Args {
     #[clap(long, env = infinity_v3_config::infinity_env!("IMAGE_ALLOWED_HOSTS"), value_delimiter = ',')]
     image_allowed_hosts: Vec<String>,
 
+    /// CPU workers per model for image decoding, resizing and tokenization (1-32).
+    /// Defaults to the available CPU parallelism, capped at 8.
+    #[clap(long, env = infinity_v3_config::infinity_env!("IMAGE_WORKERS"), value_parser = optional_usize, value_delimiter = ';')]
+    image_workers: Vec<Optional<usize>>,
+
     /// Memory budget for encoded images, CPU processing and prepared image patches, in MiB.
     #[clap(
         long,
@@ -384,6 +389,13 @@ impl Args {
         )?;
         let backend = expand(&self.backend, count, "backend")?;
         let torch_device = expand(&self.torch_device, count, "torch-device")?;
+        let image_workers = expand_optional(&self.image_workers, count, "image-workers")?;
+        for workers in image_workers.iter().flatten() {
+            anyhow::ensure!(
+                (1..=32).contains(workers),
+                "image-workers must be between 1 and 32"
+            );
+        }
         let image_memory_budget_mib = expand(
             &self.image_memory_budget_mib,
             count,
@@ -449,6 +461,9 @@ impl Args {
                     torch_device: torch_device[i],
                     multimodal_config: infinity_v3_core::multimodal::MultimodalConfig {
                         allowed_image_hosts: self.image_allowed_hosts.clone(),
+                        workers: image_workers[i].unwrap_or_else(|| {
+                            infinity_v3_core::multimodal::MultimodalConfig::default().workers
+                        }),
                         memory_budget_bytes: image_memory_budget_mib[i]
                             .checked_mul(1024 * 1024)
                             .ok_or_else(|| anyhow::anyhow!("Image memory budget is too large"))?,
