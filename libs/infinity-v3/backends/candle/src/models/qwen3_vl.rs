@@ -18,8 +18,8 @@ pub struct Qwen3VlModel {
 
 impl Qwen3VlModel {
     pub fn load(vb: VarBuilder, config: serde_json::Value, model_type: ModelType) -> Result<Self> {
-        if vb.dtype() != DType::F16 {
-            candle::bail!("Qwen3-VL currently requires float16; bfloat16 parity is not validated");
+        if !matches!(vb.dtype(), DType::F16 | DType::BF16) {
+            candle::bail!("Qwen3-VL requires float16 or bfloat16");
         }
         if model_type != ModelType::Embedding(Pool::LastToken) {
             candle::bail!("Qwen3-VL embeddings require last-token pooling");
