@@ -440,8 +440,6 @@ Cached plans retain the reservation with their exact workspace
 allocation, including old generations. This cap does not include ATen-owned
 cuBLAS/cuDNN workspaces or temporary routed-MoE scratch.
 
-This estimate is a per-request tensor admission limit. It does not account for vendor workspace internals, allocator rounding or reserved memory, model weights, graph pools retained from earlier requests, or simultaneous requests on the same device. Those require separate available-memory and concurrency admission; this setting alone is not a guarantee against OOM.
-
 Builds can change the application environment-variable base using
 [`ENV_VAR_BASE`](build-configuration.md), including Docker build arguments.
 

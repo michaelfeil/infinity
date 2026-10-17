@@ -309,6 +309,18 @@ struct Encoder final : Model {
     fused.resize(layers);
     for (int64_t i = 0; i < layers; ++i) {
       const auto p = layer_name(i);
+      const auto every = o.integer("moe_every_n_layers",0);
+      if (family==Family::Nomic && every>0 && i%every==1) {
+        const auto experts=o.integer("num_experts",0), inner=o.integer("n_inner",0);
+        TORCH_CHECK(experts>0 && inner>0,"Invalid Nomic expert count/width");
+        // Validate the reshape used by nomic_moe() at load time. Division
+        // checks avoid overflowing an experts * inner * hidden product.
+        for (const auto& name : {p+"mlp.experts.mlp.w1",p+"mlp.experts.mlp.w2"}) {
+          const auto elements=w(name).numel();
+          TORCH_CHECK(elements%experts==0 && (elements/experts)%hidden==0 &&
+            elements/experts/hidden==inner,"Invalid Nomic expert tensor dimensions: ",prefix,name);
+        }
+      }
       if (exact_cpu_half) {
         // Eligible 22-layer H768/I1152 profiles retain 420.75MiB of owned Float
         // slices; original Half weights and uncached fallback remain intact.
