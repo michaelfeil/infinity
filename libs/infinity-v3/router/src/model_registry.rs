@@ -1,6 +1,6 @@
 //! Resident models selected by their public served names.
 use crate::{ModelRuntime, ModelSettings};
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -59,13 +59,10 @@ pub(crate) fn validate_configs(configs: &[ModelSettings]) -> Result<()> {
             "Model {name}: device-id conflicts with backend-device-ids"
         );
         use infinity_v3_backend::{BackendKind, TorchDevice};
-        ensure!(
-            match config.backend_kind {
-                BackendKind::Candle => cfg!(feature = "candle"),
-                BackendKind::Libtorch => cfg!(feature = "libtorch"),
-            },
-            "Model {name}: requested backend was not compiled"
-        );
+        config
+            .backend_kind
+            .ensure_compiled()
+            .with_context(|| format!("Model {name}"))?;
         let torch = config.backend_kind.resolve_device(config.torch_device)?;
         if configs.len() > 1 && config.backend_kind.supports_replication(torch) {
             ensure!(config.device_id.is_some() || config.backend_device_ids.is_some(), "Model {name}: multi-model CUDA deployments require explicit device-id or backend-device-ids");

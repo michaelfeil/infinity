@@ -21,6 +21,13 @@ Use a local model directory or a compatible Hugging Face model ID. Model
 availability, access credentials, pooling and supported inputs depend on the
 checkpoint and selected backend.
 
+The backend is normally determined when the binary or container image is built,
+so most deployments should omit `--backend`. A single-backend build selects its
+compiled backend automatically. Builds containing both retain Candle as the
+default; use `--backend libtorch` (or `INFINITY_BACKEND=libtorch`) as an advanced
+override in those builds. The flag cannot enable a backend missing from the
+image; startup errors list the compiled choices.
+
 Open `/docs` on the running server for interactive API documentation. The API
 schema is available at `/api-doc/openapi.json`.
 
@@ -30,7 +37,7 @@ schema is available at `/api-doc/openapi.json`.
 768-dimensional CLS embeddings with a 32,768-token context:
 
 ```sh
-infinity_v3 --backend candle --model-id dmis-lab/UltraBERT-Embed-150M \
+infinity_v3 --model-id dmis-lab/UltraBERT-Embed-150M \
   --max-batch-tokens 32768
 ```
 

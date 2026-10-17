@@ -41,15 +41,55 @@ impl<T> Submission<T> {
 use infinity_v3_backend_candle::CandleBackend;
 
 /// Select an inference runtime explicitly when more than one is compiled.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum BackendKind {
-    #[default]
     Candle,
     Libtorch,
 }
 
+impl Default for BackendKind {
+    fn default() -> Self {
+        // Preserve Candle's default in dual-backend builds.
+        if cfg!(feature = "libtorch") && !cfg!(feature = "candle") {
+            Self::Libtorch
+        } else {
+            Self::Candle
+        }
+    }
+}
+
 impl BackendKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Candle => "candle",
+            Self::Libtorch => "libtorch",
+        }
+    }
+
+    pub const fn is_compiled(self) -> bool {
+        match self {
+            Self::Candle => cfg!(feature = "candle"),
+            Self::Libtorch => cfg!(feature = "libtorch"),
+        }
+    }
+
+    pub fn ensure_compiled(self) -> Result<(), BackendError> {
+        if self.is_compiled() {
+            return Ok(());
+        }
+        let available = [Self::Candle, Self::Libtorch]
+            .into_iter()
+            .filter(|kind| kind.is_compiled())
+            .map(Self::as_str)
+            .collect::<Vec<_>>();
+        Err(BackendError::Start(format!(
+            "Requested backend '{}' was not compiled into this binary; compiled backends: {}. Use an image/build containing the requested backend or omit --backend to use the build default.",
+            self.as_str(),
+            if available.is_empty() { "none".into() } else { available.join(", ") }
+        )))
+    }
+
     /// Resolve accelerator selection once before choosing dtype or replica devices.
     pub fn resolve_device(self, torch: TorchDevice) -> Result<TorchDevice, BackendError> {
         match self {
@@ -189,7 +229,7 @@ impl Backend {
             dense_path,
             device_id,
             enable_fp8_dynamic,
-            BackendKind::Candle,
+            BackendKind::default(),
             TorchDevice::Auto,
         )
         .await
@@ -207,10 +247,11 @@ impl Backend {
         kind: BackendKind,
         torch_device: TorchDevice,
     ) -> Result<Self, BackendError> {
+        kind.ensure_compiled()?;
         if kind == BackendKind::Candle {
             tracing::warn!(
                 model = %model_path.display(),
-                "Candle backend is deprecated; use --backend libtorch for supported models"
+                "Candle backend is deprecated; use a LibTorch build/image for supported models"
             );
         }
         let (backend_sender, backend_receiver) = mpsc::channel(8);
@@ -1073,6 +1114,41 @@ pub fn visible_cuda_device_count() -> Result<usize, BackendError> {
         Err(BackendError::Start(
             "GPU replicas require the Candle CUDA backend".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod backend_selection_tests {
+    use super::*;
+
+    #[test]
+    fn default_uses_compiled_backend() {
+        let default = BackendKind::default();
+        match (cfg!(feature = "candle"), cfg!(feature = "libtorch")) {
+            (true, _) => assert_eq!(default, BackendKind::Candle),
+            (false, true) => assert_eq!(default, BackendKind::Libtorch),
+            (false, false) => assert!(default.ensure_compiled().is_err()),
+        }
+    }
+
+    #[test]
+    fn unavailable_backend_reports_compiled_choices() {
+        for kind in [BackendKind::Candle, BackendKind::Libtorch] {
+            let result = kind.ensure_compiled();
+            if kind.is_compiled() {
+                assert!(result.is_ok());
+            } else {
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains(&format!("Requested backend '{}'", kind.as_str())));
+                let choices = match (cfg!(feature = "candle"), cfg!(feature = "libtorch")) {
+                    (true, true) => "candle, libtorch",
+                    (true, false) => "candle",
+                    (false, true) => "libtorch",
+                    (false, false) => "none",
+                };
+                assert!(error.contains(&format!("compiled backends: {choices}.")));
+            }
+        }
     }
 }
 

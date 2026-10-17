@@ -7,8 +7,11 @@ It serves hidden-state embeddings through Infinity's embedding APIs. This is an
 instruction checkpoint, not a trained embedding checkpoint; no autoregressive
 chat-completion or document-generation endpoint is added.
 
+Use a LibTorch-only build/image for this example. If both backends are compiled,
+add `--backend libtorch`.
+
 ```sh
-infinity_v3 --backend libtorch \
+infinity_v3 \
   --model-id mistralai/Ministral-3-3B-Instruct-2512-BF16 \
   --dtype bfloat16 --pooling last-token \
   --max-batch-tokens 8192 --auto-truncate
