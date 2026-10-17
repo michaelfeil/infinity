@@ -1,7 +1,8 @@
 # Experimental native LibTorch backend
 
-Candle is deprecated. Use `--backend libtorch` or `INFINITY_BACKEND=libtorch`
-for models supported here, with a build that includes the `libtorch` feature.
+Candle is deprecated. Use a build/image containing LibTorch for models supported
+here. Builds containing LibTorch select it automatically, including builds
+containing both backends; no `--backend` flag is needed.
 
 LibTorch 2.14.1 runs alongside Candle as an optional inference runtime. Rust owns
 model configuration, checkpoint loading, batch validation and infinity_v3 integration;
@@ -114,11 +115,11 @@ requires CMake 3.25 or newer and a C++20 compiler. CUDA distributions require a 
 export LIBTORCH=/opt/libtorch
 export LD_LIBRARY_PATH="$LIBTORCH/lib:${LD_LIBRARY_PATH:-}"
 
-# Compile both backends; Candle remains the default.
-cargo build --release -p infinity_v3-router --features libtorch
+# Compile a LibTorch-only server; the backend is selected automatically.
+cargo build --release -p infinity_v3-router --no-default-features --features libtorch,http
 
 target/release/infinity_v3 \
-  --backend libtorch --torch-device cuda --dtype float16 \
+  --torch-device cuda --dtype float16 \
   --model-id /path/to/bert-model --pooling mean \
   --backend-device-ids 0,1
 ```
@@ -130,9 +131,10 @@ for one GPU or omit device selection to use all visible CUDA devices.
 is available, otherwise CPU. Other accelerator families are not implemented yet.
 
 For CPU, use `--torch-device cpu --dtype float32` and omit replica selection.
-To build without Candle, replace build features with
-`--no-default-features --features libtorch,http`, and select `--backend libtorch`
-when starting the server. Existing Candle builds do not require LibTorch.
+To compile both backends instead, use `--features libtorch` without
+`--no-default-features`. Those builds also default to LibTorch; use
+`--backend candle` only when a model needs Candle. Existing Candle-only builds
+do not require LibTorch.
 
 CUDA builds default to a multi-architecture native library targeting SM80,
 SM86, SM89, SM90, SM100, and SM120. SM75 is outside the supported baseline.
@@ -493,7 +495,7 @@ This enables bidirectional attention inside the complete shared prefix and insid
 each question suffix. Prefix tokens cannot attend to a suffix. Gated DeltaNet
 layers remain causal.
 
-Serve a local checkpoint with `--backend libtorch --dtype bfloat16
+Serve a local checkpoint in a LibTorch build/image with `--dtype bfloat16
 --decision-protocol onejev --model-id /path/to/checkpoint`. The `/v1/systemone`
 request and answer-letter scoring format are unchanged. Attention and readout
 metadata are loaded exclusively from `baseten_modeling_overrides`.

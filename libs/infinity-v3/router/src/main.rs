@@ -140,12 +140,14 @@ struct Args {
     )]
     dtype: Vec<DType>,
 
-    /// Inference runtime (requires the matching Cargo feature). Candle is deprecated; use libtorch for supported models.
+    /// Advanced backend override; normally determined by the build/image.
+    /// Runtime selection is rarely needed; single-backend builds select it automatically.
+    /// When both are compiled, defaults to LibTorch. This flag cannot enable an uncompiled backend.
     #[clap(
         long,
         env = infinity_v3_config::infinity_env!("BACKEND"),
         value_enum,
-        default_value = "candle",
+        default_value = infinity_v3_backend::BackendKind::default().as_str(),
         value_delimiter = ';'
     )]
     backend: Vec<infinity_v3_backend::BackendKind>,
@@ -636,6 +638,50 @@ mod tests {
             Args::try_parse_from(["infinity_v3", "--model-id", "a;b;c", "--device-id", "0;1"])
                 .unwrap();
         assert!(mismatch.models().is_err());
+        // The build default applies to every model; per-model overrides remain available.
+        let backend_env = infinity_v3_config::infinity_env!("BACKEND");
+        let previous_backend = std::env::var_os(backend_env);
+        std::env::remove_var(backend_env);
+        let models = Args::try_parse_from(["infinity_v3", "--model-id", "a;b"])
+            .unwrap()
+            .models()
+            .unwrap();
+        let expected = if cfg!(feature = "libtorch") {
+            infinity_v3_backend::BackendKind::Libtorch
+        } else {
+            infinity_v3_backend::BackendKind::Candle
+        };
+        assert!(models.iter().all(|m| m.backend_kind == expected));
+        let models = Args::try_parse_from([
+            "infinity_v3",
+            "--model-id",
+            "a;b",
+            "--backend",
+            "libtorch;candle",
+        ])
+        .unwrap()
+        .models()
+        .unwrap();
+        assert_eq!(
+            models[0].backend_kind,
+            infinity_v3_backend::BackendKind::Libtorch
+        );
+        assert_eq!(
+            models[1].backend_kind,
+            infinity_v3_backend::BackendKind::Candle
+        );
+        std::env::set_var(backend_env, "libtorch");
+        let models = Args::try_parse_from(["infinity_v3", "--model-id", "a;b"])
+            .unwrap()
+            .models()
+            .unwrap();
+        assert!(models
+            .iter()
+            .all(|m| m.backend_kind == infinity_v3_backend::BackendKind::Libtorch));
+        match previous_backend {
+            Some(value) => std::env::set_var(backend_env, value),
+            None => std::env::remove_var(backend_env),
+        }
         // Verify that help and environment parsing use the same compiled names.
         let help = Args::command().render_long_help().to_string();
         assert!(help.contains(infinity_v3_config::infinity_env!("MODEL_ID")));
