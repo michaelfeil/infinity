@@ -4,6 +4,7 @@
 #include "kernels/qwen35_kernels.h"
 #include "kernels/gemma2_norm.h"
 #include "kernels/qwen35_recurrent.h"
+#include "batching/prefix_cache.h"
 #include "kernels/qwen35_chunk.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -687,7 +688,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
   const at::Tensor& dt_bias, const at::Tensor& norm, const PackedInput& input,
   int64_t key_heads, int64_t value_heads, double epsilon,
   const at::Tensor& initial, at::Tensor* final_state, const at::Tensor& history,
-  const at::Tensor& history_cumulative,bool chunk_prefill) {
+  const at::Tensor& history_cumulative,bool chunk_prefill,int64_t cache_layer) {
   c10::cuda::CUDAGuard guard(qkv.device());
   TORCH_CHECK(qkv.scalar_type()==at::kBFloat16 && z.scalar_type()==at::kBFloat16 &&
     ab.scalar_type()==at::kBFloat16 && conv.scalar_type()==at::kBFloat16 &&
@@ -708,7 +709,9 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
   auto bf=[](const at::Tensor& t) { return reinterpret_cast<const __nv_bfloat16*>(t.const_data_ptr()); };
   auto mut=[](at::Tensor& t) { return reinterpret_cast<__nv_bfloat16*>(t.mutable_data_ptr()); };
   auto cu=reinterpret_cast<const uint32_t*>(input.cumulative.const_data_ptr<int32_t>());
-  if(history.defined()) {
+  auto cached=prefix_recurrent(input,qkv,cache_layer,value_heads,conv.size(-1));
+  if(input.prefix)qwen35_cached_conv_cuda(qkv,conv,input,cached.history,cached.history_lengths,convolution,true);
+  else if(history.defined()) {
     TORCH_CHECK(history.device()==qkv.device()&&history.scalar_type()==qkv.scalar_type()&&history.is_contiguous()&&history.dim()==2&&history.size(1)==channels&&
       history_cumulative.device()==qkv.device()&&history_cumulative.scalar_type()==at::kInt&&history_cumulative.is_contiguous()&&
       history_cumulative.dim()==1&&history_cumulative.numel()>1&&input.block_prefix_sources.size()==size_t(input.batch)&&
@@ -725,7 +728,9 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
   }
   // Prefill benefits from chunk-parallel work; short question suffixes keep the
   // register-resident recurrent path. Both consume/produce the same FP32 state.
-  if(chunk_prefill&&input.max_sequence>=256) {
+  if(input.prefix)qwen35_cached_recurrent_cuda(convolution,qk,decay,input,recurrence,key_heads,value_heads,true,
+    cached.initial_sources,cached.checkpoint_positions,cached.checkpoint_rows,cached.checkpoints);
+  else if(chunk_prefill&&input.max_sequence>=256) {
     qwen35_chunk_delta_cuda(convolution,qk,decay,input,recurrence,key_heads,value_heads,initial,final_state);
   } else if(initial.defined()||final_state) {
     if(final_state)*final_state=at::empty({input.batch,value_heads,128,128},qkv.options().dtype(at::kFloat));
@@ -740,6 +745,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
   }
   qwen35_gdn_norm<<<tokens*value_heads,128,0,stream>>>(bf(recurrence),bf(z),bf(norm),mut(output),epsilon);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
+  if(input.prefix)prefix_recurrent_commit(input,qkv,cache_layer,conv.size(-1),cached);
   return output.view({tokens,value_heads*128});
 }
 }

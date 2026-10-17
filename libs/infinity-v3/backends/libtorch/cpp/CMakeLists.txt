@@ -51,6 +51,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(helpers/modern_cpu_math.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 endif()
 target_compile_features(tei_torch PRIVATE cxx_std_20)
+target_sources(tei_torch PRIVATE batching/prefix_cache.cpp)
+target_sources(tei_torch PRIVATE batching/prefix_lookup.cpp)
+target_sources(tei_torch PRIVATE helpers/prefix_linear.cpp)
 target_include_directories(tei_torch PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 target_link_libraries(tei_torch PRIVATE "${TORCH_LIBRARIES}")
@@ -60,6 +63,8 @@ install(TARGETS tei_torch LIBRARY DESTINATION lib RUNTIME DESTINATION bin)
 install(FILES ../../../LICENSE ../../../NOTICE ../../../LICENSING.md
   ../../../THIRD_PARTY_NOTICES.md DESTINATION share/licenses/tei_torch)
 install(DIRECTORY ../../../LICENSES/ DESTINATION share/licenses/tei_torch/LICENSES)
+install(FILES vendor/xxhash/LICENSE vendor/xxhash/provenance.json
+  DESTINATION share/licenses/tei_torch/xxhash)
 
 install(DIRECTORY vendor/transformers_pixtral DESTINATION share/licenses/tei_torch)
 
@@ -74,11 +79,13 @@ if(TARGET torch_cuda)
   set_source_files_properties(kernels/decoder_half_moe.cu PROPERTIES
     COMPILE_OPTIONS "--ftz=false;--prec-div=true;--prec-sqrt=true;--expt-relaxed-constexpr")
   target_sources(tei_torch PRIVATE kernels/gemma_score.cu)
+  target_sources(tei_torch PRIVATE kernels/prefix_state_copy.cu)
+  target_sources(tei_torch PRIVATE kernels/prefix_input.cu)
   set_source_files_properties(kernels/gemma_score.cu PROPERTIES
     COMPILE_OPTIONS "--fmad=false;--prec-div=true;--prec-sqrt=true;--expt-relaxed-constexpr")
   target_sources(tei_torch PRIVATE kernels/radix_qkv.cu kernels/qwen35_vision.cu kernels/qwen35_reference.cu kernels/qwen35_recurrent.cu kernels/qwen35_kernels.cu kernels/fast_kernels.cu kernels/fp8_quant.cu kernels/encoder_activation.cu kernels/encoder_bias.cu kernels/encoder_norm.cu kernels/distil_embedding.cu kernels/decoder_norm.cu kernels/decoder_packed_readout.cu kernels/packed_pool.cu
     kernels/torch_flash_alibi64.cpp kernels/torch_flash_alibi64.cu
-    kernels/torch_flash_fma.cpp kernels/torch_flash_fma_32.cu kernels/torch_flash_fma_64.cu kernels/torch_flash_fma_72.cu kernels/torch_flash_fma_128.cu kernels/torch_flash_fma_256.cu kernels/torch_flash_fma_512.cu)
+    kernels/torch_flash_fma.cpp kernels/torch_flash_fma_32.cu kernels/torch_flash_fma_64.cu kernels/torch_flash_fma_72.cu kernels/torch_flash_fma_128.cu kernels/torch_flash_fma_256.cu kernels/torch_flash_fma_512.cu kernels/torch_flash_unfused.cu)
   # Match independently verified core LayerNorm/softmax: default FMA and
   # precise exp/division, without --use_fast_math.
   set_source_files_properties(kernels/qwen35_vision.cu PROPERTIES COMPILE_OPTIONS "--fmad=true;--prec-div=true;--prec-sqrt=true")
@@ -98,6 +105,11 @@ if(TARGET torch_cuda)
   set_source_files_properties(kernels/torch_flash_fma_64.cu kernels/torch_flash_fma_128.cu kernels/torch_flash_fma_256.cu kernels/torch_flash_fma_512.cu
     PROPERTIES COMPILE_OPTIONS "--use_fast_math;--expt-relaxed-constexpr;--expt-extended-lambda"
     COMPILE_DEFINITIONS "FLASHATTENTION_DISABLE_DROPOUT;FLASHATTENTION_DISABLE_BACKWARD;FLASHATTENTION_DISABLE_ALIBI;FLASHATTENTION_DISABLE_SOFTCAP;FLASHATTENTION_DISABLE_UNEVEN_K")
+  # Keep Torch's default UNFUSE_FMA softmax in a distinct namespace for head64/128
+  # prefix suffixes. The existing fused specializations keep their arithmetic.
+  set_source_files_properties(kernels/torch_flash_unfused.cu PROPERTIES
+    COMPILE_OPTIONS "--use_fast_math;--expt-relaxed-constexpr;--expt-extended-lambda"
+    COMPILE_DEFINITIONS "UNFUSE_FMA;FLASHATTENTION_DISABLE_DROPOUT;FLASHATTENTION_DISABLE_BACKWARD;FLASHATTENTION_DISABLE_ALIBI;FLASHATTENTION_DISABLE_SOFTCAP;FLASHATTENTION_DISABLE_UNEVEN_K")
   # Head72 uses internal traits96 with true-dimension bounds; uneven-K masking
   # must remain enabled rather than exposing synthetic head columns.
   set_source_files_properties(kernels/torch_flash_fma_72.cu
@@ -160,7 +172,7 @@ option(INFINITY_BUILD_NATIVE_TESTS "Build native packed model regression tests" 
 option(INFINITY_RUN_CUDA_TESTS "Register native tests requiring a CUDA GPU" OFF)
 if(INFINITY_BUILD_NATIVE_TESTS)
   enable_testing()
-  foreach(test radix decoder_models decision_models dense_models encoder_models gemma_models qwen35_models qwen3_vl_models)
+  foreach(test radix prefix_lookup decoder_models decision_models dense_models encoder_models gemma_models qwen35_models qwen3_vl_models)
     add_executable(${test}_test tests/${test}_test.cpp)
     target_compile_features(${test}_test PRIVATE cxx_std_20)
     target_link_libraries(${test}_test PRIVATE tei_torch "${TORCH_LIBRARIES}")
@@ -170,6 +182,8 @@ if(INFINITY_BUILD_NATIVE_TESTS)
     # Match the private cache header layout even when CUDA test registration is
     # disabled: CPU fixtures can still link against a CUDA-enabled library.
     target_compile_definitions(gemma_models_test PRIVATE TEI_TORCH_CUDA_KERNELS)
+    target_compile_definitions(decoder_models_test PRIVATE TEI_TORCH_CUDA_KERNELS)
+    target_link_libraries(decoder_models_test PRIVATE CUDA::cudart)
     target_compile_definitions(qwen3_vl_models_test PRIVATE TEI_TORCH_CUDA_KERNELS)
     target_compile_definitions(qwen35_models_test PRIVATE TEI_TORCH_CUDA_KERNELS)
   endif()
@@ -193,7 +207,7 @@ if(INFINITY_BUILD_NATIVE_TESTS)
       ENVIRONMENT "TORCH_BLAS_PREFER_CUBLASLT=1;CUBLASLT_WORKSPACE_SIZE=32768")
     target_link_libraries(decoder_norm_test PRIVATE CUDA::cublasLt)
     target_link_libraries(bert_private_flash_test PRIVATE CUDA::cublasLt)
-    foreach(test encoder_models gemma_models qwen35_models qwen3_vl_models)
+    foreach(test decoder_models encoder_models gemma_models qwen35_models qwen3_vl_models)
       add_test(NAME ${test}_cuda COMMAND ${test}_test cuda:0)
     endforeach()
   endif()

@@ -2413,6 +2413,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "tracing",
  "zip 8.6.0",
 ]
 

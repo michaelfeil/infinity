@@ -41,6 +41,7 @@ class RequestImageUploads {
  }
 };
 
+struct PrefixContext;
 struct ImageInput {
   at::Tensor pixels;
   std::array<int64_t,3> grid_thw;
@@ -99,5 +100,13 @@ struct PackedInput {
   std::vector<int64_t> block_prefix_lengths{}, block_prefix_sources{};
   // Packed suffix rows select immutable prefix KV/recurrent/conv snapshots.
   at::Tensor block_cache_sources{};
+  // Execution-only state; original logical request metadata lives in the context.
+  PrefixContext* prefix=nullptr;
+  // Borrowed full-input host views, valid for this native submission only.
+  // Prefix identity must not copy token metadata back from the device.
+  at::Tensor host_ids{}, host_types{}, host_positions{}, host_multimodal_positions{}, host_scatter_unfold{};
+  // Read-only full-forward observation during graph capture. This does not
+  // select suffix execution or change the model's projection/attention recipe.
+  PrefixContext* capture_prefix=nullptr;
 };
 }

@@ -24,6 +24,9 @@ class Qwen3VL final : public Model {
   Qwen3VL(const Options& options,Weights& weights,c10::Device dev,at::ScalarType type,bool only_vision=false);
   void ready() override;
   bool supports_images() const override;
+  bool supports_prefix_cache(int operation) const override;
+  int64_t prefix_layers() const override;
+  uint64_t prefix_payload_bytes(int64_t tokens) const override;
   at::Tensor image_features(const ImageInput& image) const;
   int64_t output_width() const override;
   at::Tensor forward(const PackedInput& input) const override;

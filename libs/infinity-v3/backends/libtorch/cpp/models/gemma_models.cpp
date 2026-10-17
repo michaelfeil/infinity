@@ -7,6 +7,8 @@
 #include "helpers/workspace_admission.h"
 #include "helpers/vendor_error.h"
 #include "batching/radix.h"
+#include "batching/prefix_cache.h"
+#include "helpers/prefix_linear.h"
 #include "models/decoder_models.h"
 #include "kernels/qwen35_kernels.h"
 #include "kernels/gemma2_norm.h"
@@ -83,9 +85,24 @@ class Gemma final : public Model {
   mutable std::shared_ptr<WorkspaceMemoryPermit> radix_linear_memory_permit;
   mutable at::Tensor radix_linear_workspace;
 #endif
+  at::Tensor prefix_projection(const at::Tensor& x,const std::string& name,const PackedInput& input) const {
+    // Keep the original projection recipe when a cache hit leaves only suffix rows.
+    // Cold capture and unsupported recipes retain their original operator.
+    return input.prefix?prefix_linear(x,w(name+".weight"),has(name+".bias")?w(name+".bias"):at::Tensor(),input):linear(x,name);
+  }
   at::Tensor linear_radix_projection(const at::Tensor& x,const std::string& name,const PackedInput& packed,const at::Tensor& supplied=at::Tensor{}) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     const auto& matrix=supplied.defined()?supplied:w(name+".weight");
+    // Cached Gemma4 routers retain the original FP32 reduction geometry. Cold
+    // execution still uses its original operator and BLAS provider; warm plans
+    // use ATen's stream-owned scratch rather than a model-owned workspace.
+    if(packed.prefix&&packed.prefix->linear&&supplied.defined()&&!legacy&&!embedding2
+      &&boolean("enable_moe_block",false)&&device.is_cuda()&&dtype==at::kBFloat16
+      &&hidden==2816&&heads==16&&x.dim()==2&&matrix.dim()==2
+      &&x.scalar_type()==at::kFloat&&matrix.scalar_type()==at::kFloat
+      &&x.size(1)==2816&&matrix.sizes()==at::IntArrayRef({128,2816})
+      &&std::any_of(packed.prefix->hits.begin(),packed.prefix->hits.end(),[](auto hit){return hit!=0;}))
+      return packed.prefix->linear->forward(x,matrix,{},prefix_logical_input(packed).ids.numel(),true);
     const bool fp32_router=supplied.defined() && x.scalar_type()==at::kFloat && matrix.scalar_type()==at::kFloat &&
       !at::globalContext().allowTF32CuBLAS() && at::globalContext().blasPreferredBackend()==at::BlasBackend::Cublaslt;
     if(!legacy && !embedding2 && boolean("enable_moe_block",false) &&
@@ -102,7 +119,7 @@ class Gemma final : public Model {
       if(property->major==9 && property->minor==0 &&
          reinterpret_cast<uintptr_t>(x.const_data_ptr())%256==0 &&
          reinterpret_cast<uintptr_t>(matrix.const_data_ptr())%256==0) {
-        const auto m=x.size(0),full_m=packed.ids.numel(),k=x.size(1),n=matrix.size(0);
+        const auto m=x.size(0),full_m=prefix_logical_input(packed).ids.numel(),k=x.size(1),n=matrix.size(0);
         const auto limit=at::cuda::getCUDABlasLtWorkspaceSize();
         const RadixLinearKey key{{device.index(),full_m,m,k,n,x.stride(0),x.stride(1),matrix.stride(0),matrix.stride(1),n,1,static_cast<int64_t>(x.scalar_type()),static_cast<int64_t>(matrix.scalar_type()),static_cast<int64_t>(x.scalar_type()),static_cast<int64_t>(limit)}};
         auto found=radix_linear_plans.find(key);
@@ -171,7 +188,7 @@ class Gemma final : public Model {
     if(supplied.defined())return radix_fold(at::linear(radix_unfold(x,packed),supplied),packed);
     if(!legacy && !embedding2 && boolean("enable_moe_block",false) && dtype==at::kBFloat16 && hidden==2816 && heads==16)
       return radix_fold(linear(radix_unfold(x,packed),name),packed);
-    return linear(x,name);
+    return prefix_projection(x,name,packed);
   }
   at::Tensor moe(const at::Tensor& residual,const at::Tensor& dense,const std::string& p,const PackedInput& packed) const {
     auto input=norm(residual,p+"pre_feedforward_layernorm_2");
@@ -182,7 +199,7 @@ class Gemma final : public Model {
     // computing only actual compact router rows. Unsupported plans retain
     // the original logical-row ATen projection through the helper fallback.
     const auto& router_matrix=weight(router_f32,prefix+p+"router.proj.weight");
-    auto logits=radix_enabled(packed)
+    auto logits=radix_enabled(packed)||packed.prefix
       ?linear_radix_projection(routing,p+"router.proj",packed,router_matrix)
       :at::linear(routing,router_matrix);
     auto count=integer("num_experts",0),top=integer("top_k_experts",8);
@@ -520,11 +537,48 @@ class Gemma final : public Model {
     return at::cat({a * cos - b * sin, b * cos + a * sin}, -1).to(x.scalar_type());
   }
   at::Tensor attention(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v,
-                       const PackedInput& input, const Layer& layer, bool use_causal) const {
+                       const PackedInput& input, const Layer& layer, bool use_causal,int64_t cache_layer=-1) const {
     const bool causal=use_causal;
     auto left = layer.sliding ? (causal ? layer.window - 1 : layer.window / 2) : -1;
     auto right = layer.sliding ? (causal ? 0 : layer.window / 2) : -1;
     auto scale = legacy ? 1.0 / std::sqrt(real("query_pre_attn_scalar", layer.dim)) : 1.0;
+    if(input.capture_prefix&&!layer.shared)prefix_capture_attention(input,cache_layer,k,v);
+    if(input.prefix) {
+      TORCH_CHECK(causal,"Noncausal Gemma cannot reuse prefix state");
+      auto output=prefix_attention(q,k,v,input,cache_layer,scale,left,right,true,!layer.shared);
+      if(causal&&layer.sliding&&!input.images.empty()) {
+        auto kv=input.prefix->attention(cache_layer,k,v,false);
+        for(const auto& image:input.images) {
+          auto it=std::upper_bound(input.offsets,input.offsets+input.batch+1,image.token_start);
+          auto row=it-input.offsets-1,relative=image.token_start-input.offsets[row]+input.prefix->hits[row];
+          auto start=std::max<int64_t>(0,relative-(layer.window-1));
+          auto count=relative+image.token_count-start;
+          auto iq=q.narrow(0,image.token_start,image.token_count);
+          auto ik=kv.key.narrow(0,input.prefix->original.offsets[row]+start,count);
+          auto iv=kv.value.narrow(0,input.prefix->original.offsets[row]+start,count);
+          at::Tensor correction;
+          if(q.is_cuda()) {
+            auto cuq=at::tensor(std::vector<int32_t>{0,int32_t(image.token_count)},input.cumulative.options());
+            auto cuk=at::tensor(std::vector<int32_t>{0,int32_t(count)},input.cumulative.options());
+#ifdef TEI_TORCH_CUDA_KERNELS
+            if(torch_flash_fma_supported(iq,ik,iv,false,layer.window-1,-1))
+              correction=torch_flash_fma_varlen(iq,ik,iv,cuq,cuk,image.token_count,count,scale,false,layer.window-1,-1);
+            else
+#endif
+              correction=std::get<0>(at::_flash_attention_forward(iq,ik,iv,cuq,cuk,image.token_count,count,0.,false,false,scale,layer.window-1,-1));
+          } else {
+            auto heads=iq.size(1)/ik.size(1);
+            auto ki=at::arange(count,iq.options().dtype(at::kLong));
+            auto qi=at::arange(image.token_count,iq.options().dtype(at::kLong))+(count-image.token_count);
+            auto mask=(qi.unsqueeze(1)-ki.unsqueeze(0))<=layer.window-1;
+            correction=at::scaled_dot_product_attention(iq.transpose(0,1).unsqueeze(0),ik.repeat_interleave(heads,1).transpose(0,1).unsqueeze(0),
+              iv.repeat_interleave(heads,1).transpose(0,1).unsqueeze(0),mask,0.,false,scale).squeeze(0).transpose(0,1);
+          }
+          output.narrow(0,image.token_start,image.token_count).copy_(correction);
+        }
+      }
+      return output;
+    }
     if (device.is_cuda()) {
 #ifdef TEI_TORCH_CUDA_KERNELS
       if(layer.dim>256 && torch_flash_fma_supported(q,k,v,causal,left,right))
@@ -688,6 +742,14 @@ class Gemma final : public Model {
   }
   bool supports_images() const override { return !legacy && cfg.integer("vision_config.num_hidden_layers",0)>0; }
   bool supports_audio() const override { return embedding2 && cfg.integer("audio_config.hidden_size",0)>0; }
+  int64_t prefix_layers() const override {return legacy?layers:layers-integer("num_kv_shared_layers",0);}
+  uint64_t prefix_payload_bytes(int64_t tokens) const override {
+    auto bytes=prefix_storage_bytes(tokens,hidden,w("embed_tokens.weight").element_size());
+    for(const auto& layer:stack)if(!layer.shared)
+      bytes=prefix_storage_sum(bytes,prefix_storage_bytes(tokens,2*layer.kv*layer.dim,w("embed_tokens.weight").element_size()));
+    return bytes;
+  }
+  bool supports_prefix_cache(int operation) const override {return !embedding2&&operation!=2&&(operation==1?classification_width()>0:causal);}
   int64_t output_width() const override { return embedding2 ? integer("embedding_dim", hidden) : hidden; }
   int64_t classification_width() const override {
     auto score=weights.find("score.weight");
@@ -848,7 +910,10 @@ class Gemma final : public Model {
   at::Tensor predict(const PackedInput& input,bool tokens) const override {
     TORCH_CHECK(classification_width()>0,"Gemma classifier score head is missing");
     TORCH_CHECK(!tokens,"Gemma4 classifier supports sequence logits only");
-    auto states=forward_impl(input,true);
+    return classify_hidden(input,forward_impl(input,true));
+  }
+  at::Tensor classify_hidden(const PackedInput& input,const at::Tensor& states) const override {
+    const auto& logical=prefix_logical_input(input);
     if(publisher_sequence) {
       // The declared publisher scores every logical token before readout.
       // Selecting hidden states first changes the BF16 GEMM rounding, including
@@ -859,8 +924,8 @@ class Gemma final : public Model {
       const bool capped=cfg.values.count(key("final_logit_softcapping"));
 #ifdef TEI_TORCH_CUDA_KERNELS
       if(logits.is_cuda()&&logits.scalar_type()==at::kBFloat16&&logits.is_contiguous()
-         &&input.cumulative.scalar_type()==at::kInt&&input.cumulative.is_contiguous())
-        return gemma4_bf16_sequence_score_readout(logits,input.cumulative,input.batch,cap,capped);
+         &&logical.cumulative.scalar_type()==at::kInt&&logical.cumulative.is_contiguous())
+        return gemma4_bf16_sequence_score_readout(logits,logical.cumulative,logical.batch,cap,capped);
 #endif
       if(capped) {
         logits=logits/cap;
@@ -868,11 +933,11 @@ class Gemma final : public Model {
         logits=logits*cap;
       }
       // Read current packed ends on the producing device, including graph replay.
-      auto ids=input.cumulative.narrow(0,1,input.batch).to(at::kLong)-1;
+      auto ids=logical.cumulative.narrow(0,1,logical.batch).to(at::kLong)-1;
       return logits.index_select(0,ids);
     }
     // An LM softcap alone does not specify a sequence score contract.
-    auto ids=input.cumulative.narrow(0,1,input.batch).to(at::kLong)-1;
+    auto ids=logical.cumulative.narrow(0,1,logical.batch).to(at::kLong)-1;
     return at::linear(states.index_select(0,ids),weight(weights,"score.weight"));
   }
   at::Tensor forward_impl(const PackedInput& input,bool is_causal) const {
@@ -929,6 +994,7 @@ class Gemma final : public Model {
     }
 
     std::array<std::pair<at::Tensor,at::Tensor>,2> shared;
+    std::array<int64_t,2> producers{-1,-1};
     // Request-local gathers reuse identical shared RoPE tables across layers.
     std::array<std::pair<at::Tensor,at::Tensor>,2> legacy_rotary;
     for (int64_t i = 0; i < layers; ++i) {
@@ -942,12 +1008,12 @@ class Gemma final : public Model {
         auto qkv = at::linear(normalized, layer.qkv, bias).view({tokens, heads + 2 * layer.kv, layer.dim});
         q = qkv.narrow(1, 0, heads); k = qkv.narrow(1, heads, layer.kv); v = qkv.narrow(1, heads + layer.kv, layer.kv);
       } else {
-        q = linear(normalized, p + "self_attn.q_proj").view({tokens, heads, layer.dim});
+        q = prefix_projection(normalized, p + "self_attn.q_proj",input).view({tokens, heads, layer.dim});
         if (!layer.shared) {
           k = (radix_enabled(input) && layer.dim==512 && layer.kv==2
             ? linear_radix_projection(normalized,p+"self_attn.k_proj",input)
-            : linear(normalized,p+"self_attn.k_proj")).view({tokens,layer.kv,layer.dim});
-          v = layer.k_equals_v ? k : linear(normalized, p + "self_attn.v_proj").view({tokens, layer.kv, layer.dim});
+            : prefix_projection(normalized,p+"self_attn.k_proj",input)).view({tokens,layer.kv,layer.dim});
+          v = layer.k_equals_v ? k : prefix_projection(normalized, p + "self_attn.v_proj",input).view({tokens, layer.kv, layer.dim});
         }
       }
       bool fused_qk_rotary=false;
@@ -998,13 +1064,13 @@ class Gemma final : public Model {
         if (!legacy) v = norm(v, "", true);
         auto full=radix_unfold_qkv(q,k,v,input);
         q=full[0];k=full[1];v=full[2];
-        if (layer.store) shared[layer.sliding] = {k,v};
+        if (layer.store) {shared[layer.sliding] = {k,v};producers[layer.sliding]=i;}
       }
 
-      auto output = radix_fold(attention(q, k, v, input, layer,is_causal),input)
+      auto output = radix_fold(attention(q, k, v, input, layer,is_causal,layer.shared?producers[layer.sliding]:i),input)
         .reshape({tokens, heads * layer.dim});
 
-      output=radix_enabled(input)?linear_radix_projection(output,p+"self_attn.o_proj",input):linear(output,p+"self_attn.o_proj");
+      output=radix_enabled(input)?linear_radix_projection(output,p+"self_attn.o_proj",input):prefix_projection(output,p+"self_attn.o_proj",input);
       bool fused_residual_prenorm=false;
 #ifdef TEI_TORCH_CUDA_KERNELS
       if(fused_legacy_residual) {
@@ -1022,8 +1088,8 @@ class Gemma final : public Model {
         normalized = norm(states, p + "pre_feedforward_layernorm");
       }
 
-      auto gu=ordinary_ffn ? ordinary_ffn->forward(normalized,layer.gate_up,ordinary_session) : at::Tensor();
-      if(!gu.defined())gu=at::linear(normalized,layer.gate_up);
+      auto gu=!input.prefix && ordinary_ffn ? ordinary_ffn->forward(normalized,layer.gate_up,ordinary_session) : at::Tensor();
+      if(!gu.defined())gu=prefix_linear(normalized,layer.gate_up,{},input);
       auto width = gu.size(-1) / 2;
       at::Tensor mlp;
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -1032,9 +1098,10 @@ class Gemma final : public Model {
       else
 #endif
       mlp=activate(gu.narrow(-1,0,width))*gu.narrow(-1,width,width);
-      auto down=ordinary_ffn && !has(p+"mlp.down_proj.bias") ?
+      auto down=!input.prefix && ordinary_ffn && !has(p+"mlp.down_proj.bias") ?
         ordinary_ffn->forward(mlp,w(p+"mlp.down_proj.weight"),ordinary_session) : at::Tensor();
-      mlp=down.defined() ? down : linear(mlp,p+"mlp.down_proj");
+      mlp=down.defined() ? down : input.prefix?prefix_linear(mlp,w(p+"mlp.down_proj.weight"),
+        has(p+"mlp.down_proj.bias")?w(p+"mlp.down_proj.bias"):at::Tensor(),input):linear(mlp,p+"mlp.down_proj");
 
       if(boolean("enable_moe_block",false))mlp=moe(states,mlp,p,input);
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -1068,7 +1135,7 @@ class Gemma final : public Model {
     }
     auto output = norm(states, "norm");
     output=embedding2 ? linear(output, "embedding_projection") : output;
-    return radix_unfold(output,input);
+    return prefix_restore(input,radix_unfold(output,input));
   }
 };
 }

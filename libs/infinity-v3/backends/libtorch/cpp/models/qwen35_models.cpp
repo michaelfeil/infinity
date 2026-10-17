@@ -1,3 +1,4 @@
+#include "batching/prefix_cache.h"
 #include "helpers/attention.h"
 #include "helpers/vendor_error.h"
 #include "helpers/workspace_admission.h"
@@ -82,7 +83,7 @@ class Qwen35 final : public Model {
       if(property->major==9 && property->minor==0 &&
          reinterpret_cast<uintptr_t>(x.const_data_ptr())%256==0 &&
          reinterpret_cast<uintptr_t>(matrix.const_data_ptr())%256==0) {
-        const auto m=x.size(0),full_m=packed.ids.numel(),k=x.size(1),n=matrix.size(0);
+        const auto m=x.size(0),full_m=prefix_logical_input(packed).ids.numel(),k=x.size(1),n=matrix.size(0);
         const auto limit=at::cuda::getCUDABlasLtWorkspaceSize();
         const RadixLinearKey key{{device.index(),full_m,m,k,n,x.stride(0),x.stride(1),matrix.stride(0),matrix.stride(1),n,1,static_cast<int64_t>(x.scalar_type()),static_cast<int64_t>(matrix.scalar_type()),static_cast<int64_t>(x.scalar_type()),static_cast<int64_t>(limit)}};
         auto found=radix_linear_plans.find(key);
@@ -153,6 +154,9 @@ class Qwen35 final : public Model {
   }
   const at::Tensor& w(const std::string& name) const { return weight(weights,prefix+name); }
   at::Tensor linear(const at::Tensor& x,const std::string& name) const { return at::linear(x,w(name+".weight")); }
+  at::Tensor prefix_projection(const at::Tensor& x,const std::string& name,const PackedInput& input) const {
+    return prefix_linear(x,w(name+".weight"),{},input);
+  }
   at::Tensor gated(const at::Tensor& gu) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if(device.is_cuda() && dtype==at::kBFloat16)return gemma_gated_cuda(gu,false);
@@ -160,17 +164,17 @@ class Qwen35 final : public Model {
     auto gate=gu.narrow(-1,0,gu.size(-1)/2);
     return (gate/(at::ones({},gate.options())+at::exp(-gate)))*gu.narrow(-1,gu.size(-1)/2,gu.size(-1)/2);
   }
-  at::Tensor feed_forward(const at::Tensor& x,int64_t layer) const {
+  at::Tensor feed_forward(const at::Tensor& x,int64_t layer,const PackedInput& input) const {
     const auto& m=mlps[layer];
-    if(!m.router.defined())return at::linear(gated(at::linear(x,m.gate_up)),m.down);
+    if(!m.router.defined())return prefix_linear(gated(prefix_linear(x,m.gate_up,{},input)),m.down,{},input);
     auto top=integer("num_experts_per_tok",8);
     auto renormalize=cfg.boolean(key("norm_topk_prob"),true);
     const bool native=top==8 && device.is_cuda() && dtype==at::kBFloat16 &&
       (m.experts.size(0)==128 || m.experts.size(0)==256) && x.size(1)%8==0 && m.expert_down.size(2)%8==0;
-    auto output=native?routed_moe_cuda(x,at::linear(x,m.router).to(at::kFloat),m.experts,m.expert_down,renormalize):at::Tensor();
+    auto output=native?routed_moe_cuda(x,prefix_linear(x,m.router,{},input).to(at::kFloat),m.experts,m.expert_down,renormalize):at::Tensor();
     if(!output.defined())output=decoder_moe_forward(x,m.router,m.experts,m.expert_down,top,renormalize);
-    auto shared=at::linear(gated(at::linear(x,m.shared_gate_up)),m.shared_down);
-    auto logits=at::linear(x,m.shared_gate);
+    auto shared=prefix_linear(gated(prefix_linear(x,m.shared_gate_up,{},input)),m.shared_down,{},input);
+    auto logits=prefix_linear(x,m.shared_gate,{},input);
     auto gate=device.is_cuda() && dtype==at::kBFloat16 ?
       at::reciprocal(at::ones_like(logits)+at::exp(-logits)) : at::sigmoid(logits);
     return output+shared*gate;
@@ -197,12 +201,12 @@ class Qwen35 final : public Model {
     } else {cos=cos_cache.index_select(0,radix_positions(input)).unsqueeze(1);sin=sin_cache.index_select(0,radix_positions(input)).unsqueeze(1);}
     return at::cat({at::cat({a*cos-b*sin,b*cos+a*sin},-1),x.narrow(-1,rotary,dim-rotary)},-1).contiguous();
   }
-  at::Tensor full_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false) const {
+  at::Tensor full_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false,int64_t cache_layer=-1) const {
     auto tokens=x.size(0);
-    auto qg=linear(x,p+"q_proj").view({tokens,heads,2*dim});
+    auto qg=prefix_projection(x,p+"q_proj",input).view({tokens,heads,2*dim});
     auto q=rotate(norm(qg.narrow(-1,0,dim),p+"q_norm"),input);
-    auto k=rotate(norm(linear(x,p+"k_proj").view({tokens,kv_heads,dim}),p+"k_norm"),input);
-    auto v=linear(x,p+"v_proj").view({tokens,kv_heads,dim});
+    auto k=rotate(norm(prefix_projection(x,p+"k_proj",input).view({tokens,kv_heads,dim}),p+"k_norm"),input);
+    auto v=prefix_projection(x,p+"v_proj",input).view({tokens,kv_heads,dim});
     auto unfolded=radix_unfold_qkv(q,k,v,input);
     q=unfolded[0];k=unfolded[1];v=unfolded[2];
     auto mode=cfg.string("_decision_attention_mode",cfg.string("decision_attention_mode","causal"));
@@ -241,6 +245,8 @@ class Qwen35 final : public Model {
         attention=at::cat(rows,0);
       }
     } else
+    if(input.prefix)attention=prefix_attention(q,k,v,input,cache_layer,1./std::sqrt(static_cast<double>(dim)),-1,-1,reference);
+    else
 #ifdef TEI_TORCH_CUDA_KERNELS
     if(reference && torch_flash_fma_supported(q,k,v))
       attention=torch_flash_fma(q,k,v,input.cumulative,input.max_sequence,1./std::sqrt(static_cast<double>(dim)),causal);
@@ -251,9 +257,9 @@ class Qwen35 final : public Model {
     auto logits=qg.narrow(-1,dim,dim);
     auto gate=reference ? at::reciprocal(at::ones_like(logits)+at::exp(-logits)) : at::sigmoid(logits);
     auto gated=(a*gate).reshape({tokens,heads*dim});
-    return radix_enabled(input)?linear_radix_projection(gated,p+"o_proj",input):linear(gated,p+"o_proj");
+    return radix_enabled(input)?linear_radix_projection(gated,p+"o_proj",input):prefix_projection(gated,p+"o_proj",input);
   }
-  at::Tensor delta_cpu(const at::Tensor& qkv,const at::Tensor& z,const at::Tensor& ab,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false) const {
+  at::Tensor delta_cpu(const at::Tensor& qkv,const at::Tensor& z,const at::Tensor& ab,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false,int64_t cache_layer=-1) const {
     // Exact-length reference recurrence. No sequence padding and no persistent state.
     auto kh=integer("linear_num_key_heads"),vh=integer("linear_num_value_heads");
     auto channels=(2*kh+vh)*128;
@@ -264,8 +270,10 @@ class Qwen35 final : public Model {
     std::vector<at::Tensor> states;
     for(int64_t row=0;row<input.batch;++row) {
       auto start=input.offsets[row],length=input.offsets[row+1]-start;
+      auto prior=input.prefix?input.prefix->previous(row,cache_layer):nullptr;
+      TORCH_CHECK(!input.prefix||!input.prefix->hits[row]||(prior&&prior->recurrent.defined()),"Missing recurrent prefix checkpoint");
       const auto source=cache&&!prefill?input.block_prefix_sources[row]:row;
-      auto history=cache&&!prefill?cache->history.narrow(0,cache->history_offsets[source],cache->history_offsets[source+1]-cache->history_offsets[source]):at::Tensor();
+      auto history=prior&&prior->convolution.defined()?prior->convolution:cache&&!prefill?cache->history.narrow(0,cache->history_offsets[source],cache->history_offsets[source+1]-cache->history_offsets[source]):at::Tensor();
       const auto previous=history.defined()?history.size(0):0;
       auto raw=history.defined()?at::cat({history,qkv.narrow(0,start,length)},0):qkv.narrow(0,start,length);
       std::vector<at::Tensor> convolved;
@@ -287,13 +295,19 @@ class Qwen35 final : public Model {
       auto alpha=ab.narrow(0,start,length).narrow(-1,0,vh).to(at::kFloat)+dt;
       auto decay=at::exp(-at::exp(alog)*at::softplus(alpha));
       auto beta=at::sigmoid(ab.narrow(0,start,length).narrow(-1,vh,vh).to(at::kFloat)).to(dtype).to(at::kFloat);
-      auto state=cache&&!prefill?cache->state.select(0,source).clone():at::zeros({vh,128,128},q.options());
+      auto state=prior&&prior->recurrent.defined()?prior->recurrent.clone():cache&&!prefill?cache->state.select(0,source).clone():at::zeros({vh,128,128},q.options());
       for(int64_t t=0;t<length;++t) {
         auto kt=k.select(0,t),qt=q.select(0,t);
         state=state*decay.select(0,t).view({vh,1,1});
         auto memory=(state*kt.unsqueeze(-1)).sum(1);
         auto delta=(v.select(0,t)-memory)*beta.select(0,t).unsqueeze(-1);
         state=state+kt.unsqueeze(-1)*delta.unsqueeze(1);
+        if(input.prefix&&input.prefix->writers[row]&&input.prefix->hits[row]+t+1==int64_t(input.prefix->writers[row]->identity.tokens.size())) {
+          auto history=qkv.narrow(0,start,t+1);
+          if(prior&&prior->convolution.defined())history=at::cat({prior->convolution,history},0);
+          history=history.narrow(0,std::max<int64_t>(0,history.size(0)-(kernel-1)),std::min<int64_t>(history.size(0),kernel-1));
+          input.prefix->checkpoint(row,cache_layer,state,history);
+        }
         auto out=(state*qt.unsqueeze(-1)).sum(1).to(dtype);
         auto f=out.to(at::kFloat);
         out=(f*at::rsqrt(f.square().mean(-1,true)+epsilon)).to(dtype);
@@ -305,9 +319,9 @@ class Qwen35 final : public Model {
     if(cache&&prefill)cache->state=at::stack(states,0);
     return at::stack(outputs,0);
   }
-  at::Tensor delta_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false) const {
-    auto qkv=linear(x,p+"in_proj_qkv").contiguous(),z=linear(x,p+"in_proj_z").contiguous();
-    auto ab=at::cat({linear(x,p+"in_proj_a"),linear(x,p+"in_proj_b")},-1).contiguous();
+  at::Tensor delta_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false,int64_t cache_layer=-1) const {
+    auto qkv=prefix_projection(x,p+"in_proj_qkv",input).contiguous(),z=prefix_projection(x,p+"in_proj_z",input).contiguous();
+    auto ab=at::cat({prefix_projection(x,p+"in_proj_a",input),prefix_projection(x,p+"in_proj_b",input)},-1).contiguous();
     qkv=radix_unfold(qkv,input);z=radix_unfold(z,input);ab=radix_unfold(ab,input);
     at::Tensor output;
     if(device.is_cuda()) {
@@ -316,7 +330,7 @@ class Qwen35 final : public Model {
       auto alog=w(p+"A_log").to(at::kFloat).contiguous(),dt=w(p+"dt_bias").to(at::kFloat).contiguous();
       if(integer("num_experts",0)>0)
         output=qwen35_reference_delta_cuda(qkv,z,ab,conv,alog,dt,w(p+"norm.weight"),input,
-          integer("linear_num_key_heads"),integer("linear_num_value_heads"),epsilon);
+          integer("linear_num_key_heads"),integer("linear_num_value_heads"),epsilon,cache_layer);
       else {
         // Qualified on H100: wide chunk scans amortize their setup for multiple
         // long prefills. Keep short/single sequences on the faster recurrence.
@@ -326,12 +340,12 @@ class Qwen35 final : public Model {
         output=qwen35_delta_cuda(qkv,z,ab,conv,alog,dt,w(p+"norm.weight"),input,
           integer("linear_num_key_heads"),integer("linear_num_value_heads"),epsilon,
           cache&&!prefill?cache->state:at::Tensor(),cache&&prefill?&cache->state:nullptr,cache&&!prefill?cache->history:at::Tensor(),
-          cache&&!prefill?cache->history_cumulative:at::Tensor(),chunks);
+          cache&&!prefill?cache->history_cumulative:at::Tensor(),chunks,cache_layer);
       }
 #else
       TORCH_CHECK(false,"Qwen3.5 requires the native DeltaNet CUDA kernel build");
 #endif
-    } else output=delta_cpu(qkv,z,ab,p,input,cache,prefill);
+    } else output=delta_cpu(qkv,z,ab,p,input,cache,prefill,cache_layer);
     if(cache&&prefill) {
       std::vector<at::Tensor> histories;
       cache->history_offsets={0};
@@ -344,7 +358,7 @@ class Qwen35 final : public Model {
       cache->history_cumulative=at::tensor(cache->history_offsets,input.cumulative.options());
     }
     auto compact=radix_fold(output,input);
-    return radix_enabled(input)?linear_radix_projection(compact,p+"out_proj",input):linear(compact,p+"out_proj");
+    return radix_enabled(input)?linear_radix_projection(compact,p+"out_proj",input):prefix_projection(compact,p+"out_proj",input);
   }
   at::Tensor block_forward(const PackedInput& input) const {
     TORCH_CHECK(input.images.empty()&&input.audios.empty()&&!radix_enabled(input)&&
@@ -386,7 +400,7 @@ class Qwen35 final : public Model {
         auto x=norm(h,p+"input_layernorm");
         auto attention=string("layer_types."+std::to_string(layer))=="linear_attention"?
           delta_attention(x,p+"linear_attn.",part,&caches[layer],prefill):full_attention(x,p+"self_attn.",part,&caches[layer],prefill);
-        h=h+attention;h=h+feed_forward(norm(h,p+"post_attention_layernorm"),layer);
+        h=h+attention;h=h+feed_forward(norm(h,p+"post_attention_layernorm"),layer,part);
       }
       return norm(h,"norm");
     };
@@ -495,6 +509,22 @@ class Qwen35 final : public Model {
       }
     }
   }
+  int64_t prefix_layers() const override {return layer_count;}
+  uint64_t prefix_payload_bytes(int64_t tokens) const override {
+    const auto element_size=w("embed_tokens.weight").element_size();
+    auto bytes=prefix_storage_bytes(tokens,hidden,element_size);
+    for(int64_t layer=0;layer<layer_count;++layer) {
+      if(string("layer_types."+std::to_string(layer))=="linear_attention") {
+        const auto kh=integer("linear_num_key_heads"),vh=integer("linear_num_value_heads");
+        const auto kernel=w("layers."+std::to_string(layer)+".linear_attn.conv1d.weight").size(-1);
+        bytes=prefix_storage_sum(bytes,prefix_storage_bytes(vh,128*128,sizeof(float)));
+        bytes=prefix_storage_sum(bytes,prefix_storage_bytes(std::min<int64_t>(tokens,kernel-1),(2*kh+vh)*128,element_size));
+      } else bytes=prefix_storage_sum(bytes,prefix_storage_bytes(tokens,2*kv_heads*dim,element_size));
+    }
+    return bytes;
+  }
+  bool supports_prefix_cache(int operation) const override {return operation==0&&supports_radix();}
+  bool prefix_checkpoint_only() const override {return true;}
   bool supports_radix() const override {
     auto mode=cfg.string("_decision_attention_mode",cfg.string("decision_attention_mode","causal"));
     return !block_attention()&&mode!="noncausal_full_attention" && !cfg.boolean("use_bidirectional_attention",false);
@@ -517,12 +547,12 @@ class Qwen35 final : public Model {
       auto p="layers."+std::to_string(i)+".";
       auto normalized=norm(states,p+"input_layernorm");
       auto output=string("layer_types."+std::to_string(i))=="linear_attention" ?
-        delta_attention(normalized,p+"linear_attn.",input) : full_attention(normalized,p+"self_attn.",input);
+        delta_attention(normalized,p+"linear_attn.",input,nullptr,false,i) : full_attention(normalized,p+"self_attn.",input,nullptr,false,i);
       states=states+output;
       normalized=norm(states,p+"post_attention_layernorm");
-      states=states+feed_forward(normalized,i);
+      states=states+feed_forward(normalized,i,input);
     }
-    return radix_unfold(norm(states,"norm"),input);
+    return prefix_restore(input,radix_unfold(norm(states,"norm"),input));
   }
 };
 }

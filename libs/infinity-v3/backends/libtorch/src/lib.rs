@@ -191,6 +191,8 @@ extern "C" {
     fn tei_pooled_width(handle: *mut c_void) -> i64;
     fn tei_classification_width(handle: *mut c_void) -> i64;
     fn tei_supports_radix(handle: *mut c_void) -> i32;
+    fn tei_prefix_cache_supported(handle: *mut c_void, operation: i32) -> i32;
+    fn tei_prefix_cache_set_probe(handle: *mut c_void, enabled: i32) -> i32;
     fn tei_graph_count(handle: *mut c_void) -> i64;
     fn tei_ready(handle: *mut c_void) -> i32;
     fn tei_decision_counts(
@@ -430,6 +432,7 @@ pub struct LibtorchBackend {
     cuda: bool,
     host_output_max_bytes: usize,
     host_result_pool: std::sync::Arc<text_embeddings_backend_core::result_memory::ResultPool>,
+    prefix_cache: bool,
 }
 // SAFETY: the handle owns its tensors and is used by TEI's single backend worker.
 // It can move between threads; it is deliberately not Sync. InferenceMode is set per native call.
@@ -615,6 +618,36 @@ impl LibtorchBackend {
             && !normalized_family.starts_with("qwen3_5")
         {
             return Err(start("Pplx and Clef heads require Qwen3.5"));
+        }
+        for (env, key, default, minimum) in [
+            (
+                infinity_v3_config::infinity_env!("TORCH_PREFIX_CACHE_BYTES"),
+                "_prefix_cache_max_bytes",
+                0_i64,
+                0_i64,
+            ),
+            (
+                infinity_v3_config::infinity_env!("TORCH_PREFIX_CACHE_MAX_TOKENS"),
+                "_prefix_cache_max_tokens",
+                8192,
+                1,
+            ),
+            (
+                infinity_v3_config::infinity_env!("TORCH_PREFIX_CACHE_ENTRIES"),
+                "_prefix_cache_entries",
+                64,
+                1,
+            ),
+        ] {
+            let value = std::env::var(env).map_or(Ok(default), |value| {
+                value
+                    .parse::<i64>()
+                    .map_err(|_| start(format!("Invalid {env}")))
+            })?;
+            if value < minimum {
+                return Err(start(format!("{env} must be at least {minimum}")));
+            }
+            options[key] = value.into();
         }
         options["_cuda_graphs"] =
             std::env::var(infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPHS"))
@@ -932,6 +965,7 @@ impl LibtorchBackend {
             pooled_width: 0,
             classification_width: 0,
             supports_radix: false,
+            prefix_cache: options["_prefix_cache_max_bytes"].as_i64().unwrap_or(0) > 0,
             cuda: device.to_bytes().starts_with(b"cuda")
                 || (device.to_bytes() == b"auto" && device_count("cuda").unwrap_or(0) > 0),
             decision,
@@ -1084,6 +1118,22 @@ impl LibtorchBackend {
         }
         // SAFETY: the initialized handle owns immutable model capability flags.
         model.supports_radix = unsafe { tei_supports_radix(handle.as_ptr()) } == 1;
+        if model.prefix_cache {
+            let operation = i32::from(model_type == ModelType::Classifier);
+            // SAFETY: the initialized handle owns the concrete model capability.
+            let supported = unsafe { tei_prefix_cache_supported(handle.as_ptr(), operation) };
+            if supported < 0 {
+                return Err(start(native_error()));
+            }
+            model.prefix_cache = supported == 1;
+            tracing::info!(
+                enabled = model.prefix_cache,
+                bytes = options["_prefix_cache_max_bytes"].as_i64(),
+                max_tokens = options["_prefix_cache_max_tokens"].as_i64(),
+                entries = options["_prefix_cache_entries"].as_i64(),
+                "LibTorch prefix cache configured"
+            );
+        }
         Ok(model)
     }
 }
@@ -1093,6 +1143,33 @@ impl LibtorchBackend {
 struct NativeOutput {
     handle: NonNull<c_void>,
     size: usize,
+}
+
+struct PrefixProbe<'a> {
+    handle: NonNull<c_void>,
+    previous: i32,
+    _backend: std::marker::PhantomData<&'a LibtorchBackend>,
+}
+impl<'a> PrefixProbe<'a> {
+    fn new(backend: &'a LibtorchBackend) -> Result<Self, BackendError> {
+        let handle = backend.handle;
+        // SAFETY: the backend worker serializes access to this live engine.
+        let previous = unsafe { tei_prefix_cache_set_probe(handle.as_ptr(), 1) };
+        if previous < 0 {
+            return Err(inference(native_error()));
+        }
+        Ok(Self {
+            handle,
+            previous,
+            _backend: std::marker::PhantomData,
+        })
+    }
+}
+impl Drop for PrefixProbe<'_> {
+    fn drop(&mut self) {
+        // SAFETY: this scope cannot outlive the borrowed backend; restore even on errors.
+        unsafe { tei_prefix_cache_set_probe(self.handle.as_ptr(), self.previous) };
+    }
 }
 // SAFETY: the uniquely owned lease is transferred once; it never calls the model.
 unsafe impl Send for NativeOutput {}
@@ -1213,10 +1290,11 @@ impl LibtorchBackend {
             ));
         }
         let mut images = Vec::new();
-        let cache_images = matches!(
-            self.config.model_type.as_str(),
-            "gemma4" | "gemma4_text" | "embedding_gemma2"
-        );
+        let cache_images = self.prefix_cache
+            || matches!(
+                self.config.model_type.as_str(),
+                "gemma4" | "gemma4_text" | "embedding_gemma2"
+            );
         let mut image_keys = std::collections::HashMap::new();
         let mut audios = Vec::new();
         let mut media_positions = Vec::new();
@@ -1542,6 +1620,18 @@ impl LibtorchBackend {
 }
 
 impl Backend for LibtorchBackend {
+    fn probe(&self, batch: Batch, model_type: &ModelType) -> Result<(), BackendError> {
+        let _probe = PrefixProbe::new(self)?;
+        match model_type {
+            ModelType::Decision => {
+                let count = batch.len();
+                self.decide(batch, vec![DecisionInput::Warmup; count])
+                    .map(|_| ())
+            }
+            ModelType::Classifier => self.predict(batch).map(|_| ()),
+            ModelType::Embedding(_) => self.embed(batch).map(|_| ()),
+        }
+    }
     fn submit_embed(&self, batch: Batch) -> Result<Inference<Embeddings>, BackendError> {
         let (pool, width) = match self.pool {
             Pool::Cls => (0, self.pooled_width),

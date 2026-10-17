@@ -1,3 +1,4 @@
+#include "prefix_cache_test.h"
 // Packed sequence isolation and geometry tests for native Gemma implementations.
 #include "models/gemma_models.h"
 #include "batching/radix.h"
@@ -358,6 +359,7 @@ int main(int argc,char** argv) {
     auto output = model->forward(input(packed,po));
     TORCH_CHECK(at::equal(output,dense_model->forward(input(packed,po))),
       "Disabled Gemma expert metadata changed full dense outputs");
+    check_prefix_cache(*model,input(packed,po));
     auto independent = at::cat({model->forward(input(a,ao)),model->forward(input(b,bo))},0);
     TORCH_CHECK(at::allclose(output,independent,1e-5,1e-6),family," packed cross-sequence leakage");
     auto changed=packed; changed[0]=55;
@@ -396,6 +398,10 @@ int main(int argc,char** argv) {
       auto scored=create_gemma(scored_cfg,scored_weights,c10::Device("cpu"),at::kFloat);scored->ready();
       TORCH_CHECK(scored->supports_radix(),"Loaded Gemma sequence score head must support causal folding");
       auto full_score=scored->predict(logical,false);
+      check_prefix_cache(*scored,logical,1);
+      check_complete_classifier_cache(*scored,logical);
+      check_prefix_cache(*scored_embedding,logical);
+      check_prefix_cache(*decision,logical);
       auto capped_cfg=scored_cfg;capped_cfg.values["final_logit_softcapping"]="0.01";
       auto capped=create_gemma(capped_cfg,scored_weights,c10::Device("cpu"),at::kFloat);capped->ready();
       TORCH_CHECK(full_score.abs().max().item<float>()>0.01f,"Classifier fixture must expose accidental softcapping");
@@ -408,6 +414,7 @@ int main(int argc,char** argv) {
       publisher_cfg.values["auto_map.AutoModelForSequenceClassification"]=
         "modeling_gemma4_sequence.Gemma4ForSequenceClassification";
       auto publisher=create_gemma(publisher_cfg,scored_weights,c10::Device("cpu"),at::kFloat);publisher->ready();
+      check_complete_classifier_cache(*publisher,logical);
       auto publisher_hidden=decision->forward(logical);
       auto publisher_logits=at::linear(publisher_hidden,scored_weights.at("score.weight"));
       publisher_logits=publisher_logits/.01;
@@ -446,6 +453,9 @@ int main(int argc,char** argv) {
         for(const auto& name:{"post_feedforward_layernorm_1","pre_feedforward_layernorm_2","post_feedforward_layernorm_2"})mf.weights[p+name+".weight"]=at::ones({16});
       }
       auto routed=create_gemma(mf.cfg,mf.weights,c10::Device("cpu"),at::kFloat);routed->ready();
+      auto causal_moe_cfg=mf.cfg;causal_moe_cfg.values["_decision.kind"]="option_tokens";
+      auto causal_moe=create_gemma(causal_moe_cfg,mf.weights,c10::Device("cpu"),at::kFloat);causal_moe->ready();
+      check_prefix_cache(*causal_moe,input(packed,po));
       auto mo=routed->forward(input(packed,po));
       auto mi=at::cat({routed->forward(input(a,ao)),routed->forward(input(b,bo))},0);
       TORCH_CHECK(at::allclose(mo,mi,1e-5,1e-6),"Gemma4 MoE packed output differs from independent sequences");
@@ -649,6 +659,12 @@ int main(int argc,char** argv) {
         auto host=input(ids,offsets),dev=host;
         dev.ids=host.ids.to(device);dev.types=host.types.to(device);dev.positions=host.positions.to(device);dev.cumulative=host.cumulative.to(device);
         auto reference=cpu->forward(host).to(at::kFloat),actual=gpu->forward(dev).cpu().to(at::kFloat);
+        check_prefix_cache(*gpu,dev,0,.01,.02);
+        if(std::string(family)=="gemma4") {
+          auto causal_cfg=f.cfg;causal_cfg.values["_decision.kind"]="option_tokens";
+          auto causal=create_gemma(causal_cfg,gpu_weights,device,at::kBFloat16);causal->ready();
+          check_prefix_cache(*causal,dev,0,.01,.02);
+        }
         TORCH_CHECK(at::allclose(reference,actual,.04,.04),family," Torch varlen-vs-CPU mismatch max_length",length," maxabs=",(reference-actual).abs().max().item<float>());
         std::cout<<family<<" Torch"<<head_dim<<" GPU/CPU parity max_length="<<length<<" maxabs="<<(reference-actual).abs().max().item<float>()<<"\n";
       }

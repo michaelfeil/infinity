@@ -1,3 +1,4 @@
+#include "batching/prefix_cache.h"
 // SPDX-License-Identifier: MIT
 // Adapted from original Candle qwen35_gdn.cu and Candle fast_sum at
 // 036f39e44015e78ba18d716d73dfdc2e78730c44. Original licenses retained.
@@ -77,7 +78,7 @@ at::Tensor qwen35_reference_norm_cuda(const at::Tensor& x,const at::Tensor& gamm
 at::Tensor qwen35_reference_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
   const at::Tensor& ab, const at::Tensor& conv, const at::Tensor& a_log,
   const at::Tensor& dt_bias, const at::Tensor& norm, const PackedInput& input,
-  int64_t key_heads, int64_t value_heads, double epsilon) {
+  int64_t key_heads, int64_t value_heads, double epsilon,int64_t cache_layer) {
   c10::cuda::CUDAGuard guard(qkv.device());
   TORCH_CHECK(qkv.scalar_type()==at::kBFloat16 && z.scalar_type()==at::kBFloat16 &&
     ab.scalar_type()==at::kBFloat16 && conv.scalar_type()==at::kBFloat16 &&
@@ -98,10 +99,16 @@ at::Tensor qwen35_reference_delta_cuda(const at::Tensor& qkv, const at::Tensor& 
   auto bf=[](const at::Tensor& t) { return reinterpret_cast<const __nv_bfloat16*>(t.const_data_ptr()); };
   auto mut=[](at::Tensor& t) { return reinterpret_cast<__nv_bfloat16*>(t.mutable_data_ptr()); };
   auto cu=reinterpret_cast<const uint32_t*>(input.cumulative.const_data_ptr<int32_t>());
+  auto cached=prefix_recurrent(input,qkv,cache_layer,value_heads,conv.size(-1));
+  if(input.prefix)qwen35_cached_conv_cuda(qkv,conv,input,cached.history,cached.history_lengths,convolution,false);
+  else
   tei_reference_qwen35_conv_bf16<<<(tokens*channels+255)/256,256,0,stream>>>(bf(qkv),bf(conv),cu,mut(convolution),tokens,channels,conv.size(-1),input.batch);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   tei_reference_qwen35_gdn_prepare<<<tokens*key_heads,128,0,stream>>>(bf(convolution),bf(ab),a_log.const_data_ptr<float>(),dt_bias.const_data_ptr<float>(),qk.mutable_data_ptr<float>(),decay.mutable_data_ptr<float>(),tokens,key_heads,value_heads);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
+  if(input.prefix)qwen35_cached_recurrent_cuda(convolution,qk,decay,input,recurrence,key_heads,value_heads,false,
+    cached.initial_sources,cached.checkpoint_positions,cached.checkpoint_rows,cached.checkpoints);
+  else
   if(qwen35_recurrent_supported(qkv.device(),key_heads,value_heads))
     qwen35_recurrent_cuda(convolution,qk,decay,input,recurrence,key_heads,value_heads,false);
   else {
@@ -110,6 +117,7 @@ at::Tensor qwen35_reference_delta_cuda(const at::Tensor& qkv, const at::Tensor& 
   }
   tei_reference_qwen35_gdn_norm<<<tokens*value_heads,128,0,stream>>>(bf(recurrence),bf(z),bf(norm),mut(output),epsilon);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
+  if(input.prefix)prefix_recurrent_commit(input,qkv,cache_layer,conv.size(-1),cached);
   return output.view({tokens,value_heads*128});
 }
 }

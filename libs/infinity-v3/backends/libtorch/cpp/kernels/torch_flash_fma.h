@@ -23,4 +23,9 @@ at::Tensor torch_flash_fma_varlen(const at::Tensor& q,const at::Tensor& k,const 
                           const at::Tensor& cumulative_q,const at::Tensor& cumulative_k,
                           int64_t max_queries,int64_t max_keys,double scale,
                           bool causal=false,int64_t window_left=-1,int64_t window_right=-1);
+// Preserve default Torch softmax arithmetic for single global head64/128 queries without its
+// single-query GQA layout change. Cold execution keeps the original provider.
+at::Tensor torch_flash_unfused_varlen(const at::Tensor& q,const at::Tensor& k,const at::Tensor& v,
+                          const at::Tensor& cumulative_q,const at::Tensor& cumulative_k,
+                          int64_t max_queries,int64_t max_keys,double scale);
 }
