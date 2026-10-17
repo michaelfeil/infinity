@@ -41,7 +41,7 @@ def flatten(value, prefix=''):
 
 
 class Native:
-    def __init__(self, library, model, graphs, transient_max_bytes=8 << 30, fp8=False):
+    def __init__(self, library, model, graphs, fp8=False):
         self.lib = lib = C.CDLL(str(library.resolve()))
         lib.tei_error.restype = C.c_char_p
         lib.tei_create.argtypes = [C.POINTER(Config), C.c_char_p, C.c_int32]
@@ -67,7 +67,7 @@ class Native:
         cfg.update(_decision={'kind': 'laya', 'config': json.loads((model / 'rl_agent_config.json').read_text())},
                    _cuda_graphs=graphs, _cuda_graph_max_tokens=32768, _cuda_graph_entries=8,
                    _cuda_graph_max_bytes=2 << 30, _pooling='decision', _dense_count=0,
-                   _cudnn_varlen=False, _fp8_dynamic=fp8, _transient_max_bytes=transient_max_bytes)
+                   _cudnn_varlen=False, _fp8_dynamic=fp8)
         for key, value in flatten(cfg):
             self.check(lib.tei_option(self.handle, key.encode(), value.encode()))
         file = model / 'model.safetensors'
@@ -177,8 +177,6 @@ def main():
     p.add_argument('--case', default='')
     p.add_argument('--extended', action='store_true', help='Include exact latency targets and batches 40/48/64')
     p.add_argument('--extended-only', action='store_true', help='Measure only added larger batches and exact targets')
-    p.add_argument('--transient-max-bytes', type=int, default=8 << 30,
-                   help='Native transient allocation admission budget (increase for larger shape studies)')
     p.add_argument('--tune-gemm', type=int, default=0,
                    help='Experimentally tune this many cuBLASLt heuristic candidates before measuring')
     p.add_argument('--fp8', action='store_true', help='Evaluate existing dynamic FP8 encoder MLP; changes precision')
@@ -208,12 +206,11 @@ def main():
                     library_sha256=hashlib.sha256(args.library.read_bytes()).hexdigest(),
                     model_metadata=json.loads((args.model / 'checkpoint_metadata.json').read_text()),
                     graphs=args.graphs, iterations=args.iterations, repeats=args.repeats,
-                    transient_max_bytes=args.transient_max_bytes,
                     gemm_heuristic_candidates=args.tune_gemm,
                     fp8_mlp=args.fp8,
                     measurement='synchronous native C ABI; includes input upload, encoder, head and host outputs; excludes HTTP/tokenization; BF16; exact packed tokens')
     (args.output / 'manifest.json').write_text(json.dumps(manifest, indent=2))
-    engine = Native(args.library, args.model, args.graphs, args.transient_max_bytes, args.fp8)
+    engine = Native(args.library, args.model, args.graphs, args.fp8)
     rows = []
     try:
         for repeat in range(args.repeats):

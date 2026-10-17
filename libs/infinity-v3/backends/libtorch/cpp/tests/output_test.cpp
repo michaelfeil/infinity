@@ -11,8 +11,8 @@
 #include <iostream>
 #include <utility>
 
-// Exercise quota-aware request admission without reading the large payload,
-// classify an actual startup CUDA OOM, and check bounded pinned staging.
+// Exercise actual allocator failures with readable inputs, classify startup
+// CUDA OOM, and check bounded pinned staging.
 void native_allocator_error_test(const at::Device& device,int pressure=0) {
   const bool bounded_staging=pressure==1;
   TeiConfig cfg{16,2,2,24,32,32,1,1e-6,0};
@@ -24,6 +24,9 @@ void native_allocator_error_test(const at::Device& device,int pressure=0) {
       {"num_hidden_layers","2"},{"vocab_size","32"},{"max_position_embeddings","32"},
       {"hidden_act","silu"},{"rms_norm_eps","0.000001"}})
     TORCH_CHECK(tei_option(engine.get(),key,value)==0,tei_error());
+  // Removed estimate options must not affect sync or deferred execution.
+  TORCH_CHECK(tei_option(engine.get(),"_transient_max_bytes","1")==0&&
+    tei_option(engine.get(),"_device_memory_headroom_bytes","9223372036854775807")==0,tei_error());
   auto weight=[&](const std::string& key,std::initializer_list<int64_t> shape,bool norm=false) {
     int64_t count=1;for(auto n:shape)count*=n;
     float offset=0;for(auto c:key)offset+=c;
@@ -101,17 +104,17 @@ void native_allocator_error_test(const at::Device& device,int pressure=0) {
   const auto reserved=c10::cuda::CUDACachingAllocator::getDeviceStats(device.index()).reserved_bytes[0].current;
   c10::cuda::CUDACachingAllocator::setMemoryFraction(double(reserved+(1<<20))/total,device.index());
   try {
-    const auto* unread=reinterpret_cast<const int64_t*>(uintptr_t(1));int32_t huge[]={0,4000000};
-    std::unique_ptr<void,decltype(&tei_output_destroy)> rejected(tei_forward_submit(engine.get(),unread,unread,
-      unread,huge,1,4000000,0,nullptr,0,&row,1,64000000,nullptr,nullptr,0,nullptr,0,nullptr),tei_output_destroy);
-    TORCH_CHECK(!rejected&&tei_last_error_kind()==2,"Allocator quota did not reject before output allocation/upload");
+    int32_t huge[]={0,4000000};
     std::vector<int64_t> real_input(4000000,0);
+    std::unique_ptr<void,decltype(&tei_output_destroy)> rejected(tei_forward_submit(engine.get(),real_input.data(),real_input.data(),
+      real_input.data(),huge,1,4000000,0,nullptr,0,&row,1,64000000,nullptr,nullptr,0,nullptr,0,nullptr),tei_output_destroy);
+    TORCH_CHECK(!rejected&&tei_last_error_kind()==3,"Actual output allocator OOM lost its recoverable classification: ",tei_error());
     std::unique_ptr<void,decltype(&tei_output_destroy)> upload_rejected(tei_forward_submit(engine.get(),
       real_input.data(),real_input.data(),real_input.data(),huge,1,4000000,0,nullptr,0,nullptr,0,0,
       nullptr,nullptr,0,nullptr,0,nullptr),tei_output_destroy);
-    TORCH_CHECK(!upload_rejected&&tei_last_error_kind()==2,
-      "Allocator quota did not reject before nested upload");
-    // Weight upload is a startup C ABI path, outside serving admission. Use
+    TORCH_CHECK(!upload_rejected&&tei_last_error_kind()==3,
+      "Actual input allocator OOM lost its recoverable classification: ",tei_error());
+    // Weight upload is a startup C ABI path. Use
     // real readable host data to preserve an actual allocator-OOM check.
     // Inactive graph/cache segments can be reclaimed during allocation.
     // Bound against active bytes so reclamation cannot make this probe fit.

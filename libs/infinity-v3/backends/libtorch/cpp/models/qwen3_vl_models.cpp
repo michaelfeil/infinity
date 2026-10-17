@@ -158,6 +158,10 @@ Qwen3VL::Qwen3VL(const Options& options,Weights& weights,c10::Device dev,at::Sca
 
 void Qwen3VL::ready() {
     TORCH_CHECK(hidden>0 && heads>0 && hidden%heads==0 && dim%4==0 && merge>0 && depth>0,"Invalid Qwen3-VL architecture");
+    for(int64_t i=0;cfg.values.count("vision_config.deepstack_visual_indexes."+std::to_string(i));++i) {
+      const auto layer=cfg.integer("vision_config.deepstack_visual_indexes."+std::to_string(i));
+      TORCH_CHECK(layer>=0&&layer<depth,"Invalid vision deepstack layer index");
+    }
     const auto& patch_kernel=w("patch_embed.proj.weight");w("pos_embed.weight");
 #ifdef TEI_TORCH_CUDA_KERNELS
     exact_vision=device.is_cuda() && dtype==at::kHalf && cfg.string("model_type").starts_with("qwen3_5") &&
@@ -191,21 +195,6 @@ void Qwen3VL::ready() {
 bool Qwen3VL::supports_images() const {return true;}
 
 at::Tensor Qwen3VL::image_features(const ImageInput& image) const {return vision(image).first;}
-
-TowerMemoryProfile Qwen3VL::vision_memory_profile() const {
-  int64_t saved=0;
-  for(int64_t i=0;cfg.values.count("vision_config.deepstack_visual_indexes."+std::to_string(i));++i) {
-    const auto layer=cfg.integer("vision_config.deepstack_visual_indexes."+std::to_string(i));
-    TORCH_CHECK(layer>=0&&layer<depth,"Invalid vision deepstack layer index");++saved;
-  }
-  TowerMemoryProfile p{hidden,heads,std::max(hidden,transient_linear_width(visual_weights)),saved,0};
-  p.per_frame_attention=true;
-  p.efficient_scores=device.is_cuda();return p;
-}
-std::optional<TransientMemoryProfile> Qwen3VL::transient_memory_profile() const {
-  if(!text)return std::nullopt;
-  auto p=text->transient_memory_profile();if(p)p->vision=vision_memory_profile();return p;
-}
 int64_t Qwen3VL::output_width() const {return text->output_width();}
 
 at::Tensor Qwen3VL::forward(const PackedInput& input) const {

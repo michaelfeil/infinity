@@ -688,40 +688,6 @@ class Gemma final : public Model {
   }
   bool supports_images() const override { return !legacy && cfg.integer("vision_config.num_hidden_layers",0)>0; }
   bool supports_audio() const override { return embedding2 && cfg.integer("audio_config.hidden_size",0)>0; }
-  std::optional<TransientMemoryProfile> transient_memory_profile() const override {
-    auto p=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
-    for(const auto& layer:stack)if(layer.store){
-      TORCH_CHECK(layer.kv>0&&layer.dim>0&&layer.kv<=std::numeric_limits<int64_t>::max()/layer.dim,
-        "Invalid retained attention KV dimensions");
-      p.retained_kv_width=std::max(p.retained_kv_width,layer.kv*layer.dim);++p.retained_kv_layers;
-    }
-    p.experts=boolean("enable_moe_block",false)?integer("num_experts",0):0;
-    p.top_k=p.experts?integer("top_k_experts",8):1;
-    if(supports_images()) {
-      p.vision=TowerMemoryProfile{cfg.integer("vision_config.hidden_size",0),
-        cfg.integer("vision_config.num_attention_heads",0),p.linear,cfg.integer("vision_config.num_hidden_layers",0),0};
-      p.vision->efficient_scores=device.is_cuda();
-      p.retained_vision_bytes=64UL<<20;
-    }
-    if(supports_audio()) {
-      int64_t width=0,convolution=0,converted=0;
-      for(const auto& [name,value]:weights)if(name.find("audio")!=std::string::npos&&value.defined()) {
-        if(value.dim()==2)width=std::max(width,value.size(0));
-        if(value.dim()==3||value.dim()==4)converted=std::max(converted,value.numel());
-        if(value.dim()==4&&value.size(0)>0)convolution=std::max({convolution,value.numel()/value.size(0),value.size(0)});
-      }
-      p.audio=TowerMemoryProfile{width,cfg.integer("audio_config.num_attention_heads",cfg.integer("audio_config.conf_num_attention_heads",8)),p.linear,0,convolution,converted};
-      const auto chunk=cfg.integer("audio_config.attention_chunk_size",12),left=cfg.integer("audio_config.attention_context_left",13),
-        future=cfg.integer("audio_config.attention_context_right",0);
-      TORCH_CHECK(left>0,"Invalid audio left attention context");const auto past=left-1;
-      TORCH_CHECK(chunk>0&&past>=0&&future>=0&&chunk<=std::numeric_limits<int64_t>::max()-past&&
-        future<=std::numeric_limits<int64_t>::max()-chunk-past,"Invalid audio relative attention geometry");
-      p.audio->relative_span=(chunk+past+future)/2+1;
-      p.audio->attention_chunk=chunk;
-      p.audio->attention_window=chunk+past+future;
-    }
-    return p;
-  }
   int64_t output_width() const override { return embedding2 ? integer("embedding_dim", hidden) : hidden; }
   int64_t classification_width() const override {
     auto score=weights.find("score.weight");
@@ -750,6 +716,13 @@ class Gemma final : public Model {
     }
   }
   void ready() override {
+    if(supports_audio()) {
+      const auto chunk=cfg.integer("audio_config.attention_chunk_size",12),left=cfg.integer("audio_config.attention_context_left",13),
+        future=cfg.integer("audio_config.attention_context_right",0);
+      TORCH_CHECK(left>0,"Invalid audio left attention context");const auto past=left-1;
+      TORCH_CHECK(chunk>0&&future>=0&&chunk<=std::numeric_limits<int64_t>::max()-past&&
+        future<=std::numeric_limits<int64_t>::max()-chunk-past,"Invalid audio relative attention geometry");
+    }
     if(legacy) {
       legacy_embedding_scale=at::scalar_tensor(std::sqrt(static_cast<double>(hidden)),w("embed_tokens.weight").options());
       // Complete initialization before the model moves to another inference stream.

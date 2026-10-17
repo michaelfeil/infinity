@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // Ports the typed head contracts in Candle models/laya.rs and models/clef.rs.
 #include "models/decision_models.h"
-#include "helpers/transient_memory.h"
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include "kernels/laya_features.h"
 #endif
@@ -103,15 +102,6 @@ struct OptionHead final:DecisionHead {
   for(size_t j=0;j<request.token_ids.size();++j)TORCH_CHECK(request.token_ids[j]>=0&&request.token_ids[j]<weights.size(0)&&(!external||request.token_ids[j]==int64_t(j)),"Invalid option-token/readout-row metadata");
   return request.token_ids.size();
  }
- size_t transient_memory(const TeiDecision* requests,size_t count,const int32_t*,size_t limit)const override {
-  TransientMemoryBudget cost(limit);const auto width=positive_memory_dimension(weights.size(1));
-  for(size_t i=0;i<count;++i) {
-   const auto rows=requests[i].kind==3?size_t(1):requests[i].token_count;
-   cost.add({rows,width,8,sizeof(float)});cost.add({rows,8,sizeof(float)});cost.add({rows,4,sizeof(int64_t)});
-   // D3 projects all FP32 readout rows before selecting requested codes.
-   if(d3)cost.add({positive_memory_dimension(weights.size(0)),2,sizeof(float)});
-  }return cost.bytes();
- }
  std::vector<DecisionResult> forward(const at::Tensor& hidden,const PackedInput& input,const std::vector<DecisionRequest>& requests) const override {
   validate(hidden,input,requests);TORCH_CHECK(hidden.size(1)==weights.size(1),"Decision hidden width mismatch");std::vector<DecisionResult> result;
   for(int64_t i=0;i<input.batch;++i){const auto& request=requests[i];auto ids=request.token_ids;
@@ -148,18 +138,6 @@ struct LayaHead final:DecisionHead {
   if(request.kind==DecisionRequest::Kind::Warmup)return 1;
   TORCH_CHECK(request.kind==DecisionRequest::Kind::Laya&&request.question_type>=0&&request.question_type<3&&!request.markers.empty(),"Invalid Laya metadata");
   return request.markers.size();
- }
- size_t transient_memory(const TeiDecision* requests,size_t count,const int32_t* cumulative,size_t limit)const override {
-  TransientMemoryBudget cost(limit);const auto h=positive_memory_dimension(width),heads=std::max(size_t(1),h/64);
-  for(size_t i=0;i<count;++i) {
-   const auto length=positive_memory_dimension(int64_t(cumulative[i+1])-cumulative[i]);
-   const auto markers=requests[i].kind==3?size_t(1):requests[i].marker_count;
-   cost.add({length,h,32,sizeof(float)});cost.add({length,h,4,8,sizeof(float)});
-   cost.add({markers,h,32,sizeof(float)});cost.add({markers,8,sizeof(float)});
-   // Packed CUDA head uploads one type index per token and absolute marker indices.
-   if(types.is_cuda()){cost.add({length,sizeof(int64_t)});cost.add({markers,sizeof(int64_t)});}
-   if(!layers.empty()&&types.device().is_cpu())cost.add({length,length,heads,8,sizeof(float)});
-  }return cost.bytes();
  }
  struct Metadata {std::vector<int64_t> token_types,marker_rows,marker_offsets{0};};
  Metadata metadata(const PackedInput& input,const std::vector<DecisionRequest>& requests)const {
@@ -264,10 +242,8 @@ struct FieldDecoder {
 struct ClefHead final:DecisionHead {
  Norm hidden_norm,summary_norm,field_norm,option_norm;std::vector<Linear> projections;at::Tensor types,words;
  std::vector<Routing> routing;std::vector<FieldDecoder> decoder;Linear scorer1,scorer2;double prior_scale,joint_scale,gate;int64_t width;
- int64_t memory_linear=0,memory_heads=0;
  ClefHead(const Options&cfg,const Options&backbone,const Weights&w,const Weights&bw,int64_t h):hidden_norm(w,"hidden_norm",h),summary_norm(w,"option_summary_norm",cfg.integer("width")),field_norm(w,"field_norm",cfg.integer("width")),option_norm(w,"option_norm",cfg.integer("width")),types(weight(w,"type_embedding.weight")),words(lexical(backbone,bw)),scorer1(w,"residual_scorer.0",4*cfg.integer("width"),cfg.integer("width")),scorer2(w,"residual_scorer.3",cfg.integer("width"),1),width(cfg.integer("width")){
   auto heads=cfg.integer("heads"),ff=cfg.integer("feedforward");TORCH_CHECK(cfg.integer("hidden_size")==h&&width>0&&heads>0&&width%heads==0&&ff>0&&types.sizes()==at::IntArrayRef({3,width}),"Invalid Clef configuration");
-  memory_linear=std::max(width,transient_linear_width(w));memory_heads=heads;
   for(auto name:{"memory_projection","question_projection","option_question_projection","global_projection","option_context_projection","option_lexical_projection"})projections.emplace_back(w,name,h,width,false);
   for(int64_t i=0;i<cfg.integer("routing_layers");++i)routing.emplace_back(w,"evidence_layers."+std::to_string(i),width,heads,ff);
   for(int64_t i=0;i<cfg.integer("layers");++i)decoder.emplace_back(w,"layers."+std::to_string(i),width,heads,ff);
@@ -300,26 +276,6 @@ struct ClefHead final:DecisionHead {
    auto features=at::cat({f,option,f*option,(f-option).abs()},1);auto residual=scorer2(at::gelu(scorer1(features),"none")).squeeze(1);
    logits.push_back(prior+(cosine*joint_scale+residual)*gate);
   }return at::cat(logits).to(at::kFloat);
- }
- size_t transient_memory(const TeiDecision* requests,size_t count,const int32_t* cumulative,size_t limit)const override {
-  TransientMemoryBudget cost(limit);const auto h=positive_memory_dimension(width),
-    linear=positive_memory_dimension(memory_linear),heads=positive_memory_dimension(memory_heads),
-    lexical=positive_memory_dimension(words.size(1));
-  for(size_t i=0;i<count;++i) {
-   const auto length=positive_memory_dimension(int64_t(cumulative[i+1])-cumulative[i]);
-   const bool warm=requests[i].kind==3;const auto fields=warm?size_t(1):requests[i].field_count;
-   cost.add({length,h,32,sizeof(float)});cost.add({length,lexical,32,sizeof(float)});
-   cost.add({fields,h,32,sizeof(float)});cost.add({fields,linear,8,sizeof(float)});
-   if(types.device().is_cpu()&&!decoder.empty()) {
-    cost.add({fields,fields,heads,8,sizeof(float)});cost.add({fields,length,heads,8,sizeof(float)});
-   }
-   for(size_t j=0;j<fields;++j) {
-    const auto options=warm?size_t(1):requests[i].fields[j].option_count;
-    cost.add({options,h,32,sizeof(float)});cost.add({options,linear,8,sizeof(float)});
-    cost.add({options,lexical,32,sizeof(float)});cost.add({options,8,sizeof(float)});
-    if(types.device().is_cpu()&&!routing.empty())cost.add({options,length,heads,8,sizeof(float)});
-   }
-  }return cost.bytes();
  }
  std::vector<DecisionResult> forward(const at::Tensor&hidden,const PackedInput&input,const std::vector<DecisionRequest>&requests)const override{
   validate(hidden,input,requests);std::vector<DecisionResult> result;

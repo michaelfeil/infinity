@@ -50,9 +50,8 @@ single matrix workload for focused profiling.
 40-question/12,000-token targets plus batches 40, 48 and 64 at each sequence
 length. Target inputs resize the supplied tokenized fixture and retain its
 markers and question types; they are controlled workloads. The report includes
-tokens and questions per second. On sufficiently large GPUs, increase the
-admission budget with `--transient-max-bytes 17179869184` for the largest shapes;
-the default native budget remains unchanged.
+tokens and questions per second. Select workloads that fit the GPU; the native
+backend no longer imposes a heuristic transient allocation budget.
 
 `--tune-gemm 32` experimentally benchmarks cuBLASLt heuristic choices using
 Torch's tunable operator support before latency measurement and retains the

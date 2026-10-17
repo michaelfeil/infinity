@@ -355,11 +355,6 @@ int main(int argc,char** argv) {
     auto dense_metadata=f.cfg;dense_metadata.values["enable_moe_block"]="false";
     dense_metadata.values["num_experts"]="3";dense_metadata.values["top_k_experts"]="0";
     auto dense_model=create_gemma(dense_metadata,f.weights,c10::Device("cpu"),at::kFloat);dense_model->ready();
-    auto dense_profile=dense_model->transient_memory_profile();
-    TORCH_CHECK(dense_profile&&dense_profile->experts==0&&dense_profile->top_k==1,
-      "Dense Gemma charged disabled expert metadata");
-    TORCH_CHECK(estimate_transient_memory(*dense_profile,7,2,5,0,0,nullptr,0,nullptr,0,1<<20)>0,
-      "Dense Gemma profile rejected valid packed inference");
     auto output = model->forward(input(packed,po));
     TORCH_CHECK(at::equal(output,dense_model->forward(input(packed,po))),
       "Disabled Gemma expert metadata changed full dense outputs");
@@ -451,9 +446,6 @@ int main(int argc,char** argv) {
         for(const auto& name:{"post_feedforward_layernorm_1","pre_feedforward_layernorm_2","post_feedforward_layernorm_2"})mf.weights[p+name+".weight"]=at::ones({16});
       }
       auto routed=create_gemma(mf.cfg,mf.weights,c10::Device("cpu"),at::kFloat);routed->ready();
-      const auto routed_profile=routed->transient_memory_profile();
-      TORCH_CHECK(routed_profile&&routed_profile->experts==3&&routed_profile->top_k==2,
-        "Gemma transient profile does not match the actual MoE routing policy");
       auto mo=routed->forward(input(packed,po));
       auto mi=at::cat({routed->forward(input(a,ao)),routed->forward(input(b,bo))},0);
       TORCH_CHECK(at::allclose(mo,mi,1e-5,1e-6),"Gemma4 MoE packed output differs from independent sequences");
@@ -589,12 +581,6 @@ int main(int argc,char** argv) {
         put(p+"lconv1d.linear_start.linear.weight",{16,8});put(p+"lconv1d.linear_end.linear.weight",{8,8});put(p+"lconv1d.depthwise_conv1d.weight",{8,1,3});
         put("embed_audio.embedding_projection.weight",{16,8});
         auto audio=create_gemma(f.cfg,f.weights,c10::Device("cpu"),at::kFloat);audio->ready();
-        auto audio_profile=audio->transient_memory_profile();
-        TORCH_CHECK(audio_profile&&audio_profile->audio,"Gemma audio memory profile is missing");
-        TeiAudio long_audio{};long_audio.frames=3000;long_audio.feature_size=128;long_audio.token_count=750;
-        TORCH_CHECK(estimate_transient_memory(*audio_profile,750,1,750,0,0,nullptr,0,&long_audio,1,256UL<<20)>0,
-          "Chunked Gemma audio was charged for a full frame-by-frame score matrix");
-        std::cout<<family<<": 3000-frame chunked audio transient admission passed\n";
         auto audio_batch=input(packed,po);
         audio_batch.audios.push_back({at::randn({8,128}),at::ones({8},at::TensorOptions().dtype(at::kByte)),1,2});
         auto with_audio=audio->forward(audio_batch);

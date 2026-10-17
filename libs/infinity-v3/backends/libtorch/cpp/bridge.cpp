@@ -15,7 +15,6 @@
 #include "batching/packed_pool.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/detail/CUDAHooksInterface.h>
-#include <c10/cuda/CUDACachingAllocator.h>
 #endif
 #include "models/decoder_models.h"
 #include "models/mistral3_models.h"
@@ -89,7 +88,6 @@ struct Engine {
   std::unique_ptr<tei::Model> model;
   std::shared_ptr<tei::OutputPool> outputs = std::make_shared<tei::OutputPool>();
   std::unique_ptr<tei::DenseChain> dense;
-  std::optional<tei::TransientMemoryProfile> transient_profile;
   std::unique_ptr<tei::DecisionHead> decision;
   std::unique_ptr<tei::CudaGraphCache> graphs;
   bool media_graphs=false;
@@ -101,8 +99,6 @@ struct Engine {
   void ready() {
     TORCH_CHECK(options.integer("_input_upload_max_bytes",512LL<<20)>0,
       "Native input upload budget must be positive");
-    TORCH_CHECK(options.integer("_transient_max_bytes",8LL<<30)>0,"Native transient tensor memory budget must be positive");
-    TORCH_CHECK(options.integer("_device_memory_headroom_bytes",1LL<<30)>0,"Native device memory headroom must be positive");
     const auto workspace_bytes=options.integer("_retained_workspace_max_bytes",512LL<<20);
     TORCH_CHECK(workspace_bytes>0&&uint64_t(workspace_bytes)<=std::numeric_limits<size_t>::max(),"Invalid native retained workspace allowance");
     if(device.is_cuda())workspace_policy=tei::configure_workspace_admission(device.index(),static_cast<size_t>(workspace_bytes));
@@ -151,7 +147,6 @@ struct Engine {
     }
     TORCH_CHECK(model, "Unsupported native Torch model family: ", family);
     model->ready();
-    transient_profile=model->transient_memory_profile();
     TORCH_CHECK(model->output_width() > 0, "Model must declare a positive output width");
     dense->output_width(options.string("_pooling") == "splade" ? config.vocab : model->output_width());
     media_graphs=options.boolean("_media_cuda_graphs",false);
@@ -218,17 +213,7 @@ size_t validate_request_input(Engine& model,const int64_t* ids,const int64_t* ty
  return tei::validate_input_upload_budget(tokens,batch,media_positions,images,image_count,audios,audio_count,
    radix,c10::elementSize(image_dtype),input_upload_limit(model),gemma,model.options.string("_decision.kind")=="d3");
 }
-size_t validate_transient_memory(Engine& model,int64_t tokens,int64_t batch,int64_t maximum,
-    int32_t pool,size_t expected,const TeiImage* images,size_t image_count,const TeiAudio* audios,size_t audio_count) {
-  TORCH_CHECK(model.model&&model.transient_profile,"Unknown native transient tensor profile or model not ready");
-  const auto bytes=model.options.integer("_transient_max_bytes",8LL<<30);
-  TORCH_CHECK(bytes>0&&uint64_t(bytes)<=std::numeric_limits<size_t>::max(),"Invalid native transient tensor memory budget");
-  return tei::estimate_transient_memory(*model.transient_profile,tokens,batch,maximum,pool,expected,
-    images,image_count,audios,audio_count,static_cast<size_t>(bytes),
-    model.options.string("_decision.kind")=="d3",
-    model.options.string("_decision.kind")=="d3"&&model.options.string("model_type").starts_with("qwen3_5"));
-}
-size_t validate_forward_descriptors(Engine& model,const int64_t* ids,const int64_t* types,
+void validate_forward_descriptors(Engine& model,const int64_t* ids,const int64_t* types,
  const int64_t* positions,const int32_t* cumulative,int64_t batch,int64_t max_sequence,int32_t pool,
  const int64_t* pooled,size_t pooled_count,const int64_t* raw,size_t raw_count,size_t capacity,
  const int64_t* media_positions,const TeiImage* images,size_t image_count,const TeiAudio* audios,size_t audio_count,const TeiRadix* radix,bool deferred=false) {
@@ -242,45 +227,21 @@ size_t validate_forward_descriptors(Engine& model,const int64_t* ids,const int64
  const auto pooled_width=pool>=4?raw_width:model.dense->output_width(pool==3?model.config.vocab:raw_width);
  const auto expected=tei::expected_output_elements(pooled_count,raw_rows,pooled_width,raw_width);
  TORCH_CHECK(expected<=capacity,"Native output exceeds provided capacity");
- const auto estimate=validate_transient_memory(model,cumulative[batch],batch,max_sequence,pool,expected,images,image_count,audios,audio_count);
  TORCH_CHECK(!deferred||expected==capacity,"Deferred output capacity must exactly match requested output");
- return estimate;
 }
-std::shared_ptr<tei::DeviceMemoryPermit> acquire_device_memory(Engine& model,size_t estimate) {
-#ifdef TEI_TORCH_CUDA_KERNELS
- if(model.device.is_cuda()) {
-  const auto headroom=model.options.integer("_device_memory_headroom_bytes",1LL<<30);
-  TORCH_CHECK(headroom>0&&uint64_t(headroom)<=std::numeric_limits<size_t>::max(),"Invalid native device memory headroom");
-  c10::cuda::CUDAGuard guard(model.device);
-  auto state=tei::device_admission_state(model.device.index());
-  std::lock_guard lock(state->mutex);
-  size_t free=0,total=0;C10_CUDA_CHECK(cudaMemGetInfo(&free,&total));
-  const auto fraction=c10::cuda::CUDACachingAllocator::getMemoryFraction(model.device.index());
-  tei::require_memory_admission(fraction==1||c10::cuda::CUDACachingAllocator::name()=="native",
-    "Native device quota accounting is unavailable for the selected allocator");
-  const auto reserved=c10::cuda::CUDACachingAllocator::getDeviceStats(model.device.index()).reserved_bytes[0].current;
-  const auto available=tei::device_admission_available(free,total,fraction,reserved);
-  // Allocator reserved-active is not usable driver memory. Pending estimates
-  // are additionally charged, even when their allocations have already begun.
-  return std::make_shared<tei::DeviceMemoryPermit>(state,available,size_t(headroom),estimate);
- }
-#endif
- return {};
-}
-struct SynchronousMemoryAdmission {
- std::shared_ptr<tei::DeviceMemoryPermit> permit;
+// Synchronous calls must drain work queued before an exception while their
+// borrowed host descriptors and temporary tensors are still alive.
+struct SynchronousStreamGuard {
 #ifdef TEI_TORCH_CUDA_KERNELS
  std::optional<c10::cuda::CUDAStream> stream;
 #endif
- SynchronousMemoryAdmission(Engine& model,size_t bytes):permit(acquire_device_memory(model,bytes)) {
+ explicit SynchronousStreamGuard(Engine& model) {
 #ifdef TEI_TORCH_CUDA_KERNELS
-  if(permit)stream=c10::cuda::getCurrentCUDAStream(model.device.index());
+  if(model.device.is_cuda())stream=c10::cuda::getCurrentCUDAStream(model.device.index());
 #endif
  }
- ~SynchronousMemoryAdmission() {
+ ~SynchronousStreamGuard() {
 #ifdef TEI_TORCH_CUDA_KERNELS
-  // Also join work enqueued before an exception; retain the reservation until
-  // the GPU has finished using this request's temporary storage.
   try {if(stream)stream->synchronize();}catch(...){}
 #endif
  }
@@ -513,18 +474,12 @@ int32_t tei_decide_radix(void* handle,const int64_t* ids,const int64_t* types,co
  const TeiImage* images,size_t image_count,const TeiAudio* audios,size_t audio_count,const TeiRadix* radix) {
  return checked([&]{auto& engine=*static_cast<Engine*>(handle);
   const auto input_bytes=validate_request_input(engine,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audios,audio_count,radix);
-  const auto backbone_bytes=validate_transient_memory(engine,cumulative[batch],batch,max_sequence,0,0,images,image_count,audios,audio_count);
   TORCH_CHECK(engine.decision&&batch>0,"Model was not loaded for typed decisions");
   tei::validate_decision_metadata_budget(requests,batch,input_upload_limit(engine),input_bytes);
-  const auto transient_limit=static_cast<size_t>(engine.options.integer("_transient_max_bytes",8LL<<30));
-  const auto head_bytes=engine.decision->transient_memory(requests,static_cast<size_t>(batch),cumulative,transient_limit);
-  tei::TransientMemoryBudget initial_cost(transient_limit);initial_cost.add({backbone_bytes});initial_cost.add({head_bytes});
   auto converted=decision_requests(requests,batch);size_t expected=0;
   for(const auto& request:converted){auto count=engine.decision->output_count(request);TORCH_CHECK(count>0&&static_cast<size_t>(count)<=capacity-expected,"Decision output exceeds provided capacity");expected+=count;}
   TORCH_CHECK((logits||!expected)&&actions,"Missing decision output buffer");
-  const auto estimate=validate_transient_memory(engine,cumulative[batch],batch,max_sequence,0,expected,images,image_count,audios,audio_count);
-  tei::TransientMemoryBudget total_cost(transient_limit);total_cost.add({estimate});total_cost.add({head_bytes});
-  SynchronousMemoryAdmission admission(engine,total_cost.bytes());
+  SynchronousStreamGuard stream_guard(engine);
   auto packed=packed_input(engine,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audios,audio_count);
   attach_radix(engine,packed,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audio_count,radix);
   const bool blocks=engine.options.string("_decision_attention_mode")=="block_bidirectional";
@@ -580,10 +535,10 @@ static int32_t forward_radix(void* handle, const int64_t* ids, const int64_t* ty
                     const TeiAudio* audios, size_t audio_count, const TeiRadix* radix, tei::OutputLease* completion) {
   return checked([&] {
     auto& model = *static_cast<Engine*>(handle);
-    const auto estimate=validate_forward_descriptors(model,ids,types,positions,cumulative,batch,max_sequence,pool,
+    validate_forward_descriptors(model,ids,types,positions,cumulative,batch,max_sequence,pool,
       pooled,pooled_count,raw,raw_count,capacity,media_positions,images,image_count,audios,audio_count,radix);
-    std::optional<SynchronousMemoryAdmission> admission;
-    if(!completion)admission.emplace(model,estimate);
+    std::optional<SynchronousStreamGuard> stream_guard;
+    if(!completion)stream_guard.emplace(model);
     TORCH_CHECK(completion||output||(!pooled_count&&!raw_count),"Missing native output buffer");
     auto packed=packed_input(model,ids,types,positions,cumulative,batch,max_sequence,
       media_positions,images,image_count,audios,audio_count,completion);
@@ -692,12 +647,10 @@ void* tei_forward_submit(void* handle, const int64_t* ids, const int64_t* types,
   std::unique_ptr<tei::OutputLease> lease;
   const auto status=checked([&] {
     auto& model=*static_cast<Engine*>(handle);
-    const auto estimate=validate_forward_descriptors(model,ids,types,positions,cumulative,batch,max_sequence,pool,
+    validate_forward_descriptors(model,ids,types,positions,cumulative,batch,max_sequence,pool,
       pooled,pooled_count,raw,raw_count,capacity,media_positions,images,image_count,audios,audio_count,radix,true);
     TORCH_CHECK(model.device.is_cuda(), "Deferred output requires CUDA");
-    auto permit=acquire_device_memory(model,estimate);
     lease=std::make_unique<tei::OutputLease>(model.outputs,model.device,capacity);
-    lease->admit_memory(std::move(permit));
     lease->allocate();
     if (forward_radix(handle,ids,types,positions,cumulative,batch,max_sequence,pool,pooled,pooled_count,raw,raw_count,nullptr,capacity,media_positions,images,image_count,audios,audio_count,radix,lease.get()) != 0)
       throw tei::NativeCallError(error_kind);

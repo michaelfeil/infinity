@@ -179,10 +179,7 @@ struct Bert : tei::Model {
   void check(const std::string& name, std::initializer_list<int64_t> shape) const {
     TORCH_CHECK(w(name).sizes() == at::IntArrayRef(shape), "Invalid shape for ", name);
   }
-  int64_t transient_linear=0,transient_vocabulary=0;
   void ready() override {
-    const auto checkpoint_profile=tei::transient_profile(weights,config.hidden,config.heads,dtype,device.is_cpu());
-    transient_linear=checkpoint_profile.linear;transient_vocabulary=checkpoint_profile.vocab;
     TORCH_CHECK(device.is_cpu() || device.is_cuda(),
       "LibTorch 2.14.1 varlen Flash Attention requires CUDA. CPU supports an unpadded reference path; MPS/XPU are not implemented.");
     if (device.is_cuda()) {
@@ -327,11 +324,6 @@ struct Bert : tei::Model {
       bias = tei::weight(weights, "cls.predictions.bias");
     }
     return at::log1p(head_activation(transformed, matrix, bias, 2));
-  }
-  std::optional<tei::TransientMemoryProfile> transient_memory_profile() const override {
-    auto p=tei::transient_profile(weights,config.hidden,config.heads,dtype,device.is_cpu());
-    p.linear=std::max(p.linear,transient_linear);p.vocab=std::max(p.vocab,transient_vocabulary);
-    return p;
   }
   int64_t output_width() const override { return config.hidden; }
   at::Tensor forward(const tei::PackedInput& input) const override {

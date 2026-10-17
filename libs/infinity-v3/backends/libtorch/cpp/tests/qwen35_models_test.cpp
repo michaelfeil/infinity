@@ -115,8 +115,6 @@ int main(int argc,char** argv) {
     auto loader=source;return create_qwen35(options,loader,device,dtype);
   };
   auto model=build(cfg,weights,c10::Device("cpu"),at::kFloat);model->ready();
-  TORCH_CHECK(model->transient_memory_profile()->recurrent_heads==1,
-    "Mixed Qwen3.5 attention must retain its actual recurrent state estimate");
   auto full_cfg=cfg;full_cfg.values["layer_types.0"]="full_attention";
   auto full_weights=weights;
   for(const auto& [name,value]:weights) {
@@ -125,11 +123,7 @@ int main(int argc,char** argv) {
       full_weights["model.layers.0.self_attn."+name.substr(from.size())]=value.clone();
   }
   auto full_model=build(full_cfg,full_weights,c10::Device("cpu"),at::kFloat);
-  TORCH_CHECK(full_model->transient_memory_profile()->recurrent_heads==0,
-    "Full-attention Qwen3.5 must not charge unused DeltaNet metadata before ready");
   full_model->ready();
-  TORCH_CHECK(full_model->transient_memory_profile()->recurrent_heads==0,
-    "Full-attention Qwen3.5 must not charge unused DeltaNet metadata after ready");
   std::vector<int32_t> offsets={0,3,5},one={0,3},two={0,2};
   auto make=[](const std::vector<int64_t>& ids,const std::vector<int32_t>& ends) {
     auto tokens=at::from_blob(const_cast<int64_t*>(ids.data()),{static_cast<int64_t>(ids.size())},at::TensorOptions().dtype(at::kLong)).clone();
@@ -209,7 +203,7 @@ int main(int argc,char** argv) {
       auto to_device=[&](PackedInput& input) {
         for(auto* tensor:{&input.ids,&input.types,&input.positions,&input.cumulative})*tensor=tensor->to(block_device);
       };
-      TORCH_CHECK(!blocks->supports_radix()&&blocks->transient_memory_profile()->retained_recurrent_layers==2,"Block cache policy/profile missing");
+      TORCH_CHECK(!blocks->supports_radix(),"Block cache policy missing");
       std::vector<int32_t> ends{0,5,9};
       auto packed=make({1,2,3,4,5,1,2,7,8},ends);packed.block_prefix_lengths={2,2};packed.block_prefix_sources={0,0};
       to_device(packed);

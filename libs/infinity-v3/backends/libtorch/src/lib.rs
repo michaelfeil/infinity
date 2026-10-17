@@ -635,18 +635,6 @@ impl LibtorchBackend {
         options["_cuda_graph_max_tokens"] = graph_max_tokens.into();
         for (env, key, default, minimum) in [
             (
-                infinity_v3_config::infinity_env!("TORCH_TRANSIENT_MAX_BYTES"),
-                "_transient_max_bytes",
-                8i64 << 30,
-                1,
-            ),
-            (
-                infinity_v3_config::infinity_env!("TORCH_DEVICE_MEMORY_HEADROOM_BYTES"),
-                "_device_memory_headroom_bytes",
-                1i64 << 30,
-                1,
-            ),
-            (
                 infinity_v3_config::infinity_env!("TORCH_RETAINED_WORKSPACE_MAX_BYTES"),
                 "_retained_workspace_max_bytes",
                 512i64 << 20,

@@ -12,16 +12,6 @@ void reject(const std::function<void()>&run){bool failed=false;try{run();}catch(
 void norm(Weights&w,const std::string&p,int64_t n){w[p+".weight"]=at::ones({n});w[p+".bias"]=at::zeros({n});}
 void linear(Weights&w,const std::string&p,int64_t in,int64_t out,bool bias=true){w[p+".weight"]=at::zeros({out,in});if(bias)w[p+".bias"]=at::zeros({out});}
 void attention(Weights&w,const std::string&p,int64_t n){w[p+".in_proj_weight"]=at::zeros({3*n,n});w[p+".in_proj_bias"]=at::zeros({3*n});linear(w,p+".out_proj",n,n);}
-void head_admission_test(const DecisionHead& head,int32_t kind) {
- TeiDecisionField field{};field.options=reinterpret_cast<const int64_t*>(uintptr_t(1));field.option_count=1<<20;
- TeiDecision request{};request.kind=kind;request.token_ids=request.markers=field.options;
- request.marker_count=request.token_count=1<<20;request.fields=&field;request.field_count=1;
- int32_t cumulative[]={0,3};bool rejected=false;
- try{head.transient_memory(&request,1,cumulative,1<<20);}catch(const MemoryAdmissionError&){rejected=true;}
- TORCH_CHECK(rejected,"Typed head selected rows escaped transient admission before metadata payload read");
- request.marker_count=request.token_count=field.option_count=1;
- TORCH_CHECK(head.transient_memory(&request,1,cumulative,1<<20)>0,"Valid typed head rejected after large row selection");
-}
 struct Input {
  std::vector<int32_t> offsets{0,3,5};PackedInput input;
  Input(){auto ids=at::tensor({1,2,3,4,5},at::TensorOptions().dtype(at::kLong));input={ids,at::zeros_like(ids),at::tensor({0,1,2,0,1},ids.options()),at::tensor({0,3,5},ids.options().dtype(at::kInt)),offsets.data(),2,3};}
@@ -31,7 +21,6 @@ void options_test(){
  Weights backbone;backbone["lm_head.weight"]=at::arange(128).view({8,16}).to(at::kFloat)*.001;
  Options cfg;cfg.values={{"hidden_size","16"},{"model_type","qwen3_5"}};
  auto head=create_decision_head("option_tokens",{},cfg,{},backbone);backbone.clear();
- head_admission_test(*head,1);
  DecisionRequest first{DecisionRequest::Kind::OptionTokens},second{DecisionRequest::Kind::Warmup};first.token_ids={4,1};
  auto result=head->forward(hidden,in.input,{first,second});
  auto expectedweights=at::arange(128).view({8,16}).to(at::kFloat)*.001;
@@ -53,7 +42,6 @@ Weights laya_weights(){Weights w;w["type_emb.weight"]=at::zeros({3,16});norm(w,"
  auto p=std::string("head.layers.0");norm(w,p+".norm1",16);norm(w,p+".norm2",16);attention(w,p+".self_attn",16);linear(w,p+".linear1",16,64);linear(w,p+".linear2",64,16);return w;}
 void laya_test(){Input in;Options cfg,backbone;cfg.values={{"head_layers","1"},{"max_len","32"},{"head_max_len","32"}};backbone.values["hidden_size"]="16";
  auto weights=laya_weights();auto head=create_decision_head("laya",cfg,backbone,weights,{});weights.clear();
- head_admission_test(*head,0);
  DecisionRequest first{DecisionRequest::Kind::Laya},second{DecisionRequest::Kind::Warmup};first.question_type=2;first.markers={0,2};
  auto hidden=at::sin(at::arange(80).view({5,16}).to(at::kFloat));auto out=head->forward(hidden,in.input,{first,second});close(out[0].logits,at::zeros({2}));close(out[1].logits,at::zeros({1}));
  close(out[0].action_probability,at::sigmoid(at::gelu(at::tensor(1.5),"none")));close(out[1].action_probability,at::sigmoid(at::gelu(at::tensor(1.),"none")));
@@ -118,7 +106,6 @@ Weights clef_weights(){Weights w;for(auto p:{"hidden_norm","option_summary_norm"
 void clef_test(){Input in;Options cfg,backbone;cfg.values={{"hidden_size","16"},{"width","16"},{"heads","2"},{"feedforward","32"},{"routing_layers","1"},{"layers","1"}};backbone.values={{"hidden_size","16"},{"model_type","qwen3_5"}};
  auto weights=clef_weights();Weights bw;bw["lm_head.weight"]=at::cos(at::arange(128).view({8,16}).to(at::kFloat)*.13);auto lexical=bw["lm_head.weight"];
  auto head=create_decision_head("clef",cfg,backbone,weights,bw);weights.clear();bw.clear();
- head_admission_test(*head,2);
  DecisionRequest first{DecisionRequest::Kind::Clef},second{DecisionRequest::Kind::Warmup};first.fields={{0,{0,1},{{1,2},{2,3}}},{2,{1,2},{{0,2}}}};
  auto hidden=at::sin(at::arange(80).view({5,16}).to(at::kFloat)*.17);auto out=head->forward(hidden,in.input,{first,second});
  auto normalized=at::layer_norm(hidden.narrow(0,0,3),{16},at::ones({16}),at::zeros({16}),1e-5);std::vector<at::Tensor> expected;
@@ -181,10 +168,6 @@ void d3_test(){
  Weights readout;readout["weight"]=at::sin(at::arange(255*16).view({255,16}).to(at::kFloat)*.017);
  auto hidden=(at::cos(at::arange(80).view({5,16}).to(at::kFloat)*.13)).to(at::kBFloat16);
  auto head=create_decision_head("d3",cfg,backbone,readout,{});
- head_admission_test(*head,1);
- TeiDecision warmup{};warmup.kind=3;int32_t one_row[]={0,3};
- TORCH_CHECK(head->transient_memory(&warmup,1,one_row,1<<20)>=255*2*sizeof(float),
-   "D3 warmup admission omitted the full FP32 readout projection");
  DecisionRequest first{DecisionRequest::Kind::OptionTokens},second{DecisionRequest::Kind::Warmup};first.token_ids={0,1,2};
  auto result=head->forward(hidden,in.input,{first,second});
  auto full=at::linear(hidden[2].to(at::kFloat).unsqueeze(0),readout["weight"]);
