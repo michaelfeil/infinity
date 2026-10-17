@@ -12,7 +12,6 @@ CUDA libraries, model weights, or container base images.
 | Adapted Candle CPU operators | [Apache text](LICENSES/Apache-2.0.txt) and source attribution in [ModernBERT CPU math](backends/libtorch/cpp/helpers/modern_cpu_math.cpp), based on Candle revision `036f39e`. |
 | Candle CUDA activation kernel | [MIT text](backends/candle/src/kernels/LICENSE.candle-MIT) and [kernel notices](backends/candle/src/kernels/gated_activation.cu). |
 | Candle cuBLASLt extension | [Apache text](backends/candle/extensions/candle-cublaslt/LICENSE-APACHE) and [MIT text](backends/candle/extensions/candle-cublaslt/LICENSE-MIT). |
-| Candle FlashAttention v1 extension | [Apache text](backends/candle/extensions/candle-flash-attn-v1/LICENSE-APACHE), [MIT text](backends/candle/extensions/candle-flash-attn-v1/LICENSE-MIT), and kernel file notices. |
 | Candle index-select extension | [Apache text](backends/candle/extensions/candle-index-select-cu/LICENSE-APACHE), [MIT text](backends/candle/extensions/candle-index-select-cu/LICENSE-MIT), and file headers. |
 | Candle layer-norm extension | [Apache text](backends/candle/extensions/candle-layer-norm/LICENSE-APACHE), [MIT text](backends/candle/extensions/candle-layer-norm/LICENSE-MIT), and [BSD text](backends/candle/extensions/candle-layer-norm/LICENSE). |
 | Candle rotary extension | [Apache text](backends/candle/extensions/candle-rotary/LICENSE-APACHE) and [MIT text](backends/candle/extensions/candle-rotary/LICENSE-MIT). |

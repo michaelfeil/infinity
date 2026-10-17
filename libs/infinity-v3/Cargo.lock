@@ -599,20 +599,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "candle-flash-attn-v1"
-version = "0.0.1"
-dependencies = [
- "anyhow",
- "bindgen_cuda",
- "candle-core",
- "candle-nn",
- "cudaforge",
- "half",
- "num_cpus",
- "rayon",
-]
-
-[[package]]
 name = "candle-flash-attn-v4"
 version = "0.1.0-alpha.1"
 source = "git+https://github.com/michaelfeil/candle-flash-attn-v4?rev=0f6c65849ad3b28b085940d5b31d325ed1df4902#0f6c65849ad3b28b085940d5b31d325ed1df4902"
@@ -2445,7 +2431,6 @@ dependencies = [
  "candle-core",
  "candle-cublaslt",
  "candle-flash-attn",
- "candle-flash-attn-v1",
  "candle-flash-attn-v4",
  "candle-index-select-cu",
  "candle-layer-norm",

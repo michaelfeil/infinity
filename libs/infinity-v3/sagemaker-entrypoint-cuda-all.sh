@@ -39,13 +39,11 @@ if [[ -n "${HF_MODEL_REVISION}" ]]; then
 fi
 
 compute_cap=$(nvidia-smi --query-gpu=compute_cap --format=csv | sed -n '2p' | sed 's/\.//g')
-if [ ${compute_cap} -eq 75 ]; then
-    exec infinity_v3-75 --port 8080 --json-output
-elif [ ${compute_cap} -ge 80 -a ${compute_cap} -lt 90 ]; then
+if [ ${compute_cap} -ge 80 -a ${compute_cap} -lt 90 ]; then
     exec infinity_v3-80 --port 8080 --json-output
 elif [ ${compute_cap} -eq 90 ]; then
     exec infinity_v3-90 --port 8080 --json-output
 else
-    echo "CUDA compute cap ${compute_cap} is not supported"
+    echo "CUDA compute cap ${compute_cap} is not supported; CUDA requires SM80 or newer"
     exit 1
 fi

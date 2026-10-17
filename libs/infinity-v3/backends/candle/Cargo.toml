@@ -17,7 +17,6 @@ half = { workspace = true }
 candle-nn = { workspace = true }
 candle-transformers = { workspace = true }
 candle-flash-attn = { workspace = true, optional = true}
-candle-flash-attn-v1 = { workspace = true, optional = true }
 candle-cublaslt = { workspace = true, optional = true }
 candle-index-select-cu = { workspace = true, optional = true}
 candle-layer-norm = { workspace = true, optional = true }
@@ -55,7 +54,6 @@ mkl = ["dep:intel-mkl-src", "candle/mkl"]
 cuda = ["candle/cuda", "candle-nn/cuda", "dep:candle-cublaslt", "dep:candle-layer-norm", "dep:candle-rotary", "dep:candle-index-select-cu", "dep:cudaforge"]
 cuda-static-linking = ["candle/cuda-static-linking", "candle-flash-attn?/static-linking"]
 cuda-dynamic-linking = ["candle/cuda-dynamic-linking"]
-flash-attn-v1 = ["dep:candle-flash-attn-v1", "cuda"]
 flash-attn = ["dep:candle-flash-attn", "cuda", "candle-transformers/flash-attn"]
 
 experimental-deberta = ["cuda", "dep:candle-flash-attn-v4", "candle-flash-attn-v4/deberta"]

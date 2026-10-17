@@ -137,7 +137,8 @@ To compile both backends instead, use `--features libtorch` without
 do not require LibTorch.
 
 CUDA builds default to a multi-architecture native library targeting SM80,
-SM86, SM89, SM90, SM100, and SM120. SM75 is outside the supported baseline.
+SM86, SM89, SM90, SM100, and SM120. Both Candle and LibTorch require SM80 or newer
+for supported CUDA builds. SM75/Turing is unsupported.
 Each target includes native code and PTX.
 The separate SM90a MoE optimization is selected only on Hopper; other GPUs use
 the portable path. The bundled LibTorch distribution must also support the target
@@ -146,7 +147,10 @@ The full target list requires a CUDA toolkit supporting SM100 and SM120;
 older toolkits require a narrower explicit architecture list.
 
 `LIBTORCH_CUDA_ARCHITECTURES` accepts a semicolon-separated CMake architecture
-list. Candle's `CUDA_COMPUTE_CAP` setting no longer narrows LibTorch builds.
+list of explicit targets >=80 (optionally suffixed with `-real` or `-virtual`).
+Special targets such as `all` and `native` are rejected to prevent implicit
+pre-Ampere builds. Candle's `CUDA_COMPUTE_CAP` setting no longer narrows
+LibTorch builds.
 Distribution builds can pin the full target list explicitly:
 
 ```bash

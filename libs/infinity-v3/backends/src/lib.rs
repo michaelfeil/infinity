@@ -1090,26 +1090,16 @@ async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBu
 pub fn supports_device_replication() -> bool {
     cfg!(all(
         feature = "candle",
-        any(
-            feature = "cuda",
-            feature = "flash-attn",
-            feature = "flash-attn-v1"
-        )
+        any(feature = "cuda", feature = "flash-attn")
     ))
 }
 
 pub fn visible_cuda_device_count() -> Result<usize, BackendError> {
-    #[cfg(all(
-        feature = "candle",
-        any(feature = "cuda", feature = "flash-attn", feature = "flash-attn-v1")
-    ))]
+    #[cfg(all(feature = "candle", any(feature = "cuda", feature = "flash-attn")))]
     {
         infinity_v3_backend_candle::visible_cuda_device_count()
     }
-    #[cfg(not(all(
-        feature = "candle",
-        any(feature = "cuda", feature = "flash-attn", feature = "flash-attn-v1")
-    )))]
+    #[cfg(not(all(feature = "candle", any(feature = "cuda", feature = "flash-attn"))))]
     {
         Err(BackendError::Start(
             "GPU replicas require the Candle CUDA backend".into(),

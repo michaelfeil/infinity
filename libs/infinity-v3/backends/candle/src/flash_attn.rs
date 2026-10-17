@@ -109,32 +109,7 @@ pub(crate) fn flash_attn_varlen(
             }
         }
 
-        if runtime_compute_cap == 75 {
-            if alibi_slopes.is_some() {
-                candle::bail!("Flash attention v1 does not support alibi");
-            }
-            if window_size_left.is_some() | window_size_right.is_some() {
-                candle::bail!("Flash attention v1 does not support attention windowing");
-            }
-
-            #[cfg(feature = "flash-attn-v1")]
-            {
-                use candle_flash_attn_v1::flash_attn_varlen;
-                return flash_attn_varlen(
-                    q,
-                    k,
-                    v,
-                    seqlens_q,
-                    seqlens_k,
-                    max_seqlen_q,
-                    max_seqlen_k,
-                    softmax_scale,
-                    causal,
-                );
-            }
-            #[cfg(not(feature = "flash-attn-v1"))]
-            candle::bail!("Flash attention v1 is not installed. Use `flash-attn-v1` feature.")
-        } else if (80..90).contains(&runtime_compute_cap)
+        if (80..90).contains(&runtime_compute_cap)
             || runtime_compute_cap == 90
             || runtime_compute_cap == 120
             || runtime_compute_cap == 100

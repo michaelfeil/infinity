@@ -4,6 +4,8 @@ fn main() {
     println!("cargo:rustc-check-cfg=cfg(gemma4_moe_cuda)");
     println!("cargo:rustc-check-cfg=cfg(gemma4_moe_hopper)");
     println!("cargo:rerun-if-env-changed=CUDA_COMPUTE_CAP");
+    #[cfg(feature = "cuda")]
+    let _ = set_compute_cap().expect("Candle CUDA requires SM80 (Ampere) or newer");
     if let Ok(compute_cap) = set_compute_cap() {
         println!("cargo:rustc-env=CUDA_COMPUTE_CAP={compute_cap}");
     }
@@ -16,8 +18,7 @@ fn main() {
         );
         println!("cargo:rerun-if-changed=extensions/candle-gemma4-moe/kernels/grouped_gemm.cu");
         let out = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
-        // Routed BF16 experts need Ampere Tensor Cores. Keep older CUDA
-        // targets buildable for the models they already support.
+        // All supported CUDA targets provide Ampere-or-newer Tensor Cores.
         if set_compute_cap().expect("CUDA compute capability") >= 80 {
             cudaforge::KernelBuilder::new()
                 .source_files(["extensions/candle-gemma4-moe/kernels/grouped_gemm.cu"])
@@ -150,5 +151,9 @@ fn set_compute_cap() -> Result<usize> {
             .replace('.', "");
         cap.parse::<usize>().context("cannot parse as int")?
     };
+    anyhow::ensure!(
+        compute_cap >= 80,
+        "Candle CUDA requires SM80 (Ampere) or newer; SM{compute_cap} is unsupported"
+    );
     Ok(compute_cap)
 }

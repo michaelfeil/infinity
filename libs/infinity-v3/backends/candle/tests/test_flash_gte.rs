@@ -56,10 +56,7 @@ fn test_flash_gte() -> Result<()> {
 
 #[test]
 #[serial_test::serial]
-#[cfg(all(
-    feature = "cuda",
-    any(feature = "flash-attn", feature = "flash-attn-v1")
-))]
+#[cfg(all(feature = "cuda", feature = "flash-attn"))]
 fn test_flash_gte_classification() -> Result<()> {
     let (model_root, _) =
         download_artifacts("Alibaba-NLP/gte-multilingual-reranker-base", None, None)?;

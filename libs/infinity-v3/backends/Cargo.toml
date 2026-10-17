@@ -33,6 +33,5 @@ metal = ["infinity_v3-backend-candle?/metal"]
 mkl = ["infinity_v3-backend-candle?/mkl"]
 accelerate = ["infinity_v3-backend-candle?/accelerate"]
 flash-attn = ["infinity_v3-backend-candle?/flash-attn"]
-flash-attn-v1 = ["infinity_v3-backend-candle?/flash-attn-v1"]
 
 experimental-deberta = ["infinity_v3-backend-candle?/experimental-deberta"]

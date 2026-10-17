@@ -33,11 +33,13 @@ Full-featured script with error handling, parallel builds, and verification.
 ./push-docker-images.sh --help
 ```
 
+CUDA inference in both Candle and LibTorch requires SM80 (Ampere) or newer.
+SM75/Turing images are no longer built or supported. CPU builds are unaffected.
+
 ## Supported Variants
 
 | Prefix | Architecture | Compute Cap | Dockerfile |
 |--------|--------------|-------------|------------|
-| `turing-` | Turing | sm75 | Dockerfile-cuda |
 | (none) | Ampere | sm80 | Dockerfile-cuda |
 | `86-` | A10 | sm86 | Dockerfile-cuda |
 | `89-` | RTX 4000 | sm89 | Dockerfile-cuda |
@@ -56,7 +58,6 @@ Images are tagged following the GitHub Actions conventions:
 
 **Examples:**
 - `baseten/infinity_v3:latest` (sm80)
-- `baseten/infinity_v3:turing-latest` (sm75)
 - `baseten/infinity_v3:blackwell-latest` (sm100)
 - `baseten/infinity_v3:sm120-latest` (sm120)
 
@@ -106,7 +107,6 @@ export BUILDKIT_INLINE_CACHE=1
 - `CUDA_COMPUTE_CAP` - Target compute capability
 - `GIT_SHA` - Git commit SHA
 - `SCCACHE_GHA_ENABLED` - Enable sccache caching
-- `DEFAULT_USE_FLASH_ATTENTION=False` - For Turing (sm75) only
 
 **Platform:**
 - `linux/amd64` - All images built for this platform
