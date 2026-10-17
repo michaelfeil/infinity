@@ -142,7 +142,7 @@ struct Args {
 
     /// Advanced backend override; normally determined by the build/image.
     /// Runtime selection is rarely needed; single-backend builds select it automatically.
-    /// When both are compiled, defaults to Candle. This flag cannot enable an uncompiled backend.
+    /// When both are compiled, defaults to LibTorch. This flag cannot enable an uncompiled backend.
     #[clap(
         long,
         env = infinity_v3_config::infinity_env!("BACKEND"),
@@ -646,9 +646,12 @@ mod tests {
             .unwrap()
             .models()
             .unwrap();
-        assert!(models
-            .iter()
-            .all(|m| m.backend_kind == infinity_v3_backend::BackendKind::default()));
+        let expected = if cfg!(feature = "libtorch") {
+            infinity_v3_backend::BackendKind::Libtorch
+        } else {
+            infinity_v3_backend::BackendKind::Candle
+        };
+        assert!(models.iter().all(|m| m.backend_kind == expected));
         let models = Args::try_parse_from([
             "infinity_v3",
             "--model-id",

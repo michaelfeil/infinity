@@ -23,9 +23,9 @@ checkpoint and selected backend.
 
 The backend is normally determined when the binary or container image is built,
 so most deployments should omit `--backend`. A single-backend build selects its
-compiled backend automatically. Builds containing both retain Candle as the
-default; use `--backend libtorch` (or `INFINITY_BACKEND=libtorch`) as an advanced
-override in those builds. The flag cannot enable a backend missing from the
+compiled backend automatically. Builds containing both prefer LibTorch; use
+`--backend candle` (or `INFINITY_BACKEND=candle`) as an advanced override when
+Candle is needed. The flag cannot enable a backend missing from the
 image; startup errors list the compiled choices.
 
 Open `/docs` on the running server for interactive API documentation. The API
@@ -34,10 +34,11 @@ schema is available at `/api-doc/openapi.json`.
 ## UltraBERT embeddings
 
 `dmis-lab/UltraBERT-Embed-150M` uses the Candle backend and produces
-768-dimensional CLS embeddings with a 32,768-token context:
+768-dimensional CLS embeddings with a 32,768-token context. The override below
+selects Candle in dual-backend builds; Candle-only builds can omit it:
 
 ```sh
-infinity_v3 --model-id dmis-lab/UltraBERT-Embed-150M \
+infinity_v3 --backend candle --model-id dmis-lab/UltraBERT-Embed-150M \
   --max-batch-tokens 32768
 ```
 

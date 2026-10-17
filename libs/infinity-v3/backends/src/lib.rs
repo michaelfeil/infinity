@@ -50,8 +50,8 @@ pub enum BackendKind {
 
 impl Default for BackendKind {
     fn default() -> Self {
-        // Preserve Candle's default in dual-backend builds.
-        if cfg!(feature = "libtorch") && !cfg!(feature = "candle") {
+        // Prefer LibTorch when available; Candle-only builds still select Candle.
+        if cfg!(feature = "libtorch") {
             Self::Libtorch
         } else {
             Self::Candle
@@ -1125,8 +1125,8 @@ mod backend_selection_tests {
     fn default_uses_compiled_backend() {
         let default = BackendKind::default();
         match (cfg!(feature = "candle"), cfg!(feature = "libtorch")) {
-            (true, _) => assert_eq!(default, BackendKind::Candle),
-            (false, true) => assert_eq!(default, BackendKind::Libtorch),
+            (_, true) => assert_eq!(default, BackendKind::Libtorch),
+            (true, false) => assert_eq!(default, BackendKind::Candle),
             (false, false) => assert!(default.ensure_compiled().is_err()),
         }
     }
