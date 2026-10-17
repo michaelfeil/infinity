@@ -31,6 +31,9 @@ image; startup errors list the compiled choices.
 Open `/docs` on the running server for interactive API documentation. The API
 schema is available at `/api-doc/openapi.json`.
 
+CUDA inference requires SM80 (Ampere) or newer in both backends. SM75/Turing
+is unsupported; use a CPU build on hosts without a supported GPU.
+
 ## UltraBERT embeddings
 
 `dmis-lab/UltraBERT-Embed-150M` uses the Candle backend and produces

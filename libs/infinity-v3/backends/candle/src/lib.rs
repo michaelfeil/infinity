@@ -1,5 +1,5 @@
 mod alibi;
-#[cfg(feature = "cuda")]
+#[cfg(any(feature = "cuda", test))]
 mod compute_cap;
 #[cfg(feature = "fa4")]
 mod fa4_native;

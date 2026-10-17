@@ -1,13 +1,5 @@
 [
   {
-    "name": "turing",
-    "imageNamePrefix": "turing-",
-    "sccache": true,
-    "cudaComputeCap": 75,
-    "extraBuildArgs": "DEFAULT_USE_FLASH_ATTENTION=False",
-    "dockerfile": "libs/infinity-v3/Dockerfile-cuda"
-  },
-  {
     "name": "ampere",
     "imageNamePrefix": "",
     "sccache": true,

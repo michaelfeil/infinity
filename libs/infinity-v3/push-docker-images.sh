@@ -14,7 +14,6 @@ REGISTRIES=(
 
 # Matrix configurations: prefix:compute_cap:dockerfile:sccache:extra_args
 declare -A IMAGES=(
-    ["turing-"]="75:Dockerfile-cuda:true:DEFAULT_USE_FLASH_ATTENTION=True"
     ["ampere-"]="80:Dockerfile-cuda:true:"
     ["86-"]="86:Dockerfile-cuda:true:"
     ["89-"]="89:Dockerfile-cuda:true:"

@@ -70,10 +70,6 @@ RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=75 cargo chef cook --release --features candle-cuda-turing --recipe-path recipe.json && sccache -s;
-
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
     CUDA_COMPUTE_CAP=80 cargo chef cook --release --features candle-cuda --recipe-path recipe.json && sccache -s;
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
@@ -91,12 +87,6 @@ COPY NOTICE LICENSING.md THIRD_PARTY_NOTICES.md ./
 COPY LICENSES LICENSES
 COPY scripts/collect-license-notices.sh scripts/collect-license-notices.sh
 RUN sh scripts/collect-license-notices.sh /usr/src/distribution-licenses
-
-RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
-    --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    CUDA_COMPUTE_CAP=75 cargo build --release --bin infinity_v3 -F candle-cuda-turing && sccache -s;
-
-RUN mv /usr/src/target/release/infinity_v3 /usr/src/target/release/infinity_v3-75
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
@@ -127,7 +117,6 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=builder /usr/src/target/release/infinity_v3-75 /usr/local/bin/infinity_v3-75
 COPY --from=builder /usr/src/target/release/infinity_v3-80 /usr/local/bin/infinity_v3-80
 COPY --from=builder /usr/src/target/release/infinity_v3-90 /usr/local/bin/infinity_v3-90
 

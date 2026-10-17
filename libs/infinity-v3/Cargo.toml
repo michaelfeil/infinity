@@ -54,7 +54,6 @@ candle-cublaslt = { path = "backends/candle/extensions/candle-cublaslt" }
 candle-layer-norm = { path = "backends/candle/extensions/candle-layer-norm" }
 candle-index-select-cu = { path = "backends/candle/extensions/candle-index-select-cu" }
 candle-rotary = { path = "backends/candle/extensions/candle-rotary" }
-candle-flash-attn-v1 = { path = "backends/candle/extensions/candle-flash-attn-v1" }
 half = { version = "2.3.1", features = ["num-traits"] }
 radix_mlp = { version = "0.0.2" }
 

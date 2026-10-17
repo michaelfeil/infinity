@@ -73,10 +73,7 @@ WORKDIR /usr/src
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
-    then  \
-        nvprune --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
-    elif [ ${CUDA_COMPUTE_CAP} -ge 80 -a ${CUDA_COMPUTE_CAP} -lt 90 ]; \
+    if [ ${CUDA_COMPUTE_CAP} -ge 80 -a ${CUDA_COMPUTE_CAP} -lt 90 ]; \
     then  \
         nvprune --generate-code code=sm_80 --generate-code code=sm_${CUDA_COMPUTE_CAP} /usr/local/cuda/lib64/libcublas_static.a -o /usr/local/cuda/lib64/libcublas_static.a; \
     elif [ ${CUDA_COMPUTE_CAP} -eq 90 ]; \
@@ -98,12 +95,7 @@ COPY LICENSE ./
 RUN --mount=type=cache,id=tei-sccache-cuda12.9-sm${CUDA_COMPUTE_CAP},target=/var/cache/sccache,sharing=shared \
     --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
-    then \
-        cargo-static-cuda chef cook --release --bin infinity_v3 --features http --features candle-cuda-turing --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
-    else \
-        cargo-static-cuda chef cook --release --bin infinity_v3 --features http --features candle-cuda $(case "$CUDA_COMPUTE_CAP" in 90) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 120) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 89) printf %s --features=fa4,experimental-fp8 ;; 100) printf %s --features=experimental-fp8 ;; 80|86) printf %s --features=fa4 ;; esac) --features static-linking --no-default-features --recipe-path recipe.json && sccache -s; \
-    fi;
+    cargo-static-cuda chef cook --release --bin infinity_v3 --features http --features candle-cuda $(case "$CUDA_COMPUTE_CAP" in 90) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 120) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 89) printf %s --features=fa4,experimental-fp8 ;; 100) printf %s --features=experimental-fp8 ;; 80|86) printf %s --features=fa4 ;; esac) --features static-linking --no-default-features --recipe-path recipe.json && sccache -s;
 
 COPY backends backends
 COPY core core
@@ -126,12 +118,7 @@ ARG DOCKER_LABEL
 RUN --mount=type=cache,id=tei-sccache-cuda12.9-sm${CUDA_COMPUTE_CAP},target=/var/cache/sccache,sharing=shared \
     --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
-    if [ ${CUDA_COMPUTE_CAP} -ge 75 -a ${CUDA_COMPUTE_CAP} -lt 80 ]; \
-    then \
-        cargo-static-cuda build --release --bin infinity_v3 -F candle-cuda-turing -F static-linking -F http --no-default-features && sccache -s; \
-    else \
-        cargo-static-cuda build --release --bin infinity_v3 -F candle-cuda $(case "$CUDA_COMPUTE_CAP" in 90) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 120) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 89) printf %s --features=fa4,experimental-fp8 ;; 100) printf %s --features=experimental-fp8 ;; 80|86) printf %s --features=fa4 ;; esac) -F static-linking -F http --no-default-features && sccache -s; \
-    fi;
+    cargo-static-cuda build --release --bin infinity_v3 -F candle-cuda $(case "$CUDA_COMPUTE_CAP" in 90) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 120) printf %s --features=fa4,experimental-deberta,experimental-fp8 ;; 89) printf %s --features=fa4,experimental-fp8 ;; 100) printf %s --features=experimental-fp8 ;; 80|86) printf %s --features=fa4 ;; esac) -F static-linking -F http --no-default-features && sccache -s;
 
 FROM nvidia/cuda:12.9.0-base-ubuntu22.04 AS base
 COPY --from=fa4-builder /opt/fa4 /opt/fa4
