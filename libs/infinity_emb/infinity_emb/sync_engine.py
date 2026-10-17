@@ -189,6 +189,9 @@ class SyncEngineArray(WeakAsyncLifeMixin):
         docs: list[str],
         raw_scores: bool = False,
         top_n: Optional[int] = None,
+        max_query_tokens: Optional[int] = None,
+        max_tokens_per_doc: Optional[int] = None,
+        max_pair_tokens: Optional[int] = None,
     ):
         """sync interface of AsyncEngineArray"""
         return self.async_run(
@@ -198,6 +201,9 @@ class SyncEngineArray(WeakAsyncLifeMixin):
             docs=docs,
             raw_scores=raw_scores,
             top_n=top_n,
+            max_query_tokens=max_query_tokens,
+            max_tokens_per_doc=max_tokens_per_doc,
+            max_pair_tokens=max_pair_tokens,
         )
 
     @add_start_docstrings(AsyncEngineArray.classify.__doc__)

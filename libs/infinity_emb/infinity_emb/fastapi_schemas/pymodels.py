@@ -13,7 +13,10 @@ import numpy as np
 
 
 from infinity_emb._optional_imports import CHECK_PYDANTIC
-from infinity_emb.primitives import EmbeddingEncodingFormat, Modality
+from infinity_emb.primitives import (
+    EmbeddingEncodingFormat,
+    Modality,
+)
 
 CHECK_PYDANTIC.mark_required()
 # pydantic 2.x is strictly needed starting v0.0.70
@@ -230,6 +233,33 @@ class RerankInput(BaseModel):
     raw_scores: bool = False
     model: str = "default/not-specified"
     top_n: Optional[int] = Field(default=None, gt=0)
+    max_query_tokens: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Head-truncate the query to at most N tokens before scoring. Clamped to the "
+            "model's server-side ceiling: a request may lower this but not raise it above "
+            "the configured limit. Omit or null to use the server ceiling."
+        ),
+    )
+    max_tokens_per_doc: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Head-truncate each document to at most N tokens before scoring (Cohere v2 "
+            "compatible). Clamped to the model's server-side ceiling: a request may lower "
+            "this but not raise it. Omit or null to use the server ceiling."
+        ),
+    )
+    max_pair_tokens: Optional[int] = Field(
+        default=None,
+        gt=0,
+        description=(
+            "Cap the joined (query, document) pair to at most N tokens, trimming the longest "
+            "side first. Clamped to the model's server-side ceiling: a request may lower "
+            "this but not raise it. Omit or null to use the server ceiling."
+        ),
+    )
 
 
 class _ReRankObject(BaseModel):

@@ -22,6 +22,17 @@ from infinity_emb.primitives import (
 )
 
 
+def _clamp_to_ceiling(requested: Optional[int], ceiling: Optional[int]) -> Optional[int]:
+    """Clamp a client-requested rerank token budget to the model's startup ceiling.
+
+    The startup ceiling guards backend stability; a client may only lower a limit (to
+    trade quality for speed), never raise it. ``None`` means "no constraint from that
+    side", so the result is the smaller of the two set values, or ``None`` if neither is.
+    """
+    candidates = [value for value in (requested, ceiling) if value is not None]
+    return min(candidates) if candidates else None
+
+
 class AsyncEmbeddingEngine:
     """
     An LLM engine that receives requests and embeds them asynchronously.
@@ -164,6 +175,9 @@ class AsyncEmbeddingEngine:
         docs: list[str],
         raw_scores: bool = False,
         top_n: Optional[int] = None,
+        max_query_tokens: Optional[int] = None,
+        max_tokens_per_doc: Optional[int] = None,
+        max_pair_tokens: Optional[int] = None,
     ) -> tuple[list["RerankReturnType"], int]:
         """rerank multiple sentences
 
@@ -173,6 +187,16 @@ class AsyncEmbeddingEngine:
             raw_scores (bool): return raw scores instead of sigmoid
             top_n (Optional[int]): number of top scores to return after reranking
                 if top_n is None, <= 0 or out of range, all scores are returned
+            max_query_tokens (Optional[int]): head-truncate the query to at most N tokens.
+            max_tokens_per_doc (Optional[int]): head-truncate each document to at most N
+                tokens.
+            max_pair_tokens (Optional[int]): cap the joined (query, document) pair to at most
+                N tokens, trimming the longest side first.
+
+        Each token budget is clamped to the model's startup ceiling
+        (``EngineArgs.max_*``): a client may lower a limit to trade quality for speed but
+        cannot raise it above the configured ceiling. None on both the request and the
+        ceiling disables that limit.
 
         Raises:
             ValueError: raised if engine is not started yet
@@ -189,6 +213,15 @@ class AsyncEmbeddingEngine:
             docs=docs,
             raw_scores=raw_scores,
             top_n=top_n,
+            max_query_tokens=_clamp_to_ceiling(
+                max_query_tokens, self._engine_args.max_query_tokens
+            ),
+            max_tokens_per_doc=_clamp_to_ceiling(
+                max_tokens_per_doc, self._engine_args.max_tokens_per_doc
+            ),
+            max_pair_tokens=_clamp_to_ceiling(
+                max_pair_tokens, self._engine_args.max_pair_tokens
+            ),
         )
 
         return scores, usage
@@ -351,6 +384,9 @@ class AsyncEngineArray:
         docs: list[str],
         raw_scores: bool = False,
         top_n: Optional[int] = None,
+        max_query_tokens: Optional[int] = None,
+        max_tokens_per_doc: Optional[int] = None,
+        max_pair_tokens: Optional[int] = None,
     ) -> tuple[list["RerankReturnType"], int]:
         """rerank multiple sentences
 
@@ -360,6 +396,12 @@ class AsyncEngineArray:
             docs (list[str]): docs to be reranked
             raw_scores (bool): return raw scores instead of sigmoid
             top_n (Optional[int]): number of top scores to return after reranking
+            max_query_tokens (Optional[int]): head-truncate the query to at most N tokens.
+            max_tokens_per_doc (Optional[int]): head-truncate each document to at most N
+                tokens.
+            max_pair_tokens (Optional[int]): cap the joined (query, document) pair to at
+                most N tokens, trimming the longest side first. Each budget is clamped to
+                the model's startup ceiling; a client may lower a limit but not raise it.
 
         Raises:
             ValueError: raised if engine is not started yet
@@ -370,7 +412,15 @@ class AsyncEngineArray:
             list[float]: list of scores
             int: token usage
         """
-        return await self[model].rerank(query=query, docs=docs, raw_scores=raw_scores, top_n=top_n)
+        return await self[model].rerank(
+            query=query,
+            docs=docs,
+            raw_scores=raw_scores,
+            top_n=top_n,
+            max_query_tokens=max_query_tokens,
+            max_tokens_per_doc=max_tokens_per_doc,
+            max_pair_tokens=max_pair_tokens,
+        )
 
     async def classify(
         self, *, model: str, sentences: list[str], raw_scores: bool = False
