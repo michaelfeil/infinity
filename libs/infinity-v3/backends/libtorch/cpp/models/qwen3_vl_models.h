@@ -26,8 +26,6 @@ class Qwen3VL final : public Model {
   bool supports_images() const override;
   at::Tensor image_features(const ImageInput& image) const;
   int64_t output_width() const override;
-  TowerMemoryProfile vision_memory_profile() const;
-  std::optional<TransientMemoryProfile> transient_memory_profile() const override;
   at::Tensor forward(const PackedInput& input) const override;
 };
 std::unique_ptr<Model> create_qwen3_vl(const Options&, Weights&, c10::Device, at::ScalarType);

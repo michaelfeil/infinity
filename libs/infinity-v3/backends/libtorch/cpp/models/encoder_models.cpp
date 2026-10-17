@@ -55,7 +55,6 @@ at::Tensor gte_ntk_inverse_frequencies(int64_t dimension, double theta, double f
 struct Encoder final : Model {
   Options o;
   Weights& weights;
-  int64_t transient_linear=0,transient_vocabulary=0;
   c10::Device device;
   at::ScalarType dtype;
   Family family;
@@ -110,22 +109,6 @@ struct Encoder final : Model {
     exact_norm=f==Family::Modern && (!norm_mode||std::string(norm_mode)=="1"||std::string(norm_mode)=="true");
     TORCH_CHECK(!o.boolean("_fp8_dynamic",false) || family==Family::Modern,
       "Dynamic FP8 is unsupported for this encoder family");
-  }
-  std::optional<TransientMemoryProfile> transient_memory_profile() const override {
-    auto p=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
-    p.linear=std::max(p.linear,transient_linear);p.vocab=std::max(p.vocab,transient_vocabulary);
-    p.packed_bias=alibi.has_value();
-    // Routing uses i % every == 1; periods 0/1 or a single layer have no
-    // expert layer even if the checkpoint carries expert-count metadata.
-    if(exact_moe && o.integer("moe_every_n_layers",0)>1 && layers>1) {
-      p.top_k=o.integer("moe_top_k",0);p.experts=o.integer("num_experts",0);
-      for(const auto& [name,value]:weights)if(name.ends_with("experts.mlp.w1")) {
-        TORCH_CHECK(p.experts>0&&hidden>0&&value.numel()%p.experts==0&&
-          (value.numel()/p.experts)%hidden==0,"Unknown Nomic expert transient dimensions");
-        p.linear=std::max(p.linear,value.numel()/p.experts/hidden);
-      }
-    }
-    return p;
   }
   int64_t output_width() const override { return hidden; }
   int64_t classification_width() const override {
@@ -255,9 +238,6 @@ struct Encoder final : Model {
     }
   }
   void ready() override {
-    // Retain scalar dimensions before inference caches erase checkpoint tensors.
-    const auto checkpoint_profile=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
-    transient_linear=checkpoint_profile.linear;transient_vocabulary=checkpoint_profile.vocab;
     exact_cpu_half = family == Family::Modern && device.is_cpu() && dtype == at::kHalf
       && hidden == 768 && heads == 12 && o.integer("intermediate_size", 0) == 1152
       && (activation == "gelu" || activation == "gelu_approx" || activation == "gelu_new"
@@ -329,6 +309,18 @@ struct Encoder final : Model {
     fused.resize(layers);
     for (int64_t i = 0; i < layers; ++i) {
       const auto p = layer_name(i);
+      const auto every = o.integer("moe_every_n_layers",0);
+      if (family==Family::Nomic && every>0 && i%every==1) {
+        const auto experts=o.integer("num_experts",0), inner=o.integer("n_inner",0);
+        TORCH_CHECK(experts>0 && inner>0,"Invalid Nomic expert count/width");
+        // Validate the reshape used by nomic_moe() at load time. Division
+        // checks avoid overflowing an experts * inner * hidden product.
+        for (const auto& name : {p+"mlp.experts.mlp.w1",p+"mlp.experts.mlp.w2"}) {
+          const auto elements=w(name).numel();
+          TORCH_CHECK(elements%experts==0 && (elements/experts)%hidden==0 &&
+            elements/experts/hidden==inner,"Invalid Nomic expert tensor dimensions: ",prefix,name);
+        }
+      }
       if (exact_cpu_half) {
         // Eligible 22-layer H768/I1152 profiles retain 420.75MiB of owned Float
         // slices; original Half weights and uncached fallback remain intact.
@@ -718,10 +710,6 @@ struct Mpnet final : Model {
   const at::Tensor& w(const std::string& key) const { return weight(weights,prefix+key); }
   at::Tensor linear(const at::Tensor& h, const std::string& n) const { return at::linear(h,w(n+".weight"),w(n+".bias")); }
   at::Tensor norm(const at::Tensor& h, const std::string& n) const { return at::layer_norm(h,{hidden},w(n+".weight"),w(n+".bias"),o.real("layer_norm_eps",1e-12)); }
-  std::optional<TransientMemoryProfile> transient_memory_profile() const override {
-    auto p=transient_profile(weights,hidden,heads,dtype,true);
-    p.packed_bias=device.is_cuda();p.relative_buckets=true;return p;
-  }
   int64_t output_width() const override { return hidden; }
   void ready() override {
     TORCH_CHECK(hidden > 0 && heads > 0 && hidden%heads==0 && layers>0,"Invalid MPNet dimensions");
@@ -824,12 +812,6 @@ struct Deberta final : Model {
     if(kind=="relu")return at::relu(x);if(kind=="silu")return at::silu(x);if(kind=="tanh")return at::tanh(x);
     TORCH_CHECK(kind=="gelu" || kind=="gelu_new" || kind=="gelu_pytorch_tanh","Unsupported DeBERTa activation: ",kind);
     return at::gelu(x,kind=="gelu"?"none":"tanh");
-  }
-  std::optional<TransientMemoryProfile> transient_memory_profile() const override {
-    auto p=transient_profile(weights,hidden,heads,dtype,true);
-    p.packed_bias=device.is_cuda();p.relative_buckets=true;
-    if(o.boolean("relative_attention",false))p.relative_bins=w("encoder.rel_embeddings.weight").size(0);
-    return p;
   }
   int64_t output_width()const override{return hidden;}
   int64_t classification_width()const override {auto it=weights.find("classifier.weight");return it==weights.end()?0:it->second.size(0);}

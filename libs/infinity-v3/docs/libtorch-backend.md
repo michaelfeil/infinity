@@ -416,25 +416,19 @@ these buffers are allocated; their token lengths and model math are unchanged.
 This is a limit for these attention buffers, not a total activation, workspace or
 CUDA allocator reservation budget.
 
-The native bridge also applies `INFINITY_TORCH_TRANSIENT_MAX_BYTES` (8 GiB by default) before request uploads and deferred output allocation. It caches a profile of the ready model’s actual matrix dimensions, model dtype, attention geometry, routed experts and media towers. Its conservative tensor estimate includes residual/QKV/FFN intermediates, F32 conversion buffers, dense or packed attention bias and relative buckets, recurrent states, retained shared KV tensors, image/audio processing and requested outputs. SPLADE charges its full token-by-vocabulary tensor. Unknown model or requested media profiles are rejected. Inputs are not padded or truncated.
+Forward execution has no fixed transient-tensor cap or heuristic admission
+against free GPU memory. Batch size is controlled by the router's token/request
+limits; actual tensor allocations are handled by LibTorch. Allocation failures
+continue to propagate through the existing native error mapping. Configure batch
+limits to fit the deployed models and hardware; warmup exercises those limits.
 
-CUDA requests additionally reserve that estimate against current driver free
-memory, shared across native models using the same device in this process.
-`INFINITY_TORCH_DEVICE_MEMORY_HEADROOM_BYTES` reserves a positive allowance, 1 GiB by
-default, beyond outstanding request estimates. This allowance is a policy for
-unestimated allocations, not a proven upper bound on vendor workspaces.
-Admission uses the smaller of driver free memory and the configured Torch
-allocator quota minus all allocator reserved bytes. Allocator reserved-but-inactive
-memory is not counted as available memory. Nondefault quotas require native
-allocator accounting; unsupported accounting rejects before request allocation.
-Reservations remain live until GPU completion, including cancellation and
-error cleanup. Synchronous calls drain their stream before releasing admission;
-deferred calls use their existing output completion event and lease.
-
-This does not control foreign processes or other allocators racing after the
-free-memory query, or establish
-an upper bound on private graph pools, retained vendor workspaces and every
-model's actual tensor peak. Those limits require separate accounting.
+`INFINITY_TORCH_TRANSIENT_MAX_BYTES` and
+`INFINITY_TORCH_DEVICE_MEMORY_HEADROOM_BYTES` have been removed and are no longer
+read. Remove these settings from deployment manifests. The input upload, output
+staging, pinned storage, attention-bias and retained-workspace limits described
+here account for their specific allocations independently of forward activations.
+Synchronous calls still drain queued CUDA work on errors; deferred calls retain
+their completion events and output leases through result construction.
 
 `INFINITY_TORCH_RETAINED_WORKSPACE_MAX_BYTES` separately bounds the retained custom
 OrdinaryLinearExecutor, Gemma and Qwen3.5 radix-projection CUDA workspaces per device
@@ -445,8 +439,6 @@ fallback and retry the same supported plan after workspace credit is released.
 Cached plans retain the reservation with their exact workspace
 allocation, including old generations. This cap does not include ATen-owned
 cuBLAS/cuDNN workspaces or temporary routed-MoE scratch.
-
-This estimate is a per-request tensor admission limit. It does not account for vendor workspace internals, allocator rounding or reserved memory, model weights, graph pools retained from earlier requests, or simultaneous requests on the same device. Those require separate available-memory and concurrency admission; this setting alone is not a guarantee against OOM.
 
 Builds can change the application environment-variable base using
 [`ENV_VAR_BASE`](build-configuration.md), including Docker build arguments.

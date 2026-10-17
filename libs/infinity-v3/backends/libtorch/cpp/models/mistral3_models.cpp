@@ -127,11 +127,6 @@ public:
     return (value.sum(0,true)/value.size(0)).to(at::kFloat);
   }
   int64_t output_width() const override {return text->output_width();}
-  std::optional<TransientMemoryProfile> transient_memory_profile() const override {
-    auto p=text->transient_memory_profile();
-    if(p){p->vision=TowerMemoryProfile{hidden,heads,std::max({hidden,hidden*merge*merge,cfg.integer("vision_config.intermediate_size"),text->output_width()}),feature_layer<depth?1:0,0};p->vision->efficient_scores=device.is_cuda();}
-    return p;
-  }
   at::Tensor forward(const PackedInput& input) const override {
     if(input.images.empty())return text->forward(input);
     std::vector<at::Tensor> indices,features;

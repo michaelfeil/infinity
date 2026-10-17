@@ -34,7 +34,6 @@ class Qwen35 final : public Model {
   bool block_attention() const {return cfg.string("_decision_attention_mode")=="block_bidirectional";}
   Options cfg;
   Weights weights;
-  int64_t transient_linear=0,transient_vocabulary=0;
   c10::Device device;
   at::ScalarType dtype;
   std::string prefix;
@@ -424,35 +423,10 @@ class Qwen35 final : public Model {
       if(weights.count(std::string(p)+"embed_tokens.weight")) { prefix=p; break; }
     if(cfg.integer("vision_config.depth",0)>0)visual=std::make_unique<Qwen3VL>(cfg,weights,device,dtype,true);
   }
-  std::optional<TransientMemoryProfile> transient_memory_profile() const override {
-    auto p=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
-    p.linear=std::max(p.linear,transient_linear);p.vocab=std::max(p.vocab,transient_vocabulary);
-    p.experts=integer("num_experts",0);p.top_k=p.experts?integer("num_experts_per_tok",8):1;
-    bool recurrent=false;
-    for(int64_t i=0;i<layer_count;++i)
-      recurrent=recurrent || string("layer_types."+std::to_string(i))=="linear_attention";
-    p.recurrent_heads=recurrent?integer("linear_num_value_heads",0):0;
-    p.recurrent_key=integer("linear_key_head_dim",128);p.recurrent_value=integer("linear_value_head_dim",128);
-    if(block_attention()) {
-      p.retained_kv_width=kv_heads*dim;
-      for(int64_t i=0;i<layer_count;++i) {
-        if(string("layer_types."+std::to_string(i))=="linear_attention")++p.retained_recurrent_layers;
-        else ++p.retained_kv_layers;
-      }
-      // Retain each GDN layer's prefix state and convolution history until all
-      // suffixes in the group finish.
-      p.retained_conv_width=(2*integer("linear_num_key_heads")+integer("linear_num_value_heads"))*128;
-      p.retained_conv_length=integer("linear_conv_kernel_dim",4);
-    }
-    if(visual)p.vision=visual->vision_memory_profile();return p;
-  }
   int64_t output_width() const override { return hidden; }
   bool supports_images() const override {return bool(visual);}
   void ready() override {
     TORCH_CHECK(!block_attention()||integer("num_experts",0)==0,"OneJev block attention currently requires a dense Qwen3.5 model");
-    // Retain scalar dimensions before inference caches erase checkpoint tensors.
-    const auto checkpoint_profile=transient_profile(weights,hidden,heads,dtype,device.is_cpu());
-    transient_linear=checkpoint_profile.linear;transient_vocabulary=checkpoint_profile.vocab;
     TORCH_CHECK(hidden>0 && heads>0 && kv_heads>0 && heads%kv_heads==0 && dim>0 && rotary>0 && rotary<=dim && rotary%2==0 && layer_count>0,"Invalid Qwen3.5 attention geometry");
     TORCH_CHECK(integer("linear_key_head_dim",128)==128 && integer("linear_value_head_dim",128)==128,"Qwen3.5 DeltaNet requires head dimension128");
     TORCH_CHECK(device.is_cpu() || device.is_cuda(),"Native Qwen3.5 supports CPU/CUDA");
