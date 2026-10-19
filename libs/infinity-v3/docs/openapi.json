@@ -2722,7 +2722,9 @@
           "system",
           "developer",
           "user",
-          "assistant"
+          "assistant",
+          "query",
+          "document"
         ]
       },
       "VideoSource": {
@@ -2793,6 +2795,11 @@
               },
               "truncation_direction": {
                 "$ref": "#/components/schemas/TruncationDirection"
+              },
+              "use_activation": {
+                "type": "boolean",
+                "description": "vLLM extension: `false` returns raw logits instead of softmax probabilities, which\none-label cross-encoders need for a usable relevance score.",
+                "nullable": true
               },
               "user": {
                 "type": "string",

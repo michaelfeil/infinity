@@ -56,6 +56,10 @@ pub enum MessageRole {
     Developer,
     User,
     Assistant,
+    /// Query side of a cross-encoder pair, for checkpoints whose template defines it.
+    Query,
+    /// Document side of a cross-encoder pair, for checkpoints whose template defines it.
+    Document,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]

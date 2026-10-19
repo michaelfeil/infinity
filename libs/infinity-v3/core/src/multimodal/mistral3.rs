@@ -207,6 +207,16 @@ impl Mistral3Processor {
                 role: MessageRole::User,
                 content: MessageContent::Text(text),
             }],
+            EncodingInput::Dual(query, document) => vec![
+                Message {
+                    role: MessageRole::Query,
+                    content: MessageContent::Text(query),
+                },
+                Message {
+                    role: MessageRole::Document,
+                    content: MessageContent::Text(document),
+                },
+            ],
             EncodingInput::Messages(m) => m,
             _ => return Err(invalid("Mistral3 accepts text or native messages")),
         };
@@ -265,7 +275,7 @@ fn validate(messages: &[Message], max_images: usize) -> Result<()> {
                     match p {
                         ContentPart::Text { text: s } => text(s)?,
                         ContentPart::ImageUrl { image_url }
-                            if matches!(m.role, MessageRole::User) =>
+                            if matches!(m.role, MessageRole::User | MessageRole::Document) =>
                         {
                             if !matches!(image_url.detail, None | Some(ImageDetail::Auto)) {
                                 return Err(invalid("Image detail must be auto or omitted"));

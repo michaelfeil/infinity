@@ -47,6 +47,40 @@ rejected even when automatic text truncation is enabled. Image row/end markers
 count toward the request's actual token budget, but only image-placeholder
 positions receive projected vision features.
 
+## Cross-encoder reranking
+
+`Mistral3ForSequenceClassification` checkpoints such as
+[`nvidia/Nemotron-3.5-Rerank-8B-BF16`](https://huggingface.co/nvidia/Nemotron-3.5-Rerank-8B-BF16)
+load as rerankers. The score is a bias-free linear over the masked mean of the final
+hidden states, computed in FP32 after averaging in the model dtype, which matches the
+checkpoint's `model.py`. Pooling flags do not apply.
+
+```sh
+infinity_v3 --backend libtorch --model-id nvidia/Nemotron-3.5-Rerank-8B-BF16 --dtype bfloat16
+```
+
+`/rerank` and pair inputs to `/predict` render each pair through the checkpoint's
+chat template as a `query` message followed by a `document` message, so its escaping
+and turn layout apply.
+
+```json
+{"query": "What is NVIDIA NeMo Framework?", "texts": ["NeMo Framework offers ..."], "raw_scores": true}
+```
+
+`/rerank` takes text documents. For image documents, send the pair to `/v1/classify` as
+`query` and `document` messages, the request shape the checkpoint documents for vLLM.
+Set `use_activation` to `false`: one-label classifiers otherwise return a softmax of
+1.0, while `false` returns the raw relevance logit.
+
+```json
+{"messages": [
+  {"role": "query", "content": [{"type": "text", "text": "What is NVIDIA NeMo Framework?"}]},
+  {"role": "document", "content": [
+    {"type": "text", "text": "NeMo Framework offers ..."},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}]}],
+ "use_activation": false}
+```
+
 ## Reference validation
 
 Reference fixtures use public Transformers 5.12.1 and public model artifacts:

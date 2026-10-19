@@ -516,6 +516,7 @@ async fn init_backend(
         #[cfg(feature = "libtorch")]
         {
             let dense_paths = if let Some(repo) = api_repo.as_ref() {
+                let explicit_dense = dense_path.is_some();
                 let paths = download_dense_modules(repo, dense_path)
                     .await
                     .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
@@ -524,7 +525,13 @@ async fn init_backend(
                         .await
                         .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
                 }
-                Some(paths)
+                // Discovered Dense modules are not an override for classifiers: the
+                // backend decides from modules.json whether the checkpoint needs them.
+                if model_type == ModelType::Classifier && !explicit_dense {
+                    None
+                } else {
+                    Some(paths)
+                }
             } else if let Some(override_path) = dense_path {
                 let modules = model_path.join("modules.json");
                 if modules.exists() {

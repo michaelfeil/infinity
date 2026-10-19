@@ -176,6 +176,14 @@ impl Tokenization {
         truncation_direction: TruncationDirection,
         prompt_name: Option<String>,
     ) -> Result<ValidEncoding, TextEmbeddingsError> {
+        // Classification pairs and native messages use the existing multimodal path.
+        if self.mistral3.is_some()
+            && matches!(inputs, EncodingInput::Dual(..) | EncodingInput::Messages(_))
+        {
+            return self
+                .encode_embedding(inputs, truncate, truncation_direction, prompt_name)
+                .await;
+        }
         self.encode_request(
             inputs,
             truncate,
