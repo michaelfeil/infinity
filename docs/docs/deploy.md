@@ -141,3 +141,7 @@ matching. Full URLs/path prefixes are not supported: use their hostname instead.
 Only HTTP(S) URLs without credentials are accepted. Resolved connection addresses
 and every redirect are checked; environment proxies and `.netrc` are ignored.
 Public URLs/redirects and image/audio bytes or data URIs remain supported.
+
+Remote downloads are streamed with a fixed 128 MiB limit per item, including when
+`Content-Length` is absent. HTTP-compressed responses are rejected (requests ask for
+identity encoding). Decoded media and concurrent downloads can require more memory.

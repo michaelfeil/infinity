@@ -15,6 +15,8 @@ if TYPE_CHECKING:
     import aiohttp
     from yarl import URL
 
+MAX_MEDIA_DOWNLOAD_BYTES = 128 * 1024 * 1024
+
 DEFAULT_MEDIA_URL_BLACKLIST = (
     "localhost;*.localhost;0.0.0.0/8;10.0.0.0/8;100.64.0.0/10;127.0.0.0/8;"
     "169.254.0.0/16;172.16.0.0/12;192.168.0.0/16;224.0.0.0/4;"
@@ -105,12 +107,30 @@ async def download_media_url(value: str, session: aiohttp.ClientSession) -> byte
     blacklist = media_url_blacklist()
     url = blacklist.validate_url(value)
     for _ in range(11):
-        async with session.get(url, allow_redirects=False) as response:
+        # Disable HTTP decompression so an encoded response cannot expand before the cap.
+        async with session.get(
+            url,
+            allow_redirects=False,
+            auto_decompress=False,
+            headers={"Accept-Encoding": "identity"},
+        ) as response:
             if response.status in {301, 302, 303, 307, 308} and "Location" in response.headers:
                 url = blacklist.validate_url(
                     str(response.url.join(URL(response.headers["Location"])))
                 )
                 continue
             response.raise_for_status()
-            return await response.read()
+            if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                raise ValueError("HTTP-compressed media responses are not supported")
+            if (
+                response.content_length is not None
+                and response.content_length > MAX_MEDIA_DOWNLOAD_BYTES
+            ):
+                raise ValueError("Media download exceeds 128 MiB")
+            data = bytearray()
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                if len(data) + len(chunk) > MAX_MEDIA_DOWNLOAD_BYTES:
+                    raise ValueError("Media download exceeds 128 MiB")
+                data.extend(chunk)
+            return bytes(data)
     raise ValueError("Too many media URL redirects")
