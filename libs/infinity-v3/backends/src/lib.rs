@@ -774,7 +774,9 @@ impl BackendThread {
                     BackendCommand::Probe(batch, model_type, span, sender) => {
                         let _span = span.entered();
                         let result = backend.probe(batch, &model_type);
-                        let _ = health_sender.send(result.is_ok());
+                        let _ = health_sender.send(
+                            result.is_ok() || matches!(&result, Err(BackendError::Overloaded(_))),
+                        );
                         let _ = sender.send(result);
                     }
                     BackendCommand::Decide(batch, inputs, span, sender) => {
@@ -1310,6 +1312,39 @@ mod completion_tests {
         drop(result);
         assert_eq!(pool.used(), 0);
     }
+    #[tokio::test]
+    async fn overloaded_probe_preserves_health_and_recovers() {
+        for model_type in [ModelType::Embedding(Pool::Mean), ModelType::Decision] {
+            let pool = result_memory::ResultPool::new(64).unwrap();
+            let held = pool.reserve(64).unwrap();
+            let (sender, receiver) = mpsc::channel(8);
+            let (health, health_receiver) = watch::channel(true);
+            let worker =
+                BackendThread::new(Box::new(AdmittedBackend(pool.clone())), receiver, health);
+            let backend = Backend {
+                backend_sender: sender,
+                health_receiver,
+                _backend_thread: Arc::new(worker),
+                radix_mlp_supported: false,
+                max_batch_size: Some(1),
+                model_type,
+            };
+            assert!(matches!(
+                backend.probe(batch()).await,
+                Err(BackendError::Overloaded(_))
+            ));
+            assert!(*backend.health_receiver.borrow());
+            // Health must use the lightweight check even while the result pool
+            // is still full; a second inference probe would overload again.
+            backend.health().await.unwrap();
+            assert_eq!(pool.used(), 64);
+            drop(held);
+            backend.probe(batch()).await.unwrap();
+            assert!(*backend.health_receiver.borrow());
+            assert_eq!(pool.used(), 0);
+        }
+    }
+
     #[test]
     fn deferred_completion_does_not_block_model_and_drains_after_cancellation() {
         let (gate, wait) = std::sync::mpsc::channel();
