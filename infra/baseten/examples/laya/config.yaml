@@ -12,7 +12,7 @@ resources:
 runtime:
   predict_concurrency: 32
   health_checks:
-    startup_threshold_seconds: 10
+    startup_threshold_seconds: 1800
     restart_threshold_seconds: 10
     stop_traffic_threshold_seconds: 10
 
