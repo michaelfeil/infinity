@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/basetenlabs/truss/main/truss/config.schema.json
+model_name: infinity-baseten-laya
+
+base_image:
+  image: ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0-alpha.3
+
+resources:
+  accelerator: L4:2
+  cpu: "8"
+  memory: 4Gi
+
+runtime:
+  predict_concurrency: 32
+  health_checks:
+    startup_threshold_seconds: 1800
+
+weights:
+  - source: hf://convaiinnovations/laya-typed-decisions@e929ae5cf69bc34259cd2f95c9e91145b818b1f0
+    mount_location: /models/laya
+    ignore_patterns: ["*.bin", "onnx/**"]
+
+docker_server:
+  no_build: true
+  server_port: 8000
+  readiness_endpoint: /health
+  liveness_endpoint: /health
+  predict_endpoint: /v1/systemone
+  start_command: >-
+    /usr/local/bin/infinity_v3
+    --model-id /models/laya
+    --served-model-name laya
+    --backend libtorch
+    --torch-device cuda
+    --backend-device-ids 0,1
+    --dtype float16
+    --hostname 0.0.0.0
+    --port 8000

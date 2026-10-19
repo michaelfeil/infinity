@@ -1,5 +1,8 @@
 # Baseten: Infinity Embedding Server Truss
 
+For Infinity v3 typed decisions, see the [Laya Truss example](examples/laya/README.md),
+including a pinned checkpoint, a two-L4 configuration, and a sample request.
+
 This is a [Truss](https://truss.baseten.co/) to deploy [infinity embedding server](https://github.com/michaelfeil/infinity), a high-throughput, low-latency REST API server for serving vector embeddings.
 
 ## Deployment
