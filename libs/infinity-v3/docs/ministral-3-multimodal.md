@@ -61,12 +61,24 @@ infinity_v3 --backend libtorch --model-id nvidia/Nemotron-3.5-Rerank-8B-BF16 --d
 
 `/rerank` and pair inputs to `/predict` render each pair through the checkpoint's
 chat template as a `query` message followed by a `document` message, so its escaping
-and turn layout apply. The processor accepts an image in the `document` message,
-using the same Pixtral preprocessing as embeddings, but `/rerank` currently takes
-text documents only.
+and turn layout apply.
 
 ```json
 {"query": "What is NVIDIA NeMo Framework?", "texts": ["NeMo Framework offers ..."], "raw_scores": true}
+```
+
+`/rerank` takes text documents. For image documents, send the pair to `/v1/classify` as
+`query` and `document` messages, the request shape the checkpoint documents for vLLM.
+Set `use_activation` to `false`: one-label classifiers otherwise return a softmax of
+1.0, while `false` returns the raw relevance logit.
+
+```json
+{"messages": [
+  {"role": "query", "content": [{"type": "text", "text": "What is NVIDIA NeMo Framework?"}]},
+  {"role": "document", "content": [
+    {"type": "text", "text": "NeMo Framework offers ..."},
+    {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}}]}],
+ "use_activation": false}
 ```
 
 ## Reference validation

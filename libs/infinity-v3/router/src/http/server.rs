@@ -460,6 +460,7 @@ async fn classify_inner(
     })?;
     let labels = classifier_labels(&info.model_type).map_err(classify_inference_error)?;
     let model = info.model_id.clone();
+    let activation = request.use_activation != Some(false);
     let request = request.into_predict().map_err(|message| {
         classify_error(
             StatusCode::BAD_REQUEST,
@@ -473,7 +474,8 @@ async fn classify_inner(
     reserve_classification_output(&scores, &labels)
         .map_err(ErrorResponse::from)
         .map_err(classify_inference_error)?;
-    let response = classification_response(scores, &labels, model, metadata.compute_tokens);
+    let response =
+        classification_response(scores, &labels, model, metadata.compute_tokens, activation);
     Ok((HeaderMap::from(metadata), Json(response)))
 }
 
@@ -482,6 +484,7 @@ fn classification_response(
     labels: &std::collections::HashMap<String, String>,
     model: String,
     prompt_tokens: usize,
+    activation: bool,
 ) -> ClassifyResponse {
     ClassifyResponse {
         id: format!("classify-{}", uuid::Uuid::new_v4().simple()),
@@ -491,7 +494,7 @@ fn classification_response(
             .unwrap_or_default()
             .as_secs(),
         model,
-        data: classification_data(scores, labels),
+        data: classification_data(scores, labels, activation),
         usage: ClassifyUsage {
             prompt_tokens,
             completion_tokens: 0,
@@ -504,6 +507,7 @@ fn classification_response(
 fn classification_data(
     scores: Vec<Vec<f32>>,
     labels: &std::collections::HashMap<String, String>,
+    activation: bool,
 ) -> Vec<ClassifyData> {
     scores
         .into_iter()
@@ -517,16 +521,18 @@ fn classification_data(
                     best = class;
                 }
             }
-            let max = logits[best];
-            let sum: f32 = logits
-                .iter_mut()
-                .map(|score| {
-                    *score = (*score - max).exp();
-                    *score
-                })
-                .sum();
-            for score in &mut logits {
-                *score /= sum;
+            if activation {
+                let max = logits[best];
+                let sum: f32 = logits
+                    .iter_mut()
+                    .map(|score| {
+                        *score = (*score - max).exp();
+                        *score
+                    })
+                    .sum();
+                for score in &mut logits {
+                    *score /= sum;
+                }
             }
             ClassifyData {
                 index,
@@ -2847,6 +2853,7 @@ mod classify_tests {
             &labels,
             "model".into(),
             120,
+            true,
         );
         assert!(response.id.starts_with("classify-"));
         assert!(uuid::Uuid::parse_str(response.id.strip_prefix("classify-").unwrap()).is_ok());
@@ -2870,10 +2877,21 @@ mod classify_tests {
 
     #[test]
     fn one_label_classifier_matches_sglang_softmax_and_labels_fall_back() {
-        let data = classification_data(vec![vec![-20.0], vec![0.0, 1.0]], &HashMap::new());
+        let data = classification_data(vec![vec![-20.0], vec![0.0, 1.0]], &HashMap::new(), true);
         assert_eq!(data[0].probs, vec![1.0]);
         assert_eq!(data[0].label, "LABEL_0");
         assert_eq!(data[1].label, "LABEL_1");
+    }
+
+    #[test]
+    fn use_activation_false_returns_raw_logits() {
+        let data = classification_data(vec![vec![-2.5], vec![0.0, 1.0]], &HashMap::new(), false);
+        assert_eq!(data[0].probs, vec![-2.5]);
+        assert_eq!(data[1].probs, vec![0.0, 1.0]);
+        assert_eq!(data[1].label, "LABEL_1");
+        let request: ClassifyRequest =
+            serde_json::from_value(json!({"input": "x", "use_activation": false})).unwrap();
+        assert_eq!(request.use_activation, Some(false));
     }
 
     #[test]

@@ -335,6 +335,10 @@ pub(crate) struct ClassifyRequest {
     pub truncate: Option<bool>,
     #[serde(default)]
     pub truncation_direction: TruncationDirection,
+    /// vLLM extension: `false` returns raw logits instead of softmax probabilities, which
+    /// one-label cross-encoders need for a usable relevance score.
+    #[serde(default)]
+    pub use_activation: Option<bool>,
 }
 
 #[derive(Deserialize, ToSchema)]
