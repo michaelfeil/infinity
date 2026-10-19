@@ -161,7 +161,8 @@ def cases_for(config, image_grid=4):
     rotary['axes'][1, 3] += 1
     return [first, sibling, case([(image_grid, image_grid)], [6, 7, 8], zero=True),
             case([], [6, 7] * 32), case([(image_grid, image_grid)] * 2 if image_grid >= 64 else [(2, 4), (4, 2)], [8, 9]), rotary,
-            dict(first, ids=first['ids'][:first['prefix']], axes=first['axes'][:, :first['prefix']])]
+            dict(first, ids=first['ids'][:first['prefix']], axes=first['axes'][:, :first['prefix']]),
+            dict(first, prefix=1)]  # Same pixels in another row's suffix.
 
 
 def main():
@@ -169,13 +170,17 @@ def main():
     parser.add_argument('--library', type=Path, required=True)
     parser.add_argument('--model', type=Path)
     parser.add_argument('--device', default='cpu')
-    parser.add_argument('--dtype', choices=['float32', 'bfloat16'], default='float32')
+    parser.add_argument('--dtype', choices=['float32', 'bfloat16'])
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--iterations', type=int, default=10)
     parser.add_argument('--image-grid', type=int, default=4)
     parser.add_argument('--text-only', action='store_true')
     parser.add_argument('--profile', action='store_true')
     args = parser.parse_args()
+    if args.dtype is None:
+        args.dtype = 'bfloat16' if args.device.startswith('cuda') else 'float32'
+    if args.device.startswith('cuda') and args.dtype != 'bfloat16':
+        parser.error('Qwen3.5 CUDA DeltaNet requires bfloat16; use --device cpu for float32')
     torch.set_num_threads(1)
     torch.manual_seed(19)
     dtype = getattr(torch, args.dtype)
@@ -190,7 +195,9 @@ def main():
             layer_types=['linear_attention', 'full_attention'] * 2,
             rope_parameters={'rope_type': 'default', 'rope_theta': 10000.,
                 'partial_rotary_factor': 1., 'mrope_interleaved': True, 'mrope_section': [4, 2, 2]})
-        vision = Qwen3_5VisionConfig(depth=2, hidden_size=16, intermediate_size=24, num_heads=2,
+        # Keep MLP input shapes distinct from the 24-column patch matrix so
+        # profiler shape matching identifies only the patch projection.
+        vision = Qwen3_5VisionConfig(depth=2, hidden_size=16, intermediate_size=40, num_heads=2,
             patch_size=2, temporal_patch_size=2, spatial_merge_size=2, out_hidden_size=32,
             num_position_embeddings=16)
         cfg = Qwen3_5Config(text_config=text.to_dict(), vision_config=vision.to_dict(),
@@ -271,21 +278,29 @@ def main():
                     case = dict(cases[0], ids=cases[0]['ids'].copy())
                     case['ids'][0] = 14 + index
                     distinct.append(case)
-                run = native.prepare(distinct)
-                activities = [torch.profiler.ProfilerActivity.CPU]
-                if args.device.startswith('cuda'):
-                    activities.append(torch.profiler.ProfilerActivity.CUDA)
-                with torch.profiler.profile(activities=activities, record_shapes=True) as capture:
-                    run()
-                shape = list(cases[0]['images'][0]['pixels'].shape)
-                events = capture.events()
-                projections = sum(event.name == 'aten::linear' and event.input_shapes[0] == shape for event in events if event.input_shapes)
-                copies = sum(event.name == 'aten::_to_copy' and event.input_shapes[0] == shape for event in events if event.input_shapes)
-                assert projections == 1, f'Vision projection ran {projections} times for eight shared images'
-                if args.device.startswith('cuda'):
-                    assert copies == 2, f'Expected one F32 upload plus one BF16 conversion, got {copies}'
-                profile = dict(distinct_text_prefixes=8, vision_patch_projections=projections, pixel_copies=copies,
-                    chunked_gdn=any('scan_chunks' in event.name for event in events))
+                def profile_run(ordered):
+                    run = native.prepare(ordered)
+                    activities = [torch.profiler.ProfilerActivity.CPU]
+                    if args.device.startswith('cuda'):
+                        activities.append(torch.profiler.ProfilerActivity.CUDA)
+                    with torch.profiler.profile(activities=activities, record_shapes=True) as capture:
+                        run()
+                    shape = list(cases[0]['images'][0]['pixels'].shape)
+                    events = capture.events()
+                    projections = sum(event.name == 'aten::linear' and event.input_shapes[0] == shape for event in events if event.input_shapes)
+                    copies = sum(event.name == 'aten::_to_copy' and event.input_shapes[0] == shape for event in events if event.input_shapes)
+                    assert projections == 1, f'Vision projection ran {projections} times for eight shared images'
+                    if args.device.startswith('cuda'):
+                        expected_copies = 1 if args.dtype == 'float32' else 2
+                        assert copies == expected_copies, f'Expected {expected_copies} pixel copies, got {copies}'
+                    return dict(vision_patch_projections=projections, pixel_copies=copies,
+                        chunked_gdn=any('scan_chunks' in event.name for event in events))
+                profile = dict(distinct_text_prefixes=8, **profile_run(distinct))
+                # Same borrowed pixels in four prefixes and four suffixes must
+                # still run the vision tower only once across both passes.
+                cross_pass = [dict(case, prefix=1) if index % 2 else case
+                              for index, case in enumerate(distinct)]
+                profile['cross_pass'] = profile_run(cross_pass)
             if cases[0]['images'] and cases[0]['images'][0]['pixels'].nbytes > 1024 * 1024:
                 # One shared upload fits; eight independently owned pixel buffers
                 # exceed this same limit even if their contents are identical.

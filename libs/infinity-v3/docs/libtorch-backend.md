@@ -546,7 +546,8 @@ explicit destination hostnames. Image spans expand before the block boundary is
 finalized, and token limits apply to the expanded sequence. Spans cannot cross a
 block boundary. Both prefix and suffix execution retain the original mRoPE axes.
 Image uploads and vision features are reused within a native call when their
-borrowed pixel storage and layout match, and a shared visual prefix is prefilled
+borrowed pixel storage and layout match, including across prefix and suffix
+passes, and a shared visual prefix is prefilled
 once. Packed FlashAttention, dense MLPs, and the existing recurrent/chunked GDN
 selection remain active, with no sequence padding or per-question full-forward
 fallback.
@@ -572,8 +573,10 @@ long prefixes also exercise the existing H100 chunked GDN gate. The report inclu
 warmed packed-versus-serial timing for eight questions with one shared image.
 These timings cover native inference only, excluding startup, image decoding,
 HTTP and tokenization; they do not qualify every model, image size or GPU.
-Add `--profile` to check that distinct text prefixes sharing pixel storage reuse
-one vision projection and, on CUDA, one upload/conversion pair; the report also
+The comparison defaults to FP32 on CPU and BF16 on CUDA; native CUDA DeltaNet
+requires BF16. Add `--profile` to check that distinct text prefixes sharing pixel
+storage reuse one vision projection, including a separate control sharing images
+across prefix and suffix passes. CUDA checks one upload/conversion pair; the report also
 indicates whether the chunked GDN kernel ran. Input-budget checks ensure shared
 uploads are accounted for once and independent pixel buffers remain charged.
 

@@ -360,13 +360,12 @@ class Qwen35 final : public Model {
     auto compact=radix_fold(output,input);
     return radix_enabled(input)?linear_radix_projection(compact,p+"out_proj",input):prefix_projection(compact,p+"out_proj",input);
   }
-  at::Tensor embeddings(const PackedInput& input) const {
+  at::Tensor embeddings(const PackedInput& input,RequestImageFeatures& shared_features) const {
     auto states=at::embedding(w("embed_tokens.weight"),input.images.empty()?radix_ids(input):input.ids);
-    RequestImageFeatures shared_features(input.images,cfg.string("_decision.kind")=="d3"||block_attention());
     for(const auto& image:input.images) {
       TORCH_CHECK(visual,"Qwen3.5 vision tower unavailable");
       auto compute=[&]{return visual->image_features(image).to(dtype);};
-      auto features=(cfg.string("_decision.kind")=="d3"||block_attention())?shared_features.get(image,compute):compute();
+      auto features=shared_features.get(image,compute);
       TORCH_CHECK(features.size(0)==image.token_count && features.size(1)==hidden,"Qwen3.5 visual token geometry mismatch");
       states.narrow(0,image.token_start,image.token_count).copy_(features);
     }
@@ -406,19 +405,6 @@ class Qwen35 final : public Model {
         suffix_offsets.push_back(suffix_offsets.back()+length-prefix);max_suffix=std::max(max_suffix,length-prefix);
       }
     }
-    std::vector<BlockCache> caches(layer_count);
-    for(auto& cache:caches)cache.offsets=prefix_offsets;
-    auto run=[&](const PackedInput& part,bool prefill) {
-      auto h=embeddings(part);
-      for(int64_t layer=0;layer<layer_count;++layer) {
-        const auto p="layers."+std::to_string(layer)+".";
-        auto x=norm(h,p+"input_layernorm");
-        auto attention=string("layer_types."+std::to_string(layer))=="linear_attention"?
-          delta_attention(x,p+"linear_attn.",part,&caches[layer],prefill):full_attention(x,p+"self_attn.",part,&caches[layer],prefill);
-        h=h+attention;h=h+feed_forward(norm(h,p+"post_attention_layernorm"),layer,part);
-      }
-      return norm(h,"norm");
-    };
     PackedInput prefixes{at::cat(prefix_ids,0),at::cat(prefix_types,0),at::cat(prefix_positions,0),
       at::tensor(prefix_offsets,input.cumulative.options()),prefix_offsets.data(),int64_t(representatives.size()),max_prefix};
     if(!prefix_axes.empty())prefixes.multimodal_positions=at::cat(prefix_axes,1);
@@ -435,10 +421,9 @@ class Qwen35 final : public Model {
       const auto row=representatives[i];
       attach_images(prefixes,row,0,input.block_prefix_lengths[row],prefix_offsets[i]);
     }
-    auto prefix_hidden=run(prefixes,true);
-    at::Tensor suffix_hidden;
+    PackedInput suffixes{};
     if(!suffix_rows.empty()) {
-      PackedInput suffixes{at::cat(suffix_ids,0),at::cat(suffix_types,0),at::cat(suffix_positions,0),
+      suffixes=PackedInput{at::cat(suffix_ids,0),at::cat(suffix_types,0),at::cat(suffix_positions,0),
         at::tensor(suffix_offsets,input.cumulative.options()),suffix_offsets.data(),int64_t(suffix_rows.size()),max_suffix};
       if(!suffix_axes.empty())suffixes.multimodal_positions=at::cat(suffix_axes,1);
       for(size_t i=0;i<suffix_rows.size();++i) {
@@ -447,8 +432,28 @@ class Qwen35 final : public Model {
       }
       suffixes.block_prefix_sources=suffix_sources;
       suffixes.block_cache_sources=at::tensor(suffix_sources,input.ids.options());
-      suffix_hidden=run(suffixes,false);
     }
+    // Count only images in the executed representative prefixes and suffixes.
+    // One cache spans both passes, releasing features after their final use.
+    auto executed_images=prefixes.images;
+    executed_images.insert(executed_images.end(),suffixes.images.begin(),suffixes.images.end());
+    RequestImageFeatures shared_features(executed_images);
+    std::vector<BlockCache> caches(layer_count);
+    for(auto& cache:caches)cache.offsets=prefix_offsets;
+    auto run=[&](const PackedInput& part,bool prefill) {
+      auto h=embeddings(part,shared_features);
+      for(int64_t layer=0;layer<layer_count;++layer) {
+        const auto p="layers."+std::to_string(layer)+".";
+        auto x=norm(h,p+"input_layernorm");
+        auto attention=string("layer_types."+std::to_string(layer))=="linear_attention"?
+          delta_attention(x,p+"linear_attn.",part,&caches[layer],prefill):full_attention(x,p+"self_attn.",part,&caches[layer],prefill);
+        h=h+attention;h=h+feed_forward(norm(h,p+"post_attention_layernorm"),layer,part);
+      }
+      return norm(h,"norm");
+    };
+    auto prefix_hidden=run(prefixes,true);
+    at::Tensor suffix_hidden;
+    if(!suffix_rows.empty())suffix_hidden=run(suffixes,false);
     std::vector<at::Tensor> results;
     size_t suffix_row=0;
     for(int64_t row=0;row<input.batch;++row) {
@@ -567,7 +572,8 @@ class Qwen35 final : public Model {
     if(block_attention())return block_forward(input);
     TORCH_CHECK(!radix_enabled(input)||supports_radix(),"Noncausal Qwen3.5 attention does not support radix folding");
     TORCH_CHECK(!radix_enabled(input)||input.audios.empty(),"Qwen3.5 radix audio is not supported");
-    auto states=embeddings(input);
+    RequestImageFeatures shared_features(input.images,cfg.string("_decision.kind")=="d3");
+    auto states=embeddings(input,shared_features);
     for(int64_t i=0;i<layer_count;++i) {
       auto p="layers."+std::to_string(i)+".";
       auto normalized=norm(states,p+"input_layernorm");
