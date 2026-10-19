@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 from functools import cached_property
 from pathlib import Path
-from typing import TypeVar
+from typing import Optional, TypeVar
 
 from infinity_emb.log_handler import logger
 from infinity_emb.primitives import (
@@ -87,6 +87,21 @@ class __Infinity_EnvManager:
     def _to_int_multiple(value: list[str]) -> list[int]:
         return [int(v) for v in value]
 
+    @staticmethod
+    def _to_optional_int_multiple(value: list[str]) -> list[Optional[int]]:
+        """Parse a per-model list where an empty token or `none`/`null` disables the limit."""
+        parsed: list[Optional[int]] = []
+        for v in value:
+            v = v.strip()
+            if v == "" or v.lower() in {"none", "null"}:
+                parsed.append(None)
+                continue
+            number = int(v)
+            if number <= 0:
+                raise ValueError(f"token limit must be a positive integer, got `{v}`")
+            parsed.append(number)
+        return parsed
+
     @cached_property
     def api_key(self):
         return self._optional_infinity_var("api_key", default="")
@@ -105,6 +120,24 @@ class __Infinity_EnvManager:
     def batch_size(self):
         return self._to_int_multiple(
             self._optional_infinity_var_multiple("batch_size", default=["32"])
+        )
+
+    @cached_property
+    def max_query_tokens(self):
+        return self._to_optional_int_multiple(
+            self._optional_infinity_var_multiple("max_query_tokens", default=[""])
+        )
+
+    @cached_property
+    def max_tokens_per_doc(self):
+        return self._to_optional_int_multiple(
+            self._optional_infinity_var_multiple("max_tokens_per_doc", default=[""])
+        )
+
+    @cached_property
+    def max_pair_tokens(self):
+        return self._to_optional_int_multiple(
+            self._optional_infinity_var_multiple("max_pair_tokens", default=[""])
         )
 
     @cached_property
