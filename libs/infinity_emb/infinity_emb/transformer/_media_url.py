@@ -8,6 +8,7 @@ from __future__ import annotations
 import ipaddress
 import os
 import socket
+import zlib
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING
 
@@ -112,7 +113,7 @@ async def download_media_url(value: str, session: aiohttp.ClientSession) -> byte
             url,
             allow_redirects=False,
             auto_decompress=False,
-            headers={"Accept-Encoding": "identity"},
+            headers={"Accept-Encoding": "gzip, deflate"},
         ) as response:
             if response.status in {301, 302, 303, 307, 308} and "Location" in response.headers:
                 url = blacklist.validate_url(
@@ -120,17 +121,31 @@ async def download_media_url(value: str, session: aiohttp.ClientSession) -> byte
                 )
                 continue
             response.raise_for_status()
-            if response.headers.get("Content-Encoding", "identity").lower() != "identity":
-                raise ValueError("HTTP-compressed media responses are not supported")
+            encoding = response.headers.get("Content-Encoding", "identity").strip().lower()
+            if encoding not in {"identity", "gzip", "deflate"}:
+                raise ValueError("Unsupported media Content-Encoding")
+            decoder = (
+                zlib.decompressobj(16 + zlib.MAX_WBITS if encoding == "gzip" else zlib.MAX_WBITS)
+                if encoding != "identity"
+                else None
+            )
             if (
                 response.content_length is not None
                 and response.content_length > MAX_MEDIA_DOWNLOAD_BYTES
             ):
                 raise ValueError("Media download exceeds 128 MiB")
             data = bytearray()
+            downloaded = 0
             async for chunk in response.content.iter_chunked(64 * 1024):
+                downloaded += len(chunk)
+                if downloaded > MAX_MEDIA_DOWNLOAD_BYTES:
+                    raise ValueError("Media download exceeds 128 MiB")
+                if decoder is not None:
+                    chunk = decoder.decompress(chunk, MAX_MEDIA_DOWNLOAD_BYTES - len(data) + 1)
                 if len(data) + len(chunk) > MAX_MEDIA_DOWNLOAD_BYTES:
                     raise ValueError("Media download exceeds 128 MiB")
                 data.extend(chunk)
+            if decoder is not None and (not decoder.eof or decoder.unused_data):
+                raise ValueError("Invalid or incomplete compressed media response")
             return bytes(data)
     raise ValueError("Too many media URL redirects")

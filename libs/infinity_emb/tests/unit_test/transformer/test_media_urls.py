@@ -1,4 +1,6 @@
 import asyncio
+import gzip
+import zlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -121,7 +123,7 @@ def test_redirects_are_revalidated(monkeypatch):
         assert session.get.call_args.kwargs == {
             "allow_redirects": False,
             "auto_decompress": False,
-            "headers": {"Accept-Encoding": "identity"},
+            "headers": {"Accept-Encoding": "gzip, deflate"},
         }
 
     asyncio.run(run())
@@ -132,13 +134,21 @@ def test_redirects_are_revalidated(monkeypatch):
     [
         (9, "identity", [], "exceeds"),
         (None, "identity", [b"1234", b"5678", b"9"], "exceeds"),
-        (None, "gzip", [], "HTTP-compressed"),
+        (None, "br", [], "Unsupported"),
+        (None, "gzip", [gzip.compress(b"12345678")], None),
+        (None, "deflate", [zlib.compress(b"12345678")], None),
+        (None, "gzip", [gzip.compress(b"x" * 65)], "exceeds"),
+        (None, "deflate", [zlib.compress(b"x" * 65)], "exceeds"),
+        (None, "gzip", [gzip.compress(b"12345678")[:-1]], "incomplete"),
         (8, "identity", [b"1234", b"5678"], None),
     ],
 )
 def test_download_size_limit(monkeypatch, length, encoding, chunks, error):
     monkeypatch.delenv("INFINITY_MEDIA_URL_BLACKLIST", raising=False)
-    monkeypatch.setattr("infinity_emb.transformer._media_url.MAX_MEDIA_DOWNLOAD_BYTES", 8)
+    monkeypatch.setattr(
+        "infinity_emb.transformer._media_url.MAX_MEDIA_DOWNLOAD_BYTES",
+        64 if encoding in {"gzip", "deflate"} else 8,
+    )
     response = MagicMock(status=200, content_length=length)
     response.headers = {"Content-Encoding": encoding}
 

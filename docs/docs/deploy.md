@@ -143,5 +143,6 @@ and every redirect are checked; environment proxies and `.netrc` are ignored.
 Public URLs/redirects and image/audio bytes or data URIs remain supported.
 
 Remote downloads are streamed with a fixed 128 MiB limit per item, including when
-`Content-Length` is absent. HTTP-compressed responses are rejected (requests ask for
-identity encoding). Decoded media and concurrent downloads can require more memory.
+`Content-Length` is absent. Gzip/deflate HTTP responses are decompressed incrementally;
+both downloaded and decompressed bytes are capped. Other HTTP content encodings are
+rejected. Decoded media and concurrent downloads can require more memory.
