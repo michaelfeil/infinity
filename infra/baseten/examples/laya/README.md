@@ -1,9 +1,8 @@
 # Laya on Baseten with Truss
 
 Deploy Infinity v3's native LibTorch Laya server using a prebuilt NVIDIA image
-and the [`michaelfeil/laya`](https://huggingface.co/michaelfeil/laya) checkpoint.
-The weight source selects `main`; replace it with an immutable checkpoint commit
-when you have a revision available.
+and a pinned copy of
+[`michaelfeil/laya-typed-decisions`](https://huggingface.co/michaelfeil/laya-typed-decisions/tree/2741340228fc0c982ae9dd63b34dcd5a9e7ce3ce).
 
 The [config](config.yaml) requests two L4 GPUs, eight CPUs, 4 GiB of host memory,
 32 concurrent requests, a 1800-second startup allowance, and 10-second restart
@@ -18,9 +17,8 @@ deployment.
 Weights are mounted at `/models/laya`.
 Infinity detects the Laya protocol from `rl_agent_config.json` and exposes
 typed decisions at `/v1/systemone`. The public API model name is `laya`.
-Create a Baseten secret named `hf_access_token` containing a Hugging Face token
-with read access to `michaelfeil/laya`. The weight source uses this secret for
-download authentication; keep its value out of `config.yaml`.
+The checkpoint is public and ungated, so this example does not require a
+Hugging Face secret.
 
 ## Deploy
 

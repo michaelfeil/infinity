@@ -17,13 +17,9 @@ runtime:
     stop_traffic_threshold_seconds: 10
 
 weights:
-  - source: hf://michaelfeil/laya@main
+  - source: hf://michaelfeil/laya-typed-decisions@2741340228fc0c982ae9dd63b34dcd5a9e7ce3ce
     mount_location: /models/laya
-    auth_secret_name: hf_access_token
     ignore_patterns: ["*.bin", "onnx/**"]
-
-secrets:
-  hf_access_token: null
 
 docker_server:
   no_build: true
