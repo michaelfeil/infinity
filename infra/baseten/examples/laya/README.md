@@ -5,7 +5,10 @@ and a pinned copy of
 [`convaiinnovations/laya-typed-decisions`](https://huggingface.co/convaiinnovations/laya-typed-decisions/tree/e929ae5cf69bc34259cd2f95c9e91145b818b1f0).
 
 The [config](config.yaml) requests two L4 GPUs, eight CPUs, 4 GiB of host memory,
-32 concurrent requests, and a 30-minute startup allowance. The server binds to
+32 concurrent requests, and 10-second startup, restart, and stop-traffic health
+thresholds (the [platform minimums](https://docs.baseten.co/development/model/health-checks#parameters)).
+Increase the startup threshold if measured cold starts need more than 10 seconds.
+The server binds to
 `0.0.0.0:8000` and explicitly creates data-parallel replicas on CUDA devices
 `0,1`. Each GPU loads its own model copy; this does not shard the model.
 Adjust host memory and concurrency to fit your traffic after measuring the
