@@ -11,6 +11,7 @@ from infinity_emb.primitives import (
     ImageCorruption,
     ImageSingle,
 )
+from infinity_emb.transformer._media_url import download_media_url, media_client_session
 
 if CHECK_AIOHTTP.is_available:
     import aiohttp
@@ -28,8 +29,7 @@ def resolve_from_img_obj(img_obj: "ImageClassType") -> ImageSingle:
 async def resolve_from_img_url(img_url: str, session: "aiohttp.ClientSession") -> ImageSingle:
     """Resolve an image from an URL."""
     try:
-        # requests.get(img_url, stream=True).raw
-        downloaded_img = await (await session.get(img_url)).read()
+        downloaded_img = await download_media_url(img_url, session)
     except Exception as e:
         raise ImageCorruption(f"error opening an image in your request image from url: {e}")
 
@@ -79,12 +79,11 @@ async def resolve_images(
     images: list[Union[str, "ImageClassType", bytes]],
 ) -> list[ImageSingle]:
     """Resolve images from URLs or ImageClassType Objects using multithreading."""
-    # TODO: improve parallel requests, safety, error handling
     CHECK_AIOHTTP.mark_required()
     CHECK_PIL.mark_required()
 
     resolved_imgs = []
-    async with aiohttp.ClientSession(trust_env=True) as session:
+    async with media_client_session() as session:
         resolved_imgs = await asyncio.gather(*[resolve_image(img, session) for img in images])
 
     return resolved_imgs

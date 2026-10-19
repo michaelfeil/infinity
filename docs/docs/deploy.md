@@ -124,3 +124,38 @@ Note: You can also save a dockerfile direclty as `.tar`.
 This might come in handy if you do not have a shared internal docker registry in your nuclear facility, but still want to leverage the latest semantic search.
 https://docs.docker.com/reference/cli/docker/image/save/.
 
+
+## Remote image and audio URLs (Infinity v1)
+
+`INFINITY_MEDIA_URL_BLACKLIST` controls which client-provided image/audio URLs the
+server refuses to download. Entries are separated by `;` and can be hostnames,
+host patterns such as `*.example.com`, IP addresses/CIDRs, or HTTP(S) URL prefixes.
+URL prefixes match the scheme, host, port, and the start of the path/query.
+
+The default list blocks localhost, loopback, private networks, link-local
+addresses (including common cloud metadata addresses), shared-address space,
+and multicast. Ordinary public HTTP(S) URLs and redirects remain supported:
+
+```text
+localhost;*.localhost;0.0.0.0/8;10.0.0.0/8;100.64.0.0/10;127.0.0.0/8;
+169.254.0.0/16;172.16.0.0/12;192.168.0.0/16;224.0.0.0/4;
+::/128;::1/128;fc00::/7;fe80::/10;ff00::/8
+```
+
+Setting the variable **replaces** the default list. For example, retain those
+ranges and additionally block a domain and URL prefix:
+
+```bash
+export INFINITY_MEDIA_URL_BLACKLIST='localhost;*.localhost;0.0.0.0/8;10.0.0.0/8;100.64.0.0/10;127.0.0.0/8;'
+export INFINITY_MEDIA_URL_BLACKLIST="${INFINITY_MEDIA_URL_BLACKLIST}169.254.0.0/16;172.16.0.0/12;192.168.0.0/16;224.0.0.0/4;"
+export INFINITY_MEDIA_URL_BLACKLIST="${INFINITY_MEDIA_URL_BLACKLIST}::/128;::1/128;fc00::/7;fe80::/10;ff00::/8;*.blocked.example;https://images.example/private/"
+```
+
+An explicitly empty value disables blacklist matching. HTTP(S)-only URL syntax
+and the prohibition on URL credentials still apply. Image/audio bytes and data
+URIs are unaffected.
+
+Hostnames are checked against the list, and their resolved addresses are checked
+by the HTTP connection's DNS resolver. Each redirect is checked again. Media
+fetching does not use environment proxies or `.netrc` credentials, so a proxy
+cannot bypass destination checks by resolving the hostname elsewhere.
