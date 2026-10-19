@@ -23,6 +23,51 @@ void rotary_presence_test(Model& model,PackedInput input) {
   TORCH_CHECK(at::allclose(cache.run(model,input,0),implicit,.003,.003)&&cache.stats().hits==0,
     "Implicit rotary positions reused explicit-zero state");
 }
+// Exercise packed visual prefixes and suffixes against independently executed
+// rows. Prefix representatives are request-local and may contain image spans.
+void block_images_test(Options cfg,const Weights& checkpoint,const c10::Device& device) {
+  cfg.values["_decision_attention_mode"]="block_bidirectional";
+  const auto dtype=device.is_cpu()?at::kFloat:at::kBFloat16;
+  auto weights=checkpoint;for(auto& [name,value]:weights)value=value.to(device,dtype);
+  auto model=create_qwen35(cfg,weights,device,dtype);model->ready();
+  const auto options=at::TensorOptions().device(device).dtype(at::kLong);
+  std::vector<int32_t> offsets{0,5,9,14,18,21};
+  auto ids=at::tensor({1,2,3,4,5, 1,2,3,7, 1,2,3,8,9, 1,2,3,4, 1,2,3},options);
+  auto positions=at::cat({at::arange(5,options),at::arange(4,options),at::arange(5,options),at::arange(4,options),at::arange(3,options)});
+  PackedInput input{ids,at::zeros_like(ids),positions,at::tensor(offsets,options.dtype(at::kInt)),offsets.data(),5,5};
+  input.multimodal_positions=positions.unsqueeze(0).repeat({3,1});
+  input.block_prefix_lengths={3,3,3,3,3};input.block_prefix_sources={0,0,2,3,0};
+  auto pixels=at::rand({4,6},options.dtype(dtype));
+  for(int row:{0,1,2,4})input.images.push_back({row==2?at::zeros_like(pixels):pixels,{1,2,2},2,offsets[row]+1,1,offsets[row]});
+  auto actual=model->forward(input);
+  auto separate=input;separate.block_prefix_sources={0,1,2,3,4};
+  const auto tolerance=device.is_cpu()?1e-5:1e-2;
+  TORCH_CHECK(at::allclose(actual,model->forward(separate),tolerance,tolerance),"Image prefix sharing changed outputs");
+  for(int row=0;row<5;++row) {
+    std::vector<int32_t> ends{0,offsets[row+1]-offsets[row]};
+    PackedInput single{ids.narrow(0,offsets[row],ends[1]),input.types.narrow(0,offsets[row],ends[1]),
+      positions.narrow(0,offsets[row],ends[1]),at::tensor(ends,options.dtype(at::kInt)),ends.data(),1,ends[1]};
+    single.multimodal_positions=input.multimodal_positions.narrow(1,offsets[row],ends[1]);
+    single.block_prefix_lengths={3};single.block_prefix_sources={0};
+    for(const auto& image:input.images)if(image.sequence_start==offsets[row]) {
+      auto copy=image;copy.token_start-=offsets[row];copy.sequence_start=0;single.images.push_back(copy);
+    }
+    TORCH_CHECK(at::allclose(actual.narrow(0,offsets[row],ends[1]),model->forward(single),tolerance,tolerance),
+      "Packed image/text block rows leaked across sequences on ",device," row=",row);
+  }
+  TORCH_CHECK(!at::allclose(actual.narrow(0,0,3),actual.narrow(0,9,3),1e-5,1e-6),"Distinct images did not change the prefix");
+  auto changed=input;changed.ids=input.ids.clone();changed.ids.index_put_({4},12);
+  auto future=model->forward(changed);
+  TORCH_CHECK(at::allclose(actual.narrow(0,0,3),future.narrow(0,0,3),tolerance,tolerance),"Visual prefix attended to question suffix");
+  auto suffix=input;suffix.block_prefix_lengths={1,1,1,1,1};suffix.block_prefix_sources={0,0,0,0,0};
+  auto suffix_output=model->forward(suffix);suffix.images.clear();
+  TORCH_CHECK(!at::allclose(suffix_output,model->forward(suffix),1e-5,1e-6),"Suffix image features were dropped");
+  auto crossing=input;crossing.block_prefix_lengths={1,1,1,1,1};crossing.block_prefix_sources={0,0,0,0,0};
+  crossing.images[0].token_start=0;crossing.images[0].token_count=2;
+  bool rejected=false;try{model->forward(crossing);}catch(const c10::Error& e){rejected=std::string(e.what()).find("crosses a block boundary")!=std::string::npos;}
+  TORCH_CHECK(rejected,"Image span crossing a block boundary was accepted");
+  std::cout<<"OneJev block images: shared/distinct prefixes, ragged mixed rows, suffix images and boundary rejection passed on "<<device<<"\n";
+}
 int main(int argc,char** argv) {
   c10::InferenceMode inference;at::set_num_threads(1);at::manual_seed(712);
   Options cfg;
@@ -89,6 +134,8 @@ int main(int argc,char** argv) {
     auto query=q35weights.at(key).view({2,8,16});
     q35weights[key]=at::cat({query,at::zeros_like(query)},1).reshape({32,16});
   }
+  block_images_test(q35cfg,q35weights,c10::Device("cpu"));
+  if(argc>1)block_images_test(q35cfg,q35weights,c10::Device(argv[1]));
   auto q35loader=q35weights;auto q35=create_qwen35(q35cfg,q35loader,c10::Device("cpu"),at::kFloat);q35->ready();
   auto q35plain=input;q35plain.images.clear();q35plain.multimodal_positions=at::Tensor();
   auto q35text=q35->forward(q35plain),q35image=q35->forward(input);

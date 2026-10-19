@@ -510,12 +510,77 @@ request and answer-letter scoring format are unchanged. Attention and readout
 metadata are loaded exclusively from `baseten_modeling_overrides`.
 
 Within each backend batch, identical complete prefixes share full-attention KV,
-FP32 recurrent states and convolution history. Prefix tokens, positions and the
-block boundary must all match. Suffixes execute independently from immutable
-prefix snapshots. Caches are released after the group finishes; batches split by
-token limits or assigned to different replicas recompute their prefixes.
-Partial-prefix reuse, persistent cross-request caches, CUDA graph capture for
-this mode, image inputs and learned pointer readout heads are not supported.
+FP32 recurrent states and convolution history. Prefix tokens, token types,
+positions, all mRoPE axes, image pixels/layout/placement and the block boundary
+must match. Caller-provided image hashes alone cannot authorize reuse. Suffixes
+execute independently from immutable prefix snapshots. Caches are released after
+the group finishes; batches split by token limits or assigned to different
+replicas recompute their prefixes. Partial-prefix reuse, persistent cross-request
+caches, CUDA graph capture for this mode, audio inputs and learned pointer
+readout heads are not supported.
+
+Block-attention checkpoints with a Qwen3.5 vision tower and the checkpoint's
+image processor configuration also accept OneJev image inputs. This requires a
+build containing the multimodal block implementation; released images through
+`v3.0.0-alpha.4` reject images in block mode. Supply up to four images in user
+messages inside `state`; question instructions remain text/structured content:
+
+```json
+{
+  "state": {
+    "messages": [{
+      "role": "user",
+      "content": [
+        {"type": "text", "text": "Inspect this picture."},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,<PNG_BYTES>"}}
+      ]
+    }]
+  },
+  "questions": {"red": {"type": "noul", "instructions": "Is the object red?"}}
+}
+```
+
+Replace `<PNG_BYTES>` with base64-encoded PNG content. Inline data URLs work
+without a hostname allowlist; HTTPS images require `--image-allowed-hosts` with
+explicit destination hostnames. Image spans expand before the block boundary is
+finalized, and token limits apply to the expanded sequence. Spans cannot cross a
+block boundary. Both prefix and suffix execution retain the original mRoPE axes.
+Direct native decision calls with images must supply `media_positions`; block
+image requests without these coordinates are rejected before GPU uploads.
+Image uploads and vision features are reused within a native call when their
+borrowed pixel storage and layout match, including across prefix and suffix
+passes, and a shared visual prefix is prefilled
+once. Packed FlashAttention, dense MLPs, and the existing recurrent/chunked GDN
+selection remain active, with no sequence padding or per-question full-forward
+fallback.
+
+Run the independent full-sequence Transformers comparison (Torch 2.14.1 and
+Transformers 5.19.0):
+
+```sh
+python scripts/onejev-block-image-reference.py --library /path/to/libtei_torch.so \
+  --device cuda:0 --dtype bfloat16 --output /tmp/onejev-images.json
+```
+
+The default uses tiny random hybrid/vision weights and checks mixed text/image
+batches, shared/distinct pixels, multiple images, changed rotary coordinates,
+ragged suffixes and prefix-only rows, in both batch orders. It bounds FP32 logits,
+BF16 centered option logits, probabilities and well-separated decisions against
+full-sequence block masks. Centering removes a common offset, which does not
+change OneJev scores; the report also records uncentered logit drift. BF16
+full-sequence, split-prefix and chunked GDN execution are not bitwise equivalent.
+Add `--model /path/to/checkpoint --image-grid 64` for a local trained-model
+control with 1024 merged tokens per image; native batches with several distinct
+long prefixes also exercise the existing H100 chunked GDN gate. The report includes
+warmed packed-versus-serial timing for eight questions with one shared image.
+These timings cover native inference only, excluding startup, image decoding,
+HTTP and tokenization; they do not qualify every model, image size or GPU.
+The comparison defaults to FP32 on CPU and BF16 on CUDA; native CUDA DeltaNet
+requires BF16. Add `--profile` to check that distinct text prefixes sharing pixel
+storage reuse one vision projection, including a separate control sharing images
+across prefix and suffix passes. CUDA checks one upload/conversion pair; the report also
+indicates whether the chunked GDN kernel ran. Input-budget checks ensure shared
+uploads are accounted for once and independent pixel buffers remain charged.
 
 Independent full-sequence reference fixtures can be generated with Transformers
 5.19.0 using `scripts/onejev-block-reference.py --output /tmp/onejev-reference`.

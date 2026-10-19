@@ -173,7 +173,7 @@ option(INFINITY_BUILD_NATIVE_TESTS "Build native packed model regression tests" 
 option(INFINITY_RUN_CUDA_TESTS "Register native tests requiring a CUDA GPU" OFF)
 if(INFINITY_BUILD_NATIVE_TESTS)
   enable_testing()
-  foreach(test radix prefix_lookup decoder_models decision_models dense_models encoder_models gemma_models qwen35_models qwen3_vl_models)
+  foreach(test radix block_prefix prefix_lookup decoder_models decision_models dense_models encoder_models gemma_models qwen35_models qwen3_vl_models)
     add_executable(${test}_test tests/${test}_test.cpp)
     target_compile_features(${test}_test PRIVATE cxx_std_20)
     target_link_libraries(${test}_test PRIVATE tei_torch "${TORCH_LIBRARIES}")

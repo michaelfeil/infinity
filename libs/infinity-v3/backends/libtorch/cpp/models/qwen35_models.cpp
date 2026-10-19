@@ -360,15 +360,27 @@ class Qwen35 final : public Model {
     auto compact=radix_fold(output,input);
     return radix_enabled(input)?linear_radix_projection(compact,p+"out_proj",input):prefix_projection(compact,p+"out_proj",input);
   }
+  at::Tensor embeddings(const PackedInput& input,RequestImageFeatures& shared_features) const {
+    auto states=at::embedding(w("embed_tokens.weight"),input.images.empty()?radix_ids(input):input.ids);
+    for(const auto& image:input.images) {
+      TORCH_CHECK(visual,"Qwen3.5 vision tower unavailable");
+      auto compute=[&]{return visual->image_features(image).to(dtype);};
+      auto features=shared_features.get(image,compute);
+      TORCH_CHECK(features.size(0)==image.token_count && features.size(1)==hidden,"Qwen3.5 visual token geometry mismatch");
+      states.narrow(0,image.token_start,image.token_count).copy_(features);
+    }
+    if(!input.images.empty())states=radix_fold(states,input);
+    return states;
+  }
   at::Tensor block_forward(const PackedInput& input) const {
-    TORCH_CHECK(input.images.empty()&&input.audios.empty()&&!radix_enabled(input)&&
+    TORCH_CHECK(input.audios.empty()&&!radix_enabled(input)&&
       input.block_prefix_lengths.size()==size_t(input.batch)&&input.block_prefix_sources.size()==size_t(input.batch),"Missing OneJev block boundaries");
     // Structural packing is host-side; projections, MLPs, attention and GDN run
     // once per layer over actual rows. No activation/sequence padding is added.
     std::vector<int64_t> representatives,source_index(input.batch,-1),suffix_rows;
     std::vector<int32_t> prefix_offsets{0},suffix_offsets{0};
     std::vector<int64_t> suffix_sources;
-    std::vector<at::Tensor> prefix_ids,prefix_types,prefix_positions,suffix_ids,suffix_types,suffix_positions;
+    std::vector<at::Tensor> prefix_ids,prefix_types,prefix_positions,suffix_ids,suffix_types,suffix_positions,prefix_axes,suffix_axes;
     int64_t max_prefix=0,max_suffix=0;
     for(int64_t row=0;row<input.batch;++row) {
       const int64_t prefix=input.block_prefix_lengths[row],length=input.offsets[row+1]-input.offsets[row];
@@ -381,6 +393,7 @@ class Qwen35 final : public Model {
         prefix_ids.push_back(input.ids.narrow(0,input.offsets[row],prefix));
         prefix_types.push_back(input.types.narrow(0,input.offsets[row],prefix));
         prefix_positions.push_back(input.positions.narrow(0,input.offsets[row],prefix));
+        if(input.multimodal_positions.defined())prefix_axes.push_back(input.multimodal_positions.narrow(1,input.offsets[row],prefix));
         prefix_offsets.push_back(prefix_offsets.back()+prefix);max_prefix=std::max(max_prefix,prefix);
       }
       if(length>prefix) {
@@ -388,13 +401,47 @@ class Qwen35 final : public Model {
         suffix_ids.push_back(input.ids.narrow(0,input.offsets[row]+prefix,length-prefix));
         suffix_types.push_back(input.types.narrow(0,input.offsets[row]+prefix,length-prefix));
         suffix_positions.push_back(input.positions.narrow(0,input.offsets[row]+prefix,length-prefix));
+        if(input.multimodal_positions.defined())suffix_axes.push_back(input.multimodal_positions.narrow(1,input.offsets[row]+prefix,length-prefix));
         suffix_offsets.push_back(suffix_offsets.back()+length-prefix);max_suffix=std::max(max_suffix,length-prefix);
       }
     }
+    PackedInput prefixes{at::cat(prefix_ids,0),at::cat(prefix_types,0),at::cat(prefix_positions,0),
+      at::tensor(prefix_offsets,input.cumulative.options()),prefix_offsets.data(),int64_t(representatives.size()),max_prefix};
+    if(!prefix_axes.empty())prefixes.multimodal_positions=at::cat(prefix_axes,1);
+    auto attach_images=[&](PackedInput& part,int64_t row,int64_t begin,int64_t length,int64_t destination) {
+      const auto start=input.offsets[row]+begin,end=start+length;
+      for(const auto& image:input.images)if(image.sequence_start==input.offsets[row]&&image.token_start<end&&image.token_start+image.token_count>start) {
+        TORCH_CHECK(image.token_start>=start&&image.token_start+image.token_count<=end,
+          "OneJev image span crosses a block boundary");
+        auto relocated=image;relocated.token_start=destination+image.token_start-start;
+        relocated.sequence_start=destination;part.images.push_back(std::move(relocated));
+      }
+    };
+    for(size_t i=0;i<representatives.size();++i) {
+      const auto row=representatives[i];
+      attach_images(prefixes,row,0,input.block_prefix_lengths[row],prefix_offsets[i]);
+    }
+    PackedInput suffixes{};
+    if(!suffix_rows.empty()) {
+      suffixes=PackedInput{at::cat(suffix_ids,0),at::cat(suffix_types,0),at::cat(suffix_positions,0),
+        at::tensor(suffix_offsets,input.cumulative.options()),suffix_offsets.data(),int64_t(suffix_rows.size()),max_suffix};
+      if(!suffix_axes.empty())suffixes.multimodal_positions=at::cat(suffix_axes,1);
+      for(size_t i=0;i<suffix_rows.size();++i) {
+        const auto row=suffix_rows[i],prefix=input.block_prefix_lengths[row];
+        attach_images(suffixes,row,prefix,input.offsets[row+1]-input.offsets[row]-prefix,suffix_offsets[i]);
+      }
+      suffixes.block_prefix_sources=suffix_sources;
+      suffixes.block_cache_sources=at::tensor(suffix_sources,input.ids.options());
+    }
+    // Count only images in the executed representative prefixes and suffixes.
+    // One cache spans both passes, releasing features after their final use.
+    auto executed_images=prefixes.images;
+    executed_images.insert(executed_images.end(),suffixes.images.begin(),suffixes.images.end());
+    RequestImageFeatures shared_features(executed_images);
     std::vector<BlockCache> caches(layer_count);
     for(auto& cache:caches)cache.offsets=prefix_offsets;
     auto run=[&](const PackedInput& part,bool prefill) {
-      auto h=at::embedding(w("embed_tokens.weight"),part.ids);
+      auto h=embeddings(part,shared_features);
       for(int64_t layer=0;layer<layer_count;++layer) {
         const auto p="layers."+std::to_string(layer)+".";
         auto x=norm(h,p+"input_layernorm");
@@ -404,17 +451,9 @@ class Qwen35 final : public Model {
       }
       return norm(h,"norm");
     };
-    PackedInput prefixes{at::cat(prefix_ids,0),at::cat(prefix_types,0),at::cat(prefix_positions,0),
-      at::tensor(prefix_offsets,input.cumulative.options()),prefix_offsets.data(),int64_t(representatives.size()),max_prefix};
     auto prefix_hidden=run(prefixes,true);
     at::Tensor suffix_hidden;
-    if(!suffix_rows.empty()) {
-      PackedInput suffixes{at::cat(suffix_ids,0),at::cat(suffix_types,0),at::cat(suffix_positions,0),
-        at::tensor(suffix_offsets,input.cumulative.options()),suffix_offsets.data(),int64_t(suffix_rows.size()),max_suffix};
-      suffixes.block_prefix_sources=suffix_sources;
-      suffixes.block_cache_sources=at::tensor(suffix_sources,input.ids.options());
-      suffix_hidden=run(suffixes,false);
-    }
+    if(!suffix_rows.empty())suffix_hidden=run(suffixes,false);
     std::vector<at::Tensor> results;
     size_t suffix_row=0;
     for(int64_t row=0;row<input.batch;++row) {
@@ -533,16 +572,8 @@ class Qwen35 final : public Model {
     if(block_attention())return block_forward(input);
     TORCH_CHECK(!radix_enabled(input)||supports_radix(),"Noncausal Qwen3.5 attention does not support radix folding");
     TORCH_CHECK(!radix_enabled(input)||input.audios.empty(),"Qwen3.5 radix audio is not supported");
-    auto states=at::embedding(w("embed_tokens.weight"),input.images.empty()?radix_ids(input):input.ids);
     RequestImageFeatures shared_features(input.images,cfg.string("_decision.kind")=="d3");
-    for(const auto& image:input.images) {
-      TORCH_CHECK(visual,"Qwen3.5 vision tower unavailable");
-      auto compute=[&]{return visual->image_features(image).to(dtype);};
-      auto features=cfg.string("_decision.kind")=="d3"?shared_features.get(image,compute):compute();
-      TORCH_CHECK(features.size(0)==image.token_count && features.size(1)==hidden,"Qwen3.5 visual token geometry mismatch");
-      states.narrow(0,image.token_start,image.token_count).copy_(features);
-    }
-    if(!input.images.empty())states=radix_fold(states,input);
+    auto states=embeddings(input,shared_features);
     for(int64_t i=0;i<layer_count;++i) {
       auto p="layers."+std::to_string(i)+".";
       auto normalized=norm(states,p+"input_layernorm");
