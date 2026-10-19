@@ -93,20 +93,31 @@ int main(int argc,char** argv) {
  bool rejected_width=false;try{auto x=at::ones({1,512},options);tei::decoder_exact_rms_norm(x,{},at::ones({512},options),1e-6);}catch(const c10::Error&){rejected_width=true;}TORCH_CHECK(rejected_width,"Unregistered width must be rejected");
  // Independent packed readout oracle: interior/trailing PAD, all-PAD first
  // fallback, then changing actual IDs without changing cumulative layout.
- {
+ for(int64_t width:{16,129,896,1024,2048}) {
   constexpr int64_t pad=31;
-  auto hidden=at::arange(10*896,options.dtype(at::kFloat)).view({10,896}).to(at::kBFloat16);
+  auto hidden=at::arange(10*width,options.dtype(at::kFloat)).view({10,width}).to(at::kBFloat16);
   auto ids=at::tensor(at::IntArrayRef{5,pad,6,pad,pad,pad,pad,9,pad,11},options.dtype(at::kLong));
   auto cu=at::tensor({0,4,6,10},options.dtype(at::kInt));
   auto expected=hidden.index_select(0,at::tensor({2,4,9},options.dtype(at::kLong)));
-  auto selected=tei::qwen2_packed_classifier_rows(hidden,ids,cu,3,pad);
+  auto selected=tei::decoder_packed_classifier_rows(hidden,ids,cu,3,pad);
   TORCH_CHECK(at::equal(selected,expected),"Packed classifier readout changed selected hidden bits");
   ids.copy_(at::tensor(at::IntArrayRef{5,pad,6,7,pad,7,pad,9,pad,pad},options.dtype(at::kLong)));
   expected=hidden.index_select(0,at::tensor({3,5,7},options.dtype(at::kLong)));
-  TORCH_CHECK(at::equal(tei::qwen2_packed_classifier_rows(hidden,ids,cu,3,pad),expected),"Packed readout reused stale ID selection");
+  TORCH_CHECK(at::equal(tei::decoder_packed_classifier_rows(hidden,ids,cu,3,pad),expected),"Packed readout reused stale ID selection");
   auto half_hidden=hidden.to(at::kHalf);
-  TORCH_CHECK(at::equal(tei::qwen2_packed_classifier_rows(half_hidden,ids,cu,3,pad),tei::qwen2_packed_classifier_rows(hidden,ids,cu,3,pad).to(at::kHalf)),"Packed FP16 gather must preserve every original bit");
-  bool rejected=false;try{tei::qwen2_packed_classifier_rows(hidden.to(at::kFloat),ids,cu,3,pad);}catch(const c10::Error&){rejected=true;}
+  TORCH_CHECK(at::equal(tei::decoder_packed_classifier_rows(half_hidden,ids,cu,3,pad),tei::decoder_packed_classifier_rows(hidden,ids,cu,3,pad).to(at::kHalf)),"Packed FP16 gather must preserve every original bit");
+  auto last=hidden.index_select(0,at::tensor({3,5,9},options.dtype(at::kLong)));
+  TORCH_CHECK(at::equal(tei::decoder_packed_classifier_rows(hidden,ids,cu,3,pad,false),last),"Absent PAD configuration changed end-row selection");
+  auto bits=(at::arange(10*width,options.dtype(at::kInt))*73).remainder(65536).to(at::kShort).view({10,width});
+  auto indices=at::tensor({3,5,7},options.dtype(at::kLong));
+  for(auto type:{at::kHalf,at::kBFloat16}) {
+    auto rows=tei::decoder_packed_classifier_rows(bits.view(type),ids,cu,3,pad);
+    TORCH_CHECK(at::equal(rows.view(at::kShort),bits.index_select(0,indices)),"Packed gather changed raw16-bit payloads");
+  }
+  auto float_bits=(at::arange(10*width,options.dtype(at::kLong))*2654435761LL).to(at::kInt).view({10,width});
+  auto float_rows=tei::decoder_packed_classifier_rows(float_bits.view(at::kFloat),ids,cu,3,pad);
+  TORCH_CHECK(at::equal(float_rows.view(at::kInt),float_bits.index_select(0,indices)),"Packed gather changed raw32-bit payloads");
+  bool rejected=false;try{tei::decoder_packed_classifier_rows(hidden.to(at::kDouble),ids,cu,3,pad);}catch(const c10::Error&){rejected=true;}
   TORCH_CHECK(rejected,"Unvalidated packed readout dtype must be rejected");
  }
  // Exercise recoverable execution failure and capacity fallback on the

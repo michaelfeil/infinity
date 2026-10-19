@@ -64,6 +64,13 @@ int64_t tei_classification_width(void*);
 int64_t tei_graph_count(void*);
 // hits, misses, captures, attempts, evictions, live bytes, cumulative admitted bytes.
 int32_t tei_graph_stats(void*, uint64_t* counters, size_t count);
+// Operation 0: hidden states, 1: sequence classification, 2: token classification.
+int32_t tei_prefix_cache_supported(void*, int32_t operation);
+// hits, misses, reused tokens, admissions, evictions, bypasses, live bytes.
+int32_t tei_prefix_cache_stats(void*, uint64_t* counters, size_t count);
+int32_t tei_prefix_cache_clear(void*);
+// Set probe bypass and return its previous value, or -1 on error.
+int32_t tei_prefix_cache_set_probe(void*, int32_t enabled);
 int32_t tei_supports_radix(void*);
 int32_t tei_ready(void*);
 int32_t tei_decision_counts(void*,const TeiDecision*,size_t count,int64_t* counts);

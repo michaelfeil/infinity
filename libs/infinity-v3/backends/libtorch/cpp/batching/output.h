@@ -5,6 +5,7 @@
 #include "helpers/pinned_admission.h"
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <condition_variable>
 #include <cstring>
 #include <memory>
@@ -86,7 +87,7 @@ class OutputLease {
   c10::cuda::CUDAStream stream;
   at::cuda::CUDAEvent ready;
   bool recorded = false;
-  bool finished = false;
+  std::atomic<bool> finished = false;
 #endif
 public:
   const size_t size;
@@ -107,7 +108,7 @@ public:
   ~OutputLease() {
 #ifdef TEI_TORCH_CUDA_KERNELS
     // Also drain partially submitted work on errors, before releasing pins.
-    try { if (!finished) { if (recorded) ready.synchronize(); else stream.synchronize(); } }
+    try { if (!finished.load(std::memory_order_acquire)) { if (recorded) ready.synchronize(); else stream.synchronize(); } }
     catch (...) { /* CUDA failures are reported by submit/wait. */ }
 #endif
     slot->gpu.clear();
@@ -187,7 +188,7 @@ public:
     c10::cuda::CUDAGuard guard(stream.device());
     TORCH_CHECK(recorded, "Output event was not recorded");
     ready.synchronize();
-    finished = true;
+    finished.store(true, std::memory_order_release);
 #endif
     return slot->host.data_ptr<float>();
   }

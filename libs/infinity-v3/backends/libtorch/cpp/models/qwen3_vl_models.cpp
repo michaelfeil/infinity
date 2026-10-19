@@ -1,3 +1,4 @@
+#include "batching/prefix_cache.h"
 #include "helpers/attention.h"
 // Native adaptation of Candle Qwen3.5. Upstream notices retained in LICENSE/NOTICE.
 #include "models/qwen3_vl_models.h"
@@ -193,6 +194,9 @@ void Qwen3VL::ready() {
   }
 
 bool Qwen3VL::supports_images() const {return true;}
+int64_t Qwen3VL::prefix_layers() const {return text?text->prefix_layers():0;}
+uint64_t Qwen3VL::prefix_payload_bytes(int64_t tokens) const {return text?text->prefix_payload_bytes(tokens):0;}
+bool Qwen3VL::supports_prefix_cache(int operation) const {return operation==0&&text&&text->supports_prefix_cache(0);}
 
 at::Tensor Qwen3VL::image_features(const ImageInput& image) const {return vision(image).first;}
 int64_t Qwen3VL::output_width() const {return text->output_width();}
@@ -209,9 +213,20 @@ at::Tensor Qwen3VL::forward(const PackedInput& input) const {
       TORCH_CHECK(deep.size()==ds.size(),"Qwen3-VL deepstack count mismatch");
       for(size_t i=0;i<ds.size();++i)deep[i].push_back(ds[i]);
     }
+    if(indices.empty()&&input.prefix&&!input.prefix->original.images.empty()) {
+      // Cached visual rows need no feature computation, but the original
+      // deepstack stages still consolidate residuals for the real text suffix.
+      auto width=cfg.integer("text_config.hidden_size");
+      auto empty=at::empty({0,width},input.ids.options().dtype(dtype));
+      indices.push_back(at::empty({0},input.ids.options()));features.push_back(empty);
+      for(int64_t i=0;cfg.values.count("vision_config.deepstack_visual_indexes."+std::to_string(i));++i) {
+        auto layer=cfg.integer("vision_config.deepstack_visual_indexes."+std::to_string(i));
+        if(layer>=0&&layer<depth)deep.push_back({empty});
+      }
+    }
     std::vector<at::Tensor> stacked;for(auto& rows:deep)stacked.push_back(at::cat(rows,0));
-    return decoder_multimodal_forward(*text,input,indices.empty()?at::Tensor():at::cat(indices,0),
-      features.empty()?at::Tensor():at::cat(features,0),angles.cos().to(dtype).contiguous(),angles.sin().to(dtype).contiguous(),stacked);
+    return prefix_restore(input,decoder_multimodal_forward(*text,input,indices.empty()?at::Tensor():at::cat(indices,0),
+      features.empty()?at::Tensor():at::cat(features,0),angles.cos().to(dtype).contiguous(),angles.sin().to(dtype).contiguous(),stacked));
   }
 std::unique_ptr<Model> create_qwen3_vl(const Options& cfg,Weights& weights,c10::Device device,at::ScalarType dtype) {
   if(cfg.string("model_type")=="qwen3_vl")return std::make_unique<Qwen3VL>(cfg,weights,device,dtype);

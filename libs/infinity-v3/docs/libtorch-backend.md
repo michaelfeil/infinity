@@ -4,6 +4,11 @@ Candle is deprecated. Use a build/image containing LibTorch for models supported
 here. Builds containing LibTorch select it automatically, including builds
 containing both backends; no `--backend` flag is needed.
 
+An [experimental persistent prefix cache](libtorch-prefix-cache.md) is available
+for supported causal operations. It remains disabled unless
+`INFINITY_TORCH_PREFIX_CACHE_BYTES` is explicitly set above zero. Its historical
+benchmarks do not qualify the current port for production.
+
 LibTorch 2.14.1 runs alongside Candle as an optional inference runtime. Rust owns
 model configuration, checkpoint loading, batch validation and infinity_v3 integration;
 a small C ABI bridge runs the model with the PyTorch C++ tensor API. Python is

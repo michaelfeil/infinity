@@ -117,5 +117,21 @@
     "source_macro_contract": "FLASH_NAMESPACE=tei_torch_flash_alibi64 in both adapters; UNFUSE_FMA and FLASHATTENTION_DISABLE_ALIBI undefined in the CUDA specialization",
     "fallback": "unsupported family/geometry/dtype/architecture retains existing attention",
     "token_padding": false
+  },
+  "prefix_default": {
+    "adapter": "kernels/torch_flash_unfused.cu",
+    "namespace": "tei_torch_flash_unfused",
+    "source_macro_contract": "UNFUSE_FMA defined; unmodified pinned upstream headers",
+    "purpose": "Preserve default Torch head64/head128 softmax arithmetic for single global prefix queries without GQA layout swapping; longer or windowed suffixes retain their existing provider",
+    "dtypes": [
+      "FP16",
+      "BF16"
+    ],
+    "token_padding": false,
+    "cold_provider": "unchanged",
+    "head_dimensions": [
+      64,
+      128
+    ]
   }
 }

@@ -17,6 +17,7 @@ extern "C" __global__ void qk_norm_rope_bf16(const __nv_bfloat16*, const __nv_bf
 
 namespace tei {
 namespace {
+#include "kernels/prefix_qkv_norm_rope.cuh"
 // Eight-way descending bitonic network derived from Candle's sort.cu:
 // https://github.com/michaelfeil/candle/blob/036f39e44015e78ba18d716d73dfdc2e78730c44/candle-kernels/src/sort.cu
 // Original source: Adapted from https://github.com/ggerganov/llama.cpp/blob/master/ggml-cuda/argsort.cu
@@ -600,6 +601,56 @@ std::pair<at::Tensor,at::Tensor> fused_qk_norm_rope(const at::Tensor& q,const at
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   }
   return {output.narrow(0,0,qrows).view({q.size(0),q.size(1),128}),output.narrow(0,qrows,krows).view({k.size(0),k.size(1),128})};
+}
+at::Tensor fused_qkv_norm_rope_into(const at::Tensor& q,const at::Tensor& k,const at::Tensor& v,
+ const at::Tensor& qw,const at::Tensor& kw,const at::Tensor& cosine,const at::Tensor& sine,
+ double epsilon,const at::Tensor& key_target,const at::Tensor& value_target,const at::Tensor& output_rows) {
+  TORCH_CHECK(q.is_cuda()&&q.dim()==3&&k.dim()==3&&v.sizes()==k.sizes()
+    &&q.size(0)==k.size(0)&&q.size(2)==128&&k.size(2)==128
+    &&(q.scalar_type()==at::kHalf||q.scalar_type()==at::kBFloat16),"Unsupported direct prefix QKV geometry");
+  for(const auto& t:{q,k,v})TORCH_CHECK(t.device()==q.device()&&t.scalar_type()==q.scalar_type()
+    &&t.stride(2)==1&&t.stride(1)==128&&t.stride(0)>=0&&t.stride(0)<=INT32_MAX&&t.stride(0)%8==0
+    &&!t.is_neg()&&!t.is_conj(),"Invalid direct prefix QKV layout");
+  TORCH_CHECK(q.size(0)>0&&q.size(0)<=INT32_MAX&&q.size(1)>0&&k.size(1)>0
+    &&q.size(1)<=INT32_MAX&&k.size(1)<=INT32_MAX
+    &&q.size(0)*(q.size(1)+k.size(1))<=INT32_MAX,"Direct prefix QKV exceeds kernel range");
+  const bool indexed=output_rows.defined();
+  TORCH_CHECK(key_target.dim()==3&&value_target.sizes()==key_target.sizes()
+    &&key_target.sizes().slice(1)==k.sizes().slice(1)
+    &&(indexed?key_target.size(0)>=k.size(0):key_target.size(0)==k.size(0))
+    &&key_target.size(0)*k.size(1)<=INT32_MAX
+    &&key_target.is_contiguous()&&value_target.is_contiguous(),"Invalid direct prefix QKV targets");
+  for(const auto& t:{qw,kw,cosine,sine,key_target,value_target})
+    TORCH_CHECK(t.device()==q.device()&&t.scalar_type()==q.scalar_type()&&t.is_contiguous()
+      &&!t.is_neg()&&!t.is_conj(),"Invalid direct prefix QKV coefficients or targets");
+  for(const auto& t:{q,k,v,qw,kw,cosine,sine,key_target,value_target})
+    TORCH_CHECK(reinterpret_cast<uintptr_t>(t.const_data_ptr())%16==0,"Direct prefix QKV requires aligned vectors");
+  if(indexed)TORCH_CHECK(output_rows.device()==q.device()&&output_rows.scalar_type()==at::kInt
+    &&output_rows.dim()==1&&output_rows.is_contiguous()&&output_rows.numel()==q.size(0)
+    &&!output_rows.is_neg()&&!output_rows.is_conj(),"Invalid direct prefix output rows");
+  TORCH_CHECK(qw.numel()==128&&kw.numel()==128&&cosine.numel()==q.size(0)*64
+    &&sine.numel()==q.size(0)*64,"Invalid direct prefix normalization coefficients");
+  for(const auto& source:{q,k,v,qw,kw,cosine,sine})
+    TORCH_CHECK(!key_target.is_alias_of(source)&&!value_target.is_alias_of(source),"Prefix QKV targets must own independent storage");
+  TORCH_CHECK(!key_target.is_alias_of(value_target),"Prefix key and value targets must not alias");
+  if(indexed)TORCH_CHECK(!key_target.is_alias_of(output_rows)&&!value_target.is_alias_of(output_rows),"Prefix targets must not alias row metadata");
+  c10::cuda::CUDAGuard guard(q.device());
+  auto output=at::empty(q.sizes(),q.options());
+  const auto blocks=std::min<int64_t>((q.size(0)*(q.size(1)+k.size(1))+7)/8,65535);
+  const auto stream=at::cuda::getCurrentCUDAStream(q.get_device());
+  const int32_t* rows=indexed?output_rows.const_data_ptr<int32_t>():nullptr;
+  auto launch=[&]<class T,bool Indexed>() {
+    auto p=[](const at::Tensor& t){return reinterpret_cast<const T*>(t.const_data_ptr());};
+    prefix_qkv_norm_rope<T,Indexed><<<blocks,128,0,stream>>>(p(q),p(k),p(qw),p(kw),p(cosine),p(sine),p(v),
+      reinterpret_cast<T*>(output.mutable_data_ptr()),reinterpret_cast<T*>(key_target.mutable_data_ptr()),
+      reinterpret_cast<T*>(value_target.mutable_data_ptr()),q.size(0),q.size(1),k.size(1),q.stride(0),k.stride(0),v.stride(0),epsilon,rows,key_target.size(0));
+  };
+  if(q.scalar_type()==at::kHalf) {
+    if(indexed)launch.template operator()<__half,true>();else launch.template operator()<__half,false>();
+  }else {
+    if(indexed)launch.template operator()<__nv_bfloat16,true>();else launch.template operator()<__nv_bfloat16,false>();
+  }
+  C10_CUDA_KERNEL_LAUNCH_CHECK();return output;
 }
 std::pair<at::Tensor, at::Tensor> nomic_router_topk8(const at::Tensor& p, int64_t k) {
   TORCH_CHECK(p.is_cuda()&&p.scalar_type()==at::kFloat&&p.dim()==2&&p.size(1)==8&&p.is_contiguous(),
