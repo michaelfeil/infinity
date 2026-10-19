@@ -36,7 +36,7 @@ truss push
 Enter your Baseten API key when prompted. Current Truss versions create
 published deployments by default; do not use `--watch` (development mode)
 with this no-build config. The image remains pinned
-to `nvidia-3.0.0-alpha.3`; change `base_image.image` to choose another release.
+to `nvidia-3.0.0-alpha.4`; change `base_image.image` to choose another release.
 
 ## Call the model
 

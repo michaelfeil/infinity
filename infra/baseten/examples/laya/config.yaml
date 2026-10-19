@@ -2,7 +2,7 @@
 model_name: infinity-baseten-laya
 
 base_image:
-  image: ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0-alpha.3
+  image: ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0-alpha.4
 
 resources:
   accelerator: L4:2
