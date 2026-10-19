@@ -443,6 +443,11 @@ matching. Full URLs/path prefixes are not supported: use their hostname instead.
 Only HTTP(S) URLs without credentials are accepted. Resolved connection addresses
 and every redirect are checked; environment proxies and <code>.netrc</code> are ignored.
 Public URLs/redirects and image/audio bytes or data URIs remain supported.</p>
+<p>Remote downloads are streamed with a 128 MiB limit per item, including when
+<code>Content-Length</code> is absent. HTTP-compressed responses are rejected (requests ask for
+identity encoding). Decoded media and concurrent downloads can require more memory.
+Configure the limit in bytes with <code>INFINITY_MEDIA_MAX_DOWNLOAD_BYTES</code> (default:
+<code>134217728</code>); the value must be a positive integer.</p>
 </article>
 </div>
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
