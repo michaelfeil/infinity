@@ -1,6 +1,4 @@
 import asyncio
-import gzip
-import zlib
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -123,7 +121,7 @@ def test_redirects_are_revalidated(monkeypatch):
         assert session.get.call_args.kwargs == {
             "allow_redirects": False,
             "auto_decompress": False,
-            "headers": {"Accept-Encoding": "gzip, deflate"},
+            "headers": {"Accept-Encoding": "identity"},
         }
 
     asyncio.run(run())
@@ -134,21 +132,13 @@ def test_redirects_are_revalidated(monkeypatch):
     [
         (9, "identity", [], "exceeds"),
         (None, "identity", [b"1234", b"5678", b"9"], "exceeds"),
-        (None, "br", [], "Unsupported"),
-        (None, "gzip", [gzip.compress(b"12345678")], None),
-        (None, "deflate", [zlib.compress(b"12345678")], None),
-        (None, "gzip", [gzip.compress(b"x" * 65)], "exceeds"),
-        (None, "deflate", [zlib.compress(b"x" * 65)], "exceeds"),
-        (None, "gzip", [gzip.compress(b"12345678")[:-1]], "incomplete"),
+        (None, "gzip", [], "HTTP-compressed"),
         (8, "identity", [b"1234", b"5678"], None),
     ],
 )
 def test_download_size_limit(monkeypatch, length, encoding, chunks, error):
     monkeypatch.delenv("INFINITY_MEDIA_URL_BLACKLIST", raising=False)
-    monkeypatch.setattr(
-        "infinity_emb.transformer._media_url.MAX_MEDIA_DOWNLOAD_BYTES",
-        64 if encoding in {"gzip", "deflate"} else 8,
-    )
+    monkeypatch.setenv("INFINITY_MEDIA_MAX_DOWNLOAD_BYTES", "8")
     response = MagicMock(status=200, content_length=length)
     response.headers = {"Content-Encoding": encoding}
 
@@ -176,3 +166,12 @@ def test_download_size_limit(monkeypatch, length, encoding, chunks, error):
             )
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "invalid"])
+def test_invalid_download_limit(monkeypatch, limit):
+    monkeypatch.setenv("INFINITY_MEDIA_MAX_DOWNLOAD_BYTES", limit)
+    session = MagicMock()
+    with pytest.raises(ValueError):
+        asyncio.run(download_media_url("https://images.example/photo.png", session))
+    session.get.assert_not_called()

@@ -8,7 +8,6 @@ from __future__ import annotations
 import ipaddress
 import os
 import socket
-import zlib
 from fnmatch import fnmatchcase
 from typing import TYPE_CHECKING
 
@@ -16,7 +15,7 @@ if TYPE_CHECKING:
     import aiohttp
     from yarl import URL
 
-MAX_MEDIA_DOWNLOAD_BYTES = 128 * 1024 * 1024
+DEFAULT_MEDIA_MAX_DOWNLOAD_BYTES = 128 * 1024 * 1024
 
 DEFAULT_MEDIA_URL_BLACKLIST = (
     "localhost;*.localhost;0.0.0.0/8;10.0.0.0/8;100.64.0.0/10;127.0.0.0/8;"
@@ -105,6 +104,11 @@ def media_client_session() -> aiohttp.ClientSession:
 async def download_media_url(value: str, session: aiohttp.ClientSession) -> bytes:
     from yarl import URL
 
+    max_bytes = int(
+        os.environ.get("INFINITY_MEDIA_MAX_DOWNLOAD_BYTES", DEFAULT_MEDIA_MAX_DOWNLOAD_BYTES)
+    )
+    if max_bytes <= 0:
+        raise ValueError("INFINITY_MEDIA_MAX_DOWNLOAD_BYTES must be a positive integer")
     blacklist = media_url_blacklist()
     url = blacklist.validate_url(value)
     for _ in range(11):
@@ -113,7 +117,7 @@ async def download_media_url(value: str, session: aiohttp.ClientSession) -> byte
             url,
             allow_redirects=False,
             auto_decompress=False,
-            headers={"Accept-Encoding": "gzip, deflate"},
+            headers={"Accept-Encoding": "identity"},
         ) as response:
             if response.status in {301, 302, 303, 307, 308} and "Location" in response.headers:
                 url = blacklist.validate_url(
@@ -121,31 +125,14 @@ async def download_media_url(value: str, session: aiohttp.ClientSession) -> byte
                 )
                 continue
             response.raise_for_status()
-            encoding = response.headers.get("Content-Encoding", "identity").strip().lower()
-            if encoding not in {"identity", "gzip", "deflate"}:
-                raise ValueError("Unsupported media Content-Encoding")
-            decoder = (
-                zlib.decompressobj(16 + zlib.MAX_WBITS if encoding == "gzip" else zlib.MAX_WBITS)
-                if encoding != "identity"
-                else None
-            )
-            if (
-                response.content_length is not None
-                and response.content_length > MAX_MEDIA_DOWNLOAD_BYTES
-            ):
-                raise ValueError("Media download exceeds 128 MiB")
+            if response.headers.get("Content-Encoding", "identity").lower() != "identity":
+                raise ValueError("HTTP-compressed media responses are not supported")
+            if response.content_length is not None and response.content_length > max_bytes:
+                raise ValueError(f"Media download exceeds {max_bytes} bytes")
             data = bytearray()
-            downloaded = 0
             async for chunk in response.content.iter_chunked(64 * 1024):
-                downloaded += len(chunk)
-                if downloaded > MAX_MEDIA_DOWNLOAD_BYTES:
-                    raise ValueError("Media download exceeds 128 MiB")
-                if decoder is not None:
-                    chunk = decoder.decompress(chunk, MAX_MEDIA_DOWNLOAD_BYTES - len(data) + 1)
-                if len(data) + len(chunk) > MAX_MEDIA_DOWNLOAD_BYTES:
-                    raise ValueError("Media download exceeds 128 MiB")
+                if len(data) + len(chunk) > max_bytes:
+                    raise ValueError(f"Media download exceeds {max_bytes} bytes")
                 data.extend(chunk)
-            if decoder is not None and (not decoder.eof or decoder.unused_data):
-                raise ValueError("Invalid or incomplete compressed media response")
             return bytes(data)
     raise ValueError("Too many media URL redirects")
