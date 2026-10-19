@@ -33,4 +33,11 @@ at::Tensor fused_bias_gelu(const at::Tensor& x, const at::Tensor& bias, bool app
 std::pair<at::Tensor, at::Tensor> fused_qk_norm_rope(const at::Tensor& q,
  const at::Tensor& k, const at::Tensor& q_weight, const at::Tensor& k_weight,
  const at::Tensor& cosine, const at::Tensor& sine, double epsilon);
+// Preserve Q/K arithmetic while writing normalized K and raw V into independent
+// contiguous suffix buffers. Returns independently owned normalized Q rows.
+// Optional output_rows must contain unique, in-range destination rows. The
+// prefix graph owner validates and owns this immutable mapping before capture.
+at::Tensor fused_qkv_norm_rope_into(const at::Tensor& q,const at::Tensor& k,const at::Tensor& v,
+ const at::Tensor& qw,const at::Tensor& kw,const at::Tensor& cosine,const at::Tensor& sine,
+ double epsilon,const at::Tensor& key_target,const at::Tensor& value_target,const at::Tensor& output_rows={});
 }

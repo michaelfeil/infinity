@@ -7,6 +7,7 @@
 #include <c10/core/InferenceMode.h>
 #include <chrono>
 #include <cmath>
+#include <barrier>
 #include <future>
 #include <iostream>
 #include <utility>
@@ -282,6 +283,19 @@ int main() {
     tei::OutputLease reused(pool, device, 768); reused.allocate();
     reused.copy(at::full({1,768}, 42, at::TensorOptions().device(device)), 0); reused.record();
     TORCH_CHECK(reused.wait()[767] == 42, "Abandoned lease contaminated reuse");
+    // Multiple waiters may read a live lease. Completion bookkeeping must not
+    // race, and each waiter observes the same result until the owner retires it.
+    const auto expected_host = reused.wait();
+    std::barrier readers(2);
+    auto read = [&] {
+      readers.arrive_and_wait();
+      for (int i = 0; i < 1000; ++i)
+        TORCH_CHECK(reused.wait() == expected_host && expected_host[767] == 42,
+                    "Concurrent wait changed output ownership or bits");
+    };
+    auto first_reader = std::async(std::launch::async, read);
+    auto second_reader = std::async(std::launch::async, read);
+    first_reader.get(); second_reader.get();
     // GPU completion alone must not release A while CPU packing still owns it.
     // Even if B is free, C waits for A rather than selecting any free slot.
     auto alternating = std::make_shared<tei::OutputPool>();

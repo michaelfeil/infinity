@@ -36,7 +36,7 @@ at::Tensor round_model_double(const at::Tensor& values,at::ScalarType dtype) {
  }
  return output;
 }
-int main(){c10::InferenceMode guard;
+int main(int argc,char** argv){c10::InferenceMode guard;
  {
   // Captured strict failure: generic Half4096 RMS returned -8.28125 at
   // row14,col3320; original Candle4096, FP32 and direct FP64 return -8.2734375.
@@ -241,12 +241,36 @@ int main(){c10::InferenceMode guard;
     close(packed,original,0,"Out-of-place rotary preserves all QKV storage");
    }
    auto actual=tei::fused_qk_norm_rope(q,k,qw,kw,cosine,sine,1e-6);
+   auto vstore=at::randn({k.size(0),2*k.size(1),128},k.options()),v=vstore.narrow(1,k.size(1),k.size(1));
+   auto key_owner=at::full({k.size(0)+3,k.size(1),128},17,k.options());
+   auto value_owner=at::full_like(key_owner,-17);
+   auto key_target=key_owner.narrow(0,3,k.size(0)),value_target=value_owner.narrow(0,3,k.size(0));
+   auto direct=tei::fused_qkv_norm_rope_into(q,k,v,qw,kw,cosine,sine,1e-6,key_target,value_target);
+   close(direct,actual.first,0,"Direct Q normalization retains original arithmetic");
+   close(key_target,actual.second,0,"Direct K normalization retains original arithmetic");
+   TORCH_CHECK(at::equal(value_target.view(at::kByte),v.contiguous().view(at::kByte)),"Direct V copy changed raw bits");
+   TORCH_CHECK(at::equal(key_owner.narrow(0,0,3),at::full_like(key_owner.narrow(0,0,3),17))
+     &&at::equal(value_owner.narrow(0,0,3),at::full_like(value_owner.narrow(0,0,3),-17)),"Direct writes corrupted prefix rows");
+   std::vector<int32_t> mapping;for(int32_t row=0;row<k.size(0);++row)mapping.push_back(row+3+(row>=7?3:0));
+   auto rows=at::tensor(mapping,k.options().dtype(at::kInt)),indices=rows.to(at::kLong);
+   auto mapped_key=at::full({k.size(0)+6,k.size(1),128},17,k.options()),mapped_value=at::full_like(mapped_key,-17);
+   auto mapped_q=tei::fused_qkv_norm_rope_into(q,k,v,qw,kw,cosine,sine,1e-6,mapped_key,mapped_value,rows);
+   auto expected_key=at::full_like(mapped_key,17),expected_value=at::full_like(mapped_value,-17);
+   expected_key.index_copy_(0,indices,actual.second);expected_value.index_copy_(0,indices,v);
+   close(mapped_q,actual.first,0,"Mapped Q normalization retains original arithmetic");
+   close(mapped_key,expected_key,0,"Mapped K writes retain prefix and skipped rows");
+   TORCH_CHECK(at::equal(mapped_value.view(at::kByte),expected_value.view(at::kByte)),"Mapped V writes changed bits or skipped rows");
+   auto contiguous_k=k.contiguous();bool alias_rejected=false;
+   try{tei::fused_qkv_norm_rope_into(q,contiguous_k,v,qw,kw,cosine,sine,1e-6,contiguous_k,value_target);}
+   catch(const c10::Error&){alias_rejected=true;}
+   TORCH_CHECK(alias_rejected&&at::equal(contiguous_k,k),"Aliasing prefix targets were written before rejection");
    auto ref=[&](const at::Tensor& x,const at::Tensor& weight){auto n=std::get<0>(at::_fused_rms_norm(x.contiguous(),{128},weight,1e-6));auto a=n.narrow(-1,0,64),b=n.narrow(-1,64,64);return at::cat({a*cosine-b*sine,b*cosine+a*sine},-1);};
    close(actual.first,ref(q,qw),dtype==at::kBFloat16?0.0625:0.008,"Q norm+RoPE");
    close(actual.second,ref(k,kw),dtype==at::kBFloat16?0.0625:0.008,"K norm+RoPE");
   }
   std::cout<<dtype<<" fused CUDA operator parity passed\n";
  }
+ if(argc>1&&std::string(argv[1])=="prefix-qkv")return 0;
  {
   auto opts=at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
   auto x=at::ones({2,256},opts);x.narrow(-1,128,128).fill_(2);

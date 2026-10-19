@@ -11,12 +11,14 @@ CUDA libraries, model weights, or container base images.
 | Vendored TEI regression-test snapshots | Apache-2.0 comparison baselines; [Candle snapshot provenance](backends/candle/tests/snapshots/NOTICE) and [router snapshot provenance](router/tests/snapshots/NOTICE) list the fixtures, full Git blob hashes, and pinned upstream revisions. |
 | Adapted Candle CPU operators | [Apache text](LICENSES/Apache-2.0.txt) and source attribution in [ModernBERT CPU math](backends/libtorch/cpp/helpers/modern_cpu_math.cpp), based on Candle revision `036f39e`. |
 | Candle CUDA activation kernel | [MIT text](backends/candle/src/kernels/LICENSE.candle-MIT) and [kernel notices](backends/candle/src/kernels/gated_activation.cu). |
+| Native prefix Q/K normalization and rotary kernel | Derived from [Candle Q/K normalization](backends/candle/src/kernels/qk_norm_rope.cu), with the MIT permission notice retained in [the derived kernel](backends/libtorch/cpp/kernels/prefix_qkv_norm_rope.cuh). |
 | Candle cuBLASLt extension | [Apache text](backends/candle/extensions/candle-cublaslt/LICENSE-APACHE) and [MIT text](backends/candle/extensions/candle-cublaslt/LICENSE-MIT). |
 | Candle index-select extension | [Apache text](backends/candle/extensions/candle-index-select-cu/LICENSE-APACHE), [MIT text](backends/candle/extensions/candle-index-select-cu/LICENSE-MIT), and file headers. |
 | Candle layer-norm extension | [Apache text](backends/candle/extensions/candle-layer-norm/LICENSE-APACHE), [MIT text](backends/candle/extensions/candle-layer-norm/LICENSE-MIT), and [BSD text](backends/candle/extensions/candle-layer-norm/LICENSE). |
 | Candle rotary extension | [Apache text](backends/candle/extensions/candle-rotary/LICENSE-APACHE) and [MIT text](backends/candle/extensions/candle-rotary/LICENSE-MIT). |
 | RadixMLP-derived layers | MIT attribution in [index-select](backends/candle/src/layers/index_select.rs) and [RadixMLP](backends/candle/src/layers/radix_mlp.rs) source headers. |
 | CUTLASS-derived Gemma4 and Nomic MoE kernels | [BSD-3-Clause text](backends/candle/extensions/candle-gemma4-moe/LICENSE.cutlass). |
+| xxHash prefix fingerprints | [BSD-2-Clause text](backends/libtorch/cpp/vendor/xxhash/LICENSE), upstream header notices, and [pinned source provenance](backends/libtorch/cpp/vendor/xxhash/provenance.json). |
 | ALiBi implementation | [Source notices](backends/candle/src/alibi.rs) for Google AI Language Team, Hugging Face, and Jina AI. |
 
 The native Torch [embedding normalization kernel](backends/libtorch/cpp/kernels/encoder_embedding_norm.cuh)

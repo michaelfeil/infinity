@@ -139,6 +139,18 @@ impl<T: Send + 'static> Inference<T> {
 }
 
 pub trait Backend {
+    /// Execute internal startup/health input without populating user caches.
+    fn probe(&self, batch: Batch, model_type: &ModelType) -> Result<(), BackendError> {
+        match model_type {
+            ModelType::Decision => {
+                let count = batch.len();
+                self.decide(batch, vec![DecisionInput::Warmup; count])
+                    .map(|_| ())
+            }
+            ModelType::Classifier => self.predict(batch).map(|_| ()),
+            ModelType::Embedding(_) => self.embed(batch).map(|_| ()),
+        }
+    }
     fn decide(
         &self,
         _batch: Batch,

@@ -124,3 +124,26 @@ Note: You can also save a dockerfile direclty as `.tar`.
 This might come in handy if you do not have a shared internal docker registry in your nuclear facility, but still want to leverage the latest semantic search.
 https://docs.docker.com/reference/cli/docker/image/save/.
 
+
+## Remote image and audio URLs (Infinity v1)
+
+`INFINITY_MEDIA_URL_BLACKLIST` is a semicolon-separated list of hostnames,
+host globs (e.g. `*.example.com`), and IP addresses/CIDRs to block. The default is:
+
+```text
+localhost;*.localhost;0.0.0.0/8;10.0.0.0/8;100.64.0.0/10;127.0.0.0/8;
+169.254.0.0/16;172.16.0.0/12;192.168.0.0/16;224.0.0.0/4;
+::/128;::1/128;fc00::/7;fe80::/10;ff00::/8
+```
+
+Setting the variable **replaces** these defaults; an empty value disables blacklist
+matching. Full URLs/path prefixes are not supported: use their hostname instead.
+Only HTTP(S) URLs without credentials are accepted. Resolved connection addresses
+and every redirect are checked; environment proxies and `.netrc` are ignored.
+Public URLs/redirects and image/audio bytes or data URIs remain supported.
+
+Remote downloads are streamed with a 128 MiB limit per item, including when
+`Content-Length` is absent. HTTP-compressed responses are rejected (requests ask for
+identity encoding). Decoded media and concurrent downloads can require more memory.
+Configure the limit in bytes with `INFINITY_MEDIA_MAX_DOWNLOAD_BYTES` (default:
+`134217728`); the value must be a positive integer.

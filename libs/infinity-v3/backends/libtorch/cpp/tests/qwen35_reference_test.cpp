@@ -1,9 +1,53 @@
 #include "kernels/qwen35_reference.h"
 #include "kernels/qwen35_kernels.h"
+#include "batching/prefix_cache.h"
 #include <ATen/ATen.h>
 #include <cmath>
 #include <iostream>
 #include <vector>
+
+void resumed_delta(c10::Device device,int64_t kh,int64_t vh,bool fma) {
+  constexpr int64_t tokens=35;
+  auto opts=at::TensorOptions().device(device).dtype(at::kBFloat16);
+  auto qkv=(at::randn({tokens,(2*kh+vh)*128},opts)*.2).contiguous();
+  auto z=(at::randn({tokens,vh*128},opts)*.2).contiguous();
+  auto ab=(at::randn({tokens,2*vh},opts)*.2).contiguous();
+  auto conv=(at::randn({(2*kh+vh)*128,4},opts)*.2).contiguous();
+  auto alog=at::zeros({vh},opts.dtype(at::kFloat)),dt=at::zeros_like(alog);
+  auto norm=at::ones({128},opts);
+  int32_t offsets[]={0,tokens};tei::PackedInput full;
+  full.offsets=offsets;full.batch=1;full.max_sequence=tokens;
+  full.cumulative=at::tensor(std::vector<int32_t>{0,tokens},opts.dtype(at::kInt));
+  auto run=[&](const tei::PackedInput& input,int64_t start) {
+    auto count=tokens-start;
+    if(fma)return tei::qwen35_delta_cuda(qkv.narrow(0,start,count),z.narrow(0,start,count),ab.narrow(0,start,count),
+      conv,alog,dt,norm,input,kh,vh,1e-6,{},nullptr,{},{},false,0);
+    return tei::qwen35_reference_delta_cuda(qkv.narrow(0,start,count),z.narrow(0,start,count),ab.narrow(0,start,count),
+      conv,alog,dt,norm,input,kh,vh,1e-6,0);
+  };
+  auto expected=run(full,0);
+  for(int64_t boundary:{1,13,34}) {
+    auto budget=std::make_shared<tei::PrefixBudget>();
+    auto saved=std::make_shared<tei::PrefixEntry>();saved->budget=budget;
+    // This kernel-level fixture supplies the admission reservation normally
+    // established by PrefixCache before requesting any checkpoint buffers.
+    saved->reserved_bytes=budget->reserved_bytes=64<<20;
+    saved->identity.tokens.resize(boundary);
+    tei::PrefixContext capture{full,{0,tokens},{0},{nullptr},{saved},64<<20,budget};
+    auto cold=full;cold.prefix=&capture;
+    TORCH_CHECK(at::equal(run(cold,0),expected),"Cache capture changed DeltaNet arithmetic kh=",kh," vh=",vh," fma=",fma);
+    auto state=saved->layers.find(0);
+    TORCH_CHECK(state!=saved->layers.end()&&state->second.recurrent.defined(),"DeltaNet checkpoint was not exported");
+    int32_t suffix_offsets[]={0,int32_t(tokens-boundary)};
+    tei::PrefixContext resume{full,{0,int32_t(tokens-boundary)},{boundary},{saved},{nullptr},64<<20,budget};
+    auto suffix=full;suffix.offsets=suffix_offsets;suffix.max_sequence=tokens-boundary;suffix.prefix=&resume;
+    suffix.cumulative=at::tensor(std::vector<int32_t>{0,int32_t(tokens-boundary)},opts.dtype(at::kInt));
+    auto actual=run(suffix,boundary);
+    TORCH_CHECK(at::equal(actual,expected.narrow(0,boundary,tokens-boundary)),
+      "Resumed DeltaNet changed outputs kh=",kh," vh=",vh," fma=",fma," boundary=",boundary,
+      " maxabs=",(actual-expected.narrow(0,boundary,tokens-boundary)).abs().max().item<float>());
+  }
+}
 
 at::Tensor independent_norm(const at::Tensor& x,const at::Tensor& gamma,float eps) {
   auto f=x.to(at::kFloat).contiguous(),g=gamma.to(at::kFloat).contiguous();
@@ -64,5 +108,8 @@ int main(int argc,char** argv) {
   TORCH_CHECK(at::equal(twice,at::cat({expected,expected},0)),"Packed sequence recurrence state leaked");
   auto poisoned=tei::qwen35_reference_delta_cuda(at::cat({q,at::full_like(q,NAN)},0),at::cat({z,z},0),at::cat({ab,ab},0),conv,alog,dt,weight,input,1,1,1e-6);
   TORCH_CHECK(at::equal(poisoned.narrow(0,0,32),expected),"Independent sequence contaminated by later NaNs");
+  for(bool fma:{false,true})for(auto geometry:{std::pair<int64_t,int64_t>{1,1},{2,4},{16,48}})
+    resumed_delta(device,geometry.first,geometry.second,fma);
   std::cout<<"Independent original norms and synthetic packed sequence isolation passed\n";
+  std::cout<<"DeltaNet cache capture and split/resume preserve both arithmetic modes exactly\n";
 }

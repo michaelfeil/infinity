@@ -22,6 +22,9 @@ void launch_128(Flash_fwd_params&,cudaStream_t);
 void launch_256(Flash_fwd_params&,cudaStream_t);
 void launch_512(Flash_fwd_params&,cudaStream_t);
 }
+namespace tei_torch_flash_unfused {
+void launch(const void*,size_t,cudaStream_t);
+}
 namespace tei {
 bool torch_flash_fma_supported(const at::Tensor& q,const at::Tensor& k,const at::Tensor& v) {
   return torch_flash_fma_supported(q,k,v,false,-1,-1);
@@ -51,7 +54,7 @@ static at::Tensor torch_flash_fma_impl(const at::Tensor& q,const at::Tensor& k,c
                           const at::Tensor& cumulative_q,const at::Tensor& cumulative_k,
                           int64_t max_queries,int64_t max_keys,
                           double scale,bool causal,int64_t window_left,int64_t window_right,
-                          bool normalize_oversized_windows) {
+                          bool normalize_oversized_windows,bool unfused=false) {
   TORCH_CHECK(torch_flash_fma_supported(q,k,v,causal,window_left,window_right),"Unsupported packed Torch FMA attention shape or dtype");
   TORCH_CHECK(k.device()==q.device() && v.device()==q.device()
     && k.scalar_type()==q.scalar_type() && v.scalar_type()==q.scalar_type()
@@ -100,7 +103,8 @@ static at::Tensor torch_flash_fma_impl(const at::Tensor& q,const at::Tensor& k,c
   p.window_size_left=window_left;p.window_size_right=window_right;
   p.is_bf16=q.scalar_type()==at::kBFloat16;p.num_splits=1;
   const auto stream=at::cuda::getCurrentCUDAStream();
-  if(p.d==64)tei_torch_flash::launch_64(p,stream);
+  if(unfused)tei_torch_flash_unfused::launch(&p,sizeof(p),stream);
+  else if(p.d==64)tei_torch_flash::launch_64(p,stream);
   else if(p.d==72)tei_torch_flash::launch_72(p,stream);
   else if(p.d==128)tei_torch_flash::launch_128(p,stream);
   else if(p.d==256)tei_torch_flash::launch_256(p,stream);
@@ -121,6 +125,14 @@ at::Tensor torch_flash_fma_varlen(const at::Tensor& q,const at::Tensor& k,const 
                           bool causal,int64_t window_left,int64_t window_right) {
   return torch_flash_fma_impl(q,k,v,cumulative_q,cumulative_k,max_queries,max_keys,
                             scale,causal,window_left,window_right,true);
+}
+at::Tensor torch_flash_unfused_varlen(const at::Tensor& q,const at::Tensor& k,const at::Tensor& v,
+                          const at::Tensor& cumulative_q,const at::Tensor& cumulative_k,
+                          int64_t max_queries,int64_t max_keys,double scale) {
+  TORCH_CHECK(q.dim()==3&&(q.size(2)==64||q.size(2)==128)&&max_queries==1,
+    "Default Torch prefix attention requires one global head64/128 query per sequence");
+  return torch_flash_fma_impl(q,k,v,cumulative_q,cumulative_k,max_queries,max_keys,
+                            scale,true,-1,-1,true,true);
 }
 
 bool torch_flash_fma_alibi32_supported(c10::Device device,at::ScalarType dtype,int64_t head_dim) {

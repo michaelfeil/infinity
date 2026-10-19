@@ -14,6 +14,9 @@
 #include "kernels/torch_flash_fma.h"
 #include "batching/packed_pool.h"
 #include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/CUDAEvent.h>
+#include <c10/cuda/CUDAGuard.h>
+#include <c10/cuda/CUDAStream.h>
 #include <ATen/detail/CUDAHooksInterface.h>
 #endif
 #include "models/decoder_models.h"
@@ -39,7 +42,10 @@
 #include <cstdlib>
 #include <mutex>
 #include "batching/input_validation.h"
+#include <atomic>
+#include "batching/prefix_cache.h"
 #include <memory>
+#include <optional>
 #include <string>
 #include <set>
 #include <unordered_map>
@@ -79,6 +85,7 @@ c10::Device device(const char* name) {
   return c10::Device(name);
 }
 struct Engine {
+  std::mutex mutex;
   TeiConfig config;
   c10::Device device;
   at::ScalarType dtype;
@@ -90,13 +97,32 @@ struct Engine {
   std::unique_ptr<tei::DenseChain> dense;
   std::unique_ptr<tei::DecisionHead> decision;
   std::unique_ptr<tei::CudaGraphCache> graphs;
+  std::unique_ptr<tei::PrefixCache> prefix;
+  std::atomic<bool> prefix_probe=false;
   bool media_graphs=false;
   bool nomic_moe_graphs=false;
+#ifdef TEI_TORCH_CUDA_KERNELS
+  std::unique_ptr<at::cuda::CUDAEvent> submitted;
+  std::optional<c10::cuda::CUDAStream> producer;
+  bool submission_failed=false;
+#endif
+  void drain() {
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if(submission_failed&&producer)producer->synchronize();
+    else if(submitted)submitted->synchronize();
+#endif
+  }
+  ~Engine() {try{drain();}catch(...) { /* A failed CUDA context is already reported by inference. */ }}
   bool graph_policy_ready() const {
     return !nomic_moe_graphs || tei::encoder_nomic_device_routing_ready(*model);
   }
   Engine(TeiConfig cfg, c10::Device dev, at::ScalarType type) : config(cfg), device(dev), dtype(type) {}
   void ready() {
+    drain();
+    // A reload can disable features as well as enable them. Retire old graph
+    // buffers while their planner/model still exist, after submitted work ends.
+    graphs.reset();prefix.reset();decision.reset();
+    media_graphs=false;nomic_moe_graphs=false;
     TORCH_CHECK(options.integer("_input_upload_max_bytes",512LL<<20)>0,
       "Native input upload budget must be positive");
     const auto workspace_bytes=options.integer("_retained_workspace_max_bytes",512LL<<20);
@@ -147,6 +173,11 @@ struct Engine {
     }
     TORCH_CHECK(model, "Unsupported native Torch model family: ", family);
     model->ready();
+    auto cache_bytes=options.integer("_prefix_cache_max_bytes",0);
+    auto cache_tokens=options.integer("_prefix_cache_max_tokens",8192),cache_entries=options.integer("_prefix_cache_entries",64);
+    TORCH_CHECK(cache_bytes>=0&&cache_tokens>0&&cache_entries>0,"Invalid prefix cache bounds");
+    if(cache_bytes)prefix=std::make_unique<tei::PrefixCache>(cache_bytes,cache_tokens,cache_entries,2,
+      tei::PrefixCache::StreamOrder::EngineOrdered);
     TORCH_CHECK(model->output_width() > 0, "Model must declare a positive output width");
     dense->output_width(options.string("_pooling") == "splade" ? config.vocab : model->output_width());
     media_graphs=options.boolean("_media_cuda_graphs",false);
@@ -194,6 +225,49 @@ struct Engine {
       // Larger Nomic batches use host-count reference routing and remain eager.
       if(nomic_moe_graphs) max_tokens=std::min<int64_t>(max_tokens,8192);
       graphs=std::make_unique<tei::CudaGraphCache>(entries,max_tokens,reuse,bytes,captures);
+      graphs->retain_prefix_states(bool(prefix));
+    }
+  }
+};
+// Host serialization protects model/graph mutation. A CUDA event also orders
+// queued work across callers' streams; a host mutex alone cannot do that.
+class EngineCall {
+  Engine& engine;
+  std::unique_lock<std::mutex> lock;
+  bool inference,finished=false;
+#ifdef TEI_TORCH_CUDA_KERNELS
+  c10::cuda::OptionalCUDAGuard device;
+  std::optional<c10::cuda::CUDAStream> stream;
+#endif
+  static Engine& get(void* handle) {TORCH_CHECK(handle,"Missing native engine");return *static_cast<Engine*>(handle);}
+public:
+  explicit EngineCall(void* handle,bool submits=false):engine(get(handle)),lock(engine.mutex),inference(submits) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if(inference&&engine.device.is_cuda()) {
+      TORCH_CHECK(!engine.submission_failed,"Native engine requires recreation after CUDA submission failure");
+      device.set_device(engine.device);
+      stream=c10::cuda::getCurrentCUDAStream(engine.device.index());
+      if(engine.submitted&&engine.producer!=stream)engine.submitted->block(*stream);
+    }
+#endif
+  }
+  void finish() {
+    if(finished)return;
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if(stream) {
+      // Also remember the stream if recording fails after work was queued.
+      engine.producer=stream;
+      if(!engine.submitted)engine.submitted=std::make_unique<at::cuda::CUDAEvent>();
+      engine.submitted->record(*stream);
+    }
+#endif
+    finished=true;
+  }
+  ~EngineCall() {
+    try{finish();}catch(...) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+      engine.submission_failed=true;
+#endif
     }
   }
 };
@@ -260,7 +334,13 @@ tei::PackedInput packed_input(Engine& model,const int64_t* ids,const int64_t* ty
  auto input=[&](const int64_t* data){TORCH_CHECK(data,"Missing native token buffer");return upload(at::from_blob(const_cast<int64_t*>(data),{tokens},options));};
  auto cu=upload(at::from_blob(const_cast<int32_t*>(cumulative),{batch+1},options.dtype(at::kInt)));
  tei::PackedInput packed{input(ids),input(types),input(positions),cu,cumulative,batch,max_sequence};
+ packed.host_ids=at::from_blob(const_cast<int64_t*>(ids),{tokens},options);
+ packed.host_types=at::from_blob(const_cast<int64_t*>(types),{tokens},options);
+ packed.host_positions=at::from_blob(const_cast<int64_t*>(positions),{tokens},options);
+ TORCH_CHECK(!image_count||model.model->supports_images(),"This native model does not yet support images");
+ TORCH_CHECK(!audio_count||model.model->supports_audio(),"This native model does not yet support audio");
  if(media_positions)packed.multimodal_positions=at::from_blob(const_cast<int64_t*>(media_positions),{3,tokens},options).to(model.device);
+ if(media_positions)packed.host_multimodal_positions=at::from_blob(const_cast<int64_t*>(media_positions),{3,tokens},options);
  const bool d3=model.options.string("_decision.kind")=="d3";
  tei::RequestImageUploads shared_images;
  for(size_t i=0;i<image_count;++i){const auto& item=images[i];
@@ -294,6 +374,7 @@ void attach_radix(Engine& model,tei::PackedInput& packed,const int64_t* ids,cons
       metadata.compact_positions=host(radix->positions,compact);
       metadata.scatter_unfold=host(radix->scatter,total);
       metadata.fold_gather=host(radix->fold,compact);
+      packed.host_scatter_unfold=metadata.scatter_unfold;
       // Validate complete causal contexts on host before capture or map upload.
       tei::validate_radix(metadata,true);
       if(image_count||media_positions) {
@@ -398,6 +479,7 @@ void* tei_create(const TeiConfig* cfg, const char* name, int32_t dtype) {
 int32_t tei_weight(void* handle, const char* name, const uint8_t* data,
                    const int64_t* shape, size_t rank, int32_t dtype) {
   return checked([&] {
+    EngineCall access(handle);
     auto& model = *static_cast<Engine*>(handle);
     auto tensor = at::empty(at::IntArrayRef(shape, rank), at::TensorOptions().dtype(scalar(dtype)).device(at::kCPU));
     std::memcpy(tensor.data_ptr(), data, tensor.nbytes());
@@ -417,45 +499,84 @@ int32_t tei_weight(void* handle, const char* name, const uint8_t* data,
   });
 }
 int32_t tei_option(void* handle, const char* key, const char* value) {
-  return checked([&] { static_cast<Engine*>(handle)->options.values[key] = value; });
+  return checked([&] { EngineCall access(handle);static_cast<Engine*>(handle)->options.values[key] = value; });
 }
 int64_t tei_output_width(void* handle) {
   int64_t width = -1;
-  checked([&] { width = static_cast<Engine*>(handle)->model->output_width(); });
+  checked([&] { EngineCall access(handle);width = static_cast<Engine*>(handle)->model->output_width(); });
   return width;
 }
 int32_t tei_supports_radix(void* handle) {
-  return static_cast<Engine*>(handle)->model->supports_radix() ? 1 : 0;
+  int32_t supported=-1;
+  checked([&]{EngineCall access(handle);supported=static_cast<Engine*>(handle)->model->supports_radix()?1:0;});
+  return supported;
+}
+int32_t tei_prefix_cache_supported(void* handle,int32_t operation) {
+  int32_t supported=-1;
+  checked([&] {
+    EngineCall access(handle);
+    const auto& engine=*static_cast<Engine*>(handle);
+    TORCH_CHECK(engine.model&&operation>=0&&operation<=2,"Invalid prefix-cache capability query");
+    supported=engine.model->supports_prefix_cache(operation)?1:0;
+  });
+  return supported;
+}
+int32_t tei_prefix_cache_stats(void* handle,uint64_t* counters,size_t count) {
+  return checked([&] {
+    EngineCall access(handle);
+    TORCH_CHECK(counters&&count>=7,"Prefix-cache stats require seven counters");
+    const auto& engine=*static_cast<Engine*>(handle);
+    auto s=engine.prefix?engine.prefix->stats():tei::PrefixCache::Stats{};
+    counters[0]=s.hits;counters[1]=s.misses;counters[2]=s.reused_tokens;counters[3]=s.admissions;
+    counters[4]=s.evictions;counters[5]=s.bypasses;counters[6]=engine.prefix?engine.prefix->bytes():0;
+  });
+}
+int32_t tei_prefix_cache_clear(void* handle) {
+  return checked([&] {EngineCall access(handle);auto& engine=*static_cast<Engine*>(handle);if(engine.prefix)engine.prefix->clear();});
+}
+int32_t tei_prefix_cache_set_probe(void* handle,int32_t enabled) {
+  int32_t previous=-1;
+  checked([&] {
+    TORCH_CHECK(handle&&(enabled==0||enabled==1),"Invalid prefix-cache probe flag");
+    EngineCall access(handle);
+    auto& engine=*static_cast<Engine*>(handle);
+    previous=engine.prefix_probe.exchange(enabled!=0,std::memory_order_relaxed)?1:0;
+  });
+  return previous;
 }
 int64_t tei_graph_count(void* handle) {
-  const auto& engine = *static_cast<Engine*>(handle);
-  return engine.graphs ? engine.graphs->size() : 0;
+  int64_t count=-1;
+  checked([&]{EngineCall access(handle);const auto& engine=*static_cast<Engine*>(handle);count=engine.graphs?engine.graphs->size():0;});
+  return count;
 }
 int32_t tei_graph_stats(void* handle,uint64_t* counters,size_t count) {
   return checked([&] {
+    EngineCall access(handle);
     TORCH_CHECK(counters && count>=7,"CUDA graph stats require seven counters");
     const auto& engine=*static_cast<Engine*>(handle);
     auto s=engine.graphs?engine.graphs->stats():tei::CudaGraphCache::Stats{};
     counters[0]=s.hits;counters[1]=s.misses;counters[2]=s.captures;counters[3]=s.attempts;
     counters[4]=s.evictions;counters[5]=s.live_bytes;counters[6]=s.admitted_bytes;
+    if(count>=9){counters[7]=s.prefix_hits;counters[8]=s.prefix_captures;}
   });
 }
 int64_t tei_classification_width(void* handle) {
   int64_t width = -1;
-  checked([&] { width = static_cast<Engine*>(handle)->model->classification_width(); });
+  checked([&] { EngineCall access(handle);width = static_cast<Engine*>(handle)->model->classification_width(); });
   return width;
 }
 int64_t tei_pooled_width(void* handle) {
   int64_t width = -1;
   checked([&] {
+    EngineCall access(handle);
     const auto& engine = *static_cast<Engine*>(handle);
     width = engine.dense->output_width(engine.options.string("_pooling") == "splade" ? engine.config.vocab : engine.model->output_width());
   });
   return width;
 }
-int32_t tei_ready(void* handle) { return checked([&] { static_cast<Engine*>(handle)->ready(); }); }
+int32_t tei_ready(void* handle) { return checked([&] { EngineCall access(handle,true);static_cast<Engine*>(handle)->ready();access.finish(); }); }
 int32_t tei_decision_counts(void* handle,const TeiDecision* requests,size_t count,int64_t* counts) {
- return checked([&]{auto& engine=*static_cast<Engine*>(handle);TORCH_CHECK(engine.decision,"Model was not loaded for typed decisions");
+ return checked([&]{EngineCall access(handle);auto& engine=*static_cast<Engine*>(handle);TORCH_CHECK(engine.decision,"Model was not loaded for typed decisions");
   TORCH_CHECK(counts||!count,"Missing decision counts buffer");
   tei::validate_decision_metadata_budget(requests,count,input_upload_limit(engine));
   auto converted=decision_requests(requests,count);
@@ -472,7 +593,7 @@ int32_t tei_decide_radix(void* handle,const int64_t* ids,const int64_t* types,co
  const int32_t* cumulative,int64_t batch,int64_t max_sequence,const TeiDecision* requests,
  float* logits,size_t capacity,float* actions,const int64_t* media_positions,
  const TeiImage* images,size_t image_count,const TeiAudio* audios,size_t audio_count,const TeiRadix* radix) {
- return checked([&]{auto& engine=*static_cast<Engine*>(handle);
+ return checked([&]{EngineCall access(handle,true);auto& engine=*static_cast<Engine*>(handle);
   const auto input_bytes=validate_request_input(engine,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audios,audio_count,radix);
   TORCH_CHECK(engine.decision&&batch>0,"Model was not loaded for typed decisions");
   tei::validate_decision_metadata_budget(requests,batch,input_upload_limit(engine),input_bytes);
@@ -497,15 +618,18 @@ int32_t tei_decide_radix(void* handle,const int64_t* ids,const int64_t* types,co
       packed.block_prefix_lengths.push_back(boundary);packed.block_prefix_sources.push_back(source);
     }
   } else for(int64_t row=0;row<batch;++row)TORCH_CHECK(requests[row].kind!=4,"Block decision metadata requires a block-attention checkpoint");
+  const bool cached=!blocks&&!engine.prefix_probe.load(std::memory_order_relaxed)&&engine.prefix&&engine.model->supports_prefix_cache(0)
+    &&std::none_of(converted.begin(),converted.end(),[](const auto& request){return request.kind==tei::DecisionRequest::Kind::Warmup;});
   const bool use_graph=!blocks&&engine.graphs&&engine.graph_policy_ready()&&(engine.media_graphs||(!image_count&&!audio_count&&!media_positions));
   auto prepared_decision=engine.decision->prepare(packed,converted);
-  if(!use_graph)engine.model->prepare_input(packed);
-  auto hidden=use_graph?engine.graphs->forward(*engine.model,packed):engine.model->forward(packed);
+  if(cached||!use_graph)engine.model->prepare_input(packed);
+  auto hidden=cached?engine.prefix->run(*engine.model,packed,0,use_graph?engine.graphs.get():nullptr):use_graph?engine.graphs->forward(*engine.model,packed):engine.model->forward(packed);
   auto results=engine.decision->forward_prepared(hidden,packed,converted,prepared_decision);TORCH_CHECK(results.size()==size_t(batch),"Decision head output count mismatch");
   std::vector<at::Tensor> values;for(size_t i=0;i<results.size();++i){TORCH_CHECK(results[i].logits.numel()==engine.decision->output_count(converted[i]),"Decision head output width mismatch");values.push_back(results[i].logits.flatten());}
   std::vector<at::Tensor> action_values;for(const auto& result:results)action_values.push_back(result.action_probability);
   values.push_back(at::stack(action_values));auto output=at::cat(values).to(at::kFloat).to(at::kCPU).contiguous();
   std::memcpy(logits,output.data_ptr<float>(),expected*sizeof(float));std::memcpy(actions,output.data_ptr<float>()+expected,batch*sizeof(float));
+  access.finish();
  });
 }
 static int32_t forward_radix(void* handle, const int64_t* ids, const int64_t* types,
@@ -534,6 +658,7 @@ static int32_t forward_radix(void* handle, const int64_t* ids, const int64_t* ty
                     const int64_t* media_positions, const TeiImage* images, size_t image_count,
                     const TeiAudio* audios, size_t audio_count, const TeiRadix* radix, tei::OutputLease* completion) {
   return checked([&] {
+    EngineCall access(handle,true);
     auto& model = *static_cast<Engine*>(handle);
     validate_forward_descriptors(model,ids,types,positions,cumulative,batch,max_sequence,pool,
       pooled,pooled_count,raw,raw_count,capacity,media_positions,images,image_count,audios,audio_count,radix);
@@ -544,9 +669,11 @@ static int32_t forward_radix(void* handle, const int64_t* ids, const int64_t* ty
       media_positions,images,image_count,audios,audio_count,completion);
     auto upload=[&](const at::Tensor& host){return completion?completion->upload(host):host.to(model.device);};
     attach_radix(model,packed,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audio_count,radix,completion);
+    const int operation=pool>=4?(pool==5?2:1):0;
+    const bool cached=!model.prefix_probe.load(std::memory_order_relaxed)&&model.prefix&&model.model->supports_prefix_cache(operation);
     const bool graph_eligible = model.graphs && model.graph_policy_ready() && (model.media_graphs || (!image_count && !audio_count && !media_positions));
-    if(!graph_eligible)model.model->prepare_input(packed);
-    auto h = graph_eligible ? model.graphs->forward(*model.model, packed, pool >= 4 ? (pool == 5 ? 2 : 1) : 0)
+    if(cached||!graph_eligible)model.model->prepare_input(packed);
+    auto h = cached ? model.prefix->run(*model.model,packed,operation,graph_eligible?model.graphs.get():nullptr) : graph_eligible ? model.graphs->forward(*model.model, packed, pool >= 4 ? (pool == 5 ? 2 : 1) : 0)
       : pool >= 4 ? model.model->predict(packed, pool == 5) : model.model->forward(packed);
     // Project only requested real token spans once. Offsets below preserve
     // caller order, repeated requests and mixed pooled/raw output semantics.
@@ -626,6 +753,7 @@ static int32_t forward_radix(void* handle, const int64_t* ids, const int64_t* ty
       if (completion) TORCH_CHECK(offset == capacity, "Native output size mismatch");
     }
     if (completion) completion->record();
+    access.finish();
   });
 }
 int32_t tei_forward_radix(void* handle, const int64_t* ids, const int64_t* types,
@@ -646,11 +774,17 @@ void* tei_forward_submit(void* handle, const int64_t* ids, const int64_t* types,
                     const TeiAudio* audios, size_t audio_count, const TeiRadix* radix) {
   std::unique_ptr<tei::OutputLease> lease;
   const auto status=checked([&] {
-    auto& model=*static_cast<Engine*>(handle);
-    validate_forward_descriptors(model,ids,types,positions,cumulative,batch,max_sequence,pool,
-      pooled,pooled_count,raw,raw_count,capacity,media_positions,images,image_count,audios,audio_count,radix,true);
-    TORCH_CHECK(model.device.is_cuda(), "Deferred output requires CUDA");
-    lease=std::make_unique<tei::OutputLease>(model.outputs,model.device,capacity);
+    std::shared_ptr<tei::OutputPool> output_pool;auto device=c10::Device(c10::kCPU);
+    {
+      EngineCall access(handle);auto& model=*static_cast<Engine*>(handle);
+      validate_forward_descriptors(model,ids,types,positions,cumulative,batch,max_sequence,pool,
+        pooled,pooled_count,raw,raw_count,capacity,media_positions,images,image_count,audios,audio_count,radix,true);
+      TORCH_CHECK(model.device.is_cuda(), "Deferred output requires CUDA");
+      output_pool=model.outputs;device=model.device;
+    }
+    // Waiting for the A/B slot must not hold the engine lock. Completion and
+    // cancellation own the pool independently of the model's submission lock.
+    lease=std::make_unique<tei::OutputLease>(std::move(output_pool),device,capacity);
     lease->allocate();
     if (forward_radix(handle,ids,types,positions,cumulative,batch,max_sequence,pool,pooled,pooled_count,raw,raw_count,nullptr,capacity,media_positions,images,image_count,audios,audio_count,radix,lease.get()) != 0)
       throw tei::NativeCallError(error_kind);
