@@ -53,6 +53,7 @@ def test_configurable_blacklist(monkeypatch):
         "https://a.blocked.example/a",
         "http://203.0.113.1/a",
         "https://images.example/private/photo.png",
+        "https://images.example./private/photo.png",
     ]:
         with pytest.raises(ValueError, match="blacklisted"):
             policy.validate_url(url)
@@ -66,12 +67,16 @@ def test_connection_dns_is_checked(monkeypatch):
     monkeypatch.delenv("INFINITY_MEDIA_URL_BLACKLIST", raising=False)
     resolve = AsyncMock(return_value=[{"host": "8.8.8.8"}, {"host": "127.0.0.1"}])
     monkeypatch.setattr("aiohttp.resolver.ThreadedResolver.resolve", resolve)
+    connect = AsyncMock(side_effect=AssertionError("No socket should be opened"))
+    monkeypatch.setattr("aiohttp.connector.aiohappyeyeballs.start_connection", connect)
 
     async def run():
         async with media_client_session() as session:
             assert not session.trust_env
             with pytest.raises(ValueError, match="blacklisted"):
-                await session.connector._resolver.resolve("images.example", 443)
+                await download_media_url("https://images.example/photo.png", session)
+            assert resolve.await_count == 1
+            connect.assert_not_awaited()
             resolve.return_value = [{"host": "8.8.8.8"}]
             assert await session.connector._resolver.resolve("images.example", 443) == [
                 {"host": "8.8.8.8"}

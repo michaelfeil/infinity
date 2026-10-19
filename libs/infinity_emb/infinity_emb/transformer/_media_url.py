@@ -81,7 +81,8 @@ class MediaURLBlacklist:
         url = self.parse_url(value)
         self.validate_host(url.host)
         if any(
-            (url.scheme, url.host, url.port) == (rule.scheme, rule.host, rule.port)
+            (url.scheme, url.host.lower().rstrip("."), url.port)
+            == (rule.scheme, rule.host.lower().rstrip("."), rule.port)
             and url.raw_path_qs.startswith(rule.raw_path_qs)
             for rule in self.urls
         ):
