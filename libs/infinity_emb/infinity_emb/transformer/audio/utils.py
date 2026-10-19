@@ -7,6 +7,7 @@ from infinity_emb.primitives import (
     AudioCorruption,
     AudioSingle,
 )
+from infinity_emb.transformer._media_url import download_media_url, media_client_session
 
 if CHECK_AIOHTTP.is_available:
     import aiohttp
@@ -27,8 +28,7 @@ async def resolve_audio(
             raise AudioCorruption(f"Error opening audio from bytes: {e}")
     else:
         try:
-            downloaded = await (await session.get(audio)).read()
-            #
+            downloaded = await download_media_url(audio, session)
             audio_bytes = io.BytesIO(downloaded)
         except Exception as e:
             raise AudioCorruption(f"Error downloading audio from {audio}. \nError msg: {str(e)}")
@@ -51,7 +51,7 @@ async def resolve_audios(
     CHECK_AIOHTTP.mark_required()
     CHECK_SOUNDFILE.mark_required()
 
-    async with aiohttp.ClientSession(trust_env=True) as session:
+    async with media_client_session() as session:
         resolved_audios = await asyncio.gather(
             *[resolve_audio(audio, allowed_sampling_rate, session) for audio in audio_urls]
         )
