@@ -1,7 +1,7 @@
 
 [tool.poetry]
 name = "infinity_emb"
-version = "0.0.77"
+version = "0.0.78"
 description = "Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models and clip."
 authors = ["michaelfeil <noreply@michaelfeil.eu>"]
 license = "MIT"
@@ -24,6 +24,8 @@ orjson = {version = ">=3.9.8,!=3.10.0", optional=true}
 prometheus-fastapi-instrumentator = {version = ">=6.1.0", optional=true}
 uvicorn = {version = "^0.32.0", optional=true, extras = ["standard"]}
 typer = {version = "^0.12.5", optional=true}
+# Typer 0.12 uses the Click 8.1 flag and help APIs.
+click = {version = ">=8.0.0,<8.2", optional=true}
 pydantic = {version = ">=2.4.0,<3", optional=true} 
 posthog = {version = "*", optional=true}
 # backend
@@ -117,6 +119,7 @@ server=[
     "posthog",
     "pydantic",
     "rich",
+    "click",
     "typer",
     "uvicorn",
 ]
@@ -137,6 +140,7 @@ all=[
     "timm",
     "torch", 
     "torchvision",
+    "click",
     "typer", 
     "uvicorn",
     "soundfile"

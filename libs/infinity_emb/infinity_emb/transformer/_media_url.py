@@ -88,7 +88,9 @@ def media_client_session() -> aiohttp.ClientSession:
     blacklist = media_url_blacklist()
 
     class MediaResolver(ThreadedResolver):
-        async def resolve(self, host: str, port: int = 0, family: int = socket.AF_INET):
+        async def resolve(
+            self, host: str, port: int = 0, family: socket.AddressFamily = socket.AF_INET
+        ):
             blacklist.validate_host(host)
             records = await super().resolve(host, port, family)
             # Validate the exact records used to connect, not a separate DNS lookup.
