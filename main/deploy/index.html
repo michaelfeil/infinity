@@ -432,30 +432,17 @@ You can also set an argument <code>EXTRA_PACKAGES</code> if you require to insta
 This might come in handy if you do not have a shared internal docker registry in your nuclear facility, but still want to leverage the latest semantic search.
 https://docs.docker.com/reference/cli/docker/image/save/.</p>
 <h2 id="remote-image-and-audio-urls-infinity-v1">Remote image and audio URLs (Infinity v1)</h2>
-<p><code>INFINITY_MEDIA_URL_BLACKLIST</code> controls which client-provided image/audio URLs the
-server refuses to download. Entries are separated by <code>;</code> and can be hostnames,
-host patterns such as <code>*.example.com</code>, IP addresses/CIDRs, or HTTP(S) URL prefixes.
-URL prefixes match the scheme, host, port, and the start of the path/query.</p>
-<p>The default list blocks localhost, loopback, private networks, link-local
-addresses (including common cloud metadata addresses), shared-address space,
-and multicast. Ordinary public HTTP(S) URLs and redirects remain supported:</p>
+<p><code>INFINITY_MEDIA_URL_BLACKLIST</code> is a semicolon-separated list of hostnames,
+host globs (e.g. <code>*.example.com</code>), and IP addresses/CIDRs to block. The default is:</p>
 <div class="language-text highlight"><pre><span></span><code><span id="__span-6-1"><a href="#__codelineno-6-1" id="__codelineno-6-1" name="__codelineno-6-1"></a>localhost;*.localhost;0.0.0.0/8;10.0.0.0/8;100.64.0.0/10;127.0.0.0/8;
 </span><span id="__span-6-2"><a href="#__codelineno-6-2" id="__codelineno-6-2" name="__codelineno-6-2"></a>169.254.0.0/16;172.16.0.0/12;192.168.0.0/16;224.0.0.0/4;
 </span><span id="__span-6-3"><a href="#__codelineno-6-3" id="__codelineno-6-3" name="__codelineno-6-3"></a>::/128;::1/128;fc00::/7;fe80::/10;ff00::/8
 </span></code></pre></div>
-<p>Setting the variable <strong>replaces</strong> the default list. For example, retain those
-ranges and additionally block a domain and URL prefix:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a href="#__codelineno-7-1" id="__codelineno-7-1" name="__codelineno-7-1"></a><span class="nb">export</span><span class="w"> </span><span class="nv">INFINITY_MEDIA_URL_BLACKLIST</span><span class="o">=</span><span class="s1">'localhost;*.localhost;0.0.0.0/8;10.0.0.0/8;100.64.0.0/10;127.0.0.0/8;'</span>
-</span><span id="__span-7-2"><a href="#__codelineno-7-2" id="__codelineno-7-2" name="__codelineno-7-2"></a><span class="nb">export</span><span class="w"> </span><span class="nv">INFINITY_MEDIA_URL_BLACKLIST</span><span class="o">=</span><span class="s2">"</span><span class="si">${</span><span class="nv">INFINITY_MEDIA_URL_BLACKLIST</span><span class="si">}</span><span class="s2">169.254.0.0/16;172.16.0.0/12;192.168.0.0/16;224.0.0.0/4;"</span>
-</span><span id="__span-7-3"><a href="#__codelineno-7-3" id="__codelineno-7-3" name="__codelineno-7-3"></a><span class="nb">export</span><span class="w"> </span><span class="nv">INFINITY_MEDIA_URL_BLACKLIST</span><span class="o">=</span><span class="s2">"</span><span class="si">${</span><span class="nv">INFINITY_MEDIA_URL_BLACKLIST</span><span class="si">}</span><span class="s2">::/128;::1/128;fc00::/7;fe80::/10;ff00::/8;*.blocked.example;https://images.example/private/"</span>
-</span></code></pre></div>
-<p>An explicitly empty value disables blacklist matching. HTTP(S)-only URL syntax
-and the prohibition on URL credentials still apply. Image/audio bytes and data
-URIs are unaffected.</p>
-<p>Hostnames are checked against the list, and their resolved addresses are checked
-by the HTTP connection's DNS resolver. Each redirect is checked again. Media
-fetching does not use environment proxies or <code>.netrc</code> credentials, so a proxy
-cannot bypass destination checks by resolving the hostname elsewhere.</p>
+<p>Setting the variable <strong>replaces</strong> these defaults; an empty value disables blacklist
+matching. Full URLs/path prefixes are not supported: use their hostname instead.
+Only HTTP(S) URLs without credentials are accepted. Resolved connection addresses
+and every redirect are checked; environment proxies and <code>.netrc</code> are ignored.
+Public URLs/redirects and image/audio bytes or data URIs remain supported.</p>
 </article>
 </div>
 <script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
