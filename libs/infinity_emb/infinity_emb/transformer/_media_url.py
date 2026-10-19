@@ -57,7 +57,16 @@ class MediaURLBlacklist:
         try:
             address = ipaddress.ip_address(host)
         except ValueError:
-            return  # Hostname addresses are checked by the connection's resolver.
+            from aiohttp.helpers import is_ip_address
+
+            if not is_ip_address(host):
+                return  # Hostname addresses are checked by the connection's resolver.
+            # aiohttp also skips DNS for legacy numeric IPv4 forms. Normalize
+            # those before matching CIDRs; inet_aton parses without DNS/I/O.
+            try:
+                address = ipaddress.IPv4Address(socket.inet_aton(host))
+            except OSError:
+                raise ValueError("Invalid media URL IP address") from None
         addresses = [address]
         if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
             addresses.append(address.ipv4_mapped)
