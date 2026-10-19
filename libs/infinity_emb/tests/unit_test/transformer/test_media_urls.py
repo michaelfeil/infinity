@@ -92,9 +92,15 @@ def test_redirects_are_revalidated(monkeypatch):
     monkeypatch.delenv("INFINITY_MEDIA_URL_BLACKLIST", raising=False)
 
     def response(status, location=None):
-        result = MagicMock(status=status, url=URL("https://images.example/original"))
+        result = MagicMock(
+            status=status, url=URL("https://images.example/original"), content_length=None
+        )
         result.headers = {"Location": location} if location else {}
-        result.read = AsyncMock(return_value=b"image payload")
+
+        async def chunks(_):
+            yield b"image payload"
+
+        result.content.iter_chunked = chunks
         context = MagicMock()
         context.__aenter__ = AsyncMock(return_value=result)
         context.__aexit__ = AsyncMock(return_value=False)
@@ -112,6 +118,60 @@ def test_redirects_are_revalidated(monkeypatch):
             await download_media_url("https://images.example/original", session) == b"image payload"
         )
         assert str(session.get.call_args.args[0]) == "https://images.example/photo.png"
-        assert session.get.call_args.kwargs == {"allow_redirects": False}
+        assert session.get.call_args.kwargs == {
+            "allow_redirects": False,
+            "auto_decompress": False,
+            "headers": {"Accept-Encoding": "identity"},
+        }
 
     asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "length,encoding,chunks,error",
+    [
+        (9, "identity", [], "exceeds"),
+        (None, "identity", [b"1234", b"5678", b"9"], "exceeds"),
+        (None, "gzip", [], "HTTP-compressed"),
+        (8, "identity", [b"1234", b"5678"], None),
+    ],
+)
+def test_download_size_limit(monkeypatch, length, encoding, chunks, error):
+    monkeypatch.delenv("INFINITY_MEDIA_URL_BLACKLIST", raising=False)
+    monkeypatch.setenv("INFINITY_MEDIA_MAX_DOWNLOAD_BYTES", "8")
+    response = MagicMock(status=200, content_length=length)
+    response.headers = {"Content-Encoding": encoding}
+
+    async def stream(_):
+        for chunk in chunks:
+            yield chunk
+        if error == "exceeds" and chunks:
+            pytest.fail("Oversized response should stop reading immediately")
+
+    response.content.iter_chunked = stream
+    context = MagicMock()
+    context.__aenter__ = AsyncMock(return_value=response)
+    context.__aexit__ = AsyncMock(return_value=False)
+    session = MagicMock()
+    session.get.return_value = context
+
+    async def run():
+        if error:
+            with pytest.raises(ValueError, match=error):
+                await download_media_url("https://images.example/photo.png", session)
+            context.__aexit__.assert_awaited_once()
+        else:
+            assert (
+                await download_media_url("https://images.example/photo.png", session) == b"12345678"
+            )
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("limit", ["0", "-1", "invalid"])
+def test_invalid_download_limit(monkeypatch, limit):
+    monkeypatch.setenv("INFINITY_MEDIA_MAX_DOWNLOAD_BYTES", limit)
+    session = MagicMock()
+    with pytest.raises(ValueError):
+        asyncio.run(download_media_url("https://images.example/photo.png", session))
+    session.get.assert_not_called()

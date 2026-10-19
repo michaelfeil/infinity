@@ -141,3 +141,9 @@ matching. Full URLs/path prefixes are not supported: use their hostname instead.
 Only HTTP(S) URLs without credentials are accepted. Resolved connection addresses
 and every redirect are checked; environment proxies and `.netrc` are ignored.
 Public URLs/redirects and image/audio bytes or data URIs remain supported.
+
+Remote downloads are streamed with a 128 MiB limit per item, including when
+`Content-Length` is absent. HTTP-compressed responses are rejected (requests ask for
+identity encoding). Decoded media and concurrent downloads can require more memory.
+Configure the limit in bytes with `INFINITY_MEDIA_MAX_DOWNLOAD_BYTES` (default:
+`134217728`); the value must be a positive integer.
