@@ -265,7 +265,7 @@ fn validate(messages: &[Message], max_images: usize) -> Result<()> {
                     match p {
                         ContentPart::Text { text: s } => text(s)?,
                         ContentPart::ImageUrl { image_url }
-                            if matches!(m.role, MessageRole::User) =>
+                            if matches!(m.role, MessageRole::User | MessageRole::Document) =>
                         {
                             if !matches!(image_url.detail, None | Some(ImageDetail::Auto)) {
                                 return Err(invalid("Image detail must be auto or omitted"));

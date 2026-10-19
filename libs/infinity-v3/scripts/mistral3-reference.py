@@ -11,7 +11,7 @@ from pathlib import Path
 import numpy as np
 import torch
 from PIL import Image, ImageOps
-from safetensors.torch import save_file
+from safetensors.torch import load_file, save_file
 from transformers import AutoConfig, AutoProcessor, Mistral3Model
 
 PUBLIC_MODEL = "mistralai/Ministral-3-3B-Instruct-2512-BF16"
@@ -29,7 +29,12 @@ def main():
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--attention", choices=["eager","sdpa"], default="eager")
     parser.add_argument("--dtype", choices=["float32","bfloat16"],default=None)
+    parser.add_argument("--reranker", action="store_true",
+                        help="Synthetic Mistral3ForSequenceClassification (Nemotron-3.5 reranker head); "
+                             "requires --tiny --bidirectional --pooling mean")
     args = parser.parse_args()
+    if args.reranker and not (args.tiny and args.bidirectional and args.pooling == "mean"):
+        parser.error("--reranker requires --tiny --bidirectional --pooling mean")
     args.output.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(731)
     dtype = getattr(torch,args.dtype) if args.dtype else (torch.float32 if args.tiny else torch.bfloat16)
@@ -58,6 +63,30 @@ def main():
         pooling_dir = args.output / "model" / "1_Pooling"
         pooling_dir.mkdir(exist_ok=True)
         (pooling_dir / "config.json").write_text(json.dumps({"pooling_mode": args.pooling.replace("-", "")}))
+        if args.reranker:
+            # Mirrors nvidia/Nemotron-3.5-Rerank-8B-BF16: a bias-free 1-label head stored as
+            # language_model.score.weight next to the Mistral3Model weights.
+            score = torch.randn(1, config.text_config.hidden_size) * 0.1
+            weights_path = args.output / "model" / "model.safetensors"
+            tensors = load_file(weights_path)
+            tensors["language_model.score.weight"] = score.contiguous()
+            save_file(tensors, weights_path, metadata={"format": "pt"})
+            config_path = args.output / "model" / "config.json"
+            saved_config = json.loads(config_path.read_text())
+            saved_config.update(architectures=["Mistral3ForSequenceClassification"],
+                                id2label={"0": "LABEL_0"}, label2id={"LABEL_0": 0})
+            config_path.write_text(json.dumps(saved_config, indent=2) + "\n")
+            # The published checkpoint also carries the head as a Sentence Transformers Dense module.
+            dense_dir = args.output / "model" / "2_Dense"
+            dense_dir.mkdir(exist_ok=True)
+            save_file({"linear.weight": score.contiguous()}, dense_dir / "model.safetensors")
+            (dense_dir / "config.json").write_text(json.dumps({
+                "in_features": config.text_config.hidden_size, "out_features": 1, "bias": False,
+                "activation_function": "torch.nn.modules.linear.Identity"}))
+            (args.output / "model" / "modules.json").write_text(json.dumps([
+                {"idx": 0, "name": "0", "path": "", "type": "sentence_transformers.base.modules.transformer.Transformer"},
+                {"idx": 1, "name": "1", "path": "1_Pooling", "type": "sentence_transformers.sentence_transformer.modules.pooling.Pooling"},
+                {"idx": 2, "name": "2", "path": "2_Dense", "type": "sentence_transformers.base.modules.dense.Dense"}]))
     else:
         model = Mistral3Model.from_pretrained(args.model,revision=args.revision, dtype=dtype, attn_implementation=args.attention).eval()
     model = model.to(args.device, dtype=dtype)
@@ -96,6 +125,9 @@ def main():
             pooled = native_hidden.sum(0) / native_hidden.size(0) if args.pooling == "mean" else native_hidden[-1]
             hidden = native_hidden.float().cpu()
         saved["pooled"] = pooled.float().cpu().contiguous().clone()
+        if args.reranker:
+            # The checkpoint's model.py: masked mean in the hidden dtype, then an FP32 linear.
+            saved["logits"] = torch.nn.functional.linear(pooled.float().cpu(), score.float()).contiguous()
         saved["hidden"] = hidden.contiguous()
         save_file(saved, args.output / f"{name}.safetensors")
         for i,image in enumerate(images):

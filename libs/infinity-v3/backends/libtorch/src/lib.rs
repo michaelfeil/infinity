@@ -849,7 +849,15 @@ impl LibtorchBackend {
                 }
             }
         }
-        let dense_paths = dense_paths.unwrap_or(module_dense_paths);
+        // Mistral3 cross-encoders also ship their score head as a Sentence Transformers
+        // Dense module; the backend applies the checkpoint's own copy.
+        let score_head_in_checkpoint = model_type == ModelType::Classifier
+            && options["architectures"][0].as_str() == Some("Mistral3ForSequenceClassification");
+        let dense_paths = match dense_paths {
+            Some(paths) => paths,
+            None if score_head_in_checkpoint => Vec::new(),
+            None => module_dense_paths,
+        };
         if !dense_paths.is_empty() && !matches!(model_type, ModelType::Embedding(_)) {
             return Err(start(
                 "Sentence Transformers Dense modules require an embedding model",

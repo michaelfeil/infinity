@@ -10,6 +10,8 @@ namespace tei { namespace {
 class Mistral3 final : public Model {
   Options cfg; Weights weights; c10::Device device; at::ScalarType dtype;
   std::unique_ptr<Model> text;
+  at::Tensor score;
+  bool classifier=false;
   int64_t hidden,heads,dim,depth,patch,merge,feature_layer;
   const at::Tensor& w(const std::string& name) const {return weight(weights,name);}
   at::Tensor rms(const at::Tensor& x,const at::Tensor& scale,double eps) const {
@@ -72,9 +74,11 @@ public:
     // Consume the loader map: retaining it would keep unfused text parameters
     // alive alongside the decoder's packed matrices.
     Weights tw;
+    classifier=c.string("architectures.0","")=="Mistral3ForSequenceClassification";
     for(auto& [name,value]:source){
       auto key=name.starts_with("model.")?name.substr(6):name;
-      if(key.starts_with("language_model."))tw[key.substr(15)]=std::move(value);
+      if(classifier&&(key=="score.weight"||key=="language_model.score.weight"))score=std::move(value);
+      else if(key.starts_with("language_model."))tw[key.substr(15)]=std::move(value);
       else if(key.starts_with("vision_tower.")||key.starts_with("multi_modal_projector."))weights[key]=std::move(value);
     }
     source.clear();
@@ -117,9 +121,26 @@ public:
       if(cfg.boolean("multimodal_projector_bias",true))require(name,{out});
       else TORCH_CHECK(!weights.count(name),"Unexpected projector bias");
     }
+    if(classifier)TORCH_CHECK(score.defined()&&score.dim()==2&&score.size(0)>0&&score.size(1)==out,
+      "Mistral3 sequence classifier requires score.weight of shape [labels, ",out,"]");
     text->ready();
   }
   bool supports_images() const override {return true;}
+  int64_t classification_width() const override {return score.defined()?score.size(0):0;}
+  // Matches the checkpoint's reference head: masked mean in the hidden-state
+  // dtype, then an FP32 linear over all real tokens, including image markers.
+  at::Tensor predict(const PackedInput& input,bool tokenwise) const override {
+    TORCH_CHECK(!tokenwise,"Mistral3 sequence classifier does not implement token classification");
+    TORCH_CHECK(score.defined(),"Mistral3 checkpoint has no sequence classification score head");
+    auto states=forward(input);
+    std::vector<at::Tensor> pooled;pooled.reserve(input.batch);
+    for(int64_t row=0;row<input.batch;++row) {
+      auto start=input.offsets[row],length=input.offsets[row+1]-start;
+      TORCH_CHECK(length>0,"Sequence classification requires nonempty inputs");
+      pooled.push_back(mean_pool(states.narrow(0,start,length)));
+    }
+    return at::linear(at::cat(pooled),score.to(states.device(),at::kFloat));
+  }
   bool model_dtype_mean_pool() const override {return true;}
   at::Tensor mean_pool(const at::Tensor& value) const override {
     // Match a masked sum followed by division in the hidden-state dtype.

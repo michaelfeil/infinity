@@ -176,6 +176,38 @@ impl Tokenization {
         truncation_direction: TruncationDirection,
         prompt_name: Option<String>,
     ) -> Result<ValidEncoding, TextEmbeddingsError> {
+        // Mistral3 cross-encoders render pairs through the checkpoint's
+        // query/document chat template, which may also carry document images.
+        if let Some(processor) = &self.mistral3 {
+            if matches!(inputs, EncodingInput::Dual(..) | EncodingInput::Messages(_)) {
+                use crate::input::{Message, MessageContent, MessageRole};
+                let inputs = match inputs {
+                    EncodingInput::Dual(query, document) => EncodingInput::Messages(vec![
+                        Message {
+                            role: MessageRole::Query,
+                            content: MessageContent::Text(query),
+                        },
+                        Message {
+                            role: MessageRole::Document,
+                            content: MessageContent::Text(document),
+                        },
+                    ]),
+                    other => other,
+                };
+                let prepared = processor
+                    .prepare(inputs, truncate, truncation_direction, prompt_name)
+                    .await?;
+                let length = prepared.input_ids.len();
+                return Ok(ValidEncoding {
+                    multimodal: Some(prepared.media),
+                    input_ids: prepared.input_ids,
+                    token_type_ids: vec![0; length],
+                    position_ids: (0..length as u32).collect(),
+                    tokens: vec![],
+                    offsets: vec![],
+                });
+            }
+        }
         self.encode_request(
             inputs,
             truncate,

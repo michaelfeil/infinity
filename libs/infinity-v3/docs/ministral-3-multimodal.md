@@ -47,6 +47,28 @@ rejected even when automatic text truncation is enabled. Image row/end markers
 count toward the request's actual token budget, but only image-placeholder
 positions receive projected vision features.
 
+## Cross-encoder reranking
+
+`Mistral3ForSequenceClassification` checkpoints such as
+[`nvidia/Nemotron-3.5-Rerank-8B-BF16`](https://huggingface.co/nvidia/Nemotron-3.5-Rerank-8B-BF16)
+load as rerankers. The score is a bias-free linear over the masked mean of the final
+hidden states, computed in FP32 after averaging in the model dtype, which matches the
+checkpoint's `model.py`. Pooling flags do not apply.
+
+```sh
+infinity_v3 --backend libtorch --model-id nvidia/Nemotron-3.5-Rerank-8B-BF16 --dtype bfloat16
+```
+
+`/rerank` and pair inputs to `/predict` render each pair through the checkpoint's
+chat template as a `query` message followed by a `document` message, so its escaping
+and turn layout apply. The processor accepts an image in the `document` message,
+using the same Pixtral preprocessing as embeddings, but `/rerank` currently takes
+text documents only.
+
+```json
+{"query": "What is NVIDIA NeMo Framework?", "texts": ["NeMo Framework offers ..."], "raw_scores": true}
+```
+
 ## Reference validation
 
 Reference fixtures use public Transformers 5.12.1 and public model artifacts:

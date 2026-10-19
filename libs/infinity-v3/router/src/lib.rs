@@ -1002,6 +1002,7 @@ impl ModelConfig {
                     | "Qwen3ForSequenceClassification"
                     | "Qwen3MoeForSequenceClassification"
                     | "Gemma4ForSequenceClassification"
+                    | "Mistral3ForSequenceClassification"
             )
         }) {
             return Ok(());
