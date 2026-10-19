@@ -57,6 +57,7 @@ class Native:
         lib.tei_decide.argtypes = [C.c_void_p] + [C.c_void_p] * 4 + [
             C.c_int64, C.c_int64, C.c_void_p, C.c_void_p, C.c_size_t,
             C.c_void_p, C.c_void_p, C.c_void_p, C.c_size_t, C.c_void_p, C.c_size_t]
+        lib.tei_decide_radix.argtypes = lib.tei_decide.argtypes + [C.c_void_p]
         cfg = model.config.to_dict()
         text = cfg['text_config']
         conf = Config(text['hidden_size'], text['num_attention_heads'], text['num_hidden_layers'],
@@ -80,7 +81,7 @@ class Native:
         if code:
             raise RuntimeError(self.lib.tei_error().decode())
 
-    def prepare(self, cases):
+    def prepare(self, cases, omit_media_positions=False, use_radix_api=False):
         ids = np.concatenate([case['ids'] for case in cases]).astype(np.int64)
         axes = np.concatenate([case['axes'] for case in cases], axis=1).astype(np.int64)
         positions = axes[0].copy()
@@ -103,10 +104,12 @@ class Native:
         def forward():
             # Retain every borrowed buffer until the synchronous native call returns.
             _ = pixels, labels
-            self.check(self.lib.tei_decide(self.handle, ids.ctypes.data, types.ctypes.data,
+            arguments = (self.handle, ids.ctypes.data, types.ctypes.data,
                 positions.ctypes.data, cumulative.ctypes.data, len(cases), max(np.diff(cumulative)),
                 metadata, logits.ctypes.data, len(logits), actions.ctypes.data,
-                axes.ctypes.data if len(images) or not np.array_equal(axes, np.tile(positions, (3, 1))) else None, images, len(images), None, 0))
+                axes.ctypes.data if not omit_media_positions and (len(images) or not np.array_equal(axes, np.tile(positions, (3, 1)))) else None,
+                images, len(images), None, 0)
+            self.check(self.lib.tei_decide_radix(*arguments, None) if use_radix_api else self.lib.tei_decide(*arguments))
             assert np.isfinite(logits).all()
             return logits.reshape(len(cases), -1).copy()
         return forward
@@ -215,6 +218,15 @@ def main():
     report = []
     try:
         with torch.inference_mode():
+            image_case = next((case for case in cases if case['images']), None)
+            if image_case:
+                for use_radix_api in [False, True]:
+                    try:
+                        native.prepare([image_case], omit_media_positions=True, use_radix_api=use_radix_api)()
+                    except RuntimeError as error:
+                        assert 'block images require mRoPE coordinates' in str(error), error
+                    else:
+                        raise AssertionError('Native block images accepted missing mRoPE coordinates')
             for case in cases:
                 ids = torch.tensor(case['ids'][None], device=args.device)
                 block_ids = (torch.arange(ids.shape[1], device=args.device) >= case['prefix']).long()[None]

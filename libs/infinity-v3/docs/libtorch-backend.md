@@ -545,6 +545,8 @@ without a hostname allowlist; HTTPS images require `--image-allowed-hosts` with
 explicit destination hostnames. Image spans expand before the block boundary is
 finalized, and token limits apply to the expanded sequence. Spans cannot cross a
 block boundary. Both prefix and suffix execution retain the original mRoPE axes.
+Direct native decision calls with images must supply `media_positions`; block
+image requests without these coordinates are rejected before GPU uploads.
 Image uploads and vision features are reused within a native call when their
 borrowed pixel storage and layout match, including across prefix and suffix
 passes, and a shared visual prefix is prefilled

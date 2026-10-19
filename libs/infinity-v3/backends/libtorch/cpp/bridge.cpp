@@ -599,6 +599,8 @@ int32_t tei_decide_radix(void* handle,const int64_t* ids,const int64_t* types,co
  const TeiImage* images,size_t image_count,const TeiAudio* audios,size_t audio_count,const TeiRadix* radix) {
  return checked([&]{EngineCall access(handle,true);auto& engine=*static_cast<Engine*>(handle);
   const auto input_bytes=validate_request_input(engine,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audios,audio_count,radix);
+  const bool blocks=engine.options.string("_decision_attention_mode")=="block_bidirectional";
+  TORCH_CHECK(!blocks||!image_count||media_positions,"OneJev block images require mRoPE coordinates");
   TORCH_CHECK(engine.decision&&batch>0,"Model was not loaded for typed decisions");
   tei::validate_decision_metadata_budget(requests,batch,input_upload_limit(engine),input_bytes);
   auto converted=decision_requests(requests,batch);size_t expected=0;
@@ -607,7 +609,6 @@ int32_t tei_decide_radix(void* handle,const int64_t* ids,const int64_t* types,co
   SynchronousStreamGuard stream_guard(engine);
   auto packed=packed_input(engine,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audios,audio_count);
   attach_radix(engine,packed,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audio_count,radix);
-  const bool blocks=engine.options.string("_decision_attention_mode")=="block_bidirectional";
   if(blocks) {
     TORCH_CHECK(!audio_count&&!radix,"OneJev block attention does not support audio or radix folding");
     for(int64_t row=0;row<batch;++row) {
