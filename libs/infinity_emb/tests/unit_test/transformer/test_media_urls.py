@@ -46,19 +46,22 @@ def test_default_blacklist(monkeypatch):
 def test_configurable_blacklist(monkeypatch):
     monkeypatch.setenv(
         "INFINITY_MEDIA_URL_BLACKLIST",
-        "*.blocked.example;203.0.113.0/24;https://images.example/private/",
+        "*.blocked.example;203.0.113.0/24;images.example",
     )
     policy = media_url_blacklist()
     for url in [
         "https://a.blocked.example/a",
         "http://203.0.113.1/a",
-        "https://images.example/private/photo.png",
-        "https://images.example./private/photo.png",
+        "https://images.example/photo.png",
+        "https://images.example./photo.png",
     ]:
         with pytest.raises(ValueError, match="blacklisted"):
             policy.validate_url(url)
-    assert policy.validate_url("https://images.example/public/photo.png")
+    assert policy.validate_url("https://allowed.example/photo.png")
     assert policy.validate_url("http://10.0.0.1/photo.png")  # Explicit replacement of defaults.
+    monkeypatch.setenv("INFINITY_MEDIA_URL_BLACKLIST", "https://images.example/private/")
+    with pytest.raises(ValueError, match="Invalid INFINITY_MEDIA_URL_BLACKLIST entry"):
+        media_url_blacklist()
     monkeypatch.setenv("INFINITY_MEDIA_URL_BLACKLIST", "")
     assert media_url_blacklist().validate_url("http://localhost/photo.png")
 

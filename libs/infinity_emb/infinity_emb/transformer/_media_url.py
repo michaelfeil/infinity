@@ -9,7 +9,6 @@ import ipaddress
 import os
 import socket
 from fnmatch import fnmatchcase
-from functools import lru_cache
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -27,28 +26,13 @@ class MediaURLBlacklist:
     def __init__(self, rules: str):
         self.networks = []
         self.hosts = []
-        self.urls = []
         for rule in filter(None, (value.strip() for value in rules.split(";"))):
-            if "://" in rule:
-                self.urls.append(self.parse_url(rule))
-                continue
             try:
                 self.networks.append(ipaddress.ip_network(rule, strict=False))
             except ValueError:
                 if "/" in rule or ":" in rule:
                     raise ValueError("Invalid INFINITY_MEDIA_URL_BLACKLIST entry") from None
                 self.hosts.append(rule.lower().rstrip("."))
-
-    @staticmethod
-    def parse_url(value: str) -> URL:
-        from yarl import URL
-
-        url = URL(value)
-        if url.scheme not in {"http", "https"} or not url.host or url.user is not None:
-            raise ValueError("Media URLs must be HTTP(S) URLs without credentials")
-        if "%" in url.host:
-            raise ValueError("Scoped or escaped media URL hosts are not supported")
-        return url
 
     def validate_host(self, host: str) -> None:
         host = host.lower().rstrip(".")
@@ -78,25 +62,21 @@ class MediaURLBlacklist:
             raise ValueError("Media URL address is blacklisted")
 
     def validate_url(self, value: str) -> URL:
-        url = self.parse_url(value)
+        from yarl import URL
+
+        url = URL(value)
+        if url.scheme not in {"http", "https"} or not url.host or url.user is not None:
+            raise ValueError("Media URLs must be HTTP(S) URLs without credentials")
+        if "%" in url.host:
+            raise ValueError("Scoped or escaped media URL hosts are not supported")
         self.validate_host(url.host)
-        if any(
-            (url.scheme, url.host.lower().rstrip("."), url.port)
-            == (rule.scheme, rule.host.lower().rstrip("."), rule.port)
-            and url.raw_path_qs.startswith(rule.raw_path_qs)
-            for rule in self.urls
-        ):
-            raise ValueError("Media URL is blacklisted")
         return url
 
 
-@lru_cache(maxsize=16)
-def _blacklist(rules: str) -> MediaURLBlacklist:
-    return MediaURLBlacklist(rules)
-
-
 def media_url_blacklist() -> MediaURLBlacklist:
-    return _blacklist(os.environ.get("INFINITY_MEDIA_URL_BLACKLIST", DEFAULT_MEDIA_URL_BLACKLIST))
+    return MediaURLBlacklist(
+        os.environ.get("INFINITY_MEDIA_URL_BLACKLIST", DEFAULT_MEDIA_URL_BLACKLIST)
+    )
 
 
 def media_client_session() -> aiohttp.ClientSession:
