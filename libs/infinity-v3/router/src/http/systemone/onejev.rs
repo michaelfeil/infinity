@@ -176,9 +176,6 @@ impl Onejev {
         images: PreparedQwenImages,
         max_len: Option<usize>,
     ) -> Result<(), String> {
-        if self.block_attention {
-            return Err("OneJev block attention currently supports text only".into());
-        }
         let image_id = self
             .tokenizer
             .token_to_id("<|image_pad|>")
@@ -187,17 +184,25 @@ impl Onejev {
             .unwrap_or(self.max_input_length)
             .min(self.max_input_length);
         for question in questions {
+            let prefix_length = match &question.input {
+                DecisionInput::BlockOptionTokens { prefix_length, .. } => Some(*prefix_length),
+                _ => None,
+            };
+            let mut expanded_prefix = None;
             let encoding = &mut question.encoding;
             let mut ids = Vec::new();
             let mut spans = Vec::new();
             let mut patches = images.images.iter();
-            for &id in &encoding.input_ids {
+            for (index, &id) in encoding.input_ids.iter().enumerate() {
                 if id == image_id {
                     let image = patches.next().ok_or("Too many image markers")?;
                     spans.push((ids.len(), image.clone()));
                     ids.resize(ids.len() + image.token_count(), image_id);
                 } else {
                     ids.push(id);
+                }
+                if prefix_length == Some(index + 1) {
+                    expanded_prefix = Some(ids.len());
                 }
             }
             if patches.next().is_some() {
@@ -216,6 +221,9 @@ impl Onejev {
                     .map(|(start, image)| (*start, image.as_ref()))
                     .collect::<Vec<_>>(),
             )?;
+            if let DecisionInput::BlockOptionTokens { prefix_length, .. } = &mut question.input {
+                *prefix_length = expanded_prefix.ok_or("Invalid OneJev image prefix boundary")?;
+            }
             encoding.token_type_ids = vec![0; ids.len()];
             encoding.position_ids = positions[0].clone();
             encoding.input_ids = ids;
@@ -371,6 +379,110 @@ pub(super) fn answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn block_image_expansion_preserves_prefix_boundaries_and_limits() -> anyhow::Result<()> {
+        use infinity_v3_backend::ImagePatches;
+        let path = std::env::temp_dir().join(format!("onejev-images-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path)?;
+        std::fs::write(
+            path.join("chat_template.jinja"),
+            "{{ messages[0].content }}",
+        )?;
+        let chat = ChatProcessor::load(&path)
+            .map_err(anyhow::Error::msg)?
+            .unwrap();
+        std::fs::remove_dir_all(&path)?;
+        let tokenizer = Tokenizer::new(
+            tokenizers::models::wordlevel::WordLevel::builder()
+                .vocab(std::collections::HashMap::from([
+                    ("[UNK]".into(), 0),
+                    ("<|image_pad|>".into(), 42),
+                ]))
+                .unk_token("[UNK]".into())
+                .build()
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+        );
+        let model = Onejev {
+            tokenizer,
+            chat,
+            codes: vec![],
+            token_ids: vec![],
+            max_input_length: 64,
+            images: None,
+            block_attention: true,
+        };
+        let image = |width| {
+            Arc::new(ImagePatches {
+                pixels: vec![0.; 2 * width * 6],
+                grid_thw: [1, 2, width],
+                patch_dim: 6,
+                merge_size: 2,
+            })
+        };
+        let prepared = || PreparedQwenImages {
+            images: vec![image(4), image(6)],
+            memory: Arc::new(
+                Arc::new(tokio::sync::Semaphore::new(1))
+                    .try_acquire_owned()
+                    .unwrap(),
+            ),
+        };
+        let question = |prefix_length| Question {
+            id: "q".into(),
+            kind: "noul".into(),
+            labels: vec![],
+            criteria: Value::Null,
+            compute_chars: 0,
+            encoding: ValidEncoding {
+                multimodal: None,
+                input_ids: vec![1, 42, 2, 42, 3, 4],
+                token_type_ids: vec![0; 6],
+                position_ids: (0..6).collect(),
+                tokens: vec![],
+                offsets: vec![],
+            },
+            input: DecisionInput::BlockOptionTokens {
+                token_ids: vec![11, 12],
+                prefix_length,
+            },
+        };
+        for (original, expanded) in [(5, 8), (3, 4)] {
+            let mut questions = vec![question(original)];
+            model
+                .attach_images(&mut questions, prepared(), None)
+                .map_err(anyhow::Error::msg)?;
+            assert_eq!(
+                questions[0].encoding.input_ids,
+                [1, 42, 42, 2, 42, 42, 42, 3, 4]
+            );
+            let DecisionInput::BlockOptionTokens { prefix_length, .. } = &questions[0].input else {
+                panic!("Lost block metadata")
+            };
+            assert_eq!(*prefix_length, expanded);
+            let media = questions[0].encoding.multimodal.as_ref().unwrap();
+            assert_eq!(
+                media
+                    .images
+                    .iter()
+                    .map(|(start, _)| *start)
+                    .collect::<Vec<_>>(),
+                [1, 4]
+            );
+            assert!(media.position_ids.iter().all(|axis| axis.len() == 9));
+        }
+        assert!(model
+            .attach_images(&mut [question(5)], prepared(), Some(8))
+            .unwrap_err()
+            .contains("token limit"));
+        for invalid in [0, 7] {
+            assert!(model
+                .attach_images(&mut [question(invalid)], prepared(), None)
+                .unwrap_err()
+                .contains("prefix boundary"));
+        }
+        Ok(())
+    }
 
     #[test]
     fn native_images_are_ordered_and_unsupported_parts_are_rejected() {

@@ -3,6 +3,7 @@
 #include "bridge.h"
 #include "helpers/fp8_linear.h"
 #include "batching/radix.h"
+#include "batching/block_prefix.h"
 #include "batching/output.h"
 #include "helpers/workspace_admission.h"
 #include "models/model.h"
@@ -276,6 +277,10 @@ size_t input_upload_limit(const Engine& model) {
  TORCH_CHECK(limit>0&&uint64_t(limit)<=std::numeric_limits<size_t>::max(),"Native input upload budget must be positive and representable");
  return static_cast<size_t>(limit);
 }
+bool share_image_uploads(const Engine& model) {
+ return model.options.string("_decision.kind")=="d3"||
+   model.options.string("_decision_attention_mode")=="block_bidirectional";
+}
 size_t validate_request_input(Engine& model,const int64_t* ids,const int64_t* types,
  const int64_t* positions,const int32_t* cumulative,int64_t batch,int64_t max_sequence,
  const int64_t* media_positions,const TeiImage* images,size_t image_count,const TeiAudio* audios,size_t audio_count,const TeiRadix* radix) {
@@ -285,7 +290,7 @@ size_t validate_request_input(Engine& model,const int64_t* ids,const int64_t* ty
    media_positions,images,image_count,audios,audio_count,gemma);
  const auto image_dtype=model.dtype;
  return tei::validate_input_upload_budget(tokens,batch,media_positions,images,image_count,audios,audio_count,
-   radix,c10::elementSize(image_dtype),input_upload_limit(model),gemma,model.options.string("_decision.kind")=="d3");
+   radix,c10::elementSize(image_dtype),input_upload_limit(model),gemma,share_image_uploads(model));
 }
 void validate_forward_descriptors(Engine& model,const int64_t* ids,const int64_t* types,
  const int64_t* positions,const int32_t* cumulative,int64_t batch,int64_t max_sequence,int32_t pool,
@@ -341,12 +346,11 @@ tei::PackedInput packed_input(Engine& model,const int64_t* ids,const int64_t* ty
  TORCH_CHECK(!audio_count||model.model->supports_audio(),"This native model does not yet support audio");
  if(media_positions)packed.multimodal_positions=at::from_blob(const_cast<int64_t*>(media_positions),{3,tokens},options).to(model.device);
  if(media_positions)packed.host_multimodal_positions=at::from_blob(const_cast<int64_t*>(media_positions),{3,tokens},options);
- const bool d3=model.options.string("_decision.kind")=="d3";
  tei::RequestImageUploads shared_images;
  for(size_t i=0;i<image_count;++i){const auto& item=images[i];
   auto host_pixels=at::from_blob(const_cast<float*>(item.pixels),{item.rows,item.patch_dim},options.dtype(at::kFloat));
   auto upload=[&]{return tei::upload_image_pixels(host_pixels,model.device,model.dtype,family);};
-  auto pixels=d3?shared_images.get(host_pixels,upload):upload();
+  auto pixels=share_image_uploads(model)?shared_images.get(host_pixels,upload):upload();
   packed.images.push_back({pixels,{item.grid[0],item.grid[1],item.grid[2]},item.merge_size,item.token_start,item.token_count,item.sequence_start});
   std::copy_n(item.feature_key,32,packed.images.back().feature_key.begin());
   packed.images.back().has_feature_key=item.has_feature_key!=0;
@@ -605,7 +609,7 @@ int32_t tei_decide_radix(void* handle,const int64_t* ids,const int64_t* types,co
   attach_radix(engine,packed,ids,types,positions,cumulative,batch,max_sequence,media_positions,images,image_count,audio_count,radix);
   const bool blocks=engine.options.string("_decision_attention_mode")=="block_bidirectional";
   if(blocks) {
-    TORCH_CHECK(!image_count&&!audio_count&&!media_positions&&!radix,"OneJev block attention requires text without radix folding");
+    TORCH_CHECK(!audio_count&&!radix,"OneJev block attention does not support audio or radix folding");
     for(int64_t row=0;row<batch;++row) {
       const auto length=int64_t(cumulative[row+1]-cumulative[row]);
       const auto boundary=requests[row].kind==3?length:requests[row].question_type;
@@ -613,8 +617,7 @@ int32_t tei_decide_radix(void* handle,const int64_t* ids,const int64_t* types,co
         "OneJev block attention requires an explicit valid prefix boundary");
       int64_t source=row;
       for(int64_t prev=0;prev<row;++prev)if(packed.block_prefix_lengths[prev]==boundary &&
-        std::equal(ids+cumulative[row],ids+cumulative[row]+boundary,ids+cumulative[prev]) &&
-        std::equal(positions+cumulative[row],positions+cumulative[row]+boundary,positions+cumulative[prev])) {source=packed.block_prefix_sources[prev];break;}
+        tei::same_block_prefix(row,prev,boundary,ids,types,positions,media_positions,cumulative[batch],cumulative,images,image_count)) {source=packed.block_prefix_sources[prev];break;}
       packed.block_prefix_lengths.push_back(boundary);packed.block_prefix_sources.push_back(source);
     }
   } else for(int64_t row=0;row<batch;++row)TORCH_CHECK(requests[row].kind!=4,"Block decision metadata requires a block-attention checkpoint");
