@@ -207,6 +207,16 @@ impl Mistral3Processor {
                 role: MessageRole::User,
                 content: MessageContent::Text(text),
             }],
+            EncodingInput::Dual(query, document) => vec![
+                Message {
+                    role: MessageRole::Query,
+                    content: MessageContent::Text(query),
+                },
+                Message {
+                    role: MessageRole::Document,
+                    content: MessageContent::Text(document),
+                },
+            ],
             EncodingInput::Messages(m) => m,
             _ => return Err(invalid("Mistral3 accepts text or native messages")),
         };

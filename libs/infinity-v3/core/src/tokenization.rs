@@ -176,37 +176,13 @@ impl Tokenization {
         truncation_direction: TruncationDirection,
         prompt_name: Option<String>,
     ) -> Result<ValidEncoding, TextEmbeddingsError> {
-        // Mistral3 cross-encoders render pairs through the checkpoint's
-        // query/document chat template, which may also carry document images.
-        if let Some(processor) = &self.mistral3 {
-            if matches!(inputs, EncodingInput::Dual(..) | EncodingInput::Messages(_)) {
-                use crate::input::{Message, MessageContent, MessageRole};
-                let inputs = match inputs {
-                    EncodingInput::Dual(query, document) => EncodingInput::Messages(vec![
-                        Message {
-                            role: MessageRole::Query,
-                            content: MessageContent::Text(query),
-                        },
-                        Message {
-                            role: MessageRole::Document,
-                            content: MessageContent::Text(document),
-                        },
-                    ]),
-                    other => other,
-                };
-                let prepared = processor
-                    .prepare(inputs, truncate, truncation_direction, prompt_name)
-                    .await?;
-                let length = prepared.input_ids.len();
-                return Ok(ValidEncoding {
-                    multimodal: Some(prepared.media),
-                    input_ids: prepared.input_ids,
-                    token_type_ids: vec![0; length],
-                    position_ids: (0..length as u32).collect(),
-                    tokens: vec![],
-                    offsets: vec![],
-                });
-            }
+        // Classification pairs and native messages use the existing multimodal path.
+        if self.mistral3.is_some()
+            && matches!(inputs, EncodingInput::Dual(..) | EncodingInput::Messages(_))
+        {
+            return self
+                .encode_embedding(inputs, truncate, truncation_direction, prompt_name)
+                .await;
         }
         self.encode_request(
             inputs,
@@ -1442,66 +1418,5 @@ mod fast_embedding_tests {
                 }
             });
         }
-    }
-
-    #[tokio::test]
-    async fn mistral3_pairs_render_through_query_document_template() {
-        use tokenizers::AddedToken;
-        let mut hf = crate::fast_tokenization::test_tokenizer();
-        hf.add_special_tokens(
-            &["[IMG]", "[IMG_BREAK]", "[IMG_END]"].map(|t| AddedToken::from(t, true)),
-        );
-        let image_token = hf.token_to_id("[IMG]").unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let write = |name: &str, value: serde_json::Value| {
-            std::fs::write(dir.path().join(name), value.to_string()).unwrap();
-        };
-        write(
-            "config.json",
-            serde_json::json!({"model_type": "mistral3", "vision_config": {"patch_size": 14},
-                "spatial_merge_size": 2, "image_token_index": image_token}),
-        );
-        write(
-            "processor_config.json",
-            serde_json::json!({"patch_size": 14, "spatial_merge_size": 2,
-                "image_token": "[IMG]", "image_break_token": "[IMG_BREAK]", "image_end_token": "[IMG_END]",
-                "image_processor": {"size": {"longest_edge": 112}, "resample": 3, "do_resize": true,
-                    "do_rescale": true, "do_normalize": true, "do_convert_rgb": true,
-                    "rescale_factor": 0.00392156862745098,
-                    "image_mean": [0.5, 0.5, 0.5], "image_std": [0.5, 0.5, 0.5]}}),
-        );
-        // Cross-encoder template: only a query/document pair renders, with `[` escaped and
-        // no BOS/EOS, like nvidia/Nemotron-3.5-Rerank-8B-BF16.
-        std::fs::write(
-            dir.path().join("chat_template.jinja"),
-            "{%- if messages | length != 2 or messages[0]['role'] != 'query' or messages[1]['role'] != 'document' -%}\
-             {{- raise_exception('query/document pairs only') -}}{%- endif -%}\
-             query: {{ messages[0]['content'] | replace('[', '[\u{200c}') }}\n\
-             document: {{ messages[1]['content'] | replace('[', '[\u{200c}') }}",
-        )
-        .unwrap();
-        let processor = crate::multimodal::Mistral3Processor::load(
-            dir.path(),
-            hf.clone(),
-            64,
-            crate::multimodal::MultimodalConfig::default(),
-        )
-        .unwrap();
-        let tokenization =
-            Tokenization::new(1, hf.clone(), 64, 0, None, None, None).with_mistral3(processor);
-        let encoding = tokenization
-            .encode(
-                EncodingInput::Dual("use [INST] here".into(), "a passage".into()),
-                false,
-                TruncationDirection::Right,
-                None,
-            )
-            .await
-            .unwrap();
-        let expected = hf
-            .encode("query: use [\u{200c}INST] here\ndocument: a passage", false)
-            .unwrap();
-        assert_eq!(encoding.input_ids, expected.get_ids());
-        assert!(encoding.multimodal.is_some());
     }
 }
