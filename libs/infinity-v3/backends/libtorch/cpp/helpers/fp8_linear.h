@@ -39,6 +39,9 @@ class Fp8Linear {
 public:
   explicit Fp8Linear(const at::Tensor& weight);
   at::Tensor forward(const at::Tensor& input, const at::Tensor& bias = {}) const;
+  // Accept the identical rowwise recipe from a fused activation producer.
+  at::Tensor forward_quantized(const at::Tensor& input, const at::Tensor& scales,
+    const at::Tensor& bias = {}) const;
   int64_t input_width() const { return matrix_.size(1); }
   int64_t output_width() const { return matrix_.size(0); }
   const at::Tensor& matrix() const { return matrix_; }

@@ -1,4 +1,6 @@
 #include "helpers/fp8_linear.h"
+#include "kernels/fp8_fusions.h"
+#include "kernels/fast_kernels.h"
 #include "helpers/workspace_admission.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -131,6 +133,8 @@ int main() {
       TORCH_CHECK(quantized.first.sizes()==input.sizes() && quantized.second.size(0)==rows,
         "FP8 quantization padded actual token rows");
       auto output=linear.forward(input);
+      TORCH_CHECK(at::equal(linear.forward_quantized(quantized.first,quantized.second),output),
+        "Prequantized input changed FP8 GEMM bytes");
       auto expected=fp8_original_recipe(quantized.first,linear.matrix(),quantized.second,linear.scales(),dtype);
       TORCH_CHECK(at::equal(output,expected),
         "Native Torch FP8 GEMM differs from original independent cuBLASLt recipe: rows=",rows," dtype=",dtype);
@@ -141,6 +145,43 @@ int main() {
     }
     auto empty=linear.forward(at::empty({0,256},options));
     TORCH_CHECK(empty.sizes()==at::IntArrayRef({0,512}),"FP8 empty rows not preserved");
+    for(int64_t offset:{0,1}) {
+      auto storage=at::randn({17*4096+offset},options)*3;
+      auto x=storage.narrow(0,offset,17*4096).view({17,4096});
+      x.select(0,0).zero_();x.select(0,1).fill_(1e-14);
+      auto q=tei::fp8_quantize_rows(x);
+      auto cpu=x.to(at::kCPU).to(at::kFloat);
+      auto scale=at::amax(cpu.abs(),{1},true).clamp_min(1e-12)*(1.f/448.f);
+      auto expected=(cpu/scale).clamp(-448.,448.).to(at::kFloat8_e4m3fn);
+      TORCH_CHECK(at::equal(q.second.to(at::kCPU),scale)
+        &&at::equal(q.first.to(at::kCPU).view(at::kByte),expected.view(at::kByte)),
+        "Vector quantization or misaligned fallback changed CPU reference bytes/scales");
+    }
+    for(int64_t width:{256,12288,14336}) {
+      auto gate_up=at::randn({17,2*width},options)*8;
+      gate_up.select(0,0).zero_();
+      auto activated=tei::fused_gated_activation(gate_up,5);
+      auto reference=tei::fp8_quantize_rows(activated);
+      auto fused=tei::fp8_swiglu_quantize(gate_up);
+      TORCH_CHECK(at::equal(fused.first.view(at::kByte),reference.first.view(at::kByte))
+        &&at::equal(fused.second,reference.second),"Fused SwiGLU changed FP8 bytes/scales");
+      tei::Fp8Linear down(at::randn({256,width},options)*.05);
+      auto bias=at::randn({256},options)*.01;
+      TORCH_CHECK(at::equal(down.forward_quantized(fused.first,fused.second,bias),
+        down.forward(activated,bias)),"Fused MLP changed output or bias rounding");
+    }
+    if(dtype==at::kBFloat16) {
+      auto input=at::randn({17,4096},options),weight=at::randn({4096},options);
+      for(bool add:{false,true})for(double epsilon:{1e-6,1e-5}) {
+        auto residual=add?at::randn_like(input):at::Tensor();
+        auto norm=tei::fused_add_rms_norm(input,residual,weight,epsilon);
+        auto reference=tei::fp8_quantize_rows(norm.first);
+        auto [quantized,summed,scales]=tei::fp8_add_rms_quantize(input,residual,weight,epsilon);
+        TORCH_CHECK(at::equal(quantized.view(at::kByte),reference.first.view(at::kByte))
+          &&at::equal(scales,reference.second)&&at::equal(summed,norm.second),
+          "Fused RMS changed FP8 bytes, scales or residual rounding");
+      }
+    }
     std::cout<<"FP8 row-scale/bytes, odd real rows, model-dtype GEMM and bias: "<<dtype<<" passed\n";
   }
   for(auto shape:{std::pair<int64_t,int64_t>{511,256},{512,255}}) {

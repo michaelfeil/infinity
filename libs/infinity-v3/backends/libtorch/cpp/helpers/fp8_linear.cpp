@@ -374,23 +374,40 @@ at::Tensor Fp8Linear::forward(const at::Tensor& input,const at::Tensor& bias) co
   c10::cuda::CUDAGuard guard(input.device());
 #endif
   auto quantized=fp8_quantize_rows(input.contiguous());
+  return forward_quantized(quantized.first,quantized.second,bias);
+}
+at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
+    const at::Tensor& row_scales,const at::Tensor& bias) const {
+  TORCH_CHECK(input.dim()==2 && input.device()==matrix_.device()
+    && input.scalar_type()==at::kFloat8_e4m3fn && input.is_contiguous()
+    && input.size(1)==input_width(),"Invalid prequantized FP8 activations");
+  TORCH_CHECK(row_scales.dim()==2 && row_scales.size(0)==input.size(0)
+    && row_scales.size(1)==1 && row_scales.device()==input.device()
+    && row_scales.scalar_type()==at::kFloat && row_scales.is_contiguous(),
+    "Invalid prequantized FP8 row scales");
+  TORCH_CHECK(!bias.defined() || (bias.dim()==1 && bias.size(0)==output_width()
+    && bias.device()==input.device() && bias.scalar_type()==dtype_),"Invalid dynamic FP8 bias");
+  if(input.size(0)==0)return at::empty({0,output_width()},input.options().dtype(dtype_));
+#ifdef TEI_TORCH_CUDA_KERNELS
+  c10::cuda::CUDAGuard guard(input.device());
+#endif
   at::Tensor output;
   if(rowwise_) {
     try {
       // Candle's Hopper recipe prefers fast accumulation. Some CUDA versions
       // lack fast tactics for short, wide-K shapes; preserve its full fallback.
-      output=at::_scaled_mm(quantized.first,matrix_.t(),quantized.second,
+      output=at::_scaled_mm(input,matrix_.t(),row_scales,
         scales_.t(),{}, {},dtype_,true);
     } catch(const c10::Error& error) {
       if(std::string(error.what_without_backtrace()).find("CUBLAS_STATUS_NOT_SUPPORTED")==std::string::npos)throw;
-      output=at::_scaled_mm(quantized.first,matrix_.t(),quantized.second,
+      output=at::_scaled_mm(input,matrix_.t(),row_scales,
         scales_.t(),{}, {},dtype_,false);
     }
   } else {
     // Match the portable recipe: scale full FP32 accumulation before the
     // single model-dtype rounding. No tensorwide activation scale is inferred.
-    output=(at::_scaled_mm(quantized.first,matrix_.t(),unit_,unit_,{}, {},at::kFloat,false)
-      *quantized.second*scales_.t()).to(dtype_);
+    output=(at::_scaled_mm(input,matrix_.t(),unit_,unit_,{}, {},at::kFloat,false)
+      *row_scales*scales_.t()).to(dtype_);
   }
   // Candle's quantized MLP applies bias after GEMM model-dtype rounding.
   return bias.defined()?output+bias:output;
