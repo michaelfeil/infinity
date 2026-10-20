@@ -3,6 +3,7 @@
 #include "batching/packed_input.h"
 #include "helpers/checked_size.h"
 #include "helpers/admission_error.h"
+#include "kernels/infinity_fa4.h"
 #include <ATen/ops/_flash_attention_forward.h>
 #include <ATen/ops/_efficient_attention_forward.h>
 
@@ -72,6 +73,11 @@ inline at::Tensor packed_attention(const at::Tensor& q, const at::Tensor& k,
                                    const std::optional<at::Tensor>& alibi = std::nullopt,
                                    const std::optional<at::Tensor>& prepared_bias = std::nullopt) {
   if (q.is_cuda()) {
+    if(!alibi&&!prepared_bias) {
+      auto fa4=infinity_fa4(q,k,v,input.cumulative,input.cumulative,input.max_sequence,
+        scale,causal,window_left,window_right);
+      if(fa4.defined())return fa4;
+    }
     if (alibi) {
       // The prebuilt Torch Flash operator disables ALiBi. Its efficient
       // operator accepts actual packed Q/K/V and cumulative sequence offsets.

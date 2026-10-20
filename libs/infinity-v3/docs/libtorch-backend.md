@@ -12,8 +12,8 @@ benchmarks do not qualify the current port for production.
 LibTorch 2.14.1 runs alongside Candle as an optional inference runtime. Rust owns
 model configuration, checkpoint loading, batch validation and infinity_v3 integration;
 a small C ABI bridge runs the model with the PyTorch C++ tensor API. Python is
-not required at build time or inference time when using a standalone LibTorch
-distribution. There is no TorchScript export step.
+not required at inference time. A standalone LibTorch build without InfinityFA4
+also needs no build-time Python. There is no TorchScript export step.
 
 ## Packed inference
 
@@ -22,7 +22,8 @@ Token embeddings, projections, attention outputs and MLP activations use
 `[total_tokens, heads, head_dim]`. Sequence boundaries come directly from infinity_v3's
 cumulative lengths. No token padding is allocated. Relative position bias paths use attention bias at each sequence's actual length.
 
-On CUDA, attention calls `aten::_flash_attention_forward` with device-resident
+On CUDA, eligible shapes use InfinityFA4 when its bundles are installed (see
+below). The existing attention paths call `aten::_flash_attention_forward` with device-resident
 INT32 cumulative lengths and maximum sequence length. This is the Flash
 Attention operator behind
 [PyTorch's `varlen_attn`](https://docs.pytorch.org/docs/stable/nn.attention.varlen.html).
@@ -51,6 +52,24 @@ Set `CUTLASS_ROOT` for an offline checkout; otherwise CMake reuses the Candle
 cache or downloads that pinned revision. Installation includes the retained
 CUTLASS BSD and Candle kernel MIT notices under `share/licenses/tei_torch`. Kernel-level exact routing
 tests do not establish trained checkpoint accuracy.
+
+### InfinityFA4
+
+The NVIDIA image includes native FP16/BF16 FlashAttention-4 bundles for SM80,
+SM86, SM89, SM90, SM100 and SM120. Supported shapes are global/windowed d64
+MHA, causal d128 GQA4, global d128 GQA2, and d64 DeBERTa relative attention.
+DeBERTa avoids quadratic relative-position bucket and attention-bias storage.
+FP8 projections retain their existing attention dtype.
+
+FA4 is enabled when built. Set `INFINITY_TORCH_FA4=0` before startup to use
+previous attention paths. Unsupported shapes retain their existing kernels;
+explicit BERT/decoder cuDNN selection takes precedence. Launch errors propagate.
+
+Source builds opt in through `INFINITY_FA4_ROOT`; see the vendor
+[build instructions](../backends/libtorch/cpp/vendor/infinity_fa4/README.md).
+Export requires Python and no GPU; serving requires neither Python nor JIT
+compilation. H100 has runtime coverage; other targets have compile/link coverage.
+Performance and numerical differences depend on the checkpoint and precision.
 
 ## Model support
 

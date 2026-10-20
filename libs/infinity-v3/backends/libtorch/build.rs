@@ -3,6 +3,7 @@ use std::{env, path::PathBuf};
 fn main() {
     println!("cargo:rerun-if-env-changed=LIBTORCH");
     println!("cargo:rerun-if-env-changed=LIBTORCH_CUDA_ARCHITECTURES");
+    println!("cargo:rerun-if-env-changed=INFINITY_FA4_ROOT");
     println!("cargo:rerun-if-changed=cpp");
     println!("cargo:rerun-if-changed=cpp/vendor/torch_flash_attention");
     println!("cargo:rerun-if-changed=cpp/kernels/torch_flash_fma.cpp");
@@ -34,6 +35,15 @@ fn main() {
     let architectures =
         env::var_os("LIBTORCH_CUDA_ARCHITECTURES").unwrap_or_else(|| "80;86;89;90;100;120".into());
     config.define("CMAKE_CUDA_ARCHITECTURES", architectures);
+    let fa4_root = env::var_os("INFINITY_FA4_ROOT").unwrap_or_default();
+    if !fa4_root.is_empty() {
+        println!(
+            "cargo:rerun-if-changed={}",
+            PathBuf::from(&fa4_root).display()
+        );
+    }
+    // Clear a previous CMake cache entry when the caller removes the opt-in.
+    config.define("INFINITY_FA4_ROOT", fa4_root);
     let dst = config.build();
     println!("cargo:rustc-link-search=native={}/lib", dst.display());
     println!("cargo:rustc-link-lib=dylib=tei_torch");

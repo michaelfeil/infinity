@@ -10,6 +10,7 @@
 #include "kernels/fast_kernels.h"
 #include "kernels/encoder_norm.h"
 #include "kernels/encoder_activation.h"
+#include "kernels/infinity_fa4.h"
 #include "kernels/torch_flash_fma.h"
 #include "kernels/torch_flash_exact32.h"
 #include <ATen/cuda/CUDAContext.h>
@@ -376,7 +377,11 @@ struct Bert : tei::Model {
         // token totals. FP8 needs the fused Torch arithmetic at every total
         // to preserve quantization inputs; normal FP16 larger totals retain
         // the measured cuDNN advantage.
-        if (private_flash_exact_classifier && head == 32) {
+        if(!cudnn_varlen)attended=tei::infinity_fa4(q,k,v,cumulative,cumulative,
+          max_sequence,1.0/std::sqrt(static_cast<double>(head)));
+        if(attended.defined()) {
+          // InfinityFA4 consumed the original packed views on this stream.
+        } else if (private_flash_exact_classifier && head == 32) {
           attended = tei::torch_flash_exact32(q, k, v, cumulative, max_sequence,
             1.0 / std::sqrt(static_cast<double>(head)));
         } else if ((private_flash_exact_classifier ||
