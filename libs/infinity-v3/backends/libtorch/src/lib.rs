@@ -649,13 +649,10 @@ impl LibtorchBackend {
         {
             return Err(start("Pplx and Clef heads require Qwen3.5"));
         }
+        options["_prefix_cache_max_bytes"] = infinity_v3_config::prefix_cache_size_bytes()
+            .map_err(start)?
+            .into();
         for (env, key, default, minimum) in [
-            (
-                infinity_v3_config::infinity_env!("TORCH_PREFIX_CACHE_BYTES"),
-                "_prefix_cache_max_bytes",
-                0_i64,
-                0_i64,
-            ),
             (
                 infinity_v3_config::infinity_env!("TORCH_PREFIX_CACHE_MAX_TOKENS"),
                 "_prefix_cache_max_tokens",
@@ -1168,6 +1165,9 @@ impl LibtorchBackend {
             tracing::info!(
                 enabled = model.prefix_cache,
                 bytes = options["_prefix_cache_max_bytes"].as_i64(),
+                budget_gb = options["_prefix_cache_max_bytes"]
+                    .as_i64()
+                    .map(|b| b as f64 / 1e9),
                 max_tokens = options["_prefix_cache_max_tokens"].as_i64(),
                 entries = options["_prefix_cache_entries"].as_i64(),
                 "LibTorch prefix cache configured"
