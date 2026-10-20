@@ -6,7 +6,7 @@ containing both backends; no `--backend` flag is needed.
 
 An [experimental persistent prefix cache](libtorch-prefix-cache.md) is available
 for supported causal operations. It remains disabled unless
-`INFINITY_TORCH_PREFIX_CACHE_BYTES` is explicitly set above zero. Its historical
+`INFINITY_TORCH_PREFIX_CACHE_SIZE` is explicitly set above zero. Its historical
 benchmarks do not qualify the current port for production.
 
 LibTorch 2.14.1 runs alongside Candle as an optional inference runtime. Rust owns

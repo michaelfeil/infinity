@@ -3,14 +3,15 @@
 This is an opt-in port of [text-embeddings-inference #203](https://github.com/michaelfeil/text-embeddings-inference/pull/203)
 at `80c83f9f525bd33d4212a61caf95e6dd364ec47a`, including the prerequisite
 cache manager from #197 and lookup work from #199. It is **disabled by default**
-in Infinity: leave `INFINITY_TORCH_PREFIX_CACHE_BYTES` unset or set it to `0`.
+in Infinity. Set `INFINITY_TORCH_PREFIX_CACHE_SIZE=0` to explicitly disable it.
 The performance and sanitizer reports below describe their original source
 revisions, not fresh qualification of this port. Known short-request and
 long-admission regressions remain; this feature is not enabled for production
 by this change. OneJev block-bidirectional execution bypasses persistent caching.
 
-To experiment, set `INFINITY_TORCH_PREFIX_CACHE_BYTES` to a positive resident
-storage budget. The `INFINITY_` prefix follows the build's `ENV_VAR_BASE` setting.
+To experiment, set `INFINITY_TORCH_PREFIX_CACHE_SIZE` to a positive resident
+storage budget, for example `INFINITY_TORCH_PREFIX_CACHE_SIZE=3.5GB`.
+The `INFINITY_` prefix follows the build's `ENV_VAR_BASE` setting.
 This budget bounds retained cache entries, not estimated forward activations.
 
 The native backend can retain transformer prefix state between requests. It is disabled by default; enable it after numerical and performance controls for your deployment. The implementation covers the currently supported causal decoder families; support follows the loaded operation's actual attention policy.
@@ -19,11 +20,15 @@ The native backend can retain transformer prefix state between requests. It is d
 
 | Environment variable | Default | Meaning |
 | --- | --- | --- |
-| `INFINITY_TORCH_PREFIX_CACHE_BYTES` | `0` | Charged resident cache budget in bytes; zero disables the manager. |
+| `INFINITY_TORCH_PREFIX_CACHE_SIZE` | `0` | Charged resident cache budget in GB or GiB (e.g. `3.5GiB`); zero disables the manager. |
 | `INFINITY_TORCH_PREFIX_CACHE_MAX_TOKENS` | `8192` | Maximum retained prefix length per entry. |
 | `INFINITY_TORCH_PREFIX_CACHE_ENTRIES` | `64` | Maximum published entries per loaded engine. |
 
-The byte budget must be nonnegative. Token and entry bounds must be positive. Startup reports whether the loaded model and task can use prefix state. Each engine owns its cache; replicas do not share GPU storage.
+`GB` means 1,000,000,000 bytes; `GiB` means 1,073,741,824 bytes.
+For example, `3.5GB` is `3500000000` bytes and `3.5GiB` is `3758096384` bytes.
+Up to nine decimal places are accepted; fractional bytes round down.
+Positive unitless numbers, percentages and other units are not accepted.
+The former `INFINITY_TORCH_PREFIX_CACHE_BYTES` setting is no longer read. The budget applies per engine and must be nonnegative. Token and entry bounds must be positive. Startup reports whether the loaded model and task can use prefix state. Each engine owns its cache; replicas do not share GPU storage.
 
 ## Model and operation coverage
 
