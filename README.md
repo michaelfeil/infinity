@@ -23,6 +23,8 @@
 
 Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models, clip, clap and colpali. The Python packages use the [MIT License](LICENSE). Infinity V3 uses the [Infinity Restricted MIT License 1.0](libs/infinity-v3/LICENSING.md), with retained third-party and earlier grants.
 
+Infinity V3 supports [packed embedding tensors](libs/infinity-v3/docs/embedding-tensors.md) with shape and dtype metadata, including token matrices for late interaction.
+
 ## Why Infinity
 * **Deploy any model from HuggingFace**: deploy any embedding, reranking, clip and sentence-transformer model from [HuggingFace]( https://huggingface.co/models?other=text-embeddings-inference&sort=trending)
 * **Fast inference backends**: The inference server is built on top of [PyTorch](https://github.com/pytorch/pytorch), [optimum (ONNX/TensorRT)](https://huggingface.co/docs/optimum/index) and [CTranslate2](https://github.com/OpenNMT/CTranslate2), using FlashAttention to get the most out of your **NVIDIA CUDA**, **AMD ROCM**, **CPU**, **AWS INF2** or **APPLE MPS** accelerator. Infinity uses dynamic batching and tokenization dedicated in worker threads.
