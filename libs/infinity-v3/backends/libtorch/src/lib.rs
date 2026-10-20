@@ -828,7 +828,6 @@ impl LibtorchBackend {
         // These decoders project explicitly sized attention heads; their
         // attention width need not equal the residual stream width.
         // Encoder families still require hidden_size to divide into heads.
-        // "ministral3" normalizes to "mistral" above, so match both.
         let independent_attention_width = matches!(
             config.model_type.as_str(),
             "qwen3_5"
