@@ -171,51 +171,24 @@ struct Question {
     input: DecisionInput,
 }
 
-/// Request-level usage: count each complete OneJev block prefix once, plus every
-/// suffix, independently of backend batching or cache residency.
+/// Questions in one prepared OneJev request share the same state and images.
+/// Count complete token prefixes once and every suffix, regardless of batching.
 fn input_token_count(questions: &[Question]) -> usize {
-    let mut total = questions.iter().map(|q| q.encoding.input_ids.len()).sum();
-    let mut prefixes: HashMap<_, Vec<&ValidEncoding>> = HashMap::new();
-    for question in questions {
-        let DecisionInput::BlockOptionTokens { prefix_length, .. } = &question.input else {
-            continue;
-        };
-        let length = *prefix_length;
-        let encoding = &question.encoding;
-        let (Some(ids), Some(types), Some(positions)) = (
-            encoding.input_ids.get(..length),
-            encoding.token_type_ids.get(..length),
-            encoding.position_ids.get(..length),
-        ) else {
-            continue;
-        };
-        let representatives = prefixes.entry((ids, types, positions)).or_default();
-        let same_media = |previous: &&ValidEncoding| match (
-            previous.multimodal.as_deref(),
-            encoding.multimodal.as_deref(),
-        ) {
-            (None, None) => true,
-            (Some(a), Some(b)) => {
-                (0..3).all(|axis| {
-                    a.position_ids[axis]
-                        .get(..length)
-                        .is_some_and(|p| Some(p) == b.position_ids[axis].get(..length))
-                }) && infinity_v3_backend::MultimodalEncoding::same_radix_context(
-                    Some(a),
-                    Some(b),
-                    ids,
-                    ids,
-                )
+    let mut prefixes = HashSet::new();
+    questions
+        .iter()
+        .map(|question| {
+            let ids = &question.encoding.input_ids;
+            match &question.input {
+                DecisionInput::BlockOptionTokens { prefix_length, .. }
+                    if !prefixes.insert(&ids[..*prefix_length]) =>
+                {
+                    ids.len() - prefix_length
+                }
+                _ => ids.len(),
             }
-            _ => false,
-        };
-        if representatives.iter().any(same_media) {
-            total -= length;
-        } else {
-            representatives.push(encoding);
-        }
-    }
-    total
+        })
+        .sum()
 }
 
 impl Laya {
@@ -953,55 +926,15 @@ mod tests {
 
     #[test]
     fn usage_keeps_distinct_prefixes_and_nonblock_questions() {
-        let mut questions: Vec<_> = (0..5).map(|_| usage_question(1000, 100)).collect();
+        let mut questions: Vec<_> = (0..3).map(|_| usage_question(1000, 100)).collect();
         questions[1].encoding.input_ids[0] = 2;
-        questions[2].encoding.token_type_ids[0] = 1;
-        questions[3].encoding.position_ids[0] = 1;
-        questions[4].input = DecisionInput::OptionTokens {
+        questions[2].input = DecisionInput::OptionTokens {
             token_ids: vec![11, 12],
         };
-        assert_eq!(input_token_count(&questions), 5500);
-        questions.push(usage_question(999, 101));
-        assert_eq!(input_token_count(&questions), 6600);
-        // Even malformed metadata must not panic or discount an invalid prefix.
+        assert_eq!(input_token_count(&questions), 3300);
         questions.push(usage_question(1000, 100));
-        questions.last_mut().unwrap().encoding.position_ids.clear();
-        assert_eq!(input_token_count(&questions), 7700);
-    }
-
-    fn usage_image_question(pixel: f32) -> Question {
-        let mut question = usage_question(1000, 100);
-        question.encoding.multimodal = Some(Arc::new(infinity_v3_backend::MultimodalEncoding {
-            images: vec![(
-                1,
-                Arc::new(infinity_v3_backend::ImagePatches {
-                    pixels: vec![pixel; 4],
-                    grid_thw: [1, 2, 2],
-                    patch_dim: 1,
-                    merge_size: 1,
-                }),
-            )],
-            audios: vec![],
-            position_ids: std::array::from_fn(|_| (0..1100).collect()),
-            memory: None,
-        }));
-        question
-    }
-
-    #[test]
-    fn usage_deduplicates_image_content_but_not_distinct_pixels_or_positions() {
-        // Equal independently allocated images still share a prefix.
-        let mut questions = vec![usage_image_question(1.0), usage_image_question(1.0)];
-        assert_eq!(input_token_count(&questions), 1200);
-        questions.push(usage_image_question(2.0));
-        assert_eq!(input_token_count(&questions), 2300);
-        let mut moved = usage_image_question(1.0);
-        let media = Arc::get_mut(moved.encoding.multimodal.as_mut().unwrap()).unwrap();
-        // Check all prefix positions, including positions after the image.
-        media.position_ids[2][999] += 1;
-        questions.push(moved);
         assert_eq!(input_token_count(&questions), 3400);
-        questions.push(usage_question(1000, 100));
+        questions.push(usage_question(999, 101));
         assert_eq!(input_token_count(&questions), 4500);
     }
 
