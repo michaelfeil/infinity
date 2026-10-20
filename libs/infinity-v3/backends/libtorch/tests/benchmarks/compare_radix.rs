@@ -251,6 +251,12 @@ fn main() {
         .and_then(|meta| meta["sha"].as_str().map(str::to_owned));
     let fp8_dynamic = std::env::var("INFINITY_BENCHMARK_FP8")
         .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"));
+    assert!(
+        !fp8_dynamic
+            || std::env::var(infinity_v3_config::infinity_env!("TORCH_FP8_SCOPE")).as_deref()
+                == Ok("mlp"),
+        "Matched Candle/LibTorch FP8 comparisons require INFINITY_TORCH_FP8_SCOPE=mlp"
+    );
     let started = Instant::now();
     let torch = LibtorchBackend::new_with_dense_paths_and_fp8(
         &path,

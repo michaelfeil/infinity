@@ -25,6 +25,11 @@ run is not qualification by itself. These tools require checkpoint files and CUD
 are not run by the normal unit tests. `benchmark-fp8` additionally enables the
 Candle FP8 reference where supported.
 
+For `compare_decoders` and `compare_radix`, dynamic FP8 comparisons require
+`INFINITY_BENCHMARK_FP8=1 INFINITY_TORCH_FP8_SCOPE=mlp` so both backends use
+the same MLP-only precision policy. LibTorch's all-linear default quantizes
+additional projections and is not a matched comparison with Candle's MLP-only path.
+
 `laya_performance.py` measures a native Laya library through the synchronous C
 ABI using the pinned trained checkpoint. Its default matrix covers sequence
 lengths 100, 200, 300, 400 and 500 with batch sizes 1, 2, 4, 8, 16 and 32, plus
