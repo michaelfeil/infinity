@@ -140,9 +140,17 @@ It uses the existing native build. The new kernels compile for all four
 architectures; runtime validation currently covers H100.
 
 `INFINITY_TORCH_CUDNN_VARLEN=1` optionally selects cuDNN attention for eligible
-devices, sequence lengths and attention windows. With all-linear FP8 this also
-applies to Llama; its normalization arithmetic is preserved. SM89/SM120 retain
+devices, sequence lengths and attention windows. This also applies to Llama
+with all-linear FP8 or BF16 hidden width 4096; its normalization arithmetic is
+preserved, while cuDNN may change output rounding. SM89/SM120 retain
 Flash attention. Omitting this option preserves existing attention selection.
+
+BF16 Qwen3/Llama prefill also uses vectorized normalization and SwiGLU kernels.
+Hopper uses a cached gate/up GEMM choice for eligible large batches with the
+validated cuBLASLt 13.1.1; other versions, shapes and devices retain ATen.
+These optimizations use the native build and require no startup quantization.
+The BF16 kernels compile for SM80, SM89, SM90, SM100 and SM120; runtime
+validation currently covers H100.
 
 ### Native build
 

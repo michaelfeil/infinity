@@ -5,6 +5,8 @@
 #include <iostream>
 #include <limits>
 #include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/CUDAGraph.h>
+#include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <utility>
 namespace {
@@ -54,6 +56,24 @@ int main(int argc,char** argv) {
  c10::InferenceMode inference;at::manual_seed(43);
  auto options=at::TensorOptions().dtype(at::kBFloat16).device(c10::Device(argc>1?argv[1]:"cuda:0"));
  verify_subnormal_router(options.device());
+ // Small aligned chunks execute the retained Candle adapter, independently
+ // checking the specialized prefill kernel at its dispatch boundary.
+ for(int64_t rows:{127,128,257})for(bool residual:{false,true}) {
+  auto x=at::randn({rows,4096},options),r=at::randn_like(x),w=at::randn({4096},options);
+  for(double eps:{1e-6,1e-5}) {
+   std::vector<at::Tensor> normalized,summed;
+   for(int64_t start=0;start<rows;start+=64) {
+    auto count=std::min(int64_t(64),rows-start);
+    auto part=tei::decoder_exact_rms_norm(x.narrow(0,start,count),
+      residual?r.narrow(0,start,count):at::Tensor(),w,eps);
+    normalized.push_back(part.first);summed.push_back(part.second);
+   }
+   auto actual=tei::decoder_exact_rms_norm(x,residual?r:at::Tensor(),w,eps);
+   TORCH_CHECK(at::equal(actual.first,at::cat(normalized)),"BF16 prefill RMS changed adapter output");
+   TORCH_CHECK(at::equal(actual.second,at::cat(summed)),"BF16 prefill RMS changed residual");
+   if(!residual)TORCH_CHECK(actual.second.is_alias_of(x),"BF16 prefill RMS input alias");
+  }
+ }
  for(int64_t width:{896,1024,2048,3072,4096}) {
  for(int64_t rows:{1,7,257}) {
   auto x=(at::rand({rows,width},options)-.5),r=(at::rand_like(x)-.5),w=at::ones({width},options);
@@ -145,6 +165,35 @@ int main(int argc,char** argv) {
   auto fallback=full.forward(unseen,weight);
   expected_live_bytes_at_fallback=-1;
   TORCH_CHECK(cached_matmul_calls==saturated_calls&&at::equal(fallback,control),"Full cache must preserve independent ATen fallback output");
+  if(cublasLtGetVersion()==130101) {
+   auto stream=c10::cuda::getStreamFromPool(false,options.device().index());
+   c10::cuda::CUDAStreamGuard stream_guard(stream);
+   for(int width:{24576,28672}) {
+    tei::DecoderCacheUnderTest prefill;
+    auto input=at::randn({2048,4096},options),projection=at::randn({width,4096},options)*.02;
+    auto reference=at::linear(input,projection);
+    const auto before=cached_matmul_calls;
+    auto result=prefill.forward(input,projection,true);
+    TORCH_CHECK(cached_matmul_calls>before&&at::equal(result,reference),
+      "Qualified BF16 prefill tile must execute and match ATen");
+    stream.synchronize();
+    at::cuda::CUDAGraph graph;
+    graph.capture_begin();
+    result=prefill.forward(input,projection,true);
+    graph.capture_end();
+    input.add_(.25);
+    graph.replay();
+    TORCH_CHECK(at::equal(result,at::linear(input,projection)),
+      "Cached prefill graph must read refreshed input on the current stream");
+    fail_cached_matmul=true;
+    auto recovered=prefill.forward(input,projection,true);
+    const auto retired=cached_matmul_calls;
+    TORCH_CHECK(!fail_cached_matmul&&at::equal(recovered,at::linear(input,projection)),
+      "Prefill execution rejection must fall back");
+    prefill.forward(input,projection,true);
+    TORCH_CHECK(cached_matmul_calls==retired,"Retired prefill tile must not be retried");
+   }
+  }
   at::globalContext().setBlasPreferredBackend(prior);
  }
  std::cout<<"Exact decoder RMS registered widths 896/1024/2048/3072/4096 tests passed\n";
