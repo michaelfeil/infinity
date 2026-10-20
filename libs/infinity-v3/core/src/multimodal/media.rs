@@ -132,11 +132,18 @@ impl MediaResolver {
     }
 
     async fn resolve_inner(&self, source: String) -> Result<ResolvedImage> {
-        let slot = self.downloads.clone().try_acquire_owned()?;
-        // Bound both our Vec capacity and a decoder's compressed-input copy.
-        let reservation = self.budget.reserve(self.max_bytes * 2)?;
+        let slot = self
+            .downloads
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| invalid("Image retrieval workers closed"))?;
         if source.starts_with("data:") {
             let limit = self.max_bytes;
+            // Reserve the actual base64 capacity and the decoder's possible
+            // compressed-input copy, rather than the configured maximum.
+            let (_, capacity) = inline_data(&source, limit)?;
+            let reservation = self.budget.reserve(capacity * 2)?;
             return tokio::task::spawn_blocking(move || {
                 let _slot = slot;
                 let bytes = decode_data_url(&source, limit)?;
@@ -148,6 +155,9 @@ impl MediaResolver {
             .await
             .map_err(|_| invalid("Image data decoding failed"))?;
         }
+        // Remote responses can omit Content-Length, so bound their full buffer
+        // and the decoder's possible compressed-input copy before fetching.
+        let reservation = self.budget.reserve(self.max_bytes * 2)?;
         let url = self.remote_url(&source)?;
         let host = url.domain().unwrap();
         // Pin the validated DNS results to this client's connection. Never re-resolve after validation.
@@ -212,7 +222,7 @@ impl MediaResolver {
     }
 }
 
-fn decode_data_url(source: &str, max_bytes: usize) -> Result<Vec<u8>> {
+fn inline_data(source: &str, max_bytes: usize) -> Result<(&str, usize)> {
     if source.len() > max_bytes.div_ceil(3) * 4 + 64 {
         return Err(invalid("Image exceeds the encoded byte limit"));
     }
@@ -241,6 +251,11 @@ fn decode_data_url(source: &str, max_bytes: usize) -> Result<Vec<u8>> {
     if capacity.saturating_sub(2) > max_bytes {
         return Err(invalid("Image exceeds the encoded byte limit"));
     }
+    Ok((data, capacity))
+}
+
+fn decode_data_url(source: &str, max_bytes: usize) -> Result<Vec<u8>> {
+    let (data, capacity) = inline_data(source, max_bytes)?;
     let mut bytes = allocate_bytes(capacity)?;
     STANDARD
         .decode_vec(data, &mut bytes)
@@ -290,6 +305,87 @@ mod tests {
             Duration::from_secs(1),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn occupied_retrieval_slots_queue_and_release_on_completion() {
+        let resolver = resolver();
+        let held = resolver
+            .downloads
+            .clone()
+            .acquire_many_owned(2)
+            .await
+            .unwrap();
+        let request = resolver.resolve("data:image/png;base64,AQID".into());
+        tokio::pin!(request);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), &mut request)
+                .await
+                .is_err()
+        );
+        drop(held);
+        let image = request.await.unwrap();
+        assert_eq!(image.bytes, [1, 2, 3]);
+        assert_eq!(resolver.downloads.available_permits(), 2);
+    }
+
+    #[tokio::test]
+    async fn queued_retrieval_respects_timeout_and_does_not_leak_permits() {
+        let mut resolver = resolver();
+        resolver.timeout = Duration::from_millis(10);
+        let held = resolver
+            .downloads
+            .clone()
+            .acquire_many_owned(2)
+            .await
+            .unwrap();
+        let error = resolver
+            .resolve("data:image/png;base64,AQID".into())
+            .await
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("Image retrieval timed out"));
+        assert_eq!(resolver.budget.semaphore.available_permits(), 4);
+        drop(held);
+        assert_eq!(resolver.downloads.available_permits(), 2);
+        resolver.timeout = Duration::from_secs(1);
+        assert!(resolver
+            .resolve("data:image/png;base64,AQID".into())
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn concurrent_inline_images_reserve_actual_capacity() {
+        let budget = MediaBudget::new(40 * 1024 * 1024).unwrap();
+        let resolver = MediaResolver::new(
+            vec![],
+            budget.clone(),
+            20 * 1024 * 1024,
+            2,
+            Duration::from_secs(5),
+        )
+        .unwrap();
+        let mut requests = Vec::new();
+        for _ in 0..32 {
+            let resolver = resolver.clone();
+            requests.push(tokio::spawn(async move {
+                resolver.resolve("data:image/png;base64,AQID".into()).await
+            }));
+        }
+        // Keep all compressed inputs alive, as preprocessing/queued inference do.
+        let mut images = Vec::new();
+        for request in requests {
+            images.push(request.await.unwrap().unwrap());
+        }
+        assert!(images.iter().all(|image| image.bytes == [1, 2, 3]));
+        assert_eq!(
+            budget.semaphore.available_permits(),
+            budget.units as usize - 32
+        );
+        drop(images);
+        assert_eq!(budget.semaphore.available_permits(), budget.units as usize);
+        assert_eq!(resolver.downloads.available_permits(), 2);
     }
     #[test]
     fn url_policy_preserves_signatures_and_rejects_bypasses() {
