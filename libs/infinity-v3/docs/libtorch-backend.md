@@ -117,6 +117,8 @@ docker run --rm --gpus all -p 7997:80 \
 
 The build pins Torch 2.14.1 and CUDA 13.0.2. Python installs the C++ SDK in the
 builder; the runtime contains native shared libraries and their notices.
+Packaging follows ELF dependencies and retains runtime-loaded cuDNN/NVRTC
+modules; identical FA4 runtime libraries are shared between GPU bundles.
 Cargo dependency notices are included under `/usr/share/licenses/infinity_v3/cargo/`.
 Use `--build-arg BUILD_JOBS=16` on a host with sufficient RAM to speed up compilation.
 The default is four jobs. Supported SM targets and resolved SDK dependencies

@@ -52,6 +52,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Check native runtime packaging
+        run: python3 -m unittest discover -s scripts -p test_libtorch_packaging.py
       - name: Build default CPU server
         run: cargo build --locked
       - name: Build without default features
