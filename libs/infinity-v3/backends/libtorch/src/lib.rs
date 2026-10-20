@@ -289,6 +289,28 @@ fn start(error: impl ToString) -> BackendError {
     BackendError::Start(error.to_string())
 }
 
+fn resolve_fp8_scope(
+    requested: Option<&str>,
+    enabled: bool,
+    family: &str,
+) -> Result<String, BackendError> {
+    let dense_decoder = matches!(family, "llama" | "mistral" | "qwen2" | "qwen3");
+    let scope = requested.unwrap_or(if enabled && dense_decoder {
+        "all"
+    } else {
+        "mlp"
+    });
+    if !matches!(scope, "mlp" | "all") {
+        return Err(start("TORCH_FP8_SCOPE must be mlp or all"));
+    }
+    if scope == "all" && (!enabled || !dense_decoder) {
+        return Err(start(
+            "All-linear FP8 requires dynamic FP8 and a supported dense decoder",
+        ));
+    }
+    Ok(scope.to_owned())
+}
+
 fn upload_weight(
     handle: NonNull<c_void>,
     name: &str,
@@ -600,23 +622,14 @@ impl LibtorchBackend {
             }
         }
         options["_fp8_dynamic"] = enable_fp8_dynamic.into();
-        let fp8_scope = std::env::var(infinity_v3_config::infinity_env!("TORCH_FP8_SCOPE"))
-            .unwrap_or_else(|_| "mlp".to_owned());
-        if !matches!(fp8_scope.as_str(), "mlp" | "all") {
-            return Err(start("TORCH_FP8_SCOPE must be mlp or all"));
-        }
-        if fp8_scope == "all"
-            && (!enable_fp8_dynamic
-                || !matches!(
-                    normalized_family.as_str(),
-                    "llama" | "mistral" | "qwen2" | "qwen3"
-                ))
-        {
-            return Err(start(
-                "All-linear FP8 requires dynamic FP8 and a supported dense decoder",
-            ));
-        }
-        options["_fp8_scope"] = fp8_scope.into();
+        let requested_scope =
+            std::env::var(infinity_v3_config::infinity_env!("TORCH_FP8_SCOPE")).ok();
+        options["_fp8_scope"] = resolve_fp8_scope(
+            requested_scope.as_deref(),
+            enable_fp8_dynamic,
+            &normalized_family,
+        )?
+        .into();
         if decision
             && !laya
             && !matches!(
@@ -2678,6 +2691,29 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn dynamic_fp8_scope_defaults_and_overrides() {
+        for family in ["llama", "mistral", "qwen2", "qwen3"] {
+            assert_eq!(resolve_fp8_scope(None, true, family).unwrap(), "all");
+            assert_eq!(resolve_fp8_scope(Some("all"), true, family).unwrap(), "all");
+            assert_eq!(resolve_fp8_scope(Some("mlp"), true, family).unwrap(), "mlp");
+        }
+        for family in ["bert", "roberta", "xlm-roberta", "camembert", "modernbert"] {
+            assert_eq!(resolve_fp8_scope(None, true, family).unwrap(), "mlp");
+            assert!(resolve_fp8_scope(Some("all"), true, family).is_err());
+        }
+        for family in ["qwen3", "modernbert", "qwen3_moe", "gemma4"] {
+            assert_eq!(resolve_fp8_scope(None, false, family).unwrap(), "mlp");
+            assert_eq!(
+                resolve_fp8_scope(Some("mlp"), false, family).unwrap(),
+                "mlp"
+            );
+            assert!(resolve_fp8_scope(Some("all"), false, family).is_err());
+        }
+        assert!(resolve_fp8_scope(Some("unknown"), true, "qwen3").is_err());
+        assert!(resolve_fp8_scope(Some("all"), true, "qwen3_moe").is_err());
     }
 
     #[test]

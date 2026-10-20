@@ -222,7 +222,8 @@ struct Args {
     #[clap(long, env = infinity_v3_config::infinity_env!("MAX_BATCH_REQUESTS"), value_parser = optional_usize, value_delimiter = ';')]
     max_batch_requests: Vec<Optional<usize>>,
 
-    /// Experimental calibration-free FP8 MLPs (Ada/Hopper/Blackwell FP16/BF16 dense decoder and BERT/ModernBERT encoders).
+    /// Experimental calibration-free FP8 projections (Ada/Hopper/Blackwell FP16/BF16 dense decoder and BERT/ModernBERT encoders).
+    /// LibTorch dense decoders default to all-linear FP8; set TORCH_FP8_SCOPE=mlp with the configured environment prefix for MLP-only. Candle and encoders remain MLP-only.
     /// Bundled in official SM89/90/100/120 images; disabled by default. May change embedding, reranking, and decision accuracy.
     #[clap(long, env = infinity_v3_config::infinity_env!("ENABLE_FP8_DYNAMIC"), action = clap::ArgAction::Append, num_args = 0..=1, default_missing_value = "true", default_value = "false", value_delimiter = ';')]
     enable_fp8_dynamic: Vec<bool>,

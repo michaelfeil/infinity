@@ -458,7 +458,7 @@ public:
   }
   void ready() override {
     fp8_dynamic=options.boolean("_fp8_dynamic",false);
-    const auto fp8_scope=options.string("_fp8_scope","mlp");
+    const auto fp8_scope=options.string("_fp8_scope",fp8_dynamic?"all":"mlp");
     TORCH_CHECK(fp8_scope=="mlp"||fp8_scope=="all","FP8 scope must be mlp or all");
     fp8_all_linear=fp8_scope=="all";
     TORCH_CHECK(!fp8_all_linear||fp8_dynamic,"All-linear FP8 requires dynamic FP8 enabled");

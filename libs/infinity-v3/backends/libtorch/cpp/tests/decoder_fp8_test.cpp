@@ -101,10 +101,10 @@ at::Tensor all_linear_reference(const tei::Options& options,const tei::Weights& 
   }
   return tei::fused_add_rms_norm(h,residual,get("norm.weight"),1e-6).first;
 }
-void check_family(const std::string& family,c10::Device device,at::ScalarType dtype,bool all=false,int64_t hidden=32) {
+void check_family(const std::string& family,c10::Device device,at::ScalarType dtype,bool all=false,int64_t hidden=32,bool default_scope=false) {
   auto options=config(family);options.values["hidden_size"]=std::to_string(hidden);
   auto enabled=options;enabled.values["_fp8_dynamic"]="true";
-  enabled.values["_fp8_scope"]=all?"all":"mlp";
+  if(!default_scope)enabled.values["_fp8_scope"]=all?"all":"mlp";
   auto quantized_weights=weights(options,device,dtype);
   auto original_down=quantized_weights.at("model.layers.0.mlp.down_proj.weight").storage().getWeakStorageImpl();
   auto original_attention=quantized_weights.at("model.layers.0.self_attn.o_proj.weight").storage().getWeakStorageImpl();
@@ -202,6 +202,7 @@ void check_registered_causal_contract(c10::Device device) {
   auto gate_weight=at::cat({checkpoint.at(p+"mlp.gate_proj.weight"),checkpoint.at(p+"mlp.up_proj.weight")},0);
   for(bool fp8:{false,true}) {
     auto enabled=options;enabled.values["_fp8_dynamic"]=fp8?"true":"false";
+    enabled.values["_fp8_scope"]="mlp"; // Original Candle projection recipe.
     auto owned=checkpoint;auto model=tei::create_decoder(enabled,owned,device,at::kBFloat16);model->ready();
     auto original=[&](const at::Tensor& x,const at::Tensor& weight) {
       if(!fp8)return at::linear(x,weight);
@@ -244,6 +245,10 @@ int main(int argc,char** argv) {
   check_registered_causal_contract(device);
   for(auto dtype:{at::kHalf,at::kBFloat16})for(bool all:{false,true})
     for(auto family:{"llama","mistral","qwen2","qwen3"})check_family(family,device,dtype,all);
+  // Omitting the scope must use the same all-linear recipe and release the
+  // attention weights, while the explicit MLP-only cases above retain them.
+  for(auto dtype:{at::kHalf,at::kBFloat16})
+    for(auto family:{"llama","mistral","qwen2","qwen3"})check_family(family,device,dtype,true,32,true);
   // Width4096 activates both decoder RMS-to-FP8 branches. Two layers exercise
   // the carried residual and row scales against the unfused full-model recipe;
   // narrow attention/MLP projections keep this synthetic fixture inexpensive.

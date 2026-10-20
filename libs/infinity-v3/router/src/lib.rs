@@ -1187,7 +1187,7 @@ pub struct Info {
     pub tokenization_queue_capacity: usize,
     #[cfg_attr(feature = "http", schema(example = "0.5"))]
     pub radix_mlp_threshold: f32,
-    /// Experimental per-token activation and per-row weight FP8 MLP quantization.
+    /// Experimental per-token activation and per-row weight FP8 projection quantization.
     pub enable_fp8_dynamic: bool,
     /// Router Info
     #[cfg_attr(feature = "http", schema(example = "0.5.0"))]
