@@ -12,8 +12,8 @@ benchmarks do not qualify the current port for production.
 LibTorch 2.14.1 runs alongside Candle as an optional inference runtime. Rust owns
 model configuration, checkpoint loading, batch validation and infinity_v3 integration;
 a small C ABI bridge runs the model with the PyTorch C++ tensor API. Python is
-not required at build time or inference time when using a standalone LibTorch
-distribution. There is no TorchScript export step.
+not required at inference time. A standalone LibTorch build without InfinityFA4
+also needs no build-time Python. There is no TorchScript export step.
 
 ## Packed inference
 
@@ -22,7 +22,8 @@ Token embeddings, projections, attention outputs and MLP activations use
 `[total_tokens, heads, head_dim]`. Sequence boundaries come directly from infinity_v3's
 cumulative lengths. No token padding is allocated. Relative position bias paths use attention bias at each sequence's actual length.
 
-On CUDA, attention calls `aten::_flash_attention_forward` with device-resident
+On CUDA, eligible shapes use InfinityFA4 when its bundles are installed (see
+below). The existing attention paths call `aten::_flash_attention_forward` with device-resident
 INT32 cumulative lengths and maximum sequence length. This is the Flash
 Attention operator behind
 [PyTorch's `varlen_attn`](https://docs.pytorch.org/docs/stable/nn.attention.varlen.html).
@@ -39,6 +40,64 @@ The same arithmetic is selected for the validated Qwen3 MoE BF16 configuration,
 alongside its exact residual normalization. The vendor directory records the
 Torch and Flash revisions and source hashes; installation retains the complete
 BSD license, authors and provenance under `share/licenses/tei_torch`.
+
+### InfinityFA4
+
+The NVIDIA image includes ahead-of-time compiled FlashAttention-4 kernels for
+SM80, SM86, SM89, SM90, SM100 and SM120. All targets include FP16 and BF16
+attention; FP8 projection settings do not change the attention dtype.
+The native adapter shares the retained MIT Candle FA4 bridge and pinned
+BSD-licensed upstream kernels, without a Candle or Python serving dependency.
+
+The current exports cover these geometries:
+
+| Head dimension | Query heads / KV heads | Attention |
+|---|---|---|
+| 64 | 1 | Global or finite left/right window |
+| 128 | 4 | Causal, without a finite left window |
+| 128 | 2 | Global |
+| 64 | 1 | DeBERTa-v2/v3 disentangled relative attention |
+
+Sequence lengths and head counts are runtime values. Packed self-attention and
+unequal query/KV lengths, including eligible prefix-cache suffixes, use the
+current CUDA stream. Other geometries and ALiBi keep their existing kernels.
+Explicit decoder/BERT cuDNN selection retains precedence. Launch errors
+propagate instead of silently changing attention implementations.
+
+InfinityFA4 is enabled when built. Set `INFINITY_TORCH_FA4=0` before starting
+the server to select the previous attention paths. This setting is immutable
+after first use. FA4 is not uniformly faster: gains depend on model geometry,
+sequence length and the attention share of total inference time. Numerical
+results can differ from Torch Flash/efficient attention; kernel tests do not
+establish task accuracy for every checkpoint.
+
+DeBERTa computes relative-position terms inside attention using two packed
+relative tables and a signed-distance lookup. It avoids quadratic bucket and
+attention-bias tensors. Auxiliary memory remains subject to the backend's
+attention-memory admission budget. This applies to shared or separate position
+projections and c2p, p2c or combined relative terms.
+
+For a source build, install the pinned Torch SDK and the requirements under
+`backends/libtorch/cpp/vendor/infinity_fa4`, then run:
+
+```bash
+python backends/libtorch/cpp/vendor/infinity_fa4/build_all.py \
+  /path/to/infinity-fa4 --architectures '80;86;89;90;100;120'
+export INFINITY_FA4_ROOT=/path/to/infinity-fa4
+```
+
+Build requirements and provenance are described in the vendor
+[README](../backends/libtorch/cpp/vendor/infinity_fa4/README.md).
+Exporting adds a build stage for each architecture and requires Python, CuTe DSL
+and TVM FFI, but no GPU. Runtime packages include only the native bundles,
+their shared-library dependencies, manifests and license notices.
+Source builds omitting `INFINITY_FA4_ROOT` retain the previous attention paths.
+
+Native tests cover independent attention references, packed boundaries,
+strided views, concurrent/device initialization, CUDA graph replay and a
+complete DeBERTa model under a memory budget too small for quadratic bias.
+All six architecture exports compile; H100 is the runtime-tested target.
+Compilation alone does not establish accuracy or performance on other GPUs.
 
 CPU has an unpadded reference implementation: all projections/MLPs stay packed,
 and attention uses SDPA on each sequence at its actual length. This is useful for

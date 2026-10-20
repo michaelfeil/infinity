@@ -1,0 +1,18 @@
+{
+  "name": "InfinityFA4",
+  "wrapper_repository": "https://github.com/michaelfeil/candle-flash-attn-v4",
+  "wrapper_revision": "0f6c65849ad3b28b085940d5b31d325ed1df4902",
+  "upstream_repository": "https://github.com/Dao-AILab/flash-attention",
+  "upstream_revision": "e9cf2c1651d2303191eb40a739a3c135fda00999",
+  "licenses": {
+    "adapted_wrapper": "MIT",
+    "attention_kernels": "BSD-3-Clause"
+  },
+  "changes": [
+    "Native LibTorch integration",
+    "Multi-architecture native bundle dispatch",
+    "SM100 export ABI",
+    "DeBERTa score-hook export on SM8x",
+    "Offline target SM count for persistent scheduling"
+  ]
+}

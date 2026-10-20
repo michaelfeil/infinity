@@ -45,6 +45,26 @@ for source in libraries:
     else:
         shutil.copy2(source, destination)
 shutil.copytree(native[0] / "share/licenses/tei_torch", output / "licenses/native", dirs_exist_ok=True)
+fa4_root = native[0] / "lib/infinityfa4"
+if os.environ.get("INFINITY_FA4_ROOT") and not fa4_root.is_dir():
+    raise RuntimeError("InfinityFA4 was requested but its installed bundles are missing")
+if fa4_root.is_dir():
+    for arch in expected:
+        sm = arch.rstrip("a")
+        bundle = fa4_root / f"sm_{sm}"
+        manifest = json.loads((bundle / "manifest.json").read_text())
+        if manifest.get("name") != "InfinityFA4" or manifest.get("native_abi_version") != 1:
+            raise RuntimeError(f"Unsupported InfinityFA4 bundle ABI: {bundle}")
+        if manifest["architecture"] not in {f"sm_{sm}", f"sm_{sm}a"}:
+            raise RuntimeError(f"InfinityFA4 architecture mismatch: {bundle}")
+        if set(manifest["libraries"]) != {"libinfinityfa4.so", "libcute_dsl_runtime.so", "libtvm_ffi.so"}:
+            raise RuntimeError(f"Incomplete InfinityFA4 runtime manifest: {bundle}")
+        for name, expected_hash in manifest["libraries"].items():
+            library = bundle / name
+            with library.open("rb") as source:
+                if hashlib.file_digest(source, "sha256").hexdigest() != expected_hash:
+                    raise RuntimeError(f"InfinityFA4 library does not match its manifest: {library}")
+    shutil.copytree(fa4_root, output / "lib/infinityfa4", dirs_exist_ok=True)
 for distribution in sorted(site_packages.glob("*.dist-info")):
     notices = distribution / "licenses"
     if notices.is_dir():

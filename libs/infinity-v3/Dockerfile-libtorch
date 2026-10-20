@@ -22,11 +22,18 @@ ENV LIBTORCH=/opt/torch-sdk/lib/python3.12/site-packages/torch \
 ARG LIBTORCH_CUDA_ARCHITECTURES="80;86;89;90;100;120"
 ARG BUILD_JOBS=4
 ARG ENV_VAR_BASE=INFINITY
-ARG GIT_SHA
-ARG DOCKER_LABEL
 ENV LIBTORCH_CUDA_ARCHITECTURES=$LIBTORCH_CUDA_ARCHITECTURES \
     CMAKE_BUILD_PARALLEL_LEVEL=$BUILD_JOBS \
     CARGO_BUILD_JOBS=$BUILD_JOBS
+COPY backends/libtorch/cpp/vendor/infinity_fa4 ./backends/libtorch/cpp/vendor/infinity_fa4
+RUN --mount=type=cache,target=/root/.cache/pip \
+    /opt/torch-sdk/bin/pip install -r backends/libtorch/cpp/vendor/infinity_fa4/requirements-build.txt && \
+    /opt/torch-sdk/bin/pip install --no-deps -r backends/libtorch/cpp/vendor/infinity_fa4/requirements-sources.txt && \
+    /opt/torch-sdk/bin/python backends/libtorch/cpp/vendor/infinity_fa4/build_all.py \
+      /opt/infinity-fa4 --architectures "$LIBTORCH_CUDA_ARCHITECTURES"
+ENV INFINITY_FA4_ROOT=/opt/infinity-fa4
+ARG GIT_SHA
+ARG DOCKER_LABEL
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \

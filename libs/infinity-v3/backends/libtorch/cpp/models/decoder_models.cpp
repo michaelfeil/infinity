@@ -2,6 +2,7 @@
 #include "batching/prefix_cache.h"
 #include "models/decoder_models.h"
 #include "kernels/moe_kernels.h"
+#include "kernels/infinity_fa4.h"
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #include "helpers/fp8_linear.h"
@@ -249,6 +250,11 @@ class Decoder final : public Model {
   }
   at::Tensor attend_full(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v, const PackedInput& input,int64_t left_window,int64_t right_window) const {
     if (device.is_cuda()) {
+      if(!cudnn_varlen) {
+        auto fa4=infinity_fa4(q,k,v,input.cumulative,input.cumulative,input.max_sequence,
+          1./std::sqrt(static_cast<double>(head_dim)),causal,left_window,right_window);
+        if(fa4.defined())return fa4;
+      }
       // cuDNN packed attention cannot express the local window here. It is
       // equivalent only when every sequence fits inside the configured window.
       const bool window_inactive=(left_window<0||left_window>=input.max_sequence-1)

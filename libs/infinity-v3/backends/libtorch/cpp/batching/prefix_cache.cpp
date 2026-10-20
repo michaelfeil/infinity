@@ -1,4 +1,5 @@
 #include "batching/prefix_cache.h"
+#include "kernels/infinity_fa4.h"
 #include "batching/cuda_graph.h"
 #include "batching/prefix_lookup.h"
 #include "batching/tensor_copy.h"
@@ -163,6 +164,11 @@ at::Tensor prefix_attention(const at::Tensor& q,const at::Tensor& k,const at::Te
   bool exact,bool capture,bool cudnn) {
   auto kv=input.prefix->attention(layer,k,v,capture);
   if(q.is_cuda()) {
+    if(!cudnn) {
+      auto fa4=infinity_fa4(q,kv.key,kv.value,input.cumulative,kv.cumulative,
+        input.max_sequence,scale,true,left,right);
+      if(fa4.defined())return fa4;
+    }
     if(cudnn) {
       // Keep the original packed cuDNN geometry and causal provider. An
       // explicit dense suffix bias changes cuDNN's reduction recipe enough

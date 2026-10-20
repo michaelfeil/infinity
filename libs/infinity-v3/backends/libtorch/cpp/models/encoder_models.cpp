@@ -409,6 +409,11 @@ struct Encoder final : Model {
   at::Tensor attend(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v, const PackedInput& input, int64_t window = -1, const std::optional<at::Tensor>& bias = std::nullopt) const {
     if (exact_cpu_half) return modern_cpu::attention(q, k, v, input.offsets, input.batch,
       static_cast<float>(1.0 / std::sqrt(hidden / heads)), window);
+    if(!alibi&&!bias) {
+      auto fa4=infinity_fa4(q,k,v,input.cumulative,input.cumulative,input.max_sequence,
+        1.0/std::sqrt(static_cast<double>(q.size(-1))),false,window,window);
+      if(fa4.defined())return fa4;
+    }
 #ifdef TEI_TORCH_CUDA_KERNELS
     if(exact_alibi64)
       return torch_flash_alibi64(q,k,v,input.cumulative,*alibi,input.max_sequence,
@@ -787,6 +792,7 @@ struct Deberta final : Model {
   std::vector<at::Tensor> qkv_weight,qkv_bias,position_key,position_query;
   at::Tensor attention_scale;
   mutable std::map<int64_t,at::Tensor> shared_bucket_cache;
+  mutable std::map<int64_t,at::Tensor> signed_bucket_cache;
   mutable size_t shared_bucket_bytes = 0;
   Deberta(const Options& options,Weights& w,c10::Device dev,at::ScalarType dt)
     :o(options),weights(w),device(dev),dtype(dt),hidden(o.integer("hidden_size",768)),
@@ -849,7 +855,9 @@ struct Deberta final : Model {
     admit_attention_bias(checked_size_product(checked_size_product(length,length),128),
       o.integer("_attention_bias_max_bytes",default_attention_bias_max_bytes));
     auto idx=at::arange(length,at::TensorOptions().device(device).dtype(at::kLong));
-    auto delta=idx.unsqueeze(1)-idx.unsqueeze(0);
+    return relative_buckets(idx.unsqueeze(1)-idx.unsqueeze(0));
+  }
+  at::Tensor relative_buckets(at::Tensor delta)const {
     if(o.integer("position_buckets",-1)>0) {
       const double mid=span/2.;TORCH_CHECK(span>=4&&max_relative>mid+1,"Invalid logarithmic DeBERTa buckets");
       auto distance=delta.abs().to(at::kFloat);
@@ -857,6 +865,17 @@ struct Deberta final : Model {
       delta=at::where(distance>mid,logarithmic.to(at::kLong)*delta.sign(),delta);
     }
     return (delta+span).clamp(0,2*span-1);
+  }
+  at::Tensor signed_buckets(int64_t length)const {
+    const auto found=signed_bucket_cache.find(length);
+    if(found!=signed_bucket_cache.end())return found->second;
+    auto delta=at::arange(1-length,length,at::TensorOptions().device(device).dtype(at::kLong));
+    auto table=relative_buckets(delta).to(at::kInt);
+    constexpr size_t byte_limit=32*1024*1024;
+    if(signed_bucket_cache.size()<16&&table.nbytes()<=byte_limit-shared_bucket_bytes) {
+      shared_bucket_bytes+=table.nbytes();signed_bucket_cache.emplace(length,table);
+    }
+    return table;
   }
   at::Tensor cached_buckets(int64_t length)const {
     const auto found=shared_bucket_cache.find(length);
@@ -881,7 +900,20 @@ struct Deberta final : Model {
     // Bucket values depend only on local i-j. Use the actual longest real
     // sequence's table for CUDA, with direct top-left indexing in bias fill.
     // This metadata shares no token rows and introduces no padded activations.
-    at::Tensor shared_indices;
+    at::Tensor shared_indices,fa4_buckets;
+    const bool use_fa4=infinity_fa4_deberta_supported(h,dim);
+    if(use_fa4) {
+      // Two retained relative tables plus one matmul/scaling temporary;
+      // conservatively include contiguous Q/K/V copies, output and bucket
+      // construction. None of these allocations grows quadratically in length.
+      auto table=checked_size_product(checked_size_product(heads,h.size(0)),2*span);
+      auto bytes=checked_size_product(table,3*h.element_size());
+      bytes=checked_size_sum(bytes,checked_size_product(
+        checked_size_product(checked_size_product(h.size(0),heads),dim),4*h.element_size()));
+      bytes=checked_size_sum(bytes,checked_size_product(input.max_sequence,256));
+      admit_attention_bias(bytes,o.integer("_attention_bias_max_bytes",default_attention_bias_max_bytes));
+      fa4_buckets=signed_buckets(input.max_sequence);
+    } else
 #ifdef TEI_TORCH_CUDA_KERNELS
     if(device.is_cuda()&&(dtype==at::kHalf||dtype==at::kBFloat16))shared_indices=cached_buckets(input.max_sequence);
     else
@@ -904,7 +936,14 @@ struct Deberta final : Model {
       auto q=qkv.narrow(1,0,heads),k=qkv.narrow(1,heads,heads),v=qkv.narrow(1,2*heads,heads);
       auto keys=k/scale;
       at::Tensor attended;
-      if(device.is_cuda()) {
+      if(use_fa4) {
+        auto table=[&](const at::Tensor& projection,const at::Tensor& values) {
+          return projection.defined()?at::matmul(values.transpose(0,1),projection)/scale:
+            at::zeros({heads,h.size(0),2*span},h.options());
+        };
+        attended=infinity_fa4_deberta(q,keys,v,input.cumulative,
+          table(position_key[layer],q),table(position_query[layer],k),fa4_buckets,input.max_sequence);
+      } else if(device.is_cuda()) {
         // The packed Torch kernel addresses bias with local query/key coordinates
         // and advances stride(0) per sequence, independently of packed QKV offsets.
         // Bound storage for both these actual tiles and the logical tensor view.
