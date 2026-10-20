@@ -228,6 +228,19 @@ int main(int argc, char** argv) {
   for(auto type:{"distilbert","modernbert","nomic_bert","new","jina","jina-code","mpnet"}) {
     auto o=config(type);auto w=weights(type,device,dtype);auto model=tei::create_encoder(o,w,device,dtype);model->ready();
     auto packed=model->forward({ids,types,positions,cu,offsets,2,5});
+    TORCH_CHECK(!model->classify_hidden({ids,types,positions,cu,offsets,2,5},packed).defined(),
+      "Embedding-only encoder must not expose a classifier readout");
+    if (std::string(type) == "modernbert") {
+      auto heads=w;linear(heads,"classifier",3,H,device,dtype);
+      linear(heads,"head.dense",H,H,device,dtype,false);norm(heads,"head.norm",device,dtype,false);
+      for (const auto* pool : {"cls", "mean", "last_token"}) {
+        auto options=o;options.values["classifier_pooling"]=pool;
+        auto classifier=tei::create_encoder(options,heads,device,dtype);classifier->ready();
+        TORCH_CHECK(at::equal(classifier->predict({ids,types,positions,cu,offsets,2,5},false),
+          classifier->classify_hidden({ids,types,positions,cu,offsets,2,5},packed)),
+          "ModernBERT readout changed sequence logits for ",pool);
+      }
+    }
     auto selected_mean=model->mean_pool(packed.narrow(0,3,5));
     auto original_mean=packed.narrow(0,3,5).mean(0,true,at::kFloat);
     TORCH_CHECK(selected_mean.scalar_type()==at::kFloat&&at::equal(selected_mean,original_mean),
@@ -264,6 +277,8 @@ int main(int argc, char** argv) {
         return at::linear(pooled,head_weights.at("classifier.weight"),head_weights.at("classifier.bias"));
       };
       auto scores=head_model->predict({ids,types,positions,cu,offsets,2,5},false);
+      TORCH_CHECK(at::equal(scores,head_model->classify_hidden({ids,types,positions,cu,offsets,2,5},packed)),
+        "Readout from existing hidden states changed sequence logits for ",type);
       auto head_tolerance=device.is_cuda() ? .002 : 1e-6;
       TORCH_CHECK(at::allclose(scores,expected_head(preferred),0,head_tolerance),"Classifier pooler namespace/precedence mismatch for ",type);
       head_weights.erase(preferred+".bias");

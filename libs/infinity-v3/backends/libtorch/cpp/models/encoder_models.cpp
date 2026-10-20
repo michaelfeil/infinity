@@ -626,6 +626,13 @@ struct Encoder final : Model {
     TORCH_CHECK(!tokenwise || family != Family::Gte, "GTE does not support token classification (same as Candle)");
     auto h = forward(input);
     if (tokenwise) return root_linear(h, "classifier");
+    return sequence_readout(input, std::move(h));
+  }
+  at::Tensor classify_hidden(const PackedInput& input, const at::Tensor& states) const override {
+    if (!classification_width()) return {};
+    return sequence_readout(input, states);
+  }
+  at::Tensor sequence_readout(const PackedInput& input, at::Tensor h) const {
     std::vector<at::Tensor> rows;
     const auto pool = family == Family::Modern ? o.string("classifier_pooling", "cls") : "cls";
 #ifdef TEI_TORCH_CUDA_KERNELS
