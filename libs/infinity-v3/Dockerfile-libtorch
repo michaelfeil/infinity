@@ -6,7 +6,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     RUSTUP_HOME=/usr/local/rustup \
     PATH=/opt/torch-sdk/bin:/usr/local/cargo/bin:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential ca-certificates cmake curl git libssl-dev pkg-config \
+    binutils build-essential ca-certificates cmake curl git libssl-dev pkg-config \
     protobuf-compiler python3-venv \
     && rm -rf /var/lib/apt/lists/*
 RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -53,7 +53,7 @@ BUILD
 
 FROM nvidia/cuda:13.0.2-base-ubuntu24.04 AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libgomp1 libssl3t64 libstdc++6 \
+    ca-certificates libgomp1 libssl3t64 libstdc++6 zlib1g \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /opt/infinity/bin/ /usr/local/bin/
 COPY --from=builder /opt/infinity/lib/ /opt/infinity/lib/
@@ -61,7 +61,10 @@ COPY --from=builder /opt/infinity/licenses/ /usr/share/licenses/infinity_v3/
 COPY --from=builder /opt/infinity/cuda-architectures.txt /usr/share/infinity_v3/cuda-architectures.txt
 COPY --from=builder /opt/infinity/sdk-requirements.txt /usr/share/infinity_v3/sdk-requirements.txt
 RUN echo /opt/infinity/lib > /etc/ld.so.conf.d/infinity-v3.conf && ldconfig \
-    && infinity_v3 --help > /dev/null
+    && infinity_v3 --help > /dev/null \
+    && for tool in python python3 pip gcc g++ nvcc cmake cargo rustc; do \
+         if command -v "$tool" >/dev/null 2>&1; then echo "Unexpected build tool: $tool"; exit 1; fi; \
+       done
 # The CLI accepts unprefixed defaults for any compiled environment base.
 ENV BACKEND=libtorch \
     HUGGINGFACE_HUB_CACHE=/data \
