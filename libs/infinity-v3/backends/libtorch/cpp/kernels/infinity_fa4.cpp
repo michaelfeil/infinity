@@ -43,7 +43,10 @@ Bundle* bundle(const at::Tensor& q) {
   if(!enabled()||!q.is_cuda()||(q.scalar_type()!=at::kHalf&&q.scalar_type()!=at::kBFloat16))return nullptr;
   auto p=at::cuda::getDeviceProperties(q.get_device());
   int sm=p->major*10+p->minor;
-  if(sm!=80&&sm!=86&&sm!=89&&sm!=90&&sm!=100&&sm!=120)return nullptr;
+  // Other CUDA kernels may run through PTX on a GPU omitted from this build.
+  constexpr int architectures[]={INFINITY_FA4_ARCHITECTURES};
+  if(std::find(std::begin(architectures),std::end(architectures),sm)==std::end(architectures))
+    return nullptr;
   static std::mutex mutex;
   static std::map<int,std::unique_ptr<Bundle>> bundles;
   std::lock_guard lock(mutex);
@@ -62,7 +65,7 @@ Bundle* bundle(const at::Tensor& q) {
   auto forward=reinterpret_cast<Forward>(dlsym(handle,"infinity_fa4_forward_v1"));
   auto deberta=reinterpret_cast<Deberta>(dlsym(handle,"infinity_fa4_deberta_v1"));
   auto error=reinterpret_cast<const char*(*)()>(dlsym(handle,"infinity_fa4_error_v1"));
-  TORCH_CHECK(capability&&forward&&deberta&&error&&capability()==sm,"Incompatible InfinityFA4 bundle: ",path.string());
+  TORCH_CHECK(capability&&forward&&error&&capability()==sm,"Incompatible InfinityFA4 bundle: ",path.string());
   auto result=std::make_unique<Bundle>(Bundle{handle,forward,deberta,error});
   auto* ptr=result.get();bundles.emplace(sm,std::move(result));return ptr;
 }
@@ -109,13 +112,15 @@ at::Tensor infinity_fa4(const at::Tensor& q,const at::Tensor& k,const at::Tensor
   return output;
 }
 bool infinity_fa4_deberta_supported(const at::Tensor& q,int64_t head_dim) {
-  return head_dim==64&&q.numel()>0&&bundle(q);
+  if(head_dim!=64||q.numel()==0)return false;
+  auto* native=bundle(q);
+  return native&&native->deberta;
 }
 at::Tensor infinity_fa4_deberta(const at::Tensor& q,const at::Tensor& k,const at::Tensor& v,
     const at::Tensor& cumulative,const at::Tensor& c2p,const at::Tensor& p2c,
     const at::Tensor& buckets,int64_t max_sequence) {
   auto* native=bundle(q);
-  TORCH_CHECK(native&&q.dim()==3&&q.size(2)==64&&q.sizes()==k.sizes()&&q.sizes()==v.sizes(),
+  TORCH_CHECK(native&&native->deberta&&q.dim()==3&&q.size(2)==64&&q.sizes()==k.sizes()&&q.sizes()==v.sizes(),
     "Unsupported InfinityFA4 DeBERTa geometry");
   c10::cuda::CUDAGuard guard(q.device());check_offsets(q,cumulative);
   TORCH_CHECK(c2p.dim()==3&&c2p.sizes()==p2c.sizes()&&c2p.size(0)==q.size(1)&&

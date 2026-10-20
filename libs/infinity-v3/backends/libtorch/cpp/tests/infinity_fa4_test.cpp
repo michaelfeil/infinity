@@ -126,6 +126,28 @@ void deberta(at::ScalarType dtype) {
   a.mul_(1.1);q.mul_(.7);graph.replay();
   close(captured,expected(),"DeBERTa graph replay");
 }
+void deberta_p2c_direction(at::ScalarType dtype) {
+  auto opts=at::TensorOptions().device(at::kCUDA).dtype(dtype);
+  constexpr int64_t n=3,span=4;
+  auto q=at::zeros({n,1,64},opts),v=q.clone();
+  // Basis values expose the probabilities directly; zero QK/c2p isolates p2c.
+  v.select(1,0).slice(1,0,n).copy_(at::eye(n,opts));
+  auto c2p=at::zeros({1,n,2*span},opts);
+  auto p2c=at::tensor({0.,0.,0.,-1.,2.,.5,0.,0.,
+                       0.,0.,1.,-.5,0.,2.,0.,0.,
+                       0.,0.,-2.,1.,.5,-1.,0.,0.}).to(opts).reshape({1,n,2*span});
+  auto positions=at::arange(n,opts.dtype(at::kLong));
+  auto indices=positions.unsqueeze(1)-positions.unsqueeze(0)+span;
+  // The final transpose after gather restores q-k: output[q,k]=p2c[k,q-k+span].
+  auto scores=p2c.gather(2,indices.t().unsqueeze(0)).transpose(1,2).to(at::kFloat);
+  auto reversed=p2c.gather(2,indices.unsqueeze(0)).transpose(1,2).to(at::kFloat);
+  TORCH_CHECK((at::softmax(scores,-1)-at::softmax(reversed,-1)).abs().max().item<float>()>.2,
+    "p2c fixture must distinguish opposite bucket directions");
+  auto expected=at::matmul(at::softmax(scores,-1),v.to(at::kFloat).transpose(0,1)).transpose(0,1);
+  auto buckets=at::arange(span-n+1,span+n,opts.dtype(at::kInt));
+  auto cu=offsets({0,n},opts);
+  close(tei::infinity_fa4_deberta(q,q,v,cu,c2p,p2c,buckets,n),expected,"DeBERTa p2c direction");
+}
 void deberta_model(at::ScalarType dtype,bool shared,const std::string& terms) {
   tei::Options options;
   options.values={{"model_type","deberta-v2"},{"hidden_size","128"},{"num_attention_heads","2"},
@@ -181,11 +203,29 @@ int main(int argc,char** argv) {
   c10::InferenceMode inference;
   at::set_num_threads(2);
   at::manual_seed(724);
-  if(argc>1&&std::string(argv[1])=="--disabled") {
+  const std::string mode=argc>1?argv[1]:"";
+  if(mode=="--disabled"||mode=="--unbuilt"||mode=="--missing-bundle"||mode=="--standard-only") {
     auto q=at::zeros({7,2,64},at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16));
     auto cu=offsets({0,7},q.options());
+    if(mode=="--missing-bundle") {
+      bool rejected=false;
+      try {tei::infinity_fa4(q,q,q,cu,cu,7,.125);}
+      catch(const c10::Error& e) {
+        rejected=std::string(e.what()).find("Missing InfinityFA4 bundle")!=std::string::npos;
+      }
+      TORCH_CHECK(rejected,"Missing promised bundle must raise an error");
+      return 0;
+    }
+    if(mode=="--standard-only") {
+      TORCH_CHECK(!tei::infinity_fa4_deberta_supported(q),"Standard-only bundle advertised DeBERTa");
+      auto stream=c10::cuda::getStreamFromPool();
+      c10::cuda::CUDAStreamGuard guard(stream);
+      for(auto dtype:{at::kHalf,at::kBFloat16})
+        for(int mode=0;mode<4;++mode)standard(dtype,mode,false);
+      return 0;
+    }
     TORCH_CHECK(!tei::infinity_fa4(q,q,q,cu,cu,7,.125).defined()&&
-      !tei::infinity_fa4_deberta_supported(q),"Disabled InfinityFA4 intercepted attention");
+      !tei::infinity_fa4_deberta_supported(q),"Unavailable InfinityFA4 intercepted attention");
     return 0;
   }
   concurrent_first_use();
@@ -195,6 +235,7 @@ int main(int argc,char** argv) {
   for(auto dtype:{at::kHalf,at::kBFloat16}) {
     for(int mode=0;mode<4;++mode)for(bool cross:{false,true})standard(dtype,mode,cross);
     deberta(dtype);
+    deberta_p2c_direction(dtype);
     for(bool shared:{false,true})
       for(const auto& terms:{"c2p","p2c","c2p|p2c"})
         deberta_model(dtype,shared,terms);
