@@ -1,6 +1,7 @@
 // Fork license metadata updated by Infinity Core Contributors; see LICENSE.
 use super::model_routing::{RoutedJson, RoutingRejection};
 use super::response_format::Json;
+use super::tensor::{encode_matrix, encode_vector, Tensor};
 use crate::http::ner::apply_aggregation;
 /// HTTP Server logic
 use crate::http::types::{
@@ -28,8 +29,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{http, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
-use base64::prelude::BASE64_STANDARD;
-use base64::Engine;
 use futures::future::join_all;
 use futures::FutureExt;
 use http::header::AUTHORIZATION;
@@ -1118,6 +1117,7 @@ async fn similarity_inner(
     }
     let parameters = req.parameters.unwrap_or_default();
     let embed_req = EmbedRequest {
+        encoding_format: EncodingFormat::Float,
         model: None,
         inputs: EmbeddingInput::TextBatch(inputs),
         truncate: parameters.truncate,
@@ -1133,8 +1133,16 @@ async fn similarity_inner(
 
     // Compute cosine
     reserve_result_allocation::<f32>(batch_size - 1).map_err(ErrorResponse::from)?;
+    let Embedding::Float(source) = &embeddings[0] else {
+        unreachable!("similarity requests float embeddings");
+    };
     let distances = (1..batch_size)
-        .map(|i| 1.0 - f32::cosine(&embeddings[0], &embeddings[i]).unwrap() as f32)
+        .map(|i| {
+            let Embedding::Float(candidate) = &embeddings[i] else {
+                unreachable!("similarity requests float embeddings");
+            };
+            1.0 - f32::cosine(source, candidate).unwrap() as f32
+        })
         .collect();
 
     Ok((header_map, Json(SimilarityResponse(distances))))
@@ -1217,7 +1225,7 @@ async fn embed_inner(
             metrics::counter!("infinity_request_success", "model" => info.model_id.clone(), "method" => "single").increment(1);
 
             (
-                EmbedResponse(vec![response.results]),
+                vec![response.results],
                 ResponseMetadata::new(
                     compute_chars,
                     response.metadata.prompt_tokens,
@@ -1315,7 +1323,7 @@ async fn embed_inner(
             counter.increment(1);
 
             (
-                EmbedResponse(embeddings),
+                embeddings,
                 ResponseMetadata::new(
                     compute_chars,
                     total_compute_tokens,
@@ -1327,6 +1335,13 @@ async fn embed_inner(
             )
         }
     };
+
+    let mut encoded = super::result_storage::vector(response.len())
+        .map_err(|err| ErrorResponse::from(TextEmbeddingsError::from(err)))?;
+    for values in response {
+        encoded.push(encode_vector(values, req.encoding_format).map_err(ErrorResponse::from)?);
+    }
+    let response = EmbedResponse(encoded);
 
     metadata.record_span(&span);
     metadata.record_metrics(&info.model_id);
@@ -1621,7 +1636,7 @@ async fn embed_all_inner(
             metrics::counter!("infinity_request_success", "model" => info.model_id.clone(), "method" => "single").increment(1);
 
             (
-                EmbedAllResponse(vec![response.results]),
+                vec![response.results],
                 ResponseMetadata::new(
                     compute_chars,
                     response.metadata.prompt_tokens,
@@ -1717,7 +1732,7 @@ async fn embed_all_inner(
             counter.increment(1);
 
             (
-                EmbedAllResponse(embeddings),
+                embeddings,
                 ResponseMetadata::new(
                     compute_chars,
                     total_compute_tokens,
@@ -1729,6 +1744,13 @@ async fn embed_all_inner(
             )
         }
     };
+
+    let mut encoded = super::result_storage::vector(response.len())
+        .map_err(|err| ErrorResponse::from(TextEmbeddingsError::from(err)))?;
+    for values in response {
+        encoded.push(encode_matrix(values, req.encoding_format).map_err(ErrorResponse::from)?);
+    }
+    let response = EmbedAllResponse(encoded);
 
     metadata.record_span(&span);
     metadata.record_metrics(&info.model_id);
@@ -1785,26 +1807,8 @@ async fn openai_embed_inner(
     Json(req): Json<OpenAICompatRequest>,
 ) -> Result<(HeaderMap, Json<OpenAICompatResponse>), (StatusCode, Json<OpenAICompatErrorResponse>)>
 {
-    let encode_embedding = |array: Vec<f32>| -> Result<Embedding, ErrorResponse> {
-        match req.encoding_format {
-            EncodingFormat::Float => Ok(Embedding::Float(array)),
-            EncodingFormat::Base64 => {
-                // Unsafe is fine here since we do not violate memory ownership: bytes
-                // is only used in this scope and we return an owned string
-                let bytes = unsafe {
-                    std::slice::from_raw_parts(array.as_ptr() as *const u8, array.len() * 4)
-                };
-
-                let encoded_size = base64::encoded_len(bytes.len(), true).ok_or_else(|| {
-                    ErrorResponse::from(TextEmbeddingsError::Backend(BackendError::Inference(
-                        "Base64 output size overflow".into(),
-                    )))
-                })?;
-                reserve_result_allocation::<u8>(encoded_size).map_err(ErrorResponse::from)?;
-                Ok(Embedding::Base64(BASE64_STANDARD.encode(bytes)))
-            }
-        }
-    };
+    let encode_embedding =
+        |array: Vec<f32>| encode_vector(array, req.encoding_format).map_err(ErrorResponse::from);
 
     let span = tracing::Span::current();
     if let Some(context) = context {
@@ -2356,6 +2360,8 @@ fn api_doc() -> utoipa::openapi::OpenApi {
     ClassifierModel,
     Embedding,
     EncodingFormat,
+    Tensor,
+    super::types::AllEmbedding,
     EmbeddingModel,
     ClassifyRequest,
     ClassifyRequestId,
@@ -2973,6 +2979,15 @@ mod classify_tests {
             "ClassifyData",
             "ClassifyUsage",
             "ClassifyErrorResponse",
+            "Embedding",
+            "EncodingFormat",
+            "Tensor",
+            "AllEmbedding",
+            "EmbedRequest",
+            "EmbedAllRequest",
+            "EmbedResponse",
+            "EmbedAllResponse",
+            "OpenAICompatRequest",
         ] {
             assert_eq!(
                 doc["components"]["schemas"][schema], checked_in["components"]["schemas"][schema],

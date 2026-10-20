@@ -1,3 +1,4 @@
+use super::tensor::Tensor;
 use crate::ErrorType;
 use infinity_v3_core::input::{Message, MessageInput};
 use infinity_v3_core::tokenization::EncodingInput;
@@ -539,12 +540,13 @@ impl From<EmbeddingInput> for InputBatch {
     }
 }
 
-#[derive(Deserialize, ToSchema, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, ToSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EncodingFormat {
     #[default]
     Float,
     Base64,
+    Tensor,
 }
 
 #[derive(Deserialize)]
@@ -676,6 +678,15 @@ pub(super) fn exclusive_input_schema(schema: RefOr<Schema>) -> RefOr<Schema> {
 pub(crate) enum Embedding {
     Float(Vec<f32>),
     Base64(String),
+    Tensor(Tensor),
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(untagged)]
+pub(crate) enum AllEmbedding {
+    Float(Vec<Vec<f32>>),
+    Base64(Vec<String>),
+    Tensor(Tensor),
 }
 
 #[derive(Serialize, ToSchema)]
@@ -753,6 +764,10 @@ pub(crate) struct SimilarityResponse(pub Vec<f32>);
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedRequest {
+    /// float preserves nested arrays; tensor returns shape, dtype and packed data.
+    #[serde(default)]
+    #[schema(default = "float")]
+    pub encoding_format: EncodingFormat,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     pub inputs: EmbeddingInput,
@@ -793,7 +808,7 @@ fn default_normalize() -> bool {
 
 #[derive(Serialize, ToSchema)]
 #[schema(example = json!([[0.0, 1.0, 2.0]]))]
-pub(crate) struct EmbedResponse(pub Vec<Vec<f32>>);
+pub(crate) struct EmbedResponse(pub Vec<Embedding>);
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedSparseRequest {
@@ -830,6 +845,10 @@ pub(crate) struct EmbedSparseResponse(pub Vec<Vec<SparseValue>>);
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedAllRequest {
+    /// float preserves nested arrays; tensor returns shape, dtype and packed data.
+    #[serde(default)]
+    #[schema(default = "float")]
+    pub encoding_format: EncodingFormat,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     pub inputs: EmbeddingInput,
@@ -854,7 +873,7 @@ pub(crate) struct EmbedAllRequest {
 
 #[derive(Serialize, ToSchema)]
 #[schema(example = json!([[[0.0, 1.0, 2.0]]]))]
-pub(crate) struct EmbedAllResponse(pub Vec<Vec<Vec<f32>>>);
+pub(crate) struct EmbedAllResponse(pub Vec<AllEmbedding>);
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct OpenAICompatErrorResponse {

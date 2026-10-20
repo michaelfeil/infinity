@@ -7,7 +7,7 @@
       "name": "infinity authors"
     },
     "license": {
-      "name": "Infinity License 1.0 for Commercial Use OR PolyForm Noncommercial 1.0.0 (see scope and retained licenses)"
+      "name": "Infinity Restricted MIT License 1.0 (see scope and retained licenses)"
     },
     "version": "1.8.18-rc.0"
   },
@@ -1518,20 +1518,21 @@
             "type": "string",
             "description": "Served model name; required for multi-model deployments.",
             "nullable": true
+          },
+          "encoding_format": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EncodingFormat"
+              }
+            ],
+            "default": "float"
           }
         }
       },
       "EmbedAllResponse": {
         "type": "array",
         "items": {
-          "type": "array",
-          "items": {
-            "type": "array",
-            "items": {
-              "type": "number",
-              "format": "float"
-            }
-          }
+          "$ref": "#/components/schemas/AllEmbedding"
         },
         "example": [
           [
@@ -1590,17 +1591,21 @@
             "type": "string",
             "description": "Served model name; required for multi-model deployments.",
             "nullable": true
+          },
+          "encoding_format": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EncodingFormat"
+              }
+            ],
+            "default": "float"
           }
         }
       },
       "EmbedResponse": {
         "type": "array",
         "items": {
-          "type": "array",
-          "items": {
-            "type": "number",
-            "format": "float"
-          }
+          "$ref": "#/components/schemas/Embedding"
         },
         "example": [
           [
@@ -1667,6 +1672,9 @@
           },
           {
             "type": "string"
+          },
+          {
+            "$ref": "#/components/schemas/Tensor"
           }
         ]
       },
@@ -1686,7 +1694,8 @@
         "type": "string",
         "enum": [
           "float",
-          "base64"
+          "base64",
+          "tensor"
         ]
       },
       "ErrorResponse": {
@@ -3063,6 +3072,61 @@
           }
         ],
         "description": "Text or structured JSON data. Objects containing `messages` are reserved for\nInfinity's native conversation extension and validated as `MessageInput`."
+      },
+      "Tensor": {
+        "type": "object",
+        "required": [
+          "shape",
+          "dtype",
+          "data_encoding",
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "string",
+            "format": "byte",
+            "description": "Contiguous row-major data, little-endian for multi-byte elements."
+          },
+          "data_encoding": {
+            "type": "string",
+            "description": "\"base64\" for JSON, \"binary\" for MessagePack."
+          },
+          "dtype": {
+            "type": "string",
+            "description": "Element dtype; currently float32.",
+            "example": "float32"
+          },
+          "shape": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "AllEmbedding": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              }
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/schemas/Tensor"
+          }
+        ]
       }
     }
   },

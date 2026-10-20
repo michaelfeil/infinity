@@ -6,6 +6,7 @@ mod result_value;
 pub mod server;
 pub mod systemone;
 pub mod systemone_input;
+pub(crate) mod tensor;
 pub mod types;
 
 pub(crate) mod model_routing;
