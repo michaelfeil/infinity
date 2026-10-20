@@ -864,6 +864,7 @@ impl LibtorchBackend {
                 | "qwen3_5_text"
                 | "qwen3_5_moe"
                 | "qwen3_5_moe_text"
+                | "mistral"
                 | "mistral3"
                 | "ministral3"
                 | "ultrabert"
