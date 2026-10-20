@@ -996,10 +996,13 @@ impl ModelConfig {
             matches!(
                 arch.as_str(),
                 "LlamaForSequenceClassification"
+                    | "LlamaForTokenClassification"
                     | "UltrabertForSequenceClassification"
                     | "UltrabertForTokenClassification"
                     | "Qwen2ForSequenceClassification"
+                    | "Qwen2ForTokenClassification"
                     | "Qwen3ForSequenceClassification"
+                    | "Qwen3ForTokenClassification"
                     | "Qwen3MoeForSequenceClassification"
                     | "Gemma4ForSequenceClassification"
                     | "Mistral3ForSequenceClassification"
@@ -1464,10 +1467,13 @@ mod auto_dtype_tests {
     fn decoder_classifiers_resolve_hf_default_and_explicit_labels() {
         for (arch, model_type) in [
             ("LlamaForSequenceClassification", "llama"),
+            ("LlamaForTokenClassification", "llama"),
             ("UltrabertForSequenceClassification", "ultrabert"),
             ("UltrabertForTokenClassification", "ultrabert"),
             ("Qwen2ForSequenceClassification", "qwen2"),
+            ("Qwen2ForTokenClassification", "qwen2"),
             ("Qwen3ForSequenceClassification", "qwen3"),
+            ("Qwen3ForTokenClassification", "qwen3"),
             ("Qwen3MoeForSequenceClassification", "qwen3_moe"),
             ("Gemma4ForSequenceClassification", "gemma4"),
         ] {
@@ -1482,10 +1488,20 @@ mod auto_dtype_tests {
             ));
             assert_eq!(config.id2label.as_ref().unwrap()["1"], "LABEL_1");
             assert_eq!(config.label2id.as_ref().unwrap()["LABEL_1"], 1);
+            config.num_labels = Some(3);
+            config.id2label = None;
+            config.label2id = None;
+            config.resolve_decoder_classifier_labels().unwrap();
+            assert_eq!(config.id2label.as_ref().unwrap()["2"], "LABEL_2");
+            assert_eq!(config.label2id.as_ref().unwrap()["LABEL_2"], 2);
+            config.num_labels = None;
             config.id2label = Some(HashMap::from([("0".into(), "relevance".into())]));
             config.label2id = None;
             config.resolve_decoder_classifier_labels().unwrap();
-            assert_eq!(config.label2id.unwrap()["relevance"], 0);
+            assert_eq!(config.label2id.as_ref().unwrap()["relevance"], 0);
+            config.id2label = Some(HashMap::from([("1".into(), "missing_zero".into())]));
+            config.label2id = None;
+            assert!(config.resolve_decoder_classifier_labels().is_err());
         }
     }
 

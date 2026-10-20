@@ -627,14 +627,25 @@ public:
     if (projection.defined()) TORCH_CHECK(projection.dim() == 2 && projection.size(1) == hidden, "Invalid decoder output projection");
     auto architecture=options.string("architectures.0", "");
     auto supported=architecture=="LlamaForSequenceClassification"||architecture=="Qwen2ForSequenceClassification"||architecture=="Qwen3ForSequenceClassification"||architecture=="Qwen3MoeForSequenceClassification";
-    if (supported && !options.values.count("architectures.1")) {
+    const bool token_head=architecture=="LlamaForTokenClassification"||architecture=="Qwen2ForTokenClassification"||architecture=="Qwen3ForTokenClassification";
+    if(token_head) {
+      TORCH_CHECK(!options.values.count("architectures.1")&&
+        architecture==(family=="llama"?"LlamaForTokenClassification":family=="qwen2"?"Qwen2ForTokenClassification":family=="qwen3"?"Qwen3ForTokenClassification":""),
+        "Token classification requires an unambiguous matching Llama, Qwen2 or Qwen3 architecture");
+      TORCH_CHECK(!projection.defined(),"Decoder token classification does not support embedding output projections");
+      token_classifier=true;
+    }
+    if ((supported||token_head) && !options.values.count("architectures.1")) {
       auto it=weights.find("score.weight");
-      TORCH_CHECK(it!=weights.end(),"Missing decoder sequence classifier score.weight");
+      TORCH_CHECK(it!=weights.end(),"Missing decoder classifier score.weight");
       score=it->second;
       int64_t mapped_labels=0;for(const auto& [key,value]:options.values)if(key.rfind("id2label.",0)==0)++mapped_labels;
       auto labels=mapped_labels?mapped_labels:options.integer("num_labels",2);
       TORCH_CHECK(labels>0&&(!options.values.count("num_labels")||options.integer("num_labels")==labels)&&score.sizes()==at::IntArrayRef({labels,hidden}),"Invalid decoder classifier label dimensions");
-      auto bias=weights.find("score.bias");if(bias!=weights.end()){score_bias=bias->second;TORCH_CHECK(score_bias.sizes()==at::IntArrayRef({labels}),"Invalid decoder score.bias");}
+      auto bias=weights.find("score.bias");
+      TORCH_CHECK(!token_head||((bias!=weights.end())==options.boolean("token_classification_bias",true)),
+        "Decoder token classifier score.bias must match token_classification_bias");
+      if(bias!=weights.end()){score_bias=bias->second;TORCH_CHECK(score_bias.sizes()==at::IntArrayRef({labels}),"Invalid decoder score.bias");}
     }
     if(family=="ultrabert") {
       auto arch=options.string("architectures.0");
@@ -658,7 +669,7 @@ public:
   }
   bool supports_radix() const override {return causal;}
   int64_t prefix_layers() const override {return layer_count;}
-  bool supports_prefix_cache(int operation) const override {return causal&&(operation==0||(operation==1&&classification_width()>0));}
+  bool supports_prefix_cache(int operation) const override {return causal&&(operation==0||(operation==1&&!token_classifier&&classification_width()>0));}
   uint64_t prefix_payload_bytes(int64_t tokens) const override {
     auto bytes=prefix_storage_bytes(tokens,output_width(),embedding.element_size());
     const auto kv=prefix_storage_bytes(tokens,2*kvheads*head_dim,embedding.element_size());
@@ -669,7 +680,7 @@ public:
   int64_t classification_width() const override {return score.defined()?score.size(0):0;}
   at::Tensor predict(const PackedInput& input,bool tokenwise) const override {
     TORCH_CHECK(!tokenwise||token_classifier,"Decoder sequence classifier does not implement token classification");
-    TORCH_CHECK(score.defined(),"Decoder checkpoint has no supported sequence classification score head");
+    TORCH_CHECK(score.defined(),"Decoder checkpoint has no supported classification score head");
     for(int64_t row=0;row<input.batch;++row)TORCH_CHECK(input.offsets[row+1]>input.offsets[row],"Sequence classification requires nonempty inputs");
     if(tokenwise)return at::linear(forward(input),score,score_bias);
     return classify_hidden(input,forward(input));
