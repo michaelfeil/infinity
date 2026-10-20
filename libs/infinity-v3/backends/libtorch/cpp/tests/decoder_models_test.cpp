@@ -224,6 +224,51 @@ at::Tensor run(Model& model, std::vector<int64_t> ids, std::vector<int32_t> offs
   return model.forward(input);
 }
 void check_close(const at::Tensor& a,const at::Tensor& b){auto error=(a-b).abs().max().item<float>();TORCH_CHECK(error<2e-5,"Decoder parity error ",error);}
+void decoder_token_classifier_test(c10::Device device,at::ScalarType dtype) {
+ for(auto family:{"llama","qwen2","qwen3"})for(bool bias:{false,true})for(bool bidirectional:{false,true}) {
+  auto cfg=config(family);cfg.values["architectures.0"]=std::string(family)=="llama"?"LlamaForTokenClassification":std::string(family)=="qwen2"?"Qwen2ForTokenClassification":"Qwen3ForTokenClassification";
+  cfg.values["num_labels"]="3";if(!bias)cfg.values["token_classification_bias"]="false";
+  cfg.values["is_causal"]=bidirectional?"false":"true";
+  for(int i=0;i<3;++i)cfg.values["id2label."+std::to_string(i)]=std::to_string(i);
+  if(device.is_cuda()){cfg.values["num_attention_heads"]="2";cfg.values["num_key_value_heads"]="1";cfg.values["head_dim"]="8";}
+  auto w=weights(cfg);
+  if(device.is_cuda()&&std::string(family)=="qwen3")for(int i=0;i<2;++i)for(auto norm:{"q_norm","k_norm"})
+   w["model.layers."+std::to_string(i)+".self_attn."+norm+".weight"]=at::ones({8});
+  w["score.weight"]=at::arange(48,at::kFloat).view({3,16})*.013;
+  if(bias)w["score.bias"]=at::tensor({.1f,-.2f,.3f});
+  for(auto& [name,value]:w)value=value.to(device,dtype);
+  auto checkpoint=w,backbone_weights=w;auto backbone_cfg=cfg;backbone_cfg.values.erase("architectures.0");
+  auto backbone=create_decoder(backbone_cfg,backbone_weights,device,dtype);backbone->ready();
+  auto model=create_decoder(cfg,w,device,dtype);model->ready();
+  TORCH_CHECK(model->classification_width()==3&&!model->supports_prefix_cache(1),"Token head advertised sequence cache readout");
+  std::vector<int32_t> offsets{0,3,7};auto opts=at::TensorOptions().dtype(at::kLong).device(device);
+  PackedInput input{at::tensor({3,4,5,3,6,7,8},opts),at::zeros({7},opts),at::tensor({0,1,2,0,1,2,3},opts),
+   at::tensor(offsets,opts.dtype(at::kInt)),offsets.data(),2,4};
+  auto actual=model->predict(input,true);
+  check_close(actual,at::linear(backbone->forward(input),checkpoint.at("score.weight"),bias?checkpoint.at("score.bias"):at::Tensor()));
+  for(int row=0;row<2;++row) {
+   auto start=offsets[row],length=offsets[row+1]-start;std::vector<int32_t> one_offsets{0,length};
+   PackedInput one{input.ids.narrow(0,start,length),input.types.narrow(0,start,length),input.positions.narrow(0,start,length),
+    at::tensor(one_offsets,opts.dtype(at::kInt)),one_offsets.data(),1,length};
+   check_close(actual.narrow(0,start,length),model->predict(one,true));
+  }
+  TORCH_CHECK(model->predict(input,false).sizes()==at::IntArrayRef({2,3}),"Classifier warmup failed");
+  if(!device.is_cpu())continue;
+  auto rejects=[&](Options bad,Weights tensors) {
+   bool failed=false;try{auto invalid=create_decoder(bad,tensors,device,dtype);invalid->ready();}catch(const c10::Error&){failed=true;}
+   TORCH_CHECK(failed,"Malformed decoder token classifier accepted");
+  };
+  auto missing=checkpoint;missing.erase("score.weight");rejects(cfg,missing);
+  auto bad=cfg;bad.values["architectures.1"]="Qwen2Model";rejects(bad,checkpoint);
+  bad=cfg;bad.values["model_type"]="mistral";rejects(bad,checkpoint);
+  bad=cfg;bad.values["num_labels"]="2";rejects(bad,checkpoint);
+  bad=cfg;bad.values["token_classification_bias"]=bias?"false":"true";rejects(bad,checkpoint);
+  auto wrong=checkpoint;wrong["score.weight"]=at::zeros({3,8});rejects(cfg,wrong);
+  if(bias){wrong=checkpoint;wrong["score.bias"]=at::zeros({2});rejects(cfg,wrong);}
+  bad=cfg;bad.values["use_linear_output_projection"]="true";bad.values["linear_output_size"]="16";
+  wrong=checkpoint;wrong["linear_output_projection.weight"]=at::eye(16);rejects(bad,wrong);
+ }
+}
 void radix_decoder_test(Model& model) {
  auto options=at::TensorOptions().dtype(at::kLong);
  std::vector<int32_t> offsets={0,3,7,10};
@@ -1278,6 +1323,8 @@ int main(int argc,char** argv){c10::InferenceMode inference;at::set_num_threads(
     }
   }
  }
+ decoder_token_classifier_test(c10::Device("cpu"),at::kFloat);
+ if(argc>1)decoder_token_classifier_test(c10::Device(argv[1]),at::kBFloat16);
  output_capacity_bridge_test();
  input_descriptor_test();
  {

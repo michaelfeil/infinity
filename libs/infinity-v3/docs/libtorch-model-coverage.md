@@ -15,12 +15,12 @@ exact-length biased attention without padded token activations.
 | UltraBERT | Bidirectional packed GQA, per-layer RoPE bases and symmetric windows, embedding and sequence/token classification heads |
 | Nomic BERT | Packed rotary encoder, dense/MoE MLP |
 | Jina BERT / JinaCode | Packed encoder, one Torch efficient varlen ALiBi call per layer |
-| Llama / Llama bidirectional | Packed GQA, RoPE, RMSNorm, fused projections |
+| Llama / Llama bidirectional | Packed GQA, RoPE, RMSNorm, fused projections, sequence/token classification heads |
 | Mistral / Ministral3 | Packed GQA, sliding windows, YaRN |
 | Mistral3 / Ministral 3 multimodal | Pixtral vision, 2D rotary positions, spatial patch merger/projector, packed Ministral text |
 | Mistral3ForSequenceClassification (Nemotron 3.5 Rerank) | Mistral3 backbone with a mean-pooled, bias-free score head; query/document chat template |
-| Qwen2 | Packed GQA with projection biases |
-| Qwen3 / Qwen3 MoE | Packed Q/K norm, GQA, dense/routed MLP and optional projection |
+| Qwen2 | Packed GQA with projection biases, sequence/token classification heads |
+| Qwen3 / Qwen3 MoE | Packed Q/K norm, GQA, dense/routed MLP and optional projection; sequence heads and dense Qwen3 token classification |
 | Gemma3 text | Packed local/global attention, Gemma norm semantics |
 | EmbeddingGemma2 | Packed text model, shared KV, PLE, embedding projection and image/audio towers |
 | Gemma4 / Gemma4 unified | Packed text plus image tower implementation |
