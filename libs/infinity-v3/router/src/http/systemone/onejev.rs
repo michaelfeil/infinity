@@ -309,7 +309,7 @@ impl Onejev {
                     ((0..options.len()).map(|i| i.to_string()).collect(), (0..options.len()).map(|i| format!("level {i}")).collect(), options.iter().map(entry).collect::<Result<_, _>>()?)
                 }
                 "noul" => {
-                    if !criteria.is_null() && (criteria.as_object().is_none_or(|v| v.len() != 2 || !v.contains_key("true") || !v.contains_key("false"))) { return Err("Noul criteria must contain exactly false and true".into()); }
+                    if !criteria.is_null() && criteria.as_object().is_none_or(|v| !v.is_empty() && (v.len() != 2 || !v.contains_key("true") || !v.contains_key("false"))) { return Err("Noul criteria must be empty or contain exactly false and true".into()); }
                     let descriptions = [("true", "the statement is true / the answer is yes"), ("false", "the statement is false / the answer is no")].into_iter().map(|(key, default)| {
                         match criteria.get(key).filter(|v| !v.is_null()) { Some(value) => entry(value), None => Ok(default.into()) }
                     }).collect::<Result<_, _>>()?;
@@ -379,6 +379,92 @@ pub(super) fn answer(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_noul_criteria_use_defaults_in_mixed_requests() -> anyhow::Result<()> {
+        let path = std::env::temp_dir().join(format!("onejev-criteria-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path)?;
+        std::fs::write(
+            path.join("chat_template.jinja"),
+            "{{ messages[0].content }}\n{{ messages[1].content }}",
+        )?;
+        let chat = ChatProcessor::load(&path)
+            .map_err(anyhow::Error::msg)?
+            .unwrap();
+        std::fs::remove_dir_all(&path)?;
+        let mut tokenizer = Tokenizer::new(
+            tokenizers::models::wordlevel::WordLevel::builder()
+                .vocab(
+                    ["[UNK]", "A", "B", "yes", "no", "malicious", "legitimate"]
+                        .into_iter()
+                        .enumerate()
+                        .map(|(id, word)| (word.to_owned(), id as u32))
+                        .collect(),
+                )
+                .unk_token("[UNK]".into())
+                .build()
+                .map_err(|e| anyhow::anyhow!(e.to_string()))?,
+        );
+        tokenizer.with_pre_tokenizer(Some(tokenizers::pre_tokenizers::whitespace::Whitespace));
+        let model = Onejev {
+            tokenizer,
+            chat,
+            codes: vec!["A".into(), "B".into()],
+            token_ids: vec![1, 2],
+            max_input_length: 2048,
+            images: None,
+            block_attention: true,
+        };
+        let prepare = |criteria: Option<Value>| {
+            let mut request = json!({
+                "state": "An email asks the reader to enter their password.",
+                "questions": {
+                    "phishing": {"type": "noul", "instructions": "Is this phishing?"},
+                    "category": {"type": "choice", "criteria": {"phishing": "malicious", "safe": "legitimate"}}
+                }
+            });
+            if let Some(criteria) = criteria {
+                request["questions"]["phishing"]["criteria"] = criteria;
+            }
+            model.prepare(serde_json::from_value(request).unwrap())
+        };
+        let expected = prepare(None).unwrap();
+        assert_eq!(expected.len(), 2);
+        for criteria in [Value::Null, json!({}), json!({"true": null, "false": null})] {
+            let actual = prepare(Some(criteria)).unwrap();
+            assert_eq!(actual.len(), 2);
+            for (actual, expected) in actual.iter().zip(&expected) {
+                assert_eq!(actual.id, expected.id);
+                assert_eq!(actual.encoding.input_ids, expected.encoding.input_ids);
+                assert_eq!(actual.compute_chars, expected.compute_chars);
+                assert_eq!(actual.labels, expected.labels);
+                let block = |question: &Question| match &question.input {
+                    DecisionInput::BlockOptionTokens {
+                        token_ids,
+                        prefix_length,
+                    } => (token_ids.clone(), *prefix_length),
+                    _ => panic!("Missing block metadata"),
+                };
+                assert_eq!(block(actual), block(expected));
+            }
+        }
+        let custom = prepare(Some(json!({"true": "malicious", "false": "legitimate"}))).unwrap();
+        assert_ne!(custom[0].encoding.input_ids, expected[0].encoding.input_ids);
+        for invalid in [
+            json!([]),
+            json!(""),
+            json!(false),
+            json!({"true": "malicious"}),
+            json!({"yes": "malicious", "no": "legitimate"}),
+            json!({"true": null, "false": null, "other": null}),
+        ] {
+            assert!(prepare(Some(invalid))
+                .err()
+                .unwrap()
+                .contains("Noul criteria"));
+        }
+        Ok(())
+    }
 
     #[test]
     fn block_image_expansion_preserves_prefix_boundaries_and_limits() -> anyhow::Result<()> {
