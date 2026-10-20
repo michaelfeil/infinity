@@ -133,13 +133,16 @@ alone or `all` variants.
 
 ### Optional dynamic FP8
 
-For dense Llama, Mistral, Qwen2 and Qwen3 decoders, `--enable-fp8-dynamic`
+For dense Llama, Mistral, Qwen2, Qwen3 and Qwen3.5 decoders, `--enable-fp8-dynamic`
 quantizes MLP, Q/K/V and attention output projections by default (`all` scope).
 Set `INFINITY_TORCH_FP8_SCOPE=mlp` to quantize only MLP projections.
 Supported BERT-family and ModernBERT encoders retain MLP-only dynamic FP8;
 the `all` scope is only supported for the dense decoders listed above.
 Attention, normalization, embeddings and heads retain the selected FP16/BF16
 dtype. Weights are quantized once at startup and activations each forward pass.
+Qwen3.5 requires BF16; `all` also quantizes DeltaNet QKV, Z and output
+projections. Its small decay/update gates, convolution, recurrent state, vision
+tower and output heads retain their original precision. Qwen3.5 MoE is unsupported.
 Dynamic FP8 changes model outputs and remains opt-in. Enabling it now uses
 more FP8 projections for dense decoders; select `mlp` to retain the previous scope.
 

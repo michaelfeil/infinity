@@ -1,4 +1,5 @@
 #include "prefix_cache_test.h"
+#include "bridge.h"
 #include "models/qwen35_models.h"
 #include "models/decision_models.h"
 #include "batching/radix.h"
@@ -9,6 +10,101 @@
 #endif
 #include <iostream>
 using namespace tei;
+void dynamic_fp8_test(Options cfg,Weights weights,const c10::Device& device) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+  const auto* properties=at::cuda::getDeviceProperties(device.index());
+  const auto capability=properties->major*10+properties->minor;
+  if(capability!=89&&capability!=90&&capability!=100&&capability!=120) {
+    std::cout<<"Qwen3.5 FP8 fixture skipped: requires SM89/90/100/120\n";return;
+  }
+#endif
+  // Aligned projection widths; ragged token rows deliberately remain unaligned.
+  cfg.values["head_dim"]="16";
+  weights["model.layers.1.self_attn.q_proj.weight"]=at::randn({64,16})*.05;
+  for(auto name:{"k_proj","v_proj"})weights[std::string("model.layers.1.self_attn.")+name+".weight"]=at::randn({16,16})*.05;
+  weights["model.layers.1.self_attn.o_proj.weight"]=at::randn({16,32})*.05;
+  for(auto name:{"q_norm","k_norm"})weights[std::string("model.layers.1.self_attn.")+name+".weight"]=at::zeros({16});
+  for(int i=0;i<2;++i) {
+    auto p="model.layers."+std::to_string(i)+".mlp.";
+    for(auto name:{"gate_proj","up_proj"})weights[p+name+".weight"]=at::randn({32,16})*.05;
+    weights[p+"down_proj.weight"]=at::randn({16,32})*.05;
+  }
+  for(auto& [name,value]:weights)value=value.to(device,at::kBFloat16);
+  auto build=[&](const Options& options) {
+    Weights loader;for(const auto& [name,value]:weights)loader[name]=value.clone();
+    auto model=create_qwen35(options,loader,device,at::kBFloat16);model->ready();return model;
+  };
+  const std::vector<int32_t> ends{0,5,9};
+  auto ids=at::tensor({1,2,3,4,5,1,2,7,8},at::TensorOptions().device(device).dtype(at::kLong));
+  auto positions=at::tensor({0,1,2,3,4,0,1,2,3},ids.options());
+  PackedInput input{ids,at::zeros_like(ids),positions,at::tensor(ends,ids.options().dtype(at::kInt)),ends.data(),2,5};
+  auto close=[](const at::Tensor& expected,const at::Tensor& actual,double tolerance) {
+    auto ref=expected.to(at::kFloat),got=actual.to(at::kFloat);
+    TORCH_CHECK(at::isfinite(got).all().item<bool>(),"Qwen3.5 FP8 returned nonfinite outputs");
+    auto error=((got-ref).norm()/ref.norm()).item<double>();
+    TORCH_CHECK(error<tolerance,"Qwen3.5 FP8 relative L2 error=",error);
+  };
+  for(const auto* family:{"qwen3_5","qwen3_5_text"})for(const auto* scope:{"mlp","all","default"}) {
+    cfg.values["model_type"]=family;
+    auto enabled=cfg;enabled.values["_fp8_dynamic"]="true";
+    if(std::string(scope)!="default")enabled.values["_fp8_scope"]=scope;
+    // Exercise the serving bridge's family gate, not only model construction.
+    TeiConfig shape{16,2,2,32,32,32,1,1e-6,5};
+    std::unique_ptr<void,decltype(&tei_destroy)> engine(tei_create(&shape,device.str().c_str(),2),tei_destroy);
+    TORCH_CHECK(engine,tei_error());
+    for(const auto& [name,value]:enabled.values)TORCH_CHECK(tei_option(engine.get(),name.c_str(),value.c_str())==0,tei_error());
+    for(const auto& [name,value]:weights) {
+      auto host=value.cpu().contiguous();
+      TORCH_CHECK(tei_weight(engine.get(),name.c_str(),static_cast<const uint8_t*>(host.const_data_ptr()),host.sizes().data(),host.dim(),2)==0,tei_error());
+    }
+    TORCH_CHECK(tei_ready(engine.get())==0,tei_error());
+    engine.reset();
+    Weights loader;for(const auto& [name,value]:weights)loader[name]=value.clone();
+    auto down=loader.at("model.layers.0.mlp.down_proj.weight").storage().getWeakStorageImpl();
+    auto projection=loader.at("model.layers.0.linear_attn.out_proj.weight").storage().getWeakStorageImpl();
+    auto decay=loader.at("model.layers.0.linear_attn.in_proj_a.weight").storage().getWeakStorageImpl();
+    auto quantized=create_qwen35(enabled,loader,device,at::kBFloat16);quantized->ready();
+    TORCH_CHECK(loader.empty()&&down.expired()&&!decay.expired(),"Qwen3.5 FP8 weight ownership changed");
+    TORCH_CHECK(projection.expired()==(std::string(scope)!="mlp"),"Qwen3.5 FP8 projection scope ignored");
+    auto reference=build(cfg);auto actual=quantized->forward(input);
+    close(reference->forward(input),actual,.08);
+    // Alter one suffix; its causal prefix and the other sequence must survive.
+    auto changed=input;changed.ids=input.ids.clone();changed.ids.index_put_({4},31);
+    auto future=quantized->forward(changed);
+    TORCH_CHECK(at::equal(actual.narrow(0,0,4),future.narrow(0,0,4))&&at::equal(actual.narrow(0,5,4),future.narrow(0,5,4)),
+      "Qwen3.5 FP8 causal/sequence isolation failed");
+    auto folded=input;folded.compact_ids=ids.narrow(0,0,5);
+    folded.compact_ids=at::cat({folded.compact_ids,ids.narrow(0,7,2)});
+    folded.compact_positions=at::tensor({0,1,2,3,4,2,3},ids.options());folded.compact_types=at::zeros_like(folded.compact_ids);
+    folded.scatter_unfold=at::tensor({0,1,2,3,4,0,1,5,6},ids.options());folded.fold_gather=at::tensor({0,1,2,3,4,7,8},ids.options());
+    close(actual,quantized->forward(folded),.02);
+    check_prefix_cache(*quantized,input,0,.02,.02);
+    CudaGraphCache graphs(1,4096,1);
+    for(int repeat=0;repeat<3;++repeat)close(actual,graphs.forward(*quantized,input),.02);
+    close(future,graphs.forward(*quantized,changed),.02);
+    TORCH_CHECK(graphs.size()==1,"Qwen3.5 FP8 did not capture a CUDA graph");
+    enabled.values["_decision_attention_mode"]="block_bidirectional";
+    auto block=build(enabled);auto packed=input;packed.block_prefix_lengths={2,2};packed.block_prefix_sources={0,0};
+    auto shared=block->forward(packed);packed.block_prefix_sources={0,1};
+    auto independent=block->forward(packed);close(shared,independent,.02);
+    changed=packed;changed.ids=input.ids.clone();changed.ids.index_put_({4},31);
+    auto block_future=block->forward(changed);
+    TORCH_CHECK(at::equal(independent.narrow(0,0,2),block_future.narrow(0,0,2))&&at::equal(independent.narrow(0,5,4),block_future.narrow(0,5,4)),
+      "Qwen3.5 FP8 block prefix or sibling isolation failed");
+    std::cout<<family<<" FP8 "<<scope<<" drift, ownership, radix, prefix cache, graphs and block isolation passed\n";
+  }
+  for(const auto* invalid:{"cpu","float16","moe","quantized"}) {
+    auto enabled=cfg;enabled.values["_fp8_dynamic"]="true";
+    if(std::string(invalid)=="moe")enabled.values["num_experts"]="2";
+    if(std::string(invalid)=="quantized")enabled.values["text_config.quantization_config.quant_method"]="fp8";
+    auto loader=weights;bool rejected=false;
+    try {
+      auto model=create_qwen35(enabled,loader,std::string(invalid)=="cpu"?c10::Device("cpu"):device,
+        std::string(invalid)=="float16"?at::kHalf:at::kBFloat16);model->ready();
+    }catch(const c10::Error&){rejected=true;}
+    TORCH_CHECK(rejected,"Qwen3.5 FP8 accepted unsupported ",invalid);
+  }
+}
 void radix_workspace_recovery_test(const c10::Device& device) {
 #ifdef TEI_TORCH_CUDA_KERNELS
   const auto* properties=at::cuda::getDeviceProperties(device.index());
@@ -259,6 +355,7 @@ int main(int argc,char** argv) {
   std::cout<<"Qwen3.5 MoE/shared expert, stable routing ties and packed isolation passed\n";
   if(argc>1) {
     c10::Device device(argv[1]);
+    dynamic_fp8_test(cfg,weights,device);
     for(auto& [key,value]:weights)value=value.to(at::kBFloat16);
     auto cpu=build(cfg,weights,c10::Device("cpu"),at::kBFloat16);cpu->ready();
     Weights cuda_weights;

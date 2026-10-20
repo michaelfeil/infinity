@@ -1,5 +1,7 @@
 #include "batching/prefix_cache.h"
 #include "helpers/attention.h"
+#include "helpers/fp8_linear.h"
+#include "kernels/fp8_fusions.h"
 #include "helpers/vendor_error.h"
 #include "helpers/workspace_admission.h"
 // Native adaptation of Candle Qwen3.5. Upstream notices retained in LICENSE/NOTICE.
@@ -41,8 +43,12 @@ class Qwen35 final : public Model {
   int64_t hidden, heads, kv_heads, dim, layer_count, rotary;
   double epsilon;
   at::Tensor cos_cache, sin_cache;
-  struct Mlp {at::Tensor gate_up,down,router,experts,expert_down,shared_gate_up,shared_down,shared_gate;};
+  struct Mlp {
+    at::Tensor gate_up,down,router,experts,expert_down,shared_gate_up,shared_down,shared_gate;
+    std::unique_ptr<Fp8Linear> fp8_gate_up,fp8_down;
+  };
   std::vector<Mlp> mlps;
+  std::map<std::string,std::unique_ptr<Fp8Linear>> fp8_projections;
   std::unique_ptr<Qwen3VL> visual;
   at::Tensor rotary_frequencies,rotary_axes;
   std::string key(const std::string& name) const { return cfg.values.count("text_config."+name) ? "text_config."+name : name; }
@@ -71,6 +77,7 @@ class Qwen35 final : public Model {
   mutable at::Tensor radix_linear_workspace;
 #endif
   at::Tensor linear_radix_projection(const at::Tensor& x,const std::string& name,const PackedInput& packed) const {
+    if(auto it=fp8_projections.find(name);it!=fp8_projections.end())return it->second->forward(x);
 #ifdef TEI_TORCH_CUDA_KERNELS
     const auto& matrix=w(name+".weight");
     if(integer("num_experts",0)>0 && device.is_cuda() && dtype==at::kBFloat16 && hidden==2048 &&
@@ -155,6 +162,7 @@ class Qwen35 final : public Model {
   const at::Tensor& w(const std::string& name) const { return weight(weights,prefix+name); }
   at::Tensor linear(const at::Tensor& x,const std::string& name) const { return at::linear(x,w(name+".weight")); }
   at::Tensor prefix_projection(const at::Tensor& x,const std::string& name,const PackedInput& input) const {
+    if(auto it=fp8_projections.find(name);it!=fp8_projections.end())return it->second->forward(x);
     return prefix_linear(x,w(name+".weight"),{},input);
   }
   at::Tensor gated(const at::Tensor& gu) const {
@@ -166,6 +174,16 @@ class Qwen35 final : public Model {
   }
   at::Tensor feed_forward(const at::Tensor& x,int64_t layer,const PackedInput& input) const {
     const auto& m=mlps[layer];
+    if(m.fp8_gate_up) {
+      auto both=m.fp8_gate_up->forward(x);
+#ifdef TEI_TORCH_CUDA_KERNELS
+      if(both.size(1)/2<=32768) {
+        auto quantized=fp8_swiglu_quantize(both);
+        return m.fp8_down->forward_quantized(quantized.first,quantized.second);
+      }
+#endif
+      return m.fp8_down->forward(gated(both));
+    }
     if(!m.router.defined())return prefix_linear(gated(prefix_linear(x,m.gate_up,{},input)),m.down,{},input);
     auto top=integer("num_experts_per_tok",8);
     auto renormalize=cfg.boolean(key("norm_topk_prob"),true);
@@ -479,6 +497,19 @@ class Qwen35 final : public Model {
   int64_t output_width() const override { return hidden; }
   bool supports_images() const override {return bool(visual);}
   void ready() override {
+    const auto fp8=cfg.boolean("_fp8_dynamic",false);
+    const auto scope=cfg.string("_fp8_scope",fp8?"all":"mlp");
+    TORCH_CHECK(scope=="mlp"||scope=="all","FP8 scope must be mlp or all");
+    TORCH_CHECK(scope!="all"||fp8,"All-linear FP8 requires dynamic FP8 enabled");
+    if(fp8) {
+      TORCH_CHECK(device.is_cuda()&&dtype==at::kBFloat16,"Dynamic FP8 Qwen3.5 requires CUDA BF16");
+      TORCH_CHECK(integer("num_experts",0)==0 && (cfg.string("model_type")=="qwen3_5"||cfg.string("model_type")=="qwen3_5_text"),
+        "Dynamic FP8 Qwen3.5 supports dense models only");
+      for(const auto& [name,value]:cfg.values)
+        TORCH_CHECK(name!="quantization_config"&&name.rfind("quantization_config.",0)!=0
+          &&name!="text_config.quantization_config"&&name.rfind("text_config.quantization_config.",0)!=0,
+          "Dynamic FP8 requires an unquantized checkpoint without supplied quantization scales");
+    }
     TORCH_CHECK(!block_attention()||integer("num_experts",0)==0,"OneJev block attention currently requires a dense Qwen3.5 model");
     TORCH_CHECK(hidden>0 && heads>0 && kv_heads>0 && heads%kv_heads==0 && dim>0 && rotary>0 && rotary<=dim && rotary%2==0 && layer_count>0,"Invalid Qwen3.5 attention geometry");
     TORCH_CHECK(integer("linear_key_head_dim",128)==128 && integer("linear_value_head_dim",128)==128,"Qwen3.5 DeltaNet requires head dimension128");
@@ -513,6 +544,11 @@ class Qwen35 final : public Model {
       if(experts==0) {
         m.gate_up=at::cat({w(mp+"gate_proj.weight"),w(mp+"up_proj.weight")},0);m.down=w(mp+"down_proj.weight");
         consumed={mp+"gate_proj.weight",mp+"up_proj.weight",mp+"down_proj.weight"};
+        if(fp8) {
+          m.fp8_gate_up=std::make_unique<Fp8Linear>(m.gate_up);
+          m.fp8_down=std::make_unique<Fp8Linear>(m.down);
+          m.gate_up=at::Tensor();m.down=at::Tensor();
+        }
       } else {
         auto top=integer("num_experts_per_tok",8);
         TORCH_CHECK(top>0 && top<=experts,"Invalid Qwen3.5 routed expert count");
@@ -541,6 +577,18 @@ class Qwen35 final : public Model {
       // retain a second full allocation after concatenation. Forward reads FFNs
       // exclusively through mlps; keep all attention/embedding/vision/head keys.
       for(const auto& name:consumed)weights.erase(prefix+name);
+      if(fp8&&scope=="all") {
+        // Keep the small DeltaNet decay/update gates, convolution and recurrent
+        // state in their original precision, along with vision and output heads.
+        const std::vector<std::string> projections=kind=="linear_attention"
+          ?std::vector<std::string>{"linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"}
+          :std::vector<std::string>{"self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj"};
+        for(const auto& projection:projections) {
+          const auto name=p+projection;
+          fp8_projections.emplace(name,std::make_unique<Fp8Linear>(w(name+".weight")));
+          weights.erase(prefix+name+".weight");
+        }
+      }
       if(kind=="linear_attention") {
         auto kh=integer("linear_num_key_heads"),vh=integer("linear_num_value_heads");
         TORCH_CHECK(kh>0 && vh>0 && vh%kh==0,"Invalid Qwen3.5 DeltaNet heads");
