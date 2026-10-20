@@ -17,9 +17,8 @@ limitations under the License.
 <!-- Fork contribution policy added by Infinity Core Contributors under the scope in LICENSE. -->
 # Contribute to infinity_v3
 
-New covered contributions are offered under both
-[Infinity License 1.0 for Commercial Use](LICENSES/Infinity-License-1.0-for-Commercial-Use.txt)
-and [PolyForm Noncommercial 1.0.0](LICENSES/PolyForm-Noncommercial-1.0.0.txt),
+New covered contributions are offered under the
+[Infinity Restricted MIT License 1.0](LICENSES/Infinity-Restricted-MIT-1.0.txt),
 unless different terms are agreed before inclusion. Contributors retain
 ownership and grant only rights they own or are authorized to license.
 Preserve inherited and third-party notices; independently licensed material

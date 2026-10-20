@@ -1,370 +1,152 @@
 infinity_v3 -- License notice
 
-Covered original fork contributions and modifications are offered under your
-choice of:
-  - Infinity License 1.0 for Commercial Use; OR
-  - PolyForm Noncommercial License 1.0.0.
+Covered original Infinity V3 contributions and modifications are offered under
+Infinity Restricted MIT License 1.0, reproduced below. Each copyright holder
+grants only rights they own or are authorized to license. Contributors retain
+ownership. New covered contributions are submitted under this license unless
+different terms are agreed before inclusion.
 
-Licensors: Infinity Core Contributors, each for rights they own or are
-authorized to license. Contributors retain ownership. These alternatives
-cover only contributions whose rights holders authorize them.
-
-PolyForm is offered without additional conditions. The commercial license's
-platform restrictions, rewrite restriction, and redistribution requirements
-do not limit uses independently permitted by PolyForm.
-
-Inherited Text Embeddings Inference code and previously Apache-licensed fork
+Inherited Text Embeddings Inference code and previously Apache-licensed
 contributions retain Apache-2.0. Third-party components and independently
-licensed contributions retain their applicable terms and notices. Model
-weights, datasets, and dependencies are not relicensed by inclusion or use.
+licensed contributions retain their terms and notices. Earlier MIT, Apache,
+INFOIL, PolyForm, and commercial grants remain available for the material and
+rights they cover; this license does not withdraw those permissions.
 
-Existing grants remain available for the material and rights they cover.
-This notice does not expand the scope of either alternative or revoke
-another grant.
-
-Complete current alternatives and the retained Apache license follow.
-See LICENSING.md, NOTICE, and THIRD_PARTY_NOTICES.md for a short guide and
-component notices. Separate current license texts are in LICENSES/.
+See LICENSING.md for the user guide, NOTICE and THIRD_PARTY_NOTICES.md for
+attribution, and LICENSES/README.md for current and retained license texts.
+Model weights, datasets, and dependencies retain their own terms.
 
 =======================================================================
-COMMERCIAL ALTERNATIVE -- COVERED RIGHTS ONLY
+INFINITY RESTRICTED MIT LICENSE -- COVERED RIGHTS ONLY
 =======================================================================
 
-Infinity License 1.0 for Commercial Use
-License author: Michael Feil
-Licensors: Infinity Core Contributors, each for rights they own or control.
+Infinity Restricted MIT License 1.0
 
-This is a custom source-available license. The applicable Adoption Notice
-identifies the covered rights and effective version. It is offered as an
-alternative to PolyForm Noncommercial License 1.0.0. These terms do not
-limit rights independently granted under that alternative.
+This is a custom, source-available license based on MIT. It is not the
+standard MIT License. Use on listed providers is prohibited for every purpose.
 
-1. PERMISSION
+1. COVERED RIGHTS
 
-By accepting these terms, you may use, copy, modify, and distribute the
-covered code and documentation, including modifications and binaries,
-for commercial purposes, worldwide and without royalties for the duration
-of the contributors' rights. Each contributor grants only rights they
-control. Existing Apache,
-INFOIL, and third-party grants remain intact. No ownership, trademarks, or
-rights over model weights or outputs are transferred.
+The Software is the code and documentation expressly offered under this
+license by its copyright holders or their authorized representatives. Each
+licensor grants only rights they own or are authorized to license.
+Contributors retain their ownership.
 
-2. COMMERCIAL USE TERMS
+Inherited Apache-2.0 code, third-party components, and independently licensed
+contributions retain their licenses and notices. Existing MIT, Apache-2.0,
+INFOIL, PolyForm, and other grants remain available for the material and rights
+they cover. This license does not restrict independently granted rights or
+rights that applicable law does not permit licensors to restrict. Model
+weights, datasets, and outputs are not covered merely through use or inclusion.
 
-Commercial use, including ordinary enterprise use, is allowed on your own
-hardware or capacity supplied by an unlisted provider, subject to the
-restrictions below.
+2. PERMISSION
 
-You must not deploy or run the software commercially on the platforms
-listed in Appendix A, their rented capacity, or as part of their services.
-This applies to operators and customers, including private endpoints,
-rented GPUs, and single-customer deployments, regardless of billing unit.
-Commercial use includes business operations and product or service
-development, even before revenue.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the Software, to use, copy, modify, merge, publish, distribute, sublicense,
+and sell copies of the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following conditions.
 
-The list covers each named operator's hosting and compute platforms. Amazon
-Bedrock alone is listed, not AWS generally. AWS infrastructure (such as
-EC2), Microsoft Azure, Baseten, Google Cloud / AI Studio, Oracle Cloud,
-private hardware, and unlisted platforms are allowed. Listing follows a
-renamed operator or continuing service, not an acquirer's unrelated
-businesses. The list is fixed: no revenue test or automatic additions
-apply.
+3. RESTRICTED PROVIDERS
 
-The named permitted providers may operate their own deployments on hardware
-leased from listed operators if they actually manage serving. This does not
-permit deployment inside a listed service, including Bedrock. Routing,
-reselling, or relabeling cannot bypass the ban. Buying hardware,
-downloading models, storage, DNS, transit, and unrelated API calls alone
-are not deployment.
+You must not use, execute, deploy, host, or offer the Software, including
+modified versions, on hosting or compute services operated by any provider
+named in Appendix A, on capacity rented from that provider, or as part of
+that provider's hosted services.
 
-3. NO REWRITES FOR PROHIBITED DEPLOYMENTS
+This restriction applies to everyone, including providers, customers,
+researchers, educational institutions, nonprofit organizations, governments,
+and individuals. It applies to every purpose, including commercial use,
+noncommercial use, research, education, evaluation, testing, and personal use.
+Private endpoints, rented GPUs, and single-customer deployments are included.
+Reselling, routing, relabeling, or using an intermediary does not make a
+prohibited use permitted. There are no research, institutional, personal-use,
+or permitted-cloud leasing exceptions under this license.
 
-You must not use the covered source, documentation, or design obtained from
-them to create, commission, or assist a replacement for a listed platform's
-commercial service or another prohibited deployment. This includes manual
-rewrites, coding agents, contractors, subprocessors, intermediate design
-specifications, and ports to C, Go, or any language, even before
-deployment.
+Use on your own hardware and on unlisted providers is permitted, subject to
+the other conditions of this license, provided it does not use hosting or
+compute services or capacity from a listed provider through an intermediary.
 
-Employees and others acting for an operator also must not develop, test, or
-adapt the software toward a prohibited deployment. Employment alone does
-not restrict independent personal projects. General ideas, algorithms,
-independent development without these materials, independently licensed
-rights, and nonwaivable legal rights remain unaffected.
+Appendix A is exhaustive and fixed for this license version. A listed name
+covers the same provider or service after a rename, but does not automatically
+cover an acquirer's unrelated businesses. Where an entry names a particular
+service, that service is restricted, rather than the operator's other services.
 
-4. SHARING AND CONTRIBUTIONS
+4. REDISTRIBUTION
 
-Distributions under this commercial license must retain this license,
-Appendix A, PolyForm Noncommercial License 1.0.0, the adoption notice, and
-third-party notices; identify changes; and offer covered modifications under
-both this license and PolyForm Noncommercial License 1.0.0 so recipients
-retain the same choice. Supply editable source
-and build/install instructions with the distribution, or through a free
-download available for at least three years after the last corresponding
-distribution. Credentials, customer data, separately licensed weights,
-independent applications, and standard tools are excluded from that source
-obligation. These distribution requirements do not apply when relying
-solely on the independent PolyForm alternative.
+Include the applicable copyright notices and this complete license, including
+Appendix A, in all copies or substantial portions of the Software. Retain
+independently required third-party notices. Any sublicense for the Software
+must preserve the provider restriction for the covered code.
 
-Private modifications and network access alone do not require publication.
-API clients may retain their own licenses. Contributions intentionally
-submitted to this repository for inclusion are offered under both this
-license and PolyForm Noncommercial License 1.0.0 unless otherwise agreed;
-ownership stays with contributors. Relicensing or exceptions require
-the applicable rights holders' authorization, including for existing
-INFOIL-only contributions.
+You may keep modifications private, distribute binaries without source, and
+license your own additions under terms of your choice. Those terms do not
+remove this license's conditions from the covered code. This license does
+not require publishing source, licensing additions under this license, or
+restricting independently developed replacements.
 
-5. PATENTS, TERMINATION, AND LIABILITY
+5. PATENTS AND TERMINATION
 
-Contributors license controlled patent claims necessarily practiced by
-their contributions, alone or in their submitted combination, to make, use,
-sell, offer for sale, and import the software for permitted uses. This
-patent grant ends if you bring a patent claim alleging the software
-infringes.
+Each contributor grants a worldwide, royalty-free patent license for permitted
+uses under patent claims they control that are necessarily practiced by their
+contribution alone or in its submitted combination with the Software. This
+patent license ends if you bring a patent claim alleging that the Software
+infringes. No trademark rights are granted.
 
-Copyright permissions terminate on breach. A first breach cured within 30
-days of learning of it restores them; later reinstatement requires the
-affected rights holders' permission. Compliant recipients retain rights. To
-the extent law permits, the software is provided as is, without warranty,
-and contributors are not liable for resulting losses. Unenforceable terms
-do not invalidate the rest. Later versions do not change existing grants.
+Permissions under this license terminate on breach and are automatically
+reinstated if the breach is cured within 30 days after you learn of it.
+Otherwise reinstatement requires the affected licensors' permission.
+Compliant recipients retain their rights. Later versions of this license
+do not change existing grants.
 
-APPENDIX A -- EXHAUSTIVE PLATFORMS PROHIBITED FOR COMMERCIAL DEPLOYMENT
+6. WARRANTY AND LIABILITY
 
-Snapshot source: https://openrouter.ai/providers
-Provider identifiers: https://openrouter.ai/api/v1/providers
-Retrieved: 2026-10-13 UTC. The names below, not the live websites, control.
-Identifiers disambiguate service names; they are not a ban on unrelated
-software projects, purchased hardware, or independently licensed models.
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE, TO THE EXTENT PERMITTED BY APPLICABLE LAW.
 
-- AionLabs (aion-labs)
-- AkashML (akashml)
-- Alibaba Cloud Int. (alibaba)
-- Amazon Bedrock (amazon-bedrock)
-- Anthropic (anthropic)
+APPENDIX A -- PROVIDERS RESTRICTED FOR ALL PURPOSES
+
+The following 25 entries are the exhaustive list for this license
+version. The names below control, not a live directory or a future list.
+Identifiers disambiguate providers; they do not restrict unrelated software
+projects, purchased hardware, or independently licensed models.
+
+Nebius covers the provider's hosting and compute services, including Token
+Factory. Voyage AI identifies the Voyage AI service, not unrelated MongoDB
+products.
+
+- Fireworks (fireworks)
+- FriendliAI (friendli)
+- Morph (morph)
+- Prime Intellect (primeintellect)
+- Nebius (nebius)
 - Arcee AI (arcee-ai)
 - AssemblyAI (assemblyai)
-- AtlasCloud (atlas-cloud)
-- Baidu Qianfan (baidu)
-- Black Forest Labs (black-forest-labs)
 - Cerebras (cerebras)
-- Chutes (chutes)
-- Claude Platform on AWS (claude-on-aws)
 - Cloudflare (cloudflare)
-- Cohere (cohere)
-- CoreWeave (coreweave)
 - Crusoe (crusoe)
-- Darkbloom (darkbloom)
-- Decart (decart)
-- Deepgram (deepgram)
-- DeepInfra (deepinfra)
-- DeepSeek (deepseek)
-- DekaLLM (dekallm)
 - DigitalOcean (digitalocean)
-- ElevenLabs (elevenlabs)
-- Fireworks (fireworks)
-- Fish Audio (fish-audio)
-- Friendli (friendli)
-- GMICloud (gmicloud)
-- Groq (groq)
-- HeyGen (heygen)
-- Inception (inception)
-- Inceptron (inceptron)
-- inference.net (inference-net)
-- io.net (io-net)
-- Ionstream (ionstream)
-- Krea (krea)
-- Liquid (liquid)
-- Makora (makora)
-- Mancer (mancer)
-- MARA (mara)
-- Meta (meta)
-- MiniMax (minimax)
-- Mistral (mistral)
-- Modal (modal)
-- ModelRun [by Modular] (modelrun)
-- Moonshot AI (moonshotai)
-- Morph (morph)
-- NEAR AI (near-ai)
-- Nebius Token Factory (nebius)
-- Nex AGI (nex-agi)
-- NextBit (nextbit)
 - NovitaAI (novita)
-- NVIDIA (nvidia)
-- Open Inference (open-inference)
-- OpenAI (openai)
-- Parasail (parasail)
-- Perceptron (perceptron)
-- Perplexity (perplexity)
-- Phala (phala)
-- Poolside (poolside)
-- Prime Intellect (primeintellect)
-- Recraft (recraft)
-- Reka AI (reka)
-- Relace (relace)
-- Respan (respan)
-- Runway (runway)
+- Modal (modal)
 - Sail Research (sail-research)
 - Sakana (sakana)
 - SambaNova (sambanova)
-- ScaleDown (scaledown)
-- Seed (seed)
-- SiliconFlow (siliconflow)
-- Sourceful (sourceful)
-- SpaceXAI (xai)
-- StepFun (stepfun)
-- StreamLake (streamlake)
-- Tencent Cloud (tencent)
-- Tenstorrent (tenstorrent)
-- Thinking Machines (thinkingmachines)
 - Together (together)
 - TypeSafe (typesafe)
-- Unbiased (unbiased)
-- Upstage (upstage)
 - Venice (venice)
-- Voyage AI by MongoDB (voyageai)
+- Voyage AI (voyageai)
 - Wafer (wafer)
-- Xiaomi (xiaomi)
-- Z.ai (z-ai)
+- Parasail (parasail)
+- SiliconFlow (siliconflow)
+- Runware (runware)
+- DeepInfra (deepinfra)
 
 =======================================================================
-POLYFORM ALTERNATIVE -- UNMODIFIED STANDARD TERMS FOR COVERED RIGHTS
-=======================================================================
-
-# PolyForm Noncommercial License 1.0.0
-
-<https://polyformproject.org/licenses/noncommercial/1.0.0>
-
-## Acceptance
-
-In order to get any license under these terms, you must agree
-to them as both strict obligations and conditions to all
-your licenses.
-
-## Copyright License
-
-The licensor grants you a copyright license for the
-software to do everything you might do with the software
-that would otherwise infringe the licensor's copyright
-in it for any permitted purpose.  However, you may
-only distribute the software according to [Distribution
-License](#distribution-license) and make changes or new works
-based on the software according to [Changes and New Works
-License](#changes-and-new-works-license).
-
-## Distribution License
-
-The licensor grants you an additional copyright license
-to distribute copies of the software.  Your license
-to distribute covers distributing the software with
-changes and new works permitted by [Changes and New Works
-License](#changes-and-new-works-license).
-
-## Notices
-
-You must ensure that anyone who gets a copy of any part of
-the software from you also gets a copy of these terms or the
-URL for them above, as well as copies of any plain-text lines
-beginning with `Required Notice:` that the licensor provided
-with the software.  For example:
-
-> Required Notice: Copyright Yoyodyne, Inc. (http://example.com)
-
-## Changes and New Works License
-
-The licensor grants you an additional copyright license to
-make changes and new works based on the software for any
-permitted purpose.
-
-## Patent License
-
-The licensor grants you a patent license for the software that
-covers patent claims the licensor can license, or becomes able
-to license, that you would infringe by using the software.
-
-## Noncommercial Purposes
-
-Any noncommercial purpose is a permitted purpose.
-
-## Personal Uses
-
-Personal use for research, experiment, and testing for
-the benefit of public knowledge, personal study, private
-entertainment, hobby projects, amateur pursuits, or religious
-observance, without any anticipated commercial application,
-is use for a permitted purpose.
-
-## Noncommercial Organizations
-
-Use by any charitable organization, educational institution,
-public research organization, public safety or health
-organization, environmental protection organization,
-or government institution is use for a permitted purpose
-regardless of the source of funding or obligations resulting
-from the funding.
-
-## Fair Use
-
-You may have "fair use" rights for the software under the
-law. These terms do not limit them.
-
-## No Other Rights
-
-These terms do not allow you to sublicense or transfer any of
-your licenses to anyone else, or prevent the licensor from
-granting licenses to anyone else.  These terms do not imply
-any other licenses.
-
-## Patent Defense
-
-If you make any written claim that the software infringes or
-contributes to infringement of any patent, your patent license
-for the software granted under these terms ends immediately. If
-your company makes such a claim, your patent license ends
-immediately for work on behalf of your company.
-
-## Violations
-
-The first time you are notified in writing that you have
-violated any of these terms, or done anything with the software
-not covered by your licenses, your licenses can nonetheless
-continue if you come into full compliance with these terms,
-and take practical steps to correct past violations, within
-32 days of receiving notice.  Otherwise, all your licenses
-end immediately.
-
-## No Liability
-
-***As far as the law allows, the software comes as is, without
-any warranty or condition, and the licensor will not be liable
-to you for any damages arising out of these terms or the use
-or nature of the software, under any kind of legal claim.***
-
-## Definitions
-
-The **licensor** is the individual or entity offering these
-terms, and the **software** is the software the licensor makes
-available under these terms.
-
-**You** refers to the individual or entity agreeing to these
-terms.
-
-**Your company** is any legal entity, sole proprietorship,
-or other kind of organization that you work for, plus all
-organizations that have control over, are under the control of,
-or are under common control with that organization.  **Control**
-means ownership of substantially all the assets of an entity,
-or the power to direct its management and policies by vote,
-contract, or otherwise.  Control can be direct or indirect.
-
-**Your licenses** are all the licenses granted to you for the
-software under these terms.
-
-**Use** means anything you do with the software requiring one
-of your licenses.
-
-=======================================================================
-APACHE-2.0 -- RETAINED UPSTREAM LICENSE AND ATTRIBUTION
+RETAINED APACHE LICENSE -- INHERITED AND APPLICABLE CONTRIBUTIONS
 =======================================================================
 
                                  Apache License

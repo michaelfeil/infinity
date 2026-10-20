@@ -2,7 +2,7 @@
 Congratulations! You've made it this far! Thanks for submitting a PR to Infinity!
 
 ## License & CLA
-By submitting this PR, I confirm that my contribution is made under the terms of the [MIT license](https://github.com/michaelfeil/infinity/blob/main/LICENSE).
+By submitting this PR, I confirm that my contribution follows the applicable package license: [Infinity Restricted MIT License 1.0 for covered V3 contributions](https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/LICENSE), or [MIT for the Python packages](https://github.com/michaelfeil/infinity/blob/main/LICENSE), with inherited and third-party terms preserved.
 -->
 
 ## Related Issue

@@ -81,7 +81,7 @@ jobs:
           flavor: latest=false
           # v3 has scoped licensing; do not inherit the parent repository's MIT label.
           labels: |
-            org.opencontainers.image.licenses=(LicenseRef-Infinity-Commercial-1.0 OR PolyForm-Noncommercial-1.0.0) AND Apache-2.0
+            org.opencontainers.image.licenses=LicenseRef-Infinity-Restricted-MIT-1.0 AND Apache-2.0
           tags: |
             type=semver,pattern={{version}},prefix=${{ matrix.imageNamePrefix }}
             type=semver,pattern={{major}}.{{minor}},prefix=${{ matrix.imageNamePrefix }}
