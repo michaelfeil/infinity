@@ -42,6 +42,9 @@ class Decoder final : public Model {
 #endif
   at::Tensor cached_linear(const at::Tensor& x,const at::Tensor& w,const at::Tensor& b={}) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
+    if(!b.defined()&&!fp8_dynamic&&!transformers_math()&&dtype==at::kBFloat16
+      &&hidden==4096&&(family=="qwen3"||family=="llama")&&w.size(1)==4096
+      &&(w.size(0)==24576||w.size(0)==28672))return no_bias_cache.forward(x,w,true);
     if(!b.defined()&&!fp8_dynamic&&dtype==at::kBFloat16&&family=="qwen2"&&hidden==896&&head_dim==64)
       return no_bias_cache.forward(x,w);
 #endif
@@ -119,6 +122,12 @@ class Decoder final : public Model {
         ||(family=="llama"&&(hidden==2048||hidden==4096))
         ||(family=="qwen3"&&hidden==1024&&head_dim==128)
         ||(family=="qwen2"&&hidden==896&&head_dim==64)));
+  }
+  bool allow_cudnn_attention() const {
+    // The explicit cuDNN option permits its different softmax reduction for
+    // BF16 Llama-8B as well as all-linear FP8. Normalization stays unchanged.
+    return fp8_all_linear||!exact_decoder_math()
+      ||(!fp8_dynamic&&dtype==at::kBFloat16&&family=="llama"&&hidden==4096);
   }
   std::pair<at::Tensor,at::Tensor> residual_norm(const at::Tensor& x,
     const at::Tensor& residual,const at::Tensor& weight) const {
@@ -246,9 +255,7 @@ class Decoder final : public Model {
         &&(right_window<0||(causal&&right_window==0)||right_window>=input.max_sequence-1);
       bool use_cudnn=cudnn_varlen&&input.max_sequence>=512&&window_inactive;
 #ifdef TEI_TORCH_CUDA_KERNELS
-      // Existing exact contracts retain precedence. The explicit all-linear
-      // FP8 policy may also opt into cuDNN BF16 attention.
-      use_cudnn=use_cudnn&&(fp8_all_linear||!exact_decoder_math());
+      use_cudnn=use_cudnn&&allow_cudnn_attention();
       if(!use_cudnn&&exact_decoder_math()&&torch_flash_fma_supported(q,k,v,causal,left_window,right_window))
         return torch_flash_fma(q,k,v,input.cumulative,input.max_sequence,
           1./std::sqrt(static_cast<double>(head_dim)),causal,left_window,right_window);
@@ -293,13 +300,15 @@ class Decoder final : public Model {
       return radix_fold(attend_full(rows[0],rows[1],rows[2],input,layer.left_window,layer.right_window),input);
     }
     bool exact=false;
+    bool allow_cudnn=true;
 #ifdef TEI_TORCH_CUDA_KERNELS
     exact=exact_decoder_math();
+    allow_cudnn=allow_cudnn_attention();
 #endif
     auto full_length=input.prefix->original.max_sequence;
     const bool window_inactive=(layer.left_window<0||layer.left_window>=full_length-1)
       &&(layer.right_window<0||layer.right_window==0||layer.right_window>=full_length-1);
-    const bool use_cudnn=(fp8_all_linear||!exact)&&cudnn_varlen&&full_length>=512&&window_inactive;
+    const bool use_cudnn=allow_cudnn&&cudnn_varlen&&full_length>=512&&window_inactive;
     return radix_fold(prefix_attention(rows[0],rows[1],rows[2],input,layer_index,
       1./std::sqrt(static_cast<double>(head_dim)),layer.left_window,layer.right_window,exact,true,use_cudnn),input);
   }

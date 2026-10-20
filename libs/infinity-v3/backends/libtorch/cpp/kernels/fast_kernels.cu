@@ -9,6 +9,7 @@
 #include <cuda_fp16.h>
 #include <cstdint>
 #include <cmath>
+#include <type_traits>
 #include "../../../candle/extensions/candle-layer-norm/kernels/ln_fwd_kernels.cuh"
 // Candle emits PTX directly and guards its BF16 kernel by __CUDA_ARCH__.
 // LibTorch builds a host CUDA translation unit, which also needs the declaration.
@@ -187,6 +188,48 @@ template<class T,int Columns> __global__ void add_rms_kernel(const T* x,const T*
     if(col<width)out[row*width+col]=T((values[j]*inverse)*float(weight[col]));
   }
 }
+// Vector global transfers retain the scalar kernel's per-thread summation
+// order. Shared memory changes the access layout without changing arithmetic.
+struct alignas(16) Bf16NormVector { __nv_bfloat16 v[8]; };
+__global__ void add_rms_bf16_4096_kernel(const __nv_bfloat16* x,
+    const __nv_bfloat16* residual,const __nv_bfloat16* weight,
+    __nv_bfloat16* out,__nv_bfloat16* summed,float epsilon) {
+  __shared__ float values[4096];
+  const int64_t row=blockIdx.x;
+  #pragma unroll
+  for(int j=0;j<2;++j) {
+    const int group=threadIdx.x+j*256;
+    auto input=reinterpret_cast<const Bf16NormVector*>(x)[row*512+group];
+    Bf16NormVector add{},sum;
+    if(residual)add=reinterpret_cast<const Bf16NormVector*>(residual)[row*512+group];
+    #pragma unroll
+    for(int i=0;i<8;++i) {
+      float value=float(input.v[i]);
+      if(residual)value+=float(add.v[i]);
+      values[group*8+i]=value;
+      sum.v[i]=__nv_bfloat16(value);
+    }
+    if(residual)reinterpret_cast<Bf16NormVector*>(summed)[row*512+group]=sum;
+  }
+  __syncthreads();
+  float variance=0;
+  #pragma unroll
+  for(int j=0;j<16;++j) {
+    float value=values[threadIdx.x+j*256];
+    variance+=value*value;
+  }
+  float inverse=rsqrtf(block_sum(variance)/4096+epsilon);
+  #pragma unroll
+  for(int j=0;j<2;++j) {
+    const int group=threadIdx.x+j*256;
+    auto gamma=reinterpret_cast<const Bf16NormVector*>(weight)[group];
+    Bf16NormVector result;
+    #pragma unroll
+    for(int i=0;i<8;++i)
+      result.v[i]=__nv_bfloat16((values[group*8+i]*inverse)*float(gamma.v[i]));
+    reinterpret_cast<Bf16NormVector*>(out)[row*512+group]=result;
+  }
+}
 template<class T> __global__ void add_rms_large_kernel(const T* x,const T* residual,const T* weight,T* out,T* summed,int64_t width,float epsilon) {
   const int64_t row=blockIdx.x;float variance=0;
   for(int64_t col=threadIdx.x;col<width;col+=blockDim.x){
@@ -233,6 +276,14 @@ template<class T> void run_rms(const at::Tensor& x,const at::Tensor& residual,co
  auto op=reinterpret_cast<T*>(out.mutable_data_ptr());
  auto sp=residual.defined()?reinterpret_cast<T*>(sum.mutable_data_ptr()):nullptr;
  auto width=x.size(-1),rows=x.numel()/width;
+ if constexpr(std::is_same_v<T,__nv_bfloat16>) {
+  if(width==4096 && rows>=128 && reinterpret_cast<uintptr_t>(xp)%16==0
+    && reinterpret_cast<uintptr_t>(wp)%16==0 && (!rp||reinterpret_cast<uintptr_t>(rp)%16==0)) {
+   add_rms_bf16_4096_kernel<<<rows,256,0,stream>>>(xp,rp,wp,op,sp,epsilon);
+   return;
+  }
+ }
+
 #define TEI_RMS_COLUMNS(C) add_rms_kernel<T,C><<<rows,256,0,stream>>>(xp,rp,wp,op,sp,width,epsilon)
  if(width<=256){TEI_RMS_COLUMNS(1);}else if(width<=512){TEI_RMS_COLUMNS(2);}
  else if(width<=768){TEI_RMS_COLUMNS(3);}else if(width<=1024){TEI_RMS_COLUMNS(4);}
@@ -307,6 +358,23 @@ template<class Pair,class Index> __global__ void gated_gelu_pairs_kernel(const P
     result.value[lane]=__hmul2(activated,up.value[lane]);
   }
   reinterpret_cast<GatedVector<Pair,4>*>(out)[index]=result;
+}
+// BF16 pair instructions preserve each rounded SiLU intermediate.
+template<class Index> __global__ void gated_silu_bf16_pairs_kernel(
+    const __nv_bfloat162* x,__nv_bfloat162* out,Index count,Index width) {
+  const Index index=Index(blockIdx.x)*blockDim.x+threadIdx.x;
+  if(index>=count/8)return;
+  const Index vectors=width/8,row=index/vectors,col=index%vectors;
+  auto gate=reinterpret_cast<const GatedVector<__nv_bfloat162,4>*>(x)[row*2*vectors+col];
+  auto up=reinterpret_cast<const GatedVector<__nv_bfloat162,4>*>(x)[row*2*vectors+vectors+col];
+  GatedVector<__nv_bfloat162,4> result;
+  #pragma unroll
+  for(int i=0;i<4;++i) {
+    auto exponential=h2exp(__hneg2(gate.value[i]));
+    auto denominator=__hadd2(__float2bfloat162_rn(1),exponential);
+    result.value[i]=__hmul2(__h2div(gate.value[i],denominator),up.value[i]);
+  }
+  reinterpret_cast<GatedVector<__nv_bfloat162,4>*>(out)[index]=result;
 }
 template<class T,class Index,int Lanes> __global__ void gated_vector_kernel(const T* x,T* out,Index count,Index width,int activation,bool gate_first) {
   Index index=Index(blockIdx.x)*blockDim.x+threadIdx.x;if(index>=count/Lanes)return;
@@ -489,6 +557,13 @@ at::Tensor fused_gated_activation(const at::Tensor& x,int32_t activation,bool ga
   TORCH_CHECK(activation>=0&&activation<=5,"Unsupported fused gated activation");
   c10::cuda::CUDAGuard guard(x.device());auto shape=x.sizes().vec();shape.back()/=2;auto output=at::empty(shape,x.options());if(output.numel()==0)return output;
   auto stream=at::cuda::getCurrentCUDAStream(x.device().index());
+  if(activation==5 && gate_first && x.scalar_type()==at::kBFloat16 && shape.back()%8==0
+    && reinterpret_cast<uintptr_t>(x.const_data_ptr())%16==0) {
+#define TEI_SILU_PAIRS(I) gated_silu_bf16_pairs_kernel<I><<<(output.numel()/8+255)/256,256,0,stream>>>(reinterpret_cast<const __nv_bfloat162*>(x.const_data_ptr()),reinterpret_cast<__nv_bfloat162*>(output.mutable_data_ptr()),I(output.numel()),I(shape.back()))
+    if(x.numel()<=UINT32_MAX){TEI_SILU_PAIRS(uint32_t);}else{TEI_SILU_PAIRS(uint64_t);}
+#undef TEI_SILU_PAIRS
+    C10_CUDA_KERNEL_LAUNCH_CHECK();return output;
+  }
   if(activation==4 && (x.scalar_type()==at::kHalf || x.scalar_type()==at::kBFloat16) && shape.back()%8==0 &&
       reinterpret_cast<uintptr_t>(x.const_data_ptr())%16==0) {
 #define TEI_GATE_PAIRS(T,I) gated_gelu_pairs_kernel<T,I><<<(output.numel()/8+255)/256,256,0,stream>>>(reinterpret_cast<const T*>(x.const_data_ptr()),reinterpret_cast<T*>(output.mutable_data_ptr()),I(output.numel()/2),I(shape.back()/2),gate_first)

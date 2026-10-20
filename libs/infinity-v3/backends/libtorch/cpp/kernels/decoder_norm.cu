@@ -37,12 +37,77 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
 #include <vector>
+#include <cstdint>
 #define layer_norm tei_decoder_exact_norm
 #include "../../../candle/extensions/candle-layer-norm/kernels/ln_fwd_kernels.cuh"
 #undef layer_norm
 
 namespace tei {
 namespace {
+// Specialize the retained Candle 1x4-warp contract: the same 32 values per
+// thread, XOR warp reductions and Chan merges, with fixed group sizes.
+// One block owns each row; other widths and unaligned views use the adapter.
+struct alignas(16) ExactBf16Vector { __nv_bfloat16 v[8]; };
+__device__ float2 combine_exact_stats(float2 a,float2 b,float count,float inverse) {
+  float delta=a.x-b.x;
+  float m2=a.y+b.y+delta*delta*count*count*inverse;
+  float mean=(count*a.x+count*b.x)*inverse;
+  return {mean,m2};
+}
+__global__ void exact_bf16_4096_kernel(const __nv_bfloat16* x,
+    const __nv_bfloat16* residual,const __nv_bfloat16* weight,
+    __nv_bfloat16* out,__nv_bfloat16* summed,float epsilon) {
+  __shared__ float2 warp_stats[4];
+  const int64_t row=blockIdx.x;
+  const int lane=threadIdx.x%32,warp=threadIdx.x/32;
+  float values[32];
+  #pragma unroll
+  for(int j=0;j<4;++j) {
+    const int group=threadIdx.x+j*128;
+    auto input=reinterpret_cast<const ExactBf16Vector*>(x)[row*512+group];
+    ExactBf16Vector add{},sum;
+    if(residual)add=reinterpret_cast<const ExactBf16Vector*>(residual)[row*512+group];
+    #pragma unroll
+    for(int i=0;i<8;++i) {
+      float value=float(input.v[i]);
+      if(residual)value+=float(add.v[i]);
+      values[j*8+i]=value;
+      sum.v[i]=__nv_bfloat16(value);
+    }
+    if(residual)reinterpret_cast<ExactBf16Vector*>(summed)[row*512+group]=sum;
+  }
+  float mean=0;
+  #pragma unroll
+  for(int i=0;i<32;++i)mean+=values[i];
+  #pragma unroll
+  for(int i=1;i<32;i*=2)mean+=__shfl_xor_sync(0xffffffff,mean,i);
+  mean*=1.f/1024;
+  float m2=0;
+  #pragma unroll
+  for(int i=0;i<32;++i) {
+    float delta=values[i]-mean;
+    m2+=delta*delta;
+  }
+  #pragma unroll
+  for(int i=1;i<32;i*=2)m2+=__shfl_xor_sync(0xffffffff,m2,i);
+  if(!lane)warp_stats[warp]={mean,m2};
+  __syncthreads();
+  auto even=combine_exact_stats(warp_stats[0],warp_stats[2],1024,1.f/2048);
+  auto odd=combine_exact_stats(warp_stats[1],warp_stats[3],1024,1.f/2048);
+  auto stats=combine_exact_stats(even,odd,2048,1.f/4096);
+  float inverse=rsqrtf(stats.y*(1.f/4096)+epsilon+stats.x*stats.x);
+  #pragma unroll
+  for(int j=0;j<4;++j) {
+    const int group=threadIdx.x+j*128;
+    auto gamma=reinterpret_cast<const ExactBf16Vector*>(weight)[group];
+    ExactBf16Vector result;
+    #pragma unroll
+    for(int i=0;i<8;++i)
+      result.v[i]=__nv_bfloat16(float(gamma.v[i])*(inverse*(values[j*8+i]-0.f))+0.f);
+    reinterpret_cast<ExactBf16Vector*>(out)[row*512+group]=result;
+  }
+}
+
 template<int Width,int WarpsM,int WarpsN,class T=nv_bfloat16,bool Even=true>
 std::pair<at::Tensor,at::Tensor> exact_norm(const at::Tensor& x,const at::Tensor& residual,
  const at::Tensor& w,double epsilon) {
@@ -71,6 +136,17 @@ std::pair<at::Tensor,at::Tensor> decoder_exact_rms_norm(const at::Tensor& x,
    "Exact decoder RMS expects CUDA BF16 width 896, 1024, 2048, 3072 or 4096, or FP16 width 896, 1024 or 2048");
  TORCH_CHECK(w.device()==x.device()&&w.scalar_type()==x.scalar_type()&&w.dim()==1&&w.numel()==x.size(1)&&w.is_contiguous(),"Invalid exact decoder RMS weight");
  TORCH_CHECK(!residual.defined()||(residual.device()==x.device()&&residual.scalar_type()==x.scalar_type()&&residual.sizes()==x.sizes()&&residual.is_contiguous()),"Invalid exact decoder RMS residual");
+ if(x.scalar_type()==at::kBFloat16 && x.size(1)==4096 && x.size(0)>=128
+   && reinterpret_cast<uintptr_t>(x.const_data_ptr())%16==0
+   && reinterpret_cast<uintptr_t>(w.const_data_ptr())%16==0
+   && (!residual.defined()||reinterpret_cast<uintptr_t>(residual.const_data_ptr())%16==0)) {
+  const c10::cuda::CUDAGuard guard(x.device());
+  auto out=at::empty_like(x),sum=residual.defined()?at::empty_like(x):x;
+  auto ptr=[](const at::Tensor& t){return reinterpret_cast<const __nv_bfloat16*>(t.const_data_ptr());};
+  exact_bf16_4096_kernel<<<x.size(0),128,0,at::cuda::getCurrentCUDAStream()>>>(ptr(x),residual.defined()?ptr(residual):nullptr,ptr(w),
+    reinterpret_cast<__nv_bfloat16*>(out.mutable_data_ptr()),reinterpret_cast<__nv_bfloat16*>(sum.mutable_data_ptr()),epsilon);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();return {out,sum};
+ }
  // Retain Candle's registered 4x1 warp geometry and FP16 rounding.
  if(x.scalar_type()==at::kHalf&&x.size(1)==896)return exact_norm<1024,4,1,__half,false>(x,residual,w,epsilon);
  if(x.scalar_type()==at::kHalf&&x.size(1)==2048)return exact_norm<2048,4,1,__half>(x,residual,w,epsilon);
