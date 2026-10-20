@@ -1,5 +1,5 @@
 {
-  "status": "Fixed platform snapshot for Infinity License 1.0 for Commercial Use; adoption scope and effective version are defined in the root LICENSE",
+  "status": "Historical platform snapshot for the retained Infinity License 1.0 for Commercial Use. This snapshot does not define the current restricted-provider list; see ../../LICENSE, Appendix A.",
   "retrieved_date_utc": "2026-10-13",
   "directory_url": "https://openrouter.ai/providers",
   "provider_metadata_url": "https://openrouter.ai/api/v1/providers",

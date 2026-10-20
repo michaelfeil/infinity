@@ -11,7 +11,7 @@
 [![Forks][forks-shield]][forks-url]
 [![Stargazers][stars-shield]][stars-url]
 [![Issues][issues-shield]][issues-url]
-[![MIT License][license-shield]][license-url]
+[![License][license-shield]][license-url]
 
 # Infinity ♾️
 [![codecov][codecov-shield]][codecov-url]
@@ -21,7 +21,7 @@
 ![Docker pulls](https://img.shields.io/docker/pulls/michaelf34/infinity)
 
 
-Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models, clip, clap and colpali. Infinity is developed under [MIT License](https://github.com/michaelfeil/infinity/blob/main/LICENSE).
+Infinity is a high-throughput, low-latency REST API for serving text-embeddings, reranking models, clip, clap and colpali. The Python packages use the [MIT License](LICENSE). Infinity V3 uses the [Infinity Restricted MIT License 1.0](libs/infinity-v3/LICENSING.md), with retained third-party and earlier grants.
 
 ## Why Infinity
 * **Deploy any model from HuggingFace**: deploy any embedding, reranking, clip and sentence-transformer model from [HuggingFace]( https://huggingface.co/models?other=text-embeddings-inference&sort=trending)
@@ -514,7 +514,7 @@ cd libs/infinity_emb
 make precommit
 ```
 
-All contributions must be made in a way to be compatible with the MIT License of this repo. 
+Contributions to the Python packages must be compatible with the MIT License. Infinity V3 contributions follow its [contribution policy](libs/infinity-v3/CONTRIBUTING.md) and [license](libs/infinity-v3/LICENSE).
 
 ### Citation
 ```
@@ -545,7 +545,7 @@ All contributions must be made in a way to be compatible with the MIT License of
 [stars-url]: https://github.com/michaelfeil/infinity/stargazers
 [issues-shield]: https://img.shields.io/github/issues/michaelfeil/infinity.svg?style=for-the-badge
 [issues-url]: https://github.com/michaelfeil/infinity/issues
-[license-shield]: https://img.shields.io/github/license/michaelfeil/infinity.svg?style=for-the-badge
+[license-shield]: https://img.shields.io/badge/license-MIT%20%2F%20Infinity%20Restricted%20MIT-blue?style=for-the-badge
 [license-url]: https://github.com/michaelfeil/infinity/blob/main/LICENSE
 [pepa-shield]: https://static.pepy.tech/badge/infinity-emb
 [pepa-url]: https://www.pepy.tech/projects/infinity-emb
