@@ -448,7 +448,7 @@ mod tests {
             },
         };
         for (original, expanded) in [(5, 8), (3, 4)] {
-            let mut questions = vec![question(original)];
+            let mut questions = vec![question(original), question(original)];
             model
                 .attach_images(&mut questions, prepared(), None)
                 .map_err(anyhow::Error::msg)?;
@@ -460,6 +460,10 @@ mod tests {
                 panic!("Lost block metadata")
             };
             assert_eq!(*prefix_length, expanded);
+            assert_eq!(
+                super::input_token_count(&questions),
+                expanded + 2 * (9 - expanded)
+            );
             let media = questions[0].encoding.multimodal.as_ref().unwrap();
             assert_eq!(
                 media

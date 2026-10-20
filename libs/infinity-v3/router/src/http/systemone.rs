@@ -171,6 +171,26 @@ struct Question {
     input: DecisionInput,
 }
 
+/// Questions in one prepared OneJev request share the same state and images.
+/// Count complete token prefixes once and every suffix, regardless of batching.
+fn input_token_count(questions: &[Question]) -> usize {
+    let mut prefixes = HashSet::new();
+    questions
+        .iter()
+        .map(|question| {
+            let ids = &question.encoding.input_ids;
+            match &question.input {
+                DecisionInput::BlockOptionTokens { prefix_length, .. }
+                    if !prefixes.insert(&ids[..*prefix_length]) =>
+                {
+                    ids.len() - prefix_length
+                }
+                _ => ids.len(),
+            }
+        })
+        .sum()
+}
+
 impl Laya {
     pub fn load(
         path: &Path,
@@ -742,7 +762,7 @@ pub(crate) async fn systemone_inner(
     }
     let tokenization = start.elapsed();
     let compute_chars = questions.iter().map(|q| q.compute_chars).sum();
-    let input_tokens: usize = questions.iter().map(|q| q.encoding.input_ids.len()).sum();
+    let input_tokens = input_token_count(&questions);
     let batch_counter = Arc::new(std::sync::atomic::AtomicUsize::new(questions.len()));
     let output_tokens = if matches!(
         service.as_ref(),
@@ -866,6 +886,76 @@ pub(crate) async fn systemone_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn usage_question(prefix: usize, suffix: usize) -> Question {
+        let length = prefix + suffix;
+        Question {
+            id: "q".into(),
+            kind: "noul".into(),
+            labels: vec![],
+            criteria: Value::Null,
+            compute_chars: 0,
+            encoding: ValidEncoding {
+                multimodal: None,
+                input_ids: vec![1; length],
+                token_type_ids: vec![0; length],
+                position_ids: (0..length as u32).collect(),
+                tokens: vec![],
+                offsets: vec![],
+            },
+            input: DecisionInput::BlockOptionTokens {
+                token_ids: vec![11, 12],
+                prefix_length: prefix,
+            },
+        }
+    }
+
+    #[test]
+    fn usage_counts_shared_prefix_once_and_every_suffix() {
+        let mut questions: Vec<_> = (0..10).map(|_| usage_question(1000, 100)).collect();
+        assert_eq!(input_token_count(&questions), 2000);
+        // Different suffix lengths and content do not change prefix identity.
+        questions[0] = usage_question(1000, 50);
+        questions[0].encoding.input_ids[1000..].fill(9);
+        assert_eq!(input_token_count(&questions), 1950);
+        questions.reverse();
+        assert_eq!(input_token_count(&questions), 1950);
+        assert_eq!(input_token_count(&questions[..1]), 1100);
+        assert_eq!(input_token_count(&[]), 0);
+    }
+
+    #[test]
+    fn usage_keeps_distinct_prefixes_and_nonblock_questions() {
+        let mut questions: Vec<_> = (0..3).map(|_| usage_question(1000, 100)).collect();
+        questions[1].encoding.input_ids[0] = 2;
+        questions[2].input = DecisionInput::OptionTokens {
+            token_ids: vec![11, 12],
+        };
+        assert_eq!(input_token_count(&questions), 3300);
+        questions.push(usage_question(1000, 100));
+        assert_eq!(input_token_count(&questions), 3400);
+        questions.push(usage_question(999, 101));
+        assert_eq!(input_token_count(&questions), 4500);
+    }
+
+    #[test]
+    fn usage_headers_receive_the_deduplicated_count() {
+        let billing = crate::billing_input_tokens_header().unwrap();
+        let questions: Vec<_> = (0..10).map(|_| usage_question(1000, 100)).collect();
+        let headers: HeaderMap = crate::ResponseMetadata::new(
+            0,
+            input_token_count(&questions),
+            Instant::now(),
+            Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .into();
+        assert_eq!(headers["x-compute-tokens"], "2000");
+        if let Some(name) = billing {
+            assert_eq!(headers[name], "2000");
+        }
+    }
 
     fn request(state: Value) -> Result<SystemOneRequest, serde_json::Error> {
         serde_json::from_value(json!({"state":state,"questions":{}}))
