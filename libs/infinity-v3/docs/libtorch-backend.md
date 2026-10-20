@@ -558,7 +558,7 @@ Dense Qwen3.5 decision checkpoints declare their attention and readout in
 `config.json`:
 
 ```json
-"baseten_modeling_overrides": {
+"modeling_overrides": {
   "attention": {"full_attention": "block_bidirectional", "linear_attention": "causal"},
   "readout": "slot_lm"
 }
@@ -571,7 +571,9 @@ layers remain causal.
 Serve a local checkpoint in a LibTorch build/image with `--dtype bfloat16
 --decision-protocol onejev --model-id /path/to/checkpoint`. The `/v1/systemone`
 request and answer-letter scoring format are unchanged. Attention and readout
-metadata are loaded exclusively from `baseten_modeling_overrides`.
+metadata are loaded from `modeling_overrides` or the legacy
+`baseten_modeling_overrides` key. If both are present, their values must be
+identical; conflicting declarations are rejected.
 
 For OneJev block attention, `usage.input_tokens`, `x-compute-tokens`, and the
 configured billing input-token header count each distinct shared prefix once
