@@ -41,64 +41,6 @@ alongside its exact residual normalization. The vendor directory records the
 Torch and Flash revisions and source hashes; installation retains the complete
 BSD license, authors and provenance under `share/licenses/tei_torch`.
 
-### InfinityFA4
-
-The NVIDIA image includes ahead-of-time compiled FlashAttention-4 kernels for
-SM80, SM86, SM89, SM90, SM100 and SM120. All targets include FP16 and BF16
-attention; FP8 projection settings do not change the attention dtype.
-The native adapter shares the retained MIT Candle FA4 bridge and pinned
-BSD-licensed upstream kernels, without a Candle or Python serving dependency.
-
-The current exports cover these geometries:
-
-| Head dimension | Query heads / KV heads | Attention |
-|---|---|---|
-| 64 | 1 | Global or finite left/right window |
-| 128 | 4 | Causal, without a finite left window |
-| 128 | 2 | Global |
-| 64 | 1 | DeBERTa-v2/v3 disentangled relative attention |
-
-Sequence lengths and head counts are runtime values. Packed self-attention and
-unequal query/KV lengths, including eligible prefix-cache suffixes, use the
-current CUDA stream. Other geometries and ALiBi keep their existing kernels.
-Explicit decoder/BERT cuDNN selection retains precedence. Launch errors
-propagate instead of silently changing attention implementations.
-
-InfinityFA4 is enabled when built. Set `INFINITY_TORCH_FA4=0` before starting
-the server to select the previous attention paths. This setting is immutable
-after first use. FA4 is not uniformly faster: gains depend on model geometry,
-sequence length and the attention share of total inference time. Numerical
-results can differ from Torch Flash/efficient attention; kernel tests do not
-establish task accuracy for every checkpoint.
-
-DeBERTa computes relative-position terms inside attention using two packed
-relative tables and a signed-distance lookup. It avoids quadratic bucket and
-attention-bias tensors. Auxiliary memory remains subject to the backend's
-attention-memory admission budget. This applies to shared or separate position
-projections and c2p, p2c or combined relative terms.
-
-For a source build, install the pinned Torch SDK and the requirements under
-`backends/libtorch/cpp/vendor/infinity_fa4`, then run:
-
-```bash
-python backends/libtorch/cpp/vendor/infinity_fa4/build_all.py \
-  /path/to/infinity-fa4 --architectures '80;86;89;90;100;120'
-export INFINITY_FA4_ROOT=/path/to/infinity-fa4
-```
-
-Build requirements and provenance are described in the vendor
-[README](../backends/libtorch/cpp/vendor/infinity_fa4/README.md).
-Exporting adds a build stage for each architecture and requires Python, CuTe DSL
-and TVM FFI, but no GPU. Runtime packages include only the native bundles,
-their shared-library dependencies, manifests and license notices.
-Source builds omitting `INFINITY_FA4_ROOT` retain the previous attention paths.
-
-Native tests cover independent attention references, packed boundaries,
-strided views, concurrent/device initialization, CUDA graph replay and a
-complete DeBERTa model under a memory budget too small for quadratic bias.
-All six architecture exports compile; H100 is the runtime-tested target.
-Compilation alone does not establish accuracy or performance on other GPUs.
-
 CPU has an unpadded reference implementation: all projections/MLPs stay packed,
 and attention uses SDPA on each sequence at its actual length. This is useful for
 correctness testing; it is not a fused CPU varlen kernel. MPS and XPU are rejected
@@ -110,6 +52,24 @@ Set `CUTLASS_ROOT` for an offline checkout; otherwise CMake reuses the Candle
 cache or downloads that pinned revision. Installation includes the retained
 CUTLASS BSD and Candle kernel MIT notices under `share/licenses/tei_torch`. Kernel-level exact routing
 tests do not establish trained checkpoint accuracy.
+
+### InfinityFA4
+
+The NVIDIA image includes native FP16/BF16 FlashAttention-4 bundles for SM80,
+SM86, SM89, SM90, SM100 and SM120. Supported shapes are global/windowed d64
+MHA, causal d128 GQA4, global d128 GQA2, and d64 DeBERTa relative attention.
+DeBERTa avoids quadratic relative-position bucket and attention-bias storage.
+FP8 projections retain their existing attention dtype.
+
+FA4 is enabled when built. Set `INFINITY_TORCH_FA4=0` before startup to use
+previous attention paths. Unsupported shapes retain their existing kernels;
+explicit BERT/decoder cuDNN selection takes precedence. Launch errors propagate.
+
+Source builds opt in through `INFINITY_FA4_ROOT`; see the vendor
+[build instructions](../backends/libtorch/cpp/vendor/infinity_fa4/README.md).
+Export requires Python and no GPU; serving requires neither Python nor JIT
+compilation. H100 has runtime coverage; other targets have compile/link coverage.
+Performance and numerical differences depend on the checkpoint and precision.
 
 ## Model support
 

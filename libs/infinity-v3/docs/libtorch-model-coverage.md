@@ -27,7 +27,7 @@ exact-length biased attention without padded token activations.
 | Qwen3-VL | Native vision tower, mRoPE, patch/deepstack mergers and decoder injection |
 | Qwen3.5 dense/MoE/text aliases | Packed full attention, DeltaNet, MoE/shared experts and vision tower |
 | MPNet | Native exact-length relative-biased attention |
-| DeBERTa-v2/v3 (experimental) | Native disentangled relative attention, convolution and classifier; InfinityFA4 avoids quadratic attention-bias storage for FP16/BF16 head dimension 64 |
+| DeBERTa-v2/v3 (experimental) | Native disentangled relative attention, convolution and classifier |
 
 Classifier and SPLADE heads are architecture-specific. Typed decisions support
 Laya, Clef, Pplx and option-token contracts, with checkpoint sidecar loading.
