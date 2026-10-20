@@ -573,6 +573,10 @@ Serve a local checkpoint in a LibTorch build/image with `--dtype bfloat16
 request and answer-letter scoring format are unchanged. Attention and readout
 metadata are loaded exclusively from `baseten_modeling_overrides`.
 
+For OneJev block attention, `usage.input_tokens`, `x-compute-tokens`, and the
+configured billing input-token header count each distinct shared prefix once
+per request plus every question suffix, independently of batching or cache hits.
+
 Within each backend batch, identical complete prefixes share full-attention KV,
 FP32 recurrent states and convolution history. Prefix tokens, token types,
 positions, all mRoPE axes, image pixels/layout/placement and the block boundary

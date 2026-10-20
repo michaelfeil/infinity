@@ -171,6 +171,53 @@ struct Question {
     input: DecisionInput,
 }
 
+/// Request-level usage: count each complete OneJev block prefix once, plus every
+/// suffix, independently of backend batching or cache residency.
+fn input_token_count(questions: &[Question]) -> usize {
+    let mut total = questions.iter().map(|q| q.encoding.input_ids.len()).sum();
+    let mut prefixes: HashMap<_, Vec<&ValidEncoding>> = HashMap::new();
+    for question in questions {
+        let DecisionInput::BlockOptionTokens { prefix_length, .. } = &question.input else {
+            continue;
+        };
+        let length = *prefix_length;
+        let encoding = &question.encoding;
+        let (Some(ids), Some(types), Some(positions)) = (
+            encoding.input_ids.get(..length),
+            encoding.token_type_ids.get(..length),
+            encoding.position_ids.get(..length),
+        ) else {
+            continue;
+        };
+        let representatives = prefixes.entry((ids, types, positions)).or_default();
+        let same_media = |previous: &&ValidEncoding| match (
+            previous.multimodal.as_deref(),
+            encoding.multimodal.as_deref(),
+        ) {
+            (None, None) => true,
+            (Some(a), Some(b)) => {
+                (0..3).all(|axis| {
+                    a.position_ids[axis]
+                        .get(..length)
+                        .is_some_and(|p| Some(p) == b.position_ids[axis].get(..length))
+                }) && infinity_v3_backend::MultimodalEncoding::same_radix_context(
+                    Some(a),
+                    Some(b),
+                    ids,
+                    ids,
+                )
+            }
+            _ => false,
+        };
+        if representatives.iter().any(same_media) {
+            total -= length;
+        } else {
+            representatives.push(encoding);
+        }
+    }
+    total
+}
+
 impl Laya {
     pub fn load(
         path: &Path,
@@ -742,7 +789,7 @@ pub(crate) async fn systemone_inner(
     }
     let tokenization = start.elapsed();
     let compute_chars = questions.iter().map(|q| q.compute_chars).sum();
-    let input_tokens: usize = questions.iter().map(|q| q.encoding.input_ids.len()).sum();
+    let input_tokens = input_token_count(&questions);
     let batch_counter = Arc::new(std::sync::atomic::AtomicUsize::new(questions.len()));
     let output_tokens = if matches!(
         service.as_ref(),
@@ -866,6 +913,116 @@ pub(crate) async fn systemone_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn usage_question(prefix: usize, suffix: usize) -> Question {
+        let length = prefix + suffix;
+        Question {
+            id: "q".into(),
+            kind: "noul".into(),
+            labels: vec![],
+            criteria: Value::Null,
+            compute_chars: 0,
+            encoding: ValidEncoding {
+                multimodal: None,
+                input_ids: vec![1; length],
+                token_type_ids: vec![0; length],
+                position_ids: (0..length as u32).collect(),
+                tokens: vec![],
+                offsets: vec![],
+            },
+            input: DecisionInput::BlockOptionTokens {
+                token_ids: vec![11, 12],
+                prefix_length: prefix,
+            },
+        }
+    }
+
+    #[test]
+    fn usage_counts_shared_prefix_once_and_every_suffix() {
+        let mut questions: Vec<_> = (0..10).map(|_| usage_question(1000, 100)).collect();
+        assert_eq!(input_token_count(&questions), 2000);
+        // Different suffix lengths and content do not change prefix identity.
+        questions[0] = usage_question(1000, 50);
+        questions[0].encoding.input_ids[1000..].fill(9);
+        assert_eq!(input_token_count(&questions), 1950);
+        questions.reverse();
+        assert_eq!(input_token_count(&questions), 1950);
+        assert_eq!(input_token_count(&questions[..1]), 1100);
+        assert_eq!(input_token_count(&[]), 0);
+    }
+
+    #[test]
+    fn usage_keeps_distinct_prefixes_and_nonblock_questions() {
+        let mut questions: Vec<_> = (0..5).map(|_| usage_question(1000, 100)).collect();
+        questions[1].encoding.input_ids[0] = 2;
+        questions[2].encoding.token_type_ids[0] = 1;
+        questions[3].encoding.position_ids[0] = 1;
+        questions[4].input = DecisionInput::OptionTokens {
+            token_ids: vec![11, 12],
+        };
+        assert_eq!(input_token_count(&questions), 5500);
+        questions.push(usage_question(999, 101));
+        assert_eq!(input_token_count(&questions), 6600);
+        // Even malformed metadata must not panic or discount an invalid prefix.
+        questions.push(usage_question(1000, 100));
+        questions.last_mut().unwrap().encoding.position_ids.clear();
+        assert_eq!(input_token_count(&questions), 7700);
+    }
+
+    fn usage_image_question(pixel: f32) -> Question {
+        let mut question = usage_question(1000, 100);
+        question.encoding.multimodal = Some(Arc::new(infinity_v3_backend::MultimodalEncoding {
+            images: vec![(
+                1,
+                Arc::new(infinity_v3_backend::ImagePatches {
+                    pixels: vec![pixel; 4],
+                    grid_thw: [1, 2, 2],
+                    patch_dim: 1,
+                    merge_size: 1,
+                }),
+            )],
+            audios: vec![],
+            position_ids: std::array::from_fn(|_| (0..1100).collect()),
+            memory: None,
+        }));
+        question
+    }
+
+    #[test]
+    fn usage_deduplicates_image_content_but_not_distinct_pixels_or_positions() {
+        // Equal independently allocated images still share a prefix.
+        let mut questions = vec![usage_image_question(1.0), usage_image_question(1.0)];
+        assert_eq!(input_token_count(&questions), 1200);
+        questions.push(usage_image_question(2.0));
+        assert_eq!(input_token_count(&questions), 2300);
+        let mut moved = usage_image_question(1.0);
+        let media = Arc::get_mut(moved.encoding.multimodal.as_mut().unwrap()).unwrap();
+        // Check all prefix positions, including positions after the image.
+        media.position_ids[2][999] += 1;
+        questions.push(moved);
+        assert_eq!(input_token_count(&questions), 3400);
+        questions.push(usage_question(1000, 100));
+        assert_eq!(input_token_count(&questions), 4500);
+    }
+
+    #[test]
+    fn usage_headers_receive_the_deduplicated_count() {
+        let billing = crate::billing_input_tokens_header().unwrap();
+        let questions: Vec<_> = (0..10).map(|_| usage_question(1000, 100)).collect();
+        let headers: HeaderMap = crate::ResponseMetadata::new(
+            0,
+            input_token_count(&questions),
+            Instant::now(),
+            Duration::ZERO,
+            Duration::ZERO,
+            Duration::ZERO,
+        )
+        .into();
+        assert_eq!(headers["x-compute-tokens"], "2000");
+        if let Some(name) = billing {
+            assert_eq!(headers[name], "2000");
+        }
+    }
 
     fn request(state: Value) -> Result<SystemOneRequest, serde_json::Error> {
         serde_json::from_value(json!({"state":state,"questions":{}}))
