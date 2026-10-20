@@ -294,7 +294,10 @@ fn resolve_fp8_scope(
     enabled: bool,
     family: &str,
 ) -> Result<String, BackendError> {
-    let dense_decoder = matches!(family, "llama" | "mistral" | "qwen2" | "qwen3");
+    let dense_decoder = matches!(
+        family,
+        "llama" | "mistral" | "qwen2" | "qwen3" | "qwen3_5" | "qwen3_5_text"
+    );
     let scope = requested.unwrap_or(if enabled && dense_decoder {
         "all"
     } else {
@@ -614,6 +617,8 @@ impl LibtorchBackend {
                         | "mistral"
                         | "qwen2"
                         | "qwen3"
+                        | "qwen3_5"
+                        | "qwen3_5_text"
                 )
             {
                 return Err(start(
@@ -2696,7 +2701,14 @@ mod tests {
 
     #[test]
     fn dynamic_fp8_scope_defaults_and_overrides() {
-        for family in ["llama", "mistral", "qwen2", "qwen3"] {
+        for family in [
+            "llama",
+            "mistral",
+            "qwen2",
+            "qwen3",
+            "qwen3_5",
+            "qwen3_5_text",
+        ] {
             assert_eq!(resolve_fp8_scope(None, true, family).unwrap(), "all");
             assert_eq!(resolve_fp8_scope(Some("all"), true, family).unwrap(), "all");
             assert_eq!(resolve_fp8_scope(Some("mlp"), true, family).unwrap(), "mlp");
@@ -2705,7 +2717,14 @@ mod tests {
             assert_eq!(resolve_fp8_scope(None, true, family).unwrap(), "mlp");
             assert!(resolve_fp8_scope(Some("all"), true, family).is_err());
         }
-        for family in ["qwen3", "modernbert", "qwen3_moe", "gemma4"] {
+        for family in [
+            "qwen3",
+            "qwen3_5",
+            "qwen3_5_text",
+            "modernbert",
+            "qwen3_moe",
+            "gemma4",
+        ] {
             assert_eq!(resolve_fp8_scope(None, false, family).unwrap(), "mlp");
             assert_eq!(
                 resolve_fp8_scope(Some("mlp"), false, family).unwrap(),
@@ -2715,6 +2734,8 @@ mod tests {
         }
         assert!(resolve_fp8_scope(Some("unknown"), true, "qwen3").is_err());
         assert!(resolve_fp8_scope(Some("all"), true, "qwen3_moe").is_err());
+        assert!(resolve_fp8_scope(Some("all"), true, "qwen3_5_moe").is_err());
+        assert!(resolve_fp8_scope(Some("all"), true, "qwen3_5_moe_text").is_err());
     }
 
     #[test]
