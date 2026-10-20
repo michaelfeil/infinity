@@ -5,6 +5,7 @@
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #include "helpers/fp8_linear.h"
+#include "kernels/fp8_fusions.h"
 #include "kernels/decoder_norm.h"
 #include "kernels/torch_flash_fma.h"
 #include "kernels/cached_decoder_linear.h"
@@ -30,7 +31,7 @@ struct DecoderLayer {
   at::Tensor qkv, qkv_bias, out, out_bias, input_norm, post_norm, q_norm, k_norm;
   at::Tensor gate_up, gate_up_bias, down, down_bias, router;
 #ifdef TEI_TORCH_CUDA_KERNELS
-  std::unique_ptr<Fp8Linear> fp8_gate_up, fp8_down;
+  std::unique_ptr<Fp8Linear> fp8_gate_up, fp8_down, fp8_qkv, fp8_out;
 #endif
   std::vector<at::Tensor> expert_gate_up, expert_down;
   at::Tensor grouped_gate_up, grouped_down;
@@ -65,6 +66,7 @@ class Decoder final : public Model {
   std::vector<int64_t> rotary_indices,attention_windows;
   bool cudnn_varlen = false;
   bool fp8_dynamic = false;
+  bool fp8_all_linear = false;
   bool qwen_half_exact = false;
   int64_t left_window = -1, right_window = -1, top_k;
   at::Tensor embedding, final_norm, projection, projection_bias, score, score_bias, cos_cache, sin_cache, query_scale;
@@ -238,16 +240,20 @@ class Decoder final : public Model {
   }
   at::Tensor attend_full(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v, const PackedInput& input,int64_t left_window,int64_t right_window) const {
     if (device.is_cuda()) {
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if(exact_decoder_math()&&torch_flash_fma_supported(q,k,v,causal,left_window,right_window))
-        return torch_flash_fma(q,k,v,input.cumulative,input.max_sequence,
-          1./std::sqrt(static_cast<double>(head_dim)),causal,left_window,right_window);
-#endif
       // cuDNN packed attention cannot express the local window here. It is
       // equivalent only when every sequence fits inside the configured window.
       const bool window_inactive=(left_window<0||left_window>=input.max_sequence-1)
         &&(right_window<0||(causal&&right_window==0)||right_window>=input.max_sequence-1);
-      if(cudnn_varlen&&input.max_sequence>=512&&window_inactive)
+      bool use_cudnn=cudnn_varlen&&input.max_sequence>=512&&window_inactive;
+#ifdef TEI_TORCH_CUDA_KERNELS
+      // Existing exact contracts retain precedence. The explicit all-linear
+      // FP8 policy may also opt into cuDNN BF16 attention.
+      use_cudnn=use_cudnn&&(fp8_all_linear||!exact_decoder_math());
+      if(!use_cudnn&&exact_decoder_math()&&torch_flash_fma_supported(q,k,v,causal,left_window,right_window))
+        return torch_flash_fma(q,k,v,input.cumulative,input.max_sequence,
+          1./std::sqrt(static_cast<double>(head_dim)),causal,left_window,right_window);
+#endif
+      if(use_cudnn)
         return std::get<0>(at::_cudnn_attention_forward(q,k,v,std::nullopt,
           input.cumulative,input.cumulative,input.max_sequence,input.max_sequence,
           true,0.,causal,false));
@@ -293,7 +299,7 @@ class Decoder final : public Model {
     auto full_length=input.prefix->original.max_sequence;
     const bool window_inactive=(layer.left_window<0||layer.left_window>=full_length-1)
       &&(layer.right_window<0||layer.right_window==0||layer.right_window>=full_length-1);
-    const bool use_cudnn=!exact&&cudnn_varlen&&full_length>=512&&window_inactive;
+    const bool use_cudnn=(fp8_all_linear||!exact)&&cudnn_varlen&&full_length>=512&&window_inactive;
     return radix_fold(prefix_attention(rows[0],rows[1],rows[2],input,layer_index,
       1./std::sqrt(static_cast<double>(head_dim)),layer.left_window,layer.right_window,exact,true,use_cudnn),input);
   }
@@ -308,10 +314,13 @@ class Decoder final : public Model {
     auto full=attend_full(unfolded[0],unfolded[1],unfolded[2],input,layer.left_window,layer.right_window);
     return radix_fold(full,input);
   }
-  at::Tensor mlp(const at::Tensor& x, const DecoderLayer& layer,const PackedInput& input) const {
+  at::Tensor mlp(const at::Tensor& x, const DecoderLayer& layer,const PackedInput& input,
+      const at::Tensor& row_scales={}) const {
     if (!layer.router.defined()) {
 #ifdef TEI_TORCH_CUDA_KERNELS
-      auto both = layer.fp8_gate_up ? layer.fp8_gate_up->forward(x,layer.gate_up_bias)
+      auto both = layer.fp8_gate_up ? (row_scales.defined()
+        ? layer.fp8_gate_up->forward_quantized(x,row_scales,layer.gate_up_bias)
+        : layer.fp8_gate_up->forward(x,layer.gate_up_bias))
         : transformers_math()?separate_linear(x,layer.gate_up,layer.gate_up_bias,{intermediate,intermediate})
         : cached_prefix_linear(x,layer.gate_up,layer.gate_up_bias,input);
 #else
@@ -321,6 +330,10 @@ class Decoder final : public Model {
 #ifdef TEI_TORCH_CUDA_KERNELS
       if(both.is_cuda()&&!transformers_math()) {
         int code=activation=="silu"||activation=="swish"?5:activation=="relu"?3:4;
+        if(layer.fp8_down && code==5 && width<=32768 && both.is_contiguous()) {
+          auto quantized=fp8_swiglu_quantize(both);
+          return layer.fp8_down->forward_quantized(quantized.first,quantized.second,layer.down_bias);
+        }
         auto activated=fused_gated_activation(both,code);
         return layer.fp8_down ? layer.fp8_down->forward(activated,layer.down_bias)
           : cached_prefix_linear(activated,layer.down,layer.down_bias,input);
@@ -445,7 +458,12 @@ public:
   }
   void ready() override {
     fp8_dynamic=options.boolean("_fp8_dynamic",false);
+    const auto fp8_scope=options.string("_fp8_scope","mlp");
+    TORCH_CHECK(fp8_scope=="mlp"||fp8_scope=="all","FP8 scope must be mlp or all");
+    fp8_all_linear=fp8_scope=="all";
+    TORCH_CHECK(!fp8_all_linear||fp8_dynamic,"All-linear FP8 requires dynamic FP8 enabled");
     if(fp8_dynamic) {
+      TORCH_CHECK(!transformers_math(),"Dynamic FP8 requires native decoder arithmetic");
       TORCH_CHECK(device.is_cuda()&&(dtype==at::kHalf||dtype==at::kBFloat16),
         "Dynamic FP8 decoder MLPs require CUDA float16/bfloat16");
       TORCH_CHECK((family=="llama"||family=="mistral"||family=="qwen2"||family=="qwen3")
@@ -551,6 +569,13 @@ public:
           // gated activation retain their existing model-dtype arithmetic.
           layer.fp8_gate_up=std::make_unique<Fp8Linear>(layer.gate_up);
           layer.fp8_down=std::make_unique<Fp8Linear>(layer.down);
+          if(fp8_all_linear) {
+            layer.fp8_qkv=std::make_unique<Fp8Linear>(layer.qkv);
+            layer.fp8_out=std::make_unique<Fp8Linear>(layer.out);
+            layer.qkv=at::Tensor();layer.out=at::Tensor();
+            for(auto name:{"q_proj.weight","k_proj.weight","v_proj.weight","o_proj.weight"})
+              weights.erase(prefix+p+"self_attn."+name);
+          }
           layer.gate_up=at::Tensor();layer.down=at::Tensor();
           // Quantized caches own all required weight storage. Release the
           // original checkpoint FFN matrices before the next layer is cached.
@@ -703,15 +728,30 @@ public:
     for (const auto& layer : layers) {
       const auto& layer_cosine=layer.rotary_index<0?cosine:selected_rotary[layer.rotary_index].first;
       const auto& layer_sine=layer.rotary_index<0?sine:selected_rotary[layer.rotary_index].second;
-      at::Tensor normalized;
+      at::Tensor normalized,normalized_scales;
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (h.is_cuda()&&!transformers_math()) {
-        auto pair=residual_norm(h,residual,layer.input_norm);
-        normalized=pair.first;residual=pair.second;
+        if(layer.fp8_qkv && dtype==at::kBFloat16 && hidden==4096
+          && !exact_decoder_math() && h.is_contiguous()
+          && (!residual.defined()||residual.is_contiguous())) {
+          auto [quantized,summed,scales]=fp8_add_rms_quantize(h,residual,layer.input_norm,epsilon);
+          normalized=std::move(quantized);residual=std::move(summed);normalized_scales=std::move(scales);
+        } else {
+          auto pair=residual_norm(h,residual,layer.input_norm);
+          normalized=pair.first;residual=pair.second;
+        }
       } else
 #endif
       normalized=norm(h,layer.input_norm);
-      auto qkv = (transformers_math()?separate_linear(normalized,layer.qkv,layer.qkv_bias,{heads*head_dim,kvheads*head_dim,kvheads*head_dim}):at::linear(normalized, layer.qkv, layer.qkv_bias)).view({h.size(0), heads + 2 * kvheads, head_dim});
+      at::Tensor qkv;
+#ifdef TEI_TORCH_CUDA_KERNELS
+      if(layer.fp8_qkv)qkv=normalized_scales.defined()
+        ? layer.fp8_qkv->forward_quantized(normalized,normalized_scales,layer.qkv_bias)
+        : layer.fp8_qkv->forward(normalized,layer.qkv_bias);
+      else
+#endif
+        qkv=transformers_math()?separate_linear(normalized,layer.qkv,layer.qkv_bias,{heads*head_dim,kvheads*head_dim,kvheads*head_dim}):at::linear(normalized,layer.qkv,layer.qkv_bias);
+      qkv=qkv.view({h.size(0),heads+2*kvheads,head_dim});
       auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, kvheads), v = qkv.narrow(1, heads + kvheads, kvheads);
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (q.is_cuda() && layer.q_norm.defined() && head_dim==128) {
@@ -752,11 +792,23 @@ public:
       }
       if (query_scale.defined()) q = q * query_scale.index_select(0, radix_positions(input)).view({-1, 1, 1});
       auto attended = attend(q, k, v, input, layer_index,layer).contiguous().view({h.size(0), heads * head_dim});
-      auto projected=cached_prefix_linear(attended,layer.out,layer.out_bias,input);
+      at::Tensor projected;
+#ifdef TEI_TORCH_CUDA_KERNELS
+      if(layer.fp8_out)projected=layer.fp8_out->forward(attended,layer.out_bias);
+      else
+#endif
+        projected=cached_prefix_linear(attended,layer.out,layer.out_bias,input);
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (h.is_cuda()&&!transformers_math()) {
-        auto pair=residual_norm(projected,residual,layer.post_norm);
-        residual=pair.second;h=mlp(pair.first,layer,input);
+        if(layer.fp8_gate_up && dtype==at::kBFloat16 && hidden==4096
+          && !exact_decoder_math() && projected.is_contiguous()
+          && (!residual.defined()||residual.is_contiguous())) {
+          auto [quantized,summed,scales]=fp8_add_rms_quantize(projected,residual,layer.post_norm,epsilon);
+          residual=std::move(summed);h=mlp(quantized,layer,input,scales);
+        } else {
+          auto pair=residual_norm(projected,residual,layer.post_norm);
+          residual=pair.second;h=mlp(pair.first,layer,input);
+        }
       } else
 #endif
       {

@@ -600,6 +600,23 @@ impl LibtorchBackend {
             }
         }
         options["_fp8_dynamic"] = enable_fp8_dynamic.into();
+        let fp8_scope = std::env::var(infinity_v3_config::infinity_env!("TORCH_FP8_SCOPE"))
+            .unwrap_or_else(|_| "mlp".to_owned());
+        if !matches!(fp8_scope.as_str(), "mlp" | "all") {
+            return Err(start("TORCH_FP8_SCOPE must be mlp or all"));
+        }
+        if fp8_scope == "all"
+            && (!enable_fp8_dynamic
+                || !matches!(
+                    normalized_family.as_str(),
+                    "llama" | "mistral" | "qwen2" | "qwen3"
+                ))
+        {
+            return Err(start(
+                "All-linear FP8 requires dynamic FP8 and a supported dense decoder",
+            ));
+        }
+        options["_fp8_scope"] = fp8_scope.into();
         if decision
             && !laya
             && !matches!(

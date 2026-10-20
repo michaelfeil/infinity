@@ -67,8 +67,9 @@ sequence lengths without padded activations.
 
 Supported causal text models can reuse radix prefixes. Bidirectional, media and
 typed decision requests reject folded inputs; the backend reports this capability
-to the router. Optional MLP FP8 kernels preserve attention, normalization and head
-dtypes and reject unsupported geometries rather than padding them.
+to the router. Optional FP8 projections preserve attention, normalization and head
+dtypes and reject unsupported geometries rather than padding them. See the
+FP8 configuration below.
 
 Gemma image features use a bounded per-model cache (32 entries, 64 MiB). CUDA
 events protect cached values across streams, and graph replay uses independent
@@ -108,6 +109,31 @@ Prerelease versions retain the full suffix, for example
 `nvidia-3.0.0-alpha.2`, without replacing the rolling `latest` tags. Main and tag
 builds publish the NVIDIA and CPU variants; manual workflow runs can select `nvidia`
 alone or `all` variants.
+
+### Optional dynamic FP8
+
+For dense Llama, Mistral, Qwen2 and Qwen3 decoders, `--enable-fp8-dynamic`
+quantizes MLP projections. Set `INFINITY_TORCH_FP8_SCOPE=all` to also quantize
+Q/K/V and attention output projections; the default scope is `mlp`.
+Attention, normalization, embeddings and heads retain the selected FP16/BF16
+dtype. Weights are quantized once at startup and activations each forward pass.
+The `all` scope changes model outputs and requires dynamic FP8 to be enabled.
+
+```bash
+INFINITY_TORCH_FP8_SCOPE=all INFINITY_TORCH_CUDNN_VARLEN=1 \
+  target/release/infinity_v3 --model-id /path/to/model \
+  --torch-device cuda --dtype bfloat16 --enable-fp8-dynamic
+```
+
+Dynamic FP8 requires an unquantized FP16/BF16 checkpoint, native decoder
+arithmetic, projection widths divisible by 16, and SM89, SM90, SM100 or SM120.
+It uses the existing native build. The new kernels compile for all four
+architectures; runtime validation currently covers H100.
+
+`INFINITY_TORCH_CUDNN_VARLEN=1` optionally selects cuDNN attention for eligible
+devices, sequence lengths and attention windows. With all-linear FP8 this also
+applies to Llama; its normalization arithmetic is preserved. SM89/SM120 retain
+Flash attention. Omitting this option preserves existing attention selection.
 
 ### Native build
 

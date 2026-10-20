@@ -72,6 +72,9 @@ install(DIRECTORY vendor/transformers_pixtral DESTINATION share/licenses/tei_tor
 # Custom packed operators use the same current CUDA stream as ATen.
 if(TARGET torch_cuda)
   enable_language(CUDA)
+  target_sources(tei_torch PRIVATE kernels/fp8_fusions.cu)
+  set_source_files_properties(kernels/fp8_fusions.cu PROPERTIES
+    COMPILE_OPTIONS "--prec-div=true;--prec-sqrt=true")
   target_sources(tei_torch PRIVATE kernels/laya_features.cu kernels/qwen35_chunk.cu)
   install(DIRECTORY vendor/transformers_gdn DESTINATION share/licenses/tei_torch)
   set_source_files_properties(kernels/laya_features.cu PROPERTIES COMPILE_OPTIONS "--fmad=false;--prec-div=true;--prec-sqrt=true")
