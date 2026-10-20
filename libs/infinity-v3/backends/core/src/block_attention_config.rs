@@ -11,7 +11,18 @@ pub fn block_attention(path: &Path) -> Result<bool, String> {
         Err(error) => return Err(error.to_string()),
     };
     let config: Value = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    resolve(config.get("baseten_modeling_overrides"))
+    resolve_config(&config)
+}
+
+fn resolve_config(config: &Value) -> Result<bool, String> {
+    let current = config.get("modeling_overrides");
+    let legacy = config.get("baseten_modeling_overrides");
+    if let (Some(current), Some(legacy)) = (current, legacy) {
+        if current != legacy {
+            return Err("Conflicting decision modeling overrides".into());
+        }
+    }
+    resolve(current.or(legacy))
 }
 
 fn resolve(overrides: Option<&Value>) -> Result<bool, String> {
@@ -83,5 +94,34 @@ mod tests {
         ] {
             assert!(resolve(Some(&invalid)).is_err());
         }
+    }
+
+    #[test]
+    fn current_and_legacy_metadata_select_the_same_attention() {
+        let overrides = json!({"attention":{"full_attention":"block_bidirectional","linear_attention":"causal"},"readout":"slot_lm"});
+        assert_eq!(resolve_config(&json!({})), Ok(false));
+        assert_eq!(
+            resolve_config(&json!({"modeling_overrides": overrides})),
+            Ok(true)
+        );
+        assert_eq!(
+            resolve_config(&json!({"baseten_modeling_overrides": overrides})),
+            Ok(true)
+        );
+        assert_eq!(
+            resolve_config(&json!({
+                "modeling_overrides": overrides,
+                "baseten_modeling_overrides": overrides
+            })),
+            Ok(true)
+        );
+        assert!(resolve_config(&json!({"modeling_overrides": null})).is_err());
+        assert!(resolve_config(&json!({
+            "modeling_overrides": overrides,
+            "baseten_modeling_overrides": {
+                "attention": {"full_attention": "causal", "linear_attention": "causal"}
+            }
+        }))
+        .is_err());
     }
 }
