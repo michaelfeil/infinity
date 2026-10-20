@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: Apache-2.0
 // RMS arithmetic adapted from the Apache-2.0 fast_kernels.cu implementation.
 // Preserve its reduction order and BF16 rounding before row quantization.
 #include "kernels/fp8_fusions.h"

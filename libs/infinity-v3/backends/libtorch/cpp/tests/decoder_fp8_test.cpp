@@ -27,6 +27,7 @@ tei::Options config(const std::string& family) {
 }
 tei::Weights weights(const tei::Options& options,c10::Device device,at::ScalarType dtype) {
   tei::Weights tensors;
+  const auto hidden=options.integer("hidden_size",32);
   auto add=[&](const std::string& name,std::initializer_list<int64_t> shape,bool norm=false) {
     int64_t count=1;float offset=0;
     for(auto n:shape)count*=n;
@@ -35,21 +36,21 @@ tei::Weights weights(const tei::Options& options,c10::Device device,at::ScalarTy
     if(norm)value=1+value;
     tensors[name]=value.view(at::IntArrayRef(shape)).to(device,dtype);
   };
-  add("model.embed_tokens.weight",{32,32});add("model.norm.weight",{32},true);
+  add("model.embed_tokens.weight",{32,hidden});add("model.norm.weight",{hidden},true);
   for(int i=0;i<2;++i) {
     const auto p="model.layers."+std::to_string(i)+".";
-    add(p+"input_layernorm.weight",{32},true);add(p+"post_attention_layernorm.weight",{32},true);
+    add(p+"input_layernorm.weight",{hidden},true);add(p+"post_attention_layernorm.weight",{hidden},true);
     for(auto name:{"q_proj","k_proj","v_proj"}) {
       auto width=std::string(name)=="q_proj"?32:16;
-      add(p+"self_attn."+name+".weight",{width,32});
+      add(p+"self_attn."+name+".weight",{width,hidden});
       if(options.string("model_type")=="qwen2")add(p+"self_attn."+name+".bias",{width});
     }
-    add(p+"self_attn.o_proj.weight",{32,32});
+    add(p+"self_attn.o_proj.weight",{hidden,32});
     if(options.string("model_type")=="qwen3") {
       add(p+"self_attn.q_norm.weight",{8},true);add(p+"self_attn.k_norm.weight",{8},true);
     }
-    add(p+"mlp.gate_proj.weight",{64,32});add(p+"mlp.up_proj.weight",{64,32});
-    add(p+"mlp.down_proj.weight",{32,64});
+    add(p+"mlp.gate_proj.weight",{64,hidden});add(p+"mlp.up_proj.weight",{64,hidden});
+    add(p+"mlp.down_proj.weight",{hidden,64});
   }
   return tensors;
 }
@@ -100,8 +101,9 @@ at::Tensor all_linear_reference(const tei::Options& options,const tei::Weights& 
   }
   return tei::fused_add_rms_norm(h,residual,get("norm.weight"),1e-6).first;
 }
-void check_family(const std::string& family,c10::Device device,at::ScalarType dtype,bool all=false) {
-  auto options=config(family),enabled=options;enabled.values["_fp8_dynamic"]="true";
+void check_family(const std::string& family,c10::Device device,at::ScalarType dtype,bool all=false,int64_t hidden=32) {
+  auto options=config(family);options.values["hidden_size"]=std::to_string(hidden);
+  auto enabled=options;enabled.values["_fp8_dynamic"]="true";
   enabled.values["_fp8_scope"]=all?"all":"mlp";
   auto quantized_weights=weights(options,device,dtype);
   auto original_down=quantized_weights.at("model.layers.0.mlp.down_proj.weight").storage().getWeakStorageImpl();
@@ -119,7 +121,7 @@ void check_family(const std::string& family,c10::Device device,at::ScalarType dt
   tei::PackedInput input{at::tensor({3,4,5,3,4,6,7},index),at::zeros({7},index),
     at::tensor({0,1,2,0,1,2,3},index),at::tensor({0,3,7},index.dtype(at::kInt)),offsets.data(),2,4};
   auto full=model->forward(input),reference=dense->forward(input);
-  TORCH_CHECK(full.sizes()==at::IntArrayRef({7,32})&&full.scalar_type()==dtype
+  TORCH_CHECK(full.sizes()==at::IntArrayRef({7,hidden})&&full.scalar_type()==dtype
     &&at::isfinite(full).all().item<bool>(),"FP8 decoder changed actual-row count, dtype or finiteness");
   auto error=(full.to(at::kFloat)-reference.to(at::kFloat)).square().mean();
   auto energy=reference.to(at::kFloat).square().mean().clamp_min(1e-12);
@@ -146,7 +148,8 @@ void check_family(const std::string& family,c10::Device device,at::ScalarType dt
     "FP8 suffix change leaked into another sequence");
   TORCH_CHECK(!at::equal(changed.narrow(0,3,4),folded.narrow(0,3,4)),
     "FP8 fixture did not consume changed suffix IDs");
-  std::cout<<family<<" FP8 scope="<<(all?"all":"mlp")<<" actual7/compact5, isolation, weight ownership passed\n";
+  std::cout<<family<<" FP8 scope="<<(all?"all":"mlp")<<" hidden="<<hidden
+    <<" actual7/compact5, isolation, weight ownership passed\n";
 }
 // This exercises the registered BF16 width2048 causal contract, rather than
 // reproducing a particular checkpoint's layer count, vocabulary or MLP width.
@@ -241,6 +244,10 @@ int main(int argc,char** argv) {
   check_registered_causal_contract(device);
   for(auto dtype:{at::kHalf,at::kBFloat16})for(bool all:{false,true})
     for(auto family:{"llama","mistral","qwen2","qwen3"})check_family(family,device,dtype,all);
+  // Width4096 activates both decoder RMS-to-FP8 branches. Two layers exercise
+  // the carried residual and row scales against the unfused full-model recipe;
+  // narrow attention/MLP projections keep this synthetic fixture inexpensive.
+  check_family("qwen3",device,at::kBFloat16,true,4096);
   for(auto scope:{"unknown","all"}) {
     auto options=config("qwen3");options.values["_fp8_scope"]=scope;
     auto original=weights(options,device,at::kBFloat16);
