@@ -113,6 +113,7 @@ if(TARGET torch_cuda)
     target_compile_definitions(tei_torch PRIVATE INFINITY_FA4_ROOT="${INFINITY_FA4_ROOT}")
     target_link_libraries(tei_torch PRIVATE ${CMAKE_DL_LIBS})
     install(FILES vendor/infinity_fa4/LICENSE-MIT vendor/infinity_fa4/LICENSE-UPSTREAM
+      vendor/infinity_fa4/AUTHORS
       vendor/infinity_fa4/provenance.json DESTINATION share/licenses/tei_torch/infinity_fa4)
   endif()
   target_sources(tei_torch PRIVATE kernels/fp8_fusions.cu)
