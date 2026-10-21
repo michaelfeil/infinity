@@ -45,34 +45,3 @@ isolation. Some Candle model/head combinations cannot execute the corresponding
 packed request, so a direct Candle comparison is unavailable for those cases.
 The latency target remains within 5% of Candle for comparable workloads; this PR
 does not claim that target for every model, checkpoint, precision or GPU.
-
-### Nemotron 3 Embed 1B
-
-`nvidia/Nemotron-3-Embed-1B-BF16` is a bidirectional Ministral3 decoder with
-2048 residual channels, 24 query heads and an explicit head dimension of 128.
-Its attention width is 3072; residual width divisibility is not required for
-supported decoder families with a positive explicit `head_dim`. Encoder
-divisibility checks and native projection-shape validation remain in place.
-
-Generate independent Transformers references from the pinned public checkpoint
-and compare packed BF16 mean pooling:
-
-```sh
-python scripts/nemotron3-reference.py --device cuda:0 --dtype bfloat16 \
-  --output /tmp/nemotron3-reference.json
-NEMOTRON3_REFERENCE=/tmp/nemotron3-reference.json NEMOTRON3_DEVICE=cuda:0 \
-  cargo test --release -p infinity-backend-libtorch \
-  --test decoder_attention_width nemotron3_packed_embeddings_match_transformers \
-  -- --ignored --nocapture
-```
-
-For strict sampled raw token-state comparisons, generate a second reference with
-`--dtype float32` and run the test with `NEMOTRON3_DEVICE=cpu`. Individual BF16
-token states can diverge substantially across arithmetic implementations even
-when pooled embeddings agree; this test does not assert BF16 raw-state parity.
-
-The fixture includes query/passage prefixes, multilingual text and sequence
-lengths through 2049 tokens. Synthetic CPU tests additionally exercise independent
-attention widths, model-family aliases, ragged sequence isolation and invalid
-dimensions without downloading a checkpoint. This is correctness validation,
-not a retrieval benchmark or full-context performance qualification.
