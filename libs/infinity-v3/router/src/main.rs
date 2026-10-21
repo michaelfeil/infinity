@@ -175,8 +175,10 @@ struct Args {
     #[clap(long, env = infinity_v3_config::infinity_env!("DECISION_PROTOCOL"), value_parser = optional_protocol, value_delimiter = ';')]
     decision_protocol: Vec<Optional<infinity_v3_router::DecisionProtocol>>,
 
-    /// Exact HTTPS hostnames allowed for image downloads. Empty permits inline data URLs only.
-    #[clap(long, env = infinity_v3_config::infinity_env!("IMAGE_ALLOWED_HOSTS"), value_delimiter = ',')]
+    /// HTTPS host patterns for remote media. Defaults to AWS S3, GCS, Azure Blob, and R2.
+    /// An explicit list replaces the defaults; --image-allowed-hosts= permits inline media only.
+    /// Wildcards occupy whole DNS labels; a leading *. matches any subdomain depth.
+    #[clap(long, env = infinity_v3_config::infinity_env!("IMAGE_ALLOWED_HOSTS"), value_delimiter = ',', default_values_t = infinity_v3_core::multimodal::default_image_allowed_hosts())]
     image_allowed_hosts: Vec<String>,
 
     /// Memory budget for encoded images, CPU processing and prepared image patches, in MiB.
@@ -451,7 +453,12 @@ impl Args {
                     backend_kind: backend[i],
                     torch_device: torch_device[i],
                     multimodal_config: infinity_v3_core::multimodal::MultimodalConfig {
-                        allowed_image_hosts: self.image_allowed_hosts.clone(),
+                        allowed_image_hosts: self
+                            .image_allowed_hosts
+                            .iter()
+                            .filter(|host| !host.is_empty())
+                            .cloned()
+                            .collect(),
                         memory_budget_bytes: image_memory_budget_mib[i]
                             .checked_mul(1024 * 1024)
                             .ok_or_else(|| anyhow::anyhow!("Image memory budget is too large"))?,
@@ -560,6 +567,61 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
     #[test]
+    #[serial_test::serial]
+    fn media_hosts_default_to_cloud_storage_and_explicit_lists_replace_them() {
+        for (options, expected) in [
+            (
+                vec![],
+                infinity_v3_core::multimodal::default_image_allowed_hosts(),
+            ),
+            (
+                vec!["--image-allowed-hosts=media.example.com,*.example.org"],
+                vec!["media.example.com".into(), "*.example.org".into()],
+            ),
+            (vec!["--image-allowed-hosts="], vec![]),
+        ] {
+            let args = Args::try_parse_from(
+                ["infinity_v3", "--model-id", "a"]
+                    .into_iter()
+                    .chain(options),
+            )
+            .unwrap();
+            assert_eq!(
+                args.models().unwrap()[0]
+                    .multimodal_config
+                    .allowed_image_hosts,
+                expected
+            );
+        }
+        let env = infinity_v3_config::infinity_env!("IMAGE_ALLOWED_HOSTS");
+        let previous = std::env::var_os(env);
+        std::env::set_var(env, "");
+        let args = Args::try_parse_from(["infinity_v3", "--model-id", "a"]).unwrap();
+        assert!(args.models().unwrap()[0]
+            .multimodal_config
+            .allowed_image_hosts
+            .is_empty());
+        let args = Args::try_parse_from([
+            "infinity_v3",
+            "--model-id",
+            "a",
+            "--image-allowed-hosts=media.example.com",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.models().unwrap()[0]
+                .multimodal_config
+                .allowed_image_hosts,
+            vec!["media.example.com"]
+        );
+        match previous {
+            Some(value) => std::env::set_var(env, value),
+            None => std::env::remove_var(env),
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn auto_truncate_defaults_on_and_preserves_explicit_model_overrides() {
         for (options, expected) in [
             (vec![], vec![true, true]),
@@ -583,6 +645,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn model_options_broadcast_align_and_preserve_single_model_flags() {
         let args = Args::try_parse_from([
             "infinity_v3",
@@ -742,7 +805,7 @@ mod tests {
                 None => std::env::remove_var(key),
             }
         }
-        // This binary has one test, so environment changes do not race other tests.
+        // CLI tests run serially so environment changes do not race other tests.
         let original_prompt = std::env::var_os(infinity_v3_config::infinity_env!("DEFAULT_PROMPT"));
         std::env::set_var(
             infinity_v3_config::infinity_env!("DEFAULT_PROMPT"),
