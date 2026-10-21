@@ -34,6 +34,7 @@ pub(crate) struct Perplexity {
     projection: Option<Projection>,
     mask_token: Option<String>,
     media: Option<infinity_v3_core::multimodal::Qwen3VlProcessor>,
+    cpu_workers: Arc<tokio::sync::Semaphore>,
 }
 
 struct Projection {
@@ -116,6 +117,38 @@ fn read_json(path: &Path) -> anyhow::Result<Value> {
 }
 
 impl Perplexity {
+    async fn run_cpu<T: Send + 'static>(
+        self: &Arc<Self>,
+        work: impl FnOnce(&Self) -> Result<T, TextEmbeddingsError> + Send + 'static,
+    ) -> Result<T, TextEmbeddingsError> {
+        let worker = self
+            .cpu_workers
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|_| invalid("Perplexity CPU workers are closed"))?;
+        let adapter = self.clone();
+        let reservations = infinity_v3_backend::result_memory::REQUEST_RESULTS
+            .try_with(Arc::clone)
+            .ok();
+        tokio::task::spawn_blocking(move || {
+            // Keep worker admission and result ownership until the actual work ends,
+            // including when the HTTP caller drops its future.
+            let _worker = worker;
+            match reservations {
+                Some(owner) => infinity_v3_backend::result_memory::REQUEST_RESULTS
+                    .sync_scope(owner, || work(&adapter)),
+                None => work(&adapter),
+            }
+        })
+        .await
+        .map_err(|error| {
+            TextEmbeddingsError::Backend(infinity_v3_backend::BackendError::Inference(format!(
+                "Perplexity CPU worker failed: {error}"
+            )))
+        })?
+    }
+
     pub(crate) fn capabilities(&self) -> Vec<&'static str> {
         let mut result = vec!["embed", "embed_all", "tokenize", "decode"];
         if self.profile.contextual() {
@@ -254,6 +287,9 @@ impl Perplexity {
             None
         };
         Ok(Self {
+            cpu_workers: Arc::new(tokio::sync::Semaphore::new(
+                num_cpus::get().clamp(1, infinity_v3_core::tokenization::MAX_TOKENIZATION_WORKERS),
+            )),
             literal_tokenizer,
             media,
             profile,
@@ -365,23 +401,11 @@ impl Perplexity {
                     let encoding = tokenizer
                         .encode(text.as_str(), true)
                         .map_err(|e| invalid(&e.to_string()))?;
-                    let spans = char_spans
-                        .into_iter()
-                        .map(|(start, end)| {
-                            let indices = encoding
-                                .get_offsets()
-                                .iter()
-                                .enumerate()
-                                .filter(|(_, (a, b))| b > a && *a < end && *b > start)
-                                .map(|(i, _)| i)
-                                .collect::<Vec<_>>();
-                            if let (Some(first), Some(last)) = (indices.first(), indices.last()) {
-                                (*first, *last + 1)
-                            } else {
-                                (0, 0)
-                            }
-                        })
-                        .collect();
+                    let limit = self.config["document_length"]
+                        .as_u64()
+                        .unwrap_or(self.max_length as u64) as usize;
+                    check_token_limit(encoding.len(), limit.min(self.max_length))?;
+                    let spans = chunk_token_spans(encoding.get_offsets(), &char_spans);
                     (
                         encoding,
                         spans,
@@ -440,11 +464,7 @@ impl Perplexity {
         if encoding.is_empty() {
             return Err(invalid("Input produced no tokens"));
         }
-        if encoding.len() > limit.min(self.max_length) {
-            return Err(invalid(
-                "Input exceeds the model token limit; inputs are never silently truncated",
-            ));
-        }
+        check_token_limit(encoding.len(), limit.min(self.max_length))?;
         let ids = encoding.get_ids().to_vec();
         Ok(Prepared {
             ids,
@@ -457,7 +477,7 @@ impl Perplexity {
         &self,
         prepared: &Prepared,
         hidden: Vec<Vec<f32>>,
-        request: &PerplexityRequest,
+        request: &ReadoutOptions,
     ) -> Result<Vec<Vec<f32>>, TextEmbeddingsError> {
         if hidden.len() != prepared.ids.len() {
             return Err(invalid("Token readout length mismatch"));
@@ -598,6 +618,65 @@ pub(crate) struct PerplexityRequest {
     truncate: bool,
 }
 
+#[derive(Clone, Copy)]
+struct ReadoutOptions {
+    task: PerplexityTask,
+    quantization: PerplexityQuantization,
+    normalize: bool,
+    dimensions: Option<usize>,
+}
+impl From<&PerplexityRequest> for ReadoutOptions {
+    fn from(request: &PerplexityRequest) -> Self {
+        Self {
+            task: request.task,
+            quantization: request.quantization,
+            normalize: request.normalize,
+            dimensions: request.dimensions,
+        }
+    }
+}
+
+fn check_token_limit(tokens: usize, limit: usize) -> Result<(), TextEmbeddingsError> {
+    if tokens > limit {
+        return Err(invalid(
+            "Input exceeds the model token limit; inputs are never silently truncated",
+        ));
+    }
+    Ok(())
+}
+
+fn chunk_token_spans(offsets: &[(usize, usize)], chunks: &[(usize, usize)]) -> Vec<(usize, usize)> {
+    // Tokenizer offsets and document chunks are ordered. Retain original token
+    // indices while skipping zero-width special tokens. A token overlapping a
+    // boundary may contribute to both chunks, matching upstream late chunking.
+    let tokens = offsets
+        .iter()
+        .enumerate()
+        .filter(|(_, (a, b))| b > a)
+        .collect::<Vec<_>>();
+    let (mut first, mut after) = (0, 0);
+    let mut spans = Vec::with_capacity(chunks.len());
+    for &(start, end) in chunks {
+        if start == end {
+            spans.push((0, 0));
+            continue;
+        }
+        while first < tokens.len() && tokens[first].1 .1 <= start {
+            first += 1;
+        }
+        after = after.max(first);
+        while after < tokens.len() && tokens[after].1 .0 < end {
+            after += 1;
+        }
+        if first == after {
+            spans.push((0, 0));
+        } else {
+            spans.push((tokens[first].0, tokens[after - 1].0 + 1));
+        }
+    }
+    spans
+}
+
 fn invalid(message: &str) -> TextEmbeddingsError {
     TextEmbeddingsError::Validation(message.into())
 }
@@ -624,7 +703,7 @@ fn resize(vector: &mut Vec<f32>, dimensions: Option<usize>) -> Result<(), TextEm
     }
     Ok(())
 }
-fn finish(vector: &mut Vec<f32>, request: &PerplexityRequest) -> Result<(), TextEmbeddingsError> {
+fn finish(vector: &mut Vec<f32>, request: &ReadoutOptions) -> Result<(), TextEmbeddingsError> {
     quantize(vector, request.quantization);
     resize(vector, request.dimensions)?;
     if request.quantization == PerplexityQuantization::Ubinary {
@@ -788,21 +867,26 @@ async fn execute(
     let mut native_vectors = super::result_storage::vector(documents.len())?;
     let mut native_matrices = super::result_storage::vector(documents.len())?;
     let start_time = Instant::now();
-    let request_ref = &request;
+    let options = ReadoutOptions::from(&request);
     let operations = documents.iter().map(|document| async move {
+        let permit = runtime.infer.acquire_permit().await;
         let preparation_start = Instant::now();
         let prepared = match document {
             Document::Text(chunks) => {
-                adapter.prepare(chunks, request_ref.task == PerplexityTask::Query)?
+                let chunks = chunks.clone();
+                adapter
+                    .run_cpu(move |adapter| {
+                        adapter.prepare(&chunks, options.task == PerplexityTask::Query)
+                    })
+                    .await?
             }
             Document::Image(source) => {
                 adapter
-                    .prepare_image(source, request_ref.task == PerplexityTask::Query)
+                    .prepare_image(source, options.task == PerplexityTask::Query)
                     .await?
             }
         };
         let preparation_time = preparation_start.elapsed();
-        let permit = runtime.infer.acquire_permit().await;
         let (vectors, metadata) = if adapter.profile == Profile::Dense {
             let response = runtime
                 .infer
@@ -817,19 +901,26 @@ async fn execute(
                     None,
                 )
                 .await?;
-            let mut vector = response.results;
-            finish(&mut vector, request_ref)?;
-            if request_ref.normalize {
-                normalize(&mut vector);
-            }
-            (vec![vector], response.metadata)
+            let vectors = adapter
+                .run_cpu(move |_| {
+                    let mut vector = response.results;
+                    finish(&mut vector, &options)?;
+                    if options.normalize {
+                        normalize(&mut vector);
+                    }
+                    Ok(vec![vector])
+                })
+                .await?;
+            (vectors, response.metadata)
         } else {
             let response = runtime
                 .infer
                 .embed_prepared_all(prepared.encoding(), permit)
                 .await?;
             (
-                adapter.readout(&prepared, response.results, request_ref)?,
+                adapter
+                    .run_cpu(move |adapter| adapter.readout(&prepared, response.results, &options))
+                    .await?,
                 response.metadata,
             )
         };
@@ -952,11 +1043,52 @@ mod tests {
             projection: None,
             mask_token: None,
             media: None,
+            cpu_workers: Arc::new(tokio::sync::Semaphore::new(1)),
         }
     }
 
-    fn request(value: Value) -> PerplexityRequest {
-        serde_json::from_value(value).unwrap()
+    fn options(value: Value) -> ReadoutOptions {
+        let request: PerplexityRequest = serde_json::from_value(value).unwrap();
+        ReadoutOptions::from(&request)
+    }
+
+    #[test]
+    fn chunk_spans_preserve_overlaps_empty_chunks_and_special_offsets() {
+        let offsets = [(0, 0), (0, 2), (2, 5), (2, 5), (5, 9), (0, 0)];
+        let chunks = [(0, 3), (3, 3), (3, 7), (9, 9)];
+        assert_eq!(
+            chunk_token_spans(&offsets, &chunks),
+            [(1, 4), (0, 0), (2, 5), (0, 0)]
+        );
+        assert_eq!(chunk_token_spans(&offsets, &[(9, 10)]), [(0, 0)]);
+        assert!(check_token_limit(10, 9).is_err());
+        assert!(check_token_limit(9, 9).is_ok());
+    }
+
+    #[tokio::test]
+    async fn cpu_work_runs_off_http_worker_with_result_accounting() {
+        use infinity_v3_backend::result_memory::{RequestResults, ResultPool, REQUEST_RESULTS};
+        let adapter = Arc::new(adapter(Profile::ContextV2));
+        let pool = ResultPool::new(64).unwrap();
+        let owner = Arc::new(RequestResults::default());
+        owner.retain(Some(pool.reserve(16).unwrap()));
+        let http_thread = std::thread::current().id();
+        REQUEST_RESULTS
+            .scope(owner.clone(), async {
+                adapter
+                    .run_cpu(move |_| {
+                        assert_ne!(std::thread::current().id(), http_thread);
+                        infinity_v3_backend::result_memory::reserve_for_request(16)?;
+                        Ok(())
+                    })
+                    .await
+                    .unwrap();
+            })
+            .await;
+        assert_eq!(pool.used(), 32);
+        assert_eq!(adapter.cpu_workers.available_permits(), 1);
+        drop(owner);
+        assert_eq!(pool.used(), 0);
     }
 
     #[test]
@@ -966,10 +1098,10 @@ mod tests {
                 json!({"input":"query"}),
                 json!({"input":"query", "quantization":"int8"}),
             ] {
-                assert!(validate_quantization(profile, request(value).quantization).is_ok());
+                assert!(validate_quantization(profile, options(value).quantization).is_ok());
             }
             for quantization in ["binary", "ubinary"] {
-                let value = request(json!({"input":"query", "quantization":quantization}));
+                let value = options(json!({"input":"query", "quantization":quantization}));
                 assert!(validate_quantization(profile, value.quantization).is_err());
                 assert!(validate_quantization(Profile::Dense, value.quantization).is_ok());
                 assert!(validate_quantization(Profile::ContextV1, value.quantization).is_ok());
@@ -989,7 +1121,7 @@ mod tests {
             .readout(
                 &prepared,
                 vec![vec![-3., 1.], vec![3., 1.], vec![99., 99.], vec![-1., 0.]],
-                &request(json!({"input":[["a","","b"]]})),
+                &options(json!({"input":[["a","","b"]]})),
             )
             .unwrap();
         assert_eq!(actual, vec![vec![0., 97.], vec![0., 0.], vec![-97., 0.]]);
@@ -1011,7 +1143,7 @@ mod tests {
             .readout(
                 &prepared,
                 vec![vec![90., 90.], vec![1., 0.], vec![0., 1.]],
-                &request(json!({"input":[["a"]]})),
+                &options(json!({"input":[["a"]]})),
             )
             .unwrap();
         assert_eq!(actual, vec![vec![59., 59.]]);
@@ -1028,14 +1160,14 @@ mod tests {
         };
         let hidden = vec![vec![3., 4.], vec![0., 1.], vec![0., 0.]];
         let document = adapter
-            .readout(&prepared, hidden.clone(), &request(json!({"input":"a!"})))
+            .readout(&prepared, hidden.clone(), &options(json!({"input":"a!"})))
             .unwrap();
         assert_eq!(document, vec![vec![0.6, 0.8], vec![0., 0.]]);
         let query = adapter
             .readout(
                 &prepared,
                 hidden,
-                &request(json!({"input":"a!","task":"query"})),
+                &options(json!({"input":"a!","task":"query"})),
             )
             .unwrap();
         assert_eq!(query.len(), 3);
@@ -1046,7 +1178,7 @@ mod tests {
         let mut vector = vec![1., -1., 0., -1., 1., -1., 1., -1., 1.];
         finish(
             &mut vector,
-            &request(json!({"input":"a","quantization":"ubinary"})),
+            &options(json!({"input":"a","quantization":"ubinary"})),
         )
         .unwrap();
         assert_eq!(vector, vec![170., 128.]);

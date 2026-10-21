@@ -307,7 +307,7 @@ pub(crate) struct PredictRequest {
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     pub inputs: PredictInput,
-    #[schema(default = "false", example = "false", nullable = true)]
+    #[schema(default = "true", example = "true", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "right", example = "right")]
@@ -450,7 +450,7 @@ pub(crate) struct PredictTokensRequest {
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     pub inputs: Vec<String>,
-    #[schema(default = "false", example = "false", nullable = true)]
+    #[schema(default = "true", example = "true", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "right", example = "right")]
@@ -489,7 +489,7 @@ pub(crate) struct RerankRequest {
     #[schema(example = json!(["Deep Learning is ..."]))]
     pub texts: Vec<String>,
     #[serde(default)]
-    #[schema(default = "false", example = "false", nullable = true)]
+    #[schema(default = "true", example = "true", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "right", example = "right")]
@@ -730,7 +730,7 @@ pub(crate) struct SimilarityInput {
 
 #[derive(Deserialize, ToSchema, Default)]
 pub(crate) struct SimilarityParameters {
-    #[schema(default = "false", example = "false", nullable = true)]
+    #[schema(default = "true", example = "true", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "right", example = "right")]
@@ -773,7 +773,7 @@ pub(crate) struct EmbedRequest {
     pub inputs: EmbeddingInput,
 
     #[serde(default)]
-    #[schema(default = "false", example = "false", nullable = true)]
+    #[schema(default = "true", example = "true", nullable = true)]
     pub truncate: Option<bool>,
 
     #[serde(default)]
@@ -816,7 +816,7 @@ pub(crate) struct EmbedSparseRequest {
     pub model: Option<String>,
     pub inputs: EmbeddingInput,
     #[serde(default)]
-    #[schema(default = "false", example = "false", nullable = true)]
+    #[schema(default = "true", example = "true", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "right", example = "right")]
@@ -853,7 +853,7 @@ pub(crate) struct EmbedAllRequest {
     pub model: Option<String>,
     pub inputs: EmbeddingInput,
     #[serde(default)]
-    #[schema(default = "false", example = "false", nullable = true)]
+    #[schema(default = "true", example = "true", nullable = true)]
     pub truncate: Option<bool>,
     #[serde(default)]
     #[schema(default = "right", example = "right")]
@@ -1175,6 +1175,29 @@ mod embedding_input_tests {
             assert_eq!(
                 documentation["components"]["schemas"][name],
                 serde_json::to_value(schema).unwrap(),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn truncation_schema_defaults_match_server_and_documentation() {
+        let documentation: serde_json::Value =
+            serde_json::from_str(include_str!("../../../docs/openapi.json")).unwrap();
+        for (name, schema) in [
+            EmbedRequest::schema(),
+            EmbedAllRequest::schema(),
+            EmbedSparseRequest::schema(),
+            PredictRequest::schema(),
+            RerankRequest::schema(),
+            SimilarityParameters::schema(),
+        ] {
+            let generated = serde_json::to_value(schema).unwrap();
+            let field = &generated["properties"]["truncate"];
+            assert_eq!(field["default"], "true", "{name}");
+            assert_eq!(field["example"], "true", "{name}");
+            assert_eq!(
+                documentation["components"]["schemas"][name]["properties"]["truncate"], *field,
                 "{name}"
             );
         }
