@@ -108,16 +108,20 @@ async fn models(Extension(registry): Extension<ModelRegistry>) -> Json<ServedMod
                 infinity_v3_backend::BackendKind::Candle => "candle",
                 infinity_v3_backend::BackendKind::Libtorch => "libtorch",
             },
-            capabilities: match &model.info.model_type {
-                ModelType::Embedding(model) if model.pooling == "splade" => {
-                    vec!["embed_sparse", "tokenize", "decode"]
+            capabilities: if let Some(adapter) = &model.perplexity {
+                adapter.capabilities()
+            } else {
+                match &model.info.model_type {
+                    ModelType::Embedding(model) if model.pooling == "splade" => {
+                        vec!["embed_sparse", "tokenize", "decode"]
+                    }
+                    ModelType::Embedding(_) => {
+                        vec!["embed", "embed_all", "similarity", "tokenize", "decode"]
+                    }
+                    ModelType::Classifier(_) => vec!["classify", "tokenize", "decode"],
+                    ModelType::Reranker(_) => vec!["rerank", "classify", "tokenize", "decode"],
+                    ModelType::Decision => vec!["systemone", "tokenize", "decode"],
                 }
-                ModelType::Embedding(_) => {
-                    vec!["embed", "embed_all", "similarity", "tokenize", "decode"]
-                }
-                ModelType::Classifier(_) => vec!["classify", "tokenize", "decode"],
-                ModelType::Reranker(_) => vec!["rerank", "classify", "tokenize", "decode"],
-                ModelType::Decision => vec!["systemone", "tokenize", "decode"],
             },
         })
         .collect();
@@ -1174,8 +1178,24 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )]
 async fn embed(
     context: Extension<Option<opentelemetry::Context>>,
-    RoutedJson { runtime, value }: RoutedJson<EmbedRequest>,
+    RoutedJson { runtime, value }: RoutedJson<serde_json::Value>,
 ) -> Response {
+    if runtime.perplexity.is_some() {
+        return super::perplexity::respond(runtime, value, false, true).await;
+    }
+    let value = match serde_json::from_value::<EmbedRequest>(value) {
+        Ok(value) => value,
+        Err(error) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorResponse {
+                    error: error.to_string(),
+                    error_type: ErrorType::Validation,
+                }),
+            )
+                .into_response()
+        }
+    };
     embed_inner(
         Extension(runtime.infer.clone()),
         Extension(runtime.info.clone()),
@@ -1587,8 +1607,24 @@ example = json ! ({"error": "Batch size error", "error_type": "validation"})),
 )]
 async fn embed_all(
     context: Extension<Option<opentelemetry::Context>>,
-    RoutedJson { runtime, value }: RoutedJson<EmbedAllRequest>,
+    RoutedJson { runtime, value }: RoutedJson<serde_json::Value>,
 ) -> Response {
+    if runtime.perplexity.as_ref().is_some_and(|p| p.multivector()) {
+        return super::perplexity::respond(runtime, value, false, true).await;
+    }
+    let value = match serde_json::from_value::<EmbedAllRequest>(value) {
+        Ok(value) => value,
+        Err(error) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorResponse {
+                    error: error.to_string(),
+                    error_type: ErrorType::Validation,
+                }),
+            )
+                .into_response()
+        }
+    };
     embed_all_inner(
         Extension(runtime.infer.clone()),
         Extension(runtime.info.clone()),
@@ -1788,8 +1824,24 @@ example = json ! ({"message": "Batch size error", "type": "validation"})),
 )]
 async fn openai_embed(
     context: Extension<Option<opentelemetry::Context>>,
-    RoutedJson { runtime, value }: RoutedJson<OpenAICompatRequest>,
+    RoutedJson { runtime, value }: RoutedJson<serde_json::Value>,
 ) -> Response {
+    if runtime.perplexity.is_some() {
+        return super::perplexity::respond(runtime, value, false, false).await;
+    }
+    let value = match serde_json::from_value::<OpenAICompatRequest>(value) {
+        Ok(value) => value,
+        Err(error) => {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorResponse {
+                    error: error.to_string(),
+                    error_type: ErrorType::Validation,
+                }),
+            )
+                .into_response()
+        }
+    };
     openai_embed_inner(
         Extension(runtime.infer.clone()),
         Extension(runtime.info.clone()),
@@ -2325,6 +2377,7 @@ fn api_doc() -> utoipa::openapi::OpenApi {
     get_model_info,
     models,
     super::systemone::systemone,
+    super::perplexity::contextual,
     health,
     predict,
     classify,
@@ -2342,6 +2395,11 @@ fn api_doc() -> utoipa::openapi::OpenApi {
     schemas(
     super::systemone::SystemOneRequest,
     super::systemone::SystemOneState,
+    super::perplexity::PerplexityRequest,
+    super::perplexity::PerplexityInput,
+    super::perplexity::PerplexityImageInput,
+    super::perplexity::PerplexityTask,
+    super::perplexity::PerplexityQuantization,
     infinity_v3_core::input::ModelInput,
     infinity_v3_core::input::MessageInput,
     infinity_v3_core::input::Message,
@@ -2555,6 +2613,10 @@ fn build_router(
         // OpenAI compat route
         .route("/embeddings", post(openai_embed))
         .route("/v1/embeddings", post(openai_embed))
+        .route(
+            "/v1/contextualizedembeddings",
+            post(super::perplexity::contextual),
+        )
         .route("/v1/classify", post(classify))
         .route("/v1/systemone", post(super::systemone::systemone))
         // Vertex compat route
@@ -2701,6 +2763,9 @@ async fn default_inference(
     context: Extension<Option<opentelemetry::Context>>,
     RoutedJson { runtime, value }: RoutedJson<serde_json::Value>,
 ) -> Response {
+    if runtime.perplexity.is_some() {
+        return super::perplexity::respond(runtime, value, false, true).await;
+    }
     let infer = Extension(runtime.infer.clone());
     let info = Extension(runtime.info.clone());
     macro_rules! call {

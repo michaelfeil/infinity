@@ -143,6 +143,8 @@ pub struct Qwen35TextConfig {
     #[serde(default)]
     pub use_bidirectional_attention: bool,
     #[serde(default)]
+    pub is_causal: Option<bool>,
+    #[serde(default)]
     pub use_linear_output_projection: bool,
     #[serde(default)]
     pub quantization_config: Option<serde_json::Value>,
@@ -329,6 +331,16 @@ mod tests {
             c.validate()?;
             assert_eq!(c.text().rotary_dim(), 64);
         }
+        Ok(())
+    }
+    #[test]
+    fn saved_noncausal_full_attention_is_preserved() -> Result<()> {
+        let mut config = value();
+        config["is_causal"] = false.into();
+        let parsed: Qwen35Config =
+            serde_json::from_value(serde_json::json!({"text_config":config})).unwrap();
+        parsed.validate()?;
+        assert_eq!(parsed.text().is_causal, Some(false));
         Ok(())
     }
     #[test]

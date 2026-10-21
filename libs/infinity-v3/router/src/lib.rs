@@ -84,6 +84,7 @@ pub struct ModelRuntime {
     pub checkpoint_id: String,
     pub(crate) named: bool,
     pub backend_kind: infinity_v3_backend::BackendKind,
+    pub(crate) perplexity: Option<std::sync::Arc<http::perplexity::Perplexity>>,
     pub(crate) systemone: Option<std::sync::Arc<http::systemone::SystemOne>>,
 }
 
@@ -316,6 +317,9 @@ async fn initialize_model(
         "This multimodal model uses its native chat template; default prompt overrides are unsupported"
     );
 
+    let perplexity_profile =
+        infinity_v3_backend::perplexity::Profile::load(&model_root).map_err(anyhow::Error::msg)?;
+
     // Set model type from config
     let backend_model_type = if laya || decoder_decision {
         anyhow::ensure!(
@@ -323,6 +327,12 @@ async fn initialize_model(
             "Typed decisions do not use embedding pooling"
         );
         infinity_v3_backend::ModelType::Decision
+    } else if perplexity_profile.is_some() {
+        anyhow::ensure!(
+            pooling.is_none() || pooling == Some(infinity_v3_backend::Pool::Mean),
+            "Perplexity exports require mean pooling; late interaction uses token outputs"
+        );
+        infinity_v3_backend::ModelType::Embedding(infinity_v3_backend::Pool::Mean)
     } else if config.model_type == "qwen3_vl" {
         anyhow::ensure!(
             pooling.is_none() || pooling == Some(infinity_v3_backend::Pool::LastToken),
@@ -402,7 +412,7 @@ async fn initialize_model(
         || &config.model_type == "camembert"
         || &config.model_type == "roberta"
     {
-        config.pad_token_id + 1
+        config.pad_token_id.unwrap_or(0) + 1
     } else {
         0
     };
@@ -411,10 +421,12 @@ async fn initialize_model(
     let mut st_config: Option<STConfig> = None;
     for name in ST_CONFIG_NAMES {
         // New multimodal ST files describe modalities rather than max_seq_length.
-        if matches!(
-            config.model_type.as_str(),
-            "qwen3_vl" | "embedding_gemma2" | "ultrabert"
-        ) {
+        if perplexity_profile == Some(infinity_v3_backend::perplexity::Profile::LateV2)
+            || matches!(
+                config.model_type.as_str(),
+                "qwen3_vl" | "embedding_gemma2" | "ultrabert"
+            )
+        {
             break;
         }
         let config_path = model_root.join(name);
@@ -440,6 +452,8 @@ async fn initialize_model(
         // The checkpoint advertises a larger RoPE range but was trained with
         // an 8192-token shared text/media context.
         config.max_position_embeddings.min(8192)
+    } else if perplexity_profile.is_some() {
+        config.max_position_embeddings.min(max_batch_tokens)
     } else if decoder_decision {
         // Decision prompts cannot be truncated: reject over-budget requests in
         // the formatter, with the queue capacity as the configured input limit.
@@ -517,6 +531,8 @@ async fn initialize_model(
     } else {
         None
     };
+
+    let perplexity_tokenizer = perplexity_profile.map(|_| tokenizer.clone());
 
     // Tokenization logic
     let chat = if matches!(
@@ -759,6 +775,20 @@ async fn initialize_model(
         docker_label: option_env!("DOCKER_LABEL"),
     };
 
+    let perplexity = perplexity_profile
+        .zip(perplexity_tokenizer)
+        .map(|(profile, tokenizer)| {
+            http::perplexity::Perplexity::load(
+                &model_root,
+                tokenizer,
+                max_input_length,
+                profile,
+                multimodal_config.clone(),
+            )
+            .map(std::sync::Arc::new)
+        })
+        .transpose()?;
+
     let checkpoint_id = info.model_id.clone();
     let named = served_model_name.is_some();
     let mut info = info;
@@ -772,6 +802,7 @@ async fn initialize_model(
         named,
         backend_kind,
         systemone,
+        perplexity,
     })
 }
 
@@ -982,7 +1013,7 @@ pub struct ModelConfig {
     pub text_config: Option<TextPositionConfig>,
     pub vocab_size: Option<usize>,
     #[serde(default)]
-    pub pad_token_id: usize,
+    pub pad_token_id: Option<usize>,
     pub num_labels: Option<usize>,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
@@ -1045,6 +1076,7 @@ impl ModelConfig {
                 | "qwen3_5_moe_text"
                 | "qwen3_5"
                 | "qwen3_5_text"
+                | "pplx_contextual_qwen3_5"
                 | "qwen3_vl"
                 | "mistral3"
         ) {

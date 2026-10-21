@@ -589,6 +589,8 @@ impl LibtorchBackend {
             .ok_or_else(|| start("Missing model_type"))?
             .to_owned();
         let normalized_family = match family.as_str() {
+            "bidirectional_pplx_qwen3" => "qwen3",
+            "pplx_contextual_qwen3_5" => "qwen3_5",
             "llama_bidirec" => "llama",
             "ministral3" => "mistral",
             "new" => "gte",
@@ -597,6 +599,13 @@ impl LibtorchBackend {
         }
         .to_owned();
         options["model_type"] = normalized_family.clone().into();
+        let perplexity =
+            text_embeddings_backend_core::perplexity::Profile::load(path).map_err(start)?;
+        options["_dense_tokens"] = perplexity.is_some_and(|p| p.late()).into();
+        if family == "bidirectional_pplx_qwen3" {
+            options["use_bidirectional_attention"] = true.into();
+            options["is_causal"] = false.into();
+        }
         if enable_fp8_dynamic {
             if options
                 .get("quantization_config")
@@ -895,11 +904,17 @@ impl LibtorchBackend {
                 let kind = module["type"]
                     .as_str()
                     .ok_or_else(|| start("Missing module type"))?;
-                if !kind.starts_with("sentence_transformers.")
-                    || !matches!(
-                        kind.rsplit('.').next(),
-                        Some("Transformer" | "Pooling" | "Normalize" | "Dense")
-                    )
+                let perplexity_module =
+                    perplexity.is_some()
+                        && matches!(kind,
+                    "st_quantize.FlexibleQuantizer" | "pylate.models.Dense.Dense" |
+                    "sentence_transformers.multi_vector_encoder.modules.MultiVectorMask");
+                if !perplexity_module
+                    && (!kind.starts_with("sentence_transformers.")
+                        || !matches!(
+                            kind.rsplit('.').next(),
+                            Some("Transformer" | "Pooling" | "Normalize" | "Dense")
+                        ))
                 {
                     return Err(start(format!(
                         "LibTorch does not yet support Sentence Transformers module {kind}"

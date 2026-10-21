@@ -187,7 +187,7 @@ class Decoder final : public Model {
     }
   }
   void load_rope() {
-    auto theta = options.real("rope_theta", 10000.0);
+    auto theta = options.real("rope_parameters.rope_theta", options.real("rope_theta", 10000.0));
     auto scale = options.real("rope_scaling.factor", 1.0);
     auto kind = options.string("rope_scaling.rope_type", options.string("rope_scaling.type", ""));
     // Candle's dense Qwen2/Qwen3 layers use unscaled RoPE even when a

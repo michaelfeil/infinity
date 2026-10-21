@@ -1,5 +1,6 @@
 pub mod block_attention_config;
 mod multimodal;
+pub mod perplexity;
 pub mod result_memory;
 #[cfg(feature = "clap")]
 use clap::ValueEnum;
