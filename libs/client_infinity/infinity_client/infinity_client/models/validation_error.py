@@ -1,7 +1,13 @@
-from typing import Any, Dict, List, Type, TypeVar, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Type, TypeVar, Union, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
+
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.context import Context
+
 
 T = TypeVar("T", bound="ValidationError")
 
@@ -13,11 +19,15 @@ class ValidationError:
         loc (List[Union[int, str]]):
         msg (str):
         type (str):
+        input_ (Union[Unset, Any]):
+        ctx (Union[Unset, Context]):
     """
 
     loc: List[Union[int, str]]
     msg: str
     type: str
+    input_: Union[Unset, Any] = UNSET
+    ctx: Union[Unset, "Context"] = UNSET
     additional_properties: Dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -31,6 +41,12 @@ class ValidationError:
 
         type = self.type
 
+        input_ = self.input_
+
+        ctx: Union[Unset, Dict[str, Any]] = UNSET
+        if not isinstance(self.ctx, Unset):
+            ctx = self.ctx.to_dict()
+
         field_dict: Dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -40,11 +56,17 @@ class ValidationError:
                 "type": type,
             }
         )
+        if input_ is not UNSET:
+            field_dict["input"] = input_
+        if ctx is not UNSET:
+            field_dict["ctx"] = ctx
 
         return field_dict
 
     @classmethod
     def from_dict(cls: Type[T], src_dict: Dict[str, Any]) -> T:
+        from ..models.context import Context
+
         d = src_dict.copy()
         loc = []
         _loc = d.pop("loc")
@@ -61,10 +83,21 @@ class ValidationError:
 
         type = d.pop("type")
 
+        input_ = d.pop("input", UNSET)
+
+        _ctx = d.pop("ctx", UNSET)
+        ctx: Union[Unset, Context]
+        if isinstance(_ctx, Unset):
+            ctx = UNSET
+        else:
+            ctx = Context.from_dict(_ctx)
+
         validation_error = cls(
             loc=loc,
             msg=msg,
             type=type,
+            input_=input_,
+            ctx=ctx,
         )
 
         validation_error.additional_properties = d
