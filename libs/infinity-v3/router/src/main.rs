@@ -255,9 +255,9 @@ struct Args {
     )]
     max_decision_questions: Vec<std::num::NonZeroUsize>,
 
-    /// Automatically truncate inputs that are longer than the maximum supported size
-    ///
-    #[clap(long, env = infinity_v3_config::infinity_env!("AUTO_TRUNCATE"), action = clap::ArgAction::Append, num_args = 0..=1, default_missing_value = "true", default_value = "false", value_delimiter = ';')]
+    /// Automatically truncate inputs that are longer than the maximum supported size.
+    /// Enabled by default; use --auto-truncate=false to reject oversized inputs.
+    #[clap(long, env = infinity_v3_config::infinity_env!("AUTO_TRUNCATE"), action = clap::ArgAction::Append, num_args = 0..=1, default_missing_value = "true", default_value = "true", value_delimiter = ';')]
     auto_truncate: Vec<bool>,
 
     /// The name of the prompt that should be used by default for encoding. If not set, no prompt
@@ -559,6 +559,29 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn auto_truncate_defaults_on_and_preserves_explicit_model_overrides() {
+        for (options, expected) in [
+            (vec![], vec![true, true]),
+            (vec!["--auto-truncate=false"], vec![false, false]),
+            (vec!["--auto-truncate=false;true"], vec![false, true]),
+        ] {
+            let args = Args::try_parse_from(
+                ["infinity_v3", "--model-id", "a;b"]
+                    .into_iter()
+                    .chain(options),
+            )
+            .unwrap();
+            let actual = args
+                .models()
+                .unwrap()
+                .iter()
+                .map(|model| model.auto_truncate)
+                .collect::<Vec<_>>();
+            assert_eq!(actual, expected);
+        }
+    }
+
     #[test]
     fn model_options_broadcast_align_and_preserve_single_model_flags() {
         let args = Args::try_parse_from([
