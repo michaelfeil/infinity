@@ -601,6 +601,18 @@ pub(crate) struct PerplexityRequest {
 fn invalid(message: &str) -> TextEmbeddingsError {
     TextEmbeddingsError::Validation(message.into())
 }
+fn validate_quantization(
+    profile: Profile,
+    quantization: PerplexityQuantization,
+) -> Result<(), TextEmbeddingsError> {
+    if profile.late() && quantization != PerplexityQuantization::Int8 {
+        return Err(invalid(
+            "Late-interaction models return normalized floating-point token vectors; binary quantization is unsupported",
+        ));
+    }
+    Ok(())
+}
+
 fn resize(vector: &mut Vec<f32>, dimensions: Option<usize>) -> Result<(), TextEmbeddingsError> {
     if let Some(n) = dimensions {
         if n == 0 || n > vector.len() {
@@ -730,6 +742,7 @@ async fn execute(
         .ok_or_else(|| invalid("This model does not implement Perplexity contextual embeddings"))?;
     let request: PerplexityRequest =
         serde_json::from_value(value).map_err(|e| invalid(&e.to_string()))?;
+    validate_quantization(adapter.profile, request.quantization)?;
     if request.truncate {
         return Err(invalid("Perplexity adapters require truncate=false"));
     }
@@ -944,6 +957,24 @@ mod tests {
 
     fn request(value: Value) -> PerplexityRequest {
         serde_json::from_value(value).unwrap()
+    }
+
+    #[test]
+    fn late_profiles_reject_binary_quantization_before_inference() {
+        for profile in [Profile::LateV1, Profile::LateV2] {
+            for value in [
+                json!({"input":"query"}),
+                json!({"input":"query", "quantization":"int8"}),
+            ] {
+                assert!(validate_quantization(profile, request(value).quantization).is_ok());
+            }
+            for quantization in ["binary", "ubinary"] {
+                let value = request(json!({"input":"query", "quantization":quantization}));
+                assert!(validate_quantization(profile, value.quantization).is_err());
+                assert!(validate_quantization(Profile::Dense, value.quantization).is_ok());
+                assert!(validate_quantization(Profile::ContextV1, value.quantization).is_ok());
+            }
+        }
     }
 
     #[test]

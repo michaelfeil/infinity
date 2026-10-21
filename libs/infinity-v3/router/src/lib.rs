@@ -1089,7 +1089,11 @@ impl ModelConfig {
             }
             if matches!(
                 self.model_type.as_str(),
-                "qwen3_5_moe" | "qwen3_5_moe_text" | "qwen3_5" | "qwen3_5_text"
+                "qwen3_5_moe"
+                    | "qwen3_5_moe_text"
+                    | "qwen3_5"
+                    | "qwen3_5_text"
+                    | "pplx_contextual_qwen3_5"
             ) && self.dtype.is_none()
                 && self.torch_dtype.is_none()
             {
@@ -1408,40 +1412,42 @@ mod libtorch_auto_dtype_tests {
 
     #[test]
     fn bf16_checkpoint_auto_dtype_survives_root_and_nested_configs() {
-        for field in ["dtype", "torch_dtype"] {
-            for nested in [false, true] {
-                let mut value = serde_json::json!({
-                    "model_type": "qwen3_5_moe",
-                    "max_position_embeddings": 2048,
-                    "text_config": {"max_position_embeddings": 2048}
-                });
-                if nested {
-                    value["text_config"][field] = "bfloat16".into();
-                } else {
-                    value[field] = "bfloat16".into();
-                }
-                let mut config: ModelConfig = serde_json::from_value(value).unwrap();
-                config.resolve_text_config().unwrap();
-                let declared = config.dtype.as_deref().or(config.torch_dtype.as_deref());
-                for requested in [None, Some(DType::Auto)] {
+        for model_type in ["qwen3_5_moe", "pplx_contextual_qwen3_5"] {
+            for field in ["dtype", "torch_dtype"] {
+                for nested in [false, true] {
+                    let mut value = serde_json::json!({
+                        "model_type": model_type,
+                        "max_position_embeddings": 2048,
+                        "text_config": {"max_position_embeddings": 2048}
+                    });
+                    if nested {
+                        value["text_config"][field] = "bfloat16".into();
+                    } else {
+                        value[field] = "bfloat16".into();
+                    }
+                    let mut config: ModelConfig = serde_json::from_value(value).unwrap();
+                    config.resolve_text_config().unwrap();
+                    let declared = config.dtype.as_deref().or(config.torch_dtype.as_deref());
+                    for requested in [None, Some(DType::Auto)] {
+                        assert_eq!(
+                            resolve_libtorch_dtype(requested, declared, &config.model_type, false),
+                            DType::Bfloat16
+                        );
+                    }
                     assert_eq!(
-                        resolve_libtorch_dtype(requested, declared, &config.model_type, false),
-                        DType::Bfloat16
+                        resolve_libtorch_dtype(None, declared, &config.model_type, true),
+                        DType::Float32
+                    );
+                    assert_eq!(
+                        resolve_libtorch_dtype(
+                            Some(DType::Float16),
+                            declared,
+                            &config.model_type,
+                            false
+                        ),
+                        DType::Float16
                     );
                 }
-                assert_eq!(
-                    resolve_libtorch_dtype(None, declared, &config.model_type, true),
-                    DType::Float32
-                );
-                assert_eq!(
-                    resolve_libtorch_dtype(
-                        Some(DType::Float16),
-                        declared,
-                        &config.model_type,
-                        false
-                    ),
-                    DType::Float16
-                );
             }
         }
     }
