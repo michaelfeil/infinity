@@ -3,6 +3,7 @@
 //! The processor is a library entry point; HTTP/queue/backend wiring is a separate step.
 mod image;
 mod media;
+pub use media::default_image_allowed_hosts;
 mod positions;
 mod qwen3_vl;
 
