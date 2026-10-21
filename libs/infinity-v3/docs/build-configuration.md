@@ -27,6 +27,11 @@ and `PORT`. A custom-base binary does not also read `INFINITY_*` settings.
 Third-party variables such as `HF_TOKEN`, `RUST_LOG`, and CUDA settings retain
 their existing names. Model fixture and benchmark-only variables are unchanged.
 
+Automatic input truncation is enabled by default. Set `--auto-truncate=false`
+or `INFINITY_AUTO_TRUNCATE=false` to reject oversized inputs on standard inference
+routes. Individual requests can also set `truncate: false`. Model-specific
+Perplexity and typed-decision adapters retain their own input-length validation.
+
 ## Docker builds
 
 All Dockerfiles accept `--build-arg ENV_VAR_BASE=ACME`. From the Infinity repo root:
