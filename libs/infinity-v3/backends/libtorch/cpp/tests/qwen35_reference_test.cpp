@@ -107,7 +107,7 @@ at::Tensor independent_norm(const at::Tensor& x,const at::Tensor& gamma,float ep
 
 int main(int argc,char** argv) {
   c10::Device device(argc>1?argv[1]:"cuda:0");at::manual_seed(717);
-  for(int width:{7,256,384,2048,4096})for(bool strided:{false,true}) {
+  for(int width:{1,7,32,33,256,384,2048,4096,5120,8192})for(bool strided:{false,true}) {
     auto base=(at::randn({2,3,width*(strided?2:1)})*3).to(at::kBFloat16);
     if(strided)base.narrow(-1,width,width).fill_(NAN);
     auto x=base.narrow(-1,0,width),gamma=(at::randn({width})*.2).to(at::kBFloat16);

@@ -72,14 +72,16 @@ __global__ void quant_kernel(const T* x,__nv_fp8_e4m3* y,float* scales,int width
 }
 template<class T,int N> struct alignas(sizeof(T)*N) QuantPack {T value[N];};
 template<class T>
-__global__ void quant_vector4096(const T* x,__nv_fp8_e4m3* y,float* scales) {
+__global__ void quant_vector(const T* x,__nv_fp8_e4m3* y,float* scales,int width) {
   __shared__ float partial[8];
   const int64_t row=blockIdx.x;
   const int lane=threadIdx.x%32,warp=threadIdx.x/32;
-  float values[2][8],mx=0;
+  float values[3][8]={},mx=0;
+  const int packs=width/8;
 #pragma unroll
-  for(int group=0;group<2;++group) {
-    auto pack=reinterpret_cast<const QuantPack<T,8>*>(x)[row*512+threadIdx.x+group*256];
+  for(int group=0;group<3;++group) {
+    if(threadIdx.x+group*256>=packs)continue;
+    auto pack=reinterpret_cast<const QuantPack<T,8>*>(x)[row*packs+threadIdx.x+group*256];
 #pragma unroll
     for(int j=0;j<8;++j) {values[group][j]=float(pack.value[j]);mx=fmaxf(mx,fabsf(values[group][j]));}
   }
@@ -95,11 +97,12 @@ __global__ void quant_vector4096(const T* x,__nv_fp8_e4m3* y,float* scales) {
   const float scale=partial[0];
   if(!threadIdx.x)scales[row]=scale;
 #pragma unroll
-  for(int group=0;group<2;++group) {
+  for(int group=0;group<3;++group) {
+    if(threadIdx.x+group*256>=packs)continue;
     QuantPack<__nv_fp8_e4m3,8> pack;
 #pragma unroll
     for(int j=0;j<8;++j)pack.value[j]=__nv_fp8_e4m3(__fdiv_rn(values[group][j],scale));
-    reinterpret_cast<QuantPack<__nv_fp8_e4m3,8>*>(y)[row*512+threadIdx.x+group*256]=pack;
+    reinterpret_cast<QuantPack<__nv_fp8_e4m3,8>*>(y)[row*packs+threadIdx.x+group*256]=pack;
   }
 }
 }
@@ -115,11 +118,11 @@ std::pair<at::Tensor,at::Tensor> fp8_quantize_rows(const at::Tensor& input) {
   if(input.size(0)) {
     auto stream=at::cuda::getCurrentCUDAStream(input.device().index());
     auto* target=reinterpret_cast<__nv_fp8_e4m3*>(output.data_ptr());
-    if(input.size(1)==4096&&reinterpret_cast<uintptr_t>(input.const_data_ptr())%16==0) {
+    if(input.size(1)>=4096&&input.size(1)<=6144&&input.size(1)%8==0&&reinterpret_cast<uintptr_t>(input.const_data_ptr())%16==0) {
       if(input.scalar_type()==at::kHalf)
-        quant_vector4096<<<input.size(0),256,0,stream>>>(reinterpret_cast<const half*>(input.const_data_ptr()),target,scales.data_ptr<float>());
+        quant_vector<<<input.size(0),256,0,stream>>>(reinterpret_cast<const half*>(input.const_data_ptr()),target,scales.data_ptr<float>(),static_cast<int>(input.size(1)));
       else
-        quant_vector4096<<<input.size(0),256,0,stream>>>(reinterpret_cast<const __nv_bfloat16*>(input.const_data_ptr()),target,scales.data_ptr<float>());
+        quant_vector<<<input.size(0),256,0,stream>>>(reinterpret_cast<const __nv_bfloat16*>(input.const_data_ptr()),target,scales.data_ptr<float>(),static_cast<int>(input.size(1)));
       C10_CUDA_KERNEL_LAUNCH_CHECK();
       return {output,scales};
     }
