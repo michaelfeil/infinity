@@ -65,12 +65,36 @@ class RequestImageFeatures {
    if(match==matches.end())matches.push_back({image,{},1});else ++match->remaining;
   }
  }
+ template<class Compute> std::vector<at::Tensor> get_batch(const std::vector<ImageInput>& images,Compute compute) {
+  std::vector<ImageInput> missing;
+  std::vector<at::Tensor> values(images.size());std::vector<size_t> slots(images.size());
+  for(size_t i=0;i<images.size();++i) {
+   const auto& image=images[i];
+   auto found=entries.find(image.pixels.unsafeGetTensorImpl());
+   if(found!=entries.end())for(const auto& entry:found->second)
+    if(entry.remaining&&entry.image.grid_thw==image.grid_thw&&entry.image.merge_size==image.merge_size) {values[i]=entry.features;break;}
+   if(values[i].defined())continue;
+   auto match=std::find_if(missing.begin(),missing.end(),[&](const ImageInput& other){
+    return image.pixels.is_same(other.pixels)&&image.grid_thw==other.grid_thw&&image.merge_size==other.merge_size;
+   });
+   slots[i]=match-missing.begin();if(match==missing.end())missing.push_back(image);
+  }
+  auto computed=missing.empty()?std::vector<at::Tensor>{}:compute(missing);
+  TORCH_CHECK(computed.size()==missing.size(),"Image feature batch size mismatch");
+  for(size_t i=0;i<images.size();++i)
+   values[i]=get(images[i],[&]{return values[i].defined()?values[i]:computed[slots[i]];});
+  return values;
+ }
  template<class Compute> at::Tensor get(const ImageInput& image,Compute&& compute) {
   auto found=entries.find(image.pixels.unsafeGetTensorImpl());
   if(found!=entries.end())for(auto& entry:found->second) {
    if(entry.image.grid_thw!=image.grid_thw||entry.image.merge_size!=image.merge_size||!entry.remaining)continue;
    auto result=entry.features.defined()?entry.features:compute();
-   if(--entry.remaining)entry.features=result;else entry.features=at::Tensor();
+   if(--entry.remaining) {
+    // A reused image must not retain the other images' projected features.
+    if(!result.is_contiguous()||result.storage_offset()!=0||result.storage().nbytes()!=result.numel()*result.element_size())result=result.clone();
+    entry.features=result;
+   } else entry.features=at::Tensor();
    return result;
   }
   return compute();

@@ -1,6 +1,7 @@
 #include "prefix_cache_test.h"
 // Native actual-length image/deepstack regression; no Python or token padding.
 #include "models/qwen3_vl_models.h"
+#include "helpers/vision_batch.h"
 #include "models/qwen35_models.h"
 #include <c10/core/InferenceMode.h>
 #include <ATen/Parallel.h>
@@ -10,6 +11,31 @@
 #include <c10/cuda/CUDACachingAllocator.h>
 #endif
 using namespace tei;
+void batched_tower_test(Qwen3VL& tower,const at::Tensor& pixels) {
+  std::vector<ImageInput> images{{pixels.repeat({2,1}),{1,2,4},2,0,2,0},
+    {pixels.repeat({3,1}),{3,2,2},2,0,3,0},{pixels*.2,{1,2,2},2,0,1,0}};
+  auto chunks=vision_batches(images,c10::Device("cpu"),1LL<<30,1LL<<30);
+  TORCH_CHECK(chunks.size()==images.size()&&chunks.front().first==0&&chunks.back().second==images.size(),
+    "Vision workspace bound lost images or joined oversized images");
+  auto batch=tower.image_features(images);
+  RequestImageFeatures cache({images[0],images[0]});
+  auto retained=cache.get(images[0],[&]{return batch[0];});
+  TORCH_CHECK(retained.storage().nbytes()==retained.numel()*retained.element_size(),"Reused image retained the complete vision batch allocation");
+  for(size_t i=0;i<images.size();++i) {
+    auto expected=tower.image_features(images[i]);
+    TORCH_CHECK(at::allclose(batch[i],expected,.015,.015),"Batched Qwen image/frame attention leaked across grids");
+  }
+  std::reverse(images.begin(),images.end());auto reversed=tower.image_features(images);
+  for(size_t i=0;i<images.size();++i)
+    TORCH_CHECK(at::allclose(reversed[i],batch[images.size()-1-i],.015,.015),"Qwen image descriptor order changed features");
+}
+void packed_images_test(Model& model,PackedInput input) {
+  auto first=model.forward(input);auto second=input;second.images.clear();
+  second.images.push_back({input.images[0].pixels.repeat({2,1}),{1,2,4},2,4,2,4});
+  auto expected=model.forward(second);input.images.push_back(second.images[0]);auto mixed=model.forward(input);
+  TORCH_CHECK(at::allclose(mixed.narrow(0,0,4),first.narrow(0,0,4),.015,.015)&&
+    at::allclose(mixed.narrow(0,4,2),expected.narrow(0,4,2),.015,.015),"Packed Qwen image/deepstack features leaked across sequences");
+}
 void rotary_presence_test(Model& model,PackedInput input) {
   input.images.clear();input.multimodal_positions=at::Tensor();input.host_multimodal_positions=at::Tensor();
   auto implicit=model.forward(input);auto explicit_zero=input;
@@ -99,6 +125,7 @@ int main(int argc,char** argv) {
   for(int i=0;i<2;++i){auto p="blocks."+std::to_string(i)+".";ln(p+"norm1",16);ln(p+"norm2",16);fc(p+"attn.qkv",48,16);fc(p+"attn.proj",16,16);fc(p+"mlp.linear_fc1",24,16);fc(p+"mlp.linear_fc2",16,24);}
   for(const auto& p:{std::string("merger"),std::string("deepstack_merger_list.0")}){ln(p+".norm",p=="merger"?16:64);fc(p+".linear_fc1",64,64);fc(p+".linear_fc2",16,64);}
   auto model=create_qwen3_vl(cfg,weights,c10::Device("cpu"),at::kFloat);model->ready();
+  batched_tower_test(*dynamic_cast<Qwen3VL*>(model.get()),at::rand({4,6}));
   TORCH_CHECK(model->supports_images(),"Qwen3-VL image capability unavailable");
   std::vector<int64_t> ids={1,2,3,4,5,6},pos={0,1,2,3,0,1};std::vector<int32_t> offsets={0,4,6};
   auto options=at::TensorOptions().dtype(at::kLong);
@@ -109,6 +136,7 @@ int main(int argc,char** argv) {
   input.images.push_back({at::rand({4,6}),{1,2,2},2,1,1,0});
   input.multimodal_positions=input.positions.unsqueeze(0).repeat({3,1});
   auto visual=model->forward(input);
+  packed_images_test(*model,input);
   check_prefix_cache(*model,input);
   PrefixCache media_cache(16<<20,32,8);
   TORCH_CHECK(at::allclose(media_cache.run(*model,input,0),visual,1e-5,2e-5),"Image cache fill changed outputs");
@@ -166,6 +194,7 @@ int main(int argc,char** argv) {
     dev.ids=host.ids.to(device);dev.types=host.types.to(device);dev.positions=host.positions.to(device);dev.cumulative=host.cumulative.to(device);
     dev.multimodal_positions=host.multimodal_positions.to(device);dev.images[0].pixels=host.images[0].pixels.to(device);
     rotary_presence_test(*native,dev);
+    packed_images_test(*native,dev);
     auto expected=reference->forward(host).to(at::kFloat),actual=native->forward(dev).cpu().to(at::kFloat);
     check_prefix_cache(*native,dev,0,.003,.003);
     PrefixCache context_cache(1<<20,64,8);context_cache.run(*native,dev,0);
@@ -206,6 +235,11 @@ int main(int argc,char** argv) {
     Qwen3VL vision_only(bounded_cfg,bounded_weights,device,at::kHalf,true);vision_only.ready();
     ImageInput warm_image{large.images[0].pixels.narrow(0,0,4),{1,2,2},2,1,1,0};
     vision_only.image_features(warm_image);
+    batched_tower_test(vision_only,warm_image.pixels);
+    Weights bf16_vision_weights;
+    for(const auto& [name,value]:bounded_weights)bf16_vision_weights[name]=value.to(at::kBFloat16);
+    Qwen3VL bf16_tower(bounded_cfg,bf16_vision_weights,device,at::kBFloat16,true);bf16_tower.ready();
+    batched_tower_test(bf16_tower,warm_image.pixels.to(at::kBFloat16));
     auto chunked_features=vision_only.image_features(large.images[0]).cpu().to(at::kFloat);
     TORCH_CHECK(at::allclose(original_cpu_features,chunked_features,.03,.03),"Large chunked Qwen3.5 vision differs from independent original CPU path: ",(original_cpu_features-chunked_features).abs().max().item<float>());
     at::cuda::getCurrentCUDAStream(device.index()).synchronize();

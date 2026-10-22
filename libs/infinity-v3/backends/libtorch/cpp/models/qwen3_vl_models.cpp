@@ -1,3 +1,4 @@
+#include "helpers/vision_batch.h"
 #include "batching/prefix_cache.h"
 #include "helpers/attention.h"
 // Native adaptation of Candle Qwen3.5. Upstream notices retained in LICENSE/NOTICE.
@@ -42,51 +43,74 @@ at::Tensor Qwen3VL::merger(const at::Tensor& x,const std::string& p,bool post) c
     act=at::gelu(mid,"tanh");auto out=linear(act,p+".linear_fc2");return out;
   }
 
-std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const ImageInput& image) const {
-    const auto [frames,height,width]=image.grid_thw;
-    auto patch_dim=w("patch_embed.proj.weight").numel()/hidden;
-    TORCH_CHECK(frames>0 && height>0 && width>0 && height%merge==0 && width%merge==0 &&
-      image.merge_size==merge && image.pixels.sizes()==at::IntArrayRef({frames*height*width,patch_dim}),"Invalid Qwen3-VL packed image grid");
-    // Each preprocessed row is one complete temporal/spatial patch; Conv3D's
-    // nonoverlapping kernel is exactly this flattened projection.
-    at::Tensor states;
-    if(exact_vision) {
-      // Candle temporal-2 projection: two actual K768 GEMMs, rounded FP16
-      // sum, then separate FP16 bias. No temporal or token padding.
-      auto patch=image.pixels.to(device,dtype).view({-1,3,2,16,16});
-      auto first=at::linear(patch.select(2,0).contiguous().view({-1,768}),temporal_first);
-      auto second=at::linear(patch.select(2,1).contiguous().view({-1,768}),temporal_second);
-      states=(first+second)+w("patch_embed.proj.bias");
-    } else {
-      states=at::linear(image.pixels.to(dtype),w("patch_embed.proj.weight").reshape({hidden,patch_dim}),w("patch_embed.proj.bias"));
+std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const std::vector<ImageInput>& images) const {
+    TORCH_CHECK(!images.empty(),"Empty Qwen3-VL image batch");
+    auto batches=vision_batches(images,device,hidden,cfg.integer("vision_config.intermediate_size",hidden*4));
+    if(batches.size()>1) {
+      std::vector<at::Tensor> features;std::vector<std::vector<at::Tensor>> deep;
+      for(auto [start,end]:batches) {
+        auto [feat,ds]=vision(std::vector<ImageInput>(images.begin()+start,images.begin()+end));features.push_back(feat);
+        if(deep.empty())deep.resize(ds.size());
+        for(size_t i=0;i<ds.size();++i)deep[i].push_back(ds[i]);
+      }
+      std::vector<at::Tensor> stacked;for(const auto& rows:deep)stacked.push_back(at::cat(rows,0));
+      return {at::cat(features,0),std::move(stacked)};
     }
-    auto side=static_cast<int64_t>(std::llround(std::sqrt(double(w("pos_embed.weight").size(0)))));
-    TORCH_CHECK(side*side==w("pos_embed.weight").size(0),"Qwen3-VL position table must be square");
-    auto ix=at::arange(frames*height*width,states.options().dtype(at::kLong));
-    auto c=ix.remainder(merge)+at::floor_divide(ix,merge*merge).remainder(width/merge)*merge;
-    auto r=at::floor_divide(ix,merge).remainder(merge)+at::floor_divide(ix,merge*width).remainder(height/merge)*merge;
-    auto rf=r.to(at::kFloat)*(height==1?0.f:float(side-1)/float(height-1));
-    auto cf=c.to(at::kFloat)*(width==1?0.f:float(side-1)/float(width-1));
-    auto r0=rf.floor().to(at::kLong),r1=rf.ceil().clamp_max(side-1).to(at::kLong);
-    auto c0=cf.floor().to(at::kLong),c1=cf.ceil().clamp_max(side-1).to(at::kLong);
-    auto dr=rf-r0.to(at::kFloat),dc=cf-c0.to(at::kFloat);
-    auto table=w("pos_embed.weight");
-    auto interpolate=[&](const at::Tensor& rr,const at::Tensor& cc,const at::Tensor& scale) {
-      return table.index_select(0,rr*side+cc)*scale.to(dtype).unsqueeze(-1);
-    };
-    // Sum in table dtype, matching the four-corner interpolation stages.
-    auto corners=at::stack({interpolate(r0,c0,(1-dr)*(1-dc)),interpolate(r0,c1,(1-dr)*dc),
-      interpolate(r1,c0,dr*(1-dc)),interpolate(r1,c1,dr*dc)},0);
-    auto positional=exact_vision?(corners.select(0,0)+corners.select(0,2))+(corners.select(0,1)+corners.select(0,3)):corners.sum(0);
-    states=states+positional;
+    std::vector<at::Tensor> patches,cosines,sines;
+    std::vector<int32_t> offsets{0};int64_t max_frame=0;
+    for(const auto& image:images) {
+      const auto [frames,height,width]=image.grid_thw;
+      auto patch_dim=w("patch_embed.proj.weight").numel()/hidden;
+      TORCH_CHECK(frames>0 && height>0 && width>0 && height%merge==0 && width%merge==0 &&
+        image.merge_size==merge && image.pixels.sizes()==at::IntArrayRef({frames*height*width,patch_dim}),"Invalid Qwen3-VL packed image grid");
+      // Each preprocessed row is one complete temporal/spatial patch; Conv3D's
+      // nonoverlapping kernel is exactly this flattened projection.
+      at::Tensor states;
+      if(exact_vision) {
+        // Candle temporal-2 projection: two actual K768 GEMMs, rounded FP16
+        // sum, then separate FP16 bias. No temporal or token padding.
+        auto patch=image.pixels.to(device,dtype).view({-1,3,2,16,16});
+        auto first=at::linear(patch.select(2,0).contiguous().view({-1,768}),temporal_first);
+        auto second=at::linear(patch.select(2,1).contiguous().view({-1,768}),temporal_second);
+        states=(first+second)+w("patch_embed.proj.bias");
+      } else {
+        states=at::linear(image.pixels.to(device,dtype),w("patch_embed.proj.weight").reshape({hidden,patch_dim}),w("patch_embed.proj.bias"));
+      }
+      auto side=static_cast<int64_t>(std::llround(std::sqrt(double(w("pos_embed.weight").size(0)))));
+      TORCH_CHECK(side*side==w("pos_embed.weight").size(0),"Qwen3-VL position table must be square");
+      auto ix=at::arange(frames*height*width,states.options().dtype(at::kLong));
+      auto c=ix.remainder(merge)+at::floor_divide(ix,merge*merge).remainder(width/merge)*merge;
+      auto r=at::floor_divide(ix,merge).remainder(merge)+at::floor_divide(ix,merge*width).remainder(height/merge)*merge;
+      auto rf=r.to(at::kFloat)*(height==1?0.f:float(side-1)/float(height-1));
+      auto cf=c.to(at::kFloat)*(width==1?0.f:float(side-1)/float(width-1));
+      auto r0=rf.floor().to(at::kLong),r1=rf.ceil().clamp_max(side-1).to(at::kLong);
+      auto c0=cf.floor().to(at::kLong),c1=cf.ceil().clamp_max(side-1).to(at::kLong);
+      auto dr=rf-r0.to(at::kFloat),dc=cf-c0.to(at::kFloat);
+      auto table=w("pos_embed.weight");
+      auto interpolate=[&](const at::Tensor& rr,const at::Tensor& cc,const at::Tensor& scale) {
+        return table.index_select(0,rr*side+cc)*scale.to(dtype).unsqueeze(-1);
+      };
+      // Sum in table dtype, matching the four-corner interpolation stages.
+      auto corners=at::stack({interpolate(r0,c0,(1-dr)*(1-dc)),interpolate(r0,c1,(1-dr)*dc),
+        interpolate(r1,c0,dr*(1-dc)),interpolate(r1,c1,dr*dc)},0);
+      auto positional=exact_vision?(corners.select(0,0)+corners.select(0,2))+(corners.select(0,1)+corners.select(0,3)):corners.sum(0);
+      states=states+positional;
 
-    auto angles=at::cat({r.to(at::kFloat).unsqueeze(1)*vision_frequency,c.to(at::kFloat).unsqueeze(1)*vision_frequency},-1);
-    auto cos=angles.cos().unsqueeze(1),sin=angles.sin().unsqueeze(1);
+      auto angles=at::cat({r.to(at::kFloat).unsqueeze(1)*vision_frequency,c.to(at::kFloat).unsqueeze(1)*vision_frequency},-1);
+      patches.push_back(states);cosines.push_back(angles.cos().unsqueeze(1));sines.push_back(angles.sin().unsqueeze(1));
+      for(int64_t t=0;t<frames;++t) {
+        TORCH_CHECK(int64_t(offsets.back())+height*width<=INT32_MAX,"Qwen3-VL image batch too large");
+        offsets.push_back(offsets.back()+height*width);
+      }
+      max_frame=std::max(max_frame,height*width);
+    }
+    auto states=at::cat(patches,0),cos=at::cat(cosines,0),sin=at::cat(sines,0);
+    patches.clear();cosines.clear();sines.clear();
+    auto cu=at::tensor(offsets,at::TensorOptions().dtype(at::kInt)).to(device);
     auto rotate=[&](const at::Tensor& value) {
       auto x=value.to(at::kFloat),a=x.narrow(-1,0,dim/2),b=x.narrow(-1,dim/2,dim/2);
       return at::cat({a*cos-b*sin,b*cos+a*sin},-1);
     };
-    auto cu=at::arange(frames+1,states.options().dtype(at::kInt))*(height*width);
     std::vector<at::Tensor> deep;
     for(int64_t layer=0;layer<depth;++layer) {
       auto p="blocks."+std::to_string(layer)+".";
@@ -99,14 +123,14 @@ std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const ImageInput& 
       // model dtype, and keep frames independent through cu_seqlens.
       if(device.is_cuda() && dtype==at::kBFloat16) {
         attention=std::get<0>(at::_flash_attention_forward(q.to(dtype).contiguous(),k.to(dtype).contiguous(),v.to(dtype).contiguous(),
-          cu,cu,height*width,height*width,0.,false,false,1./std::sqrt(double(dim))));
+          cu,cu,max_frame,max_frame,0.,false,false,1./std::sqrt(double(dim))));
       } else if(device.is_cuda()) {
         attention=std::get<0>(at::_efficient_attention_forward(q.unsqueeze(0),k.unsqueeze(0),v.unsqueeze(0),
-          std::nullopt,cu,cu,height*width,height*width,0.,0,false,1./std::sqrt(double(dim)))).squeeze(0);
+          std::nullopt,cu,cu,max_frame,max_frame,0.,0,false,1./std::sqrt(double(dim)))).squeeze(0);
       } else {
         std::vector<at::Tensor> outputs;
-        for(int64_t t=0;t<frames;++t) {
-          auto slice=[&](const at::Tensor& x){return x.narrow(0,t*height*width,height*width).transpose(0,1).unsqueeze(0);};
+        for(size_t t=0;t+1<offsets.size();++t) {
+          auto slice=[&](const at::Tensor& x){return x.narrow(0,offsets[t],offsets[t+1]-offsets[t]).transpose(0,1).unsqueeze(0);};
           outputs.push_back(at::scaled_dot_product_attention(slice(q),slice(k),slice(v),std::nullopt,0.,false,1./std::sqrt(double(dim))).squeeze(0).transpose(0,1));
         }
         attention=at::cat(outputs,0);
@@ -198,35 +222,41 @@ int64_t Qwen3VL::prefix_layers() const {return text?text->prefix_layers():0;}
 uint64_t Qwen3VL::prefix_payload_bytes(int64_t tokens) const {return text?text->prefix_payload_bytes(tokens):0;}
 bool Qwen3VL::supports_prefix_cache(int operation) const {return operation==0&&text&&text->supports_prefix_cache(0);}
 
-at::Tensor Qwen3VL::image_features(const ImageInput& image) const {return vision(image).first;}
+std::vector<at::Tensor> Qwen3VL::image_features(const std::vector<ImageInput>& images) const {
+    if(images.empty())return {};
+    auto features=vision(images).first;
+    std::vector<at::Tensor> result;int64_t offset=0;
+    for(const auto& image:images) {
+      auto count=image.grid_thw[0]*image.grid_thw[1]*image.grid_thw[2]/(merge*merge);
+      result.push_back(features.narrow(0,offset,count));offset+=count;
+    }
+    return result;
+  }
 int64_t Qwen3VL::output_width() const {return text->output_width();}
 
 at::Tensor Qwen3VL::forward(const PackedInput& input) const {
     auto positions=input.multimodal_positions.defined()?input.multimodal_positions:input.positions.unsqueeze(0).expand({3,-1});
     auto angles=positions.index_select(0,text_axes).transpose(0,1).to(at::kFloat)*text_frequency;
-    std::vector<at::Tensor> indices,features;std::vector<std::vector<at::Tensor>> deep;
+    std::vector<at::Tensor> indices,deep;at::Tensor features;
     for(const auto& image:input.images) {
-      auto [feat,ds]=vision(image);
-      TORCH_CHECK(feat.size(0)==image.token_count,"Qwen3-VL merged visual token count mismatch");
-      indices.push_back(at::arange(image.token_start,image.token_start+image.token_count,input.ids.options()));features.push_back(feat);
-      if(deep.empty())deep.resize(ds.size());
-      TORCH_CHECK(deep.size()==ds.size(),"Qwen3-VL deepstack count mismatch");
-      for(size_t i=0;i<ds.size();++i)deep[i].push_back(ds[i]);
+      auto count=image.grid_thw[0]*image.grid_thw[1]*image.grid_thw[2]/(merge*merge);
+      TORCH_CHECK(count==image.token_count,"Qwen3-VL merged visual token count mismatch");
+      indices.push_back(at::arange(image.token_start,image.token_start+image.token_count,input.ids.options()));
     }
+    if(!indices.empty())std::tie(features,deep)=vision(input.images);
     if(indices.empty()&&input.prefix&&!input.prefix->original.images.empty()) {
       // Cached visual rows need no feature computation, but the original
       // deepstack stages still consolidate residuals for the real text suffix.
       auto width=cfg.integer("text_config.hidden_size");
       auto empty=at::empty({0,width},input.ids.options().dtype(dtype));
-      indices.push_back(at::empty({0},input.ids.options()));features.push_back(empty);
+      indices.push_back(at::empty({0},input.ids.options()));features=empty;
       for(int64_t i=0;cfg.values.count("vision_config.deepstack_visual_indexes."+std::to_string(i));++i) {
         auto layer=cfg.integer("vision_config.deepstack_visual_indexes."+std::to_string(i));
-        if(layer>=0&&layer<depth)deep.push_back({empty});
+        if(layer>=0&&layer<depth)deep.push_back(empty);
       }
     }
-    std::vector<at::Tensor> stacked;for(auto& rows:deep)stacked.push_back(at::cat(rows,0));
     return prefix_restore(input,decoder_multimodal_forward(*text,input,indices.empty()?at::Tensor():at::cat(indices,0),
-      features.empty()?at::Tensor():at::cat(features,0),angles.cos().to(dtype).contiguous(),angles.sin().to(dtype).contiguous(),stacked));
+      features,angles.cos().to(dtype).contiguous(),angles.sin().to(dtype).contiguous(),deep));
   }
 std::unique_ptr<Model> create_qwen3_vl(const Options& cfg,Weights& weights,c10::Device device,at::ScalarType dtype) {
   if(cfg.string("model_type")=="qwen3_vl")return std::make_unique<Qwen3VL>(cfg,weights,device,dtype);
