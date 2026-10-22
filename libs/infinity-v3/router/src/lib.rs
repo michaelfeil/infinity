@@ -532,7 +532,9 @@ async fn initialize_model(
         None
     };
 
-    let perplexity_tokenizer = perplexity_profile.map(|_| tokenizer.clone());
+    let perplexity_tokenizer = perplexity_profile
+        .filter(|profile| *profile != infinity_v3_backend::perplexity::Profile::Dense)
+        .map(|_| tokenizer.clone());
 
     // Tokenization logic
     let chat = if matches!(

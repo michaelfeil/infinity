@@ -10,7 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use infinity_v3_backend::perplexity::Profile;
-use infinity_v3_core::{tokenization::EncodingInput, TextEmbeddingsError};
+use infinity_v3_core::TextEmbeddingsError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use simsimd::SpatialSimilarity;
@@ -20,7 +20,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use tokenizers::{Tokenizer, TruncationDirection};
+use tokenizers::Tokenizer;
 
 pub(crate) struct Perplexity {
     profile: Profile,
@@ -540,7 +540,7 @@ impl Perplexity {
                 if let Some(projection) = &self.projection {
                     vector = projection.forward(&vector)?;
                 }
-                finish(&mut vector, request)?;
+                resize(&mut vector, request.dimensions)?;
                 if request.normalize {
                     normalize(&mut vector);
                 }
@@ -577,14 +577,6 @@ pub(crate) enum PerplexityTask {
     #[default]
     Document,
 }
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default, utoipa::ToSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum PerplexityQuantization {
-    #[default]
-    Int8,
-    Binary,
-    Ubinary,
-}
 #[derive(Deserialize, utoipa::ToSchema)]
 #[serde(untagged)]
 pub(crate) enum PerplexityInput {
@@ -607,8 +599,6 @@ pub(crate) struct PerplexityRequest {
     model: Option<String>,
     #[serde(default, alias = "input_type", alias = "prompt_name")]
     task: PerplexityTask,
-    #[serde(default)]
-    quantization: PerplexityQuantization,
     #[serde(default, alias = "normalize_embeddings")]
     normalize: bool,
     dimensions: Option<usize>,
@@ -621,7 +611,6 @@ pub(crate) struct PerplexityRequest {
 #[derive(Clone, Copy)]
 struct ReadoutOptions {
     task: PerplexityTask,
-    quantization: PerplexityQuantization,
     normalize: bool,
     dimensions: Option<usize>,
 }
@@ -629,7 +618,6 @@ impl From<&PerplexityRequest> for ReadoutOptions {
     fn from(request: &PerplexityRequest) -> Self {
         Self {
             task: request.task,
-            quantization: request.quantization,
             normalize: request.normalize,
             dimensions: request.dimensions,
         }
@@ -680,18 +668,6 @@ fn chunk_token_spans(offsets: &[(usize, usize)], chunks: &[(usize, usize)]) -> V
 fn invalid(message: &str) -> TextEmbeddingsError {
     TextEmbeddingsError::Validation(message.into())
 }
-fn validate_quantization(
-    profile: Profile,
-    quantization: PerplexityQuantization,
-) -> Result<(), TextEmbeddingsError> {
-    if profile.late() && quantization != PerplexityQuantization::Int8 {
-        return Err(invalid(
-            "Late-interaction models return normalized floating-point token vectors; binary quantization is unsupported",
-        ));
-    }
-    Ok(())
-}
-
 fn resize(vector: &mut Vec<f32>, dimensions: Option<usize>) -> Result<(), TextEmbeddingsError> {
     if let Some(n) = dimensions {
         if n == 0 || n > vector.len() {
@@ -703,23 +679,6 @@ fn resize(vector: &mut Vec<f32>, dimensions: Option<usize>) -> Result<(), TextEm
     }
     Ok(())
 }
-fn finish(vector: &mut Vec<f32>, request: &ReadoutOptions) -> Result<(), TextEmbeddingsError> {
-    quantize(vector, request.quantization);
-    resize(vector, request.dimensions)?;
-    if request.quantization == PerplexityQuantization::Ubinary {
-        let mut packed = super::result_storage::vector(vector.len().div_ceil(8))?;
-        for row in vector.chunks(8) {
-            let byte = row
-                .iter()
-                .enumerate()
-                .fold(0u8, |byte, (i, v)| byte | (u8::from(*v >= 0.) << (7 - i)));
-            packed.push(byte as f32);
-        }
-        *vector = packed;
-    }
-    Ok(())
-}
-
 fn normalize(vector: &mut [f32]) {
     let norm = vector
         .iter()
@@ -731,21 +690,6 @@ fn normalize(vector: &mut [f32]) {
         *v /= norm;
     }
 }
-fn quantize(vector: &mut [f32], method: PerplexityQuantization) {
-    for v in vector {
-        *v = match method {
-            PerplexityQuantization::Int8 => (v.tanh() * 127.).round_ties_even().clamp(-128., 127.),
-            PerplexityQuantization::Binary | PerplexityQuantization::Ubinary => {
-                if *v >= 0. {
-                    1.
-                } else {
-                    -1.
-                }
-            }
-        };
-    }
-}
-
 #[derive(Serialize)]
 struct Envelope {
     object: &'static str,
@@ -821,16 +765,8 @@ async fn execute(
         .ok_or_else(|| invalid("This model does not implement Perplexity contextual embeddings"))?;
     let request: PerplexityRequest =
         serde_json::from_value(value).map_err(|e| invalid(&e.to_string()))?;
-    validate_quantization(adapter.profile, request.quantization)?;
     if request.truncate {
         return Err(invalid("Perplexity adapters require truncate=false"));
-    }
-    if request.quantization == PerplexityQuantization::Ubinary && request.normalize {
-        return Err(invalid("Packed binary embeddings cannot be normalized"));
-    }
-    if adapter.profile == Profile::ContextV2 && request.quantization != PerplexityQuantization::Int8
-    {
-        return Err(invalid("Contextual v2 supports only int8 quantization"));
     }
     if adapter.profile.late() && request.dimensions.is_some() {
         return Err(invalid(
@@ -864,7 +800,6 @@ async fn execute(
         return Err(invalid("Invalid document batch size"));
     }
     let mut data = super::result_storage::vector(documents.len())?;
-    let mut native_vectors = super::result_storage::vector(documents.len())?;
     let mut native_matrices = super::result_storage::vector(documents.len())?;
     let start_time = Instant::now();
     let options = ReadoutOptions::from(&request);
@@ -887,39 +822,14 @@ async fn execute(
             }
         };
         let preparation_time = preparation_start.elapsed();
-        let (vectors, metadata) = if adapter.profile == Profile::Dense {
-            let response = runtime
-                .infer
-                .embed_pooled(
-                    EncodingInput::Ids(prepared.ids.clone()),
-                    false,
-                    TruncationDirection::Right,
-                    None,
-                    false,
-                    None,
-                    permit,
-                    None,
-                )
-                .await?;
-            // A single pooled vector is small; avoid a blocking-pool round trip.
-            let mut vector = response.results;
-            finish(&mut vector, &options)?;
-            if options.normalize {
-                normalize(&mut vector);
-            }
-            (vec![vector], response.metadata)
-        } else {
-            let response = runtime
-                .infer
-                .embed_prepared_all(prepared.encoding(), permit)
-                .await?;
-            (
-                adapter
-                    .run_cpu(move |adapter| adapter.readout(&prepared, response.results, &options))
-                    .await?,
-                response.metadata,
-            )
-        };
+        let response = runtime
+            .infer
+            .embed_prepared_all(prepared.encoding(), permit)
+            .await?;
+        let vectors = adapter
+            .run_cpu(move |adapter| adapter.readout(&prepared, response.results, &options))
+            .await?;
+        let metadata = response.metadata;
         Ok::<_, TextEmbeddingsError>((vectors, metadata, preparation_time))
     });
     let results = futures::future::join_all(operations)
@@ -936,14 +846,7 @@ async fn execute(
         queue_time += metadata.queue;
         inference_time += metadata.inference;
         if native {
-            if adapter.profile.late() || adapter.profile.contextual() {
-                native_matrices.push(tensor::encode_matrix(vectors, request.encoding_format)?);
-            } else {
-                native_vectors.push(tensor::encode_vector(
-                    vectors.into_iter().next().unwrap(),
-                    request.encoding_format,
-                )?);
-            }
+            native_matrices.push(tensor::encode_matrix(vectors, request.encoding_format)?);
         } else if adapter.profile.contextual() {
             let mut items = super::result_storage::vector(vectors.len())?;
             for (index, vector) in vectors.into_iter().enumerate() {
@@ -960,23 +863,12 @@ async fn execute(
                 index,
                 payload: Payload::Document { data: items },
             });
-        } else if adapter.profile.late() {
+        } else {
             data.push(Item {
                 object: "embedding",
                 index,
                 payload: Payload::Matrix {
                     embedding: tensor::encode_matrix(vectors, request.encoding_format)?,
-                },
-            });
-        } else {
-            data.push(Item {
-                object: "embedding",
-                index,
-                payload: Payload::Vector {
-                    embedding: tensor::encode_vector(
-                        vectors.into_iter().next().unwrap(),
-                        request.encoding_format,
-                    )?,
                 },
             });
         }
@@ -1001,9 +893,6 @@ async fn execute(
     metadata.record_metrics(&runtime.info.model_id);
     let headers = axum::http::HeaderMap::from(metadata);
     if native {
-        if adapter.profile == Profile::Dense {
-            return Ok((headers, Json(native_vectors)).into_response());
-        }
         return Ok((headers, Json(native_matrices)).into_response());
     }
     Ok((
@@ -1088,24 +977,6 @@ mod tests {
     }
 
     #[test]
-    fn late_profiles_reject_binary_quantization_before_inference() {
-        for profile in [Profile::LateV1, Profile::LateV2] {
-            for value in [
-                json!({"input":"query"}),
-                json!({"input":"query", "quantization":"int8"}),
-            ] {
-                assert!(validate_quantization(profile, options(value).quantization).is_ok());
-            }
-            for quantization in ["binary", "ubinary"] {
-                let value = options(json!({"input":"query", "quantization":quantization}));
-                assert!(validate_quantization(profile, value.quantization).is_err());
-                assert!(validate_quantization(Profile::Dense, value.quantization).is_ok());
-                assert!(validate_quantization(Profile::ContextV1, value.quantization).is_ok());
-            }
-        }
-    }
-
-    #[test]
     fn contextual_and_late_readout() {
         for (profile, ids, spans, hidden, expected) in [
             (
@@ -1113,14 +984,14 @@ mod tests {
                 vec![1, 2, 99, 3],
                 vec![(0, 2), (3, 3), (3, 4)],
                 vec![vec![-3., 1.], vec![3., 1.], vec![99., 99.], vec![-1., 0.]],
-                vec![vec![0., 97.], vec![0., 0.], vec![-97., 0.]],
+                vec![vec![0., 1.], vec![0., 0.], vec![-1., 0.]],
             ),
             (
                 Profile::ContextV2,
                 vec![99, 1, 2],
                 vec![(1, 3)],
                 vec![vec![90., 90.], vec![1., 0.], vec![0., 1.]],
-                vec![vec![59., 59.]],
+                vec![vec![0.5, 0.5]],
             ),
             (
                 Profile::LateV2,
@@ -1155,19 +1026,5 @@ mod tests {
                 assert_eq!(adapter.readout(&prepared, hidden, &query).unwrap().len(), 3);
             }
         }
-    }
-
-    #[test]
-    fn binary_packing_is_big_endian_and_zero_is_positive() {
-        let mut vector = vec![1., -1., 0., -1., 1., -1., 1., -1., 1.];
-        finish(
-            &mut vector,
-            &options(json!({"input":"a","quantization":"ubinary"})),
-        )
-        .unwrap();
-        assert_eq!(vector, vec![170., 128.]);
-        let mut zero = vec![0., 0.];
-        normalize(&mut zero);
-        assert_eq!(zero, vec![0., 0.]);
     }
 }

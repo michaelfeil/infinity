@@ -53,7 +53,7 @@ does not claim that target for every model, checkpoint, precision or GPU.
 Supports all eight `perplexity-ai/pplx-embed-*` v1/v2 exports with the existing
 Qwen3/Qwen3.5 backends:
 
-- Dense: `/v1/embeddings`, with `int8` quantization by default.
+- Dense: the standard `/v1/embeddings` and `/embed` paths, returning floating-point embeddings.
 - Contextual: `/v1/contextualizedembeddings`, with nested document chunks:
   `{"input":[["First chunk","Second chunk"]]}`. Responses preserve document/chunk order.
 - Late interaction: `/v1/embeddings` or `/embed_all`, with `task: "query"` or
@@ -61,5 +61,6 @@ Qwen3/Qwen3.5 backends:
   V2 also accepts `{"input":{"image_url":"data:image/png;base64,..."}}`.
 
 Launch with `infinity_v3 --model-id perplexity-ai/pplx-embed-v1-0.6b --dtype bfloat16`.
-Inputs beyond model/task limits are rejected. Contextual pooling/projection runs
+Int8/binary output quantization is unsupported. Contextual and late-interaction
+inputs beyond model/task limits are rejected. Contextual pooling/projection runs
 on the CPU; backbones and late-interaction projections run on the selected backend.

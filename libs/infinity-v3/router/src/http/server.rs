@@ -2399,7 +2399,6 @@ fn api_doc() -> utoipa::openapi::OpenApi {
     super::perplexity::PerplexityInput,
     super::perplexity::PerplexityImageInput,
     super::perplexity::PerplexityTask,
-    super::perplexity::PerplexityQuantization,
     infinity_v3_core::input::ModelInput,
     infinity_v3_core::input::MessageInput,
     infinity_v3_core::input::Message,
