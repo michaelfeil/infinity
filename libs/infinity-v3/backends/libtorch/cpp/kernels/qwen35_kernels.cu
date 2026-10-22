@@ -16,8 +16,11 @@ namespace tei {
 namespace {
 struct alignas(8) ConvValues { __nv_bfloat16 values[4]; };
 
+// Cached suffixes read their immutable prefix tail; short prefixes need no padding.
+template<bool Cached=false>
 __global__ void packed_conv_vector(const __nv_bfloat16* x, const __nv_bfloat16* weight,
- const uint32_t* cumulative, __nv_bfloat16* output, int channels, int kernel, int sequences) {
+ const uint32_t* cumulative, __nv_bfloat16* output, int channels, int kernel, int sequences,
+ const int64_t* sources=nullptr,const __nv_bfloat16* history=nullptr,const int32_t* history_cu=nullptr) {
   const int token=blockIdx.x, column=(blockIdx.y*blockDim.x+threadIdx.x)*4;
   if(column>=channels)return;
   int lo=0,hi=sequences;
@@ -25,11 +28,18 @@ __global__ void packed_conv_vector(const __nv_bfloat16* x, const __nv_bfloat16* 
     const int middle=(lo+hi)/2;
     if(cumulative[middle]<=token)lo=middle;else hi=middle;
   }
+  int history_end=0,previous=0;
+  if constexpr(Cached) {history_end=history_cu[sources[lo]+1];previous=history_end-history_cu[sources[lo]];}
   float sums[4]={};
   for(int j=0;j<kernel;++j) {
     const int source=token+j-kernel+1;
-    if(source>=int(cumulative[lo])) {
-      const auto values=*reinterpret_cast<const ConvValues*>(x+int64_t(source)*channels+column);
+    const __nv_bfloat16* row=nullptr;
+    if(source>=int(cumulative[lo]))row=x+int64_t(source)*channels;
+    else if constexpr(Cached) {
+      if(source>=int(cumulative[lo])-previous)row=history+int64_t(history_end+source-int(cumulative[lo]))*channels;
+    }
+    if(row) {
+      const auto values=*reinterpret_cast<const ConvValues*>(row+column);
       #pragma unroll
       for(int i=0;i<4;++i)
         sums[i]+=__bfloat162float(values.values[i])*__bfloat162float(weight[(column+i)*kernel+j]);
@@ -655,28 +665,6 @@ __global__ void exact_vision_pool(const __nv_bfloat16*x,float*out,int height,int
 }
 at::Tensor gemma_vision_pool_cuda(const at::Tensor&x,int64_t height,int64_t width,int64_t kernel){c10::cuda::CUDAGuard guard(x.device());TORCH_CHECK(x.scalar_type()==at::kBFloat16&&x.is_contiguous()&&x.dim()==2&&height>0&&width>0&&kernel>0&&height<=INT32_MAX/width&&height*width==x.size(0)&&height%kernel==0&&width%kernel==0&&x.size(1)>0&&x.numel()<=INT32_MAX,"Invalid packed Gemma vision spatial pool geometry");auto out=at::empty({height*width/(kernel*kernel),x.size(1)},x.options().dtype(at::kFloat));exact_vision_pool<<<(out.numel()+255)/256,256,0,at::cuda::getCurrentCUDAStream()>>>(reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),out.mutable_data_ptr<float>(),height,width,x.size(1),kernel,float(1./double(kernel*kernel)),float(sqrt(double(x.size(1)))));C10_CUDA_KERNEL_LAUNCH_CHECK();return out;}
 
-// Each packed suffix reads the convolution tail of its own immutable prefix.
-// Historical rows are packed too; prefixes shorter than kernel-1 need no padding.
-__global__ void packed_cached_conv(const __nv_bfloat16* x,const __nv_bfloat16* weight,
- const uint32_t* cu,const int64_t* sources,const __nv_bfloat16* history,
- const int32_t* history_cu,__nv_bfloat16* out,int tokens,int channels,int kernel,int sequences) {
- const auto index=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;
- if(index>=int64_t(tokens)*channels)return;
- const int token=index/channels,column=index%channels;
- int lo=0,hi=sequences;
- while(lo+1<hi){int mid=(lo+hi)/2;if(cu[mid]<=token)lo=mid;else hi=mid;}
- const auto source=sources[lo];
- const int previous=history_cu[source+1]-history_cu[source];
- float sum=0;
- for(int j=0;j<kernel;++j) {
-   int t=token-int(cu[lo])+j-kernel+1;
-   if(t>=0)sum+=__bfloat162float(x[int64_t(cu[lo]+t)*channels+column])*__bfloat162float(weight[column*kernel+j]);
-   else if(t>=-previous)sum+=__bfloat162float(history[int64_t(history_cu[source+1]+t)*channels+column])*__bfloat162float(weight[column*kernel+j]);
- }
- sum=__bfloat162float(__float2bfloat16_rn(sum));
- out[index]=__float2bfloat16_rn(sum/(1.f+expf(-sum)));
-}
-
 // SPDX-License-Identifier: MIT
 // Adapted from Candle qwen35_gdn_recurrent above; snapshot the complete prefix state.
 template<int Lanes>
@@ -777,7 +765,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
       input.block_cache_sources.device()==qkv.device()&&input.block_cache_sources.scalar_type()==at::kLong&&input.block_cache_sources.is_contiguous()&&input.block_cache_sources.numel()==input.batch,
       "Invalid packed GDN convolution history");
     for(const auto source:input.block_prefix_sources)TORCH_CHECK(source>=0&&source<history_cumulative.numel()-1,"Invalid packed GDN prefix source");
-    packed_cached_conv<<<(tokens*channels+255)/256,256,0,stream>>>(bf(qkv),bf(conv),cu,input.block_cache_sources.const_data_ptr<int64_t>(),bf(history),history_cumulative.const_data_ptr<int32_t>(),mut(convolution),tokens,channels,conv.size(-1),input.batch);
+    packed_conv_vector<true><<<dim3(tokens,(channels/4+255)/256),256,0,stream>>>(bf(qkv),bf(conv),cu,mut(convolution),channels,conv.size(-1),input.batch,input.block_cache_sources.const_data_ptr<int64_t>(),bf(history),history_cumulative.const_data_ptr<int32_t>());
   } else packed_conv_vector<<<dim3(tokens,(channels/4+255)/256),256,0,stream>>>(bf(qkv),bf(conv),cu,mut(convolution),channels,conv.size(-1),input.batch);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   qwen35_gdn_prepare<<<tokens*key_heads,128,0,stream>>>(bf(convolution),bf(ab),a_log.const_data_ptr<float>(),dt_bias.const_data_ptr<float>(),qk.mutable_data_ptr<float>(),decay.mutable_data_ptr<float>(),tokens,key_heads,value_heads);
