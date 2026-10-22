@@ -16,7 +16,7 @@ int main() {
   if(cudaGetDeviceProperties(&device,index)!=cudaSuccess || device.major!=9)continue;
   c10::cuda::CUDAGuard guard(index);
   ++tested;
-  for(int64_t heads:{32,48})for(int mode:{0,1,2}) {
+  for(int64_t heads:{32,48})for(int mode:{0,1,2})for(bool resume:{false,true}) {
     constexpr int64_t tokens=143,kh=16;
     std::vector<int32_t> offsets{0,1,14,tokens};
     auto options=at::TensorOptions().dtype(at::kFloat);
@@ -27,9 +27,11 @@ int main() {
     auto decay=at::rand({tokens,heads},options),beta=at::rand_like(decay);
     if(mode<2)decay.fill_(mode);
     else for(int64_t t=0;t<tokens;t+=3)decay[t].zero_();
+    auto initial=at::randn({2,heads,128,128},options)*.1;
+    std::vector<int64_t> sources{1,0,1};
     std::vector<at::Tensor> outputs,states;
     for(int row=0;row<3;++row) {
-      auto state=at::zeros({heads,128,128},options.dtype(at::kDouble));
+      auto state=resume?initial[sources[row]].to(at::kDouble):at::zeros({heads,128,128},options.dtype(at::kDouble));
       for(int t=offsets[row];t<offsets[row+1];++t) {
         auto qt=at::repeat_interleave(q[t],heads/kh,0).to(at::kDouble);
         auto kt=at::repeat_interleave(k[t],heads/kh,0).to(at::kDouble);
@@ -45,8 +47,9 @@ int main() {
     auto values=at::cat({at::zeros({tokens,kh*256},v.options()),v.flatten(1)},1).to(at::kCUDA);
     auto qk=at::cat({q,k},-1).reshape({tokens*kh,256}).to(at::kCUDA);
     auto gates=at::cat({decay,beta},-1).to(at::kCUDA);
+    if(resume)input.block_cache_sources=at::tensor(sources,options.dtype(at::kLong)).to(at::kCUDA);
     auto output=at::empty({tokens,heads,128},values.options());at::Tensor state;
-    tei::qwen35_prefill_cuda(values,qk,gates,input,output,kh,heads,&state);
+    tei::qwen35_prefill_cuda(values,qk,gates,input,output,kh,heads,&state,resume?initial.to(at::kCUDA):at::Tensor());
     auto check=[](const at::Tensor& actual,const at::Tensor& expected,double tolerance) {
       auto x=actual.cpu().to(at::kDouble);
       TORCH_CHECK(at::isfinite(x).all().item<bool>(),"Prefill produced nonfinite values");
