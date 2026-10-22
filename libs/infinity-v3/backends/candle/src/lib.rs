@@ -125,7 +125,7 @@ enum Config {
     #[allow(dead_code)]
     Qwen2(Qwen2Config),
     #[allow(dead_code)]
-    #[serde(alias = "qwen3_moe")]
+    #[serde(alias = "qwen3_moe", alias = "bidirectional_pplx_qwen3")]
     Qwen3(Qwen3Config),
     #[allow(dead_code)]
     #[serde(rename = "qwen3_vl")]
@@ -324,7 +324,12 @@ impl CandleBackend {
                 ));
             }
         }
-        let config_json = config;
+        let mut metadata: serde_json::Value = serde_json::from_str(&config)
+            .map_err(|error| BackendError::Start(error.to_string()))?;
+        if metadata["model_type"] == "bidirectional_pplx_qwen3" {
+            metadata["use_bidirectional_attention"] = true.into();
+        }
+        let config_json = metadata.to_string();
         let config: Config = serde_json::from_str(&config_json)
             .context("Model is not supported")
             .map_err(|err| BackendError::Start(format!("{err:?}")))?;

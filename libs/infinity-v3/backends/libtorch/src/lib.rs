@@ -589,6 +589,7 @@ impl LibtorchBackend {
             .ok_or_else(|| start("Missing model_type"))?
             .to_owned();
         let normalized_family = match family.as_str() {
+            "bidirectional_pplx_qwen3" => "qwen3",
             "llama_bidirec" => "llama",
             "ministral3" => "mistral",
             "new" => "gte",
@@ -597,6 +598,10 @@ impl LibtorchBackend {
         }
         .to_owned();
         options["model_type"] = normalized_family.clone().into();
+        if family == "bidirectional_pplx_qwen3" {
+            options["use_bidirectional_attention"] = true.into();
+            options["is_causal"] = false.into();
+        }
         if enable_fp8_dynamic {
             if options
                 .get("quantization_config")
@@ -900,6 +905,10 @@ impl LibtorchBackend {
                 let kind = module["type"]
                     .as_str()
                     .ok_or_else(|| start("Missing module type"))?;
+                // Output quantization is omitted: serve floating-point embeddings.
+                if family == "bidirectional_pplx_qwen3" && kind == "st_quantize.FlexibleQuantizer" {
+                    continue;
+                }
                 if !kind.starts_with("sentence_transformers.")
                     || !matches!(
                         kind.rsplit('.').next(),

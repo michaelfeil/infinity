@@ -944,6 +944,9 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
 #[cfg(any(feature = "candle", feature = "libtorch"))]
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 enum ModuleType {
+    // Output quantization is omitted when serving floating-point embeddings.
+    #[serde(rename = "st_quantize.FlexibleQuantizer")]
+    FlexibleQuantizer,
     #[serde(
         rename = "sentence_transformers.models.Dense",
         alias = "sentence_transformers.base.modules.dense.Dense"

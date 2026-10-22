@@ -289,6 +289,11 @@ async fn initialize_model(
     config.resolve_text_config()?;
     config.resolve_decoder_classifier_labels()?;
     anyhow::ensure!(
+        config.auto_map.as_ref().and_then(|map| map.get("AutoModel")).map(String::as_str)
+            != Some("modeling.PPLXQwen3ContextualModel"),
+        "Perplexity contextual embeddings are unsupported; use pplx-embed-v1-0.6b or pplx-embed-v1-4b"
+    );
+    anyhow::ensure!(
         config.max_position_embeddings > 0,
         "`max_position_embeddings` must be positive"
     );
@@ -402,7 +407,7 @@ async fn initialize_model(
         || &config.model_type == "camembert"
         || &config.model_type == "roberta"
     {
-        config.pad_token_id + 1
+        config.pad_token_id.unwrap_or(0) + 1
     } else {
         0
     };
@@ -982,7 +987,7 @@ pub struct ModelConfig {
     pub text_config: Option<TextPositionConfig>,
     pub vocab_size: Option<usize>,
     #[serde(default)]
-    pub pad_token_id: usize,
+    pub pad_token_id: Option<usize>,
     pub num_labels: Option<usize>,
     pub id2label: Option<HashMap<String, String>>,
     pub label2id: Option<HashMap<String, usize>>,
