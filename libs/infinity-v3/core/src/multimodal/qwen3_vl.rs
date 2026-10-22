@@ -181,6 +181,10 @@ impl Qwen3VlProcessor {
         .map_err(|_| invalid("Multimodal preprocessing timed out"))?
     }
 
+    pub fn max_images(&self) -> usize {
+        self.state.config.max_images
+    }
+
     /// Prepare shared image patches independently of a task's prompt template.
     pub async fn prepare_images(
         &self,

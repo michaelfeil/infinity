@@ -108,7 +108,14 @@ impl Onejev {
         Ok(self)
     }
 
-    pub(super) fn image_sources(request: &mut SystemOneRequest) -> Result<Vec<String>, String> {
+    pub(super) fn max_images(&self) -> usize {
+        self.images.as_ref().map_or(0, Qwen3VlProcessor::max_images)
+    }
+
+    pub(super) fn image_sources(
+        request: &mut SystemOneRequest,
+        max_images: usize,
+    ) -> Result<Vec<String>, String> {
         let check_text = |text: &str| {
             if text.contains("<image:") || text.contains("<video:") {
                 Err("State text must not contain reserved media placeholders".to_string())
@@ -137,6 +144,11 @@ impl Onejev {
                                     return Err(
                                         "OneJev image detail must be auto or omitted".into()
                                     );
+                                }
+                                if sources.len() >= max_images {
+                                    return Err(format!(
+                                        "OneJev supports at most {max_images} images per request"
+                                    ));
                                 }
                                 let placeholder = format!("<image:{}>", sources.len() + 1);
                                 sources.push(std::mem::replace(&mut image_url.url, placeholder));
@@ -595,7 +607,7 @@ mod tests {
         ]}]},"questions":{"q":{"type":"noul"}}});
         let mut request = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(
-            Onejev::image_sources(&mut request).unwrap(),
+            Onejev::image_sources(&mut request, 16).unwrap(),
             [
                 "data:image/png;base64,first",
                 "data:image/png;base64,second"
@@ -614,7 +626,24 @@ mod tests {
                         json!("high")
                 }
             }
-            assert!(Onejev::image_sources(&mut serde_json::from_value(invalid).unwrap()).is_err());
+            assert!(
+                Onejev::image_sources(&mut serde_json::from_value(invalid).unwrap(), 16).is_err()
+            );
+        }
+        for limit in [1, 16] {
+            for count in [limit, limit + 1] {
+                let mut request = value.clone();
+                request["state"]["messages"][0]["content"] =
+                    json!(vec![
+                        value["state"]["messages"][0]["content"][1].clone();
+                        count
+                    ]);
+                assert_eq!(
+                    Onejev::image_sources(&mut serde_json::from_value(request).unwrap(), limit)
+                        .is_ok(),
+                    count == limit
+                );
+            }
         }
     }
 
@@ -668,7 +697,8 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new()?;
         for case in fixtures {
             let mut request: SystemOneRequest = serde_json::from_value(case["request"].clone())?;
-            let sources = Onejev::image_sources(&mut request).map_err(anyhow::Error::msg)?;
+            let sources = Onejev::image_sources(&mut request, model.max_images())
+                .map_err(anyhow::Error::msg)?;
             let mut questions = model.prepare(request).map_err(anyhow::Error::msg)?;
             if !sources.is_empty() {
                 let images = runtime.block_on(model.prepare_images(sources))?;
