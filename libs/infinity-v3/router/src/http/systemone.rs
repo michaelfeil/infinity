@@ -729,7 +729,9 @@ pub(crate) async fn systemone_inner(
     let (prepared, _input_memory) = infinity_v3_core::input_memory::spawn_blocking(move || {
         let sources = match worker.as_ref() {
             SystemOne::Rune(_) => rune::Rune::image_sources(&mut request)?,
-            SystemOne::Onejev(_) => onejev::Onejev::image_sources(&mut request)?,
+            SystemOne::Onejev(model) => {
+                onejev::Onejev::image_sources(&mut request, model.max_images())?
+            }
             _ => vec![],
         };
         let max_len = request.max_len;

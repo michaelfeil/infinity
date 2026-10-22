@@ -36,7 +36,7 @@ impl Default for MultimodalConfig {
     fn default() -> Self {
         Self {
             allowed_image_hosts: super::media::default_image_allowed_hosts(),
-            max_images: 4,
+            max_images: 16,
             max_image_bytes: 20 * 1024 * 1024,
             max_decoded_pixels: 16_777_216,
             memory_budget_bytes: 512 * 1024 * 1024,
@@ -179,6 +179,10 @@ impl Qwen3VlProcessor {
         )
         .await
         .map_err(|_| invalid("Multimodal preprocessing timed out"))?
+    }
+
+    pub fn max_images(&self) -> usize {
+        self.state.config.max_images
     }
 
     /// Prepare shared image patches independently of a task's prompt template.

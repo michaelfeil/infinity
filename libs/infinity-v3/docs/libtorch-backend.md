@@ -595,7 +595,7 @@ readout heads are not supported.
 Block-attention checkpoints with a Qwen3.5 vision tower and the checkpoint's
 image processor configuration also accept OneJev image inputs. This requires a
 build containing the multimodal block implementation; released images through
-`v3.0.0-alpha.4` reject images in block mode. Supply up to four images in user
+`v3.0.0-alpha.4` reject images in block mode. Supply up to 16 images in user
 messages inside `state`; question instructions remain text/structured content:
 
 ```json
@@ -616,7 +616,11 @@ messages inside `state`; question instructions remain text/structured content:
 Replace `<PNG_BYTES>` with base64-encoded PNG content. Inline data URLs work
 without a hostname allowlist. Supported cloud object-storage HTTPS media URLs
 are allowed by default; `--image-allowed-hosts` replaces the list (empty disables
-remote media). Input truncation defaults on; opt out with `--auto-truncate=false`.
+remote media). Each image may use up to 4,096 vision tokens. The complete prompt
+for each question, including state, image tokens, question and options, must fit
+the configured/requested token limit; use `--max-batch-tokens 32768` for a
+32,768-token budget, subject to the model's context limit. State has no separate
+character limit. OneJev rejects oversized prompts rather than truncating them.
 Image spans expand before the block boundary is
 finalized, and token limits apply to the expanded sequence. Spans cannot cross a
 block boundary. Both prefix and suffix execution retain the original mRoPE axes.
