@@ -431,9 +431,8 @@ class Gemma final : public Model {
       }
       return at::cat(parts,-1);
     };
-    auto ix=at::arange(states.size(0),states.options().dtype(at::kLong));
     auto cu=at::tensor(offsets,at::TensorOptions().dtype(at::kInt)).to(device);
-    PackedInput input{ix,ix,ix,cu,offsets.data(),int64_t(images.size()),max_image};
+    PackedInput input{{},{},{},cu,offsets.data(),int64_t(images.size()),max_image};
     for(int64_t i=0;i<nlayer;++i) {
       auto p="vision_tower.encoder.layers."+std::to_string(i)+".";
       auto normalized=vn(states,p+"input_layernorm");
