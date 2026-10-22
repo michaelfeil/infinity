@@ -338,7 +338,7 @@ async fn run_classification(
                     "batch size {batch_size} > maximum allowed batch size {}",
                     info.max_client_batch_size
                 );
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Validation,
@@ -651,7 +651,7 @@ async fn predict_tokens_inner(
                 "batch size {batch_size} > maximum allowed batch size {}",
                 info.max_client_batch_size
             );
-            tracing::error!("{message}");
+            tracing::warn!("{message}");
             let err = ErrorResponse {
                 error: message,
                 error_type: ErrorType::Validation,
@@ -871,7 +871,7 @@ async fn rerank_inner(
 
     if req.texts.is_empty() {
         let message = "`texts` cannot be empty".to_string();
-        tracing::error!("{message}");
+        tracing::warn!("{message}");
         let err = ErrorResponse {
             error: message,
             error_type: ErrorType::Empty,
@@ -893,7 +893,7 @@ async fn rerank_inner(
         }
     }
     .map_err(|err| {
-        tracing::error!("{err}");
+        tracing::warn!("{err}");
         ErrorResponse::from(err)
     })?;
 
@@ -940,7 +940,7 @@ async fn rerank_inner(
                 "batch size {batch_size} > maximum allowed batch size {}",
                 info.max_client_batch_size
             );
-            tracing::error!("{message}");
+            tracing::warn!("{message}");
             let err = ErrorResponse {
                 error: message,
                 error_type: ErrorType::Validation,
@@ -1083,7 +1083,7 @@ async fn similarity_inner(
 ) -> Result<(HeaderMap, Json<SimilarityResponse>), (StatusCode, Json<ErrorResponse>)> {
     if req.inputs.sentences.is_empty() {
         let message = "`inputs.sentences` cannot be empty".to_string();
-        tracing::error!("{message}");
+        tracing::warn!("{message}");
         let err = ErrorResponse {
             error: message,
             error_type: ErrorType::Empty,
@@ -1099,7 +1099,7 @@ async fn similarity_inner(
             "batch size {batch_size} > maximum allowed batch size {}",
             info.max_client_batch_size
         );
-        tracing::error!("{message}");
+        tracing::warn!("{message}");
         let err = ErrorResponse {
             error: message,
             error_type: ErrorType::Validation,
@@ -1242,7 +1242,7 @@ async fn embed_inner(
 
             if inputs.is_empty() {
                 let message = "`inputs` cannot be empty".to_string();
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Empty,
@@ -1258,7 +1258,7 @@ async fn embed_inner(
                     "batch size {batch_size} > maximum allowed batch size {}",
                     info.max_client_batch_size
                 );
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Validation,
@@ -1457,7 +1457,7 @@ async fn embed_sparse_inner(
 
             if inputs.is_empty() {
                 let message = "`inputs` cannot be empty".to_string();
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Empty,
@@ -1473,7 +1473,7 @@ async fn embed_sparse_inner(
                     "batch size {batch_size} > maximum allowed batch size {}",
                     info.max_client_batch_size
                 );
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Validation,
@@ -1653,7 +1653,7 @@ async fn embed_all_inner(
 
             if inputs.is_empty() {
                 let message = "`inputs` cannot be empty".to_string();
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Empty,
@@ -1669,7 +1669,7 @@ async fn embed_all_inner(
                     "batch size {batch_size} > maximum allowed batch size {}",
                     info.max_client_batch_size
                 );
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Validation,
@@ -1865,7 +1865,7 @@ async fn openai_embed_inner(
 
             if inputs.is_empty() {
                 let message = "`inputs` cannot be empty".to_string();
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Empty,
@@ -1881,7 +1881,7 @@ async fn openai_embed_inner(
                     "batch size {batch_size} > maximum allowed batch size {}",
                     info.max_client_batch_size
                 );
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Validation,
@@ -2054,7 +2054,7 @@ async fn tokenize_inner(
         TokenizeInput::Batch(inputs) => {
             if inputs.is_empty() {
                 let message = "`inputs` cannot be empty".to_string();
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Empty,
@@ -2070,7 +2070,7 @@ async fn tokenize_inner(
                     "batch size {batch_size} > maximum allowed batch size {}",
                     info.max_client_batch_size
                 );
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Validation,
@@ -2144,7 +2144,7 @@ async fn decode_inner(
         InputIds::Batch(ids) => {
             if ids.is_empty() {
                 let message = "`ids` cannot be empty".to_string();
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Empty,
@@ -2160,7 +2160,7 @@ async fn decode_inner(
                     "batch size {batch_size} > maximum allowed batch size {}",
                     info.max_client_batch_size
                 );
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 let err = ErrorResponse {
                     error: message,
                     error_type: ErrorType::Validation,

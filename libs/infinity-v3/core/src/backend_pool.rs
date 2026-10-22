@@ -384,12 +384,15 @@ impl Execution {
                         batches = r.batches,
                         sequences,
                         tokens,
-                        mean_sequence_tokens = tokens as f64 / sequences.max(1) as f64,
+                        mean_sequence_tokens =
+                            (tokens as f64 * 10. / sequences.max(1) as f64).round() / 10.,
                         max_sequence_tokens = self.max_sequence_tokens,
-                        block_prefix_token_fraction =
-                            self.block_prefix_tokens as f64 / tokens.max(1) as f64,
-                        inference_seconds,
-                        tokens_per_second = tokens as f64 / inference_seconds,
+                        block_prefix_token_fraction = (self.block_prefix_tokens as f64 * 1000.
+                            / tokens.max(1) as f64)
+                            .round()
+                            / 1000.,
+                        inference_ms = (inference_seconds * 100_000.).round() / 100.,
+                        tokens_per_second = (tokens as f64 / inference_seconds).round(),
                         "Replica inference throughput (latest batch)"
                     );
                 }
