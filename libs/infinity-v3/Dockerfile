@@ -26,8 +26,6 @@ RUN cargo chef prepare  --recipe-path recipe.json
 FROM chef AS builder
 
 ARG ENV_VAR_BASE=INFINITY
-ARG GIT_SHA
-ARG DOCKER_LABEL
 
 # sccache specific variables
 ARG SCCACHE_GHA_ENABLED
@@ -72,6 +70,10 @@ COPY scripts/collect-cargo-notices.py scripts/collect-cargo-notices.py
 RUN sh scripts/collect-license-notices.sh /usr/src/distribution-licenses
 
 FROM builder AS http-builder
+
+# Per-commit values: declared here, not in builder, so they don't invalidate the cached dependency layers.
+ARG GIT_SHA
+ARG DOCKER_LABEL
 
 RUN --mount=type=secret,id=actions_results_url,env=ACTIONS_RESULTS_URL \
     --mount=type=secret,id=actions_runtime_token,env=ACTIONS_RUNTIME_TOKEN \
