@@ -33,7 +33,7 @@ exact-length biased attention without padded token activations.
 Classifier and SPLADE heads are architecture-specific. Typed decisions support
 Laya, Clef, Pplx and option-token contracts, with checkpoint sidecar loading.
 `pplx-decider-flash-v1.2` selects Perplexity’s joint marker readouts, shared text/images,
-calibrated answers and question splitting on `/systemone`. Start with
+calibrated answers and question splitting on `/v1/systemone`. Start with
 `infinity_v3 --model-id pplx-decider-flash-v1.2 --backend libtorch --dtype bfloat16`.
 Unknown custom checkpoint modules and incomplete or ambiguous media towers are
 rejected. Gemma3 is text-only; EmbeddingGemma2 includes image/audio towers when
