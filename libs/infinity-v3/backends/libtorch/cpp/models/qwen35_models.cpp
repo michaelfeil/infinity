@@ -208,6 +208,12 @@ class Qwen35 final : public Model {
   }
   at::Tensor rotate(const at::Tensor& x,const PackedInput& input) const {
     auto r=x.narrow(-1,0,rotary);
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if(device.is_cuda() && dtype==at::kBFloat16 && !input.multimodal_positions.defined()) {
+      auto rotated=gemma_rotary_cuda(r,cos_cache,sin_cache,radix_positions(input));
+      return rotary==dim?rotated:at::cat({rotated,x.narrow(-1,rotary,dim-rotary)},-1);
+    }
+#endif
     auto a=r.narrow(-1,0,rotary/2),b=r.narrow(-1,rotary/2,rotary/2);
     at::Tensor cos,sin;
     if(input.multimodal_positions.defined()) {
@@ -473,14 +479,13 @@ class Qwen35 final : public Model {
     auto executed_images=prefixes.images;
     executed_images.insert(executed_images.end(),suffixes.images.begin(),suffixes.images.end());
     RequestImageFeatures shared_features(executed_images);
-    auto prefix_hidden=embeddings(prefixes,shared_features);
-    at::Tensor suffix_hidden;
-    if(!suffix_rows.empty())suffix_hidden=embeddings(suffixes,shared_features);
-    const auto prefix_tokens=prefix_hidden.size(0);
+    auto hidden=embeddings(prefixes,shared_features);
+    const auto prefix_tokens=hidden.size(0);
+    const bool has_suffix=!suffix_rows.empty();
+    if(has_suffix)hidden=at::cat({hidden,embeddings(suffixes,shared_features)},0);
     for(int64_t layer=0;layer<layer_count;++layer) {
       const auto p="layers."+std::to_string(layer)+".";
       BlockCache cache;cache.offsets=prefix_offsets;
-      auto hidden=suffix_hidden.defined()?at::cat({prefix_hidden,suffix_hidden},0):prefix_hidden;
       auto normalized=norm(hidden,p+"input_layernorm");
       const bool linear=string("layer_types."+std::to_string(layer))=="linear_attention";
       const auto ap=p+(linear?"linear_attn.":"self_attn.");
@@ -493,15 +498,14 @@ class Qwen35 final : public Model {
         return linear?delta_attention(x,ap,part,&cache,prefill,-1,&block):full_attention(x,ap,part,&cache,prefill,-1,&block);
       };
       auto prefix_attention=attention(prefixes,true);
-      auto attended=suffix_hidden.defined()?at::cat({prefix_attention,attention(suffixes,false)},0):prefix_attention;
+      auto attended=has_suffix?at::cat({prefix_attention,attention(suffixes,false)},0):prefix_attention;
       attended=prefix_projection(attended,ap+(linear?"out_proj":"o_proj"),input);
       hidden=hidden+attended;
       hidden=hidden+feed_forward(norm(hidden,p+"post_attention_layernorm"),layer,input);
-      prefix_hidden=hidden.narrow(0,0,prefix_tokens);
-      if(suffix_hidden.defined())suffix_hidden=hidden.narrow(0,prefix_tokens,hidden.size(0)-prefix_tokens);
     }
-    prefix_hidden=norm(prefix_hidden,"norm");
-    if(suffix_hidden.defined())suffix_hidden=norm(suffix_hidden,"norm");
+    hidden=norm(hidden,"norm");
+    auto prefix_hidden=hidden.narrow(0,0,prefix_tokens);
+    auto suffix_hidden=has_suffix?hidden.narrow(0,prefix_tokens,hidden.size(0)-prefix_tokens):at::Tensor();
     std::vector<at::Tensor> results;
     size_t suffix_row=0;
     for(int64_t row=0;row<input.batch;++row) {
