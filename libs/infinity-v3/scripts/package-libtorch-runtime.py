@@ -134,7 +134,9 @@ def package(native, site_packages, output):
     libraries = runtime_libraries([server, bridge, *fa4], site_packages)
     shutil.copy2(server, output / "bin/infinity_v3")
     for source in [bridge, *libraries]:
-        shutil.copy2(source, output / "lib" / source.name)
+        destination = output / "lib" / source.name
+        shutil.copy2(source, destination)
+        subprocess.run(["strip", "--strip-unneeded", str(destination)], check=True)
     shutil.copytree(native / "share/licenses/tei_torch", output / "licenses/native")
     for distribution in sorted(site_packages.glob("*.dist-info")):
         notices = distribution / "licenses"
