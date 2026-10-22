@@ -1,4 +1,5 @@
 #include "kernels/fast_kernels.h"
+#include "kernels/transformers_norm.h"
 #include "kernels/qwen35_vision.h"
 #include "kernels/nomic_moe.h"
 #include "kernels/encoder_activation.h"
@@ -350,4 +351,18 @@ int main(int argc,char** argv){c10::InferenceMode guard;
    }
   }
  }
+ for(auto dtype:{at::kHalf,at::kBFloat16}) {
+  auto opts=at::TensorOptions().device(at::kCUDA).dtype(dtype);
+  auto x=at::randn({31,2048},opts),residual=at::randn_like(x),weight=at::randn({2048},opts);
+  for(bool add_residual:{false,true}) {
+   auto sum=add_residual?x+residual:x,fp32=sum.to(at::kFloat);
+   auto expected=(fp32*at::rsqrt(fp32.square().mean(-1,true)+1e-5)).to(dtype)*weight;
+   auto actual=tei::transformers_rms_norm(x,add_residual?residual:at::Tensor(),weight,1e-5);
+   TORCH_CHECK(at::equal(actual.second,sum),"Transformers residual must round before normalization");
+   auto difference=actual.first.to(at::kFloat)-expected.to(at::kFloat);
+   TORCH_CHECK(difference.norm().item<float>()/expected.to(at::kFloat).norm().item<float>()<1e-4,
+     "Transformers RMSNorm changed normalized-activation rounding");
+  }
+ }
+
 }

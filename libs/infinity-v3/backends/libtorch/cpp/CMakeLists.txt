@@ -116,6 +116,9 @@ if(TARGET torch_cuda)
       vendor/infinity_fa4/AUTHORS
       vendor/infinity_fa4/provenance.json DESTINATION share/licenses/tei_torch/infinity_fa4)
   endif()
+  target_sources(tei_torch PRIVATE kernels/transformers_norm.cu)
+  set_source_files_properties(kernels/transformers_norm.cu PROPERTIES
+    COMPILE_OPTIONS "--fmad=false;--prec-div=true;--prec-sqrt=true")
   target_sources(tei_torch PRIVATE kernels/fp8_fusions.cu)
   set_source_files_properties(kernels/fp8_fusions.cu PROPERTIES
     COMPILE_OPTIONS "--prec-div=true;--prec-sqrt=true")
