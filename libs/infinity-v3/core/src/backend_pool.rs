@@ -165,6 +165,8 @@ impl BackendPool {
                         submitted: false,
                         released: false,
                         reserved_at: Instant::now(),
+                        max_sequence_tokens: 0,
+                        block_prefix_tokens: 0,
                     });
                 }
             }
@@ -197,6 +199,8 @@ impl BackendPool {
                         submitted: false,
                         released: false,
                         reserved_at: Instant::now(),
+                        max_sequence_tokens: 0,
+                        block_prefix_tokens: 0,
                     }
                 })
                 .collect();
@@ -264,7 +268,8 @@ impl Execution {
         .map_err(|_| BackendError::Inference("Replica execution task exited".into()))?
     }
 
-    pub async fn embed(self, batch: Batch) -> Result<(Embeddings, Duration), BackendError> {
+    pub async fn embed(mut self, batch: Batch) -> Result<(Embeddings, Duration), BackendError> {
+        self.max_sequence_tokens = batch.max_length;
         let tokens = batch.input_ids.len();
         self.run(tokens, batch.len(), move |backend| async move {
             backend.submit_embed(batch).await
@@ -273,10 +278,21 @@ impl Execution {
     }
 
     pub async fn decide(
-        self,
+        mut self,
         batch: Batch,
         inputs: Vec<infinity_v3_backend::DecisionInput>,
     ) -> Result<(Vec<infinity_v3_backend::DecisionOutput>, Duration), BackendError> {
+        self.max_sequence_tokens = batch.max_length;
+        // Declared prefix share before deduplication, not a cache-hit metric.
+        self.block_prefix_tokens = inputs
+            .iter()
+            .map(|input| match input {
+                infinity_v3_backend::DecisionInput::BlockOptionTokens { prefix_length, .. } => {
+                    *prefix_length
+                }
+                _ => 0,
+            })
+            .sum();
         let tokens = batch.input_ids.len();
         self.run(tokens, batch.len(), move |backend| async move {
             backend
@@ -288,9 +304,10 @@ impl Execution {
     }
 
     pub async fn predict(
-        self,
+        mut self,
         batch: Batch,
     ) -> Result<(infinity_v3_backend::Predictions, Duration), BackendError> {
+        self.max_sequence_tokens = batch.max_length;
         let tokens = batch.input_ids.len();
         self.run(tokens, batch.len(), move |backend| async move {
             backend.submit_predict(batch).await
@@ -298,9 +315,10 @@ impl Execution {
         .await
     }
     pub async fn predict_tokens(
-        self,
+        mut self,
         batch: Batch,
     ) -> Result<(infinity_v3_backend::TokenPredictions, Duration), BackendError> {
+        self.max_sequence_tokens = batch.max_length;
         let tokens = batch.input_ids.len();
         self.run(tokens, batch.len(), move |backend| async move {
             backend.submit_predict_tokens(batch).await
@@ -316,6 +334,8 @@ pub(crate) struct Execution {
     submitted: bool,
     released: bool,
     reserved_at: Instant,
+    max_sequence_tokens: u32,
+    block_prefix_tokens: usize,
 }
 
 impl Execution {
@@ -364,6 +384,10 @@ impl Execution {
                         batches = r.batches,
                         sequences,
                         tokens,
+                        mean_sequence_tokens = tokens as f64 / sequences.max(1) as f64,
+                        max_sequence_tokens = self.max_sequence_tokens,
+                        block_prefix_token_fraction =
+                            self.block_prefix_tokens as f64 / tokens.max(1) as f64,
                         inference_seconds,
                         tokens_per_second = tokens as f64 / inference_seconds,
                         "Replica inference throughput (latest batch)"
@@ -442,6 +466,8 @@ mod completion_tests {
             submitted: true,
             released: false,
             reserved_at: Instant::now(),
+            max_sequence_tokens: 0,
+            block_prefix_tokens: 0,
         }
     }
     #[tokio::test]
