@@ -11,6 +11,7 @@
 #include "kernels/torch_flash_fma.h"
 #include "kernels/cached_decoder_linear.h"
 #include "kernels/decoder_packed_readout.h"
+#include "kernels/transformers_norm.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/detail/CUDAHooksInterface.h>
 #endif
@@ -69,6 +70,7 @@ class Decoder final : public Model {
   std::vector<std::pair<at::Tensor,at::Tensor>> rotary_caches;
   std::vector<int64_t> rotary_indices,attention_windows;
   bool cudnn_varlen = false;
+  bool transformers_fused_norm = false;
   bool fp8_dynamic = false;
   bool fp8_all_linear = false;
   bool qwen_half_exact = false;
@@ -96,6 +98,9 @@ class Decoder final : public Model {
   }
   bool transformers_math() const {return options.boolean("_transformers_math",false);}
   at::Tensor norm(const at::Tensor& x, const at::Tensor& w) const {
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if(transformers_fused_norm)return transformers_rms_norm(x,{},w,epsilon).first;
+#endif
     if(transformers_math()) {auto f=x.to(at::kFloat);return (f*at::rsqrt(f.square().mean(-1,true)+epsilon)).to(x.scalar_type())*w;}
     if (x.is_cuda()) return std::get<0>(at::_fused_rms_norm(x.contiguous(), {w.numel()}, w, epsilon));
     return at::rms_norm(x, {w.numel()}, w, epsilon);
@@ -132,6 +137,7 @@ class Decoder final : public Model {
   }
   std::pair<at::Tensor,at::Tensor> residual_norm(const at::Tensor& x,
     const at::Tensor& residual,const at::Tensor& weight) const {
+    if(transformers_fused_norm)return transformers_rms_norm(x,residual,weight,epsilon);
     if(exact_decoder_math())return decoder_exact_rms_norm(x,residual,weight,epsilon);
     return fused_add_rms_norm(x,residual,weight,epsilon);
   }
@@ -464,6 +470,7 @@ public:
       layer_count(cfg.integer("num_hidden_layers", 0)), epsilon(cfg.real("rms_norm_eps", 1e-6)),
       causal(!cfg.boolean("use_bidirectional_attention", false)), renormalize(cfg.boolean("norm_topk_prob", true)),
       top_k(cfg.integer("num_experts_per_tok", 0)) {
+    transformers_fused_norm=device.is_cuda()&&transformers_math();
     if (family == "ultrabert") causal=false;
     if (family == "ministral3") family = "mistral";
     if (family == "llama_bidirec") family = "llama";
@@ -756,7 +763,7 @@ public:
       const auto& layer_sine=layer.rotary_index<0?sine:selected_rotary[layer.rotary_index].second;
       at::Tensor normalized,normalized_scales;
 #ifdef TEI_TORCH_CUDA_KERNELS
-      if (h.is_cuda()&&!transformers_math()) {
+      if (h.is_cuda()&&(!transformers_math()||transformers_fused_norm)) {
         if(layer.fp8_qkv && dtype==at::kBFloat16 && hidden==4096
           && !exact_decoder_math() && h.is_contiguous()
           && (!residual.defined()||residual.is_contiguous())) {
@@ -825,7 +832,7 @@ public:
 #endif
         projected=cached_prefix_linear(attended,layer.out,layer.out_bias,input);
 #ifdef TEI_TORCH_CUDA_KERNELS
-      if (h.is_cuda()&&!transformers_math()) {
+      if (h.is_cuda()&&(!transformers_math()||transformers_fused_norm)) {
         if(layer.fp8_gate_up && dtype==at::kBFloat16 && hidden==4096
           && !exact_decoder_math() && projected.is_contiguous()
           && (!residual.defined()||residual.is_contiguous())) {
@@ -850,7 +857,7 @@ public:
       ++layer_index;
     }
 #ifdef TEI_TORCH_CUDA_KERNELS
-    if (h.is_cuda()&&!transformers_math()) h=residual_norm(h,residual,final_norm).first;
+    if (h.is_cuda()&&(!transformers_math()||transformers_fused_norm)) h=residual_norm(h,residual,final_norm).first;
     else
 #endif
     h = norm(h, final_norm);
