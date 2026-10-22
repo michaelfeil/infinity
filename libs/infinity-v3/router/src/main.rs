@@ -336,8 +336,8 @@ struct Args {
 
     /// Payload size limit in bytes
     ///
-    /// Default is 2MB
-    #[clap(default_value = "2000000", long, env = infinity_v3_config::infinity_env!("PAYLOAD_LIMIT"))]
+    /// Default is 8MB
+    #[clap(default_value = "8000000", long, env = infinity_v3_config::infinity_env!("PAYLOAD_LIMIT"))]
     payload_limit: usize,
 
     /// Set an api key for request authorization.
