@@ -1,3 +1,4 @@
+#include "helpers/vision_batch.h"
 #include "batching/prefix_cache.h"
 #include "helpers/attention.h"
 // Native adaptation of Candle Qwen3.5. Upstream notices retained in LICENSE/NOTICE.
@@ -44,6 +45,17 @@ at::Tensor Qwen3VL::merger(const at::Tensor& x,const std::string& p,bool post) c
 
 std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     TORCH_CHECK(!images.empty(),"Empty Qwen3-VL image batch");
+    auto batches=vision_batches(images,device,hidden,cfg.integer("vision_config.intermediate_size",hidden*4));
+    if(batches.size()>1) {
+      std::vector<at::Tensor> features;std::vector<std::vector<at::Tensor>> deep;
+      for(auto [start,end]:batches) {
+        auto [feat,ds]=vision(std::vector<ImageInput>(images.begin()+start,images.begin()+end));features.push_back(feat);
+        if(deep.empty())deep.resize(ds.size());
+        for(size_t i=0;i<ds.size();++i)deep[i].push_back(ds[i]);
+      }
+      std::vector<at::Tensor> stacked;for(const auto& rows:deep)stacked.push_back(at::cat(rows,0));
+      return {at::cat(features,0),std::move(stacked)};
+    }
     std::vector<at::Tensor> patches,cosines,sines;
     std::vector<int32_t> offsets{0};int64_t max_frame=0;
     for(const auto& image:images) {

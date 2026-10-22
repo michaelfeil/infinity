@@ -1,6 +1,7 @@
 #include "prefix_cache_test.h"
 // Native actual-length image/deepstack regression; no Python or token padding.
 #include "models/qwen3_vl_models.h"
+#include "helpers/vision_batch.h"
 #include "models/qwen35_models.h"
 #include <c10/core/InferenceMode.h>
 #include <ATen/Parallel.h>
@@ -13,6 +14,9 @@ using namespace tei;
 void batched_tower_test(Qwen3VL& tower,const at::Tensor& pixels) {
   std::vector<ImageInput> images{{pixels.repeat({2,1}),{1,2,4},2,0,2,0},
     {pixels.repeat({3,1}),{3,2,2},2,0,3,0},{pixels*.2,{1,2,2},2,0,1,0}};
+  auto chunks=vision_batches(images,c10::Device("cpu"),1LL<<30,1LL<<30);
+  TORCH_CHECK(chunks.size()==images.size()&&chunks.front().first==0&&chunks.back().second==images.size(),
+    "Vision workspace bound lost images or joined oversized images");
   auto batch=tower.image_features(images);
   for(size_t i=0;i<images.size();++i) {
     auto expected=tower.image_features(images[i]);
