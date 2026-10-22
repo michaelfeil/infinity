@@ -901,17 +901,13 @@ async fn execute(
                     None,
                 )
                 .await?;
-            let vectors = adapter
-                .run_cpu(move |_| {
-                    let mut vector = response.results;
-                    finish(&mut vector, &options)?;
-                    if options.normalize {
-                        normalize(&mut vector);
-                    }
-                    Ok(vec![vector])
-                })
-                .await?;
-            (vectors, response.metadata)
+            // A single pooled vector is small; avoid a blocking-pool round trip.
+            let mut vector = response.results;
+            finish(&mut vector, &options)?;
+            if options.normalize {
+                normalize(&mut vector);
+            }
+            (vec![vector], response.metadata)
         } else {
             let response = runtime
                 .infer

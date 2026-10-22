@@ -775,19 +775,26 @@ async fn initialize_model(
         docker_label: option_env!("DOCKER_LABEL"),
     };
 
-    let perplexity = perplexity_profile
-        .zip(perplexity_tokenizer)
-        .map(|(profile, tokenizer)| {
-            http::perplexity::Perplexity::load(
-                &model_root,
-                tokenizer,
-                max_input_length,
-                profile,
-                multimodal_config.clone(),
-            )
-            .map(std::sync::Arc::new)
-        })
-        .transpose()?;
+    let perplexity =
+        if let Some((profile, tokenizer)) = perplexity_profile.zip(perplexity_tokenizer) {
+            let model_root = model_root.clone();
+            let media_config = multimodal_config.clone();
+            Some(std::sync::Arc::new(
+                tokio::task::spawn_blocking(move || {
+                    http::perplexity::Perplexity::load(
+                        &model_root,
+                        tokenizer,
+                        max_input_length,
+                        profile,
+                        media_config,
+                    )
+                })
+                .await
+                .context("Perplexity initialization worker failed")??,
+            ))
+        } else {
+            None
+        };
 
     let checkpoint_id = info.model_id.clone();
     let named = served_model_name.is_some();
