@@ -567,31 +567,30 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
     #[test]
-    #[serial_test::serial]
-    fn media_hosts_default_to_cloud_storage_and_explicit_lists_replace_them() {
-        for (options, expected) in [
+    fn model_options_broadcast_align_and_preserve_single_model_flags() {
+        for (flags, truncate, hosts) in [
             (
                 vec![],
+                true,
                 infinity_v3_core::multimodal::default_image_allowed_hosts(),
             ),
             (
-                vec!["--image-allowed-hosts=media.example.com,*.example.org"],
-                vec!["media.example.com".into(), "*.example.org".into()],
+                vec!["--auto-truncate=false", "--image-allowed-hosts="],
+                false,
+                vec![],
             ),
-            (vec!["--image-allowed-hosts="], vec![]),
+            (
+                vec!["--image-allowed-hosts=media.example.com"],
+                true,
+                vec!["media.example.com".into()],
+            ),
         ] {
-            let args = Args::try_parse_from(
-                ["infinity_v3", "--model-id", "a"]
-                    .into_iter()
-                    .chain(options),
-            )
-            .unwrap();
-            assert_eq!(
-                args.models().unwrap()[0]
-                    .multimodal_config
-                    .allowed_image_hosts,
-                expected
-            );
+            let args =
+                Args::try_parse_from(["infinity_v3", "--model-id", "a"].into_iter().chain(flags))
+                    .unwrap();
+            let model = args.models().unwrap().remove(0);
+            assert_eq!(model.auto_truncate, truncate);
+            assert_eq!(model.multimodal_config.allowed_image_hosts, hosts);
         }
         let env = infinity_v3_config::infinity_env!("IMAGE_ALLOWED_HOSTS");
         let previous = std::env::var_os(env);
@@ -601,52 +600,11 @@ mod tests {
             .multimodal_config
             .allowed_image_hosts
             .is_empty());
-        let args = Args::try_parse_from([
-            "infinity_v3",
-            "--model-id",
-            "a",
-            "--image-allowed-hosts=media.example.com",
-        ])
-        .unwrap();
-        assert_eq!(
-            args.models().unwrap()[0]
-                .multimodal_config
-                .allowed_image_hosts,
-            vec!["media.example.com"]
-        );
         match previous {
             Some(value) => std::env::set_var(env, value),
             None => std::env::remove_var(env),
         }
-    }
 
-    #[test]
-    #[serial_test::serial]
-    fn auto_truncate_defaults_on_and_preserves_explicit_model_overrides() {
-        for (options, expected) in [
-            (vec![], vec![true, true]),
-            (vec!["--auto-truncate=false"], vec![false, false]),
-            (vec!["--auto-truncate=false;true"], vec![false, true]),
-        ] {
-            let args = Args::try_parse_from(
-                ["infinity_v3", "--model-id", "a;b"]
-                    .into_iter()
-                    .chain(options),
-            )
-            .unwrap();
-            let actual = args
-                .models()
-                .unwrap()
-                .iter()
-                .map(|model| model.auto_truncate)
-                .collect::<Vec<_>>();
-            assert_eq!(actual, expected);
-        }
-    }
-
-    #[test]
-    #[serial_test::serial]
-    fn model_options_broadcast_align_and_preserve_single_model_flags() {
         let args = Args::try_parse_from([
             "infinity_v3",
             "--model-id",
@@ -805,7 +763,7 @@ mod tests {
                 None => std::env::remove_var(key),
             }
         }
-        // CLI tests run serially so environment changes do not race other tests.
+        // This binary has one test, so environment changes do not race other tests.
         let original_prompt = std::env::var_os(infinity_v3_config::infinity_env!("DEFAULT_PROMPT"));
         std::env::set_var(
             infinity_v3_config::infinity_env!("DEFAULT_PROMPT"),

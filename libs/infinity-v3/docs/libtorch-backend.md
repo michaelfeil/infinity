@@ -614,9 +614,10 @@ messages inside `state`; question instructions remain text/structured content:
 ```
 
 Replace `<PNG_BYTES>` with base64-encoded PNG content. Inline data URLs work
-without a hostname allowlist. HTTPS media from AWS S3, GCS, Azure Blob, and R2
-works by default; `--image-allowed-hosts` replaces that list with explicit host
-patterns (see [build configuration](build-configuration.md)). Image spans expand before the block boundary is
+without a hostname allowlist. AWS S3, GCS, Azure Blob, and R2 HTTPS media URLs
+are allowed by default; `--image-allowed-hosts` replaces the list (empty disables
+remote media). Input truncation defaults on; opt out with `--auto-truncate=false`.
+Image spans expand before the block boundary is
 finalized, and token limits apply to the expanded sequence. Spans cannot cross a
 block boundary. Both prefix and suffix execution retain the original mRoPE axes.
 Direct native decision calls with images must supply `media_positions`; block

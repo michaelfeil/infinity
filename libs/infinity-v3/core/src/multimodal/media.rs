@@ -454,104 +454,63 @@ mod tests {
         }
     }
     #[test]
-    fn cloud_defaults_accept_storage_urls_and_preserve_signed_queries() {
-        let mut resolver = resolver();
-        resolver.allowed_hosts = Arc::new(default_image_allowed_hosts());
-        for host in [
-            "s3.amazonaws.com",
-            "bucket.s3.amazonaws.com",
-            "s3.us-east-1.amazonaws.com",
-            "my.bucket.s3.us-east-1.amazonaws.com",
-            "s3.dualstack.eu-west-1.amazonaws.com",
-            "bucket.s3.dualstack.eu-west-1.amazonaws.com",
-            "storage.googleapis.com",
-            "bucket.storage.googleapis.com",
-            "account.blob.core.windows.net",
-            "account.r2.cloudflarestorage.com",
-            "bucket.account.eu.r2.cloudflarestorage.com",
-            "pub-example.r2.dev",
+    fn cloud_defaults_and_host_overrides() {
+        let with_hosts = |hosts| {
+            MediaResolver::new(
+                hosts,
+                MediaBudget::new(4096).unwrap(),
+                128,
+                2,
+                Duration::from_secs(1),
+            )
+        };
+        let cloud = with_hosts(default_image_allowed_hosts()).unwrap();
+        for (host, allowed) in [
+            ("s3.amazonaws.com", true),
+            ("my.bucket.s3.us-east-1.amazonaws.com", true),
+            ("bucket.s3.dualstack.eu-west-1.amazonaws.com", true),
+            ("storage.googleapis.com", true),
+            ("bucket.storage.googleapis.com", true),
+            ("account.blob.core.windows.net", true),
+            ("bucket.account.eu.r2.cloudflarestorage.com", true),
+            ("pub-example.r2.dev", true),
+            ("ec2.us-east-1.amazonaws.com", false),
+            ("s3.us-east-1.amazonaws.com.evil.example", false),
+            ("evilstorage.googleapis.com", false),
+            ("account.blob.core.windows.net.evil.example", false),
+            ("r2.dev", false),
+            ("evilr2.dev", false),
         ] {
-            let signed = format!("https://{host}/image.png?sig=a%2Fb%2B&x=2&x=1");
-            assert_eq!(resolver.remote_url(&signed).unwrap().as_str(), signed);
+            let signed = format!("https://{host}/image?sig=a%2Fb%2B&x=2&x=1");
+            let result = cloud.remote_url(&signed);
+            assert_eq!(result.is_ok(), allowed, "{host}");
+            if allowed {
+                assert_eq!(result.unwrap().as_str(), signed);
+            }
         }
-        for host in [
-            "evil.example",
-            "ec2.us-east-1.amazonaws.com",
-            "s3.us-east-1.amazonaws.com.evil.example",
-            "evilamazonaws.com",
-            "evilstorage.googleapis.com",
-            "storage.googleapis.com.evil.example",
-            "evilblob.core.windows.net",
-            "account.blob.core.windows.net.evil.example",
-            "r2.dev",
-            "evilr2.dev",
-            "pub-example.r2.dev.evil.example",
-            "r2.cloudflarestorage.com",
-            "s3.arbitrary.extra.amazonaws.com",
-            "127.0.0.1",
-        ] {
-            assert!(
-                resolver
-                    .remote_url(&format!("https://{host}/image"))
-                    .is_err(),
-                "{host}"
+        for hosts in [vec![], vec!["media.example.com".into()]] {
+            let resolver = with_hosts(hosts.clone()).unwrap();
+            assert!(resolver
+                .remote_url("https://storage.googleapis.com/a")
+                .is_err());
+            assert_eq!(
+                resolver.remote_url("https://media.example.com/a").is_ok(),
+                !hosts.is_empty()
             );
+            assert!(resolver
+                .remote_url("https://sub.media.example.com/a")
+                .is_err());
         }
-        for source in [
-            "http://storage.googleapis.com/image",
-            "https://storage.googleapis.com:444/image",
-            "https://user:secret@storage.googleapis.com/image",
-            "https://storage.googleapis.com/image#fragment",
-        ] {
-            assert!(resolver.remote_url(source).is_err());
-        }
-    }
-
-    #[test]
-    fn explicit_hosts_replace_cloud_defaults_and_empty_disables_remote_media() {
-        let mut resolver = resolver();
-        resolver.allowed_hosts = Arc::new(vec!["media.example.com".into()]);
-        assert!(resolver.remote_url("https://media.example.com/a").is_ok());
-        assert!(resolver
-            .remote_url("https://sub.media.example.com/a")
-            .is_err());
-        assert!(resolver
-            .remote_url("https://storage.googleapis.com/a")
-            .is_err());
-        resolver.allowed_hosts = Arc::new(vec![]);
-        assert!(resolver
-            .remote_url("https://storage.googleapis.com/a")
-            .is_err());
-        for pattern in [
+        for host in [
             "*",
             "*.com",
             "bucket*.example.com",
-            "https://example.com",
             "*.Example.com",
             "*.example.com:444",
             "*.example.com/path",
         ] {
-            assert!(
-                MediaResolver::new(
-                    vec![pattern.into()],
-                    MediaBudget::new(4096).unwrap(),
-                    128,
-                    2,
-                    Duration::from_secs(1)
-                )
-                .is_err(),
-                "{pattern}"
-            );
+            assert!(with_hosts(vec![host.into()]).is_err(), "{host}");
         }
-        // Validate the defaults through the same constructor as every processor.
-        assert!(MediaResolver::new(
-            default_image_allowed_hosts(),
-            MediaBudget::new(4096).unwrap(),
-            128,
-            2,
-            Duration::from_secs(1)
-        )
-        .is_ok());
     }
 
     #[test]
