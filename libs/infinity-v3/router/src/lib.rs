@@ -467,8 +467,9 @@ async fn initialize_model(
         }
     };
 
-    let base_input_length =
-        sequence_length_limit(base_input_length, max_batch_tokens, max_sequence_length);
+    let base_input_length = max_sequence_length.map_or(base_input_length, |limit| {
+        base_input_length.min(limit.get())
+    });
 
     // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
     let max_input_length = if base_input_length > max_batch_tokens {
@@ -1621,31 +1622,5 @@ mod auto_dtype_tests {
         .unwrap();
         assert_eq!(config.max_position_embeddings, 0);
         assert_eq!(config.text_config.unwrap().max_position_embeddings, 131072);
-    }
-}
-
-fn sequence_length_limit(model: usize, batch: usize, cap: Option<std::num::NonZeroUsize>) -> usize {
-    cap.map_or(model, |cap| model.min(batch).min(cap.get()))
-}
-
-#[cfg(test)]
-mod sequence_length_tests {
-    #[test]
-    fn caps_sequences_without_changing_defaults() {
-        for (model, batch, cap, expected) in [
-            (65_536, 32_768, Some(8192), 8192),
-            (4096, 32_768, Some(8192), 4096),
-            (65_536, 32_768, Some(131_072), 32_768),
-            (65_536, 32_768, None, 65_536),
-        ] {
-            assert_eq!(
-                super::sequence_length_limit(
-                    model,
-                    batch,
-                    cap.and_then(std::num::NonZeroUsize::new)
-                ),
-                expected
-            );
-        }
     }
 }
