@@ -139,7 +139,7 @@ int main(int argc,char** argv) {
   TORCH_CHECK(at::equal(twice,at::cat({expected,expected},0)),"Packed sequence recurrence state leaked");
   auto poisoned=tei::qwen35_reference_delta_cuda(at::cat({q,at::full_like(q,NAN)},0),at::cat({z,z},0),at::cat({ab,ab},0),conv,alog,dt,weight,input,1,1,1e-6);
   TORCH_CHECK(at::equal(poisoned.narrow(0,0,32),expected),"Independent sequence contaminated by later NaNs");
-  for(bool fma:{false,true})for(auto geometry:{std::pair<int64_t,int64_t>{1,1},{2,4},{16,32},{16,48}})
+  for(bool fma:{false,true})for(auto geometry:{std::pair<int64_t,int64_t>{1,1},{2,4},{4,8},{16,32},{16,48},{32,64},{32,96},{16,128}})
     resumed_delta(device,geometry.first,geometry.second,fma);
   std::cout<<"Independent original norms and synthetic packed sequence isolation passed\n";
   std::cout<<"DeltaNet cache capture and split/resume preserve both arithmetic modes exactly\n";
