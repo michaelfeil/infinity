@@ -35,7 +35,7 @@ pub struct MultimodalConfig {
 impl Default for MultimodalConfig {
     fn default() -> Self {
         Self {
-            allowed_image_hosts: super::media::default_image_allowed_hosts(),
+            allowed_image_hosts: vec![],
             max_images: 4,
             max_image_bytes: 20 * 1024 * 1024,
             max_decoded_pixels: 16_777_216,

@@ -32,22 +32,6 @@ or `INFINITY_AUTO_TRUNCATE=false` to reject oversized inputs on standard inferen
 routes. Individual requests can also set `truncate: false`. Model-specific
 Perplexity and typed-decision adapters retain their own input-length validation.
 
-Remote multimodal inputs accept HTTPS object URLs from AWS S3 (global,
-regional, and dual-stack endpoints), Google Cloud Storage, Azure Blob Storage,
-and Cloudflare R2 (S3 API and `r2.dev`) by default. Public objects and presigned
-URLs work without additional server credentials. Custom domains require an
-explicit host list.
-
-`--image-allowed-hosts` (or `INFINITY_IMAGE_ALLOWED_HOSTS`) replaces the default
-list for all remote media, including images, video, and audio. For example,
-`--image-allowed-hosts=media.example.com,*.storage.example.com` restricts downloads
-to those hosts. Wildcards occupy whole DNS labels; a leading `*.` matches one or
-more subdomain labels. Use `--image-allowed-hosts=` or set
-`INFINITY_IMAGE_ALLOWED_HOSTS` to an empty string for inline media only.
-Remote retrieval still requires HTTPS on port 443 and public DNS addresses,
-pins the validated addresses, rejects redirects, and enforces the existing
-download limits. Signed query strings are preserved.
-
 ## Docker builds
 
 All Dockerfiles accept `--build-arg ENV_VAR_BASE=ACME`. From the Infinity repo root:
