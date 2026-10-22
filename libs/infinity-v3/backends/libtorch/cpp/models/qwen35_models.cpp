@@ -30,8 +30,13 @@ namespace tei {
 namespace {
 // Adapted from Candle qwen3_vl/vision.rs; upstream Apache-2.0 notices retained.
 class Qwen35 final : public Model {
+  struct BlockMetadata {
+    at::Tensor kv_cumulative,history_cumulative;
+    std::vector<int32_t> history_offsets;
+  };
   struct BlockCache {
-    at::Tensor key,value,state,history,history_cumulative;
+    BlockMetadata& metadata;
+    at::Tensor key,value,state,history;
     std::vector<int32_t> offsets,history_offsets;
   };
   bool block_attention() const {return cfg.string("_decision_attention_mode")=="block_bidirectional";}
@@ -269,7 +274,9 @@ class Qwen35 final : public Model {
         k=at::cat(keys,0);v=at::cat(values,0);
       }
       if(device.is_cuda()) {
-        auto cuk=prefill?input.cumulative:at::tensor(kv_offsets,input.cumulative.options());
+        auto& cached=cache->metadata.kv_cumulative;
+        if(!prefill&&!cached.defined())cached=at::tensor(kv_offsets,input.cumulative.options());
+        auto cuk=prefill?input.cumulative:cached;
         attention=std::get<0>(at::_flash_attention_forward(q,k,v,input.cumulative,cuk,input.max_sequence,max_kv,0.,false,false,1./std::sqrt(double(dim))));
       } else {
         std::vector<at::Tensor> rows;
@@ -380,7 +387,7 @@ class Qwen35 final : public Model {
         output=qwen35_delta_cuda(qkv,z,ab,conv,alog,dt,w(p+"norm.weight"),input,
           integer("linear_num_key_heads"),integer("linear_num_value_heads"),epsilon,
           cache&&!prefill?cache->state:at::Tensor(),cache&&prefill?&cache->state:nullptr,cache&&!prefill?cache->history:at::Tensor(),
-          cache&&!prefill?cache->history_cumulative:at::Tensor(),chunks,cache_layer);
+          cache&&!prefill?cache->metadata.history_cumulative:at::Tensor(),chunks,cache_layer);
       }
 #else
       TORCH_CHECK(false,"Qwen3.5 requires the native DeltaNet CUDA kernel build");
@@ -395,7 +402,11 @@ class Qwen35 final : public Model {
         cache->history_offsets.push_back(cache->history_offsets.back()+n);
       }
       cache->history=at::cat(histories,0);
-      cache->history_cumulative=at::tensor(cache->history_offsets,input.cumulative.options());
+      auto& metadata=cache->metadata;
+      if(!metadata.history_cumulative.defined()||metadata.history_offsets!=cache->history_offsets) {
+        metadata.history_cumulative=at::tensor(cache->history_offsets,input.cumulative.options());
+        metadata.history_offsets=cache->history_offsets;
+      }
     }
     auto compact=radix_fold(output,input);
     if(cache)return compact;
@@ -483,9 +494,11 @@ class Qwen35 final : public Model {
     const auto prefix_tokens=hidden.size(0);
     const bool has_suffix=!suffix_rows.empty();
     if(has_suffix)hidden=at::cat({hidden,embeddings(suffixes,shared_features)},0);
+    // These sequence boundaries are shared by all layers of this request.
+    BlockMetadata metadata;
     for(int64_t layer=0;layer<layer_count;++layer) {
       const auto p="layers."+std::to_string(layer)+".";
-      BlockCache cache;cache.offsets=prefix_offsets;
+      BlockCache cache{metadata};cache.offsets=prefix_offsets;
       auto normalized=norm(hidden,p+"input_layernorm");
       const bool linear=string("layer_types."+std::to_string(layer))=="linear_attention";
       const auto ap=p+(linear?"linear_attn.":"self_attn.");
