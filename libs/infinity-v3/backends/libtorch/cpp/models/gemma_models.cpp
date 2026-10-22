@@ -416,6 +416,7 @@ class Gemma final : public Model {
     // Normalize source pixels in FP32 before the projection's activation cast.
     auto states=vl(((at::cat(patches,0)-.5)*2.).to(dtype),"vision_tower.patch_embedder.input_proj")+
       (table.select(0,0).index_select(0,columns)+table.select(0,1).index_select(0,rows));
+    patches.clear();
     auto col_angles=columns.to(at::kFloat).unsqueeze(1)*vision_frequency,row_angles=rows.to(at::kFloat).unsqueeze(1)*vision_frequency;
     auto cos=at::cat({col_angles.cos(),row_angles.cos()},-1).to(dtype).unsqueeze(1);
     auto sin=at::cat({col_angles.sin(),row_angles.sin()},-1).to(dtype).unsqueeze(1);
