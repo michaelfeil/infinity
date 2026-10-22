@@ -60,6 +60,7 @@ pub struct ModelSettings {
     pub decision_protocol: Option<DecisionProtocol>,
     pub max_concurrent_requests: usize,
     pub max_batch_tokens: usize,
+    pub max_sequence_length: Option<std::num::NonZeroUsize>,
     pub max_batch_requests: Option<usize>,
     pub radix_mlp_threshold: f32,
     pub enable_fp8_dynamic: bool,
@@ -140,6 +141,7 @@ pub async fn run(
             decision_protocol,
             max_concurrent_requests,
             max_batch_tokens,
+            max_sequence_length: None,
             max_batch_requests,
             radix_mlp_threshold,
             enable_fp8_dynamic,
@@ -183,6 +185,7 @@ async fn initialize_model(
         decision_protocol,
         max_concurrent_requests,
         max_batch_tokens,
+        max_sequence_length,
         max_batch_requests,
         radix_mlp_threshold,
         enable_fp8_dynamic,
@@ -463,6 +466,10 @@ async fn initialize_model(
             }
         }
     };
+
+    let base_input_length = max_sequence_length.map_or(base_input_length, |limit| {
+        base_input_length.min(limit.get())
+    });
 
     // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
     let max_input_length = if base_input_length > max_batch_tokens {

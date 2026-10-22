@@ -3032,6 +3032,7 @@ mod multi_model_test {
             decision_protocol: None,
             max_concurrent_requests: 4,
             max_batch_tokens: 128,
+            max_sequence_length: None,
             max_batch_requests: Some(4),
             radix_mlp_threshold: 0.,
             enable_fp8_dynamic: false,
