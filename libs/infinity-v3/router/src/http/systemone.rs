@@ -689,24 +689,25 @@ pub(crate) async fn systemone_inner(
             "Loaded model does not support typed decisions",
         )
     })?;
-    let (mut request, d3_images, d3_videos) = if matches!(service.as_ref(), SystemOne::D3(_)) {
-        serde_json::from_value::<d3::Request>(raw_request)
+    let (mut request, d3_images, d3_videos) =
+        if matches!(service.as_ref(), SystemOne::D3(_) | SystemOne::PplxJoint(_)) {
+            let request = serde_json::from_value::<d3::Request>(raw_request)
+                .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?;
+            if matches!(service.as_ref(), SystemOne::PplxJoint(_)) {
+                request.into_pplx_common()
+            } else {
+                request.into_common()
+            }
             .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?
-            .into_common()
-            .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?
-    } else if matches!(service.as_ref(), SystemOne::PplxJoint(_)) {
-        serde_json::from_value::<pplx_joint::Request>(raw_request)
-            .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?
-            .into_common()
-            .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?
-    } else {
-        (
-            serde_json::from_value::<SystemOneRequest>(raw_request)
-                .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?,
-            vec![],
-            vec![],
-        )
-    };
+        } else {
+            (
+                serde_json::from_value::<SystemOneRequest>(raw_request)
+                    .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?,
+                vec![],
+                vec![],
+            )
+        };
+    let answer_count = request.questions.len();
     let d3_max_len = request.max_len;
     if request.questions.len() > info.max_decision_questions {
         return Err(error(
@@ -869,20 +870,12 @@ pub(crate) async fn systemone_inner(
     );
     metadata.record_metrics(&info.model_id);
     metrics::counter!("infinity_request_success", "model" => info.model_id.clone(), "method" => "systemone").increment(1);
-    let answers = if matches!(service.as_ref(), SystemOne::PplxJoint(_)) {
-        let mut object = ResultValue::object(
-            answers
-                .iter()
-                .map(|(_, a, _)| {
-                    if let ResultValue::Object(v) = a {
-                        v.len()
-                    } else {
-                        0
-                    }
-                })
-                .sum(),
-        )
-        .map_err(|e| error(StatusCode::TOO_MANY_REQUESTS, e))?;
+    let answers = if matches!(
+        service.as_ref(),
+        SystemOne::Clef(_) | SystemOne::PplxJoint(_)
+    ) {
+        let mut object = ResultValue::object(answer_count)
+            .map_err(|e| error(StatusCode::TOO_MANY_REQUESTS, e))?;
         for (_, answer, _) in answers {
             let ResultValue::Object(values) = answer else {
                 return Err(error(
@@ -897,16 +890,6 @@ pub(crate) async fn systemone_inner(
             }
         }
         object
-    } else if matches!(service.as_ref(), SystemOne::Clef(_)) {
-        match answers.into_iter().next().unwrap().1 {
-            ResultValue::Object(answers) => ResultValue::Object(answers),
-            _ => {
-                return Err(error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Invalid joint answers",
-                ))
-            }
-        }
     } else {
         let mut object = ResultValue::object(answers.len())
             .map_err(|e| error(StatusCode::TOO_MANY_REQUESTS, e))?;

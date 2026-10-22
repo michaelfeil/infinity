@@ -40,7 +40,20 @@ impl Request {
     pub(super) fn into_common(
         self,
     ) -> Result<(SystemOneRequest, Vec<String>, Vec<String>), String> {
-        let state = if self.state.is_null() || self.state == "" {
+        self.normalize(false)
+    }
+
+    pub(super) fn into_pplx_common(
+        self,
+    ) -> Result<(SystemOneRequest, Vec<String>, Vec<String>), String> {
+        if !self.videos.is_empty() {
+            return Err("Perplexity joint decisions support images only".into());
+        }
+        self.normalize(true)
+    }
+
+    fn normalize(self, pplx: bool) -> Result<(SystemOneRequest, Vec<String>, Vec<String>), String> {
+        let state = if !pplx && (self.state.is_null() || self.state == "") {
             "(empty)".into()
         } else {
             describe(&self.state)?
@@ -152,7 +165,7 @@ impl D3 {
             .min(self.max_input_length);
         request.questions.into_iter().map(|(id, spec)| {
             if id.is_empty() { return Err("Question IDs must be nonempty".into()); }
-            let (kind, labels, descriptions, criteria) = question_options(&spec)?;
+            let (kind, labels, descriptions, criteria) = question_options(&spec,true)?;
             let instructions = spec.get("instructions").filter(|v| truthy(v)).map(describe)
                 .transpose()?.unwrap_or_else(|| "Choose the best matching option.".into());
             let user = user_prompt(&state, &instructions, &descriptions, &self.config.codes);
@@ -271,13 +284,13 @@ fn describe(value: &Value) -> Result<String, String> {
 }
 
 type Options = (String, Vec<String>, Vec<String>, Value);
-fn question_options(spec: &Value) -> Result<Options, String> {
+pub(super) fn question_options(spec: &Value, d3: bool) -> Result<Options, String> {
     let spec = spec.as_object().ok_or("Question must be an object")?;
     if spec
         .keys()
         .any(|key| !matches!(key.as_str(), "type" | "instructions" | "criteria"))
     {
-        return Err("D3 questions support only type, instructions and criteria".into());
+        return Err("Questions support only type, instructions and criteria".into());
     }
     let kind = spec
         .get("type")
@@ -289,7 +302,10 @@ fn question_options(spec: &Value) -> Result<Options, String> {
             let options = criteria
                 .as_object()
                 .ok_or("Choice criteria must be an object")?;
-            if options.is_empty() || options.len() > 255 || options.keys().any(String::is_empty) {
+            if options.is_empty()
+                || options.len() > 255
+                || (d3 && options.keys().any(String::is_empty))
+            {
                 return Err("D3 choice needs 1-255 nonempty option keys".into());
             }
             (
@@ -310,7 +326,7 @@ fn question_options(spec: &Value) -> Result<Options, String> {
             if !criteria.is_null()
                 && criteria
                     .as_object()
-                    .is_none_or(|v| v.keys().any(|k| k != "false" && k != "true"))
+                    .is_none_or(|v| d3 && v.keys().any(|k| k != "false" && k != "true"))
             {
                 return Err("Noul criteria accepts only false and true".into());
             }
@@ -332,12 +348,13 @@ fn question_options(spec: &Value) -> Result<Options, String> {
             let levels = criteria
                 .as_array()
                 .ok_or("Score criteria must be an array")?;
-            if !(2..=10).contains(&levels.len()) {
-                return Err("D3 score requires 2-10 levels".into());
+            if !(2..=if d3 { 10 } else { 255 }).contains(&levels.len()) {
+                return Err("Invalid score level count".into());
             }
             let descriptions = levels.iter().map(describe).collect::<Result<Vec<_>, _>>()?;
-            if descriptions.iter().any(String::is_empty)
-                || descriptions.iter().collect::<HashSet<_>>().len() != descriptions.len()
+            if d3
+                && (descriptions.iter().any(String::is_empty)
+                    || descriptions.iter().collect::<HashSet<_>>().len() != descriptions.len())
             {
                 return Err("D3 score levels must be distinct and nonempty".into());
             }
@@ -577,7 +594,7 @@ mod tests {
         })
     }
     fn question(case: &Value) -> Question {
-        let (kind, labels, _, criteria) = question_options(&case["question"]).unwrap();
+        let (kind, labels, _, criteria) = question_options(&case["question"], true).unwrap();
         Question {
             id: "q".into(),
             kind,
@@ -623,7 +640,7 @@ mod tests {
             let ModelInput::Text(state) = request.state else {
                 unreachable!()
             };
-            let (_, _, descriptions, _) = question_options(&case["question"]).unwrap();
+            let (_, _, descriptions, _) = question_options(&case["question"], true).unwrap();
             let instructions = case["question"]
                 .get("instructions")
                 .filter(|v| truthy(v))
@@ -656,7 +673,7 @@ mod tests {
             json!({"type":"score","criteria":(0..11).collect::<Vec<_>>()}),
             json!({"type":"noul","criteria":{"yes":"yes"}}),
         ] {
-            assert!(question_options(&spec).is_err(), "{spec}");
+            assert!(question_options(&spec, true).is_err(), "{spec}");
         }
         let q = question(&fixtures()["cases"][1]);
         assert!(answer(

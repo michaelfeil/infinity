@@ -279,7 +279,7 @@ size_t input_upload_limit(const Engine& model) {
  return static_cast<size_t>(limit);
 }
 bool share_image_uploads(const Engine& model) {
- return model.options.string("_decision.kind")=="d3"||
+ return model.options.string("_decision.kind")=="d3"||model.options.string("_decision.kind")=="pplx"||
    model.options.string("_decision_attention_mode")=="block_bidirectional";
 }
 size_t validate_request_input(Engine& model,const int64_t* ids,const int64_t* types,

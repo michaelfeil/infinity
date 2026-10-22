@@ -620,7 +620,7 @@ class Qwen35 final : public Model {
     if(block_attention())return block_forward(input);
     TORCH_CHECK(!radix_enabled(input)||supports_radix(),"Noncausal Qwen3.5 attention does not support radix folding");
     TORCH_CHECK(!radix_enabled(input)||input.audios.empty(),"Qwen3.5 radix audio is not supported");
-    RequestImageFeatures shared_features(input.images,cfg.string("_decision.kind")=="d3");
+    RequestImageFeatures shared_features(input.images,cfg.string("_decision.kind")=="d3"||cfg.string("_decision.kind")=="pplx");
     auto states=embeddings(input,shared_features);
     for(int64_t i=0;i<layer_count;++i) {
       auto p="layers."+std::to_string(i)+".";
