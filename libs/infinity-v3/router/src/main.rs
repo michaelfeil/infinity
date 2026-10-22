@@ -175,7 +175,7 @@ struct Args {
     #[clap(long, env = infinity_v3_config::infinity_env!("DECISION_PROTOCOL"), value_parser = optional_protocol, value_delimiter = ';')]
     decision_protocol: Vec<Optional<infinity_v3_router::DecisionProtocol>>,
 
-    /// HTTPS host patterns for remote media. Defaults to AWS S3, GCS, Azure Blob, and R2.
+    /// HTTPS host patterns for remote media. Defaults to trusted cloud object-storage endpoints.
     /// An explicit list replaces the defaults; --image-allowed-hosts= permits inline media only.
     /// Wildcards occupy whole DNS labels; a leading *. matches any subdomain depth.
     #[clap(long, env = infinity_v3_config::infinity_env!("IMAGE_ALLOWED_HOSTS"), value_delimiter = ',', default_values_t = infinity_v3_core::multimodal::default_image_allowed_hosts())]
