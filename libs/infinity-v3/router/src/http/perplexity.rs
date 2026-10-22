@@ -1106,67 +1106,55 @@ mod tests {
     }
 
     #[test]
-    fn contextual_pooling_excludes_boundaries_and_preserves_empty_chunks() {
-        let adapter = adapter(Profile::ContextV1);
-        let prepared = Prepared {
-            ids: vec![1, 2, 99, 3],
-            spans: vec![(0, 2), (3, 3), (3, 4)],
-            media: None,
-        };
-        let actual = adapter
-            .readout(
-                &prepared,
+    fn contextual_and_late_readout() {
+        for (profile, ids, spans, hidden, expected) in [
+            (
+                Profile::ContextV1,
+                vec![1, 2, 99, 3],
+                vec![(0, 2), (3, 3), (3, 4)],
                 vec![vec![-3., 1.], vec![3., 1.], vec![99., 99.], vec![-1., 0.]],
-                &options(json!({"input":[["a","","b"]]})),
-            )
-            .unwrap();
-        assert_eq!(actual, vec![vec![0., 97.], vec![0., 0.], vec![-97., 0.]]);
-    }
-
-    #[test]
-    fn contextual_projection_runs_after_pooling_in_fp32() {
-        let mut adapter = adapter(Profile::ContextV2);
-        adapter.projection = Some(Projection {
-            width: 2,
-            weights: vec![2., -1., -1., 2.],
-        });
-        let prepared = Prepared {
-            ids: vec![99, 1, 2],
-            spans: vec![(1, 3)],
-            media: None,
-        };
-        let actual = adapter
-            .readout(
-                &prepared,
+                vec![vec![0., 97.], vec![0., 0.], vec![-97., 0.]],
+            ),
+            (
+                Profile::ContextV2,
+                vec![99, 1, 2],
+                vec![(1, 3)],
                 vec![vec![90., 90.], vec![1., 0.], vec![0., 1.]],
-                &options(json!({"input":[["a"]]})),
-            )
-            .unwrap();
-        assert_eq!(actual, vec![vec![59., 59.]]);
-    }
-
-    #[test]
-    fn late_readout_masks_document_punctuation_and_normalizes_each_token() {
-        let mut adapter = adapter(Profile::LateV2);
-        adapter.skip.insert(99);
-        let prepared = Prepared {
-            ids: vec![1, 99, 2],
-            spans: vec![],
-            media: None,
-        };
-        let hidden = vec![vec![3., 4.], vec![0., 1.], vec![0., 0.]];
-        let document = adapter
-            .readout(&prepared, hidden.clone(), &options(json!({"input":"a!"})))
-            .unwrap();
-        assert_eq!(document, vec![vec![0.6, 0.8], vec![0., 0.]]);
-        let query = adapter
-            .readout(
-                &prepared,
-                hidden,
-                &options(json!({"input":"a!","task":"query"})),
-            )
-            .unwrap();
-        assert_eq!(query.len(), 3);
+                vec![vec![59., 59.]],
+            ),
+            (
+                Profile::LateV2,
+                vec![1, 99, 2],
+                vec![],
+                vec![vec![3., 4.], vec![0., 1.], vec![0., 0.]],
+                vec![vec![0.6, 0.8], vec![0., 0.]],
+            ),
+        ] {
+            let mut adapter = adapter(profile);
+            adapter.skip.insert(99);
+            if profile == Profile::ContextV2 {
+                adapter.projection = Some(Projection {
+                    width: 2,
+                    weights: vec![2., -1., -1., 2.],
+                });
+            }
+            let prepared = Prepared {
+                ids,
+                spans,
+                media: None,
+            };
+            let document = options(json!({"input":"a"}));
+            assert_eq!(
+                adapter
+                    .readout(&prepared, hidden.clone(), &document)
+                    .unwrap(),
+                expected
+            );
+            if profile.late() {
+                let query = options(json!({"input":"a", "task":"query"}));
+                assert_eq!(adapter.readout(&prepared, hidden, &query).unwrap().len(), 3);
+            }
+        }
     }
 
     #[test]
