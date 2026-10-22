@@ -220,6 +220,11 @@ struct Args {
     )]
     max_batch_tokens: Vec<usize>,
 
+    /// Maximum tokens per sequence, including formatted prompts and image tokens.
+    /// Defaults to the model limit, bounded by --max-batch-tokens.
+    #[clap(long, env = infinity_v3_config::infinity_env!("MAX_SEQUENCE_LENGTH"), value_parser = optional::<std::num::NonZeroUsize>, value_delimiter = ';')]
+    max_sequence_length: Vec<Optional<std::num::NonZeroUsize>>,
+
     /// Optionally control the maximum number of individual requests in a batch
     #[clap(long, env = infinity_v3_config::infinity_env!("MAX_BATCH_REQUESTS"), value_parser = optional_usize, value_delimiter = ';')]
     max_batch_requests: Vec<Optional<usize>>,
@@ -400,6 +405,8 @@ impl Args {
             "max-concurrent-requests",
         )?;
         let max_batch_tokens = expand(&self.max_batch_tokens, count, "max-batch-tokens")?;
+        let max_sequence_length =
+            expand_optional(&self.max_sequence_length, count, "max-sequence-length")?;
         let radix_mlp_threshold = expand(&self.radix_mlp_threshold, count, "radix-mlp-threshold")?;
         let max_client_batch_size =
             expand(&self.max_client_batch_size, count, "max-client-batch-size")?;
@@ -439,6 +446,7 @@ impl Args {
                     decision_protocol: decision_protocol[i].clone(),
                     max_concurrent_requests: max_concurrent_requests[i],
                     max_batch_tokens: max_batch_tokens[i],
+                    max_sequence_length: max_sequence_length[i],
                     max_batch_requests: max_batch_requests[i],
                     radix_mlp_threshold: radix_mlp_threshold[i],
                     enable_fp8_dynamic: enable_fp8_dynamic[i],
@@ -619,6 +627,8 @@ mod tests {
             "cpu",
             "--max-batch-tokens",
             "100;200",
+            "--max-sequence-length",
+            "64;none",
             "--revision",
             "none;main",
             "--pooling",
@@ -635,6 +645,8 @@ mod tests {
         assert_eq!(models[1].served_model_name.as_deref(), Some("rerank"));
         assert_eq!(models[0].max_batch_tokens, 100);
         assert_eq!(models[1].max_batch_tokens, 200);
+        assert_eq!(models[0].max_sequence_length.unwrap().get(), 64);
+        assert_eq!(models[1].max_sequence_length, None);
         assert_eq!(models[0].revision, None);
         assert_eq!(models[1].revision.as_deref(), Some("main"));
         assert!(models[0].auto_truncate && !models[1].auto_truncate);
@@ -650,6 +662,28 @@ mod tests {
         .models()
         .unwrap();
         assert!(legacy[0].auto_truncate && legacy[0].enable_fp8_dynamic);
+        assert_eq!(legacy[0].max_sequence_length, None);
+        let models = Args::try_parse_from([
+            "infinity_v3",
+            "--model-id",
+            "a;b",
+            "--max-sequence-length",
+            "8192",
+        ])
+        .unwrap()
+        .models()
+        .unwrap();
+        assert!(models
+            .iter()
+            .all(|m| m.max_sequence_length.unwrap().get() == 8192));
+        assert!(Args::try_parse_from([
+            "infinity_v3",
+            "--model-id",
+            "a",
+            "--max-sequence-length",
+            "0",
+        ])
+        .is_err());
         for ids in ["a", "a;b"] {
             let matches = Args::command()
                 .try_get_matches_from([
@@ -758,6 +792,41 @@ mod tests {
             vec!["cli-model"]
         );
         for (key, value) in [(model_env, previous), ("MODEL_ID", previous_legacy)] {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let sequence_env = infinity_v3_config::infinity_env!("MAX_SEQUENCE_LENGTH");
+        let previous_sequence = std::env::var_os(sequence_env);
+        let previous_legacy_sequence = std::env::var_os("MAX_SEQUENCE_LENGTH");
+        std::env::remove_var(sequence_env);
+        std::env::set_var("MAX_SEQUENCE_LENGTH", "8192");
+        let matches = command_with_environment()
+            .try_get_matches_from(["infinity_v3", "--model-id", "a"])
+            .unwrap();
+        assert_eq!(
+            args_from_matches(&matches).unwrap().models().unwrap()[0]
+                .max_sequence_length
+                .unwrap()
+                .get(),
+            8192
+        );
+        std::env::set_var(sequence_env, "4096");
+        let matches = command_with_environment()
+            .try_get_matches_from(["infinity_v3", "--model-id", "a"])
+            .unwrap();
+        assert_eq!(
+            args_from_matches(&matches).unwrap().models().unwrap()[0]
+                .max_sequence_length
+                .unwrap()
+                .get(),
+            4096
+        );
+        for (key, value) in [
+            (sequence_env, previous_sequence),
+            ("MAX_SEQUENCE_LENGTH", previous_legacy_sequence),
+        ] {
             match value {
                 Some(value) => std::env::set_var(key, value),
                 None => std::env::remove_var(key),

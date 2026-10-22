@@ -34,6 +34,25 @@ schema is available at `/api-doc/openapi.json`.
 CUDA inference requires SM80 (Ampere) or newer in both backends. SM75/Turing
 is unsupported; use a CPU build on hosts without a supported GPU.
 
+## Sequence length and batch capacity
+
+Use `--max-sequence-length` to cap tokens per sequence independently of the
+batch's total token budget:
+
+```sh
+infinity_v3 --model-id /path/to/model \
+  --max-sequence-length 8192 --max-batch-tokens 32768
+```
+
+The cap includes formatted prompts and image tokens, and cannot exceed the
+model's supported input length or the batch token budget. When omitted, existing
+model and batch limits apply. Inputs follow the endpoint's existing truncation
+policy; OneJev rejects oversized prompts. `/v1/systemone` request `max_len` can
+lower its limit further.
+Set `INFINITY_MAX_SEQUENCE_LENGTH` (or `MAX_SEQUENCE_LENGTH`) instead of the flag.
+Like other model settings, one value applies to all models; semicolon-separated
+values align with `--model-id`, and `none` leaves a model's limit unchanged.
+
 ## UltraBERT embeddings
 
 `dmis-lab/UltraBERT-Embed-150M` uses the Candle backend and produces
