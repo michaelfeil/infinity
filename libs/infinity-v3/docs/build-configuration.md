@@ -30,7 +30,7 @@ their existing names. Model fixture and benchmark-only variables are unchanged.
 Automatic input truncation is enabled by default. Set `--auto-truncate=false`
 or `INFINITY_AUTO_TRUNCATE=false` to reject oversized inputs on standard inference
 routes. Individual requests can also set `truncate: false`. Model-specific
-Perplexity and typed-decision adapters retain their own input-length validation.
+Typed-decision adapters retain their own input-length validation.
 
 Remote multimodal inputs accept HTTPS object URLs from AWS S3 (global,
 regional, and dual-stack endpoints), Google Cloud Storage, Azure Blob Storage,
