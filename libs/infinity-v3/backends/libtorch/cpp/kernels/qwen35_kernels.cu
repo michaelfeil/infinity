@@ -13,6 +13,39 @@
 #include "../../../candle/src/kernels/gemma_rms_norm.cu"
 
 namespace tei {
+namespace {
+struct alignas(8) ConvValues { __nv_bfloat16 values[4]; };
+
+__global__ void packed_conv_vector(const __nv_bfloat16* x, const __nv_bfloat16* weight,
+ const uint32_t* cumulative, __nv_bfloat16* output, int channels, int kernel, int sequences) {
+  const int token=blockIdx.x, column=(blockIdx.y*blockDim.x+threadIdx.x)*4;
+  if(column>=channels)return;
+  int lo=0,hi=sequences;
+  while(lo+1<hi) {
+    const int middle=(lo+hi)/2;
+    if(cumulative[middle]<=token)lo=middle;else hi=middle;
+  }
+  float sums[4]={};
+  for(int j=0;j<kernel;++j) {
+    const int source=token+j-kernel+1;
+    if(source>=int(cumulative[lo])) {
+      const auto values=*reinterpret_cast<const ConvValues*>(x+int64_t(source)*channels+column);
+      #pragma unroll
+      for(int i=0;i<4;++i)
+        sums[i]+=__bfloat162float(values.values[i])*__bfloat162float(weight[(column+i)*kernel+j]);
+    }
+  }
+  ConvValues result;
+  #pragma unroll
+  for(int i=0;i<4;++i) {
+    // Preserve convolution -> BF16 -> SiLU rounding and accumulation order.
+    const float rounded=__bfloat162float(__float2bfloat16_rn(sums[i]));
+    result.values[i]=__float2bfloat16_rn(rounded/(1.f+expf(-rounded)));
+  }
+  *reinterpret_cast<ConvValues*>(output+int64_t(token)*channels+column)=result;
+}
+}
+
 // SPDX-License-Identifier: MIT
 // Adapted from Candle gemma_rope_reference_bf16 (included above with its full
 // MIT notices). Preserve BF16 rounding after each product. Read original
@@ -745,7 +778,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
       "Invalid packed GDN convolution history");
     for(const auto source:input.block_prefix_sources)TORCH_CHECK(source>=0&&source<history_cumulative.numel()-1,"Invalid packed GDN prefix source");
     packed_cached_conv<<<(tokens*channels+255)/256,256,0,stream>>>(bf(qkv),bf(conv),cu,input.block_cache_sources.const_data_ptr<int64_t>(),bf(history),history_cumulative.const_data_ptr<int32_t>(),mut(convolution),tokens,channels,conv.size(-1),input.batch);
-  } else qwen35_conv_bf16<<<(tokens*channels+255)/256,256,0,stream>>>(bf(qkv),bf(conv),cu,mut(convolution),tokens,channels,conv.size(-1),input.batch);
+  } else packed_conv_vector<<<dim3(tokens,(channels/4+255)/256),256,0,stream>>>(bf(qkv),bf(conv),cu,mut(convolution),channels,conv.size(-1),input.batch);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   qwen35_gdn_prepare<<<tokens*key_heads,128,0,stream>>>(bf(convolution),bf(ab),a_log.const_data_ptr<float>(),dt_bias.const_data_ptr<float>(),qk.mutable_data_ptr<float>(),decay.mutable_data_ptr<float>(),tokens,key_heads,value_heads);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
