@@ -380,10 +380,10 @@ class Qwen35 final : public Model {
   }
   at::Tensor embeddings(const PackedInput& input,RequestImageFeatures& shared_features) const {
     auto states=at::embedding(w("embed_tokens.weight"),input.images.empty()?radix_ids(input):input.ids);
-    for(const auto& image:input.images) {
-      TORCH_CHECK(visual,"Qwen3.5 vision tower unavailable");
-      auto compute=[&]{return visual->image_features(image).to(dtype);};
-      auto features=shared_features.get(image,compute);
+    TORCH_CHECK(input.images.empty()||visual,"Qwen3.5 vision tower unavailable");
+    auto batch=shared_features.get_batch(input.images,[&](const std::vector<ImageInput>& images){return visual->image_features(images);});
+    for(size_t i=0;i<input.images.size();++i) {
+      const auto& image=input.images[i];auto features=batch[i].to(dtype);
       TORCH_CHECK(features.size(0)==image.token_count && features.size(1)==hidden,"Qwen3.5 visual token geometry mismatch");
       states.narrow(0,image.token_start,image.token_count).copy_(features);
     }
