@@ -342,15 +342,15 @@ class Decoder final : public Model {
       auto both = layer.fp8_gate_up ? (row_scales.defined()
         ? layer.fp8_gate_up->forward_quantized(x,row_scales,layer.gate_up_bias)
         : layer.fp8_gate_up->forward(x,layer.gate_up_bias))
-        : transformers_math()?separate_linear(x,layer.gate_up,layer.gate_up_bias,{intermediate,intermediate})
+        : transformers_math()&&!x.is_cuda()?separate_linear(x,layer.gate_up,layer.gate_up_bias,{intermediate,intermediate})
         : cached_prefix_linear(x,layer.gate_up,layer.gate_up_bias,input);
 #else
       auto both = at::linear(x,layer.gate_up,layer.gate_up_bias);
 #endif
       auto width = both.size(-1) / 2;
 #ifdef TEI_TORCH_CUDA_KERNELS
-      if(both.is_cuda()&&!transformers_math()) {
-        int code=activation=="silu"||activation=="swish"?5:activation=="relu"?3:4;
+      if(both.is_cuda()) {
+        int code=activation=="silu"||activation=="swish"?(transformers_math()?0:5):activation=="relu"?3:(transformers_math()?2:4);
         if(layer.fp8_down && code==5 && width<=32768 && both.is_contiguous()) {
           auto quantized=fp8_swiglu_quantize(both);
           return layer.fp8_down->forward_quantized(quantized.first,quantized.second,layer.down_bias);
@@ -754,6 +754,7 @@ public:
   at::Tensor forward_states(const PackedInput& input,at::Tensor h,const at::Tensor& cosine,
     const at::Tensor& sine,const at::Tensor& visual_indices=at::Tensor(),const std::vector<at::Tensor>& deepstack={}) const {
     at::Tensor residual;
+    const auto query_scales=query_scale.defined()?query_scale.index_select(0,radix_positions(input)).view({-1,1,1}):at::Tensor();
     std::vector<std::pair<at::Tensor,at::Tensor>> selected_rotary;
     for(const auto& cache:rotary_caches)selected_rotary.emplace_back(
       cache.first.index_select(0,input.positions).unsqueeze(1),cache.second.index_select(0,input.positions).unsqueeze(1));
@@ -783,7 +784,7 @@ public:
         : layer.fp8_qkv->forward(normalized,layer.qkv_bias);
       else
 #endif
-        qkv=transformers_math()?separate_linear(normalized,layer.qkv,layer.qkv_bias,{heads*head_dim,kvheads*head_dim,kvheads*head_dim}):at::linear(normalized,layer.qkv,layer.qkv_bias);
+        qkv=transformers_math()&&!normalized.is_cuda()?separate_linear(normalized,layer.qkv,layer.qkv_bias,{heads*head_dim,kvheads*head_dim,kvheads*head_dim}):at::linear(normalized,layer.qkv,layer.qkv_bias);
       qkv=qkv.view({h.size(0),heads+2*kvheads,head_dim});
       auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, kvheads), v = qkv.narrow(1, heads + kvheads, kvheads);
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -810,10 +811,12 @@ public:
       {
         if (layer.q_norm.defined()) { q = norm(q, layer.q_norm); k = norm(k, layer.k_norm); }
 #ifdef TEI_TORCH_CUDA_KERNELS
-        if(q.is_cuda()&&!transformers_math()) {// Candle contracts one modeldtype product into HFMA.
+        if(q.is_cuda()) {
         // Preserve Llama's path; learned causal BF16 Mistral operands prove
         // the same contract with the registered exact RMS geometry.
-        if((dtype==at::kBFloat16||qwen_half_exact)&&family=="qwen2"&&hidden==896&&head_dim==64) {
+        if(transformers_math()) {
+          auto pair=fused_rotary(q,k,layer_cosine,layer_sine,false);q=pair.first;k=pair.second;
+        } else if((dtype==at::kBFloat16||qwen_half_exact)&&family=="qwen2"&&hidden==896&&head_dim==64) {
           // The fresh packed QKV projection gives disjoint Q/K/V views.
           // Preserve original model-dtype HFMA and leave V unchanged.
           encoder_rotary_inplace(q,k,layer_cosine,layer_sine);
@@ -823,7 +826,7 @@ public:
 #endif
         {q = rotate(q, layer_cosine, layer_sine); k = rotate(k, layer_cosine, layer_sine);}
       }
-      if (query_scale.defined()) q = q * query_scale.index_select(0, radix_positions(input)).view({-1, 1, 1});
+      if (query_scales.defined()) q = q * query_scales;
       auto attended = attend(q, k, v, input, layer_index,layer).contiguous().view({h.size(0), heads * head_dim});
       at::Tensor projected;
 #ifdef TEI_TORCH_CUDA_KERNELS
