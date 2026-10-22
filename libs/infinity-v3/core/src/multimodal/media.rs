@@ -60,7 +60,43 @@ pub(crate) struct ResolvedImage {
     _reservation: OwnedSemaphorePermit,
 }
 
-/// Empty allowlist permits inline data URLs only. Entries are exact DNS hostnames.
+/// Cloud object-storage endpoints accepted unless the caller supplies an override.
+pub fn default_image_allowed_hosts() -> Vec<String> {
+    [
+        "s3.amazonaws.com",
+        "*.s3.amazonaws.com",
+        "s3.*.amazonaws.com",
+        "*.s3.*.amazonaws.com",
+        "s3.dualstack.*.amazonaws.com",
+        "*.s3.dualstack.*.amazonaws.com",
+        "storage.googleapis.com",
+        "*.storage.googleapis.com",
+        "*.blob.core.windows.net",
+        "*.r2.cloudflarestorage.com",
+        "*.r2.dev",
+    ]
+    .into_iter()
+    .map(str::to_owned)
+    .collect()
+}
+
+// Wildcards occupy whole DNS labels. A leading wildcard accepts one or more
+// subdomain labels (including dotted bucket names); other wildcards accept one.
+fn hostname_matches(pattern: &str, host: &str) -> bool {
+    let pattern: Vec<_> = pattern.split('.').collect();
+    let host: Vec<_> = host.split('.').collect();
+    let (pattern, host) = if pattern[0] == "*" {
+        if host.len() < pattern.len() {
+            return false;
+        }
+        (&pattern[1..], &host[host.len() - pattern.len() + 1..])
+    } else {
+        (pattern.as_slice(), host.as_slice())
+    };
+    pattern.len() == host.len() && pattern.iter().zip(host).all(|(p, h)| *p == "*" || p == h)
+}
+
+/// Empty allowlist permits inline data URLs only. Entries are DNS host patterns.
 #[derive(Clone, Debug)]
 pub struct MediaResolver {
     allowed_hosts: Arc<Vec<String>>,
@@ -83,10 +119,21 @@ impl MediaResolver {
         }
         let mut hosts = Vec::with_capacity(allowed_hosts.len());
         for host in allowed_hosts {
-            let url = Url::parse(&format!("https://{host}/"))
+            let labels: Vec<_> = host.split('.').collect();
+            if labels
+                .iter()
+                .any(|label| label.contains('*') && *label != "*")
+                || labels.iter().rev().take(2).any(|label| *label == "*")
+            {
+                return Err(invalid(
+                    "Image host wildcards must occupy whole subdomain labels",
+                ));
+            }
+            let validation_host = host.replace('*', "wildcard");
+            let url = Url::parse(&format!("https://{validation_host}/"))
                 .map_err(|_| invalid("Invalid allowed image hostname"))?;
             if url.domain().is_none()
-                || url.host_str() != Some(host.as_str())
+                || url.host_str() != Some(validation_host.as_str())
                 || !url.username().is_empty()
                 || url.password().is_some()
                 || url.port().is_some()
@@ -94,7 +141,7 @@ impl MediaResolver {
                 || url.query().is_some()
                 || url.fragment().is_some()
             {
-                return Err(invalid("Allowed image hosts must be exact lowercase DNS hostnames without ports or paths"));
+                return Err(invalid("Allowed image hosts must be lowercase DNS host patterns without ports or paths"));
             }
             hosts.push(host);
         }
@@ -114,12 +161,14 @@ impl MediaResolver {
             || url.password().is_some()
             || url.port_or_known_default() != Some(443)
             || url.fragment().is_some()
-            || !url
-                .domain()
-                .is_some_and(|host| self.allowed_hosts.iter().any(|allowed| allowed == host))
+            || !url.domain().is_some_and(|host| {
+                self.allowed_hosts
+                    .iter()
+                    .any(|allowed| hostname_matches(allowed, host))
+            })
         {
             return Err(invalid(
-                "Remote images require an explicitly allowed HTTPS hostname on port 443",
+                "Remote images require an allowed HTTPS hostname on port 443",
             ));
         }
         Ok(url)
@@ -404,6 +453,66 @@ mod tests {
             assert!(resolver.remote_url(source).is_err());
         }
     }
+    #[test]
+    fn cloud_defaults_and_host_overrides() {
+        let with_hosts = |hosts| {
+            MediaResolver::new(
+                hosts,
+                MediaBudget::new(4096).unwrap(),
+                128,
+                2,
+                Duration::from_secs(1),
+            )
+        };
+        let cloud = with_hosts(default_image_allowed_hosts()).unwrap();
+        for (host, allowed) in [
+            ("s3.amazonaws.com", true),
+            ("my.bucket.s3.us-east-1.amazonaws.com", true),
+            ("bucket.s3.dualstack.eu-west-1.amazonaws.com", true),
+            ("storage.googleapis.com", true),
+            ("bucket.storage.googleapis.com", true),
+            ("account.blob.core.windows.net", true),
+            ("bucket.account.eu.r2.cloudflarestorage.com", true),
+            ("pub-example.r2.dev", true),
+            ("ec2.us-east-1.amazonaws.com", false),
+            ("s3.us-east-1.amazonaws.com.evil.example", false),
+            ("evilstorage.googleapis.com", false),
+            ("account.blob.core.windows.net.evil.example", false),
+            ("r2.dev", false),
+            ("evilr2.dev", false),
+        ] {
+            let signed = format!("https://{host}/image?sig=a%2Fb%2B&x=2&x=1");
+            let result = cloud.remote_url(&signed);
+            assert_eq!(result.is_ok(), allowed, "{host}");
+            if allowed {
+                assert_eq!(result.unwrap().as_str(), signed);
+            }
+        }
+        for hosts in [vec![], vec!["media.example.com".into()]] {
+            let resolver = with_hosts(hosts.clone()).unwrap();
+            assert!(resolver
+                .remote_url("https://storage.googleapis.com/a")
+                .is_err());
+            assert_eq!(
+                resolver.remote_url("https://media.example.com/a").is_ok(),
+                !hosts.is_empty()
+            );
+            assert!(resolver
+                .remote_url("https://sub.media.example.com/a")
+                .is_err());
+        }
+        for host in [
+            "*",
+            "*.com",
+            "bucket*.example.com",
+            "*.Example.com",
+            "*.example.com:444",
+            "*.example.com/path",
+        ] {
+            assert!(with_hosts(vec![host.into()]).is_err(), "{host}");
+        }
+    }
+
     #[test]
     fn rejects_private_special_and_ipv4_embedded_addresses() {
         for address in [
