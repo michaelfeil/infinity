@@ -328,6 +328,9 @@ impl CandleBackend {
             .map_err(|error| BackendError::Start(error.to_string()))?;
         if metadata["model_type"] == "bidirectional_pplx_qwen3" {
             metadata["use_bidirectional_attention"] = true.into();
+            if !metadata["rope_theta"].is_number() {
+                metadata["rope_theta"] = metadata["rope_parameters"]["rope_theta"].clone();
+            }
         }
         let config_json = metadata.to_string();
         let config: Config = serde_json::from_str(&config_json)

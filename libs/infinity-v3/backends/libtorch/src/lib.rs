@@ -600,6 +600,9 @@ impl LibtorchBackend {
         options["model_type"] = normalized_family.clone().into();
         if family == "bidirectional_pplx_qwen3" {
             options["use_bidirectional_attention"] = true.into();
+            if !options["rope_theta"].is_number() {
+                options["rope_theta"] = options["rope_parameters"]["rope_theta"].clone();
+            }
             options["is_causal"] = false.into();
         }
         if enable_fp8_dynamic {
