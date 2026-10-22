@@ -228,7 +228,7 @@ class Qwen35 final : public Model {
     auto unfolded=radix_unfold_qkv(q,k,v,input);
     q=unfolded[0];k=unfolded[1];v=unfolded[2];
     auto mode=cfg.string("_decision_attention_mode",cfg.string("decision_attention_mode","causal"));
-    auto causal=mode!="noncausal_full_attention" && !cfg.boolean("use_bidirectional_attention",false) && cfg.boolean(key("is_causal"),true);
+    auto causal=mode!="noncausal_full_attention" && !cfg.boolean("use_bidirectional_attention",false);
     const bool reference=integer("num_experts",0)>0 && device.is_cuda() && dtype==at::kBFloat16;
     at::Tensor attention;
     if(cache) {
@@ -614,7 +614,7 @@ class Qwen35 final : public Model {
   bool prefix_checkpoint_only() const override {return true;}
   bool supports_radix() const override {
     auto mode=cfg.string("_decision_attention_mode",cfg.string("decision_attention_mode","causal"));
-    return !block_attention()&&mode!="noncausal_full_attention" && !cfg.boolean("use_bidirectional_attention",false) && cfg.boolean(key("is_causal"),true);
+    return !block_attention()&&mode!="noncausal_full_attention" && !cfg.boolean("use_bidirectional_attention",false);
   }
   at::Tensor forward(const PackedInput& input) const override {
     if(block_attention())return block_forward(input);

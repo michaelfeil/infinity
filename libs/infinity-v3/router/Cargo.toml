@@ -44,8 +44,6 @@ tracing-opentelemetry = "0.24.0"
 tracing-subscriber = { version = "0.3.16", features = ["json", "env-filter"] }
 veil = "0.1.6"
 uuid = { version = "1", features = ["v4"] }
-safetensors = "0.8"
-memmap2 = "0.9"
 
 # HTTP dependencies
 http-body = { version = "1", optional = true }

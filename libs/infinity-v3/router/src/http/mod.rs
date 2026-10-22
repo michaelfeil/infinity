@@ -10,5 +10,3 @@ pub(crate) mod tensor;
 pub mod types;
 
 pub(crate) mod model_routing;
-
-pub(crate) mod perplexity;

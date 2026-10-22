@@ -303,9 +303,8 @@ void validate_forward_descriptors(Engine& model,const int64_t* ids,const int64_t
  TORCH_CHECK(model.model&&model.dense,"Native model is not ready");
  TORCH_CHECK(!image_count||model.model->supports_images(),"This native model does not yet support images");
  TORCH_CHECK(!audio_count||model.model->supports_audio(),"This native model does not yet support audio");
- const bool token_dense=model.options.boolean("_dense_tokens",false);
- const auto raw_width=pool>=4?model.model->classification_width():token_dense?model.dense->output_width(model.model->output_width()):model.model->output_width();
- const auto pooled_width=pool>=4||token_dense?raw_width:model.dense->output_width(pool==3?model.config.vocab:raw_width);
+ const auto raw_width=pool>=4?model.model->classification_width():model.model->output_width();
+ const auto pooled_width=pool>=4?raw_width:model.dense->output_width(pool==3?model.config.vocab:raw_width);
  const auto expected=tei::expected_output_elements(pooled_count,raw_rows,pooled_width,raw_width);
  TORCH_CHECK(expected<=capacity,"Native output exceeds provided capacity");
  TORCH_CHECK(!deferred||expected==capacity,"Deferred output capacity must exactly match requested output");
@@ -509,10 +508,7 @@ int32_t tei_option(void* handle, const char* key, const char* value) {
 }
 int64_t tei_output_width(void* handle) {
   int64_t width = -1;
-  checked([&] { EngineCall access(handle);const auto& engine=*static_cast<Engine*>(handle);
-    width=engine.model->output_width();
-    if(engine.options.boolean("_dense_tokens",false))width=engine.dense->output_width(width);
-  });
+  checked([&] { EngineCall access(handle);width = static_cast<Engine*>(handle)->model->output_width(); });
   return width;
 }
 int32_t tei_supports_radix(void* handle) {
@@ -684,7 +680,6 @@ static int32_t forward_radix(void* handle, const int64_t* ids, const int64_t* ty
     if(cached||!graph_eligible)model.model->prepare_input(packed);
     auto h = cached ? model.prefix->run(*model.model,packed,operation,graph_eligible?model.graphs.get():nullptr) : graph_eligible ? model.graphs->forward(*model.model, packed, pool >= 4 ? (pool == 5 ? 2 : 1) : 0)
       : pool >= 4 ? model.model->predict(packed, pool == 5) : model.model->forward(packed);
-    if(pool<4&&model.options.boolean("_dense_tokens",false))h=model.dense->forward(h);
     // Project only requested real token spans once. Offsets below preserve
     // caller order, repeated requests and mixed pooled/raw output semantics.
     at::Tensor sparse_scores;
@@ -724,7 +719,7 @@ static int32_t forward_radix(void* handle, const int64_t* ids, const int64_t* ty
       else if (pool == 1) outputs.push_back(model.model->mean_pool(h.narrow(0, start, length)));
       else outputs.push_back(h.narrow(0, start + length - 1, 1));
     }
-    if (pool < 4 && !model.options.boolean("_dense_tokens",false) && !model.dense->empty() && !outputs.empty()) {
+    if (pool < 4 && !model.dense->empty() && !outputs.empty()) {
       auto pooled_output = model.dense->forward(at::cat(outputs, 0));
       outputs.clear();
       outputs.push_back(pooled_output);

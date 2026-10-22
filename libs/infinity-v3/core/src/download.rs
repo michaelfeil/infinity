@@ -90,32 +90,11 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
         } else if serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|config| {
             matches!(
                 config["model_type"].as_str(),
-                Some(
-                    "qwen3_5"
-                        | "qwen3_5_text"
-                        | "qwen3_5_moe"
-                        | "qwen3_5_moe_text"
-                        | "pplx_contextual_qwen3_5"
-                )
+                Some("qwen3_5" | "qwen3_5_text" | "qwen3_5_moe" | "qwen3_5_moe_text")
             ) && config["vision_config"].is_object()
         }) {
             // Text-only Qwen3.5 exports may omit their optional media processor.
             let _ = download_file(api, "processor_config.json").await;
-        }
-    }
-    // Per-token masking belongs to the saved multi-vector export contract.
-    if let Ok(modules) = download_file(api, "modules.json").await {
-        if let Ok(bytes) = std::fs::read(modules) {
-            if let Ok(serde_json::Value::Array(modules)) = serde_json::from_slice(&bytes) {
-                for module in modules {
-                    if module["type"]
-                        == "sentence_transformers.multi_vector_encoder.modules.MultiVectorMask"
-                    {
-                        // Only the supported built-in path is accepted, as in the adapter.
-                        download_file(api, "2_MultiVectorMask/config.json").await?;
-                    }
-                }
-            }
         }
     }
     if download_file(api, "joint_head_config.json").await.is_ok() {

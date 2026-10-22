@@ -106,8 +106,9 @@ impl<T: DeserializeOwned + RequestedModel + Send, S: Send + Sync> FromRequest<S>
         use crate::ModelType;
         let dense_embedding = matches!(&runtime.info.model_type, ModelType::Embedding(model) if model.pooling != "splade");
         let supported = match path.as_str() {
-            "/embed" | "/embed_all" | "/embeddings" | "/v1/embeddings" => dense_embedding,
-            "/similarity" => dense_embedding && runtime.perplexity.is_none(),
+            "/embed" | "/embed_all" | "/similarity" | "/embeddings" | "/v1/embeddings" => {
+                dense_embedding
+            }
             "/embed_sparse" => {
                 matches!(&runtime.info.model_type, ModelType::Embedding(model) if model.pooling == "splade")
             }
@@ -117,10 +118,7 @@ impl<T: DeserializeOwned + RequestedModel + Send, S: Send + Sync> FromRequest<S>
             ),
             "/rerank" => matches!(&runtime.info.model_type, ModelType::Reranker(_)),
             "/v1/systemone" => matches!(&runtime.info.model_type, ModelType::Decision),
-            "/vertex" => {
-                runtime.perplexity.is_none()
-                    && !matches!(&runtime.info.model_type, ModelType::Decision)
-            }
+            "/vertex" => !matches!(&runtime.info.model_type, ModelType::Decision),
             _ => true,
         };
         if !supported {

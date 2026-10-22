@@ -1502,8 +1502,8 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "true",
-            "example": "true",
+            "default": "false",
+            "example": "false",
             "nullable": true
           },
           "truncation_direction": {
@@ -1575,8 +1575,8 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "true",
-            "example": "true",
+            "default": "false",
+            "example": "false",
             "nullable": true
           },
           "truncation_direction": {
@@ -1633,8 +1633,8 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "true",
-            "example": "true",
+            "default": "false",
+            "example": "false",
             "nullable": true
           },
           "truncation_direction": {
@@ -2177,8 +2177,8 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "true",
-            "example": "true",
+            "default": "false",
+            "example": "false",
             "nullable": true
           },
           "truncation_direction": {
@@ -2290,8 +2290,8 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "true",
-            "example": "true",
+            "default": "false",
+            "example": "false",
             "nullable": true
           },
           "truncation_direction": {
@@ -2351,8 +2351,8 @@
           },
           "truncate": {
             "type": "boolean",
-            "default": "true",
-            "example": "true",
+            "default": "false",
+            "example": "false",
             "nullable": true
           },
           "truncation_direction": {

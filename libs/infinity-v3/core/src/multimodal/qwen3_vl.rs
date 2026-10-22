@@ -71,7 +71,7 @@ impl std::fmt::Debug for Qwen3VlProcessor {
 }
 
 struct ProcessorState {
-    chat: Option<ChatProcessor>,
+    chat: ChatProcessor,
     tokenizer: Tokenizer,
     fast_tokenizer: Option<crate::fast_tokenization::FastTokenizer>,
     images: QwenImageProcessor,
@@ -86,29 +86,9 @@ struct ProcessorState {
 impl Qwen3VlProcessor {
     pub fn load(
         root: &Path,
-        tokenizer: Tokenizer,
-        max_tokens: usize,
-        config: MultimodalConfig,
-    ) -> Result<Self> {
-        Self::load_inner(root, tokenizer, max_tokens, config, true)
-    }
-
-    /// Image preprocessing for embedding exports that have no chat template.
-    pub fn load_images(
-        root: &Path,
-        tokenizer: Tokenizer,
-        max_tokens: usize,
-        config: MultimodalConfig,
-    ) -> Result<Self> {
-        Self::load_inner(root, tokenizer, max_tokens, config, false)
-    }
-
-    fn load_inner(
-        root: &Path,
         mut tokenizer: Tokenizer,
         max_tokens: usize,
         config: MultimodalConfig,
-        require_chat: bool,
     ) -> Result<Self> {
         if config.max_images == 0
             || config.max_images > 32
@@ -149,12 +129,9 @@ impl Qwen3VlProcessor {
         tokenizer
             .with_truncation(None)
             .map_err(|e| invalid(e.to_string()))?;
-        let chat = ChatProcessor::load(root).map_err(invalid)?;
-        if require_chat && chat.is_none() {
-            return Err(invalid(
-                "Qwen3-VL requires the checkpoint's native chat template",
-            ));
-        }
+        let chat = ChatProcessor::load(root)
+            .map_err(invalid)?
+            .ok_or_else(|| invalid("Qwen3-VL requires the checkpoint's native chat template"))?;
         let images = QwenImageProcessor::load(root).map_err(invalid)?;
         let budget = MediaBudget::new(config.memory_budget_bytes)?;
         let resolver = MediaResolver::new(
@@ -420,12 +397,7 @@ impl ProcessorState {
         }
         // Qwen3-VL-Embedding pools the terminal token added by its tokenizer's
         // post-processor after the assistant prefix (add_special_tokens=true).
-        let prompt = self
-            .chat
-            .as_ref()
-            .ok_or_else(|| invalid("This image-only processor has no chat template"))?
-            .render_native(&messages, true)
-            .map_err(invalid)?;
+        let prompt = self.chat.render_native(&messages, true).map_err(invalid)?;
         if prompt.chars().count() > self.max_tokens.saturating_mul(250) {
             return Err(invalid("Rendered conversation exceeds the character limit"));
         }

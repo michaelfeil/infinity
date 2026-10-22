@@ -134,8 +134,7 @@ enum Config {
         rename = "qwen3_5_moe",
         alias = "qwen3_5_moe_text",
         alias = "qwen3_5",
-        alias = "qwen3_5_text",
-        alias = "pplx_contextual_qwen3_5"
+        alias = "qwen3_5_text"
     )]
     Qwen35(models::Qwen35Config),
     Roberta(BertConfig),
@@ -149,7 +148,6 @@ pub struct CandleBackend {
     device: Device,
     model: Box<dyn Model + Send>,
     dense_layers: Vec<Box<dyn DenseLayer + Send>>,
-    token_dense: bool,
 }
 
 impl CandleBackend {
@@ -307,13 +305,8 @@ impl CandleBackend {
                 device,
                 model: Box::new(model),
                 dense_layers: vec![],
-                token_dense: false,
             });
         }
-
-        let token_dense = infinity_v3_backend_core::perplexity::Profile::load(model_path)
-            .map_err(BackendError::Start)?
-            .is_some_and(|p| p.late());
 
         // Load config
         let config: String = std::fs::read_to_string(model_path.join("config.json"))
@@ -331,13 +324,10 @@ impl CandleBackend {
                 ));
             }
         }
-        let mut metadata: serde_json::Value =
-            serde_json::from_str(&config).map_err(|e| BackendError::Start(e.to_string()))?;
+        let mut metadata: serde_json::Value = serde_json::from_str(&config)
+            .map_err(|error| BackendError::Start(error.to_string()))?;
         if metadata["model_type"] == "bidirectional_pplx_qwen3" {
             metadata["use_bidirectional_attention"] = true.into();
-            if !metadata["rope_theta"].is_number() {
-                metadata["rope_theta"] = metadata["rope_parameters"]["rope_theta"].clone();
-            }
         }
         let config_json = metadata.to_string();
         let config: Config = serde_json::from_str(&config_json)
@@ -655,7 +645,6 @@ impl CandleBackend {
             device,
             model,
             dense_layers,
-            token_dense,
         })
     }
 }
@@ -790,20 +779,6 @@ impl Backend for CandleBackend {
                 }
                 Some(pooled_embeddings)
             }
-        };
-
-        let raw_embeddings = if self.token_dense {
-            raw_embeddings
-                .map(|mut raw| {
-                    for dense in &self.dense_layers {
-                        raw = dense.forward(&raw)?;
-                    }
-                    Ok::<_, candle::Error>(raw)
-                })
-                .transpose()
-                .e()?
-        } else {
-            raw_embeddings
         };
 
         // Device => Host data transfer

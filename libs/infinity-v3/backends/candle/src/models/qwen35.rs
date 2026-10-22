@@ -83,7 +83,7 @@ impl FullAttention {
             c.head_dim,
         );
         Ok(Self {
-            causal: c.is_causal.unwrap_or(!c.use_bidirectional_attention),
+            causal: true,
             q: linear(vb.pp("q_proj"), h, 2 * n * d)?,
             k: linear(vb.pp("k_proj"), h, k * d)?,
             v: linear(vb.pp("v_proj"), h, k * d)?,
@@ -391,7 +391,7 @@ impl Qwen35Model {
             sin_cache,
             pool,
             device: vb.device().clone(),
-            use_bidirectional_attention: !c.is_causal.unwrap_or(!c.use_bidirectional_attention),
+            use_bidirectional_attention: false,
             span: tracing::span!(tracing::Level::TRACE, "qwen35"),
         })
     }

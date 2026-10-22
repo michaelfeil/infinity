@@ -49,43 +49,6 @@ impl Drop for BatchPreparation<'_> {
 }
 
 impl Infer {
-    /// Submit a model adapter's already validated token/media sequence.
-    pub async fn embed_prepared_all(
-        &self,
-        encoding: crate::tokenization::ValidEncoding,
-        _permit: OwnedSemaphorePermit,
-    ) -> Result<AllEmbeddingsInferResponse, TextEmbeddingsError> {
-        if !matches!(self.backend.model_type, ModelType::Embedding(_)) || self.is_splade() {
-            return Err(TextEmbeddingsError::Validation(
-                "Loaded model does not support token embeddings".into(),
-            ));
-        }
-        let (response_tx, response_rx) = oneshot::channel();
-        self.queue
-            .append(Entry {
-                metadata: Metadata {
-                    input_memory: None,
-                    client_batch: None,
-                    response_tx,
-                    tokenization: Duration::ZERO,
-                    queue_time: Instant::now(),
-                    prompt_tokens: encoding.input_ids.len(),
-                    pooling: false,
-                    token_classification: false,
-                    decision: None,
-                },
-                encoding,
-            })
-            .await;
-        self.notify_batching_task.notify_one();
-        let result = response_rx.await.map_err(|_| BackendError::Unhealthy)??;
-        result.retain_for_request();
-        match result {
-            InferResult::AllEmbedding(output) => Ok(output),
-            _ => Err(BackendError::Inference("Unexpected embedding response".into()).into()),
-        }
-    }
-
     pub async fn decide(
         &self,
         encoding: crate::tokenization::ValidEncoding,

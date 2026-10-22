@@ -20,8 +20,8 @@ exact-length biased attention without padded token activations.
 | Mistral3 / Ministral 3 multimodal | Pixtral vision, 2D rotary positions, spatial patch merger/projector, packed Ministral text |
 | Mistral3ForSequenceClassification (Nemotron 3.5 Rerank) | Mistral3 backbone with a mean-pooled, bias-free score head; query/document chat template |
 | Qwen2 | Packed GQA with projection biases, sequence/token classification heads |
+| Perplexity `pplx-embed-v1-0.6b` / `pplx-embed-v1-4b` | Bidirectional Qwen3, mean pooling; floating-point output only |
 | Qwen3 / Qwen3 MoE | Packed Q/K norm, GQA, dense/routed MLP and optional projection; sequence heads and dense Qwen3 token classification |
-| Perplexity embeddings (all eight v1/v2 exports) | Bidirectional Qwen3/Qwen3.5; dense, chunk-pooled contextual and 128-dimensional token heads |
 | Gemma3 text | Packed local/global attention, Gemma norm semantics |
 | EmbeddingGemma2 | Packed text model, shared KV, PLE, embedding projection and image/audio towers |
 | Gemma4 / Gemma4 unified | Packed text plus image tower implementation |
@@ -47,20 +47,3 @@ isolation. Some Candle model/head combinations cannot execute the corresponding
 packed request, so a direct Candle comparison is unavailable for those cases.
 The latency target remains within 5% of Candle for comparable workloads; this PR
 does not claim that target for every model, checkpoint, precision or GPU.
-
-## Perplexity embeddings
-
-Supports all eight `perplexity-ai/pplx-embed-*` v1/v2 exports with the existing
-Qwen3/Qwen3.5 backends:
-
-- Dense: the standard `/v1/embeddings` and `/embed` paths, returning floating-point embeddings.
-- Contextual: `/v1/contextualizedembeddings`, with nested document chunks:
-  `{"input":[["First chunk","Second chunk"]]}`. Responses preserve document/chunk order.
-- Late interaction: `/v1/embeddings` or `/embed_all`, with `task: "query"` or
-  `"document"` (default), returning normalized 128-dimensional token vectors.
-  V2 also accepts `{"input":{"image_url":"data:image/png;base64,..."}}`.
-
-Launch with `infinity_v3 --model-id perplexity-ai/pplx-embed-v1-0.6b --dtype bfloat16`.
-Int8/binary output quantization is unsupported. Contextual and late-interaction
-inputs beyond model/task limits are rejected. Contextual pooling/projection runs
-on the CPU; backbones and late-interaction projections run on the selected backend.

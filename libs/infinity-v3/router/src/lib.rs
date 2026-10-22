@@ -84,7 +84,6 @@ pub struct ModelRuntime {
     pub checkpoint_id: String,
     pub(crate) named: bool,
     pub backend_kind: infinity_v3_backend::BackendKind,
-    pub(crate) perplexity: Option<std::sync::Arc<http::perplexity::Perplexity>>,
     pub(crate) systemone: Option<std::sync::Arc<http::systemone::SystemOne>>,
 }
 
@@ -290,6 +289,11 @@ async fn initialize_model(
     config.resolve_text_config()?;
     config.resolve_decoder_classifier_labels()?;
     anyhow::ensure!(
+        config.auto_map.as_ref().and_then(|map| map.get("AutoModel")).map(String::as_str)
+            != Some("modeling.PPLXQwen3ContextualModel"),
+        "Perplexity contextual embeddings are unsupported; use pplx-embed-v1-0.6b or pplx-embed-v1-4b"
+    );
+    anyhow::ensure!(
         config.max_position_embeddings > 0,
         "`max_position_embeddings` must be positive"
     );
@@ -317,9 +321,6 @@ async fn initialize_model(
         "This multimodal model uses its native chat template; default prompt overrides are unsupported"
     );
 
-    let perplexity_profile =
-        infinity_v3_backend::perplexity::Profile::load(&model_root).map_err(anyhow::Error::msg)?;
-
     // Set model type from config
     let backend_model_type = if laya || decoder_decision {
         anyhow::ensure!(
@@ -327,12 +328,6 @@ async fn initialize_model(
             "Typed decisions do not use embedding pooling"
         );
         infinity_v3_backend::ModelType::Decision
-    } else if perplexity_profile.is_some() {
-        anyhow::ensure!(
-            pooling.is_none() || pooling == Some(infinity_v3_backend::Pool::Mean),
-            "Perplexity exports require mean pooling; late interaction uses token outputs"
-        );
-        infinity_v3_backend::ModelType::Embedding(infinity_v3_backend::Pool::Mean)
     } else if config.model_type == "qwen3_vl" {
         anyhow::ensure!(
             pooling.is_none() || pooling == Some(infinity_v3_backend::Pool::LastToken),
@@ -421,12 +416,10 @@ async fn initialize_model(
     let mut st_config: Option<STConfig> = None;
     for name in ST_CONFIG_NAMES {
         // New multimodal ST files describe modalities rather than max_seq_length.
-        if perplexity_profile == Some(infinity_v3_backend::perplexity::Profile::LateV2)
-            || matches!(
-                config.model_type.as_str(),
-                "qwen3_vl" | "embedding_gemma2" | "ultrabert"
-            )
-        {
+        if matches!(
+            config.model_type.as_str(),
+            "qwen3_vl" | "embedding_gemma2" | "ultrabert"
+        ) {
             break;
         }
         let config_path = model_root.join(name);
@@ -452,8 +445,6 @@ async fn initialize_model(
         // The checkpoint advertises a larger RoPE range but was trained with
         // an 8192-token shared text/media context.
         config.max_position_embeddings.min(8192)
-    } else if perplexity_profile.is_some() {
-        config.max_position_embeddings.min(max_batch_tokens)
     } else if decoder_decision {
         // Decision prompts cannot be truncated: reject over-budget requests in
         // the formatter, with the queue capacity as the configured input limit.
@@ -531,10 +522,6 @@ async fn initialize_model(
     } else {
         None
     };
-
-    let perplexity_tokenizer = perplexity_profile
-        .filter(|profile| *profile != infinity_v3_backend::perplexity::Profile::Dense)
-        .map(|_| tokenizer.clone());
 
     // Tokenization logic
     let chat = if matches!(
@@ -777,27 +764,6 @@ async fn initialize_model(
         docker_label: option_env!("DOCKER_LABEL"),
     };
 
-    let perplexity =
-        if let Some((profile, tokenizer)) = perplexity_profile.zip(perplexity_tokenizer) {
-            let model_root = model_root.clone();
-            let media_config = multimodal_config.clone();
-            Some(std::sync::Arc::new(
-                tokio::task::spawn_blocking(move || {
-                    http::perplexity::Perplexity::load(
-                        &model_root,
-                        tokenizer,
-                        max_input_length,
-                        profile,
-                        media_config,
-                    )
-                })
-                .await
-                .context("Perplexity initialization worker failed")??,
-            ))
-        } else {
-            None
-        };
-
     let checkpoint_id = info.model_id.clone();
     let named = served_model_name.is_some();
     let mut info = info;
@@ -811,7 +777,6 @@ async fn initialize_model(
         named,
         backend_kind,
         systemone,
-        perplexity,
     })
 }
 
@@ -1085,7 +1050,6 @@ impl ModelConfig {
                 | "qwen3_5_moe_text"
                 | "qwen3_5"
                 | "qwen3_5_text"
-                | "pplx_contextual_qwen3_5"
                 | "qwen3_vl"
                 | "mistral3"
         ) {
@@ -1098,11 +1062,7 @@ impl ModelConfig {
             }
             if matches!(
                 self.model_type.as_str(),
-                "qwen3_5_moe"
-                    | "qwen3_5_moe_text"
-                    | "qwen3_5"
-                    | "qwen3_5_text"
-                    | "pplx_contextual_qwen3_5"
+                "qwen3_5_moe" | "qwen3_5_moe_text" | "qwen3_5" | "qwen3_5_text"
             ) && self.dtype.is_none()
                 && self.torch_dtype.is_none()
             {
@@ -1421,42 +1381,40 @@ mod libtorch_auto_dtype_tests {
 
     #[test]
     fn bf16_checkpoint_auto_dtype_survives_root_and_nested_configs() {
-        for model_type in ["qwen3_5_moe", "pplx_contextual_qwen3_5"] {
-            for field in ["dtype", "torch_dtype"] {
-                for nested in [false, true] {
-                    let mut value = serde_json::json!({
-                        "model_type": model_type,
-                        "max_position_embeddings": 2048,
-                        "text_config": {"max_position_embeddings": 2048}
-                    });
-                    if nested {
-                        value["text_config"][field] = "bfloat16".into();
-                    } else {
-                        value[field] = "bfloat16".into();
-                    }
-                    let mut config: ModelConfig = serde_json::from_value(value).unwrap();
-                    config.resolve_text_config().unwrap();
-                    let declared = config.dtype.as_deref().or(config.torch_dtype.as_deref());
-                    for requested in [None, Some(DType::Auto)] {
-                        assert_eq!(
-                            resolve_libtorch_dtype(requested, declared, &config.model_type, false),
-                            DType::Bfloat16
-                        );
-                    }
+        for field in ["dtype", "torch_dtype"] {
+            for nested in [false, true] {
+                let mut value = serde_json::json!({
+                    "model_type": "qwen3_5_moe",
+                    "max_position_embeddings": 2048,
+                    "text_config": {"max_position_embeddings": 2048}
+                });
+                if nested {
+                    value["text_config"][field] = "bfloat16".into();
+                } else {
+                    value[field] = "bfloat16".into();
+                }
+                let mut config: ModelConfig = serde_json::from_value(value).unwrap();
+                config.resolve_text_config().unwrap();
+                let declared = config.dtype.as_deref().or(config.torch_dtype.as_deref());
+                for requested in [None, Some(DType::Auto)] {
                     assert_eq!(
-                        resolve_libtorch_dtype(None, declared, &config.model_type, true),
-                        DType::Float32
-                    );
-                    assert_eq!(
-                        resolve_libtorch_dtype(
-                            Some(DType::Float16),
-                            declared,
-                            &config.model_type,
-                            false
-                        ),
-                        DType::Float16
+                        resolve_libtorch_dtype(requested, declared, &config.model_type, false),
+                        DType::Bfloat16
                     );
                 }
+                assert_eq!(
+                    resolve_libtorch_dtype(None, declared, &config.model_type, true),
+                    DType::Float32
+                );
+                assert_eq!(
+                    resolve_libtorch_dtype(
+                        Some(DType::Float16),
+                        declared,
+                        &config.model_type,
+                        false
+                    ),
+                    DType::Float16
+                );
             }
         }
     }
