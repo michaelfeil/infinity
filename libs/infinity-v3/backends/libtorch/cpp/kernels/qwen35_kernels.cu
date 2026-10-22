@@ -646,41 +646,59 @@ __global__ void packed_cached_conv(const __nv_bfloat16* x,const __nv_bfloat16* w
 
 // SPDX-License-Identifier: MIT
 // Adapted from Candle qwen35_gdn_recurrent above; snapshot the complete prefix state.
+__device__ float gdn_sum16(float first,float second) {
+    // Merge original lanes x and x+16 before the unchanged remaining tree.
+    float sum=first+second;
+    for(int d=8;d;d>>=1)sum+=__shfl_down_sync(0xffffffff,sum,d,16);
+    return __shfl_sync(0xffffffff,sum,0,16);
+}
 extern "C" __global__ void qwen35_gdn_cached(const __nv_bfloat16 *qkv, const float *qk,
                                                 const float *decay_beta, const uint32_t *cu,
                                                 __nv_bfloat16 *out, int kh, int vh, const float* initial, float* final_state,
                                                 const int64_t* sources) {
-    const int seq = blockIdx.x, head = blockIdx.y, col = blockIdx.z * 8 + threadIdx.x / 32,
-              lane = threadIdx.x % 32;
+    const int seq = blockIdx.x, head = blockIdx.y, col = blockIdx.z * 32 + threadIdx.x / 16,
+              lane = threadIdx.x % 16;
     const int qhead = head / (vh / kh), channels = (2 * kh + vh) * 128;
-    // One warp owns one state column. Four FP32 entries per lane, no state in HBM.
-    float state[4] = {0, 0, 0, 0};
+    // Two columns per warp; split accumulators preserve the original 32-lane tree.
+    float state[8] = {};
     const auto source=initial?sources[seq]:seq;
-    if(initial) for(int i=0;i<4;++i) state[i]=initial[((source*vh+head)*128+lane+i*32)*128+col];
-    for (uint32_t t = cu[seq]; t < cu[seq + 1]; ++t) {
-        float decay = decay_beta[uint64_t(t) * 2 * vh + head],
-              beta = decay_beta[uint64_t(t) * 2 * vh + vh + head];
-        float q[4], k[4], memory = 0;
+    if(initial) for(int i=0;i<8;++i) state[i]=initial[((source*vh+head)*128+lane+i*16)*128+col];
+    constexpr int tile=16;
+    __shared__ float queries_keys[tile][256],gates[tile][2];
+    __shared__ __nv_bfloat16 values[tile][32],outputs[tile][32];
+    const uint32_t begin=cu[seq],end=cu[seq+1];
+    for(uint32_t start=begin;start<end;start+=tile) {
+      const int count=min(uint32_t(tile),end-start);
+      __syncthreads();
+      // Cooperatively stage each head once for all 32 state columns.
+      for(int i=threadIdx.x;i<count*256;i+=blockDim.x)
+        queries_keys[i/256][i%256]=qk[(uint64_t(start+i/256)*kh+qhead)*256+i%256];
+      for(int i=threadIdx.x;i<count*2;i+=blockDim.x)
+        gates[i/2][i%2]=decay_beta[uint64_t(start+i/2)*2*vh+head+(i%2)*vh];
+      for(int i=threadIdx.x;i<count*32;i+=blockDim.x)
+        values[i/32][i%32]=qkv[uint64_t(start+i/32)*channels+2*kh*128+head*128+blockIdx.z*32+i%32];
+      __syncthreads();
+#pragma unroll 2
+      for(int row=0;row<count;++row) {
+        float decay=gates[row][0],beta=gates[row][1];
+        float q[8],k[8],memory[2]={};
 #pragma unroll
-        for (int i = 0; i < 4; ++i) {
-            q[i] = qk[(uint64_t(t) * kh + qhead) * 256 + lane + i * 32];
-            k[i] = qk[(uint64_t(t) * kh + qhead) * 256 + 128 + lane + i * 32];
-            state[i] *= decay;
-            memory += state[i] * k[i];
+        for(int i=0;i<8;++i) {
+          q[i]=queries_keys[row][lane+i*16];k[i]=queries_keys[row][128+lane+i*16];
+          state[i]*=decay;memory[i%2]+=state[i]*k[i];
         }
-        memory = gdn_sum(memory);
-        float v = __bfloat162float(qkv[uint64_t(t) * channels + 2 * kh * 128 + head * 128 + col]);
-        float delta = (v - memory) * beta, sum = 0;
+        const float remembered=gdn_sum16(memory[0],memory[1]);
+        float delta=(__bfloat162float(values[row][threadIdx.x/16])-remembered)*beta,sum[2]={};
 #pragma unroll
-        for (int i = 0; i < 4; ++i) {
-            state[i] += k[i] * delta;
-            sum += state[i] * q[i];
-        }
-        sum = gdn_sum(sum);
-        if (lane == 0)
-            out[(uint64_t(t) * vh + head) * 128 + col] = __float2bfloat16_rn(sum);
+        for(int i=0;i<8;++i){state[i]+=k[i]*delta;sum[i%2]+=state[i]*q[i];}
+        const float value=gdn_sum16(sum[0],sum[1]);
+        if(lane==0)outputs[row][threadIdx.x/16]=__float2bfloat16_rn(value);
+      }
+      __syncthreads();
+      for(int i=threadIdx.x;i<count*32;i+=blockDim.x)
+        out[(uint64_t(start+i/32)*vh+head)*128+blockIdx.z*32+i%32]=outputs[i/32][i%32];
     }
-    if(final_state) for(int i=0;i<4;++i) final_state[((int64_t(seq)*vh+head)*128+lane+i*32)*128+col]=state[i];
+    if(final_state) for(int i=0;i<8;++i) final_state[((int64_t(seq)*vh+head)*128+lane+i*16)*128+col]=state[i];
 }
 
 at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
@@ -734,7 +752,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
     qwen35_chunk_delta_cuda(convolution,qk,decay,input,recurrence,key_heads,value_heads,initial,final_state);
   } else if(initial.defined()||final_state) {
     if(final_state)*final_state=at::empty({input.batch,value_heads,128,128},qkv.options().dtype(at::kFloat));
-    qwen35_gdn_cached<<<dim3(input.batch,value_heads,16),256,0,stream>>>(bf(convolution),qk.const_data_ptr<float>(),decay.const_data_ptr<float>(),cu,mut(recurrence),key_heads,value_heads,initial.defined()?initial.const_data_ptr<float>():nullptr,final_state?final_state->mutable_data_ptr<float>():nullptr,
+    qwen35_gdn_cached<<<dim3(input.batch,value_heads,4),512,0,stream>>>(bf(convolution),qk.const_data_ptr<float>(),decay.const_data_ptr<float>(),cu,mut(recurrence),key_heads,value_heads,initial.defined()?initial.const_data_ptr<float>():nullptr,final_state?final_state->mutable_data_ptr<float>():nullptr,
       initial.defined()?input.block_cache_sources.const_data_ptr<int64_t>():nullptr);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   } else if(qwen35_recurrent_supported(qkv.device(),key_heads,value_heads))
