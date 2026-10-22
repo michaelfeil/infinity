@@ -48,25 +48,55 @@ DEALINGS IN THE SOFTWARE.
 
 namespace tei {
 namespace {
-__global__ void norm_tree(const __nv_bfloat16* x,const __nv_bfloat16* gamma,__nv_bfloat16* out,long rows,long width,long heads,long stride0,long stride1,float eps) {
+// Each thread owns V adjacent logical lanes; preserve the original reduction tree.
+template<int V> struct alignas(V*2) NormValues { __nv_bfloat16 values[V]; };
+template<int V>
+__global__ void norm_tree(const __nv_bfloat16* x,const __nv_bfloat16* gamma,__nv_bfloat16* out,int rows,int width,int heads,long stride0,long stride1,float eps) {
   __shared__ float sums[1024];
-  long row=blockIdx.x,tid=threadIdx.x;
-  long base=(row/heads)*stride0+(row%heads)*stride1;
-  float sum=0.f;
-  for(long d=tid;d<width;d+=blockDim.x){float z=__bfloat162float(x[base+d]);sum=__fadd_rn(sum,__fmul_rn(z,z));}
-  sums[tid]=sum;
-  for(int s=blockDim.x/2;s>=32;s>>=1){__syncthreads();if(tid<s)sums[tid]=__fadd_rn(sums[tid],sums[tid+s]);}
-  if(tid<32) {
-    float value=sums[tid];
-    const unsigned mask=__activemask();
-    for(int s=min(int(blockDim.x)/2,16);s;s>>=1)
-      value=__fadd_rn(value,__shfl_down_sync(mask,value,s));
-    if(!tid)sums[0]=value;
+  int row=blockIdx.x,tid=threadIdx.x*V,threads=blockDim.x*V;
+  long base=int64_t(row/heads)*stride0+(row%heads)*stride1;
+  float sum[V]={};
+  for(int d=tid;d<width;d+=threads) {
+    auto values=*reinterpret_cast<const NormValues<V>*>(x+base+d);
+#pragma unroll
+    for(int j=0;j<V;++j) {float z=__bfloat162float(values.values[j]);sum[j]=__fadd_rn(sum[j],__fmul_rn(z,z));}
   }
-  __syncthreads();
-  float mean=__fmul_rn(sums[0],1.f/width);
-  float inv=__fdiv_rn(1.f,__fsqrt_rn(__fadd_rn(mean,eps)));
-  for(long d=tid;d<width;d+=blockDim.x){float z=__bfloat162float(x[base+d]);float weight=__fadd_rn(__bfloat162float(gamma[d]),1.f);out[row*width+d]=__float2bfloat16_rn(__fmul_rn(__fmul_rn(z,inv),weight));}
+#pragma unroll
+  for(int j=0;j<V;++j)sums[tid+j]=sum[j];
+  for(int s=threads/2;s>=32;s>>=1){
+    __syncthreads();
+#pragma unroll
+    for(int j=0;j<V;++j)if(tid+j<s)sums[tid+j]=__fadd_rn(sums[tid+j],sums[tid+j+s]);
+  }
+  if(tid<32) {
+    float value[V];
+#pragma unroll
+    for(int j=0;j<V;++j)value[j]=sums[tid+j];
+    const unsigned mask=__activemask();
+    for(int s=min(threads/2,16);s>=V;s>>=1)
+#pragma unroll
+      for(int j=0;j<V;++j)value[j]=__fadd_rn(value[j],__shfl_down_sync(mask,value[j],s/V));
+#pragma unroll
+    for(int s=V/2;s;s>>=1)
+#pragma unroll
+      for(int j=0;j<s;++j)value[j]=__fadd_rn(value[j],value[j+s]);
+    if(!tid) {
+      float mean=__fmul_rn(value[0],1.f/width);
+      sums[0]=__fdiv_rn(1.f,__fsqrt_rn(__fadd_rn(mean,eps)));
+    }
+  }
+  __syncthreads();float inv=sums[0];
+  for(int d=tid;d<width;d+=threads) {
+    auto values=*reinterpret_cast<const NormValues<V>*>(x+base+d);
+    auto weights=*reinterpret_cast<const NormValues<V>*>(gamma+d);
+    NormValues<V> result;
+#pragma unroll
+    for(int j=0;j<V;++j) {
+      float z=__bfloat162float(values.values[j]),weight=__fadd_rn(__bfloat162float(weights.values[j]),1.f);
+      result.values[j]=__float2bfloat16_rn(__fmul_rn(__fmul_rn(z,inv),weight));
+    }
+    *reinterpret_cast<NormValues<V>*>(out+int64_t(row)*width+d)=result;
+  }
 }
 }
 at::Tensor qwen35_reference_norm_cuda(const at::Tensor& x,const at::Tensor& gamma,double eps){
@@ -78,7 +108,10 @@ at::Tensor qwen35_reference_norm_cuda(const at::Tensor& x,const at::Tensor& gamm
   TORCH_CHECK(rows>0 && rows<=INT32_MAX);
   int threads=1;while(threads<width && threads<1024)threads*=2;
   c10::cuda::CUDAGuard guard(x.device());auto out=at::empty(x.sizes(),x.options());
-  norm_tree<<<rows,threads,0,at::cuda::getCurrentCUDAStream()>>>(reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),reinterpret_cast<const __nv_bfloat16*>(gamma.const_data_ptr()),reinterpret_cast<__nv_bfloat16*>(out.mutable_data_ptr()),rows,width,heads,x.stride(0),x.dim()==3?x.stride(1):0,static_cast<float>(eps));
+  bool vector=width%4==0 && x.stride(0)%4==0 && (x.dim()==2||x.stride(1)%4==0) &&
+    (reinterpret_cast<uintptr_t>(x.const_data_ptr())%8==0) && (reinterpret_cast<uintptr_t>(gamma.const_data_ptr())%8==0);
+  if(vector)norm_tree<4><<<rows,threads/4,0,at::cuda::getCurrentCUDAStream()>>>(reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),reinterpret_cast<const __nv_bfloat16*>(gamma.const_data_ptr()),reinterpret_cast<__nv_bfloat16*>(out.mutable_data_ptr()),rows,width,heads,x.stride(0),x.dim()==3?x.stride(1):0,static_cast<float>(eps));
+  else norm_tree<1><<<rows,threads,0,at::cuda::getCurrentCUDAStream()>>>(reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),reinterpret_cast<const __nv_bfloat16*>(gamma.const_data_ptr()),reinterpret_cast<__nv_bfloat16*>(out.mutable_data_ptr()),rows,width,heads,x.stride(0),x.dim()==3?x.stride(1):0,static_cast<float>(eps));
   C10_CUDA_KERNEL_LAUNCH_CHECK();return out;
 }
 

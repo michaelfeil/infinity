@@ -153,12 +153,15 @@ at::Tensor independent_norm(const at::Tensor& x,const at::Tensor& gamma,float ep
 
 int main(int argc,char** argv) {
   c10::Device device(argc>1?argv[1]:"cuda:0");at::manual_seed(717);
-  for(int width:{1,7,32,33,256,384,2048,4096,5120,8192})for(bool strided:{false,true}) {
-    auto base=(at::randn({2,3,width*(strided?2:1)})*3).to(at::kBFloat16);
+  for(int width:{1,4,7,8,16,32,33,64,128,256,384,1024,2048,4096,5120,8192})for(int layout:{0,1,2}) {
+    bool strided=layout==1;int offset=layout==2;
+    auto base=(at::randn({2,3,width*(strided?2:1)+offset})*3).to(at::kBFloat16);
     if(strided)base.narrow(-1,width,width).fill_(NAN);
-    auto x=base.narrow(-1,0,width),gamma=(at::randn({width})*.2).to(at::kBFloat16);
-    auto cuda_base=base.to(device),cuda_x=cuda_base.narrow(-1,0,width);
-    auto actual=tei::qwen35_reference_norm_cuda(cuda_x,gamma.to(device),1e-6).cpu();
+    auto x=base.narrow(-1,offset,width),gamma=(at::randn({width+offset})*.2).to(at::kBFloat16).narrow(0,offset,width);
+    auto cuda_base=base.to(device),cuda_x=cuda_base.narrow(-1,offset,width);
+    auto cuda_gamma=at::zeros({width+offset},gamma.options().device(device)).narrow(0,offset,width);
+    cuda_gamma.copy_(gamma);
+    auto actual=tei::qwen35_reference_norm_cuda(cuda_x,cuda_gamma,1e-6).cpu();
     TORCH_CHECK(at::equal(actual,independent_norm(x,gamma,1e-6)),"Independent original binary-tree norm oracle failed width=",width," strided=",strided);
   }
   auto rejects=[&](const at::Tensor& x,const at::Tensor& gamma) {
