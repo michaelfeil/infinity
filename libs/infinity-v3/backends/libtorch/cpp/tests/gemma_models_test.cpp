@@ -30,6 +30,12 @@ void batched_vision_test(Model& model,const PackedInput& input) {
     TORCH_CHECK(at::allclose(batch.images[i].prepared_features,single.images[0].prepared_features,.015,.015),
       "Batched Gemma vision leaked between differently sized images or reused stale cache features");
   }
+  batch.images[1].token_start=3;
+  batch.images[2].token_start=5;batch.images[2].sequence_start=5;
+  batch.images[3].token_start=6;batch.images[3].sequence_start=5;
+  auto expected=model.forward(batch);auto partial=batch;
+  partial.images[1].prepared_features=at::Tensor();partial.images[3].prepared_features=at::Tensor();
+  TORCH_CHECK(at::allclose(model.forward(partial),expected,.015,.015),"Direct Gemma image batching changed prepared/unprepared feature placement");
   auto again=batch;model.prepare_input(again);
   TORCH_CHECK(again.images[2].prepared_features.const_data_ptr()==batch.images[2].prepared_features.const_data_ptr(),
     "Batched Gemma feature cache hit recomputed features");

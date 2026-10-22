@@ -1,3 +1,4 @@
+#include "helpers/vision_batch.h"
 #include "helpers/attention.h"
 // Native adaptations of backends/candle/src/models/{gemma3,gemma4,embedding_gemma2}.rs.
 // Upstream Apache-2.0 notices remain in LICENSE and NOTICE.
@@ -369,6 +370,15 @@ class Gemma final : public Model {
     auto nk=cfg.integer("vision_config.num_key_value_heads",nh),dim=cfg.integer("vision_config.head_dim",vh/(nh?nh:1));
     auto nlayer=cfg.integer("vision_config.num_hidden_layers");
     auto eps=cfg.real("vision_config.rms_norm_eps",1e-6);
+    auto batches=vision_batches(images,device,vh,cfg.integer("vision_config.intermediate_size",vh*4));
+    if(batches.size()>1) {
+      std::vector<at::Tensor> features;
+      for(auto [start,end]:batches) {
+        auto part=vision(std::vector<ImageInput>(images.begin()+start,images.begin()+end));
+        features.insert(features.end(),part.begin(),part.end());
+      }
+      return features;
+    }
     TORCH_CHECK(vh>0 && nh>0 && nk>0 && nh%nk==0 && dim>0 && dim%4==0 && nlayer>0,"Invalid Gemma vision geometry");
     TORCH_CHECK(!cfg.boolean("vision_config.use_clipped_linears",false),"Clipped Gemma vision linears unsupported");
     auto root=weights.count("model.vision_tower.patch_embedder.input_proj.weight")?std::string("model."):std::string();
