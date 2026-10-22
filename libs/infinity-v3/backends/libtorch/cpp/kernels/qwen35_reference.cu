@@ -55,7 +55,14 @@ __global__ void norm_tree(const __nv_bfloat16* x,const __nv_bfloat16* gamma,__nv
   float sum=0.f;
   for(long d=tid;d<width;d+=blockDim.x){float z=__bfloat162float(x[base+d]);sum=__fadd_rn(sum,__fmul_rn(z,z));}
   sums[tid]=sum;
-  for(int s=blockDim.x/2;s;s>>=1){__syncthreads();if(tid<s)sums[tid]=__fadd_rn(sums[tid],sums[tid+s]);}
+  for(int s=blockDim.x/2;s>=32;s>>=1){__syncthreads();if(tid<s)sums[tid]=__fadd_rn(sums[tid],sums[tid+s]);}
+  if(tid<32) {
+    float value=sums[tid];
+    const unsigned mask=__activemask();
+    for(int s=min(int(blockDim.x)/2,16);s;s>>=1)
+      value=__fadd_rn(value,__shfl_down_sync(mask,value,s));
+    if(!tid)sums[0]=value;
+  }
   __syncthreads();
   float mean=__fmul_rn(sums[0],1.f/width);
   float inv=__fdiv_rn(1.f,__fsqrt_rn(__fadd_rn(mean,eps)));

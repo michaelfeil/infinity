@@ -220,9 +220,17 @@ class Qwen35 final : public Model {
   }
   using AttentionProjections=std::array<at::Tensor,3>;
   AttentionProjections project_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,bool linear) const {
-    if(linear)return {prefix_projection(x,p+"in_proj_qkv",input).contiguous(),prefix_projection(x,p+"in_proj_z",input).contiguous(),
-      at::cat({prefix_projection(x,p+"in_proj_a",input),prefix_projection(x,p+"in_proj_b",input)},-1).contiguous()};
-    return {prefix_projection(x,p+"q_proj",input),prefix_projection(x,p+"k_proj",input),prefix_projection(x,p+"v_proj",input)};
+    std::pair<at::Tensor,at::Tensor> quantized;
+    auto project=[&](const std::string& name) {
+      if(auto it=fp8_projections.find(name);it!=fp8_projections.end()) {
+        if(!quantized.first.defined())quantized=fp8_quantize_rows(x.contiguous());
+        return it->second->forward_quantized(quantized.first,quantized.second);
+      }
+      return prefix_projection(x,name,input);
+    };
+    if(linear)return {project(p+"in_proj_qkv").contiguous(),project(p+"in_proj_z").contiguous(),
+      at::cat({project(p+"in_proj_a"),project(p+"in_proj_b")},-1).contiguous()};
+    return {project(p+"q_proj"),project(p+"k_proj"),project(p+"v_proj")};
   }
   at::Tensor full_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false,int64_t cache_layer=-1,const AttentionProjections* projected=nullptr) const {
     auto projections=projected?*projected:project_attention(x,p,input,false);

@@ -145,9 +145,9 @@ int main() {
     }
     auto empty=linear.forward(at::empty({0,256},options));
     TORCH_CHECK(empty.sizes()==at::IntArrayRef({0,512}),"FP8 empty rows not preserved");
-    for(int64_t offset:{0,1}) {
-      auto storage=at::randn({17*4096+offset},options)*3;
-      auto x=storage.narrow(0,offset,17*4096).view({17,4096});
+    for(int64_t width:{4096,4104,5120,6144,6152})for(int64_t offset:{0,1}) {
+      auto storage=at::randn({17*width+offset},options)*3;
+      auto x=storage.narrow(0,offset,17*width).view({17,width});
       x.select(0,0).zero_();x.select(0,1).fill_(1e-14);
       auto q=tei::fp8_quantize_rows(x);
       auto cpu=x.to(at::kCPU).to(at::kFloat);
