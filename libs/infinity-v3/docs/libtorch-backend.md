@@ -614,7 +614,7 @@ messages inside `state`; question instructions remain text/structured content:
 ```
 
 Replace `<PNG_BYTES>` with base64-encoded PNG content. Inline data URLs work
-without a hostname allowlist. AWS S3, GCS, Azure Blob, and R2 HTTPS media URLs
+without a hostname allowlist. Supported cloud object-storage HTTPS media URLs
 are allowed by default; `--image-allowed-hosts` replaces the list (empty disables
 remote media). Input truncation defaults on; opt out with `--auto-truncate=false`.
 Image spans expand before the block boundary is
