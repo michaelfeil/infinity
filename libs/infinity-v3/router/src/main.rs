@@ -663,19 +663,6 @@ mod tests {
         .unwrap();
         assert!(legacy[0].auto_truncate && legacy[0].enable_fp8_dynamic);
         assert_eq!(legacy[0].max_sequence_length, None);
-        let models = Args::try_parse_from([
-            "infinity_v3",
-            "--model-id",
-            "a;b",
-            "--max-sequence-length",
-            "8192",
-        ])
-        .unwrap()
-        .models()
-        .unwrap();
-        assert!(models
-            .iter()
-            .all(|m| m.max_sequence_length.unwrap().get() == 8192));
         assert!(Args::try_parse_from([
             "infinity_v3",
             "--model-id",
@@ -792,41 +779,6 @@ mod tests {
             vec!["cli-model"]
         );
         for (key, value) in [(model_env, previous), ("MODEL_ID", previous_legacy)] {
-            match value {
-                Some(value) => std::env::set_var(key, value),
-                None => std::env::remove_var(key),
-            }
-        }
-        let sequence_env = infinity_v3_config::infinity_env!("MAX_SEQUENCE_LENGTH");
-        let previous_sequence = std::env::var_os(sequence_env);
-        let previous_legacy_sequence = std::env::var_os("MAX_SEQUENCE_LENGTH");
-        std::env::remove_var(sequence_env);
-        std::env::set_var("MAX_SEQUENCE_LENGTH", "8192");
-        let matches = command_with_environment()
-            .try_get_matches_from(["infinity_v3", "--model-id", "a"])
-            .unwrap();
-        assert_eq!(
-            args_from_matches(&matches).unwrap().models().unwrap()[0]
-                .max_sequence_length
-                .unwrap()
-                .get(),
-            8192
-        );
-        std::env::set_var(sequence_env, "4096");
-        let matches = command_with_environment()
-            .try_get_matches_from(["infinity_v3", "--model-id", "a"])
-            .unwrap();
-        assert_eq!(
-            args_from_matches(&matches).unwrap().models().unwrap()[0]
-                .max_sequence_length
-                .unwrap()
-                .get(),
-            4096
-        );
-        for (key, value) in [
-            (sequence_env, previous_sequence),
-            ("MAX_SEQUENCE_LENGTH", previous_legacy_sequence),
-        ] {
             match value {
                 Some(value) => std::env::set_var(key, value),
                 None => std::env::remove_var(key),

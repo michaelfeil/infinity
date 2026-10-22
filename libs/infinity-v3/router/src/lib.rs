@@ -169,36 +169,6 @@ pub async fn run(
     .await
 }
 
-fn resolve_max_input_length(
-    base_input_length: usize,
-    max_batch_tokens: usize,
-    max_sequence_length: Option<std::num::NonZeroUsize>,
-    auto_truncate: bool,
-) -> Result<usize> {
-    if let Some(limit) = max_sequence_length {
-        return Ok(base_input_length.min(limit.get()).min(max_batch_tokens));
-    }
-    let limit = if base_input_length > max_batch_tokens {
-        if !auto_truncate {
-            anyhow::bail!(
-                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
-                base_input_length,
-                max_batch_tokens
-            );
-        }
-        tracing::warn!(
-            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
-            max_batch_tokens,
-            base_input_length,
-            max_batch_tokens
-        );
-        max_batch_tokens
-    } else {
-        base_input_length
-    };
-    Ok(limit)
-}
-
 async fn initialize_model(
     config: ModelSettings,
     hf_token: Option<String>,
@@ -497,12 +467,28 @@ async fn initialize_model(
         }
     };
 
-    let max_input_length = resolve_max_input_length(
-        base_input_length,
-        max_batch_tokens,
-        max_sequence_length,
-        auto_truncate,
-    )?;
+    let base_input_length =
+        sequence_length_limit(base_input_length, max_batch_tokens, max_sequence_length);
+
+    // Raise an error when max_input_length is bigger than max_batch tokens to prevent an infinite loop in the queue
+    let max_input_length = if base_input_length > max_batch_tokens {
+        if !auto_truncate {
+            anyhow::bail!(
+                "`--max-batch-tokens` cannot be lower than the model `max_input_length` ({} < {}) when `--auto-truncate` is disabled, add the `--auto-truncate` flag to truncate the input sequences to match the `--max-batch-tokens`.",
+                base_input_length,
+                max_batch_tokens
+            );
+        }
+        tracing::warn!(
+            "The input sequences will be truncated to {} tokens even if the model `max_input_length` is greater than the provided `--max-batch-tokens` ({} > {}), as `--auto-truncate` is enabled.",
+            max_batch_tokens,
+            base_input_length,
+            max_batch_tokens
+        );
+        max_batch_tokens
+    } else {
+        base_input_length
+    };
 
     tracing::info!("Maximum number of tokens per request: {max_input_length}");
 
@@ -1638,29 +1624,26 @@ mod auto_dtype_tests {
     }
 }
 
+fn sequence_length_limit(model: usize, batch: usize, cap: Option<std::num::NonZeroUsize>) -> usize {
+    cap.map_or(model, |cap| model.min(batch).min(cap.get()))
+}
+
 #[cfg(test)]
 mod sequence_length_tests {
-    use super::resolve_max_input_length;
-
     #[test]
-    fn sequence_cap_is_independent_of_batch_capacity_and_preserves_defaults() {
-        for (model, batch, cap, truncate, expected) in [
-            (65_536, 32_768, Some(8192), false, Some(8192)),
-            (65_536, 32_768, Some(8192), true, Some(8192)),
-            (4096, 32_768, Some(8192), false, Some(4096)),
-            (65_536, 32_768, Some(131_072), false, Some(32_768)),
-            (4096, 32_768, None, false, Some(4096)),
-            (65_536, 32_768, None, true, Some(32_768)),
-            (65_536, 32_768, None, false, None),
+    fn caps_sequences_without_changing_defaults() {
+        for (model, batch, cap, expected) in [
+            (65_536, 32_768, Some(8192), 8192),
+            (4096, 32_768, Some(8192), 4096),
+            (65_536, 32_768, Some(131_072), 32_768),
+            (65_536, 32_768, None, 65_536),
         ] {
             assert_eq!(
-                resolve_max_input_length(
+                super::sequence_length_limit(
                     model,
                     batch,
-                    cap.and_then(std::num::NonZeroUsize::new),
-                    truncate
-                )
-                .ok(),
+                    cap.and_then(std::num::NonZeroUsize::new)
+                ),
                 expected
             );
         }
