@@ -160,7 +160,7 @@ impl Infer {
             .map_err(|err| {
                 let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "tokenization");
                 counter.increment(1);
-                tracing::error!("{err}");
+                log_request_error(&err);
                 err
             })
     }
@@ -177,7 +177,7 @@ impl Infer {
             .map_err(|err| {
                 let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "tokenization");
                 counter.increment(1);
-                tracing::error!("{err}");
+                log_request_error(&err);
                 err
             })
     }
@@ -191,7 +191,7 @@ impl Infer {
             .map_err(|err| {
                 let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "overloaded");
                 counter.increment(1);
-                tracing::error!("{err}");
+                tracing::warn!("{err}");
                 TextEmbeddingsError::from(err)
             })
     }
@@ -222,7 +222,7 @@ impl Infer {
             let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "model_type");
             counter.increment(1);
             let message = "`embed_all` is not available for SPLADE models".to_string();
-            tracing::error!("{message}");
+            tracing::warn!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
             )));
@@ -277,7 +277,7 @@ impl Infer {
             let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "model_type");
             counter.increment(1);
             let message = "Model is not an embedding model with SPLADE pooling".to_string();
-            tracing::error!("{message}");
+            tracing::warn!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
             )));
@@ -340,7 +340,7 @@ impl Infer {
             counter.increment(1);
 
             let message = "`normalize` is not available for SPLADE models".to_string();
-            tracing::error!("{message}");
+            tracing::warn!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
             )));
@@ -350,7 +350,7 @@ impl Infer {
             if dimensions == 0 {
                 metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "validation").increment(1);
                 let message = "`dimensions` should be positive".to_string();
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
                 return Err(TextEmbeddingsError::Validation(message));
             }
         }
@@ -379,7 +379,7 @@ impl Infer {
                 let message =
                     "`dimensions` should be smaller than the maximum embedding dimension."
                         .to_string();
-                tracing::error!("{message}");
+                tracing::warn!("{message}");
 
                 return Err(TextEmbeddingsError::Validation(message));
             }
@@ -445,7 +445,7 @@ impl Infer {
             let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "model_type");
             counter.increment(1);
             let message = "Model is not an embedding model".to_string();
-            tracing::error!("{message}");
+            tracing::warn!("{message}");
             return Err(TextEmbeddingsError::Backend(BackendError::Inference(
                 message,
             )));
@@ -462,7 +462,7 @@ impl Infer {
             .map_err(|err| {
                 let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "tokenization");
                 counter.increment(1);
-                tracing::error!("{err}");
+                log_request_error(&err);
                 err
             })?;
 
@@ -497,7 +497,8 @@ impl Infer {
             .map_err(|err| {
                 let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "inference");
                 counter.increment(1);
-                tracing::error!("{err}");
+                let err = TextEmbeddingsError::from(err);
+                log_request_error(&err);
                 err
             })?;
 
@@ -541,7 +542,7 @@ impl Infer {
             .map_err(|err| {
                 let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "tokenization");
                 counter.increment(1);
-                tracing::error!("{err}");
+                log_request_error(&err);
                 err
             })?;
 
@@ -576,7 +577,8 @@ impl Infer {
             .map_err(|err| {
                 let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "inference");
                 counter.increment(1);
-                tracing::error!("{err}");
+                let err = TextEmbeddingsError::from(err);
+                log_request_error(&err);
                 err
             })?;
 
@@ -665,7 +667,7 @@ impl Infer {
             .map_err(|err| {
                 let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "tokenization");
                 counter.increment(1);
-                tracing::error!("{err}");
+                log_request_error(&err);
                 err
             })?;
 
@@ -698,7 +700,8 @@ impl Infer {
             .map_err(|err| {
                 let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "inference");
                 counter.increment(1);
-                tracing::error!("{err}");
+                let err = TextEmbeddingsError::from(err);
+                log_request_error(&err);
                 err
             })?;
 
@@ -1105,6 +1108,16 @@ pub struct PooledEmbeddingsInferResponse {
 pub struct AllEmbeddingsInferResponse {
     pub results: Vec<Vec<f32>>,
     pub metadata: InferMetadata,
+}
+
+// Request rejections are expected; backend failures still need operator attention.
+fn log_request_error(error: &TextEmbeddingsError) {
+    if matches!(error, TextEmbeddingsError::Backend(backend) if !matches!(backend, BackendError::Overloaded(_)))
+    {
+        tracing::error!("{error}");
+    } else {
+        tracing::warn!("{error}");
+    }
 }
 
 #[cfg(test)]
