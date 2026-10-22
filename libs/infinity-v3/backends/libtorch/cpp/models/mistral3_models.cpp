@@ -2,6 +2,12 @@
 // See vendor/transformers_pixtral/NOTICE; fork modifications follow repository LICENSE.
 #include "models/mistral3_models.h"
 #include "models/decoder_models.h"
+#include "helpers/attention.h"
+#include "helpers/vision_batch.h"
+#ifdef TEI_TORCH_CUDA_KERNELS
+#include "kernels/fast_kernels.h"
+#include "kernels/transformers_norm.h"
+#endif
 #include <ATen/ops/scaled_dot_product_attention.h>
 #include <cmath>
 #include <algorithm>
@@ -11,10 +17,13 @@ class Mistral3 final : public Model {
   Options cfg; Weights weights; c10::Device device; at::ScalarType dtype;
   std::unique_ptr<Model> text;
   at::Tensor score;
-  bool classifier=false;
+  bool classifier=false,fused_vision=false;
   int64_t hidden,heads,dim,depth,patch,merge,feature_layer;
   const at::Tensor& w(const std::string& name) const {return weight(weights,name);}
   at::Tensor rms(const at::Tensor& x,const at::Tensor& scale,double eps) const {
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if(fused_vision)return transformers_rms_norm(x,{},scale,eps).first;
+#endif
     auto f=x.to(at::kFloat);
     return (f*at::rsqrt(f.square().mean(-1,true)+eps)).to(x.scalar_type())*scale;
   }
@@ -22,46 +31,100 @@ class Mistral3 final : public Model {
     auto it=weights.find(name+".bias");
     return at::linear(x,w(name+".weight"),it==weights.end()?at::Tensor():it->second);
   }
-  at::Tensor vision(const ImageInput& image) const {
-    auto h=image.grid_thw[1],width=image.grid_thw[2];
+  int64_t validate_image(const ImageInput& image) const {
+    const auto h=image.grid_thw[1],width=image.grid_thw[2];
     TORCH_CHECK(image.grid_thw[0]==1&&h>0&&width>0&&h%merge==0&&width%merge==0&&
       image.merge_size==merge,"Invalid Pixtral patch grid");
-    TORCH_CHECK(h<=cfg.integer("vision_config.image_size",1540)/patch&&width<=cfg.integer("vision_config.image_size",1540)/patch,"Pixtral image exceeds its position grid");
-    auto n=h*width;
-    TORCH_CHECK(image.pixels.sizes()==at::IntArrayRef({n,3*patch*patch}),"Invalid Pixtral pixel matrix");
-    auto x=at::linear(image.pixels.to(device,dtype),w("vision_tower.patch_conv.weight").reshape({hidden,-1}));
+    const auto maximum=cfg.integer("vision_config.image_size",1540)/patch;
+    TORCH_CHECK(h<=maximum&&width<=maximum,"Pixtral image exceeds its position grid");
+    TORCH_CHECK(image.pixels.sizes()==at::IntArrayRef({h*width,3*patch*patch}),"Invalid Pixtral pixel matrix");
+    return h*width;
+  }
+  at::Tensor vision(const std::vector<ImageInput>& images) const {
+    auto batches=vision_batches(images,device,hidden,cfg.integer("vision_config.intermediate_size",hidden*4));
+    if(batches.size()>1) {
+      std::vector<at::Tensor> features;
+      for(auto [start,end]:batches)features.push_back(vision(std::vector<ImageInput>(images.begin()+start,images.begin()+end)));
+      return at::cat(features,0);
+    }
+    std::vector<at::Tensor> pixels,cosines,sines;
+    std::vector<int32_t> offsets{0};int64_t maximum=0;
+    const auto theta=cfg.real("vision_config.rope_parameters.rope_theta",cfg.real("vision_config.rope_theta",10000.));
+    for(const auto& image:images) {
+      const auto n=validate_image(image),width=image.grid_thw[2];
+      TORCH_CHECK(n<=INT32_MAX-offsets.back(),"Packed Pixtral patch count exceeds int32");
+      offsets.push_back(offsets.back()+n);maximum=std::max(maximum,n);
+      pixels.push_back(image.pixels.to(device,dtype));
+      auto index=at::arange(n,pixels.back().options().dtype(at::kLong));
+      auto rows=at::floor_divide(index,width).to(at::kFloat).unsqueeze(1);
+      auto cols=index.remainder(width).to(at::kFloat).unsqueeze(1);
+      auto freq=at::arange(dim/4,pixels.back().options().dtype(at::kFloat));
+      auto angles=at::cat({rows*at::pow(theta,-4*freq/dim),cols*at::pow(theta,-(4*freq+2)/dim)},-1);
+      cosines.push_back(angles.cos().to(dtype));sines.push_back(angles.sin().to(dtype));
+    }
+    // Cumulative patch counts isolate images, even within one text sequence.
+    PackedInput boundaries{};boundaries.offsets=offsets.data();boundaries.batch=images.size();boundaries.max_sequence=maximum;
+    boundaries.cumulative=at::from_blob(offsets.data(),{int64_t(offsets.size())},at::TensorOptions().dtype(at::kInt)).to(device);
+    const int64_t n=offsets.back();
+    auto x=at::linear(at::cat(pixels),w("vision_tower.patch_conv.weight").reshape({hidden,-1}));
+    pixels.clear();
     x=rms(x,w("vision_tower.ln_pre.weight"),1e-5);
-    auto index=at::arange(n,x.options().dtype(at::kLong));
-    auto rows=at::floor_divide(index,width).to(at::kFloat).unsqueeze(1);
-    auto cols=index.remainder(width).to(at::kFloat).unsqueeze(1);
-    auto theta=cfg.real("vision_config.rope_parameters.rope_theta",cfg.real("vision_config.rope_theta",10000.));
-    auto freq=at::arange(dim/4,x.options().dtype(at::kFloat));
-    auto angles=at::cat({rows*at::pow(theta,-4*freq/dim),cols*at::pow(theta,-(4*freq+2)/dim)},-1);
-    auto cos=at::cat({angles,angles},-1).cos().to(dtype).unsqueeze(1);
-    auto sin=at::cat({angles,angles},-1).sin().to(dtype).unsqueeze(1);
-    auto rotate=[&](const at::Tensor& t) {return t*cos+at::cat({-t.narrow(-1,dim/2,dim/2),t.narrow(-1,0,dim/2)},-1)*sin;};
+    auto cos=at::cat(cosines).unsqueeze(1),sin=at::cat(sines).unsqueeze(1);
+    cosines.clear();sines.clear();
+    auto full_cos=fused_vision?at::Tensor():at::cat({cos,cos},-1);
+    auto full_sin=fused_vision?at::Tensor():at::cat({sin,sin},-1);
+    auto rotate=[&](const at::Tensor& t) {return t*full_cos+at::cat({-t.narrow(-1,dim/2,dim/2),t.narrow(-1,0,dim/2)},-1)*full_sin;};
     at::Tensor selected;
     if(feature_layer==0)selected=x;
     for(int64_t i=0;i<depth;++i) {
       auto p="vision_tower.transformer.layers."+std::to_string(i)+".";
       auto norm=rms(x,w(p+"attention_norm.weight"),1e-5);
-      auto q=rotate(linear(norm,p+"attention.q_proj").view({n,heads,dim}));
-      auto k=rotate(linear(norm,p+"attention.k_proj").view({n,heads,dim}));
-      auto v=linear(norm,p+"attention.v_proj").view({n,heads,dim});
-      auto a=at::scaled_dot_product_attention(q.transpose(0,1).unsqueeze(0),k.transpose(0,1).unsqueeze(0),v.transpose(0,1).unsqueeze(0));
-      x=x+linear(a.squeeze(0).transpose(0,1).contiguous().view({n,hidden}),p+"attention.o_proj");
-      norm=rms(x,w(p+"ffn_norm.weight"),1e-5);
-      auto gate=linear(norm,p+"feed_forward.gate_proj");
-      auto activation=cfg.string("vision_config.hidden_act","silu");
-      TORCH_CHECK(activation=="silu"||activation=="gelu","Unsupported Pixtral MLP activation");
-      auto act=activation=="silu"?at::silu(gate):at::gelu(gate);
-      x=x+linear(act*linear(norm,p+"feed_forward.up_proj"),p+"feed_forward.down_proj");
+      at::Tensor q,k,v,attended;
+#ifdef TEI_TORCH_CUDA_KERNELS
+      if(fused_vision) {
+        auto qkv=linear(norm,p+"attention.qkv").view({n,3,heads,dim});
+        auto pair=fused_rotary(qkv.select(1,0),qkv.select(1,1),cos,sin,false);
+        attended=packed_attention(pair.first,pair.second,qkv.select(1,2),boundaries,1./std::sqrt(double(dim))).reshape({n,hidden});
+      } else
+#endif
+      {
+        q=rotate(linear(norm,p+"attention.q_proj").view({n,heads,dim}));
+        k=rotate(linear(norm,p+"attention.k_proj").view({n,heads,dim}));
+        v=linear(norm,p+"attention.v_proj").view({n,heads,dim});
+        std::vector<at::Tensor> outputs;
+        for(size_t row=0;row<images.size();++row) {
+          auto slice=[&](const at::Tensor& t) {return t.narrow(0,offsets[row],offsets[row+1]-offsets[row]).transpose(0,1).unsqueeze(0);};
+          outputs.push_back(at::scaled_dot_product_attention(slice(q),slice(k),slice(v)).squeeze(0).transpose(0,1));
+        }
+        attended=at::cat(outputs).reshape({n,hidden});
+      }
+      auto projected=linear(attended,p+"attention.o_proj");
+#ifdef TEI_TORCH_CUDA_KERNELS
+      if(fused_vision) {
+        auto pair=transformers_rms_norm(projected,x,w(p+"ffn_norm.weight"),1e-5);
+        x=pair.second;norm=pair.first;
+        auto activated=fused_gated_activation(linear(norm,p+"feed_forward.gate_up"),cfg.string("vision_config.hidden_act","silu")=="silu"?0:1);
+        x=x+linear(activated,p+"feed_forward.down_proj");
+      } else
+#endif
+      {
+        x=x+projected;norm=rms(x,w(p+"ffn_norm.weight"),1e-5);
+        auto gate=linear(norm,p+"feed_forward.gate_proj");
+        auto act=cfg.string("vision_config.hidden_act","silu")=="silu"?at::silu(gate):at::gelu(gate);
+        x=x+linear(act*linear(norm,p+"feed_forward.up_proj"),p+"feed_forward.down_proj");
+      }
       if(feature_layer==i+1)selected=x;
     }
     TORCH_CHECK(selected.defined(),"Invalid Pixtral feature layer");
     x=rms(selected,w("multi_modal_projector.norm.weight"),cfg.real("text_config.rms_norm_eps",1e-5));
     // Match F.unfold's channel, patch-row, patch-column order (not flattened pixels).
-    x=x.view({h/merge,merge,width/merge,merge,hidden}).permute({0,2,4,1,3}).contiguous().view({-1,hidden*merge*merge});
+    std::vector<at::Tensor> merged;
+    for(size_t i=0;i<images.size();++i) {
+      const auto h=images[i].grid_thw[1],width=images[i].grid_thw[2];
+      merged.push_back(x.narrow(0,offsets[i],offsets[i+1]-offsets[i]).view({h/merge,merge,width/merge,merge,hidden})
+        .permute({0,2,4,1,3}).contiguous().view({-1,hidden*merge*merge}));
+    }
+    x=at::cat(merged);
     x=linear(x,"multi_modal_projector.patch_merger.merging_layer");
     x=linear(x,"multi_modal_projector.linear_1");
     auto act=cfg.string("projector_hidden_act","gelu");
@@ -124,6 +187,23 @@ public:
     if(classifier)TORCH_CHECK(score.defined()&&score.dim()==2&&score.size(0)>0&&score.size(1)==out,
       "Mistral3 sequence classifier requires score.weight of shape [labels, ",out,"]");
     text->ready();
+#ifdef TEI_TORCH_CUDA_KERNELS
+    fused_vision=device.is_cuda()&&(dtype==at::kHalf||dtype==at::kBFloat16)&&dim%8==0&&dim<=256;
+    if(fused_vision)for(int64_t i=0;i<depth;++i) {
+      const auto p="vision_tower.transformer.layers."+std::to_string(i)+".";
+      auto pack=[&](const std::string& target,std::initializer_list<std::string> names) {
+        std::vector<at::Tensor> matrices,biases;bool has_bias=false;
+        for(const auto& name:names) {
+          matrices.push_back(w(name+".weight"));auto it=weights.find(name+".bias");
+          has_bias|=it!=weights.end();biases.push_back(it==weights.end()?at::zeros({matrices.back().size(0)},matrices.back().options()):it->second);
+        }
+        weights[target+".weight"]=at::cat(matrices);if(has_bias)weights[target+".bias"]=at::cat(biases);
+        for(const auto& name:names) {weights.erase(name+".weight");weights.erase(name+".bias");}
+      };
+      pack(p+"attention.qkv",{p+"attention.q_proj",p+"attention.k_proj",p+"attention.v_proj"});
+      pack(p+"feed_forward.gate_up",{p+"feed_forward.gate_proj",p+"feed_forward.up_proj"});
+    }
+#endif
   }
   bool supports_images() const override {return true;}
   int64_t classification_width() const override {return score.defined()?score.size(0):0;}
@@ -150,8 +230,9 @@ public:
   int64_t output_width() const override {return text->output_width();}
   at::Tensor forward(const PackedInput& input) const override {
     if(input.images.empty())return text->forward(input);
-    std::vector<at::Tensor> indices,features;
+    std::vector<at::Tensor> indices;
     for(const auto& image:input.images) {
+      validate_image(image);
       auto nh=image.grid_thw[1]/merge,nw=image.grid_thw[2]/merge;
       TORCH_CHECK(image.token_count==nh*nw&&image.token_start>=image.sequence_start,"Invalid Pixtral image token count");
       auto id=at::arange(nh*nw,input.ids.options());
@@ -159,10 +240,11 @@ public:
       TORCH_CHECK(image.sequence_start>=0&&image.sequence_start<input.ids.numel(),"Invalid Pixtral sequence start");
       int64_t end=-1;for(int64_t r=0;r<input.batch;++r)if(input.offsets[r]==image.sequence_start)end=input.offsets[r+1];
       TORCH_CHECK(end>=0&&image.token_start<end&&nh*(nw+1)<=end-image.token_start,"Pixtral image tokens cross a sequence boundary");
-      TORCH_CHECK(at::all(input.ids.index_select(0,id)==cfg.integer("image_token_index",10)).item<bool>(),"Pixtral image placeholders do not match");
-      indices.push_back(id);features.push_back(vision(image));
+      indices.push_back(id);
     }
-    return decoder_visual_forward(*text,input,at::cat(indices),at::cat(features));
+    auto all_indices=at::cat(indices);
+    TORCH_CHECK(at::all(input.ids.index_select(0,all_indices)==cfg.integer("image_token_index",10)).item<bool>(),"Pixtral image placeholders do not match");
+    return decoder_visual_forward(*text,input,all_indices,vision(input.images));
   }
 };
 }
