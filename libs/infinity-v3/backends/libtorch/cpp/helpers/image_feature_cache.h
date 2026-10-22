@@ -8,6 +8,8 @@
 #include <utility>
 #include <cstdint>
 #include <mutex>
+#include <optional>
+#include <vector>
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAEvent.h>
@@ -30,13 +32,7 @@ class ImageFeatureCache {
   mutable std::list<Entry> entries;
   mutable size_t bytes=0;
   size_t byte_limit, entry_limit;
- public:
-  explicit ImageFeatureCache(size_t byte_limit=64*1024*1024,size_t entry_limit=32)
-    :byte_limit(byte_limit),entry_limit(entry_limit){}
-  // Serialize a cache miss and its publication. GPU work remains asynchronous;
-  // ready events make hits safe on a different caller stream.
-  template<class Compute> at::Tensor get_or_compute(const Key& key,Compute compute) const {
-    std::lock_guard<std::mutex> lock(mutex);
+  at::Tensor find(const Key& key) const {
     for(auto found=entries.begin();found!=entries.end();++found)if(found->key==key) {
 #ifdef TEI_TORCH_CUDA_KERNELS
       if(found->ready) {
@@ -45,11 +41,11 @@ class ImageFeatureCache {
         c10::cuda::CUDACachingAllocator::recordStream(found->value.storage().data_ptr(),stream);
       }
 #endif
-      auto result=found->value;
-      entries.splice(entries.end(),entries,found);
-      return result;
+      auto result=found->value;entries.splice(entries.end(),entries,found);return result;
     }
-    auto value=compute();
+    return {};
+  }
+  at::Tensor publish(const Key& key,at::Tensor value) const {
     TORCH_CHECK(value.defined(),"Undefined image feature cache value");
     const size_t logical_bytes=value.numel()*value.element_size();
     if(!entry_limit || logical_bytes>byte_limit)return value;
@@ -70,6 +66,35 @@ class ImageFeatureCache {
     }
 #endif
     bytes+=owned_bytes;entries.push_back(std::move(entry));return value;
+  }
+ public:
+  explicit ImageFeatureCache(size_t byte_limit=64*1024*1024,size_t entry_limit=32)
+    :byte_limit(byte_limit),entry_limit(entry_limit){}
+  // Serialize a cache miss and its publication. GPU work remains asynchronous;
+  // ready events make hits safe on a different caller stream.
+  template<class Compute> at::Tensor get_or_compute(const Key& key,Compute compute) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    auto value=find(key);return value.defined()?value:publish(key,compute());
+  }
+  template<class Compute> std::vector<at::Tensor> get_batch(const std::vector<std::optional<Key>>& keys,Compute compute) const {
+    std::lock_guard<std::mutex> lock(mutex);
+    std::vector<at::Tensor> result(keys.size());
+    std::vector<size_t> missing,slots(keys.size());
+    for(size_t i=0;i<keys.size();++i) {
+      if(keys[i])result[i]=find(*keys[i]);
+      if(result[i].defined())continue;
+      size_t slot=0;
+      while(slot<missing.size()&&(!keys[i]||keys[i]!=keys[missing[slot]]))++slot;
+      slots[i]=slot;if(slot==missing.size())missing.push_back(i);
+    }
+    auto values=missing.empty()?std::vector<at::Tensor>{}:compute(missing);
+    TORCH_CHECK(values.size()==missing.size(),"Image feature cache batch size mismatch");
+    for(size_t slot=0;slot<missing.size();++slot) {
+      const auto& key=keys[missing[slot]];
+      if(key)values[slot]=publish(*key,values[slot]);
+    }
+    for(size_t i=0;i<keys.size();++i)if(!result[i].defined())result[i]=values[slots[i]];
+    return result;
   }
   std::pair<size_t,size_t> usage() const {
     std::lock_guard<std::mutex> lock(mutex);return {entries.size(),bytes};

@@ -15,6 +15,31 @@
 
 using namespace tei;
 namespace {
+void batched_vision_test(Model& model,const PackedInput& input) {
+  auto batch=input;auto original=input.images.front();
+  batch.images={original,original,original};
+  batch.images[1].pixels=original.pixels.repeat({2,1});batch.images[1].grid_thw={1,3,6};batch.images[1].token_count=2;
+  batch.images[1].has_feature_key=false;
+  batch.images[2].pixels=1.-original.pixels;batch.images[2].has_feature_key=true;batch.images[2].feature_key[0]=91;
+  batch.images.push_back(batch.images[2]);
+  model.prepare_input(batch);
+  TORCH_CHECK(batch.images[2].prepared_features.const_data_ptr()==batch.images[3].prepared_features.const_data_ptr(),"Duplicate image keys were encoded twice in one batch");
+  for(size_t i=0;i<batch.images.size();++i) {
+    auto single=input;single.images={batch.images[i]};single.images[0].has_feature_key=false;
+    model.prepare_input(single);
+    TORCH_CHECK(at::allclose(batch.images[i].prepared_features,single.images[0].prepared_features,.015,.015),
+      "Batched Gemma vision leaked between differently sized images or reused stale cache features");
+  }
+  batch.images[1].token_start=3;
+  batch.images[2].token_start=5;batch.images[2].sequence_start=5;
+  batch.images[3].token_start=6;batch.images[3].sequence_start=5;
+  auto expected=model.forward(batch);auto partial=batch;
+  partial.images[1].prepared_features=at::Tensor();partial.images[3].prepared_features=at::Tensor();
+  TORCH_CHECK(at::allclose(model.forward(partial),expected,.015,.015),"Direct Gemma image batching changed prepared/unprepared feature placement");
+  auto again=batch;model.prepare_input(again);
+  TORCH_CHECK(again.images[2].prepared_features.const_data_ptr()==batch.images[2].prepared_features.const_data_ptr(),
+    "Batched Gemma feature cache hit recomputed features");
+}
 void feature_cache_bounds() {
   ImageFeatureCache cache(64,2);ImageFeatureCache::Key a{},b{},c{};b[0]=1;c[0]=2;
   int calls=0;
@@ -495,6 +520,7 @@ int main(int argc,char** argv) {
       auto prepared=batch;prepared.images[0].has_feature_key=true;prepared.images[0].feature_key[0]=1;
       visual->prepare_input(prepared);
       TORCH_CHECK(at::equal(with_image,visual->forward(prepared)),family," Feature preparation changed model outputs");
+      batched_vision_test(*visual,prepared);
       auto features=prepared.images[0].prepared_features;
       auto moved=prepared;moved.images[0].token_start=1;
       visual->prepare_input(moved);
@@ -535,6 +561,7 @@ int main(int argc,char** argv) {
         TORCH_CHECK(host.images[0].pixels.device().is_cpu(),"CUDA miss regression already uploaded its pixels");
         on_gpu->prepare_input(host);auto cached=host.images[0].prepared_features;
         TORCH_CHECK(cached.device()==gpu,"Host pixel miss prepared features on wrong device");
+        batched_vision_test(*on_gpu,host);
         auto uploaded=host;uploaded.images[0].pixels=host.images[0].pixels.to(gpu);
         uploaded.images[0].has_feature_key=false;uploaded.images[0].prepared_features=at::Tensor();
         on_gpu->prepare_input(uploaded);

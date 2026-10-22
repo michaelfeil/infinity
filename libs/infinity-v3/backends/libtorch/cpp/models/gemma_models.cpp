@@ -1,3 +1,4 @@
+#include "helpers/vision_batch.h"
 #include "helpers/attention.h"
 // Native adaptations of backends/candle/src/models/{gemma3,gemma4,embedding_gemma2}.rs.
 // Upstream Apache-2.0 notices remain in LICENSE and NOTICE.
@@ -362,15 +363,22 @@ class Gemma final : public Model {
     auto selected=media.selected_frames.defined()?media.selected_frames:at::nonzero(valid).squeeze(-1);
     return projected.index_select(0,selected);
   }
-  at::Tensor vision(const ImageInput& image) const {
-    auto [frames,height,width]=image.grid_thw;
+  std::vector<at::Tensor> vision(const std::vector<ImageInput>& images) const {
+    if(images.empty())return {};
     auto patch=cfg.integer("vision_config.patch_size",16),pool=cfg.integer("vision_config.pooling_kernel_size",3);
     auto vh=cfg.integer("vision_config.hidden_size"),nh=cfg.integer("vision_config.num_attention_heads");
     auto nk=cfg.integer("vision_config.num_key_value_heads",nh),dim=cfg.integer("vision_config.head_dim",vh/(nh?nh:1));
     auto nlayer=cfg.integer("vision_config.num_hidden_layers");
     auto eps=cfg.real("vision_config.rms_norm_eps",1e-6);
-    TORCH_CHECK(frames==1 && height>0 && width>0 && height%pool==0 && width%pool==0 && image.merge_size==pool &&
-      image.pixels.sizes()==at::IntArrayRef({height*width,patch*patch*3}),"Invalid packed Gemma vision patches");
+    auto batches=vision_batches(images,device,vh,cfg.integer("vision_config.intermediate_size",vh*4));
+    if(batches.size()>1) {
+      std::vector<at::Tensor> features;
+      for(auto [start,end]:batches) {
+        auto part=vision(std::vector<ImageInput>(images.begin()+start,images.begin()+end));
+        features.insert(features.end(),part.begin(),part.end());
+      }
+      return features;
+    }
     TORCH_CHECK(vh>0 && nh>0 && nk>0 && nh%nk==0 && dim>0 && dim%4==0 && nlayer>0,"Invalid Gemma vision geometry");
     TORCH_CHECK(!cfg.boolean("vision_config.use_clipped_linears",false),"Clipped Gemma vision linears unsupported");
     auto root=weights.count("model.vision_tower.patch_embedder.input_proj.weight")?std::string("model."):std::string();
@@ -391,12 +399,24 @@ class Gemma final : public Model {
       if(!name.empty()) f=f*vw(name+".weight").to(at::kFloat);
       return f.to(x.scalar_type());
     };
-    auto ix=at::arange(height*width,image.pixels.options().device(device).dtype(at::kLong));
-    auto columns=ix.remainder(width),rows=at::floor_divide(ix,width);
+    std::vector<at::Tensor> patches,column_parts,row_parts;
+    std::vector<int32_t> offsets{0};int64_t max_image=0;
+    for(const auto& image:images) {
+      auto [frames,height,width]=image.grid_thw;
+      TORCH_CHECK(frames==1 && height>0 && width>0 && height%pool==0 && width%pool==0 && image.merge_size==pool &&
+        image.pixels.sizes()==at::IntArrayRef({height*width,patch*patch*3}),"Invalid packed Gemma vision patches");
+      TORCH_CHECK(int64_t(offsets.back())+height*width<=INT32_MAX,"Gemma image batch too large");
+      offsets.push_back(offsets.back()+height*width);max_image=std::max(max_image,height*width);
+      auto ix=at::arange(height*width,image.pixels.options().device(device).dtype(at::kLong));
+      column_parts.push_back(ix.remainder(width));row_parts.push_back(at::floor_divide(ix,width));
+      patches.push_back(image.pixels.to(device,at::kFloat));
+    }
+    auto columns=at::cat(column_parts,0),rows=at::cat(row_parts,0);
     auto table=vw("vision_tower.patch_embedder.position_embedding_table");
     // Normalize source pixels in FP32 before the projection's activation cast.
-    auto states=vl(((image.pixels.to(device,at::kFloat)-.5)*2.).to(dtype),"vision_tower.patch_embedder.input_proj")+
+    auto states=vl(((at::cat(patches,0)-.5)*2.).to(dtype),"vision_tower.patch_embedder.input_proj")+
       (table.select(0,0).index_select(0,columns)+table.select(0,1).index_select(0,rows));
+    patches.clear();
     auto col_angles=columns.to(at::kFloat).unsqueeze(1)*vision_frequency,row_angles=rows.to(at::kFloat).unsqueeze(1)*vision_frequency;
     auto cos=at::cat({col_angles.cos(),row_angles.cos()},-1).to(dtype).unsqueeze(1);
     auto sin=at::cat({col_angles.sin(),row_angles.sin()},-1).to(dtype).unsqueeze(1);
@@ -412,15 +432,14 @@ class Gemma final : public Model {
       }
       return at::cat(parts,-1);
     };
-    const int32_t offsets[]={0,static_cast<int32_t>(height*width)};
-    auto cu=at::arange(2,ix.options().dtype(at::kInt))*(height*width);
-    PackedInput input{ix,ix,ix,cu,offsets,1,height*width};
+    auto cu=at::tensor(offsets,at::TensorOptions().dtype(at::kInt)).to(device);
+    PackedInput input{{},{},{},cu,offsets.data(),int64_t(images.size()),max_image};
     for(int64_t i=0;i<nlayer;++i) {
       auto p="vision_tower.encoder.layers."+std::to_string(i)+".";
       auto normalized=vn(states,p+"input_layernorm");
-      auto q=rotate2d(vn(vl(normalized,p+"self_attn.q_proj").view({height*width,nh,dim}),p+"self_attn.q_norm"));
-      auto k=rotate2d(vn(vl(normalized,p+"self_attn.k_proj").view({height*width,nk,dim}),p+"self_attn.k_norm"));
-      auto v=vn(vl(normalized,p+"self_attn.v_proj").view({height*width,nk,dim}),"");
+      auto q=rotate2d(vn(vl(normalized,p+"self_attn.q_proj").view({states.size(0),nh,dim}),p+"self_attn.q_norm"));
+      auto k=rotate2d(vn(vl(normalized,p+"self_attn.k_proj").view({states.size(0),nk,dim}),p+"self_attn.k_norm"));
+      auto v=vn(vl(normalized,p+"self_attn.v_proj").view({states.size(0),nk,dim}),"");
       at::Tensor attention_output;
 #ifdef TEI_TORCH_CUDA_KERNELS
       if(device.is_cuda()&&dtype==at::kBFloat16&&torch_flash_fma_supported(q,k,v,false,-1,-1))
@@ -428,7 +447,7 @@ class Gemma final : public Model {
       else
 #endif
       attention_output=packed_attention(q,k,v,input,1.);
-      auto output=attention_output.reshape({height*width,nh*dim});
+      auto output=attention_output.reshape({states.size(0),nh*dim});
       states=states+vn(vl(output,p+"self_attn.o_proj"),p+"post_attention_layernorm");
       normalized=vn(states,p+"pre_feedforward_layernorm");
       auto gate=vl(normalized,p+"mlp.gate_proj");
@@ -441,27 +460,39 @@ class Gemma final : public Model {
       auto mlp=vl(gate*vl(normalized,p+"mlp.up_proj"),p+"mlp.down_proj");
       states=states+vn(mlp,p+"post_feedforward_layernorm");
     }
-    at::Tensor pooled;
+    std::vector<at::Tensor> pools;
+    for(size_t i=0;i<images.size();++i) {
+      const auto height=images[i].grid_thw[1],width=images[i].grid_thw[2];
+      auto slice=states.narrow(0,offsets[i],offsets[i+1]-offsets[i]);
+      at::Tensor pooled;
 #ifdef TEI_TORCH_CUDA_KERNELS
-    if(device.is_cuda()&&dtype==at::kBFloat16)pooled=gemma_vision_pool_cuda(states.contiguous(),height,width,pool);
-    else
+      if(device.is_cuda()&&dtype==at::kBFloat16)pooled=gemma_vision_pool_cuda(slice.contiguous(),height,width,pool);
+      else
 #endif
-    {
-      auto bins=at::floor_divide(columns,pool)+at::floor_divide(rows,pool)*(width/pool);
-      pooled=at::zeros({height*width/(pool*pool),vh},states.options().dtype(at::kFloat));
-      pooled.index_add_(0,bins,states.to(at::kFloat)/(pool*pool));
-      pooled=pooled.to(dtype).to(at::kFloat)*std::sqrt(static_cast<double>(vh));
+      {
+        auto bins=at::floor_divide(column_parts[i],pool)+at::floor_divide(row_parts[i],pool)*(width/pool);
+        pooled=at::zeros({height*width/(pool*pool),vh},states.options().dtype(at::kFloat));
+        pooled.index_add_(0,bins,slice.to(at::kFloat)/(pool*pool));
+        pooled=pooled.to(dtype).to(at::kFloat)*std::sqrt(static_cast<double>(vh));
+      }
+      pools.push_back(pooled);
     }
+    auto pooled=at::cat(pools,0);
     if(cfg.boolean("vision_config.standardize",false)) pooled=(pooled-vw("vision_tower.std_bias").to(at::kFloat))*vw("vision_tower.std_scale").to(at::kFloat);
     pooled=pooled.to(dtype);
 #ifdef TEI_TORCH_CUDA_KERNELS
-    // The original BareRmsNorm uses separate FP32 square, fast_sum,
-    // reciprocal-width, sqrt and divide before its BF16 activation cast.
+    // Preserve the final BareRmsNorm and its activation cast before projection.
     if(device.is_cuda()&&dtype==at::kBFloat16)
-      return vl(gemma_vision_norm_cuda(pooled.contiguous(),norm_ones.at(vh),eps),"embed_vision.embedding_projection");
+      pooled=gemma_vision_norm_cuda(pooled.contiguous(),norm_ones.at(vh),eps);
+    else
 #endif
-    auto f=pooled.to(at::kFloat);
-    return vl((f/at::sqrt(f.square().mean(-1,true)+eps)).to(dtype),"embed_vision.embedding_projection");
+    {
+      auto f=pooled.to(at::kFloat);pooled=(f/at::sqrt(f.square().mean(-1,true)+eps)).to(dtype);
+    }
+    auto projected=vl(pooled,"embed_vision.embedding_projection");
+    std::vector<at::Tensor> result;int64_t offset=0;
+    for(const auto& part:pools) {result.push_back(projected.narrow(0,offset,part.size(0)));offset+=part.size(0);}
+    return result;
   }
   bool has(const std::string& key) const { return weights.count(prefix + key); }
   const at::Tensor& w(const std::string& key) const {
@@ -711,11 +742,15 @@ class Gemma final : public Model {
   void prepare_input(PackedInput& input) const override {
     // CPU-side descriptor keys are supplied before any device transfer. The
     // tower runs outside CUDA capture; only immutable features enter forward.
-    for(auto& image:input.images) {
-      TORCH_CHECK(supports_images(),"Gemma vision tower unavailable");
-      image.prepared_features=image.has_feature_key
-        ?image_features.get_or_compute(image.feature_key,[&]{return vision(image);})
-        :vision(image);
+    TORCH_CHECK(input.images.empty()||supports_images(),"Gemma vision tower unavailable");
+    std::vector<std::optional<ImageFeatureCache::Key>> keys;
+    for(const auto& image:input.images)keys.push_back(image.has_feature_key?std::optional(image.feature_key):std::nullopt);
+    auto features=image_features.get_batch(keys,[&](const std::vector<size_t>& indices){
+      std::vector<ImageInput> missing;for(auto i:indices)missing.push_back(input.images[i]);
+      return vision(missing);
+    });
+    for(size_t i=0;i<input.images.size();++i) {
+      auto& image=input.images[i];image.prepared_features=features[i];
       TORCH_CHECK(image.prepared_features.dim()==2 && image.prepared_features.size(0)==image.token_count
         && image.prepared_features.size(1)==hidden && image.prepared_features.device()==device
         && image.prepared_features.scalar_type()==dtype,"Gemma prepared image feature geometry mismatch");
@@ -959,8 +994,11 @@ class Gemma final : public Model {
     at::Tensor ple;
     auto inject_images=[&]() {
       TORCH_CHECK(input.images.empty() || supports_images(),"Gemma vision tower unavailable");
+      std::vector<ImageInput> missing;
+      for(const auto& image:input.images)if(!image.prepared_features.defined())missing.push_back(image);
+      auto computed=vision(missing);size_t next=0;
       for(const auto& image:input.images) {
-        auto features=image.prepared_features.defined()?image.prepared_features:vision(image);
+        auto features=image.prepared_features.defined()?image.prepared_features:computed[next++];
         TORCH_CHECK(image.token_start>=0 && image.token_start+image.token_count<=states.size(0)
           && features.dim()==2 && features.size(0)==image.token_count && features.size(1)==hidden
           && features.device()==states.device() && features.scalar_type()==states.scalar_type(),"Gemma image token geometry mismatch");
