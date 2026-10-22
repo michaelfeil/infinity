@@ -41,10 +41,22 @@ void resumed_delta(c10::Device device,int64_t kh,int64_t vh,bool fma) {
       suffix.block_prefix_sources={0};suffix.block_cache_sources=at::zeros({1},opts.dtype(at::kLong));
       auto history=qkv.narrow(0,std::max(int64_t(0),boundary-3),std::min(boundary,int64_t(3)));
       auto history_cu=at::tensor(std::vector<int32_t>{0,int32_t(history.size(0))},opts.dtype(at::kInt));
+      at::Tensor final_state;
       auto resumed=tei::qwen35_delta_cuda(qkv.narrow(0,boundary,tokens-boundary),z.narrow(0,boundary,tokens-boundary),
-        ab.narrow(0,boundary,tokens-boundary),conv,alog,dt,norm,suffix,kh,vh,1e-6,state,nullptr,history,history_cu,false);
+        ab.narrow(0,boundary,tokens-boundary),conv,alog,dt,norm,suffix,kh,vh,1e-6,state,&final_state,history,history_cu,false);
       TORCH_CHECK(at::equal(resumed,expected.narrow(0,boundary,tokens-boundary))&&at::equal(state,immutable),
         "Block resume changed outputs or mutated shared state");
+      auto batched=suffix;std::vector<int32_t> batch_offsets;
+      for(int i=0;i<=8;++i)batch_offsets.push_back(i*(tokens-boundary));
+      batched.batch=8;batched.offsets=batch_offsets.data();
+      batched.cumulative=at::tensor(batch_offsets,opts.dtype(at::kInt));
+      batched.block_prefix_sources.assign(8,0);batched.block_cache_sources=at::zeros({8},opts.dtype(at::kLong));
+      at::Tensor batch_state;
+      auto repeated=tei::qwen35_delta_cuda(qkv.narrow(0,boundary,tokens-boundary).repeat({8,1}),
+        z.narrow(0,boundary,tokens-boundary).repeat({8,1}),ab.narrow(0,boundary,tokens-boundary).repeat({8,1}),
+        conv,alog,dt,norm,batched,kh,vh,1e-6,state,&batch_state,history,history_cu,false);
+      TORCH_CHECK(at::equal(repeated,resumed.repeat({8,1}))&&at::equal(batch_state,final_state.repeat({8,1,1,1}))
+        &&at::equal(state,immutable),"Batched recurrence changed outputs, final states or shared prefix");
     }
     auto budget=std::make_shared<tei::PrefixBudget>();
     auto saved=std::make_shared<tei::PrefixEntry>();saved->budget=budget;

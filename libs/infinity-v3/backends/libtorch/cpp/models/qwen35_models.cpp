@@ -281,6 +281,8 @@ class Qwen35 final : public Model {
     auto logits=qg.narrow(-1,dim,dim);
     auto gate=reference ? at::reciprocal(at::ones_like(logits)+at::exp(-logits)) : at::sigmoid(logits);
     auto gated=(a*gate).reshape({tokens,heads*dim});
+    // Block mode projects the combined prefix and suffix in block_forward.
+    if(cache)return gated;
     return radix_enabled(input)?linear_radix_projection(gated,p+"o_proj",input):prefix_projection(gated,p+"o_proj",input);
   }
   at::Tensor delta_cpu(const at::Tensor& qkv,const at::Tensor& z,const at::Tensor& ab,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false,int64_t cache_layer=-1) const {
@@ -382,6 +384,7 @@ class Qwen35 final : public Model {
       cache->history_cumulative=at::tensor(cache->history_offsets,input.cumulative.options());
     }
     auto compact=radix_fold(output,input);
+    if(cache)return compact;
     return radix_enabled(input)?linear_radix_projection(compact,p+"out_proj",input):prefix_projection(compact,p+"out_proj",input);
   }
   at::Tensor embeddings(const PackedInput& input,RequestImageFeatures& shared_features) const {
@@ -483,6 +486,7 @@ class Qwen35 final : public Model {
       };
       auto prefix_attention=attention(prefixes,true);
       auto attended=suffix_hidden.defined()?at::cat({prefix_attention,attention(suffixes,false)},0):prefix_attention;
+      attended=prefix_projection(attended,ap+(linear?"out_proj":"o_proj"),input);
       hidden=hidden+attended;
       hidden=hidden+feed_forward(norm(hidden,p+"post_attention_layernorm"),layer,input);
       prefix_hidden=hidden.narrow(0,0,prefix_tokens);
