@@ -76,6 +76,7 @@ mod clef;
 mod d3;
 mod onejev;
 mod pplx;
+mod pplx_joint;
 mod rune;
 
 pub enum SystemOne {
@@ -84,6 +85,7 @@ pub enum SystemOne {
     Onejev(onejev::Onejev),
     Clef(clef::Clef),
     Pplx(pplx::Pplx),
+    PplxJoint(Box<pplx_joint::PplxJoint>),
     D3(Box<d3::D3>),
 }
 
@@ -110,6 +112,16 @@ impl SystemOne {
                 multimodal_config,
             )?)))
         } else if matches!(protocol, Some(crate::DecisionProtocol::Pplx)) {
+            let config: Value =
+                serde_json::from_slice(&std::fs::read(path.join("decision_config.json"))?)?;
+            if config["format_version"] == 2 {
+                return Ok(Self::PplxJoint(Box::new(pplx_joint::PplxJoint::load(
+                    path,
+                    tokenizer,
+                    max_input_length,
+                    multimodal_config,
+                )?)));
+            }
             Ok(Self::Pplx(pplx::Pplx::load(
                 path,
                 tokenizer,
@@ -132,6 +144,7 @@ impl SystemOne {
             Self::Onejev(model) => model.prepare(request),
             Self::Clef(model) => model.prepare(request),
             Self::Pplx(model) => model.prepare(request),
+            Self::PplxJoint(model) => model.prepare(request),
             Self::D3(model) => model.prepare(request),
         }
     }
@@ -147,6 +160,7 @@ impl SystemOne {
             Self::Onejev(_) => onejev::answer(question, output),
             Self::Clef(_) => clef::answer(question, output),
             Self::Pplx(model) => model.answer(question, output),
+            Self::PplxJoint(model) => model.answer(question, output),
             Self::D3(model) => model.answer(question, output),
         }
     }
@@ -680,6 +694,11 @@ pub(crate) async fn systemone_inner(
             .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?
             .into_common()
             .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?
+    } else if matches!(service.as_ref(), SystemOne::PplxJoint(_)) {
+        serde_json::from_value::<pplx_joint::Request>(raw_request)
+            .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?
+            .into_common()
+            .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?
     } else {
         (
             serde_json::from_value::<SystemOneRequest>(raw_request)
@@ -742,28 +761,35 @@ pub(crate) async fn systemone_inner(
         attached.map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?;
     }
     if !d3_images.is_empty() || !d3_videos.is_empty() {
-        let SystemOne::D3(model) = service.as_ref() else {
-            unreachable!()
+        let media_error = |e: infinity_v3_core::TextEmbeddingsError| {
+            let status = if matches!(e, infinity_v3_core::TextEmbeddingsError::Overloaded(_)) {
+                StatusCode::TOO_MANY_REQUESTS
+            } else {
+                StatusCode::UNPROCESSABLE_ENTITY
+            };
+            error(status, e)
         };
-        let media = model
-            .prepare_media(d3_images, d3_videos)
-            .await
-            .map_err(|e| {
-                let status = if matches!(e, infinity_v3_core::TextEmbeddingsError::Overloaded(_)) {
-                    StatusCode::TOO_MANY_REQUESTS
-                } else {
-                    StatusCode::UNPROCESSABLE_ENTITY
-                };
-                error(status, e)
-            })?;
-        model
-            .attach_media(&mut questions, media, d3_max_len)
-            .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?;
+        let attached = match service.as_ref() {
+            SystemOne::D3(model) => {
+                let media = model
+                    .prepare_media(d3_images, d3_videos)
+                    .await
+                    .map_err(media_error)?;
+                model.attach_media(&mut questions, media, d3_max_len)
+            }
+            SystemOne::PplxJoint(model) => {
+                let media = model.prepare_media(d3_images).await.map_err(media_error)?;
+                model.attach_media(&mut questions, media, d3_max_len)
+            }
+            _ => unreachable!(),
+        };
+        attached.map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?;
     }
     let tokenization = start.elapsed();
     let compute_chars = questions.iter().map(|q| q.compute_chars).sum();
     let input_tokens = input_token_count(&questions);
-    let batch_counter = Arc::new(std::sync::atomic::AtomicUsize::new(questions.len()));
+    let sequences = questions.len();
+    let batch_counter = Arc::new(std::sync::atomic::AtomicUsize::new(sequences));
     let output_tokens = if matches!(
         service.as_ref(),
         SystemOne::Rune(_) | SystemOne::Onejev(_) | SystemOne::Pplx(_)
@@ -843,14 +869,42 @@ pub(crate) async fn systemone_inner(
     );
     metadata.record_metrics(&info.model_id);
     metrics::counter!("infinity_request_success", "model" => info.model_id.clone(), "method" => "systemone").increment(1);
-    let answers = if matches!(service.as_ref(), SystemOne::Clef(_)) {
+    let answers = if matches!(service.as_ref(), SystemOne::PplxJoint(_)) {
+        let mut object = ResultValue::object(
+            answers
+                .iter()
+                .map(|(_, a, _)| {
+                    if let ResultValue::Object(v) = a {
+                        v.len()
+                    } else {
+                        0
+                    }
+                })
+                .sum(),
+        )
+        .map_err(|e| error(StatusCode::TOO_MANY_REQUESTS, e))?;
+        for (_, answer, _) in answers {
+            let ResultValue::Object(values) = answer else {
+                return Err(error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "Invalid joint answers",
+                ));
+            };
+            for (id, value) in values {
+                object
+                    .put(&id, value)
+                    .map_err(|e| error(StatusCode::TOO_MANY_REQUESTS, e))?;
+            }
+        }
+        object
+    } else if matches!(service.as_ref(), SystemOne::Clef(_)) {
         match answers.into_iter().next().unwrap().1 {
             ResultValue::Object(answers) => ResultValue::Object(answers),
             _ => {
                 return Err(error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "Invalid joint answers",
-                ));
+                ))
             }
         }
     } else {
@@ -863,6 +917,19 @@ pub(crate) async fn systemone_inner(
         }
         object
     };
+    let usage = if matches!(service.as_ref(), SystemOne::PplxJoint(_)) {
+        ResultValue::fields([
+            ("input_tokens", ResultValue::integer(input_tokens)),
+            ("output_tokens", ResultValue::integer(output_tokens)),
+            ("sequences", ResultValue::integer(sequences)),
+        ])
+    } else {
+        ResultValue::fields([
+            ("input_tokens", ResultValue::integer(input_tokens)),
+            ("output_tokens", ResultValue::integer(output_tokens)),
+        ])
+    }
+    .map_err(|e| error(StatusCode::TOO_MANY_REQUESTS, e))?;
     let response = ResultValue::fields([
         (
             "model",
@@ -870,14 +937,7 @@ pub(crate) async fn systemone_inner(
                 .map_err(|e| error(StatusCode::TOO_MANY_REQUESTS, e))?,
         ),
         ("answers", answers),
-        (
-            "usage",
-            ResultValue::fields([
-                ("input_tokens", ResultValue::integer(input_tokens)),
-                ("output_tokens", ResultValue::integer(output_tokens)),
-            ])
-            .map_err(|e| error(StatusCode::TOO_MANY_REQUESTS, e))?,
-        ),
+        ("usage", usage),
     ])
     .map_err(|e| error(StatusCode::TOO_MANY_REQUESTS, e))?;
     Ok((metadata.into(), Json(response)))

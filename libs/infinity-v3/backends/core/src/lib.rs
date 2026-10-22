@@ -55,6 +55,11 @@ pub enum DecisionInput {
     OptionTokens {
         token_ids: Vec<u32>,
     },
+    /// Joint Perplexity readouts: sequence-relative marker positions and valid option counts.
+    InlineOptions {
+        markers: Vec<usize>,
+        option_counts: Vec<usize>,
+    },
     /// OneJev block attention: prefix tokens followed by one question block.
     BlockOptionTokens {
         token_ids: Vec<u32>,

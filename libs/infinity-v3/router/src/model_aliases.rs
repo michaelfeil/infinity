@@ -18,6 +18,10 @@ pub(crate) fn resolve(
             "perplexity-ai/pplx-decider-v1.1-27b",
             DecisionProtocol::Pplx,
         ),
+        "pplx-decider-flash-v1.2" | "perplexity-ai/pplx-decider-flash-v1.2" => (
+            "perplexity-ai/pplx-decider-flash-v1.2",
+            DecisionProtocol::Pplx,
+        ),
         "d3" | "vllm-sr/d3" => ("vllm-sr/d3", DecisionProtocol::D3),
         _ => return Ok((model_id, protocol)),
     };
@@ -42,6 +46,20 @@ mod tests {
             let (id, protocol) = resolve("pplx-decider-v1.1-27b".into(), protocol, None)?;
             assert_eq!(id, "perplexity-ai/pplx-decider-v1.1-27b");
             assert!(matches!(protocol, Some(DecisionProtocol::Pplx)));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn flash_decider_alias_selects_the_joint_checkpoint() -> Result<()> {
+        for id in [
+            "pplx-decider-flash-v1.2",
+            "perplexity-ai/pplx-decider-flash-v1.2",
+        ] {
+            let (target, protocol) = resolve(id.into(), None, None)?;
+            assert_eq!(target, "perplexity-ai/pplx-decider-flash-v1.2");
+            assert_eq!(protocol, Some(DecisionProtocol::Pplx));
+            assert!(resolve(id.into(), Some(DecisionProtocol::D3), None).is_err());
         }
         Ok(())
     }

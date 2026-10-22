@@ -261,6 +261,11 @@ async fn initialize_model(
         let metadata: serde_json::Value =
             serde_json::from_slice(&fs::read(model_root.join("decision_config.json"))?)?;
         anyhow::ensure!(
+            metadata["format_version"] != 2
+                || backend_kind == infinity_v3_backend::BackendKind::Libtorch,
+            "Perplexity joint readouts require --backend libtorch"
+        );
+        anyhow::ensure!(
             (metadata["format_id"].as_str() == Some("d3-code-readout-v1")) == d3,
             "D3 checkpoints require --decision-protocol d3; Perplexity checkpoints require pplx"
         );

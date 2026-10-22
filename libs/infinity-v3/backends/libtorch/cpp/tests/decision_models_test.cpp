@@ -34,6 +34,15 @@ void options_test(){
  Weights readout;readout["weight"]=at::arange(255*16).view({255,16}).to(at::kBFloat16)*.001;
  auto pplx=create_decision_head("pplx",{},cfg,readout,{});first.token_ids={0,1};auto values=pplx->forward(hidden,in.input,{first,second});
  close(values[0].logits,at::linear(hidden[2].to(at::kBFloat16).unsqueeze(0),readout["weight"].narrow(0,0,2)).flatten().to(at::kFloat));
+ DecisionRequest joint{DecisionRequest::Kind::InlineOptions};joint.markers={0,1};joint.token_ids={2,3};
+ auto joint_logits=pplx->forward(hidden,in.input,{joint,second})[0].logits;
+ auto all_logits=at::linear(hidden.narrow(0,0,2).to(at::kBFloat16),readout["weight"]).to(at::kFloat);
+ close(joint_logits,at::cat({all_logits[0].narrow(0,0,2),all_logits[1].narrow(0,0,3)}));
+ TORCH_CHECK(pplx->output_count(joint)==5,"Wrong inline output count");
+ joint.markers={0,3};reject([&]{pplx->forward(hidden,in.input,{joint,second});});
+ joint.markers={1,0};reject([&]{pplx->output_count(joint);});
+ joint.markers={0};reject([&]{pplx->output_count(joint);});
+ joint.token_ids={256};reject([&]{pplx->output_count(joint);});
  first.token_ids={1,0};reject([&]{pplx->output_count(first);});Options bad;bad.values["pooling"]="mean";reject([&]{create_decision_head("pplx",bad,cfg,readout,{});});
  std::cout<<"Option tokens, tied embeddings, last-token selection, Gemma softcap and BF16 Pplx readout passed\n";
 }

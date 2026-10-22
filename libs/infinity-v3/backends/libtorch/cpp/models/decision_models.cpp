@@ -98,6 +98,15 @@ struct OptionHead final:DecisionHead {
  }
  int64_t output_count(const DecisionRequest& request)const override{
   if(request.kind==DecisionRequest::Kind::Warmup)return 1;
+  if(request.kind==DecisionRequest::Kind::InlineOptions) {
+   TORCH_CHECK(external&&!d3&&!request.markers.empty()&&request.markers.size()==request.token_ids.size(),"Invalid inline readout metadata");
+   int64_t count=0;
+   for(size_t j=0;j<request.markers.size();++j) {
+    TORCH_CHECK(request.markers[j]>=0&&(j==0||request.markers[j]>request.markers[j-1])&&request.token_ids[j]>0&&request.token_ids[j]<=weights.size(0),"Invalid inline readout marker or option count");
+    TORCH_CHECK(count<=INT64_MAX-request.token_ids[j],"Inline readout count overflow");count+=request.token_ids[j];
+   }
+   return count;
+  }
   TORCH_CHECK(request.kind==DecisionRequest::Kind::OptionTokens&&!request.token_ids.empty(),"Expected nonempty option-token metadata");
   for(size_t j=0;j<request.token_ids.size();++j)TORCH_CHECK(request.token_ids[j]>=0&&request.token_ids[j]<weights.size(0)&&(!external||request.token_ids[j]==int64_t(j)),"Invalid option-token/readout-row metadata");
   return request.token_ids.size();
@@ -105,6 +114,15 @@ struct OptionHead final:DecisionHead {
  std::vector<DecisionResult> forward(const at::Tensor& hidden,const PackedInput& input,const std::vector<DecisionRequest>& requests) const override {
   validate(hidden,input,requests);TORCH_CHECK(hidden.size(1)==weights.size(1),"Decision hidden width mismatch");std::vector<DecisionResult> result;
   for(int64_t i=0;i<input.batch;++i){const auto& request=requests[i];auto ids=request.token_ids;
+   if(request.kind==DecisionRequest::Kind::InlineOptions) {
+    output_count(request);
+    TORCH_CHECK(request.markers.back()<input.offsets[i+1]-input.offsets[i],"Inline readout marker outside sequence");
+    auto index=at::tensor(request.markers,hidden.options().dtype(at::kLong))+input.offsets[i];
+    auto logits=at::linear(hidden.index_select(0,index).to(at::kBFloat16),weights).to(at::kFloat);
+    std::vector<at::Tensor> valid;
+    for(size_t j=0;j<request.markers.size();++j)valid.push_back(logits[j].narrow(0,0,request.token_ids[j]));
+    result.push_back({at::cat(valid,0),at::ones({},hidden.options().dtype(at::kFloat))});continue;
+   }
    if(request.kind==DecisionRequest::Kind::Warmup)ids={0};else TORCH_CHECK(request.kind==DecisionRequest::Kind::OptionTokens,"Expected option-token decision metadata");
    TORCH_CHECK(!ids.empty(),"Option token metadata must not be empty");
    for(size_t j=0;j<ids.size();++j)TORCH_CHECK(ids[j]>=0&&ids[j]<weights.size(0)&&(!external||ids[j]==int64_t(j)),"Invalid option-token/readout-row metadata");

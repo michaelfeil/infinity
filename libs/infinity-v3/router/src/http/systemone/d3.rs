@@ -254,7 +254,7 @@ fn user_prompt(
     format!("State:\n{state}\n\nQuestion:\n{instructions}\n\nOptions:\n{options}\n\n{CLOSING}")
 }
 
-fn truthy(value: &Value) -> bool {
+pub(super) fn truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
         Value::Bool(v) => *v,

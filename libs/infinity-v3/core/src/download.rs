@@ -102,6 +102,12 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
     }
     if let Ok(path) = download_file(api, "decision_config.json").await {
         download_file(api, "readout.safetensors").await?;
+        if std::fs::read(&path).is_ok_and(|bytes| {
+            serde_json::from_slice::<serde_json::Value>(&bytes)
+                .is_ok_and(|config| config["format_version"] == 2)
+        }) {
+            download_file(api, "joint_config.json").await?;
+        }
         if std::fs::read(path).is_ok_and(|bytes| {
             serde_json::from_slice::<serde_json::Value>(&bytes)
                 .is_ok_and(|config| config["format_id"] == "d3-code-readout-v1")

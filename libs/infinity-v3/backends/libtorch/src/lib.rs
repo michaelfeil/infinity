@@ -122,6 +122,19 @@ impl OwnedDecision {
                 result.kind = 1;
                 result.token_ids = collect_fallible(token_ids.iter().map(|&n| i64::from(n)))?;
             }
+            DecisionInput::InlineOptions {
+                markers,
+                option_counts,
+            } => {
+                result.kind = 5;
+                result.markers =
+                    collect_results(markers.iter().map(|&n| i64::try_from(n).map_err(inference)))?;
+                result.token_ids = collect_results(
+                    option_counts
+                        .iter()
+                        .map(|&n| i64::try_from(n).map_err(inference)),
+                )?;
+            }
             DecisionInput::BlockOptionTokens {
                 token_ids,
                 prefix_length,
