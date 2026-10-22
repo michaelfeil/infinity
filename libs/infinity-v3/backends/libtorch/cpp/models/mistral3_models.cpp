@@ -67,8 +67,10 @@ class Mistral3 final : public Model {
     boundaries.cumulative=at::from_blob(offsets.data(),{int64_t(offsets.size())},at::TensorOptions().dtype(at::kInt)).to(device);
     const int64_t n=offsets.back();
     auto x=at::linear(at::cat(pixels),w("vision_tower.patch_conv.weight").reshape({hidden,-1}));
+    pixels.clear();
     x=rms(x,w("vision_tower.ln_pre.weight"),1e-5);
     auto cos=at::cat(cosines).unsqueeze(1),sin=at::cat(sines).unsqueeze(1);
+    cosines.clear();sines.clear();
     auto full_cos=fused_vision?at::Tensor():at::cat({cos,cos},-1);
     auto full_sin=fused_vision?at::Tensor():at::cat({sin,sin},-1);
     auto rotate=[&](const at::Tensor& t) {return t*full_cos+at::cat({-t.narrow(-1,dim/2,dim/2),t.narrow(-1,0,dim/2)},-1)*full_sin;};
