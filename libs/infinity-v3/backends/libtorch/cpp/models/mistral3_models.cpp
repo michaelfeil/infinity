@@ -3,6 +3,7 @@
 #include "models/mistral3_models.h"
 #include "models/decoder_models.h"
 #include "helpers/attention.h"
+#include "helpers/vision_batch.h"
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #include "kernels/transformers_norm.h"
@@ -40,6 +41,12 @@ class Mistral3 final : public Model {
     return h*width;
   }
   at::Tensor vision(const std::vector<ImageInput>& images) const {
+    auto batches=vision_batches(images,device,hidden,cfg.integer("vision_config.intermediate_size",hidden*4));
+    if(batches.size()>1) {
+      std::vector<at::Tensor> features;
+      for(auto [start,end]:batches)features.push_back(vision(std::vector<ImageInput>(images.begin()+start,images.begin()+end)));
+      return at::cat(features,0);
+    }
     std::vector<at::Tensor> pixels,cosines,sines;
     std::vector<int32_t> offsets{0};int64_t maximum=0;
     const auto theta=cfg.real("vision_config.rope_parameters.rope_theta",cfg.real("vision_config.rope_theta",10000.));
