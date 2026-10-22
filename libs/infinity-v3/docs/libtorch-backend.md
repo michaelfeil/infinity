@@ -618,7 +618,8 @@ without a hostname allowlist. Supported cloud object-storage HTTPS media URLs
 are allowed by default; `--image-allowed-hosts` replaces the list (empty disables
 remote media). Each image may use up to 4,096 vision tokens. The complete prompt
 for each question, including state, image tokens, question and options, must fit
-32,768 tokens or the lower configured/requested token limit. State has no separate
+the configured/requested token limit; use `--max-batch-tokens 32768` for a
+32,768-token budget, subject to the model's context limit. State has no separate
 character limit. OneJev rejects oversized prompts rather than truncating them.
 Image spans expand before the block boundary is
 finalized, and token limits apply to the expanded sequence. Spans cannot cross a

@@ -36,7 +36,7 @@ impl Default for MultimodalConfig {
     fn default() -> Self {
         Self {
             allowed_image_hosts: super::media::default_image_allowed_hosts(),
-            max_images: 4,
+            max_images: 16,
             max_image_bytes: 20 * 1024 * 1024,
             max_decoded_pixels: 16_777_216,
             memory_budget_bytes: 512 * 1024 * 1024,
@@ -504,6 +504,15 @@ mod tests {
         let messages: Vec<Message> = serde_json::from_value(valid.clone()).unwrap();
         assert!(validate_messages(&messages, 1).is_ok());
         assert!(validate_messages(&messages, 0).is_err());
+        for count in [16, 17] {
+            let mut request = valid.clone();
+            request[0]["content"] = json!(vec![valid[0]["content"][1].clone(); count]);
+            let messages = serde_json::from_value::<Vec<Message>>(request).unwrap();
+            assert_eq!(
+                validate_messages(&messages, MultimodalConfig::default().max_images).is_ok(),
+                count == 16
+            );
+        }
         for invalid in [
             json!([]),
             json!([{"role":"system","content":"hi"}]),

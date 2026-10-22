@@ -84,7 +84,7 @@ impl Onejev {
             chat,
             codes,
             token_ids,
-            max_input_length: max_input_length.min(32_768),
+            max_input_length,
             images: None,
             block_attention,
         })
@@ -93,14 +93,13 @@ impl Onejev {
     pub(super) fn with_images(
         mut self,
         path: &Path,
-        mut config: infinity_v3_core::multimodal::MultimodalConfig,
+        config: infinity_v3_core::multimodal::MultimodalConfig,
     ) -> anyhow::Result<Self> {
         let model: Value = serde_json::from_slice(&std::fs::read(path.join("config.json"))?)?;
         if model["vision_config"].is_object()
             && (path.join("processor_config.json").exists()
                 || path.join("preprocessor_config.json").exists())
         {
-            config.max_images = 16;
             self.images = Some(
                 Qwen3VlProcessor::load(path, self.tokenizer.clone(), self.max_input_length, config)
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?,
@@ -137,11 +136,6 @@ impl Onejev {
                                 if !matches!(image_url.detail, None | Some(ImageDetail::Auto)) {
                                     return Err(
                                         "OneJev image detail must be auto or omitted".into()
-                                    );
-                                }
-                                if sources.len() >= 16 {
-                                    return Err(
-                                        "OneJev supports at most 16 images per request".into()
                                     );
                                 }
                                 let placeholder = format!("<image:{}>", sources.len() + 1);
@@ -621,18 +615,6 @@ mod tests {
                 }
             }
             assert!(Onejev::image_sources(&mut serde_json::from_value(invalid).unwrap()).is_err());
-        }
-        for count in [16, 17] {
-            let mut request = value.clone();
-            request["state"]["messages"][0]["content"] =
-                json!(vec![
-                    value["state"]["messages"][0]["content"][1].clone();
-                    count
-                ]);
-            assert_eq!(
-                Onejev::image_sources(&mut serde_json::from_value(request).unwrap()).is_ok(),
-                count == 16
-            );
         }
     }
 
