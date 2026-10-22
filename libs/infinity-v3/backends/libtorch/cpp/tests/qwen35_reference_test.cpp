@@ -1,4 +1,6 @@
 #include "kernels/qwen35_reference.h"
+#include "kernels/qwen35_recurrent.h"
+#include <array>
 #include "kernels/qwen35_kernels.h"
 #include "batching/prefix_cache.h"
 #include <ATen/ATen.h>
@@ -80,6 +82,50 @@ void resumed_delta(c10::Device device,int64_t kh,int64_t vh,bool fma) {
   }
 }
 
+// CPU oracle for the original 32-lane recurrence; does not call a CUDA dispatcher.
+void independent_recurrent(c10::Device device,int kh,int vh,bool fma) {
+  if(!tei::qwen35_recurrent_supported(device,kh,vh))return;
+  constexpr int tokens=13;
+  auto values=(at::randn({tokens,(2*kh+vh)*128})*.2).to(at::kBFloat16);
+  auto qk=at::randn({tokens*kh,256})*.05,gates=at::rand({tokens,2*vh});
+  auto expected=at::empty({tokens,vh,128},values.options());
+  auto v=values.const_data_ptr<at::BFloat16>();
+  auto q=qk.const_data_ptr<float>(),g=gates.const_data_ptr<float>();
+  auto out=expected.mutable_data_ptr<at::BFloat16>();
+  auto accumulate=[&](float sum,float a,float b) {
+    if(fma)return std::fma(a,b,sum);
+    volatile float product=a*b;return sum+product;
+  };
+  auto reduce=[](std::array<float,32> partial) {
+    for(int d=16;d;d/=2)for(int lane=0;lane<d;++lane)partial[lane]+=partial[lane+d];
+    return partial[0];
+  };
+  for(int head=0;head<vh;++head)for(int column=0;column<128;++column) {
+    std::array<float,128> state{};
+    for(int t=0;t<tokens;++t) {
+      const auto* query=q+(t*kh+head/(vh/kh))*256;
+      std::array<float,32> partial{};
+      for(int lane=0;lane<32;++lane)for(int i=0;i<4;++i) {
+        int k=lane+i*32;state[k]*=g[t*2*vh+head];
+        partial[lane]=accumulate(partial[lane],state[k],query[128+k]);
+      }
+      volatile float difference=float(v[t*(2*kh+vh)*128+2*kh*128+head*128+column])-reduce(partial);
+      float delta=difference*g[t*2*vh+vh+head];partial.fill(0.f);
+      for(int lane=0;lane<32;++lane)for(int i=0;i<4;++i) {
+        int k=lane+i*32;state[k]=accumulate(state[k],query[128+k],delta);
+        partial[lane]=accumulate(partial[lane],state[k],query[k]);
+      }
+      out[(t*vh+head)*128+column]=at::BFloat16(reduce(partial));
+    }
+  }
+  int32_t offsets[]={0,tokens};tei::PackedInput input;
+  input.offsets=offsets;input.batch=1;input.max_sequence=tokens;
+  input.cumulative=at::tensor(std::vector<int32_t>{0,tokens},at::TensorOptions().dtype(at::kInt).device(device));
+  auto actual=at::empty_like(expected,expected.options().device(device));
+  tei::qwen35_recurrent_cuda(values.to(device),qk.to(device),gates.to(device),input,actual,kh,vh,fma);
+  TORCH_CHECK(at::equal(actual.cpu(),expected),"Independent recurrence oracle failed kh=",kh," vh=",vh," fma=",fma);
+}
+
 at::Tensor independent_norm(const at::Tensor& x,const at::Tensor& gamma,float eps) {
   auto f=x.to(at::kFloat).contiguous(),g=gamma.to(at::kFloat).contiguous();
   auto result=at::empty_like(f);auto width=x.size(-1),rows=x.numel()/width;
@@ -139,8 +185,8 @@ int main(int argc,char** argv) {
   TORCH_CHECK(at::equal(twice,at::cat({expected,expected},0)),"Packed sequence recurrence state leaked");
   auto poisoned=tei::qwen35_reference_delta_cuda(at::cat({q,at::full_like(q,NAN)},0),at::cat({z,z},0),at::cat({ab,ab},0),conv,alog,dt,weight,input,1,1,1e-6);
   TORCH_CHECK(at::equal(poisoned.narrow(0,0,32),expected),"Independent sequence contaminated by later NaNs");
-  for(bool fma:{false,true})for(auto geometry:{std::pair<int64_t,int64_t>{1,1},{2,4},{16,32},{16,48}})
-    resumed_delta(device,geometry.first,geometry.second,fma);
+  for(bool fma:{false,true})for(auto geometry:{std::pair<int64_t,int64_t>{1,1},{2,4},{4,8},{16,32},{16,48},{32,64},{32,96},{16,128}})
+    { resumed_delta(device,geometry.first,geometry.second,fma); independent_recurrent(device,geometry.first,geometry.second,fma); }
   std::cout<<"Independent original norms and synthetic packed sequence isolation passed\n";
   std::cout<<"DeltaNet cache capture and split/resume preserve both arithmetic modes exactly\n";
 }

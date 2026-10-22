@@ -119,9 +119,11 @@ template<int COLUMNS,bool FMA> void launch(const at::Tensor& v,const at::Tensor&
 
 }
 bool qwen35_recurrent_supported(c10::Device device,int64_t kh,int64_t vh) {
- if(!device.is_cuda()||device.index()<0||kh!=16||vh!=48)return false;
+ // Smaller head counts retain the more parallel one-column fallback.
+ if(!device.is_cuda()||device.index()<0||kh<=0||vh<48||vh>128||vh%kh!=0)return false;
  auto properties=at::cuda::getDeviceProperties(device.index());
- return properties->major==9&&properties->minor==0;
+ // Register state and warp shuffles require no architecture-specific MMA.
+ return properties->major==8||properties->major==9||properties->major==10||properties->major==12;
 }
 void qwen35_recurrent_cuda(const at::Tensor& v,const at::Tensor& qk,
  const at::Tensor& gates,const PackedInput& input,at::Tensor& out,
