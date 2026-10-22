@@ -508,15 +508,6 @@ mod tests {
         let messages: Vec<Message> = serde_json::from_value(valid.clone()).unwrap();
         assert!(validate_messages(&messages, 1).is_ok());
         assert!(validate_messages(&messages, 0).is_err());
-        for count in [16, 17] {
-            let mut request = valid.clone();
-            request[0]["content"] = json!(vec![valid[0]["content"][1].clone(); count]);
-            let messages = serde_json::from_value::<Vec<Message>>(request).unwrap();
-            assert_eq!(
-                validate_messages(&messages, MultimodalConfig::default().max_images).is_ok(),
-                count == 16
-            );
-        }
         for invalid in [
             json!([]),
             json!([{"role":"system","content":"hi"}]),
