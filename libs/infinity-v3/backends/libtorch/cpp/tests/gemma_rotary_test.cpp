@@ -14,8 +14,8 @@ at::Tensor reference(const at::Tensor& x,const at::Tensor& cos,const at::Tensor&
 int main(int argc,char** argv) {
  c10::Device device(argc>1?argv[1]:"cuda:0");at::manual_seed(7312);
  auto bf=at::TensorOptions().device(device).dtype(at::kBFloat16);
- for(int64_t tokens:{1,3,33,129})for(int64_t heads:{1,2,16})for(int64_t width:{8,72,256,512}) {
-  auto storage=at::randn({tokens,heads+3,width},bf);auto x=storage.narrow(1,1,heads);auto angles=at::randn({257,width/2},bf.dtype(at::kFloat));
+ for(int64_t tokens:{1,3,33,129})for(int64_t heads:{1,2,16})for(int64_t width:{8,64,72,256,512})for(bool partial:{false,true}) {
+  auto storage=at::randn({tokens,heads+3,width*(partial?4:1)},bf);auto x=storage.narrow(1,1,heads).narrow(2,0,width);auto angles=at::randn({257,width/2},bf.dtype(at::kFloat));
   auto cos=angles.cos().to(bf),sin=angles.sin().to(bf);
   auto pos=(at::arange(tokens,at::TensorOptions().dtype(at::kLong).device(device))*17).remainder(257);
   auto actual=tei::gemma_rotary_cuda(x,cos,sin,pos),expected=reference(x,cos,sin,pos);
