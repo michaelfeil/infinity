@@ -27,6 +27,25 @@ void resumed_delta(c10::Device device,int64_t kh,int64_t vh,bool fma) {
   };
   auto expected=run(full,0);
   for(int64_t boundary:{1,13,34}) {
+    if(fma) {
+      auto prefill=full;int32_t prefix_offsets[]={0,int32_t(boundary)};
+      prefill.offsets=prefix_offsets;prefill.max_sequence=boundary;
+      prefill.cumulative=at::tensor(std::vector<int32_t>{0,int32_t(boundary)},opts.dtype(at::kInt));
+      at::Tensor state;
+      auto prefix=tei::qwen35_delta_cuda(qkv.narrow(0,0,boundary),z.narrow(0,0,boundary),ab.narrow(0,0,boundary),
+        conv,alog,dt,norm,prefill,kh,vh,1e-6,{},&state,{},{},false);
+      TORCH_CHECK(at::equal(prefix,expected.narrow(0,0,boundary)),"Block prefill changed recurrent arithmetic");
+      auto immutable=state.clone();auto suffix=full;int32_t suffix_offsets[]={0,int32_t(tokens-boundary)};
+      suffix.offsets=suffix_offsets;suffix.max_sequence=tokens-boundary;
+      suffix.cumulative=at::tensor(std::vector<int32_t>{0,int32_t(tokens-boundary)},opts.dtype(at::kInt));
+      suffix.block_prefix_sources={0};suffix.block_cache_sources=at::zeros({1},opts.dtype(at::kLong));
+      auto history=qkv.narrow(0,std::max(int64_t(0),boundary-3),std::min(boundary,int64_t(3)));
+      auto history_cu=at::tensor(std::vector<int32_t>{0,int32_t(history.size(0))},opts.dtype(at::kInt));
+      auto resumed=tei::qwen35_delta_cuda(qkv.narrow(0,boundary,tokens-boundary),z.narrow(0,boundary,tokens-boundary),
+        ab.narrow(0,boundary,tokens-boundary),conv,alog,dt,norm,suffix,kh,vh,1e-6,state,nullptr,history,history_cu,false);
+      TORCH_CHECK(at::equal(resumed,expected.narrow(0,boundary,tokens-boundary))&&at::equal(state,immutable),
+        "Block resume changed outputs or mutated shared state");
+    }
     auto budget=std::make_shared<tei::PrefixBudget>();
     auto saved=std::make_shared<tei::PrefixEntry>();saved->budget=budget;
     // This kernel-level fixture supplies the admission reservation normally
@@ -108,7 +127,7 @@ int main(int argc,char** argv) {
   TORCH_CHECK(at::equal(twice,at::cat({expected,expected},0)),"Packed sequence recurrence state leaked");
   auto poisoned=tei::qwen35_reference_delta_cuda(at::cat({q,at::full_like(q,NAN)},0),at::cat({z,z},0),at::cat({ab,ab},0),conv,alog,dt,weight,input,1,1,1e-6);
   TORCH_CHECK(at::equal(poisoned.narrow(0,0,32),expected),"Independent sequence contaminated by later NaNs");
-  for(bool fma:{false,true})for(auto geometry:{std::pair<int64_t,int64_t>{1,1},{2,4},{16,48}})
+  for(bool fma:{false,true})for(auto geometry:{std::pair<int64_t,int64_t>{1,1},{2,4},{16,32},{16,48}})
     resumed_delta(device,geometry.first,geometry.second,fma);
   std::cout<<"Independent original norms and synthetic packed sequence isolation passed\n";
   std::cout<<"DeltaNet cache capture and split/resume preserve both arithmetic modes exactly\n";

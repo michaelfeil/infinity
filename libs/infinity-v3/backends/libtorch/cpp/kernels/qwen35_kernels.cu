@@ -657,28 +657,39 @@ extern "C" __global__ void qwen35_gdn_cached(const __nv_bfloat16 *qkv, const flo
     float state[4] = {0, 0, 0, 0};
     const auto source=initial?sources[seq]:seq;
     if(initial) for(int i=0;i<4;++i) state[i]=initial[((source*vh+head)*128+lane+i*32)*128+col];
-    for (uint32_t t = cu[seq]; t < cu[seq + 1]; ++t) {
-        float decay = decay_beta[uint64_t(t) * 2 * vh + head],
-              beta = decay_beta[uint64_t(t) * 2 * vh + vh + head];
-        float q[4], k[4], memory = 0;
+    constexpr int tile=16;
+    __shared__ float queries_keys[tile][256],gates[tile][2];
+    __shared__ __nv_bfloat16 values[tile][8],outputs[tile][8];
+    const uint32_t begin=cu[seq],end=cu[seq+1];
+    for(uint32_t start=begin;start<end;start+=tile) {
+      const int count=min(uint32_t(tile),end-start);
+      __syncthreads();
+      // Cooperatively stage each head once for all eight column warps.
+      for(int i=threadIdx.x;i<count*256;i+=blockDim.x)
+        queries_keys[i/256][i%256]=qk[(uint64_t(start+i/256)*kh+qhead)*256+i%256];
+      for(int i=threadIdx.x;i<count*2;i+=blockDim.x)
+        gates[i/2][i%2]=decay_beta[uint64_t(start+i/2)*2*vh+head+(i%2)*vh];
+      for(int i=threadIdx.x;i<count*8;i+=blockDim.x)
+        values[i/8][i%8]=qkv[uint64_t(start+i/8)*channels+2*kh*128+head*128+blockIdx.z*8+i%8];
+      __syncthreads();
+      for(int row=0;row<count;++row) {
+        float decay=gates[row][0],beta=gates[row][1];
+        float q[4],k[4],memory=0;
 #pragma unroll
-        for (int i = 0; i < 4; ++i) {
-            q[i] = qk[(uint64_t(t) * kh + qhead) * 256 + lane + i * 32];
-            k[i] = qk[(uint64_t(t) * kh + qhead) * 256 + 128 + lane + i * 32];
-            state[i] *= decay;
-            memory += state[i] * k[i];
+        for(int i=0;i<4;++i) {
+          q[i]=queries_keys[row][lane+i*32];k[i]=queries_keys[row][128+lane+i*32];
+          state[i]*=decay;memory+=state[i]*k[i];
         }
-        memory = gdn_sum(memory);
-        float v = __bfloat162float(qkv[uint64_t(t) * channels + 2 * kh * 128 + head * 128 + col]);
-        float delta = (v - memory) * beta, sum = 0;
+        memory=gdn_sum(memory);
+        float delta=(__bfloat162float(values[row][threadIdx.x/32])-memory)*beta,sum=0;
 #pragma unroll
-        for (int i = 0; i < 4; ++i) {
-            state[i] += k[i] * delta;
-            sum += state[i] * q[i];
-        }
-        sum = gdn_sum(sum);
-        if (lane == 0)
-            out[(uint64_t(t) * vh + head) * 128 + col] = __float2bfloat16_rn(sum);
+        for(int i=0;i<4;++i){state[i]+=k[i]*delta;sum+=state[i]*q[i];}
+        sum=gdn_sum(sum);
+        if(lane==0)outputs[row][threadIdx.x/32]=__float2bfloat16_rn(sum);
+      }
+      __syncthreads();
+      for(int i=threadIdx.x;i<count*8;i+=blockDim.x)
+        out[(uint64_t(start+i/8)*vh+head)*128+blockIdx.z*8+i%8]=outputs[i/8][i%8];
     }
     if(final_state) for(int i=0;i<4;++i) final_state[((int64_t(seq)*vh+head)*128+lane+i*32)*128+col]=state[i];
 }

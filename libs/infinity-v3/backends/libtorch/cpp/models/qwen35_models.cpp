@@ -199,9 +199,8 @@ class Qwen35 final : public Model {
   }
   at::Tensor norm(const at::Tensor& x,const std::string& name) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
-    // Deep routed models amplify individual BF16 differences. Preserve the
-    // original Candle reduction tree before casting the normalized value.
-    if(integer("num_experts",0)>0 && device.is_cuda() && dtype==at::kBFloat16)
+    // Keep FP32 statistics and affine scaling in one CUDA kernel.
+    if(device.is_cuda() && dtype==at::kBFloat16 && x.size(-1)<=8192)
       return qwen35_reference_norm_cuda(x,w(name+".weight"),epsilon);
 #endif
     auto f=x.to(at::kFloat);
@@ -219,12 +218,19 @@ class Qwen35 final : public Model {
     } else {cos=cos_cache.index_select(0,radix_positions(input)).unsqueeze(1);sin=sin_cache.index_select(0,radix_positions(input)).unsqueeze(1);}
     return at::cat({at::cat({a*cos-b*sin,b*cos+a*sin},-1),x.narrow(-1,rotary,dim-rotary)},-1).contiguous();
   }
-  at::Tensor full_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false,int64_t cache_layer=-1) const {
+  using AttentionProjections=std::array<at::Tensor,3>;
+  AttentionProjections project_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,bool linear) const {
+    if(linear)return {prefix_projection(x,p+"in_proj_qkv",input).contiguous(),prefix_projection(x,p+"in_proj_z",input).contiguous(),
+      at::cat({prefix_projection(x,p+"in_proj_a",input),prefix_projection(x,p+"in_proj_b",input)},-1).contiguous()};
+    return {prefix_projection(x,p+"q_proj",input),prefix_projection(x,p+"k_proj",input),prefix_projection(x,p+"v_proj",input)};
+  }
+  at::Tensor full_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false,int64_t cache_layer=-1,const AttentionProjections* projected=nullptr) const {
+    auto projections=projected?*projected:project_attention(x,p,input,false);
     auto tokens=x.size(0);
-    auto qg=prefix_projection(x,p+"q_proj",input).view({tokens,heads,2*dim});
+    auto qg=projections[0].view({tokens,heads,2*dim});
     auto q=rotate(norm(qg.narrow(-1,0,dim),p+"q_norm"),input);
-    auto k=rotate(norm(prefix_projection(x,p+"k_proj",input).view({tokens,kv_heads,dim}),p+"k_norm"),input);
-    auto v=prefix_projection(x,p+"v_proj",input).view({tokens,kv_heads,dim});
+    auto k=rotate(norm(projections[1].view({tokens,kv_heads,dim}),p+"k_norm"),input);
+    auto v=projections[2].view({tokens,kv_heads,dim});
     auto unfolded=radix_unfold_qkv(q,k,v,input);
     q=unfolded[0];k=unfolded[1];v=unfolded[2];
     auto mode=cfg.string("_decision_attention_mode",cfg.string("decision_attention_mode","causal"));
@@ -337,9 +343,9 @@ class Qwen35 final : public Model {
     if(cache&&prefill)cache->state=at::stack(states,0);
     return at::stack(outputs,0);
   }
-  at::Tensor delta_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false,int64_t cache_layer=-1) const {
-    auto qkv=prefix_projection(x,p+"in_proj_qkv",input).contiguous(),z=prefix_projection(x,p+"in_proj_z",input).contiguous();
-    auto ab=at::cat({prefix_projection(x,p+"in_proj_a",input),prefix_projection(x,p+"in_proj_b",input)},-1).contiguous();
+  at::Tensor delta_attention(const at::Tensor& x,const std::string& p,const PackedInput& input,BlockCache* cache=nullptr,bool prefill=false,int64_t cache_layer=-1,const AttentionProjections* projected=nullptr) const {
+    auto projections=projected?*projected:project_attention(x,p,input,true);
+    auto qkv=projections[0],z=projections[1],ab=projections[2];
     qkv=radix_unfold(qkv,input);z=radix_unfold(z,input);ab=radix_unfold(ab,input);
     at::Tensor output;
     if(device.is_cuda()) {
@@ -456,22 +462,34 @@ class Qwen35 final : public Model {
     auto executed_images=prefixes.images;
     executed_images.insert(executed_images.end(),suffixes.images.begin(),suffixes.images.end());
     RequestImageFeatures shared_features(executed_images);
-    std::vector<BlockCache> caches(layer_count);
-    for(auto& cache:caches)cache.offsets=prefix_offsets;
-    auto run=[&](const PackedInput& part,bool prefill) {
-      auto h=embeddings(part,shared_features);
-      for(int64_t layer=0;layer<layer_count;++layer) {
-        const auto p="layers."+std::to_string(layer)+".";
-        auto x=norm(h,p+"input_layernorm");
-        auto attention=string("layer_types."+std::to_string(layer))=="linear_attention"?
-          delta_attention(x,p+"linear_attn.",part,&caches[layer],prefill):full_attention(x,p+"self_attn.",part,&caches[layer],prefill);
-        h=h+attention;h=h+feed_forward(norm(h,p+"post_attention_layernorm"),layer,part);
-      }
-      return norm(h,"norm");
-    };
-    auto prefix_hidden=run(prefixes,true);
+    auto prefix_hidden=embeddings(prefixes,shared_features);
     at::Tensor suffix_hidden;
-    if(!suffix_rows.empty())suffix_hidden=run(suffixes,false);
+    if(!suffix_rows.empty())suffix_hidden=embeddings(suffixes,shared_features);
+    const auto prefix_tokens=prefix_hidden.size(0);
+    for(int64_t layer=0;layer<layer_count;++layer) {
+      const auto p="layers."+std::to_string(layer)+".";
+      BlockCache cache;cache.offsets=prefix_offsets;
+      auto hidden=suffix_hidden.defined()?at::cat({prefix_hidden,suffix_hidden},0):prefix_hidden;
+      auto normalized=norm(hidden,p+"input_layernorm");
+      const bool linear=string("layer_types."+std::to_string(layer))=="linear_attention";
+      const auto ap=p+(linear?"linear_attn.":"self_attn.");
+      auto projections=project_attention(normalized,ap,input,linear);
+      auto attention=[&](const PackedInput& part,bool prefill) {
+        const auto start=prefill?0:prefix_tokens,count=prefill?prefix_tokens:hidden.size(0)-prefix_tokens;
+        AttentionProjections block;
+        for(size_t i=0;i<block.size();++i)block[i]=projections[i].narrow(0,start,count);
+        auto x=normalized.narrow(0,start,count);
+        return linear?delta_attention(x,ap,part,&cache,prefill,-1,&block):full_attention(x,ap,part,&cache,prefill,-1,&block);
+      };
+      auto prefix_attention=attention(prefixes,true);
+      auto attended=suffix_hidden.defined()?at::cat({prefix_attention,attention(suffixes,false)},0):prefix_attention;
+      hidden=hidden+attended;
+      hidden=hidden+feed_forward(norm(hidden,p+"post_attention_layernorm"),layer,input);
+      prefix_hidden=hidden.narrow(0,0,prefix_tokens);
+      if(suffix_hidden.defined())suffix_hidden=hidden.narrow(0,prefix_tokens,hidden.size(0)-prefix_tokens);
+    }
+    prefix_hidden=norm(prefix_hidden,"norm");
+    if(suffix_hidden.defined())suffix_hidden=norm(suffix_hidden,"norm");
     std::vector<at::Tensor> results;
     size_t suffix_row=0;
     for(int64_t row=0;row<input.batch;++row) {
