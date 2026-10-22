@@ -95,7 +95,7 @@ struct Args {
     /// Alternatively, the specified ID can also be a path to a local directory containing the
     /// necessary model files saved by the `save_pretrained(...)` methods of either Transformers or
     /// Sentence Transformers.
-    /// The aliases `pplx-decider-v1.1-27b` and `d3` select their native decision protocols.
+    /// The aliases `pplx-decider-v1.1-27b`, `pplx-decider-flash-v1.2` and `d3` select their native decision protocols.
     #[clap(
         long,
         env = infinity_v3_config::infinity_env!("MODEL_ID"),

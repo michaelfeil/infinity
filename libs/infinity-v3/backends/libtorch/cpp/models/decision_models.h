@@ -10,7 +10,7 @@ struct DecisionField {
  std::vector<std::pair<int64_t,int64_t>> options;
 };
 struct DecisionRequest {
- enum class Kind { Laya, OptionTokens, Clef, Warmup } kind;
+ enum class Kind { Laya, OptionTokens, Clef, Warmup, InlineOptions=5 } kind;
  int64_t question_type=0;
  std::vector<int64_t> markers,token_ids;
  std::vector<DecisionField> fields;

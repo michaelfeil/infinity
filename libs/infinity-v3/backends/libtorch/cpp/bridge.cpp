@@ -279,7 +279,7 @@ size_t input_upload_limit(const Engine& model) {
  return static_cast<size_t>(limit);
 }
 bool share_image_uploads(const Engine& model) {
- return model.options.string("_decision.kind")=="d3"||
+ return model.options.string("_decision.kind")=="d3"||model.options.string("_decision.kind")=="pplx"||
    model.options.string("_decision_attention_mode")=="block_bidirectional";
 }
 size_t validate_request_input(Engine& model,const int64_t* ids,const int64_t* types,
@@ -438,7 +438,7 @@ void attach_radix(Engine& model,tei::PackedInput& packed,const int64_t* ids,cons
 }
 std::vector<tei::DecisionRequest> decision_requests(const TeiDecision* requests,size_t count) {
  TORCH_CHECK(requests||!count,"Missing decision metadata buffer");std::vector<tei::DecisionRequest> result;result.reserve(count);
- for(size_t i=0;i<count;++i){const auto& request=requests[i];TORCH_CHECK(request.kind>=0&&request.kind<=4,"Invalid decision metadata kind");
+ for(size_t i=0;i<count;++i){const auto& request=requests[i];TORCH_CHECK(request.kind>=0&&request.kind<=5,"Invalid decision metadata kind");
   tei::DecisionRequest converted{static_cast<tei::DecisionRequest::Kind>(request.kind==4?1:request.kind)};converted.question_type=request.question_type;
   TORCH_CHECK((!request.marker_count||request.markers)&&(!request.token_count||request.token_ids)&&(!request.field_count||request.fields),"Missing decision metadata values");
   if(request.marker_count)converted.markers.assign(request.markers,request.markers+request.marker_count);

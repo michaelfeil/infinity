@@ -80,6 +80,18 @@ impl PreparedD3Media {
 
 impl D3MediaProcessor {
     pub fn load(root: &Path, config: MultimodalConfig) -> Result<Self> {
+        Self::with_images(QwenImageProcessor::load_d3(root).map_err(invalid)?, config)
+    }
+
+    /// Perplexity's joint protocol shares Qwen media tokens and bounded image preparation.
+    pub fn load_pplx(root: &Path, config: MultimodalConfig, max_pixels: usize) -> Result<Self> {
+        Self::with_images(
+            QwenImageProcessor::load_pplx(root, max_pixels).map_err(invalid)?,
+            config,
+        )
+    }
+
+    fn with_images(images: QwenImageProcessor, config: MultimodalConfig) -> Result<Self> {
         if config.workers == 0 || config.max_images == 0 || config.memory_budget_bytes == 0 {
             return Err(invalid("Invalid D3 media limits"));
         }
@@ -92,7 +104,7 @@ impl D3MediaProcessor {
             config.timeout,
         )?;
         Ok(Self {
-            images: QwenImageProcessor::load_d3(root).map_err(invalid)?,
+            images,
             resolver,
             workers: Arc::new(Semaphore::new(config.workers)),
             budget,

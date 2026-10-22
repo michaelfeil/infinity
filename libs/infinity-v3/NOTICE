@@ -13,3 +13,10 @@ Bundled third-party components retain their respective terms; see
 THIRD_PARTY_NOTICES.md and the notices in their source directories.
 
 This NOTICE records attribution. It does not amend the license terms.
+
+Perplexity joint decision protocol:
+The prompt constants and wire protocol in router/src/http/systemone/pplx_joint.rs
+follow pplx-decider-flash-v1.2 (Apache License 2.0):
+https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2
+Upstream model notice: Derived from Qwen/Qwen3.5-4B, revision
+851bf6e806efd8d0a36b00ddf55e13ccb7b8cd0a, under Apache License 2.0.

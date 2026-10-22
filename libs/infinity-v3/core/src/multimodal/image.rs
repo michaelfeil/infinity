@@ -68,6 +68,15 @@ impl QwenImageProcessor {
         Ok(config)
     }
 
+    pub(super) fn load_pplx(root: &Path, max_pixels: usize) -> Result<Self, String> {
+        let mut config = Self::load(root)?;
+        config.min_pixels = 65_536;
+        config.max_pixels = max_pixels;
+        config.ignore_exif = true;
+        config.validate()?;
+        Ok(config)
+    }
+
     /// Released D3 uses the Qwen defaults but saves only a subset of processor fields.
     pub(super) fn load_d3(root: &Path) -> Result<Self, String> {
         let mut value: serde_json::Value = serde_json::from_slice(

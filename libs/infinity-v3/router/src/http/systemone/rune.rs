@@ -325,28 +325,38 @@ pub(super) fn answer(
     question: &Question,
     output: DecisionOutput,
 ) -> Result<ResultValue, AnswerError> {
-    let n = question.labels.len();
-    if output.logits.len() != n || n == 0 || output.logits.iter().any(|v| !v.is_finite()) {
+    answer_options(
+        &question.kind,
+        &question.labels,
+        &question.criteria,
+        &output.logits,
+    )
+}
+
+pub(super) fn answer_options(
+    kind: &str,
+    labels: &[String],
+    criteria: &Value,
+    logits: &[f32],
+) -> Result<ResultValue, AnswerError> {
+    let n = labels.len();
+    if logits.len() != n || n == 0 || logits.iter().any(|v| !v.is_finite()) {
         return Err("Model returned invalid option logits".into());
     }
-    let max = output
-        .logits
-        .iter()
-        .copied()
-        .fold(f32::NEG_INFINITY, f32::max) as f64;
-    let mut p = super::super::result_storage::vector(output.logits.len())?;
-    p.extend(output.logits.iter().map(|&v| (v as f64 - max).exp()));
+    let max = logits.iter().copied().fold(f32::NEG_INFINITY, f32::max) as f64;
+    let mut p = super::super::result_storage::vector(logits.len())?;
+    p.extend(logits.iter().map(|&v| (v as f64 - max).exp()));
     let sum: f64 = p.iter().sum();
     p.iter_mut().for_each(|v| *v /= sum);
     let mode = p
         .iter()
         .enumerate()
         .fold(0, |best, (i, &v)| if v > p[best] { i } else { best });
-    let probabilities = ResultValue::probabilities(question.labels.iter().map(String::as_str), &p)?;
-    match question.kind.as_str() {
+    let probabilities = ResultValue::probabilities(labels.iter().map(String::as_str), &p)?;
+    match kind {
         "choice" => ResultValue::fields([
             ("type", ResultValue::string("choice")?),
-            ("choice", ResultValue::string(&question.labels[mode])?),
+            ("choice", ResultValue::string(&labels[mode])?),
             (
                 "confidence",
                 ResultValue::number(if n == 1 {
@@ -383,10 +393,7 @@ pub(super) fn answer(
                     ),
                 ),
                 ("confidence", ResultValue::number(confidence)),
-                (
-                    "legend",
-                    ResultValue::legend(question.criteria.as_array().unwrap())?,
-                ),
+                ("legend", ResultValue::legend(criteria.as_array().unwrap())?),
                 ("probabilities", probabilities),
             ])
         }
