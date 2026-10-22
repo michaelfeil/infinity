@@ -90,7 +90,11 @@ class RequestImageFeatures {
   if(found!=entries.end())for(auto& entry:found->second) {
    if(entry.image.grid_thw!=image.grid_thw||entry.image.merge_size!=image.merge_size||!entry.remaining)continue;
    auto result=entry.features.defined()?entry.features:compute();
-   if(--entry.remaining)entry.features=result;else entry.features=at::Tensor();
+   if(--entry.remaining) {
+    // A reused image must not retain the other images' projected features.
+    if(!result.is_contiguous()||result.storage_offset()!=0||result.storage().nbytes()!=result.numel()*result.element_size())result=result.clone();
+    entry.features=result;
+   } else entry.features=at::Tensor();
    return result;
   }
   return compute();

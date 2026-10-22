@@ -18,6 +18,9 @@ void batched_tower_test(Qwen3VL& tower,const at::Tensor& pixels) {
   TORCH_CHECK(chunks.size()==images.size()&&chunks.front().first==0&&chunks.back().second==images.size(),
     "Vision workspace bound lost images or joined oversized images");
   auto batch=tower.image_features(images);
+  RequestImageFeatures cache({images[0],images[0]});
+  auto retained=cache.get(images[0],[&]{return batch[0];});
+  TORCH_CHECK(retained.storage().nbytes()==retained.numel()*retained.element_size(),"Reused image retained the complete vision batch allocation");
   for(size_t i=0;i<images.size();++i) {
     auto expected=tower.image_features(images[i]);
     TORCH_CHECK(at::allclose(batch[i],expected,.015,.015),"Batched Qwen image/frame attention leaked across grids");
