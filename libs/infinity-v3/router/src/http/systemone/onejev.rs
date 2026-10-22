@@ -84,7 +84,7 @@ impl Onejev {
             chat,
             codes,
             token_ids,
-            max_input_length,
+            max_input_length: max_input_length.min(32_768),
             images: None,
             block_attention,
         })
@@ -93,13 +93,14 @@ impl Onejev {
     pub(super) fn with_images(
         mut self,
         path: &Path,
-        config: infinity_v3_core::multimodal::MultimodalConfig,
+        mut config: infinity_v3_core::multimodal::MultimodalConfig,
     ) -> anyhow::Result<Self> {
         let model: Value = serde_json::from_slice(&std::fs::read(path.join("config.json"))?)?;
         if model["vision_config"].is_object()
             && (path.join("processor_config.json").exists()
                 || path.join("preprocessor_config.json").exists())
         {
+            config.max_images = 16;
             self.images = Some(
                 Qwen3VlProcessor::load(path, self.tokenizer.clone(), self.max_input_length, config)
                     .map_err(|e| anyhow::anyhow!(e.to_string()))?,
@@ -138,9 +139,9 @@ impl Onejev {
                                         "OneJev image detail must be auto or omitted".into()
                                     );
                                 }
-                                if sources.len() >= 4 {
+                                if sources.len() >= 16 {
                                     return Err(
-                                        "OneJev supports at most four images per request".into()
+                                        "OneJev supports at most 16 images per request".into()
                                     );
                                 }
                                 let placeholder = format!("<image:{}>", sources.len() + 1);
@@ -166,7 +167,7 @@ impl Onejev {
                     "OneJev image processor unavailable".into(),
                 )
             })?
-            .prepare_images(sources, 1024)
+            .prepare_images(sources, 4096)
             .await
     }
 
@@ -271,9 +272,6 @@ impl Onejev {
                 serde_json::to_string_pretty(&messages).map_err(|e| e.to_string())?
             }
         };
-        if state.chars().count() > 50_000 {
-            return Err("State exceeds 50000 characters".into());
-        }
         if request.head_max_len.is_some() {
             return Err("head_max_len is specific to Laya".into());
         }
@@ -463,6 +461,16 @@ mod tests {
                 .unwrap()
                 .contains("Noul criteria"));
         }
+        let mut request = json!({"state":"a".repeat(50_001),"questions":{"q":{"type":"noul"}}});
+        assert!(model
+            .prepare(serde_json::from_value(request.clone())?)
+            .is_ok());
+        request["state"] = json!("a ".repeat(2048));
+        assert!(model
+            .prepare(serde_json::from_value(request)?)
+            .err()
+            .unwrap()
+            .contains("exceeding max_len"));
         Ok(())
     }
 
@@ -494,7 +502,7 @@ mod tests {
             chat,
             codes: vec![],
             token_ids: vec![],
-            max_input_length: 64,
+            max_input_length: 32_768,
             images: None,
             block_attention: true,
         };
@@ -565,6 +573,16 @@ mod tests {
             .attach_images(&mut [question(5)], prepared(), Some(8))
             .unwrap_err()
             .contains("token limit"));
+        for length in [32_765, 32_766] {
+            let mut boundary = question(5);
+            boundary.encoding.input_ids.resize(length, 4);
+            assert_eq!(
+                model
+                    .attach_images(&mut [boundary], prepared(), None)
+                    .is_ok(),
+                length == 32_765
+            );
+        }
         for invalid in [0, 7] {
             assert!(model
                 .attach_images(&mut [question(invalid)], prepared(), None)
@@ -603,6 +621,18 @@ mod tests {
                 }
             }
             assert!(Onejev::image_sources(&mut serde_json::from_value(invalid).unwrap()).is_err());
+        }
+        for count in [16, 17] {
+            let mut request = value.clone();
+            request["state"]["messages"][0]["content"] =
+                json!(vec![
+                    value["state"]["messages"][0]["content"][1].clone();
+                    count
+                ]);
+            assert_eq!(
+                Onejev::image_sources(&mut serde_json::from_value(request).unwrap()).is_ok(),
+                count == 16
+            );
         }
     }
 
