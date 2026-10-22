@@ -157,7 +157,7 @@ int main() {
         &&at::equal(q.first.to(at::kCPU).view(at::kByte),expected.view(at::kByte)),
         "Vector quantization or misaligned fallback changed CPU reference bytes/scales");
     }
-    for(int64_t width:{256,12288,14336,17408,18432}) {
+    for(int64_t width:{256,2048,4096,6144,8192,12288,14336,17408,18432,24576,28672,32768}) {
       auto gate_up=at::randn({17,2*width},options)*8;
       gate_up.select(0,0).zero_();
       auto activated=tei::fused_gated_activation(gate_up,5);

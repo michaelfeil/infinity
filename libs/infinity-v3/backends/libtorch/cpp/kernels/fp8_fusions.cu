@@ -29,12 +29,12 @@ __device__ float sum256(float value) {
   return total;
 }
 __device__ float row_scale(float value) {
-  __shared__ float warps[8];
+  __shared__ float warps[16];
   int lane=threadIdx.x%32,warp=threadIdx.x/32;
   for(int d=16;d;d/=2)value=fmaxf(value,__shfl_down_sync(0xffffffff,value,d));
   if(!lane)warps[warp]=value;
   __syncthreads();
-  value=threadIdx.x<8?warps[lane]:0.f;
+  value=threadIdx.x<blockDim.x/32?warps[lane]:0.f;
   if(warp==0)for(int d=16;d;d/=2)value=fmaxf(value,__shfl_down_sync(0xffffffff,value,d));
   if(!threadIdx.x)warps[0]=__fmul_rn(fmaxf(value,1e-12f),1.f/448.f);
   __syncthreads();
@@ -67,14 +67,14 @@ __global__ void swiglu_quant_kernel(const T* input,__nv_fp8_e4m3* out,float* sca
 }
 template<class T,int N> struct alignas(sizeof(T)*N) Packed {T value[N];};
 template<class T,int Groups>
-__global__ void swiglu_quant_vector_kernel(const T* input,__nv_fp8_e4m3* out,float* scales,int width) {
+__global__ __launch_bounds__(512) void swiglu_quant_vector_kernel(const T* input,__nv_fp8_e4m3* out,float* scales,int width) {
   const int64_t row=blockIdx.x;
   float values[Groups][8],amax=0;
   auto source=reinterpret_cast<const Packed<T,8>*>(input);
   int stride=width/8;
 #pragma unroll
   for(int j=0;j<Groups;++j) {
-    int col=threadIdx.x+j*256;
+    int col=threadIdx.x+j*blockDim.x;
     Packed<T,8> gate{},up{};
     if(col<stride) {gate=source[row*2*stride+col];up=source[row*2*stride+stride+col];}
 #pragma unroll
@@ -90,7 +90,7 @@ __global__ void swiglu_quant_vector_kernel(const T* input,__nv_fp8_e4m3* out,flo
   if(!threadIdx.x)scales[row]=scale;
 #pragma unroll
   for(int j=0;j<Groups;++j) {
-    int col=threadIdx.x+j*256;
+    int col=threadIdx.x+j*blockDim.x;
     if(col<stride) {
       Packed<__nv_fp8_e4m3,8> result;
 #pragma unroll
@@ -181,9 +181,10 @@ template<class T> void launch_swiglu(const at::Tensor& input,at::Tensor& output,
   auto x=reinterpret_cast<const T*>(input.const_data_ptr());
   auto y=reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr());
   if(width%8==0 && reinterpret_cast<uintptr_t>(x)%alignof(Packed<T,8>)==0) {
-#define VECTOR(C) swiglu_quant_vector_kernel<T,C><<<input.size(0),256,0,stream>>>(x,y,scales.data_ptr<float>(),width)
-    if(width<=2048){VECTOR(1);}else if(width<=4096){VECTOR(2);}else if(width<=12288){VECTOR(6);}
-    else if(width<=14336){VECTOR(7);}else if(width<=16384){VECTOR(8);}else if(width<=18432){VECTOR(9);}else if(width<=28672){VECTOR(14);}else{VECTOR(16);}
+    const int threads=width<=4096?256:512;
+#define VECTOR(C) swiglu_quant_vector_kernel<T,C><<<input.size(0),threads,0,stream>>>(x,y,scales.data_ptr<float>(),width)
+    if(width<=2048){VECTOR(1);}else if(width<=8192){VECTOR(2);}else if(width<=12288){VECTOR(3);}
+    else if(width<=16384){VECTOR(4);}else if(width<=20480){VECTOR(5);}else if(width<=24576){VECTOR(6);}else if(width<=28672){VECTOR(7);}else{VECTOR(8);}
 #undef VECTOR
     return;
   }
