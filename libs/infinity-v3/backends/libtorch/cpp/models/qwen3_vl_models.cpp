@@ -105,6 +105,7 @@ std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const std::vector<
       max_frame=std::max(max_frame,height*width);
     }
     auto states=at::cat(patches,0),cos=at::cat(cosines,0),sin=at::cat(sines,0);
+    patches.clear();cosines.clear();sines.clear();
     auto cu=at::tensor(offsets,at::TensorOptions().dtype(at::kInt)).to(device);
     auto rotate=[&](const at::Tensor& value) {
       auto x=value.to(at::kFloat),a=x.narrow(-1,0,dim/2),b=x.narrow(-1,dim/2,dim/2);
