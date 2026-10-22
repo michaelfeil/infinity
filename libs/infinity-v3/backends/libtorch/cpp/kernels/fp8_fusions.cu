@@ -183,7 +183,7 @@ template<class T> void launch_swiglu(const at::Tensor& input,at::Tensor& output,
   if(width%8==0 && reinterpret_cast<uintptr_t>(x)%alignof(Packed<T,8>)==0) {
 #define VECTOR(C) swiglu_quant_vector_kernel<T,C><<<input.size(0),256,0,stream>>>(x,y,scales.data_ptr<float>(),width)
     if(width<=2048){VECTOR(1);}else if(width<=4096){VECTOR(2);}else if(width<=12288){VECTOR(6);}
-    else if(width<=14336){VECTOR(7);}else if(width<=16384){VECTOR(8);}else if(width<=28672){VECTOR(14);}else{VECTOR(16);}
+    else if(width<=14336){VECTOR(7);}else if(width<=16384){VECTOR(8);}else if(width<=18432){VECTOR(9);}else if(width<=28672){VECTOR(14);}else{VECTOR(16);}
 #undef VECTOR
     return;
   }
