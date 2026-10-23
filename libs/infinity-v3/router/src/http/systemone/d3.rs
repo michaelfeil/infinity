@@ -21,18 +21,22 @@ struct Config {
     max_length: Option<usize>,
 }
 
-/// D3 accepts arbitrary JSON states and media shared by every question.
-#[derive(Deserialize)]
+/// D3 accepts arbitrary JSON states and top-level media shared by every question.
+/// Objects containing messages are serialized as JSON, not interpreted as native conversations.
+#[derive(Deserialize, utoipa::ToSchema)]
+#[schema(as = D3SystemOneRequest)]
 #[serde(deny_unknown_fields)]
-pub(super) struct Request {
+pub struct Request {
     state: Value,
     questions: Map<String, Value>,
     model: Option<String>,
     max_len: Option<usize>,
     head_max_len: Option<usize>,
     #[serde(default)]
+    /// Ordered remote URLs or inline data URLs, subject to configured media limits and host policy.
     images: Vec<String>,
     #[serde(default)]
+    /// Ordered video sources; supported only by the D3 protocol.
     videos: Vec<String>,
 }
 

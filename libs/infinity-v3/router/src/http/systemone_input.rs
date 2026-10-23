@@ -35,10 +35,14 @@ mod tests {
             checked_in["components"]["schemas"]["SystemOneRequest"]
         );
         let variants = state["oneOf"].as_array().unwrap();
-        assert_eq!(variants.len(), 3);
-        for (variant, expected) in variants.iter().zip(["string", "object", "array"]) {
-            assert_eq!(variant["type"], expected);
-        }
+        assert_eq!(variants.len(), 4);
+        assert_eq!(variants[0]["type"], "string");
+        assert_eq!(
+            variants[1]["oneOf"][1]["required"],
+            serde_json::json!(["messages"])
+        );
+        assert_eq!(variants[2]["type"], "array");
+        assert_eq!(variants[3]["$ref"], "#/components/schemas/MessageInput");
         let (_, messages) = MessageInput::schema();
         let messages = serde_json::to_value(messages).unwrap();
         assert_eq!(

@@ -20,13 +20,84 @@ use tokenizers::Tokenizer;
 
 /// Text or structured JSON data. Objects containing `messages` are reserved for
 /// Infinity's native conversation extension and validated as `MessageInput`.
-#[derive(Deserialize, utoipa::ToSchema)]
-#[serde(untagged)]
-#[allow(dead_code)] // Documents the wire shape; adapters continue using ModelInput.
-pub enum SystemOneState {
-    Text(String),
-    Object(Map<String, Value>),
-    Array(Vec<Value>),
+pub struct SystemOneState;
+
+impl<'s> utoipa::ToSchema<'s> for SystemOneState {
+    fn schema() -> (
+        &'s str,
+        utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
+    ) {
+        use utoipa::openapi::{
+            schema::AdditionalProperties, ArrayBuilder, ObjectBuilder, OneOfBuilder, Ref,
+            SchemaType,
+        };
+        // XOR excludes reserved `messages` objects from the arbitrary-JSON branch.
+        // Utoipa 4 does not represent OpenAPI's `not` keyword.
+        let plain_object = OneOfBuilder::new()
+            .item(
+                ObjectBuilder::new()
+                    .additional_properties(Some(AdditionalProperties::FreeForm(true))),
+            )
+            .item(
+                ObjectBuilder::new()
+                    .required("messages")
+                    .additional_properties(Some(AdditionalProperties::FreeForm(true))),
+            )
+            .description(Some(
+                "Arbitrary JSON object without the reserved messages key.",
+            ));
+        ("SystemOneState", OneOfBuilder::new()
+            .item(ObjectBuilder::new().schema_type(SchemaType::String))
+            .item(plain_object)
+            .item(ArrayBuilder::new().items(ObjectBuilder::new().schema_type(SchemaType::Value)))
+            .item(Ref::from_schema_name("MessageInput"))
+            .description(Some("Text, a JSON array/object, or Infinity's native conversation envelope. Objects with messages must match MessageInput. Supported roles and media depend on the selected model: OneJev accepts user/assistant text and user image_url parts, with image detail omitted or auto; Laya rejects conversations. Content parts use Chat Completions-style names; this is not an OpenAI Chat Completions, Responses, or Decisions endpoint."))
+            .into())
+    }
+}
+
+/// The loaded model's protocol selects the request format; these alternatives
+/// overlap for text-only requests, so this is anyOf rather than oneOf.
+pub struct SystemOneRequestBody;
+
+impl<'s> utoipa::ToSchema<'s> for SystemOneRequestBody {
+    fn schema() -> (
+        &'s str,
+        utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
+    ) {
+        ("SystemOneRequestBody", serde_json::from_value(json!({
+            "description": "Use the schema for the selected model's decision protocol, not an arbitrary alternative. OneJev (Elephant/Mammoth), Rune, Clef, Laya and Perplexity v1.1 use SystemOneRequest. D3 and Perplexity joint v1.2 use their respective top-level media formats. Model is required when multiple models are loaded.",
+            "anyOf": [
+                {"$ref": "#/components/schemas/SystemOneRequest"},
+                {"$ref": "#/components/schemas/D3SystemOneRequest"},
+                {"$ref": "#/components/schemas/PplxJointSystemOneRequest"}
+            ]
+        })).expect("valid SystemOne request schema"))
+    }
+}
+
+pub use d3::Request as D3SystemOneRequest;
+
+/// Perplexity joint v1.2 accepts shared images, but only an empty videos array.
+pub struct PplxJointSystemOneRequest;
+
+impl<'s> utoipa::ToSchema<'s> for PplxJointSystemOneRequest {
+    fn schema() -> (
+        &'s str,
+        utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
+    ) {
+        use utoipa::openapi::{RefOr, Schema};
+        let RefOr::T(Schema::Object(mut schema)) = D3SystemOneRequest::schema().1 else {
+            unreachable!("D3 request schema is an object");
+        };
+        schema.description = Some("Perplexity joint v1.2 (pplx-decider-flash-v1.2): arbitrary JSON state and shared top-level images. Nonempty videos are rejected. Native state.messages is serialized as JSON, not interpreted as a conversation.".into());
+        let Some(RefOr::T(Schema::Array(videos))) = schema.properties.get_mut("videos") else {
+            unreachable!("D3 videos schema is an array");
+        };
+        videos.max_items = Some(0);
+        videos.description = Some("Must be omitted or empty for this protocol.".into());
+        ("PplxJointSystemOneRequest", schema.into())
+    }
 }
 
 fn deserialize_state<'de, D: Deserializer<'de>>(deserializer: D) -> Result<ModelInput, D::Error> {
@@ -50,6 +121,9 @@ fn instructions(value: Option<&Value>) -> Result<String, String> {
     }
 }
 
+/// OneJev (including Elephant/Mammoth), Rune, Clef, Laya and Perplexity v1.1.
+/// Top-level images/videos are rejected with HTTP 422. Image-capable OneJev/Rune
+/// models accept user image_url content parts inside state.messages instead.
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SystemOneRequest {
@@ -646,10 +720,25 @@ fn error(status: StatusCode, message: impl ToString) -> ApiError {
     )
 }
 
-#[utoipa::path(post, path = "/v1/systemone", request_body = Value,
+#[utoipa::path(post, path = "/v1/systemone", request_body(content = SystemOneRequestBody, examples(
+        ("onejev_image" = (summary = "OneJev: image inside state.messages", value = json!({
+            "model": "decision-models/baseten-elephant-9b-latest",
+            "state": {"messages": [{"role": "user", "content": [
+                {"type": "text", "text": "Inspect this delivery."},
+                {"type": "image_url", "image_url": {"url": "https://bucket.s3.amazonaws.com/photo.jpg"}}
+            ]}]},
+            "questions": {"damaged": {"type": "noul", "instructions": "Is the package damaged?"}}
+        }))),
+        ("joint_image" = (summary = "Perplexity joint v1.2: shared top-level image", value = json!({
+            "model": "perplexity-ai/pplx-decider-flash-v1.2", "state": "Inspect this delivery.",
+            "images": ["https://bucket.s3.amazonaws.com/photo.jpg"],
+            "questions": {"damaged": {"type": "noul", "instructions": "Is the package damaged?"}}
+        })))
+    )),
     responses((status = 200, description = "Typed decisions", body = Value),
-              (status = 422, description = "Invalid question or token budget"),
-              (status = 429, description = "Server overloaded")))]
+              (status = 400, description = "Invalid or unsupported model", body = crate::ErrorResponse),
+              (status = 422, description = "Invalid request for the selected protocol, question or token budget", body = crate::ErrorResponse),
+              (status = 429, description = "Server overloaded", body = crate::ErrorResponse)))]
 pub async fn systemone(
     super::model_routing::RoutedJson { runtime, value }: super::model_routing::RoutedJson<Value>,
 ) -> axum::response::Response {

@@ -1397,7 +1397,58 @@
         "requestBody": {
           "content": {
             "application/json": {
-              "schema": {}
+              "schema": {
+                "$ref": "#/components/schemas/SystemOneRequestBody"
+              },
+              "examples": {
+                "joint_image": {
+                  "summary": "Perplexity joint v1.2: shared top-level image",
+                  "value": {
+                    "model": "perplexity-ai/pplx-decider-flash-v1.2",
+                    "state": "Inspect this delivery.",
+                    "images": [
+                      "https://bucket.s3.amazonaws.com/photo.jpg"
+                    ],
+                    "questions": {
+                      "damaged": {
+                        "type": "noul",
+                        "instructions": "Is the package damaged?"
+                      }
+                    }
+                  }
+                },
+                "onejev_image": {
+                  "summary": "OneJev: image inside state.messages",
+                  "value": {
+                    "model": "decision-models/baseten-elephant-9b-latest",
+                    "state": {
+                      "messages": [
+                        {
+                          "role": "user",
+                          "content": [
+                            {
+                              "type": "text",
+                              "text": "Inspect this delivery."
+                            },
+                            {
+                              "type": "image_url",
+                              "image_url": {
+                                "url": "https://bucket.s3.amazonaws.com/photo.jpg"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "questions": {
+                      "damaged": {
+                        "type": "noul",
+                        "instructions": "Is the package damaged?"
+                      }
+                    }
+                  }
+                }
+              }
             }
           },
           "required": true
@@ -1414,11 +1465,50 @@
               }
             }
           },
+          "400": {
+            "description": "Invalid or unsupported model",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/crate.ErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/crate.ErrorResponse"
+                }
+              }
+            }
+          },
           "422": {
-            "description": "Invalid question or token budget"
+            "description": "Invalid request for the selected protocol, question or token budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/crate.ErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/crate.ErrorResponse"
+                }
+              }
+            }
           },
           "429": {
-            "description": "Server overloaded"
+            "description": "Server overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/crate.ErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/crate.ErrorResponse"
+                }
+              }
+            }
           }
         }
       }
@@ -3028,6 +3118,7 @@
       },
       "SystemOneRequest": {
         "type": "object",
+        "description": "OneJev (including Elephant/Mammoth), Rune, Clef, Laya and Perplexity v1.1.\nTop-level images/videos are rejected with HTTP 422. Image-capable OneJev/Rune\nmodels accept user image_url content parts inside state.messages instead.",
         "required": [
           "state",
           "questions"
@@ -3063,15 +3154,30 @@
             "type": "string"
           },
           {
-            "type": "object",
-            "additionalProperties": {}
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "required": [
+                  "messages"
+                ],
+                "additionalProperties": true
+              }
+            ],
+            "description": "Arbitrary JSON object without the reserved messages key."
           },
           {
             "type": "array",
             "items": {}
+          },
+          {
+            "$ref": "#/components/schemas/MessageInput"
           }
         ],
-        "description": "Text or structured JSON data. Objects containing `messages` are reserved for\nInfinity's native conversation extension and validated as `MessageInput`."
+        "description": "Text, a JSON array/object, or Infinity's native conversation envelope. Objects with messages must match MessageInput. Supported roles and media depend on the selected model: OneJev accepts user/assistant text and user image_url parts, with image detail omitted or auto; Laya rejects conversations. Content parts use Chat Completions-style names; this is not an OpenAI Chat Completions, Responses, or Decisions endpoint."
       },
       "Tensor": {
         "type": "object",
@@ -3127,6 +3233,109 @@
             "$ref": "#/components/schemas/Tensor"
           }
         ]
+      },
+      "SystemOneRequestBody": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/SystemOneRequest"
+          },
+          {
+            "$ref": "#/components/schemas/D3SystemOneRequest"
+          },
+          {
+            "$ref": "#/components/schemas/PplxJointSystemOneRequest"
+          }
+        ],
+        "description": "Use the schema for the selected model's decision protocol, not an arbitrary alternative. OneJev (Elephant/Mammoth), Rune, Clef, Laya and Perplexity v1.1 use SystemOneRequest. D3 and Perplexity joint v1.2 use their respective top-level media formats. Model is required when multiple models are loaded."
+      },
+      "D3SystemOneRequest": {
+        "type": "object",
+        "description": "D3 accepts arbitrary JSON states and top-level media shared by every question.\nObjects containing messages are serialized as JSON, not interpreted as native conversations.",
+        "required": [
+          "state",
+          "questions"
+        ],
+        "properties": {
+          "head_max_len": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered remote URLs or inline data URLs, subject to configured media limits and host policy."
+          },
+          "max_len": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0
+          },
+          "model": {
+            "type": "string",
+            "nullable": true
+          },
+          "questions": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "state": {},
+          "videos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered video sources; supported only by the D3 protocol."
+          }
+        },
+        "additionalProperties": false
+      },
+      "PplxJointSystemOneRequest": {
+        "type": "object",
+        "description": "Perplexity joint v1.2 (pplx-decider-flash-v1.2): arbitrary JSON state and shared top-level images. Nonempty videos are rejected. Native state.messages is serialized as JSON, not interpreted as a conversation.",
+        "required": [
+          "state",
+          "questions"
+        ],
+        "properties": {
+          "head_max_len": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered remote URLs or inline data URLs, subject to configured media limits and host policy."
+          },
+          "max_len": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0
+          },
+          "model": {
+            "type": "string",
+            "nullable": true
+          },
+          "questions": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "state": {},
+          "videos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Must be omitted or empty for this protocol.",
+            "maxItems": 0
+          }
+        },
+        "additionalProperties": false
       }
     }
   },
