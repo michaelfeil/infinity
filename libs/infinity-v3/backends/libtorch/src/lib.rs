@@ -1150,7 +1150,11 @@ impl LibtorchBackend {
                 }
                 continue;
             }
-            let data = fs::read(path.join(file)).map_err(start)?;
+            let file = fs::File::open(path.join(file)).map_err(start)?;
+            // SAFETY: checkpoints stay immutable during initialization. Each upload
+            // synchronously copies its tensor before the mapping is dropped.
+            // File-backed pages are shared across concurrent replica loaders.
+            let data = unsafe { memmap2::Mmap::map(&file) }.map_err(start)?;
             let tensors = SafeTensors::deserialize(&data).map_err(start)?;
             for (name, tensor) in tensors.tensors() {
                 // Integer buffers are derived from packed positions rather than uploaded as weights.

@@ -2394,6 +2394,7 @@ dependencies = [
  "infinity-v3-config",
  "infinity_v3-backend-candle",
  "infinity_v3-backend-core",
+ "memmap2",
  "pytorch-reader",
  "safetensors",
  "serde",
