@@ -218,7 +218,7 @@ struct Engine {
         native_moe_graphs=tei::native_hopper_moe_available(device);
     }
 #endif
-    if (device.is_cuda() && options.boolean("_cuda_graphs", false)
+    if (device.is_cuda() && !multi_vector && options.boolean("_cuda_graphs", false)
         && (native_moe_graphs || (options.integer("num_experts", options.integer("text_config.num_experts", 0)) == 0
         && options.integer("moe_every_n_layers", options.integer("text_config.moe_every_n_layers", 0)) == 0
         && !options.boolean("enable_moe_block", options.boolean("text_config.enable_moe_block", false))
