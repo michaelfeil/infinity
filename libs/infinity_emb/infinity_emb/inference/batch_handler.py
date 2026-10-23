@@ -46,6 +46,10 @@ if TYPE_CHECKING:
 QUEUE_TIMEOUT = 0.5
 
 
+class EngineUnhealthyError(RuntimeError):
+    """Raised when a batching engine can no longer complete accepted requests."""
+
+
 class ShutdownReadOnly:
     def __init__(self, shutdown: threading.Event) -> None:
         self._shutdown = shutdown
@@ -84,6 +88,7 @@ class BatchHandler:
         vector_disk_cache_path: str = "",
         verbose=False,
         lengths_via_tokenize: bool = False,
+        request_timeout: float = MANAGER.request_timeout,
     ) -> None:
         """
         performs the scheduling of the dynamic batching around the model.
@@ -93,6 +98,8 @@ class BatchHandler:
             model (BaseTransformer): the base class of the model to be used
             max_batch_size (int): max batch size of dynamic batch size
             max_queue_wait (int, optional): max items to queue in the batch, default 32_000
+            request_timeout (float, optional): maximum seconds an accepted request may wait;
+                disabled when set to 0.
             batch_delay (float, optional): sleep in seconds, wait time for pre/post methods.
                 Best result: setting to 1/2 the minimal expected
                 time for core_encode method / "gpu inference".
@@ -103,6 +110,8 @@ class BatchHandler:
         """
 
         self._max_queue_wait = max_queue_wait
+        self._request_timeout = request_timeout
+        assert request_timeout >= 0, "request_timeout must not be negative"
         self._lengths_via_tokenize = lengths_via_tokenize
 
         self._shutdown = threading.Event()
@@ -110,6 +119,10 @@ class BatchHandler:
         self._queue_prio = CustomFIFOQueue()
         self._publish_to_model_queue: Queue = Queue(8)
         self._result_queue: Queue = Queue(8)
+        self._healthy = True
+        self._failure_lock = threading.Lock()
+        self._inflight: dict[asyncio.Future, float] = {}
+        self._watchdog_task: Optional[asyncio.Task] = None
 
         self.max_batch_size = max_batch_size
         self._verbose = verbose
@@ -134,6 +147,7 @@ class BatchHandler:
                 threadpool=ThreadPoolExecutorReadOnly(self._threadpool),
                 input_q=self._publish_to_model_queue,
                 output_q=self._result_queue,
+                on_failure=self._mark_unhealthy,
                 verbose=self._verbose,
                 batch_delay=batch_delay,
             )
@@ -324,6 +338,14 @@ class BatchHandler:
                 item=inner,
             )
             new_prioqueue.append(item)
+        if not self.is_healthy():
+            raise EngineUnhealthyError("batching engine is unhealthy")
+
+        for item in new_prioqueue:
+            future = item.item.future
+            self._inflight[future] = self.loop.time()
+            future.add_done_callback(self._inflight.pop)
+
         self._queue_prio.extend(new_prioqueue)
 
         result = await asyncio.gather(
@@ -335,6 +357,58 @@ class BatchHandler:
     def capabilities(self) -> set[ModelCapabilites]:
         # TODO: try to remove inheritance here and return upon init.
         return self.model_worker[0].capabilities
+
+    def is_healthy(self) -> bool:
+        return self._healthy
+
+    def _fail_inflight(self, error: EngineUnhealthyError) -> None:
+        for future in list(self._inflight):
+            if not future.done():
+                future.set_exception(error)
+
+    def _mark_unhealthy(self, error: BaseException) -> None:
+        if self._shutdown.is_set():
+            return
+        with self._failure_lock:
+            if not self._healthy:
+                return
+            self._healthy = False
+            self._shutdown.set()
+
+        failure = EngineUnhealthyError(f"batching engine failed: {error}")
+        logger.error("%s", failure)
+        self.loop.call_soon_threadsafe(self._fail_inflight, failure)
+
+    def _watch_background_worker(self, future) -> None:
+        if self._shutdown.is_set() or future.cancelled():
+            return
+        error = future.exception()
+        if error is None:
+            error = RuntimeError("batching worker stopped unexpectedly")
+        self._mark_unhealthy(error)
+
+    def _watch_subscriber(self, task: asyncio.Task) -> None:
+        if self._shutdown.is_set() or task.cancelled():
+            return
+        error = task.exception()
+        if error is None:
+            error = RuntimeError("result subscriber stopped unexpectedly")
+        self._mark_unhealthy(error)
+
+    async def _watch_requests(self) -> None:
+        interval = min(max(self._request_timeout / 10, 0.1), 1.0)
+        while not self._shutdown.is_set():
+            await asyncio.sleep(interval)
+            if not self._inflight:
+                continue
+            oldest_request = min(self._inflight.values())
+            elapsed = self.loop.time() - oldest_request
+            if elapsed > self._request_timeout:
+                self._mark_unhealthy(
+                    TimeoutError(
+                        f"request exceeded the {self._request_timeout}s timeout"
+                    )
+                )
 
     def is_overloaded(self) -> bool:
         """checks if more items can be queued.
@@ -443,6 +517,10 @@ class BatchHandler:
                             raise e
                         continue
                 results, batch = post_batch
+                if len(results) != len(batch):
+                    raise ValueError(
+                        f"received {len(results)} results for a batch of {len(batch)} items"
+                    )
                 for i, item in enumerate(batch):
                     await item.complete(results[i])
 
@@ -456,15 +534,17 @@ class BatchHandler:
         logger.info("creating batching engine")
         self.loop = asyncio.get_event_loop()
 
-        self._threadpool.submit(
-            self._publish_towards_model,
-        )
+        publish_task = self._threadpool.submit(self._publish_towards_model)
+        publish_task.add_done_callback(self._watch_background_worker)
 
         self._push_task = asyncio.create_task(
             self._subscribe_to_model(
                 ShutdownReadOnly(self._shutdown), self._result_queue, self._threadpool
             )
         )
+        self._push_task.add_done_callback(self._watch_subscriber)
+        if self._request_timeout:
+            self._watchdog_task = asyncio.create_task(self._watch_requests())
         for worker in self.model_worker:
             worker.spawn()
 
@@ -474,9 +554,14 @@ class BatchHandler:
         Blocking event, until shutdown complete.
         reverses .spawn()
         """
+        was_healthy = self.is_healthy()
         self._shutdown.set()
-        await asyncio.to_thread(self._threadpool.shutdown)
-        # collect task
+        if self._watchdog_task:
+            self._watchdog_task.cancel()
+        if was_healthy:
+            await asyncio.to_thread(self._threadpool.shutdown)
+        else:
+            self._threadpool.shutdown(wait=False, cancel_futures=True)
         self._push_task.cancel()
 
 
@@ -490,6 +575,7 @@ class ModelWorker:
         threadpool: ThreadPoolExecutorReadOnly,
         input_q: Queue,
         output_q: Queue,
+        on_failure,
         batch_delay: float = 5e-3,
         verbose=False,
     ) -> None:
@@ -501,6 +587,7 @@ class ModelWorker:
         self._batch_delay = float(max(1e-4, batch_delay))
         self._input_q = input_q
         self._output_q = output_q
+        self._on_failure = on_failure
         self._last_inference = time.perf_counter()
         self._verbose = verbose
         self._ready = False
@@ -508,10 +595,23 @@ class ModelWorker:
     def spawn(self):
         if self._ready:
             raise ValueError("already spawned")
-        # start the threads
-        self._threadpool.submit(self._preprocess_batch)
-        self._threadpool.submit(self._core_batch)
-        self._threadpool.submit(self._postprocess_batch)
+        # Start and supervise each stage: an uncaught exception otherwise only
+        # terminates the ThreadPoolExecutor task and leaves requests unresolved.
+        for stage in (
+            self._preprocess_batch,
+            self._core_batch,
+            self._postprocess_batch,
+        ):
+            task = self._threadpool.submit(stage)
+            task.add_done_callback(self._watch_stage)
+
+    def _watch_stage(self, future) -> None:
+        if self._shutdown.is_set() or future.cancelled():
+            return
+        error = future.exception()
+        if error is None:
+            error = RuntimeError("model worker stage stopped unexpectedly")
+        self._on_failure(error)
 
     @property
     def capabilities(self) -> set[ModelCapabilites]:
