@@ -2230,6 +2230,11 @@ mod tests {
             model.embed(batch()).is_err(),
             "pooled ColBERT output must be rejected"
         );
+        fs::write(file, &bytes).unwrap();
+        let error = LibtorchBackend::new(&fixture.0, "float32", kind, "cpu")
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("missing its token projection"));
     }
     fn dense_fixture() -> (Fixture, Vec<String>) {
         let fixture = fixture("", false);

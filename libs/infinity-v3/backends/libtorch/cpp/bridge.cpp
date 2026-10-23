@@ -181,7 +181,10 @@ struct Engine {
       model = std::move(bert);
     }
     TORCH_CHECK(model, "Unsupported native Torch model family: ", family);
-    if(multi_vector)model=std::make_unique<tei::MultiVectorModel>(std::move(model),token_projection,token_bias);
+    if(multi_vector) {
+      TORCH_CHECK(token_projection.defined(),"Multi-vector checkpoint is missing its token projection");
+      model=std::make_unique<tei::MultiVectorModel>(std::move(model),token_projection,token_bias);
+    }
     model->ready();
     auto cache_bytes=options.integer("_prefix_cache_max_bytes",0);
     auto cache_tokens=options.integer("_prefix_cache_max_tokens",8192),cache_entries=options.integer("_prefix_cache_entries",64);
