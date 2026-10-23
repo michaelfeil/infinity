@@ -258,13 +258,28 @@ PackedInput input(const std::vector<int64_t>& ids, const std::vector<int32_t>& o
   return {tokens,at::zeros_like(tokens),pos,at::from_blob(const_cast<int32_t*>(offsets.data()), {static_cast<int64_t>(offsets.size())}, at::TensorOptions().dtype(at::kInt)).clone(),offsets.data(),static_cast<int64_t>(offsets.size()-1),maximum};
 }
 #ifdef TEI_TORCH_CUDA_KERNELS
-void dynamic_fp8(const c10::Device& device) {
+void dynamic_fp8(const c10::Device& device,bool moe=false) {
   const auto* props=at::cuda::getDeviceProperties(device.index());
   const int sm=props->major*10+props->minor;
   if(sm!=89 && sm!=90 && sm!=100 && sm!=120)return;
+  if(moe && sm!=90 && sm!=100)return;
   at::manual_seed(418);
   Fixture f("gemma4",8,2,0);
   f.cfg.values["_decision.kind"]="option_tokens";
+  if(moe) {
+    f.cfg.values["enable_moe_block"]="true";
+    f.cfg.values["num_experts"]="16";f.cfg.values["top_k_experts"]="8";
+    for(int i=0;i<2;++i) {
+      const auto p="layers."+std::to_string(i)+".";
+      for(const auto* norm:{"pre_feedforward_layernorm_2","post_feedforward_layernorm_1","post_feedforward_layernorm_2"})
+        f.weights[p+norm+".weight"]=at::ones({16});
+      f.weights[p+"router.scale"]=at::ones({16});
+      f.weights[p+"router.proj.weight"]=at::zeros({16,16}); // Ties plus eight empty experts.
+      f.weights[p+"router.per_expert_scale"]=at::linspace(.5,1.5,16);
+      f.weights[p+"experts.gate_up_proj"]=at::randn({16,64,16})*.1;
+      f.weights[p+"experts.down_proj"]=at::randn({16,16,32})*.1;
+    }
+  }
   for(int i=0;i<2;++i) {
     const auto p="layers."+std::to_string(i)+".mlp.";
     f.weights[p+"gate_proj.weight"]=at::randn({32,16})*.1;
@@ -291,7 +306,16 @@ void dynamic_fp8(const c10::Device& device) {
     "Gemma dense FP8 numerical regression: maxabs=",(actual-expected).abs().max().item<float>(),
     " relative_rmse=",relative_error);
   check_prefix_cache(*quantized,packed,0,.01,.02);
-  std::cout<<"Gemma dense FP8 numerical and prefix-cache checks passed\n";
+  auto stream=at::cuda::getStreamFromPool(false,device.index());
+  c10::cuda::CUDAStreamGuard stream_guard(stream);
+  for(int warmup=0;warmup<3;++warmup)quantized->forward(packed);
+  stream.synchronize();
+  at::cuda::CUDAGraph graph;
+  graph.capture_begin();auto replay=quantized->forward(packed);graph.capture_end();
+  packed.ids.add_(1);graph.replay();
+  TORCH_CHECK(at::allclose(replay,quantized->forward(packed),.01,.02),
+    "Gemma FP8 graph replay did not use current token inputs");
+  std::cout<<"Gemma "<<(moe?"MoE":"dense")<<" FP8 numerical and prefix-cache checks passed\n";
 }
 #endif
 void audio_operations(const c10::Device& device) {
@@ -403,7 +427,7 @@ int main(int argc,char** argv) {
   embedding_layer_key_aliases();
   feature_cache_bounds();
 #ifdef TEI_TORCH_CUDA_KERNELS
-  if(argc>1){dynamic_fp8(c10::Device(argv[1]));feature_cache_stream_lifetime(c10::Device(argv[1]));publisher_bf16_score_readout(c10::Device(argv[1]));}
+  if(argc>1){dynamic_fp8(c10::Device(argv[1]));dynamic_fp8(c10::Device(argv[1]),true);feature_cache_stream_lifetime(c10::Device(argv[1]));publisher_bf16_score_readout(c10::Device(argv[1]));}
 #endif
   at::manual_seed(418);
   audio_operations(c10::Device("cpu"));

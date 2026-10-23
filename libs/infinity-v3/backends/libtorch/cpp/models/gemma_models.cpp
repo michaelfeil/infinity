@@ -53,6 +53,7 @@ class Gemma final : public Model {
     std::string p;
     at::Tensor qkv, gate_up;
     std::unique_ptr<Fp8Linear> fp8_gate_up, fp8_down;
+    std::unique_ptr<Fp8GroupedLinear> fp8_expert_gate_up, fp8_expert_down;
     int64_t dim, kv, window;
     bool sliding, shared, store, k_equals_v;
     at::Tensor cos, sin;
@@ -192,7 +193,8 @@ class Gemma final : public Model {
       return radix_fold(linear(radix_unfold(x,packed),name),packed);
     return prefix_projection(x,name,packed);
   }
-  at::Tensor moe(const at::Tensor& residual,const at::Tensor& dense,const std::string& p,const PackedInput& packed) const {
+  at::Tensor moe(const at::Tensor& residual,const at::Tensor& dense,const Layer& layer,const PackedInput& packed) const {
+    const auto& p=layer.p;
     auto input=norm(residual,p+"pre_feedforward_layernorm_2");
     // Preserve the router's BF16 rounding before both root-size and learned scales.
     auto root=at::scalar_tensor(1./std::sqrt(double(hidden)),residual.options());
@@ -206,9 +208,10 @@ class Gemma final : public Model {
       :at::linear(routing,router_matrix);
     auto count=integer("num_experts",0),top=integer("top_k_experts",8);
     TORCH_CHECK(count>0 && top>0 && top<=count,"Invalid Gemma4 MoE routing geometry");
-    const auto& gate_up=w(p+"experts.gate_up_proj");const auto& down=w(p+"experts.down_proj");
+    const auto gate_up=layer.fp8_expert_gate_up?at::Tensor():w(p+"experts.gate_up_proj");
+    const auto down=layer.fp8_expert_down?at::Tensor():w(p+"experts.down_proj");
     auto act=string("hidden_activation","gelu_pytorch_tanh");
-    if(device.is_cuda() && dtype==at::kBFloat16 && count==128 && top==8 && hidden==2816 && down.size(2)==704 &&
+    if(!layer.fp8_expert_gate_up && device.is_cuda() && dtype==at::kBFloat16 && count==128 && top==8 && hidden==2816 && down.size(2)==704 &&
        (act=="gelu_pytorch_tanh" || act=="gelu_new")) {
       auto output=routed_moe_cuda(input,logits,gate_up,down,true,weight(router_f32,prefix+p+"router.per_expert_scale"));
       if(output.defined())return norm(dense,p+"post_feedforward_layernorm_1")+norm(output,p+"post_feedforward_layernorm_2");
@@ -226,7 +229,25 @@ class Gemma final : public Model {
       auto width=gu.size(-1)/2;
       return activate(gu.narrow(-1,0,width))*gu.narrow(-1,width,width);
     };
-    auto output=decoder_moe_dispatch(input,gate_up,down,ids,probability,activation);
+    at::Tensor output;
+    if(layer.fp8_expert_gate_up) {
+      const auto flat=ids.flatten(),order=at::argsort(flat,true,0,false);
+      const auto tokens=at::floor_divide(order,top);
+      auto counts=at::zeros({count},ids.options().dtype(at::kInt));
+      counts.scatter_add_(0,flat,at::ones_like(flat,flat.options().dtype(at::kInt)));
+      const auto ends=counts.cumsum(0,at::kInt);
+      // Quantize each token once, before routing duplicates it across experts.
+      auto quantized=fp8_quantize_rows(input.contiguous());
+      auto both=layer.fp8_expert_gate_up->forward_quantized(quantized.first.index_select(0,tokens),
+        quantized.second.index_select(0,tokens),ends);
+      auto expert=layer.fp8_expert_down->forward(activation(both),ends);
+      output=routed_moe_combine_cuda(expert,order,probability);
+      if(!output.defined()) {
+        expert=(expert.to(at::kFloat)*probability.flatten().index_select(0,order).unsqueeze(1)).to(dtype);
+        auto ordered=at::empty_like(expert);ordered.index_copy_(0,order,expert);
+        output=ordered.view({input.size(0),top,hidden}).to(at::kFloat).sum(1).to(dtype);
+      }
+    } else output=decoder_moe_dispatch(input,gate_up,down,ids,probability,activation);
     return norm(dense,p+"post_feedforward_layernorm_1")+norm(output.to(dtype),p+"post_feedforward_layernorm_2");
   }
   at::Tensor audio(const AudioInput& media) const {
@@ -817,8 +838,8 @@ class Gemma final : public Model {
     const auto fp8=cfg.boolean("_fp8_dynamic",false);
     TORCH_CHECK(cfg.string("_fp8_scope","mlp")=="mlp","Gemma FP8 supports MLP scope only");
     if(fp8) {
-      TORCH_CHECK(!legacy && !embedding2 && !boolean("enable_moe_block",false),
-        "Dynamic FP8 Gemma currently requires dense Gemma4");
+      TORCH_CHECK(!legacy && !embedding2,
+        "Dynamic FP8 Gemma requires Gemma4");
       TORCH_CHECK(device.is_cuda() && (dtype==at::kHalf || dtype==at::kBFloat16),
         "Dynamic FP8 Gemma requires CUDA float16/bfloat16");
       for(const auto& [name,value]:cfg.values)
@@ -848,6 +869,8 @@ class Gemma final : public Model {
     if(boolean("enable_moe_block",false)) TORCH_CHECK(!legacy && !embedding2,"Gemma4 expert routing requires Gemma4 architecture");
     TORCH_CHECK(device.is_cpu() || device.is_cuda(), "Gemma packed attention supports CPU/CUDA only");
     if (device.is_cuda()) TORCH_CHECK(dtype == at::kHalf || dtype == at::kBFloat16, "Packed CUDA Gemma requires half/bfloat16");
+    if(fp8 && boolean("enable_moe_block",false))
+      TORCH_CHECK(dtype==at::kBFloat16,"Grouped dynamic FP8 Gemma MoE requires BF16");
     w("embed_tokens.weight"); w("norm.weight");
     norm_ones[hidden]=at::ones({hidden},at::TensorOptions().dtype(at::kFloat).device(device));
     if(cfg.integer("vision_config.num_hidden_layers",0)>0) {
@@ -933,6 +956,12 @@ class Gemma final : public Model {
         for(const auto* projection:{"gate_proj","up_proj","down_proj"})
           weights.erase(prefix+layer.p+"mlp."+projection+".weight");
       } else w(layer.p + "mlp.down_proj.weight");
+      if(fp8 && boolean("enable_moe_block",false)) {
+        layer.fp8_expert_gate_up=std::make_unique<Fp8GroupedLinear>(w(layer.p+"experts.gate_up_proj"));
+        layer.fp8_expert_down=std::make_unique<Fp8GroupedLinear>(w(layer.p+"experts.down_proj"));
+        weights.erase(prefix+layer.p+"experts.gate_up_proj");
+        weights.erase(prefix+layer.p+"experts.down_proj");
+      }
       auto rope_kind = layer.sliding ? "sliding_attention" : "full_attention";
       auto theta = legacy ? real(layer.sliding ? "rope_local_base_freq" : "rope_theta", 10000.) :
         real(std::string("rope_parameters.") + rope_kind + ".rope_theta", 10000.);
@@ -1160,7 +1189,7 @@ class Gemma final : public Model {
       mlp=down.defined() ? down : input.prefix?prefix_linear(mlp,w(p+"mlp.down_proj.weight"),
         has(p+"mlp.down_proj.bias")?w(p+"mlp.down_proj.bias"):at::Tensor(),input):linear(mlp,p+"mlp.down_proj");
 
-      if(boolean("enable_moe_block",false))mlp=moe(states,mlp,p,input);
+      if(boolean("enable_moe_block",false))mlp=moe(states,mlp,layer,input);
 #ifdef TEI_TORCH_CUDA_KERNELS
       const auto* layer_scale=publisher_sequence && ple_width==0 ? &w(p+"layer_scalar") : nullptr;
       if(layer_scale && device.is_cuda() && dtype==at::kBFloat16 && states.is_contiguous()

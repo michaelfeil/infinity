@@ -47,4 +47,15 @@ public:
   const at::Tensor& matrix() const { return matrix_; }
   const at::Tensor& scales() const { return scales_; }
 };
+// Packed expert rows with device-resident cumulative end offsets.
+class Fp8GroupedLinear {
+  Fp8Linear flat_;
+  int64_t experts_, outputs_;
+public:
+  explicit Fp8GroupedLinear(const at::Tensor& weight);
+  at::Tensor forward(const at::Tensor& input, const at::Tensor& ends) const;
+  at::Tensor forward_quantized(const at::Tensor& input, const at::Tensor& scales,
+    const at::Tensor& ends) const;
+};
+
 }

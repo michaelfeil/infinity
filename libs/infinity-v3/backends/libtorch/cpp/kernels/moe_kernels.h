@@ -11,4 +11,7 @@ bool native_hopper_moe_available(const c10::Device& device);
 at::Tensor routed_moe_cuda(const at::Tensor& input, const at::Tensor& logits,
   const at::Tensor& gate_up, const at::Tensor& down, bool renormalize,
   const at::Tensor& expert_scales = {});
+// Reuse the native ordered, weighted reduction for eight routed experts.
+at::Tensor routed_moe_combine_cuda(const at::Tensor& expert_output,
+  const at::Tensor& order, const at::Tensor& routing);
 }

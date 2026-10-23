@@ -2,6 +2,7 @@
 #include "helpers/workspace_admission.h"
 #include "helpers/vendor_error.h"
 #include <ATen/ops/_scaled_mm.h>
+#include <ATen/ops/_scaled_grouped_mm.h>
 #include <string>
 #include <mutex>
 #include <thread>
@@ -412,4 +413,37 @@ at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
   // Candle's quantized MLP applies bias after GEMM model-dtype rounding.
   return bias.defined()?output+bias:output;
 }
+Fp8GroupedLinear::Fp8GroupedLinear(const at::Tensor& weight)
+  : flat_(weight.flatten(0,1)), experts_(weight.size(0)), outputs_(weight.size(1)) {
+  TORCH_CHECK(weight.dim()==3 && weight.scalar_type()==at::kBFloat16,
+    "Grouped dynamic FP8 requires BF16 [experts, output, input] weights");
+#ifdef TEI_TORCH_CUDA_KERNELS
+  const auto* props=at::cuda::getDeviceProperties(weight.get_device());
+  TORCH_CHECK(props->major==9 || (props->major==10 && props->minor==0),
+    "Grouped dynamic FP8 requires SM90/100 with this LibTorch version");
+#endif
+}
+at::Tensor Fp8GroupedLinear::forward(const at::Tensor& input,const at::Tensor& ends) const {
+  TORCH_CHECK(input.scalar_type()==at::kBFloat16,"Grouped dynamic FP8 requires BF16 activations");
+  auto quantized=fp8_quantize_rows(input.contiguous());
+  return forward_quantized(quantized.first,quantized.second,ends);
+}
+at::Tensor Fp8GroupedLinear::forward_quantized(const at::Tensor& input,
+    const at::Tensor& scales,const at::Tensor& ends) const {
+  TORCH_CHECK(input.dim()==2 && input.scalar_type()==at::kFloat8_e4m3fn && input.is_contiguous()
+    && input.device()==flat_.matrix().device() && input.size(1)==flat_.input_width(),
+    "Invalid grouped FP8 packed activations");
+  TORCH_CHECK(scales.sizes()==at::IntArrayRef({input.size(0),1}) && scales.scalar_type()==at::kFloat
+    && scales.device()==input.device() && scales.is_contiguous(),"Invalid grouped FP8 row scales");
+  TORCH_CHECK(ends.dim()==1 && ends.numel()==experts_ && ends.scalar_type()==at::kInt
+    && ends.device()==input.device() && ends.is_contiguous(),"Invalid grouped FP8 offsets");
+#ifdef TEI_TORCH_CUDA_KERNELS
+  c10::cuda::CUDAGuard guard(input.device());
+#endif
+  return at::_scaled_grouped_mm(input,
+    flat_.matrix().view({experts_,outputs_,flat_.input_width()}).transpose(-2,-1),
+    scales.flatten(),flat_.scales().view({experts_,outputs_}),ends,
+    {},{},at::kBFloat16,true);
+}
+
 }
