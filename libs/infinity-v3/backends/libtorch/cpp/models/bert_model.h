@@ -142,6 +142,8 @@ struct Bert : tei::Model {
     return classifier_projection(x,w(name+".weight"),w(name+".bias"));
   }
   at::Tensor activated_linear(const at::Tensor& x,const std::string& name) const {
+    if(options.boolean("_multi_vector",false) && options.string("hidden_act","gelu")=="gelu")
+      return at::gelu(at::linear(x,w(name+".weight"),w(name+".bias")),"none");
     if(fp8_mlp.count(name)) {
 #ifdef TEI_TORCH_CUDA_KERNELS
       if(private_flash_embedding && options.boolean("_fp8_dynamic",false)
