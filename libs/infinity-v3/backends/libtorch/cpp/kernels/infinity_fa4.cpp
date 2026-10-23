@@ -25,6 +25,7 @@ struct Bundle {
   Forward forward;
   Deberta deberta;
   const char* (*error)();
+  bool qwen35;
   // Keep loaded code alive for CUDA graphs and concurrent in-flight requests.
 };
 bool enabled() {
@@ -65,8 +66,9 @@ Bundle* bundle(const at::Tensor& q) {
   auto forward=reinterpret_cast<Forward>(dlsym(handle,"infinity_fa4_forward_v1"));
   auto deberta=reinterpret_cast<Deberta>(dlsym(handle,"infinity_fa4_deberta_v1"));
   auto error=reinterpret_cast<const char*(*)()>(dlsym(handle,"infinity_fa4_error_v1"));
+  auto qwen35=reinterpret_cast<int(*)()>(dlsym(handle,"infinity_fa4_qwen35_v1"));
   TORCH_CHECK(capability&&forward&&error&&capability()==sm,"Incompatible InfinityFA4 bundle: ",path.string());
-  auto result=std::make_unique<Bundle>(Bundle{handle,forward,deberta,error});
+  auto result=std::make_unique<Bundle>(Bundle{handle,forward,deberta,error,qwen35&&qwen35()});
   auto* ptr=result.get();bundles.emplace(sm,std::move(result));return ptr;
 }
 bool layout(const at::Tensor& q) {
@@ -93,8 +95,15 @@ at::Tensor infinity_fa4(const at::Tensor& q,const at::Tensor& k,const at::Tensor
   }
   if(d==128&&h==4*hk&&causal&&left<0&&(right<0||right==0))mode=2;
   if(d==128&&h==2*hk&&!causal&&left<0&&right<0)mode=3;
+  // Short rows keep Torch's faster kernel; only Hopper bundles export d256.
+  if(q.is_cuda()&&d==256&&!causal&&left<0&&right<0&&max_q>=2048&&
+      at::cuda::getDeviceProperties(q.get_device())->major==9) {
+    if(h==4*hk)mode=4;
+    else if(h==6*hk)mode=5;
+  }
   if(mode<0)return {};
   auto* native=bundle(q);if(!native)return {};
+  if(mode>=4&&!native->qwen35)return {}; // Older bundles retain Torch's fallback.
   c10::cuda::CUDAGuard guard(q.device());
   check_offsets(q,cu_q);check_offsets(q,cu_k);
   TORCH_CHECK(cu_q.numel()==cu_k.numel()&&max_q>0&&max_q<=INT32_MAX&&

@@ -62,13 +62,19 @@ if not a.link_only:
     from torch._subclasses.fake_tensor import FakeTensorMode
     with FakeTensorMode() if a.compile_only else contextlib.nullcontext():
         cu = torch.tensor([0, 127, 256], device="cuda", dtype=torch.int32)
+        families = [
+            ("bert", 16, 16, 64, False, (None, None)),
+            ("modern_local", 12, 12, 64, False, (64, 64)),
+            ("qwen", 32, 8, 128, True, (None, None)),
+            ("voyage", 16, 8, 128, False, (None, None)),
+        ]
+        if a.arch == "sm_90a":
+            families += [
+                ("qwen35_gqa4", 16, 4, 256, False, (None, None)),
+                ("qwen35_gqa6", 24, 4, 256, False, (None, None)),
+            ]
         for dtype_name, dtype in [("fp16", torch.float16), ("bf16", torch.bfloat16)]:
-            for name, h, hk, d, causal, window in [
-                ("bert", 16, 16, 64, False, (None, None)),
-                ("modern_local", 12, 12, 64, False, (64, 64)),
-                ("qwen", 32, 8, 128, True, (None, None)),
-                ("voyage", 16, 8, 128, False, (None, None)),
-            ]:
+            for name, h, hk, d, causal, window in families:
                 q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
                 k = torch.zeros((256, hk, d), device="cuda", dtype=dtype)
                 previous = set(interface._flash_attn_fwd.compile_cache.cache)
@@ -112,7 +118,7 @@ if not a.link_only:
                 kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
                                     causal=False, window=[None, None], dtype=dtype_name))
     manifest = {
-        "abi_version": 4,
+        "abi_version": 5,
         "softmax_backport": softmax_backport,
         "architecture": a.arch,
         "executed_during_export": not a.compile_only,
@@ -128,8 +134,8 @@ if not a.link_only:
     (a.output / "manifest.json").write_text(json.dumps(manifest, indent=2))
 else:
     manifest = json.loads((a.output / "manifest.json").read_text())
-    if manifest.get("abi_version") != 4:
-        raise RuntimeError("Re-export the native bundle for ABI version 4")
+    if manifest.get("abi_version") != 5:
+        raise RuntimeError("Re-export the native bundle for ABI version 5")
     objects = [str(a.output / (k["symbol"] + ".o")) for k in manifest["kernels"]]
     for obj in objects:
         path = pathlib.Path(obj)
