@@ -221,6 +221,13 @@ int main(int argc,char** argv) {
   at::set_num_threads(2);
   at::manual_seed(724);
   const std::string mode=argc>1?argv[1]:"";
+  if(mode=="--cpu-only") {
+    auto opts=at::TensorOptions().dtype(at::kBFloat16);
+    auto q=at::zeros({2048,16,256},opts),k=at::zeros({2048,4,256},opts);
+    auto cu=offsets({0,2048},opts);
+    TORCH_CHECK(!tei::infinity_fa4(q,k,k,cu,cu,2048,1./16.).defined(),"CPU tensors must retain CPU attention");
+    return 0;
+  }
   if(mode=="--qwen35-only"||mode=="--qwen35-old-bundle") {
     if(at::cuda::getCurrentDeviceProperties()->major!=9)return 0;
     for(auto dtype:{at::kHalf,at::kBFloat16})

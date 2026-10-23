@@ -96,7 +96,7 @@ at::Tensor infinity_fa4(const at::Tensor& q,const at::Tensor& k,const at::Tensor
   if(d==128&&h==4*hk&&causal&&left<0&&(right<0||right==0))mode=2;
   if(d==128&&h==2*hk&&!causal&&left<0&&right<0)mode=3;
   // Short rows keep Torch's faster kernel; only Hopper bundles export d256.
-  if(d==256&&!causal&&left<0&&right<0&&max_q>=2048&&
+  if(q.is_cuda()&&d==256&&!causal&&left<0&&right<0&&max_q>=2048&&
       at::cuda::getDeviceProperties(q.get_device())->major==9) {
     if(h==4*hk)mode=4;
     else if(h==6*hk)mode=5;
