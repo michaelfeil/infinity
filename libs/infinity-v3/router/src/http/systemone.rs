@@ -1,6 +1,7 @@
 //! Jev typed decisions, submitted to infinity_v3's shared queue and replica pool.
 use super::response_format::Json;
 use super::result_value::{AnswerError, ResultValue};
+use crate::ErrorResponse;
 use axum::{
     extract::Extension,
     http::{HeaderMap, StatusCode},
@@ -703,7 +704,7 @@ fn json_text(value: &Value) -> String {
     }
 }
 
-type ApiError = (StatusCode, Json<crate::ErrorResponse>);
+type ApiError = (StatusCode, Json<ErrorResponse>);
 fn error(status: StatusCode, message: impl ToString) -> ApiError {
     metrics::counter!("infinity_request_failure", "err" => "systemone").increment(1);
     let error_type = match status {
@@ -713,7 +714,7 @@ fn error(status: StatusCode, message: impl ToString) -> ApiError {
     };
     (
         status,
-        Json(crate::ErrorResponse {
+        Json(ErrorResponse {
             error: message.to_string(),
             error_type,
         }),
@@ -736,9 +737,9 @@ fn error(status: StatusCode, message: impl ToString) -> ApiError {
         })))
     )),
     responses((status = 200, description = "Typed decisions", body = Value),
-              (status = 400, description = "Invalid or unsupported model", body = crate::ErrorResponse),
-              (status = 422, description = "Invalid request for the selected protocol, question or token budget", body = crate::ErrorResponse),
-              (status = 429, description = "Server overloaded", body = crate::ErrorResponse)))]
+              (status = 400, description = "Invalid or unsupported model", body = ErrorResponse),
+              (status = 422, description = "Invalid request for the selected protocol, question or token budget", body = ErrorResponse),
+              (status = 429, description = "Server overloaded", body = ErrorResponse)))]
 pub async fn systemone(
     super::model_routing::RoutedJson { runtime, value }: super::model_routing::RoutedJson<Value>,
 ) -> axum::response::Response {

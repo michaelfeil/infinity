@@ -2986,6 +2986,17 @@ mod classify_tests {
             );
         }
         let operation = &doc["paths"]["/v1/systemone"]["post"];
+        for status in ["400", "422", "429"] {
+            for response in operation["responses"][status]["content"]
+                .as_object()
+                .unwrap()
+                .values()
+            {
+                let reference = response["schema"]["$ref"].as_str().unwrap();
+                assert_eq!(reference, "#/components/schemas/ErrorResponse");
+                assert!(doc.pointer(reference.strip_prefix('#').unwrap()).is_some());
+            }
+        }
         assert_eq!(
             operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
             "#/components/schemas/SystemOneRequestBody"
