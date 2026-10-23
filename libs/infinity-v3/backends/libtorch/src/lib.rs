@@ -640,6 +640,8 @@ impl LibtorchBackend {
                         | "qwen3"
                         | "qwen3_5"
                         | "qwen3_5_text"
+                        | "gemma4"
+                        | "gemma4_text"
                 )
             {
                 return Err(start(
@@ -2743,7 +2745,15 @@ mod tests {
             assert_eq!(resolve_fp8_scope(Some("all"), true, family).unwrap(), "all");
             assert_eq!(resolve_fp8_scope(Some("mlp"), true, family).unwrap(), "mlp");
         }
-        for family in ["bert", "roberta", "xlm-roberta", "camembert", "modernbert"] {
+        for family in [
+            "bert",
+            "roberta",
+            "xlm-roberta",
+            "camembert",
+            "modernbert",
+            "gemma4",
+            "gemma4_text",
+        ] {
             assert_eq!(resolve_fp8_scope(None, true, family).unwrap(), "mlp");
             assert!(resolve_fp8_scope(Some("all"), true, family).is_err());
         }

@@ -257,6 +257,43 @@ PackedInput input(const std::vector<int64_t>& ids, const std::vector<int32_t>& o
   auto pos = at::from_blob(positions.data(), {static_cast<int64_t>(positions.size())}, at::TensorOptions().dtype(at::kLong)).clone();
   return {tokens,at::zeros_like(tokens),pos,at::from_blob(const_cast<int32_t*>(offsets.data()), {static_cast<int64_t>(offsets.size())}, at::TensorOptions().dtype(at::kInt)).clone(),offsets.data(),static_cast<int64_t>(offsets.size()-1),maximum};
 }
+#ifdef TEI_TORCH_CUDA_KERNELS
+void dynamic_fp8(const c10::Device& device) {
+  const auto* props=at::cuda::getDeviceProperties(device.index());
+  const int sm=props->major*10+props->minor;
+  if(sm!=89 && sm!=90 && sm!=100 && sm!=120)return;
+  at::manual_seed(418);
+  Fixture f("gemma4",8,2,0);
+  f.cfg.values["_decision.kind"]="option_tokens";
+  for(int i=0;i<2;++i) {
+    const auto p="layers."+std::to_string(i)+".mlp.";
+    f.weights[p+"gate_proj.weight"]=at::randn({32,16})*.1;
+    f.weights[p+"up_proj.weight"]=at::randn({32,16})*.1;
+    f.weights[p+"down_proj.weight"]=at::randn({16,32})*.1;
+  }
+  Weights reference_weights,quantized_weights;
+  for(const auto& [name,value]:f.weights)
+    reference_weights[name]=quantized_weights[name]=value.to(device,at::kBFloat16);
+  auto reference=create_gemma(f.cfg,reference_weights,device,at::kBFloat16);reference->ready();
+  f.cfg.values["_fp8_dynamic"]="true";
+  auto quantized=create_gemma(f.cfg,quantized_weights,device,at::kBFloat16);quantized->ready();
+  TORCH_CHECK(!quantized_weights.count("layers.0.mlp.down_proj.weight"),"FP8 retained redundant dense weights");
+  const std::vector<int32_t> offsets={0,5,7};
+  auto packed=input({1,2,3,4,5,6,7},offsets);
+  packed.ids=packed.ids.to(device);packed.types=packed.types.to(device);
+  packed.positions=packed.positions.to(device);packed.cumulative=packed.cumulative.to(device);
+  const auto expected=reference->forward(packed).to(at::kFloat);
+  const auto actual=quantized->forward(packed).to(at::kFloat);
+  // Two quantized projections per layer: bound aggregate error on the random
+  // fixture; real-checkpoint task accuracy is validated separately.
+  const auto relative_error=((actual-expected).square().mean()/expected.square().mean()).sqrt().item<float>();
+  TORCH_CHECK(at::isfinite(actual).all().item<bool>() && relative_error<.1,
+    "Gemma dense FP8 numerical regression: maxabs=",(actual-expected).abs().max().item<float>(),
+    " relative_rmse=",relative_error);
+  check_prefix_cache(*quantized,packed,0,.01,.02);
+  std::cout<<"Gemma dense FP8 numerical and prefix-cache checks passed\n";
+}
+#endif
 void audio_operations(const c10::Device& device) {
   // Natural odd/even frame counts and feature widths: evaluate the scalar
   // convolution at each true output location, with only filter boundaries zero.
@@ -366,7 +403,7 @@ int main(int argc,char** argv) {
   embedding_layer_key_aliases();
   feature_cache_bounds();
 #ifdef TEI_TORCH_CUDA_KERNELS
-  if(argc>1){feature_cache_stream_lifetime(c10::Device(argv[1]));publisher_bf16_score_readout(c10::Device(argv[1]));}
+  if(argc>1){dynamic_fp8(c10::Device(argv[1]));feature_cache_stream_lifetime(c10::Device(argv[1]));publisher_bf16_score_readout(c10::Device(argv[1]));}
 #endif
   at::manual_seed(418);
   audio_operations(c10::Device("cpu"));
