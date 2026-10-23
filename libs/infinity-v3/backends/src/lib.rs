@@ -948,6 +948,10 @@ enum ModuleType {
     #[serde(rename = "st_quantize.FlexibleQuantizer")]
     FlexibleQuantizer,
     #[serde(
+        rename = "sentence_transformers.multi_vector_encoder.modules.multi_vector_mask.MultiVectorMask"
+    )]
+    MultiVectorMask,
+    #[serde(
         rename = "sentence_transformers.models.Dense",
         alias = "sentence_transformers.base.modules.dense.Dense"
     )]

@@ -81,6 +81,8 @@ struct ProcessorState {
     image_id: u32,
     vision_start: u32,
     vision_end: u32,
+    colqwen: bool,
+    raw_text: bool,
 }
 
 impl Qwen3VlProcessor {
@@ -107,7 +109,14 @@ impl Qwen3VlProcessor {
         .map_err(|e| invalid(e.to_string()))?;
         if !matches!(
             model["model_type"].as_str(),
-            Some("qwen3_vl" | "qwen3_5" | "qwen3_5_text" | "qwen3_5_moe" | "qwen3_5_moe_text")
+            Some(
+                "colqwen3"
+                    | "qwen3_vl"
+                    | "qwen3_5"
+                    | "qwen3_5_text"
+                    | "qwen3_5_moe"
+                    | "qwen3_5_moe_text"
+            )
         ) {
             return Err(invalid("Image processor requires a Qwen vision checkpoint"));
         }
@@ -155,6 +164,8 @@ impl Qwen3VlProcessor {
                 image_id,
                 vision_start,
                 vision_end,
+                colqwen: model["model_type"] == "colqwen3",
+                raw_text: model["model_type"] == "colqwen3",
             }),
             resolver,
             workers,
@@ -179,6 +190,10 @@ impl Qwen3VlProcessor {
         )
         .await
         .map_err(|_| invalid("Multimodal preprocessing timed out"))?
+    }
+
+    pub fn accepts_raw_text(&self) -> bool {
+        self.state.raw_text
     }
 
     pub fn max_images(&self) -> usize {
@@ -401,7 +416,18 @@ impl ProcessorState {
         }
         // Qwen3-VL-Embedding pools the terminal token added by its tokenizer's
         // post-processor after the assistant prefix (add_special_tokens=true).
-        let prompt = self.chat.render_native(&messages, true).map_err(invalid)?;
+        let prompt = if self.colqwen {
+            // ColQwen3 document prompts end at the user turn, followed by EOS.
+            format!(
+                "{}<|endoftext|>",
+                self.chat
+                    .render_native(&messages, false)
+                    .map_err(invalid)?
+                    .trim_end_matches('\n')
+            )
+        } else {
+            self.chat.render_native(&messages, true).map_err(invalid)?
+        };
         if prompt.chars().count() > self.max_tokens.saturating_mul(250) {
             return Err(invalid("Rendered conversation exceeds the character limit"));
         }

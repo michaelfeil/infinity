@@ -161,7 +161,17 @@ struct Engine {
     }
     const bool multi_vector=options.boolean("_multi_vector",false);
     at::Tensor token_projection,token_bias;
-    if(multi_vector && weights.count("linear.weight")) {
+    if(multi_vector && weights.count("embedding_proj_layer.weight")) {
+      tei::Weights canonical;
+      for(const auto& [name,value]:weights) {
+        auto key=name.starts_with("vlm.")?name.substr(4):name;
+        TORCH_CHECK(!canonical.count(key),"Duplicate ColQwen3 weight: ",key);
+        canonical.emplace(std::move(key),value);
+      }
+      weights=std::move(canonical);
+      token_projection=weights.at("embedding_proj_layer.weight");
+      if(weights.count("embedding_proj_layer.bias"))token_bias=weights.at("embedding_proj_layer.bias");
+    } else if(multi_vector && weights.count("linear.weight")) {
       token_projection=weights.at("linear.weight");
       if(weights.count("linear.bias"))token_bias=weights.at("linear.bias");
     }

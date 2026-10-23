@@ -59,7 +59,7 @@ impl QwenImageProcessor {
             ("min_pixels", "shortest_edge"),
             ("max_pixels", "longest_edge"),
         ] {
-            if value.get(name).is_none() {
+            if value.get(name).is_none_or(serde_json::Value::is_null) {
                 value[name] = value["size"][edge].clone();
             }
         }

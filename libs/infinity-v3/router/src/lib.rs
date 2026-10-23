@@ -294,6 +294,11 @@ async fn initialize_model(
     let config = fs::read_to_string(config_path).context("`config.json` not found")?;
     let mut config: ModelConfig =
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
+    let multi_vector = config.architectures.iter().any(|arch| arch == "HF_ColBERT")
+        || config.model_type == "colqwen3";
+    if config.model_type == "colqwen3" {
+        config.model_type = "qwen3_vl".into();
+    }
     config.resolve_text_config()?;
     config.resolve_decoder_classifier_labels()?;
     anyhow::ensure!(
@@ -336,6 +341,12 @@ async fn initialize_model(
             "Typed decisions do not use embedding pooling"
         );
         infinity_v3_backend::ModelType::Decision
+    } else if multi_vector {
+        anyhow::ensure!(
+            pooling.is_none(),
+            "Multi-vector models do not support pooling"
+        );
+        infinity_v3_backend::ModelType::Embedding(infinity_v3_backend::Pool::Mean)
     } else if config.model_type == "qwen3_vl" {
         anyhow::ensure!(
             pooling.is_none() || pooling == Some(infinity_v3_backend::Pool::LastToken),
@@ -367,7 +378,7 @@ async fn initialize_model(
             }
         }
         infinity_v3_backend::ModelType::Embedding(pool) => ModelType::Embedding(EmbeddingModel {
-            pooling: if config.architectures.iter().any(|arch| arch == "HF_ColBERT") {
+            pooling: if multi_vector {
                 anyhow::ensure!(
                     backend_kind == infinity_v3_backend::BackendKind::Libtorch,
                     "ColBERT requires the LibTorch backend"

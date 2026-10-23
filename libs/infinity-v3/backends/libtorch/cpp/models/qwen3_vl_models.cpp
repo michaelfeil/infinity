@@ -14,6 +14,7 @@
 #include <ATen/ops/_flash_attention_forward.h>
 #include <cmath>
 #include <algorithm>
+#include <map>
 
 namespace tei {
 // Adapted from Candle qwen3_vl/vision.rs; upstream Apache-2.0 notices retained.
@@ -35,12 +36,12 @@ at::Tensor Qwen3VL::ln(const at::Tensor& x,const std::string& name) const {
 at::Tensor Qwen3VL::merger(const at::Tensor& x,const std::string& p,bool post) const {
     auto grouped=x.view({-1,hidden*merge*merge});
     auto normalized=post?ln(grouped,p+".norm"):ln(x,p+".norm").view_as(grouped);
-    // Candle Tensor::gelu is the tanh approximation; merger has no activation config.
+    // Retrieval checkpoints use Transformers' exact merger GELU; Candle uses tanh.
     auto mid=linear(normalized,p+".linear_fc1");auto act=at::Tensor();
 #ifdef TEI_TORCH_CUDA_KERNELS
     if(exact_vision)act=encoder_gelu(mid);else
 #endif
-    act=at::gelu(mid,"tanh");auto out=linear(act,p+".linear_fc2");return out;
+    act=at::gelu(mid,cfg.boolean("_multi_vector",false)?"none":"tanh");auto out=linear(act,p+".linear_fc2");return out;
   }
 
 std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const std::vector<ImageInput>& images) const {
@@ -73,6 +74,11 @@ std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const std::vector<
         auto first=at::linear(patch.select(2,0).contiguous().view({-1,768}),temporal_first);
         auto second=at::linear(patch.select(2,1).contiguous().view({-1,768}),temporal_second);
         states=(first+second)+w("patch_embed.proj.bias");
+      } else if(cfg.boolean("_multi_vector",false)) {
+        const auto& kernel=w("patch_embed.proj.weight");
+        TORCH_CHECK(kernel.dim()==5,"Invalid Qwen3-VL patch kernel");
+        states=at::conv3d(image.pixels.to(device,dtype).view({-1,kernel.size(1),kernel.size(2),kernel.size(3),kernel.size(4)}),
+          kernel,w("patch_embed.proj.bias"),{kernel.size(2),kernel.size(3),kernel.size(4)}).view({-1,hidden});
       } else {
         states=at::linear(image.pixels.to(device,dtype),w("patch_embed.proj.weight").reshape({hidden,patch_dim}),w("patch_embed.proj.bias"));
       }
@@ -93,7 +99,8 @@ std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const std::vector<
       // Sum in table dtype, matching the four-corner interpolation stages.
       auto corners=at::stack({interpolate(r0,c0,(1-dr)*(1-dc)),interpolate(r0,c1,(1-dr)*dc),
         interpolate(r1,c0,dr*(1-dc)),interpolate(r1,c1,dr*dc)},0);
-      auto positional=exact_vision?(corners.select(0,0)+corners.select(0,2))+(corners.select(0,1)+corners.select(0,3)):corners.sum(0);
+      auto positional=cfg.boolean("_multi_vector",false)?((corners.select(0,0)+corners.select(0,1))+corners.select(0,2))+corners.select(0,3)
+        :exact_vision?(corners.select(0,0)+corners.select(0,2))+(corners.select(0,1)+corners.select(0,3)):corners.sum(0);
       states=states+positional;
 
       auto angles=at::cat({r.to(at::kFloat).unsqueeze(1)*vision_frequency,c.to(at::kFloat).unsqueeze(1)*vision_frequency},-1);
@@ -112,6 +119,9 @@ std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const std::vector<
       return at::cat({a*cos-b*sin,b*cos+a*sin},-1);
     };
     std::vector<at::Tensor> deep;
+    std::map<int64_t,std::vector<size_t>> frame_groups;
+    if(cfg.boolean("_multi_vector",false))
+      for(size_t i=0;i+1<offsets.size();++i)frame_groups[offsets[i+1]-offsets[i]].push_back(i);
     for(int64_t layer=0;layer<depth;++layer) {
       auto p="blocks."+std::to_string(layer)+".";
       auto normalized=ln(states,p+"norm1");
@@ -121,7 +131,21 @@ std::pair<at::Tensor,std::vector<at::Tensor>> Qwen3VL::vision(const std::vector<
       at::Tensor attention;
       // Round rotary Q/K back to BF16 before attention, matching the
       // model dtype, and keep frames independent through cu_seqlens.
-      if(device.is_cuda() && dtype==at::kBFloat16) {
+      if(cfg.boolean("_multi_vector",false)) {
+        // Match SDPA's arithmetic while batching equally sized frames without padding.
+        std::vector<at::Tensor> outputs(offsets.size()-1);
+        for(const auto& [length,frames]:frame_groups) {
+          auto group=[&](const at::Tensor& x) {
+            if(frames.size()==1)return x.narrow(0,offsets[frames[0]],length).transpose(0,1).unsqueeze(0).to(dtype);
+            std::vector<at::Tensor> rows;
+            for(auto frame:frames)rows.push_back(x.narrow(0,offsets[frame],length));
+            return at::stack(rows,0).transpose(1,2).to(dtype);
+          };
+          auto result=at::scaled_dot_product_attention(group(q),group(k),group(v),std::nullopt,0.,false,1./std::sqrt(double(dim))).transpose(1,2);
+          for(size_t i=0;i<frames.size();++i)outputs[frames[i]]=result.select(0,i);
+        }
+        attention=at::cat(outputs,0);
+      } else if(device.is_cuda() && dtype==at::kBFloat16) {
         attention=std::get<0>(at::_flash_attention_forward(q.to(dtype).contiguous(),k.to(dtype).contiguous(),v.to(dtype).contiguous(),
           cu,cu,max_frame,max_frame,0.,false,false,1./std::sqrt(double(dim))));
       } else if(device.is_cuda()) {

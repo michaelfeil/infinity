@@ -76,10 +76,15 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
     let config_path = download_file(api, "config.json").await?;
     // Required for supported vision checkpoints; do not silently serve images without it.
     if let Ok(bytes) = std::fs::read(&config_path) {
-        if serde_json::from_slice::<serde_json::Value>(&bytes)
-            .is_ok_and(|config| config["model_type"] == "qwen3_vl")
-        {
+        if serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|config| {
+            matches!(config["model_type"].as_str(), Some("qwen3_vl" | "colqwen3"))
+        }) {
             download_file(api, "preprocessor_config.json").await?;
+            if serde_json::from_slice::<serde_json::Value>(&bytes)
+                .is_ok_and(|config| config["model_type"] == "colqwen3")
+            {
+                download_file(api, "1_MultiVectorMask/config.json").await?;
+            }
         } else if serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|config| {
             matches!(
                 config["model_type"].as_str(),
