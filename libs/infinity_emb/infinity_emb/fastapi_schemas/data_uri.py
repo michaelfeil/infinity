@@ -12,7 +12,7 @@ if sys.version_info >= (3, 11):
 else:
     from typing_extensions import Self
 
-from urllib.parse import quote, unquote
+from urllib.parse import quote, unquote, unquote_to_bytes
 
 T = TypeVar("T")
 
@@ -81,7 +81,7 @@ class DataURI(str):
                 _data = bytes(data, _charset)
             encoded_data = encode64(_data).decode(_charset).strip()
         else:
-            encoded_data = quote(data)
+            encoded_data = quote(data.encode(charset or "utf-8") if isinstance(data, str) else data)
         parts.extend([",", encoded_data])
         return cls("".join(parts))
 
@@ -175,7 +175,7 @@ class DataURI(str):
             _data = bytes(match.group("data"), _charset)
             data = decode64(_data)
         else:
-            data = bytes(unquote(match.group("data")), _charset)
+            data = unquote_to_bytes(match.group("data"))
 
         return mimetype, name, charset, bool(match.group("base64")), data
 
