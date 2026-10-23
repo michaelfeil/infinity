@@ -14,6 +14,7 @@ text-embeddings-backend-core = { package = "infinity_v3-backend-core", path = ".
 serde = { workspace = true }
 serde_json = { workspace = true }
 safetensors = "0.8"
+memmap2 = "0.9"
 sha2 = "0.10"
 bytemuck = "1"
 tracing = { workspace = true }
