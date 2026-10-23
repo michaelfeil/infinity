@@ -352,8 +352,8 @@ Fp8Linear::Fp8Linear(const at::Tensor& weight)
   c10::cuda::CUDAGuard guard(weight.device());
   const auto* props=at::cuda::getDeviceProperties(weight.device().index());
   const int capability=props->major*10+props->minor;
-  TORCH_CHECK(capability==89 || capability==90 || capability==100 || capability==120,
-    "Dynamic FP8 requires SM89/90/100/120");
+  TORCH_CHECK(capability==89 || capability==90 || capability==100 || capability==103 || capability==120,
+    "Dynamic FP8 requires SM89/90/100/103/120");
   rowwise_=capability==90;
 #else
   TORCH_CHECK(false, "Dynamic FP8 requires a CUDA LibTorch build");

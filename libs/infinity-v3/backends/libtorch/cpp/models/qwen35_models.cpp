@@ -1,6 +1,9 @@
 #include "batching/prefix_cache.h"
 #include "helpers/attention.h"
 #include "helpers/fp8_linear.h"
+#ifdef TEI_TORCH_CUDA_KERNELS
+#include "helpers/nvfp4_prototype.h"
+#endif
 #include "kernels/fp8_fusions.h"
 #include "helpers/vendor_error.h"
 #include "helpers/workspace_admission.h"
@@ -51,6 +54,9 @@ class Qwen35 final : public Model {
   struct Mlp {
     at::Tensor gate_up,down,router,experts,expert_down,shared_gate_up,shared_down,shared_gate;
     std::unique_ptr<Fp8Linear> fp8_gate_up,fp8_down;
+#ifdef TEI_TORCH_CUDA_KERNELS
+    std::unique_ptr<Nvfp4PrototypeLinear> nvfp4_gate_up,nvfp4_down;
+#endif
   };
   std::vector<Mlp> mlps;
   std::map<std::string,std::unique_ptr<Fp8Linear>> fp8_projections;
@@ -179,6 +185,9 @@ class Qwen35 final : public Model {
   }
   at::Tensor feed_forward(const at::Tensor& x,int64_t layer,const PackedInput& input) const {
     const auto& m=mlps[layer];
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if(m.nvfp4_gate_up)return m.nvfp4_down->forward(gated(m.nvfp4_gate_up->forward(x)));
+#endif
     if(m.fp8_gate_up) {
       auto both=m.fp8_gate_up->forward(x);
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -591,6 +600,15 @@ class Qwen35 final : public Model {
       if(experts==0) {
         m.gate_up=at::cat({w(mp+"gate_proj.weight"),w(mp+"up_proj.weight")},0);m.down=w(mp+"down_proj.weight");
         consumed={mp+"gate_proj.weight",mp+"up_proj.weight",mp+"down_proj.weight"};
+#ifdef TEI_TORCH_CUDA_KERNELS
+        const auto mode=cfg.string("_nvfp4_prototype",std::getenv("INFINITY_NVFP4_PROTOTYPE")?std::getenv("INFINITY_NVFP4_PROTOTYPE"):"");
+        if(!mode.empty()) {
+          auto path=cfg.string("_nvfp4_calibration",std::getenv("INFINITY_NVFP4_CALIBRATION")?std::getenv("INFINITY_NVFP4_CALIBRATION"):"");
+          m.nvfp4_gate_up=std::make_unique<Nvfp4PrototypeLinear>(m.gate_up,mode,mp+"gate_up",path);
+          m.nvfp4_down=std::make_unique<Nvfp4PrototypeLinear>(m.down,mode,mp+"down",path);
+          m.gate_up=at::Tensor();m.down=at::Tensor();
+        } else
+#endif
         if(fp8) {
           m.fp8_gate_up=std::make_unique<Fp8Linear>(m.gate_up);
           m.fp8_down=std::make_unique<Fp8Linear>(m.down);
