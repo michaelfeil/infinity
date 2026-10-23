@@ -261,6 +261,29 @@ PackedInput input(const std::vector<int64_t>& ids, const std::vector<int32_t>& o
   return {tokens,at::zeros_like(tokens),pos,at::from_blob(const_cast<int32_t*>(offsets.data()), {static_cast<int64_t>(offsets.size())}, at::TensorOptions().dtype(at::kInt)).clone(),offsets.data(),static_cast<int64_t>(offsets.size()-1),maximum};
 }
 #ifdef TEI_TORCH_CUDA_KERNELS
+void reference_norm_dispatch(const c10::Device& device) {
+  at::manual_seed(719);
+  auto opts=at::TensorOptions().device(device).dtype(at::kBFloat16);
+  // Odd row count and padded row strides exercise both dispatches and tail warps.
+  for(int width:{256,512,704,1024,2816,4096,8192}) {
+    auto x=at::randn({8193,width+8},opts).narrow(1,0,width);
+    auto scale=at::randn({width},opts.dtype(at::kFloat));
+    int logical=1;while(logical<width && logical<1024)logical*=2;
+    auto partial=at::zeros({x.size(0),logical},opts.dtype(at::kFloat));
+    auto values=x.to(at::kFloat);
+    for(int offset=0;offset<width;offset+=logical) {
+      auto count=std::min(logical,width-offset);
+      partial.narrow(1,0,count).add_(values.narrow(1,offset,count).square());
+    }
+    for(int step=logical/2;step;step/=2)
+      partial.narrow(1,0,step).add_(partial.narrow(1,step,step));
+    auto den=(partial.narrow(1,0,1)*(1.f/width)+1e-6f).sqrt();
+    auto expected=((values/den)*scale).to(at::kBFloat16);
+    TORCH_CHECK(at::equal(gemma_norm_cuda(x,scale,1e-6,true),expected),
+      "Gemma optimized norm changed reference arithmetic at width ",width);
+  }
+  std::cout<<"Gemma optimized norm exact reference parity passed\n";
+}
 void dynamic_fp8(const c10::Device& device,bool moe=false) {
   const auto* props=at::cuda::getDeviceProperties(device.index());
   const int sm=props->major*10+props->minor;
@@ -448,7 +471,7 @@ int main(int argc,char** argv) {
   embedding_layer_key_aliases();
   feature_cache_bounds();
 #ifdef TEI_TORCH_CUDA_KERNELS
-  if(argc>1){dynamic_fp8(c10::Device(argv[1]));dynamic_fp8(c10::Device(argv[1]),true);feature_cache_stream_lifetime(c10::Device(argv[1]));publisher_bf16_score_readout(c10::Device(argv[1]));}
+  if(argc>1){reference_norm_dispatch(c10::Device(argv[1]));dynamic_fp8(c10::Device(argv[1]));dynamic_fp8(c10::Device(argv[1]),true);feature_cache_stream_lifetime(c10::Device(argv[1]));publisher_bf16_score_readout(c10::Device(argv[1]));}
 #endif
   at::manual_seed(418);
   audio_operations(c10::Device("cpu"));

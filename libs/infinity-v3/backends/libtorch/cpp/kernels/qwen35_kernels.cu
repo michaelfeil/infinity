@@ -380,6 +380,39 @@ at::Tensor gemma_gated_cuda(const at::Tensor& x,bool gelu) {
   else gemma_precise_gate<false><<<(out.numel()+255)/256,256,0,stream>>>(input,output,out.numel(),width);
   C10_CUDA_KERNEL_LAUNCH_CHECK();return out;
 }
+// Emulate the reference logical lanes in registers: one warp per row,
+// keeping the reduction tree and separate mean/epsilon rounding unchanged.
+template<int Logical> static __global__ void gemma_norm_warp(
+ const __nv_bfloat16* x,const float* scale,__nv_bfloat16* out,
+ unsigned width,unsigned heads,unsigned long long stride,float eps,unsigned rows) {
+  const unsigned lane=threadIdx.x%32,row=blockIdx.x*8+threadIdx.x/32;
+  if(row>=rows)return;
+  const size_t base=size_t(row/heads)*stride+size_t(row%heads)*width;
+  float partial[Logical/32]={};
+  #pragma unroll
+  for(int i=0;i<Logical/32;++i)for(unsigned col=lane+i*32;col<width;col+=Logical) {
+    float v=__bfloat162float(x[base+col]);partial[i]=fmaf(v,v,partial[i]);
+  }
+  #pragma unroll
+  for(int step=Logical/64;step;step>>=1) {
+    #pragma unroll
+    for(int i=0;i<step;++i)partial[i]+=partial[i+step];
+  }
+  float sum=partial[0];
+  #pragma unroll
+  for(int step=16;step;step>>=1) {
+    float other=__shfl_down_sync(0xffffffff,sum,step);if(lane<step)sum+=other;
+  }
+  float den=0;
+  if(!lane)den=sqrtf(__fadd_rn(__fmul_rn(sum,float(1./double(width))),eps));
+  den=__shfl_sync(0xffffffff,den,0);
+  for(unsigned col=lane;col<width;col+=32)
+    out[size_t(row)*width+col]=__float2bfloat16_rn((__bfloat162float(x[base+col])/den)*scale[col]);
+}
+static __global__ void gemma_norm_compact(const __nv_bfloat16* x,const float* scale,
+ __nv_bfloat16* out,unsigned width,unsigned heads,unsigned long long stride,float eps) {
+  tei_gemma_rms_norm_reference_impl<true>(x,scale,out,width,heads,stride,eps);
+}
 at::Tensor gemma_norm_cuda(const at::Tensor& x,const at::Tensor& scale,double epsilon,bool reference) {
   c10::cuda::CUDAGuard guard(x.device());
   TORCH_CHECK(x.scalar_type()==at::kBFloat16 && scale.scalar_type()==at::kFloat &&
@@ -394,7 +427,13 @@ at::Tensor gemma_norm_cuda(const at::Tensor& x,const at::Tensor& scale,double ep
   auto stream=at::cuda::getCurrentCUDAStream(x.device().index());
   auto source=reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr());
   auto destination=reinterpret_cast<__nv_bfloat16*>(output.mutable_data_ptr());
-  if(reference)tei_gemma_rms_norm_reference_bf16<<<rows,threads,0,stream>>>(source,scale.const_data_ptr<float>(),destination,width,heads,x.stride(0),epsilon);
+  if(reference && width>=256 && width<=512 && rows>=8192 && rows<=INT32_MAX) {
+#define RUN(L) gemma_norm_warp<L><<<(rows+7)/8,256,0,stream>>>(source,scale.const_data_ptr<float>(),destination,width,heads,x.stride(0),epsilon,rows)
+    if(width==256){RUN(256);}else{RUN(512);}
+#undef RUN
+  } else if(reference && width>512 && rows>=2048)
+    gemma_norm_compact<<<rows,256,0,stream>>>(source,scale.const_data_ptr<float>(),destination,width,heads,x.stride(0),epsilon);
+  else if(reference)tei_gemma_rms_norm_reference_bf16<<<rows,threads,0,stream>>>(source,scale.const_data_ptr<float>(),destination,width,heads,x.stride(0),epsilon);
   else gemma_rms_norm_bf16<<<rows,threads,0,stream>>>(source,scale.const_data_ptr<float>(),destination,width,heads,x.stride(0),epsilon);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output;
