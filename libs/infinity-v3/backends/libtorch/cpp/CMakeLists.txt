@@ -120,6 +120,9 @@ if(TARGET torch_cuda)
   set_source_files_properties(kernels/transformers_norm.cu PROPERTIES
     COMPILE_OPTIONS "--fmad=false;--prec-div=true;--prec-sqrt=true")
   target_sources(tei_torch PRIVATE kernels/fp8_fusions.cu)
+  target_sources(tei_torch PRIVATE kernels/nvfp4_prototype.cu)
+  set_source_files_properties(kernels/nvfp4_prototype.cu PROPERTIES
+    COMPILE_OPTIONS "--fmad=false;--prec-div=true")
   set_source_files_properties(kernels/fp8_fusions.cu PROPERTIES
     COMPILE_OPTIONS "--prec-div=true;--prec-sqrt=true")
   target_sources(tei_torch PRIVATE kernels/laya_features.cu kernels/qwen35_chunk.cu)
