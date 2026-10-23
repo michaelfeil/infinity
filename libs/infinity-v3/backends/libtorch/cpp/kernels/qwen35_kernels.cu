@@ -16,6 +16,25 @@ namespace tei {
 namespace {
 struct alignas(8) ConvValues { __nv_bfloat16 values[4]; };
 
+// One warp per head preserves the four original partial sums without a block barrier.
+__global__ void packed_gdn_norm(const __nv_bfloat16* x,const __nv_bfloat16* z,const __nv_bfloat16* weight,__nv_bfloat16* out,int64_t rows,float eps){
+ int64_t row=int64_t(blockIdx.x)*4+threadIdx.x/32;int lane=threadIdx.x%32;
+ if(row>=rows)return;
+ float values[4],sums[4];
+#pragma unroll
+ for(int i=0;i<4;++i){values[i]=float(x[row*128+lane+i*32]);sums[i]=::gdn_sum(values[i]*values[i]);}
+ float variance=(sums[0]+sums[1]+sums[2]+sums[3])/128.f;
+ float inverse=rsqrtf(variance+eps);
+#pragma unroll
+ for(int i=0;i<4;++i){
+  int j=lane+i*32;
+  float normalized=float(__float2bfloat16_rn(values[i]*inverse));
+  normalized=float(__float2bfloat16_rn(normalized*float(weight[j])));
+  float gate=float(z[row*128+j]);
+  out[row*128+j]=__float2bfloat16_rn(normalized*(gate/(1.f+expf(-gate))));
+ }
+}
+
 // Cached suffixes read their immutable prefix tail; short prefixes need no padding.
 template<bool Cached=false>
 __global__ void packed_conv_vector(const __nv_bfloat16* x, const __nv_bfloat16* weight,
@@ -799,7 +818,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
     qwen35_gdn_recurrent<<<dim3(input.batch,value_heads,16),256,0,stream>>>(bf(convolution),qk.const_data_ptr<float>(),decay.const_data_ptr<float>(),cu,mut(recurrence),key_heads,value_heads);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   }
-  qwen35_gdn_norm<<<tokens*value_heads,128,0,stream>>>(bf(recurrence),bf(z),bf(norm),mut(output),epsilon);
+  packed_gdn_norm<<<(tokens*value_heads+3)/4,128,0,stream>>>(bf(recurrence),bf(z),bf(norm),mut(output),tokens*value_heads,epsilon);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   if(input.prefix)prefix_recurrent_commit(input,qkv,cache_layer,conv.size(-1),cached);
   return output.view({tokens,value_heads*128});
