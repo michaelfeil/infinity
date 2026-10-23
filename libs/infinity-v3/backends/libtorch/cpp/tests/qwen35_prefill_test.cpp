@@ -26,7 +26,7 @@ void production_prefill(int64_t heads) {
   auto z=at::randn({tokens,heads*128},opts)*.2,ab=at::randn({tokens,2*heads},opts)*.2;
   auto conv=at::randn({(2*kh+heads)*128,4},opts)*.2;
   auto alog=at::zeros({heads},opts.dtype(at::kFloat)),dt=at::zeros_like(alog),norm=at::ones({128},opts);
-  std::vector<int32_t> offsets{0,1,14,tokens};tei::PackedInput input;
+  std::vector<int32_t> offsets{0,1,14,int32_t(tokens)};tei::PackedInput input;
   input.batch=3;input.offsets=offsets.data();input.max_sequence=tokens-14;
   input.cumulative=at::tensor(offsets,opts.dtype(at::kInt));
   auto budget=std::make_shared<tei::PrefixBudget>();budget->reserved_bytes=64<<20;
@@ -55,9 +55,9 @@ int main() {
   if(cudaGetDeviceProperties(&device,index)!=cudaSuccess || device.major!=9)continue;
   c10::cuda::CUDAGuard guard(index);
   ++tested;
-  for(int64_t heads:{32,48})for(int mode:{0,1,2}) {
-    constexpr int64_t tokens=143,kh=16;
-    std::vector<int32_t> offsets{0,1,14,tokens};
+  for(int64_t heads:{32,48})for(int mode:{0,1,2})for(bool resume:{false,true}) {
+    constexpr int64_t kh=16;const int64_t tokens=resume?519:143;
+    std::vector<int32_t> offsets{0,1,14,int32_t(tokens)};
     auto options=at::TensorOptions().dtype(at::kFloat);
     auto q=at::randn({tokens,kh,128},options),k=at::randn_like(q);
     q=q/q.square().sum(-1,true).sqrt()/std::sqrt(128.);
@@ -66,9 +66,11 @@ int main() {
     auto decay=at::rand({tokens,heads},options),beta=at::rand_like(decay);
     if(mode<2)decay.fill_(mode);
     else for(int64_t t=0;t<tokens;t+=3)decay[t].zero_();
+    auto initial=at::randn({2,heads,128,128},options)*.1;
+    std::vector<int64_t> sources{1,0,1};
     std::vector<at::Tensor> outputs,states;
     for(int row=0;row<3;++row) {
-      auto state=at::zeros({heads,128,128},options.dtype(at::kDouble));
+      auto state=resume?initial[sources[row]].to(at::kDouble):at::zeros({heads,128,128},options.dtype(at::kDouble));
       for(int t=offsets[row];t<offsets[row+1];++t) {
         auto qt=at::repeat_interleave(q[t],heads/kh,0).to(at::kDouble);
         auto kt=at::repeat_interleave(k[t],heads/kh,0).to(at::kDouble);
@@ -84,8 +86,9 @@ int main() {
     auto values=at::cat({at::zeros({tokens,kh*256},v.options()),v.flatten(1)},1).to(at::kCUDA);
     auto qk=at::cat({q,k},-1).reshape({tokens*kh,256}).to(at::kCUDA);
     auto gates=at::cat({decay,beta},-1).to(at::kCUDA);
+    if(resume)input.block_cache_sources=at::tensor(sources,options.dtype(at::kLong)).to(at::kCUDA);
     auto output=at::empty({tokens,heads,128},values.options());at::Tensor state;
-    tei::qwen35_prefill_cuda(values,qk,gates,input,output,kh,heads,&state);
+    tei::qwen35_prefill_cuda(values,qk,gates,input,output,kh,heads,&state,resume?initial.to(at::kCUDA):at::Tensor());
     check(output,at::stack(outputs),.007);check(state,at::stack(states),.006);
   }
   for(int64_t heads:{32,48})production_prefill(heads);
