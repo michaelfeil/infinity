@@ -277,7 +277,9 @@ class Qwen35 final : public Model {
         auto& cached=cache->metadata.kv_cumulative;
         if(!prefill&&!cached.defined())cached=at::tensor(kv_offsets,input.cumulative.options());
         auto cuk=prefill?input.cumulative:cached;
-        attention=std::get<0>(at::_flash_attention_forward(q,k,v,input.cumulative,cuk,input.max_sequence,max_kv,0.,false,false,1./std::sqrt(double(dim))));
+        if(prefill)attention=infinity_fa4(q,k,v,input.cumulative,cuk,input.max_sequence,
+          1./std::sqrt(double(dim)),false,-1,-1);
+        if(!attention.defined())attention=std::get<0>(at::_flash_attention_forward(q,k,v,input.cumulative,cuk,input.max_sequence,max_kv,0.,false,false,1./std::sqrt(double(dim))));
       } else {
         std::vector<at::Tensor> rows;
         const auto* offsets=prefill?input.offsets:kv_offsets.data();

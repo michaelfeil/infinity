@@ -284,6 +284,7 @@ if(INFINITY_BUILD_NATIVE_TESTS)
       target_compile_features(infinity_fa4_test PRIVATE cxx_std_20)
       target_link_libraries(infinity_fa4_test PRIVATE tei_torch "${TORCH_LIBRARIES}" CUDA::cudart)
       add_test(NAME infinity_fa4_cuda COMMAND infinity_fa4_test)
+      add_test(NAME infinity_fa4_qwen35_cuda COMMAND infinity_fa4_test --qwen35-only)
       add_test(NAME infinity_fa4_disabled COMMAND infinity_fa4_test --disabled)
       set_tests_properties(infinity_fa4_disabled PROPERTIES
         ENVIRONMENT "${ENV_VAR_BASE}_TORCH_FA4=0")

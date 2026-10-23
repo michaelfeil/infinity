@@ -9,6 +9,9 @@
 #include <atomic>
 #include <exception>
 #include <mutex>
+#ifndef FA4_COMPUTE_CAPABILITY
+#define FA4_COMPUTE_CAPABILITY 90
+#endif
 extern "C" {
 int __tvm_ffi_fa4_bert_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
 int __tvm_ffi_fa4_modern_local_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
@@ -18,12 +21,15 @@ int __tvm_ffi_fa4_bert_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
 int __tvm_ffi_fa4_modern_local_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
 int __tvm_ffi_fa4_qwen_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
 int __tvm_ffi_fa4_voyage_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-
-}
-#ifndef FA4_COMPUTE_CAPABILITY
-#define FA4_COMPUTE_CAPABILITY 90
+#if FA4_COMPUTE_CAPABILITY == 90
+int __tvm_ffi_fa4_qwen35_gqa4_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
+int __tvm_ffi_fa4_qwen35_gqa6_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
+int __tvm_ffi_fa4_qwen35_gqa4_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
+int __tvm_ffi_fa4_qwen35_gqa6_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
 #endif
+}
 extern "C" int infinity_fa4_compute_capability_v1(){return FA4_COMPUTE_CAPABILITY;}
+extern "C" int infinity_fa4_qwen35_v1(){return FA4_COMPUTE_CAPABILITY==90;}
 thread_local std::string last_error;
 extern "C" const char* infinity_fa4_error_v1(){return last_error.c_str();}
 struct StreamScope {
@@ -36,7 +42,7 @@ struct StreamScope {
 // only the first successful call to each export; warm calls stay concurrent.
 namespace {
 std::mutex export_init_mutex;
-std::atomic<bool> export_initialized[10]{};
+std::atomic<bool> export_initialized[14]{};
 std::exception_ptr export_init_failure;
 
 template <typename F>
@@ -63,11 +69,11 @@ void invoke_export(unsigned slot, F&& invoke) {
 }
 }  // namespace
 
-// Export families: 0 global d64 MHA, 1 windowed d64 MHA, 2 causal d128 GQA4, 3 global d128 GQA2.
+// Families 4/5 add Hopper global d256 GQA4/GQA6 to the original four exports.
 // Pointers remain owned by the caller; no device allocation or synchronization here.
 extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* stream,void* q,void* k,void* v,void* o,void* offsets,void* offsets_k,int64_t total,int64_t total_k,int64_t batch,int64_t h,int64_t hk,double scale,int left,int right,const int64_t* strides,int max_q){
  try{
-  if(dtype<0||dtype>1||mode<0||mode>3||total<=0||total_k<=0||batch<=0||max_q<=0)throw std::runtime_error("unsupported attention geometry");
+  if(dtype<0||dtype>1||mode<0||mode>5||total<=0||total_k<=0||batch<=0||max_q<=0)throw std::runtime_error("unsupported attention geometry");
   static tvm::ffi::Function functions[2][4] = {
     {tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_bert_fp16,nullptr),
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_modern_local_fp16,nullptr),
@@ -78,12 +84,27 @@ extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* strea
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen_bf16,nullptr),
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_voyage_bf16,nullptr)}
   };
+#if FA4_COMPUTE_CAPABILITY == 90
+  static tvm::ffi::Function qwen35[2][2] = {
+    {tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa4_fp16,nullptr),
+     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa6_fp16,nullptr)},
+    {tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa4_bf16,nullptr),
+     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa6_bf16,nullptr)}
+  };
+#else
+  if(mode>=4)throw std::runtime_error("d256 GQA requires a Hopper bundle");
+#endif
   if(h<=0||hk<=0||(!std::isfinite(scale)||scale<=0)||(mode<2&&h!=hk)||(mode==2&&(h%hk||h/hk!=4))
      ||(mode==3&&(h%hk||h/hk!=2))
+     ||(mode==4&&(h%hk||h/hk!=4))||(mode==5&&(h%hk||h/hk!=6))
      ||(mode==1&&(left<0||right<0)))throw std::runtime_error("unsupported attention parameters");
-  auto& fn=functions[dtype][mode];
+  auto* selected=&functions[dtype][mode<4?mode:0];
+#if FA4_COMPUTE_CAPABILITY == 90
+  if(mode>=4)selected=&qwen35[dtype][mode-4];
+#endif
+  auto& fn=*selected;
   DLDataType data_type{static_cast<uint8_t>(dtype==0?kDLFloat:kDLBfloat),16,1};
-  int64_t d=mode>=2?128:64;
+  int64_t d=mode>=4?256:mode>=2?128:64;
   int64_t qs[]={total,h,d},ks[]={total_k,hk,d},cs[]={batch+1},st[12],cst[]={1};
   for(int j=0;j<12;j++)st[j]=strides[j];
   auto tensor=[&](void* p,int n,int64_t* sh,int64_t* stride,DLDataType dt){return DLTensor{p,{kDLCUDA,device},n,dt,sh,stride,0};};
@@ -91,7 +112,7 @@ extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* strea
   tvm::ffi::Array<tvm::ffi::Any> aux{nullptr,nullptr};tvm::ffi::Any lb=mode==1?tvm::ffi::Any(int64_t(left)):tvm::ffi::Any(nullptr);
   tvm::ffi::Any rb=mode==1?tvm::ffi::Any(int64_t(right)):tvm::ffi::Any(nullptr);
   StreamScope scope(device,stream);
-  invoke_export(dtype * 4 + mode, [&] {
+  invoke_export(dtype * 6 + mode, [&] {
 #if FA4_COMPUTE_CAPABILITY == 100
   fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,&ckt,nullptr,nullptr,nullptr,lb,rb,nullptr,
      nullptr,nullptr,aux,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,int64_t(max_q));
@@ -130,7 +151,7 @@ extern "C" int infinity_fa4_deberta_v1(int dtype,int device,void* stream,
   tvm::ffi::Array<tvm::ffi::Any> tensors{tvm::ffi::Tensor::FromDLPack(&am),tvm::ffi::Tensor::FromDLPack(&bm),tvm::ffi::Tensor::FromDLPack(&lm)};
   tvm::ffi::Array<tvm::ffi::Any> aux{tensors,nullptr};
   StreamScope scope(device,stream);
-  invoke_export(8 + dtype, [&] {
+  invoke_export(12 + dtype, [&] {
 #if FA4_COMPUTE_CAPABILITY == 100
   fns[dtype](&qt,&kt,&vt,&ot,nullptr,1.0,&ct,&ct,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,
      nullptr,nullptr,aux,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,int64_t(max_q));

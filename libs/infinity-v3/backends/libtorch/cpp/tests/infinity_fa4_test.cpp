@@ -95,6 +95,23 @@ void standard(at::ScalarType dtype,int mode,bool cross) {
   graph.replay();
   TORCH_CHECK(at::equal(first,captured.narrow(0,0,qe[1])),"InfinityFA4 mixed independent sequences");
 }
+void qwen35(at::ScalarType dtype,int64_t heads,bool old_bundle) {
+  auto opts=at::TensorOptions().device(at::kCUDA).dtype(dtype);
+  std::vector<int64_t> ends={0,7,2056};
+  auto storage=at::randn({2057,heads*2,256},opts)*.2;
+  auto q=storage.narrow(0,1,2056).narrow(1,0,heads);
+  auto k=at::randn({2056,4,256},opts)*.2,v=at::randn_like(k);
+  auto cu=offsets(ends,opts);
+  auto output=tei::infinity_fa4(q,k,v,cu,cu,2049,1./16.);
+  if(old_bundle) {
+    TORCH_CHECK(!output.defined(),"Older bundle must retain the d256 fallback");
+    return;
+  }
+  close(output,reference(q,k,v,ends,ends,1./16.,false),"Hopper d256 packed GQA");
+  auto short_cu=offsets({0,7},opts);
+  TORCH_CHECK(!tei::infinity_fa4(q.narrow(0,0,7),k.narrow(0,0,7),v.narrow(0,0,7),
+    short_cu,short_cu,7,1./16.).defined(),"Short d256 requests must retain Torch");
+}
 void deberta(at::ScalarType dtype) {
   auto opts=at::TensorOptions().device(at::kCUDA).dtype(dtype);
   constexpr int64_t h=3,n=649,span=16,length=513;
@@ -204,6 +221,12 @@ int main(int argc,char** argv) {
   at::set_num_threads(2);
   at::manual_seed(724);
   const std::string mode=argc>1?argv[1]:"";
+  if(mode=="--qwen35-only"||mode=="--qwen35-old-bundle") {
+    if(at::cuda::getCurrentDeviceProperties()->major!=9)return 0;
+    for(auto dtype:{at::kHalf,at::kBFloat16})
+      for(int64_t heads:{16,24})qwen35(dtype,heads,mode=="--qwen35-old-bundle");
+    return 0;
+  }
   if(mode=="--disabled"||mode=="--unbuilt"||mode=="--missing-bundle"||mode=="--standard-only") {
     auto q=at::zeros({7,2,64},at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16));
     auto cu=offsets({0,7},q.options());
