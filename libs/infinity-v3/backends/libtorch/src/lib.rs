@@ -6,7 +6,10 @@
 //! waits and calls `pack_output`. CPU and decision calls complete synchronously.
 //! See `cpp/README.md` for model entry points and tests.
 mod radix;
+#[cfg(unix)]
+mod weight_reader;
 use radix::{NativeRadix, OwnedRadix};
+#[cfg(any(not(unix), test))]
 use safetensors::{Dtype, SafeTensors};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
@@ -895,7 +898,6 @@ impl LibtorchBackend {
                 | "qwen3_5_text"
                 | "qwen3_5_moe"
                 | "qwen3_5_moe_text"
-                | "mistral"
                 | "mistral3"
                 | "ultrabert"
         ) && text
@@ -1150,26 +1152,31 @@ impl LibtorchBackend {
                 }
                 continue;
             }
-            let data = fs::read(path.join(file)).map_err(start)?;
-            let tensors = SafeTensors::deserialize(&data).map_err(start)?;
-            for (name, tensor) in tensors.tensors() {
-                // Integer buffers are derived from packed positions rather than uploaded as weights.
-                if name.ends_with("position_ids") || name.ends_with("token_type_ids") {
-                    continue;
+            #[cfg(unix)]
+            weight_reader::load(handle, &path.join(&file), &prefix)?;
+            #[cfg(not(unix))]
+            {
+                let data = fs::read(path.join(&file)).map_err(start)?;
+                let tensors = SafeTensors::deserialize(&data).map_err(start)?;
+                for (name, tensor) in tensors.tensors() {
+                    // Integer buffers are derived from packed positions rather than uploaded as weights.
+                    if name.ends_with("position_ids") || name.ends_with("token_type_ids") {
+                        continue;
+                    }
+                    let dtype = match tensor.dtype() {
+                        Dtype::F32 => 0,
+                        Dtype::F16 => 1,
+                        Dtype::BF16 => 2,
+                        other => return Err(start(format!("Unsupported weight dtype {other:?}"))),
+                    };
+                    upload_weight(
+                        handle,
+                        &format!("{prefix}{name}"),
+                        tensor.data(),
+                        tensor.shape(),
+                        dtype,
+                    )?;
                 }
-                let dtype = match tensor.dtype() {
-                    Dtype::F32 => 0,
-                    Dtype::F16 => 1,
-                    Dtype::BF16 => 2,
-                    other => return Err(start(format!("Unsupported weight dtype {other:?}"))),
-                };
-                upload_weight(
-                    handle,
-                    &format!("{prefix}{name}"),
-                    tensor.data(),
-                    tensor.shape(),
-                    dtype,
-                )?;
             }
         }
         // SAFETY: the live handle is owned by model; this checks every required weight and its shape.
@@ -2279,6 +2286,35 @@ mod tests {
             }
         }
     }
+    #[test]
+    #[ignore = "Manual GPU checkpoint smoke test; set INFINITY_TEST_CHECKPOINT_PATH"]
+    fn cuda_real_checkpoint_startup() {
+        let path = std::env::var("INFINITY_TEST_CHECKPOINT_PATH")
+            .expect("Set INFINITY_TEST_CHECKPOINT_PATH to a supported local embedding checkpoint");
+        let started = std::time::Instant::now();
+        let backend = LibtorchBackend::new(
+            Path::new(&path),
+            "bfloat16",
+            ModelType::Embedding(Pool::Mean),
+            "cuda:0",
+        )
+        .unwrap();
+        let loaded = started.elapsed();
+        let mut input = batch();
+        input.token_type_ids.fill(0);
+        let output = backend.embed(input).unwrap();
+        assert!(!output.is_empty());
+        for embedding in output.values() {
+            assert!(values(embedding).iter().all(|value| value.is_finite()));
+        }
+        eprintln!(
+            "checkpoint={} load_seconds={:.3} total_seconds={:.3}",
+            path,
+            loaded.as_secs_f64(),
+            started.elapsed().as_secs_f64()
+        );
+    }
+
     #[test]
     #[ignore = "Requires an NVIDIA GPU and CUDA LibTorch 2.14.1"]
     fn cuda_bulk_completion_preserves_mixed_projection_widths() {
