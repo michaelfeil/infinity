@@ -7,6 +7,9 @@
 #include <cstring>
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include "kernels/gemma_score.h"
+#include "kernels/moe_kernels.h"
+#include "kernels/fp8_fusions.h"
+#include "helpers/fp8_linear.h"
 #include "kernels/qwen35_kernels.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAGraph.h>
@@ -258,13 +261,69 @@ PackedInput input(const std::vector<int64_t>& ids, const std::vector<int32_t>& o
   return {tokens,at::zeros_like(tokens),pos,at::from_blob(const_cast<int32_t*>(offsets.data()), {static_cast<int64_t>(offsets.size())}, at::TensorOptions().dtype(at::kInt)).clone(),offsets.data(),static_cast<int64_t>(offsets.size()-1),maximum};
 }
 #ifdef TEI_TORCH_CUDA_KERNELS
-void dynamic_fp8(const c10::Device& device) {
+void reference_norm_dispatch(const c10::Device& device) {
+  at::manual_seed(719);
+  auto opts=at::TensorOptions().device(device).dtype(at::kBFloat16);
+  // Odd row count and padded row strides exercise both dispatches and tail warps.
+  for(int width:{256,512,704,1024,2816,4096,8192}) {
+    auto x=at::randn({8193,width+8},opts).narrow(1,0,width);
+    auto scale=at::randn({width},opts.dtype(at::kFloat));
+    int logical=1;while(logical<width && logical<1024)logical*=2;
+    auto partial=at::zeros({x.size(0),logical},opts.dtype(at::kFloat));
+    auto values=x.to(at::kFloat);
+    for(int offset=0;offset<width;offset+=logical) {
+      auto count=std::min(logical,width-offset);
+      partial.narrow(1,0,count).add_(values.narrow(1,offset,count).square());
+    }
+    for(int step=logical/2;step;step/=2)
+      partial.narrow(1,0,step).add_(partial.narrow(1,step,step));
+    auto den=(partial.narrow(1,0,1)*(1.f/width)+1e-6f).sqrt();
+    auto expected=((values/den)*scale).to(at::kBFloat16);
+    TORCH_CHECK(at::equal(gemma_norm_cuda(x,scale,1e-6,true),expected),
+      "Gemma optimized norm changed reference arithmetic at width ",width);
+  }
+  std::cout<<"Gemma optimized norm exact reference parity passed\n";
+}
+void dynamic_fp8(const c10::Device& device,bool moe=false) {
   const auto* props=at::cuda::getDeviceProperties(device.index());
   const int sm=props->major*10+props->minor;
   if(sm!=89 && sm!=90 && sm!=100 && sm!=120)return;
+  if(moe && sm!=90 && sm!=100)return;
+  if(moe) {
+    auto opts=at::TensorOptions().device(device).dtype(at::kBFloat16);
+    for(int width:{32,704,2048,8192}) {
+      auto gu=at::randn({17,2*width},opts)*3;
+      auto reference=fp8_quantize_rows(gemma_gated_cuda(gu,true));
+      auto fused=fp8_geglu_quantize(gu);
+      TORCH_CHECK(at::equal(reference.first.view(at::kByte),fused.first.view(at::kByte))
+        && at::equal(reference.second,fused.second),"Fused GeGLU changed quantization");
+    }
+    auto expert=at::randn({136,2816},opts),weights=at::randn({17,8},opts.dtype(at::kFloat));
+    auto order=at::randperm(136,opts.dtype(at::kLong));
+    auto ordered=at::empty_like(expert);ordered.index_copy_(0,order,expert);
+    auto weighted=(ordered.view({17,8,2816}).to(at::kFloat)*weights.unsqueeze(-1)).to(at::kBFloat16).to(at::kFloat);
+    auto expected=at::zeros({17,2816},opts.dtype(at::kFloat));
+    for(int k=0;k<8;++k)expected+=weighted.select(1,k);
+    TORCH_CHECK(at::equal(routed_moe_combine_cuda(expert,order,weights),expected.to(at::kBFloat16)),
+      "MoE combine changed ordered BF16 rounding");
+  }
   at::manual_seed(418);
   Fixture f("gemma4",8,2,0);
   f.cfg.values["_decision.kind"]="option_tokens";
+  if(moe) {
+    f.cfg.values["enable_moe_block"]="true";
+    f.cfg.values["num_experts"]="16";f.cfg.values["top_k_experts"]="8";
+    for(int i=0;i<2;++i) {
+      const auto p="layers."+std::to_string(i)+".";
+      for(const auto* norm:{"pre_feedforward_layernorm_2","post_feedforward_layernorm_1","post_feedforward_layernorm_2"})
+        f.weights[p+norm+".weight"]=at::ones({16});
+      f.weights[p+"router.scale"]=at::ones({16});
+      f.weights[p+"router.proj.weight"]=at::zeros({16,16}); // Ties plus eight empty experts.
+      f.weights[p+"router.per_expert_scale"]=at::linspace(.5,1.5,16);
+      f.weights[p+"experts.gate_up_proj"]=at::randn({16,64,16})*.1;
+      f.weights[p+"experts.down_proj"]=at::randn({16,16,32})*.1;
+    }
+  }
   for(int i=0;i<2;++i) {
     const auto p="layers."+std::to_string(i)+".mlp.";
     f.weights[p+"gate_proj.weight"]=at::randn({32,16})*.1;
@@ -291,7 +350,16 @@ void dynamic_fp8(const c10::Device& device) {
     "Gemma dense FP8 numerical regression: maxabs=",(actual-expected).abs().max().item<float>(),
     " relative_rmse=",relative_error);
   check_prefix_cache(*quantized,packed,0,.01,.02);
-  std::cout<<"Gemma dense FP8 numerical and prefix-cache checks passed\n";
+  auto stream=at::cuda::getStreamFromPool(false,device.index());
+  c10::cuda::CUDAStreamGuard stream_guard(stream);
+  for(int warmup=0;warmup<3;++warmup)quantized->forward(packed);
+  stream.synchronize();
+  at::cuda::CUDAGraph graph;
+  graph.capture_begin();auto replay=quantized->forward(packed);graph.capture_end();
+  packed.ids.add_(1);graph.replay();
+  TORCH_CHECK(at::allclose(replay,quantized->forward(packed),.01,.02),
+    "Gemma FP8 graph replay did not use current token inputs");
+  std::cout<<"Gemma "<<(moe?"MoE":"dense")<<" FP8 numerical and prefix-cache checks passed\n";
 }
 #endif
 void audio_operations(const c10::Device& device) {
@@ -403,7 +471,7 @@ int main(int argc,char** argv) {
   embedding_layer_key_aliases();
   feature_cache_bounds();
 #ifdef TEI_TORCH_CUDA_KERNELS
-  if(argc>1){dynamic_fp8(c10::Device(argv[1]));feature_cache_stream_lifetime(c10::Device(argv[1]));publisher_bf16_score_readout(c10::Device(argv[1]));}
+  if(argc>1){reference_norm_dispatch(c10::Device(argv[1]));dynamic_fp8(c10::Device(argv[1]));dynamic_fp8(c10::Device(argv[1]),true);feature_cache_stream_lifetime(c10::Device(argv[1]));publisher_bf16_score_readout(c10::Device(argv[1]));}
 #endif
   at::manual_seed(418);
   audio_operations(c10::Device("cpu"));

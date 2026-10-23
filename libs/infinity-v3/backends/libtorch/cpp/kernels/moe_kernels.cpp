@@ -73,4 +73,7 @@ at::Tensor routed_moe_cuda(const at::Tensor& x,const at::Tensor& logits,
  return {};
 #endif
 }
+#ifndef TEI_TORCH_CUDA_KERNELS
+at::Tensor routed_moe_combine_cuda(const at::Tensor&,const at::Tensor&,const at::Tensor&) { return {}; }
+#endif
 }
