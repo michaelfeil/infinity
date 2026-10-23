@@ -74,35 +74,34 @@ void invoke_export(unsigned slot, F&& invoke) {
 extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* stream,void* q,void* k,void* v,void* o,void* offsets,void* offsets_k,int64_t total,int64_t total_k,int64_t batch,int64_t h,int64_t hk,double scale,int left,int right,const int64_t* strides,int max_q){
  try{
   if(dtype<0||dtype>1||mode<0||mode>5||total<=0||total_k<=0||batch<=0||max_q<=0)throw std::runtime_error("unsupported attention geometry");
-  static tvm::ffi::Function functions[2][4] = {
+  static tvm::ffi::Function functions[2][6] = {
     {tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_bert_fp16,nullptr),
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_modern_local_fp16,nullptr),
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen_fp16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_voyage_fp16,nullptr)},
+     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_voyage_fp16,nullptr),
+#if FA4_COMPUTE_CAPABILITY == 90
+     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa4_fp16,nullptr),
+     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa6_fp16,nullptr),
+#endif
+    },
     {tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_bert_bf16,nullptr),
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_modern_local_bf16,nullptr),
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen_bf16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_voyage_bf16,nullptr)}
-  };
+     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_voyage_bf16,nullptr),
 #if FA4_COMPUTE_CAPABILITY == 90
-  static tvm::ffi::Function qwen35[2][2] = {
-    {tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa4_fp16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa6_fp16,nullptr)},
-    {tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa4_bf16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa6_bf16,nullptr)}
+     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa4_bf16,nullptr),
+     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_gqa6_bf16,nullptr),
+#endif
+    }
   };
-#else
+#if FA4_COMPUTE_CAPABILITY != 90
   if(mode>=4)throw std::runtime_error("d256 GQA requires a Hopper bundle");
 #endif
   if(h<=0||hk<=0||(!std::isfinite(scale)||scale<=0)||(mode<2&&h!=hk)||(mode==2&&(h%hk||h/hk!=4))
      ||(mode==3&&(h%hk||h/hk!=2))
      ||(mode==4&&(h%hk||h/hk!=4))||(mode==5&&(h%hk||h/hk!=6))
      ||(mode==1&&(left<0||right<0)))throw std::runtime_error("unsupported attention parameters");
-  auto* selected=&functions[dtype][mode<4?mode:0];
-#if FA4_COMPUTE_CAPABILITY == 90
-  if(mode>=4)selected=&qwen35[dtype][mode-4];
-#endif
-  auto& fn=*selected;
+  auto& fn=functions[dtype][mode];
   DLDataType data_type{static_cast<uint8_t>(dtype==0?kDLFloat:kDLBfloat),16,1};
   int64_t d=mode>=4?256:mode>=2?128:64;
   int64_t qs[]={total,h,d},ks[]={total_k,hk,d},cs[]={batch+1},st[12],cst[]={1};
