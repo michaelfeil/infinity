@@ -2,6 +2,7 @@
 // RMS arithmetic adapted from the Apache-2.0 fast_kernels.cu implementation.
 // Preserve its reduction order and BF16 rounding before row quantization.
 #include "kernels/fp8_fusions.h"
+#include "kernels/moe_kernels.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
@@ -40,7 +41,7 @@ __device__ float row_scale(float value) {
   __syncthreads();
   return warps[0];
 }
-template<class T,int Columns>
+template<class T,int Columns,bool Gelu=false>
 __global__ void swiglu_quant_kernel(const T* input,__nv_fp8_e4m3* out,float* scales,int width) {
   const int64_t row=blockIdx.x;
   float values[Columns],amax=0;
@@ -50,9 +51,18 @@ __global__ void swiglu_quant_kernel(const T* input,__nv_fp8_e4m3* out,float* sca
     float value=0;
     if(col<width) {
       T gate=input[row*2*width+col],up=input[row*2*width+width+col];
-      T exponential=hexp(T(-gate));
-      T denominator=T(T(1)+exponential);
-      T activated=T(gate/denominator);
+      T activated;
+      if constexpr(Gelu) {
+        T square=gate*gate,cube=square*gate;
+        T alpha=gate+T(.044715)*cube;
+        T tanh_input=T(M_2_SQRTPI*M_SQRT1_2)*alpha;
+        T tanh_value=T(tanhf(float(tanh_input)));
+        activated=T(.5)*gate*(T(1.)+tanh_value);
+      } else {
+        T exponential=hexp(T(-gate));
+        T denominator=T(T(1)+exponential);
+        activated=T(gate/denominator);
+      }
       value=float(T(float(activated)*float(up)));
     }
     values[j]=value;amax=fmaxf(amax,fabsf(value));
@@ -208,6 +218,25 @@ std::pair<at::Tensor,at::Tensor> fp8_swiglu_quantize(const at::Tensor& input) {
   }
   return {output,scales};
 }
+std::pair<at::Tensor,at::Tensor> fp8_geglu_quantize(const at::Tensor& input) {
+  validate_matrix(input);
+  TORCH_CHECK(input.scalar_type()==at::kBFloat16 && input.size(1)%2==0 && input.size(1)<=16384,
+    "Gemma fused GeGLU quantization requires BF16 gate/up width <=16384");
+  c10::cuda::CUDAGuard guard(input.device());
+  int width=input.size(1)/2;
+  auto output=at::empty({input.size(0),width},input.options().dtype(at::kFloat8_e4m3fn));
+  auto scales=at::empty({input.size(0),1},input.options().dtype(at::kFloat));
+  if(input.size(0)) {
+    auto x=reinterpret_cast<const __nv_bfloat16*>(input.const_data_ptr());
+    auto y=reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr());
+    auto stream=at::cuda::getCurrentCUDAStream(input.get_device());
+#define RUN(C) swiglu_quant_kernel<__nv_bfloat16,C,true><<<input.size(0),256,0,stream>>>(x,y,scales.data_ptr<float>(),width)
+    if(width<=1024){RUN(4);}else if(width<=4096){RUN(16);}else{RUN(32);}
+#undef RUN
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+  }
+  return {output,scales};
+}
 std::tuple<at::Tensor,at::Tensor,at::Tensor> fp8_add_rms_quantize(
  const at::Tensor& x,const at::Tensor& residual,const at::Tensor& weight,double epsilon) {
   validate_matrix(x);
@@ -240,5 +269,47 @@ std::tuple<at::Tensor,at::Tensor,at::Tensor> fp8_add_rms_quantize(
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   }
   return {output,summed,scales};
+}
+
+// Preserve ordered per-expert BF16 rounding without an FP32 staging tensor.
+namespace {
+__global__ void combine_bf16(const __nv_bfloat16* expert,const int64_t* mapping,
+ const float* weights,__nv_bfloat16* output,int64_t vectors,int64_t width) {
+  const int64_t i=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;
+  if(i>=vectors)return;
+  const int64_t token=i/width,column=i%width;
+  float sum[8]={};
+  #pragma unroll
+  for(int k=0;k<8;++k) {
+    const auto slot=token*8+k;
+    alignas(16) __nv_bfloat16 values[8];
+    *reinterpret_cast<uint4*>(values)=reinterpret_cast<const uint4*>(expert)[mapping[slot]*width+column];
+    const float weight=weights[slot];
+    #pragma unroll
+    for(int j=0;j<8;++j)sum[j]+=__bfloat162float(__float2bfloat16_rn(__bfloat162float(values[j])*weight));
+  }
+  alignas(16) __nv_bfloat16 result[8];
+  #pragma unroll
+  for(int j=0;j<8;++j)result[j]=__float2bfloat16_rn(sum[j]);
+  reinterpret_cast<uint4*>(output)[i]=*reinterpret_cast<const uint4*>(result);
+}
+}
+at::Tensor routed_moe_combine_cuda(const at::Tensor& expert,const at::Tensor& order,const at::Tensor& routing) {
+  if(!expert.is_cuda() || expert.scalar_type()!=at::kBFloat16 || expert.dim()!=2
+    || expert.size(0)==0 || expert.size(1)==0 || routing.dim()!=2 || routing.size(1)!=8 || expert.size(1)%8 || reinterpret_cast<uintptr_t>(expert.const_data_ptr())%16)return {};
+  TORCH_CHECK(expert.is_contiguous() && routing.is_contiguous() && routing.scalar_type()==at::kFloat
+    && order.is_contiguous() && order.dim()==1 && order.scalar_type()==at::kLong
+    && order.numel()==expert.size(0) && routing.numel()==order.numel()
+    && order.device()==expert.device() && routing.device()==expert.device(),"Invalid routed MoE combine inputs");
+  c10::cuda::CUDAGuard guard(expert.device());
+  auto mapping=at::empty_like(order);
+  mapping.scatter_(0,order,at::arange(order.numel(),order.options()));
+  auto output=at::empty({routing.size(0),expert.size(1)},expert.options());
+  const auto vectors=output.numel()/8;
+  combine_bf16<<<(vectors+255)/256,256,0,at::cuda::getCurrentCUDAStream(expert.get_device())>>>(
+    reinterpret_cast<const __nv_bfloat16*>(expert.const_data_ptr()),mapping.const_data_ptr<int64_t>(),
+    routing.const_data_ptr<float>(),reinterpret_cast<__nv_bfloat16*>(output.mutable_data_ptr()),vectors,expert.size(1)/8);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return output;
 }
 }

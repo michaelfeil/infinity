@@ -3,11 +3,8 @@
 #ifdef TEI_TORCH_MOE_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
-#include <c10/cuda/CUDAException.h>
 #include <climits>
 #include "kernels/moe_symbols.h"
-struct __nv_bfloat16;
-extern "C" void gemma4_moe_combine_vec8(const float*,const uint32_t*,const float*,__nv_bfloat16*,uint64_t,uint32_t);
 extern "C" size_t qwen3_moe_workspace_bytes(int,int,int);
 extern "C" size_t qwen35_moe_workspace_bytes(int,int,int);
 extern "C" size_t gemma4_moe_workspace_bytes(int,int,int);
@@ -76,30 +73,7 @@ at::Tensor routed_moe_cuda(const at::Tensor& x,const at::Tensor& logits,
  return {};
 #endif
 }
-at::Tensor routed_moe_combine_cuda(const at::Tensor& expert,const at::Tensor& order,const at::Tensor& routing) {
-#ifdef TEI_TORCH_MOE_KERNELS
- if(!expert.is_cuda() || expert.scalar_type()!=at::kBFloat16 || expert.dim()!=2
-   || expert.size(0)==0 || expert.size(1)==0 || routing.dim()!=2 || routing.size(1)!=8 || expert.size(1)%8)return {};
- TORCH_CHECK(expert.is_contiguous() && routing.is_contiguous() && routing.scalar_type()==at::kFloat
-   && order.is_contiguous() && order.dim()==1 && order.scalar_type()==at::kLong
-   && order.numel()==expert.size(0) && routing.numel()==order.numel()
-   && expert.size(0)<=INT_MAX && expert.size(1)<=INT_MAX
-   && order.device()==expert.device() && routing.device()==expert.device(),"Invalid routed MoE combine inputs");
- const c10::cuda::CUDAGuard guard(expert.device());
- auto mapping=at::empty_like(order,order.options().dtype(at::kInt));
- mapping.scatter_(0,order,at::arange(order.numel(),mapping.options()));
- auto values=expert.to(at::kFloat),output=at::empty({routing.size(0),expert.size(1)},expert.options());
- const auto* x=values.const_data_ptr<float>();
- const auto* indices=reinterpret_cast<const uint32_t*>(mapping.const_data_ptr<int32_t>());
- const auto* weights=routing.const_data_ptr<float>();auto* out=output.data_ptr();
- uint64_t tokens=routing.size(0);uint32_t hidden=expert.size(1);
- void* args[]={&x,&indices,&weights,&out,&tokens,&hidden};
- C10_CUDA_CHECK(cudaLaunchKernel(reinterpret_cast<const void*>(gemma4_moe_combine_vec8),
-   dim3((tokens*(hidden/8)+255)/256),dim3(256),args,0,at::cuda::getCurrentCUDAStream(expert.get_device()).stream()));
- return output;
-#else
- return {};
+#ifndef TEI_TORCH_CUDA_KERNELS
+at::Tensor routed_moe_combine_cuda(const at::Tensor&,const at::Tensor&,const at::Tensor&) { return {}; }
 #endif
-}
-
 }

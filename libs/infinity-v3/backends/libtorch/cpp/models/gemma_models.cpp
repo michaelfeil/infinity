@@ -5,6 +5,7 @@
 #include "models/gemma_models.h"
 #include "helpers/image_feature_cache.h"
 #include "helpers/fp8_linear.h"
+#include "kernels/fp8_fusions.h"
 #include "helpers/workspace_admission.h"
 #include "helpers/vendor_error.h"
 #include "batching/radix.h"
@@ -240,7 +241,14 @@ class Gemma final : public Model {
       auto quantized=fp8_quantize_rows(input.contiguous());
       auto both=layer.fp8_expert_gate_up->forward_quantized(quantized.first.index_select(0,tokens),
         quantized.second.index_select(0,tokens),ends);
-      auto expert=layer.fp8_expert_down->forward(activation(both),ends);
+      at::Tensor expert;
+#ifdef TEI_TORCH_CUDA_KERNELS
+      if((act=="gelu_pytorch_tanh" || act=="gelu_new") && both.size(1)<=16384) {
+        auto gated=fp8_geglu_quantize(both);
+        expert=layer.fp8_expert_down->forward_quantized(gated.first,gated.second,ends);
+      } else
+#endif
+        expert=layer.fp8_expert_down->forward(activation(both),ends);
       output=routed_moe_combine_cuda(expert,order,probability);
       if(!output.defined()) {
         expert=(expert.to(at::kFloat)*probability.flatten().index_select(0,order).unsqueeze(1)).to(dtype);

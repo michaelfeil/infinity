@@ -7,6 +7,9 @@
 #include <cstring>
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include "kernels/gemma_score.h"
+#include "kernels/moe_kernels.h"
+#include "kernels/fp8_fusions.h"
+#include "helpers/fp8_linear.h"
 #include "kernels/qwen35_kernels.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAGraph.h>
@@ -263,6 +266,24 @@ void dynamic_fp8(const c10::Device& device,bool moe=false) {
   const int sm=props->major*10+props->minor;
   if(sm!=89 && sm!=90 && sm!=100 && sm!=120)return;
   if(moe && sm!=90 && sm!=100)return;
+  if(moe) {
+    auto opts=at::TensorOptions().device(device).dtype(at::kBFloat16);
+    for(int width:{32,704,2048,8192}) {
+      auto gu=at::randn({17,2*width},opts)*3;
+      auto reference=fp8_quantize_rows(gemma_gated_cuda(gu,true));
+      auto fused=fp8_geglu_quantize(gu);
+      TORCH_CHECK(at::equal(reference.first.view(at::kByte),fused.first.view(at::kByte))
+        && at::equal(reference.second,fused.second),"Fused GeGLU changed quantization");
+    }
+    auto expert=at::randn({136,2816},opts),weights=at::randn({17,8},opts.dtype(at::kFloat));
+    auto order=at::randperm(136,opts.dtype(at::kLong));
+    auto ordered=at::empty_like(expert);ordered.index_copy_(0,order,expert);
+    auto weighted=(ordered.view({17,8,2816}).to(at::kFloat)*weights.unsqueeze(-1)).to(at::kBFloat16).to(at::kFloat);
+    auto expected=at::zeros({17,2816},opts.dtype(at::kFloat));
+    for(int k=0;k<8;++k)expected+=weighted.select(1,k);
+    TORCH_CHECK(at::equal(routed_moe_combine_cuda(expert,order,weights),expected.to(at::kBFloat16)),
+      "MoE combine changed ordered BF16 rounding");
+  }
   at::manual_seed(418);
   Fixture f("gemma4",8,2,0);
   f.cfg.values["_decision.kind"]="option_tokens";
