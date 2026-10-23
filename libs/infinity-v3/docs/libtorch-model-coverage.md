@@ -8,6 +8,7 @@ exact-length biased attention without padded token activations.
 | Model family / aliases | Native implementation |
 | --- | --- |
 | BERT | Packed encoder, fused QKV/GELU, pooling, classifier and SPLADE heads |
+| ColBERTv2 / Answer.AI ColBERT Small | Packed BERT, learned token projection, L2 normalization and multi-vector output |
 | RoBERTa, XLM-RoBERTa, CamemBERT | BERT path with checkpoint prefixes and matching heads |
 | DistilBERT | Packed encoder, SPLADE projection |
 | GTE / New | Packed rotary encoder, gated MLP and classifier |
@@ -39,6 +40,18 @@ Unknown custom checkpoint modules and incomplete or ambiguous media towers are
 rejected. Gemma3 is text-only; EmbeddingGemma2 includes image/audio towers when
 present. The official Gemma4 checkpoint has no audio tower. Qwen3-VL requires
 last-token pooling.
+
+ColBERT checkpoints declaring `HF_ColBERT` return one matrix per input on
+`/embeddings`, `/v1/embeddings`, `/embed`, and `/embed_all`. Rows contain token
+vectors, not a pooled sentence embedding. Float, base64-per-row, and tensor
+encodings preserve the token matrix. Sentence pooling, dimension overrides, and
+single-vector `/similarity` scoring are rejected.
+
+Plain text follows the unaugmented document encoding path, with punctuation
+tokens excluded from scoring. Clients can supply final token IDs for model-specific
+query/document formatting. Query-marker inputs retain punctuation; query expansion
+MASK tokens remain output vectors but don't participate as attention keys.
+The server doesn't insert markers or expand queries automatically.
 
 Causal text prefix reuse is available only where the native model reports radix
 support. Bidirectional, media and typed decision requests reject folded inputs.

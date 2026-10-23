@@ -367,7 +367,15 @@ async fn initialize_model(
             }
         }
         infinity_v3_backend::ModelType::Embedding(pool) => ModelType::Embedding(EmbeddingModel {
-            pooling: pool.to_string(),
+            pooling: if config.architectures.iter().any(|arch| arch == "HF_ColBERT") {
+                anyhow::ensure!(
+                    backend_kind == infinity_v3_backend::BackendKind::Libtorch,
+                    "ColBERT requires the LibTorch backend"
+                );
+                "colbert".into()
+            } else {
+                pool.to_string()
+            },
         }),
     };
 
@@ -884,6 +892,15 @@ fn get_backend_model_type(
     model_root: &Path,
     pooling: Option<infinity_v3_backend::Pool>,
 ) -> Result<infinity_v3_backend::ModelType> {
+    if config.architectures.iter().any(|arch| arch == "HF_ColBERT") {
+        anyhow::ensure!(
+            pooling.is_none(),
+            "ColBERT returns token embeddings and does not support pooling"
+        );
+        return Ok(infinity_v3_backend::ModelType::Embedding(
+            infinity_v3_backend::Pool::Mean,
+        ));
+    }
     for arch in &config.architectures {
         // Edge case affecting `Alibaba-NLP/gte-multilingual-base` and possibly other fine-tunes of
         // the same base model. More context at https://huggingface.co/Alibaba-NLP/gte-multilingual-base/discussions/7
@@ -1216,6 +1233,12 @@ pub struct Info {
     pub sha: Option<&'static str>,
     #[cfg_attr(feature = "http", schema(nullable = true, example = "null"))]
     pub docker_label: Option<&'static str>,
+}
+
+impl Info {
+    pub fn is_multi_vector(&self) -> bool {
+        matches!(&self.model_type, ModelType::Embedding(model) if model.pooling == "colbert")
+    }
 }
 
 #[derive(Serialize)]

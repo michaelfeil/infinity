@@ -25,6 +25,7 @@
 #include "kernels/moe_kernels.h"
 #include "models/decision_models.h"
 #include "models/dense_models.h"
+#include "models/multivector_model.h"
 #include "models/encoder_models.h"
 #include "models/gemma_models.h"
 #include "models/qwen35_models.h"
@@ -158,6 +159,12 @@ struct Engine {
         TORCH_CHECK(!encoder.empty(),"Laya checkpoint contains no encoder.* weights");weights=std::move(encoder);
       }
     }
+    const bool multi_vector=options.boolean("_multi_vector",false);
+    at::Tensor token_projection,token_bias;
+    if(multi_vector && weights.count("linear.weight")) {
+      token_projection=weights.at("linear.weight");
+      if(weights.count("linear.bias"))token_bias=weights.at("linear.bias");
+    }
     model = tei::create_encoder(options, weights, device, dtype);
     if (!model) model = tei::create_mistral3(options, weights, device, dtype);
     if (!model) model = tei::create_decoder(options, weights, device, dtype);
@@ -174,6 +181,7 @@ struct Engine {
       model = std::move(bert);
     }
     TORCH_CHECK(model, "Unsupported native Torch model family: ", family);
+    if(multi_vector)model=std::make_unique<tei::MultiVectorModel>(std::move(model),token_projection,token_bias);
     model->ready();
     auto cache_bytes=options.integer("_prefix_cache_max_bytes",0);
     auto cache_tokens=options.integer("_prefix_cache_max_tokens",8192),cache_entries=options.integer("_prefix_cache_entries",64);
