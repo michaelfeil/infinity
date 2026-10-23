@@ -9,9 +9,10 @@ namespace tei {
 class MultiVectorModel final : public Model {
   std::unique_ptr<Model> backbone;
   at::Tensor projection, bias;
+  double epsilon;
 public:
-  MultiVectorModel(std::unique_ptr<Model> model, at::Tensor weight, at::Tensor offset)
-      : backbone(std::move(model)), projection(std::move(weight)), bias(std::move(offset)) {}
+  MultiVectorModel(std::unique_ptr<Model> model, at::Tensor weight, at::Tensor offset, double eps=1e-12)
+      : backbone(std::move(model)), projection(std::move(weight)), bias(std::move(offset)), epsilon(eps) {}
   void ready() override {
     backbone->ready();
     TORCH_CHECK(!projection.defined() || (projection.dim()==2 &&
@@ -26,7 +27,7 @@ public:
   at::Tensor forward(const PackedInput& input) const override {
     auto states=backbone->forward(input);
     if(projection.defined())states=at::linear(states,projection,bias);
-    return states/at::linalg_vector_norm(states,2,{-1},true).clamp_min(1e-12);
+    return states/at::linalg_vector_norm(states,2,{-1},true).clamp_min(epsilon);
   }
 };
 }

@@ -161,7 +161,10 @@ struct Engine {
     }
     const bool multi_vector=options.boolean("_multi_vector",false);
     at::Tensor token_projection,token_bias;
+    double token_norm_eps=1e-12;
     if(multi_vector && weights.count("embedding_proj_layer.weight")) {
+      // ColQwen3 uses finfo(dtype).eps rather than F.normalize's default.
+      token_norm_eps=dtype==at::kBFloat16?1.0/128:dtype==at::kHalf?1.0/1024:std::numeric_limits<float>::epsilon();
       tei::Weights canonical;
       for(const auto& [name,value]:weights) {
         auto key=name.starts_with("vlm.")?name.substr(4):name;
@@ -193,7 +196,7 @@ struct Engine {
     TORCH_CHECK(model, "Unsupported native Torch model family: ", family);
     if(multi_vector) {
       TORCH_CHECK(token_projection.defined(),"Multi-vector checkpoint is missing its token projection");
-      model=std::make_unique<tei::MultiVectorModel>(std::move(model),token_projection,token_bias);
+      model=std::make_unique<tei::MultiVectorModel>(std::move(model),token_projection,token_bias,token_norm_eps);
     }
     model->ready();
     auto cache_bytes=options.integer("_prefix_cache_max_bytes",0);
