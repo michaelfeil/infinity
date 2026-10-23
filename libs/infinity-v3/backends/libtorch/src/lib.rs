@@ -970,7 +970,7 @@ impl LibtorchBackend {
                 }
                 if family == "colqwen3" && kind == "sentence_transformers.multi_vector_encoder.modules.multi_vector_mask.MultiVectorMask" {
                     let mask_path = module["path"].as_str().ok_or_else(|| start("Missing multi-vector mask path"))?;
-                    if Path::new(mask_path).components().any(|part| !matches!(part, std::path::Component::Normal(_))) {
+                    if mask_path.is_empty() || Path::new(mask_path).components().any(|part| !matches!(part, std::path::Component::Normal(_))) {
                         return Err(start("Multi-vector mask path must stay inside the model directory"));
                     }
                     let mask = read_config(&format!("{mask_path}/config.json"))?;
