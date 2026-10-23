@@ -776,9 +776,10 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv, const at::Tensor& z,
   // Prefill benefits from chunk-parallel work; short question suffixes keep the
   // register-resident recurrent path. Both consume/produce the same FP32 state.
 #ifdef TEI_TORCH_GDN_HOPPER
-  if(final_state&&!initial.defined()&&!input.prefix&&tokens>=256&&
+  if((final_state||initial.defined())&&!input.prefix&&tokens>=256&&
+     (!initial.defined()||tokens>=64*input.batch)&&
      at::cuda::getDeviceProperties(qkv.get_device())->major==9) {
-    qwen35_prefill_cuda(convolution,qk,decay,input,recurrence,key_heads,value_heads,final_state);
+    qwen35_prefill_cuda(convolution,qk,decay,input,recurrence,key_heads,value_heads,final_state,initial);
   } else
 #endif
   if(input.prefix)qwen35_cached_recurrent_cuda(convolution,qk,decay,input,recurrence,key_heads,value_heads,true,
