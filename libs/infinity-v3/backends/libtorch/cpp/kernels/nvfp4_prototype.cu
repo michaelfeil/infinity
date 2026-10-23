@@ -21,30 +21,32 @@ template<bool Dequantize>
 __global__ void quantize(const __nv_bfloat16* input,unsigned char* packed,
                          __nv_fp8_e4m3* scales,__nv_bfloat16* output,
                          const float* global,int64_t blocks,int64_t kblocks,int64_t padded_k) {
-  const int64_t pair=int64_t(blockIdx.x)*blockDim.x+threadIdx.x,block=pair/8;
+  const int64_t block=int64_t(blockIdx.x)*blockDim.x+threadIdx.x;
   if(block>=blocks)return;
-  float a=float(input[pair*2]),b=float(input[pair*2+1]);
-  float maximum=fmaxf(fabsf(a),fabsf(b));
-  const unsigned mask=__activemask();
-  for(int d=4;d;d/=2)maximum=fmaxf(maximum,__shfl_xor_sync(mask,maximum,d,8));
+  struct alignas(16) Block {__nv_bfloat16 v[16];};
+  Block values;
+  if(reinterpret_cast<uintptr_t>(input)%16==0)values=reinterpret_cast<const Block*>(input)[block];
+  else for(int j=0;j<16;++j)values.v[j]=input[block*16+j];
+  float maximum=0;
+#pragma unroll
+  for(int j=0;j<16;++j)maximum=fmaxf(maximum,fabsf(float(values.v[j])));
   const float g=global[0];
   float s=__fdiv_rn(maximum,__fmul_rn(6.f,g));
   if(s==0)s=1;
   const __nv_fp8_e4m3 scale(fminf(448.f,s));
   const float combined=__fmul_rn(float(scale),g);
-  a=combined>0?__fdiv_rn(a,combined):0;
-  b=combined>0?__fdiv_rn(b,combined):0;
-  const auto qa=fp4_code(a),qb=fp4_code(b);
-  packed[pair]=qa|(qb<<4);
-  if((pair%8)==0) {
-    const auto row=block/kblocks,k=block%kblocks;
-    const auto index=((((row/128)*(padded_k/4)+k/4)*32+row%32)*4+(row/32)%4)*4+k%4;
-    scales[index]=scale;
+  uint64_t codes=0;Block dequantized;
+#pragma unroll
+  for(int j=0;j<16;++j) {
+    const auto code=fp4_code(combined>0?__fdiv_rn(float(values.v[j]),combined):0);
+    codes|=uint64_t(code)<<(j*4);
+    if constexpr(Dequantize)dequantized.v[j]=__float2bfloat16_rn(__fmul_rn(fp4_value(code),combined));
   }
-  if constexpr(Dequantize) {
-    output[pair*2]=__float2bfloat16_rn(__fmul_rn(fp4_value(qa),combined));
-    output[pair*2+1]=__float2bfloat16_rn(__fmul_rn(fp4_value(qb),combined));
-  }
+  reinterpret_cast<uint64_t*>(packed)[block]=codes;
+  const auto row=block/kblocks,k=block%kblocks;
+  const auto index=((((row/128)*(padded_k/4)+k/4)*32+row%32)*4+(row/32)%4)*4+k%4;
+  scales[index]=scale;
+  if constexpr(Dequantize)reinterpret_cast<Block*>(output)[block]=dequantized;
 }
 }
 Nvfp4PrototypePacked nvfp4_prototype_quantize_cuda(const at::Tensor& input,
@@ -60,7 +62,7 @@ Nvfp4PrototypePacked nvfp4_prototype_quantize_cuda(const at::Tensor& input,
     at::zeros({((m+127)/128*128)*padded_k},input.options().dtype(at::kFloat8_e4m3fn)),
     dequantize?at::empty_like(input):at::Tensor()};
   if(m) {
-    const auto grid=(m*kblocks*8+255)/256;
+    const auto grid=(m*kblocks+255)/256;
     auto stream=at::cuda::getCurrentCUDAStream(input.get_device());
     auto launch=[&]<bool D>() {quantize<D><<<grid,256,0,stream>>>(
       reinterpret_cast<const __nv_bfloat16*>(input.const_data_ptr()),result.packed.data_ptr<unsigned char>(),
