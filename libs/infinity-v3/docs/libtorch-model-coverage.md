@@ -24,6 +24,7 @@ exact-length biased attention without padded token activations.
 | Perplexity `pplx-embed-v1-0.6b` / `pplx-embed-v1-4b` | Bidirectional Qwen3, mean pooling; floating-point output only |
 | Qwen3 / Qwen3 MoE | Packed Q/K norm, GQA, dense/routed MLP and optional projection; sequence heads and dense Qwen3 token classification |
 | Gemma3 text | Packed local/global attention, Gemma norm semantics |
+| NVIDIA Nemotron ColEmbed V2 4B / 8B | Bidirectional Qwen3-VL, pre-final-norm token states, normalized multi-vector text/image outputs |
 | ColQwen3 (TomoroAI 4B) | Qwen3-VL backbone, learned 320-wide token projection, normalized multi-vector text/image outputs |
 | EmbeddingGemma2 | Packed text model, shared KV, PLE, embedding projection and image/audio towers |
 | Gemma4 / Gemma4 unified | Packed text plus image tower implementation |
@@ -70,3 +71,8 @@ query suffix (ten `<|endoftext|>` tokens) in text inputs. For image documents, u
 a user conversation with an image and `Describe the image.`; the processor ends
 the user turn with EOS, without an assistant prefix. ColQwen2/2.5 adapter
 checkpoints require separate architecture and adapter support.
+
+NVIDIA ColEmbed V2 4B and 8B use the same matrix API. Provide the checkpoint's
+retrieval instructions in user conversations; no query/document prefix is
+automatically inserted. The 3B Eagle checkpoint uses a separate architecture
+and is not covered by this path.

@@ -295,8 +295,14 @@ async fn initialize_model(
     let mut config: ModelConfig =
         serde_json::from_str(&config).context("Failed to parse `config.json`")?;
     let multi_vector = config.architectures.iter().any(|arch| arch == "HF_ColBERT")
-        || config.model_type == "colqwen3";
-    if config.model_type == "colqwen3" {
+        || matches!(
+            config.model_type.as_str(),
+            "colqwen3" | "qwen3_vl_nemotron_embed"
+        );
+    if matches!(
+        config.model_type.as_str(),
+        "colqwen3" | "qwen3_vl_nemotron_embed"
+    ) {
         config.model_type = "qwen3_vl".into();
     }
     config.resolve_text_config()?;

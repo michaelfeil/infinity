@@ -192,7 +192,7 @@ struct Engine {
     }
     TORCH_CHECK(model, "Unsupported native Torch model family: ", family);
     if(multi_vector) {
-      TORCH_CHECK(token_projection.defined(),"Multi-vector checkpoint is missing its token projection");
+      TORCH_CHECK(token_projection.defined() || options.boolean("_skip_final_norm",false),"Multi-vector checkpoint is missing its token projection");
       model=std::make_unique<tei::MultiVectorModel>(std::move(model),token_projection,token_bias);
     }
     model->ready();

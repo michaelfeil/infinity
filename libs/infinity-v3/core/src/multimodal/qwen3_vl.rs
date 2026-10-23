@@ -111,6 +111,7 @@ impl Qwen3VlProcessor {
             model["model_type"].as_str(),
             Some(
                 "colqwen3"
+                    | "qwen3_vl_nemotron_embed"
                     | "qwen3_vl"
                     | "qwen3_5"
                     | "qwen3_5_text"
@@ -165,7 +166,10 @@ impl Qwen3VlProcessor {
                 vision_start,
                 vision_end,
                 colqwen: model["model_type"] == "colqwen3",
-                raw_text: model["model_type"] == "colqwen3",
+                raw_text: matches!(
+                    model["model_type"].as_str(),
+                    Some("colqwen3" | "qwen3_vl_nemotron_embed")
+                ),
             }),
             resolver,
             workers,
