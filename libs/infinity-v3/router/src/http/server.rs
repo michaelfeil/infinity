@@ -2341,6 +2341,9 @@ fn api_doc() -> utoipa::openapi::OpenApi {
     components(
     schemas(
     super::systemone::SystemOneRequest,
+    super::systemone::SystemOneRequestBody,
+    super::systemone::D3SystemOneRequest,
+    super::systemone::PplxJointSystemOneRequest,
     super::systemone::SystemOneState,
     infinity_v3_core::input::ModelInput,
     infinity_v3_core::input::MessageInput,
@@ -2945,6 +2948,71 @@ mod classify_tests {
                 "unchanged"
             );
         }
+    }
+
+    #[test]
+    fn systemone_openapi_schema_snapshot() {
+        let doc = serde_json::to_value(api_doc()).unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/openapi.json");
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        let names = [
+            "SystemOneRequestBody",
+            "SystemOneRequest",
+            "SystemOneState",
+            "D3SystemOneRequest",
+            "PplxJointSystemOneRequest",
+        ];
+        // UPDATE_OPENAPI=1 cargo test --lib systemone_openapi_schema_snapshot
+        if std::env::var_os("UPDATE_OPENAPI").is_some() {
+            saved["paths"]["/v1/systemone"] = doc["paths"]["/v1/systemone"].clone();
+            for name in names {
+                saved["components"]["schemas"][name] = doc["components"]["schemas"][name].clone();
+            }
+            std::fs::write(
+                &path,
+                format!("{}\n", serde_json::to_string_pretty(&saved).unwrap()),
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            doc["paths"]["/v1/systemone"],
+            saved["paths"]["/v1/systemone"]
+        );
+        for name in names {
+            assert_eq!(
+                doc["components"]["schemas"][name], saved["components"]["schemas"][name],
+                "{name}"
+            );
+        }
+        let operation = &doc["paths"]["/v1/systemone"]["post"];
+        for status in ["400", "422", "429"] {
+            for response in operation["responses"][status]["content"]
+                .as_object()
+                .unwrap()
+                .values()
+            {
+                let reference = response["schema"]["$ref"].as_str().unwrap();
+                assert_eq!(reference, "#/components/schemas/ErrorResponse");
+                assert!(doc.pointer(reference.strip_prefix('#').unwrap()).is_some());
+            }
+        }
+        assert_eq!(
+            operation["requestBody"]["content"]["application/json"]["schema"]["$ref"],
+            "#/components/schemas/SystemOneRequestBody"
+        );
+        assert!(doc["components"]["schemas"]["SystemOneRequestBody"]["anyOf"].is_array());
+        assert!(doc["components"]["schemas"]["SystemOneRequest"]["properties"]["images"].is_null());
+        assert_eq!(
+            doc["components"]["schemas"]["D3SystemOneRequest"]["properties"]["images"]["items"]
+                ["type"],
+            "string"
+        );
+        assert_eq!(
+            doc["components"]["schemas"]["PplxJointSystemOneRequest"]["properties"]["videos"]
+                ["maxItems"],
+            0
+        );
     }
 
     #[test]
