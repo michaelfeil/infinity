@@ -138,7 +138,8 @@ struct Engine {
       TORCH_CHECK(family=="bert" || family=="roberta" || family=="xlm-roberta"
         || family=="camembert" || family=="modernbert" || family=="llama"
         || family=="llama_bidirec" || family=="mistral" || family=="ministral3"
-        || family=="qwen2" || family=="qwen3" || family=="qwen3_5" || family=="qwen3_5_text",
+        || family=="qwen2" || family=="qwen3" || family=="qwen3_5" || family=="qwen3_5_text"
+        || family=="gemma4" || family=="gemma4_text",
         "Dynamic FP8 is unsupported for this model family");
       TORCH_CHECK(!options.values.count("quantization_config") && !options.values.count("quantization_config.quant_method"),
         "Dynamic FP8 requires an unquantized checkpoint");
