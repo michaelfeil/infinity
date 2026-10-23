@@ -138,6 +138,8 @@ quantizes MLP, Q/K/V and attention output projections by default (`all` scope).
 Set `INFINITY_TORCH_FP8_SCOPE=mlp` to quantize only MLP projections.
 Supported BERT-family and ModernBERT encoders retain MLP-only dynamic FP8;
 the `all` scope is only supported for the dense decoders listed above.
+Dense Gemma4 also supports MLP-only FP8; attention, per-layer embeddings and
+media encoders keep their original precision. Gemma4 MoE is not yet supported.
 Attention, normalization, embeddings and heads retain the selected FP16/BF16
 dtype. Weights are quantized once at startup and activations each forward pass.
 Qwen3.5 requires BF16; `all` also quantizes DeltaNet QKV, Z and output

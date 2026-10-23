@@ -52,6 +52,7 @@ class Gemma final : public Model {
   struct Layer {
     std::string p;
     at::Tensor qkv, gate_up;
+    std::unique_ptr<Fp8Linear> fp8_gate_up, fp8_down;
     int64_t dim, kv, window;
     bool sliding, shared, store, k_equals_v;
     at::Tensor cos, sin;
@@ -813,6 +814,18 @@ class Gemma final : public Model {
     }
   }
   void ready() override {
+    const auto fp8=cfg.boolean("_fp8_dynamic",false);
+    TORCH_CHECK(cfg.string("_fp8_scope","mlp")=="mlp","Gemma FP8 supports MLP scope only");
+    if(fp8) {
+      TORCH_CHECK(!legacy && !embedding2 && !boolean("enable_moe_block",false),
+        "Dynamic FP8 Gemma currently requires dense Gemma4");
+      TORCH_CHECK(device.is_cuda() && (dtype==at::kHalf || dtype==at::kBFloat16),
+        "Dynamic FP8 Gemma requires CUDA float16/bfloat16");
+      for(const auto& [name,value]:cfg.values)
+        TORCH_CHECK(name!="quantization_config" && name.rfind("quantization_config.",0)!=0
+          && name!="text_config.quantization_config" && name.rfind("text_config.quantization_config.",0)!=0,
+          "Dynamic FP8 requires an unquantized checkpoint without supplied quantization scales");
+    }
     if(supports_audio()) {
       const auto chunk=cfg.integer("audio_config.attention_chunk_size",12),left=cfg.integer("audio_config.attention_context_left",13),
         future=cfg.integer("audio_config.attention_context_right",0);
@@ -913,7 +926,13 @@ class Gemma final : public Model {
         if (!layer.shared) { w(layer.p + "self_attn.k_proj.weight"); if (!layer.k_equals_v) w(layer.p + "self_attn.v_proj.weight"); }
       }
       layer.gate_up = at::cat({w(layer.p + "mlp.gate_proj.weight"), w(layer.p + "mlp.up_proj.weight")}, 0);
-      w(layer.p + "mlp.down_proj.weight");
+      if(fp8) {
+        layer.fp8_gate_up=std::make_unique<Fp8Linear>(layer.gate_up);
+        layer.fp8_down=std::make_unique<Fp8Linear>(w(layer.p+"mlp.down_proj.weight"));
+        layer.gate_up=at::Tensor();
+        for(const auto* projection:{"gate_proj","up_proj","down_proj"})
+          weights.erase(prefix+layer.p+"mlp."+projection+".weight");
+      } else w(layer.p + "mlp.down_proj.weight");
       auto rope_kind = layer.sliding ? "sliding_attention" : "full_attention";
       auto theta = legacy ? real(layer.sliding ? "rope_local_base_freq" : "rope_theta", 10000.) :
         real(std::string("rope_parameters.") + rope_kind + ".rope_theta", 10000.);
@@ -1126,7 +1145,7 @@ class Gemma final : public Model {
         normalized = norm(states, p + "pre_feedforward_layernorm");
       }
 
-      auto gu=!input.prefix && ordinary_ffn ? ordinary_ffn->forward(normalized,layer.gate_up,ordinary_session) : at::Tensor();
+      auto gu=layer.fp8_gate_up ? layer.fp8_gate_up->forward(normalized) : !input.prefix && ordinary_ffn ? ordinary_ffn->forward(normalized,layer.gate_up,ordinary_session) : at::Tensor();
       if(!gu.defined())gu=prefix_linear(normalized,layer.gate_up,{},input);
       auto width = gu.size(-1) / 2;
       at::Tensor mlp;
@@ -1136,7 +1155,7 @@ class Gemma final : public Model {
       else
 #endif
       mlp=activate(gu.narrow(-1,0,width))*gu.narrow(-1,width,width);
-      auto down=!input.prefix && ordinary_ffn && !has(p+"mlp.down_proj.bias") ?
+      auto down=layer.fp8_down ? layer.fp8_down->forward(mlp,has(p+"mlp.down_proj.bias")?w(p+"mlp.down_proj.bias"):at::Tensor()) : !input.prefix && ordinary_ffn && !has(p+"mlp.down_proj.bias") ?
         ordinary_ffn->forward(mlp,w(p+"mlp.down_proj.weight"),ordinary_session) : at::Tensor();
       mlp=down.defined() ? down : input.prefix?prefix_linear(mlp,w(p+"mlp.down_proj.weight"),
         has(p+"mlp.down_proj.bias")?w(p+"mlp.down_proj.bias"):at::Tensor(),input):linear(mlp,p+"mlp.down_proj");
