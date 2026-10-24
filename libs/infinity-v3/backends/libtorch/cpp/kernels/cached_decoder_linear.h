@@ -147,7 +147,9 @@ public:
         weight.scalar_type() != x.scalar_type() || weight.device() != x.device() || x.dim() != 2 ||
         weight.dim() != 2 || x.size(0) <= 0 || x.size(1) <= 0 || weight.size(0) <= 0 ||
         weight.size(1) != x.size(1) || !x.is_contiguous() || !weight.is_contiguous() ||
-        at::globalContext().blasPreferredBackend() != at::BlasBackend::Cublaslt ||
+        (at::globalContext().blasPreferredBackend() != at::BlasBackend::Cublaslt &&
+         !(prefill && at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublas &&
+           x.size(1) == 2048 && weight.size(0) == 12288)) ||
         at::globalContext()._SMCarveout_EXPERIMENTAL().has_value())
       return fallback();
     // The alternate tile retains full FP32 accumulation and the model-dtype
@@ -155,8 +157,11 @@ public:
     // These dimensions, row multiples, and policy/version checks scope the explicit alternate
     // algorithm selected below. They describe the validated prefill recipe, not all
     // layouts accepted by cuBLASLt.
-    if (prefill && (cublasLtGetVersion() != 130101 || x.size(0) < 2048 || x.size(0) % 256 ||
-                    x.size(1) != 4096 || (weight.size(0) != 24576 && weight.size(0) != 28672) ||
+    // The 2048-wide MLP recipe also handles partial row tiles under the default BLAS policy.
+    if (prefill && (cublasLtGetVersion() != 130101 || x.size(0) < 2048 ||
+                    (x.size(1) != 2048 && x.size(0) % 256) ||
+                    !((x.size(1) == 4096 && (weight.size(0) == 24576 || weight.size(0) == 28672)) ||
+                      (x.size(1) == 2048 && weight.size(0) == 12288)) ||
                     at::globalContext().deterministicAlgorithms() ||
                     at::cuda::tunable::getTuningContext()->IsTunableOpEnabled() ||
                     at::globalContext().allowBF16ReductionCuBLAS() !=
