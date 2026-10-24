@@ -26,6 +26,8 @@ const at::Tensor& Qwen3VL::w(const std::string& name) const {
   return weight(visual_weights, "model.visual." + name);
 }
 
+/// Apply a vision projection with the profile's bias-rounding boundary. Exact vision rounds the
+/// bias-free GEMM first, then adds bias separately.
 at::Tensor Qwen3VL::linear(const at::Tensor& x, const std::string& name) const {
   // Original Linear rounds the model-dtype GEMM before adding its bias.
   if (exact_vision)
@@ -33,6 +35,8 @@ at::Tensor Qwen3VL::linear(const at::Tensor& x, const std::string& name) const {
   return at::linear(x, w(name + ".weight"), w(name + ".bias"));
 }
 
+/// Normalize the final vision feature dimension with affine scale/bias and epsilon 1e-6; use the
+/// qualified reference reduction for exact vision.
 at::Tensor Qwen3VL::ln(const at::Tensor& x, const std::string& name) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
   if (exact_vision)
@@ -44,6 +48,9 @@ at::Tensor Qwen3VL::ln(const at::Tensor& x, const std::string& name) const {
 /// Group merge-by-merge patches and project vision width to text width using
 /// checkpoint-specific norm/GELU order.
 at::Tensor Qwen3VL::merger(const at::Tensor& x, const std::string& p, bool post) const {
+  // Preprocessing already places each spatial merge group in consecutive rows. Grouping therefore
+  // changes only layout; the post flag selects normalization before or after
+  // concatenating patch features.
   auto grouped = x.view({-1, hidden * merge * merge});
   auto normalized = post ? ln(grouped, p + ".norm") : ln(x, p + ".norm").view_as(grouped);
   // Retrieval checkpoints use Transformers' exact merger GELU; Candle uses tanh.
@@ -124,6 +131,8 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     TORCH_CHECK(side * side == w("pos_embed.weight").size(0),
                 "Qwen3-VL position table must be square");
     auto ix = at::arange(frames * height * width, states.options().dtype(at::kLong));
+    // Recover original grid coordinates from merge-group-major patch order before interpolating
+    // learned positions and generating spatial rotary phases.
     auto c =
         ix.remainder(merge) + at::floor_divide(ix, merge * merge).remainder(width / merge) * merge;
     auto r = at::floor_divide(ix, merge).remainder(merge) +
@@ -177,6 +186,8 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
   std::map<int64_t, std::vector<size_t>> frame_groups;
   if (cfg.boolean("_multi_vector", false))
     for (size_t i = 0; i + 1 < offsets.size(); ++i)
+      // Only equal-length frames share a dense SDPA batch in the retrieval path. Grouping preserves
+      // the reference provider without padding shorter frames or merging their attention contexts.
       frame_groups[offsets[i + 1] - offsets[i]].push_back(i);
   for (int64_t layer = 0; layer < depth; ++layer) {
     auto p = "blocks." + std::to_string(layer) + ".";
@@ -205,6 +216,8 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
                 group(q), group(k), group(v), std::nullopt, 0., false, 1. / std::sqrt(double(dim)))
                 .transpose(1, 2);
         for (size_t i = 0; i < frames.size(); ++i)
+          // Restore each frame to its original slot before concatenation, so merged image spans and
+          // deepstack features retain the caller's ordering.
           outputs[frames[i]] = result.select(0, i);
       }
       attention = at::cat(outputs, 0);
@@ -266,6 +279,8 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
          cfg.values.count("vision_config.deepstack_visual_indexes." + std::to_string(i));
          ++i)
       if (cfg.integer("vision_config.deepstack_visual_indexes." + std::to_string(i)) == layer)
+        // Capture each configured intermediate tower layer through its own merger. Collect these
+        // tensors in tower-layer execution order for early text-layer injection.
         deep.push_back(merger(states, "deepstack_merger_list." + std::to_string(i), true));
   }
   return {merger(states, "merger", false), std::move(deep)};

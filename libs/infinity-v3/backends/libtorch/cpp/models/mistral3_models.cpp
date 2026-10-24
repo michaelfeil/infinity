@@ -29,6 +29,8 @@ class Mistral3 final : public Model {
     return weight(weights, name);
   }
 
+  /// Compute RMS statistics in FP32, round normalized rows back to model dtype, then multiply
+  /// affine weights. The fused vision path retains those Transformers boundaries.
   at::Tensor rms(const at::Tensor& x, const at::Tensor& scale, double eps) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (fused_vision)
@@ -38,6 +40,8 @@ class Mistral3 final : public Model {
     return (f * at::rsqrt(f.square().mean(-1, true) + eps)).to(x.scalar_type()) * scale;
   }
 
+  /// Apply a Pixtral tower/projector matrix and include bias only when that
+  /// checkpoint tensor exists.
   at::Tensor linear(const at::Tensor& x, const std::string& name) const {
     auto it = weights.find(name + ".bias");
     return at::linear(x, w(name + ".weight"), it == weights.end() ? at::Tensor() : it->second);
@@ -114,6 +118,8 @@ class Mistral3 final : public Model {
              at::cat({-t.narrow(-1, dim / 2, dim / 2), t.narrow(-1, 0, dim / 2)}, -1) * full_sin;
     };
     at::Tensor selected;
+    // Feature-layer zero selects patch embeddings after the initial norm; positive values select
+    // the output of that numbered transformer block.
     if (feature_layer == 0)
       selected = x;
     for (int64_t i = 0; i < depth; ++i) {
@@ -172,6 +178,8 @@ class Mistral3 final : public Model {
         selected = x;
     }
     TORCH_CHECK(selected.defined(), "Invalid Pixtral feature layer");
+    // The projector consumes the configured hidden-state snapshot rather than necessarily the last
+    // tower layer. Keep this choice before spatial patch merging.
     x = rms(selected,
             w("multi_modal_projector.norm.weight"),
             cfg.real("text_config.rms_norm_eps", 1e-5));
@@ -179,6 +187,8 @@ class Mistral3 final : public Model {
     std::vector<at::Tensor> merged;
     for (size_t i = 0; i < images.size(); ++i) {
       const auto h = images[i].grid_thw[1], width = images[i].grid_thw[2];
+      // Reshape each image independently, then order concatenated features as channel, patch row,
+      // patch column to match the checkpoint's unfold-based projector weights.
       merged.push_back(x.narrow(0, offsets[i], offsets[i + 1] - offsets[i])
                            .view({h / merge, merge, width / merge, merge, hidden})
                            .permute({0, 2, 4, 1, 3})

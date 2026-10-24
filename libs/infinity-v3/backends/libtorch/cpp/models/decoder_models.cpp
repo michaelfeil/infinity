@@ -49,6 +49,8 @@ class Decoder final : public Model {
 #ifdef TEI_TORCH_CUDA_KERNELS
   mutable CachedNoBiasLt no_bias_cache;
 #endif
+  /// Attempt qualified bias-free decoder GEMMs while retaining ordinary ATen linear for all other
+  /// shapes, biases, precision policies, and model families.
   at::Tensor
   cached_linear(const at::Tensor& x, const at::Tensor& w, const at::Tensor& b = {}) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -63,6 +65,8 @@ class Decoder final : public Model {
     return at::linear(x, w, b);
   }
 
+  /// Choose suffix-aware linear planning only when execution has fewer rows than the logical
+  /// request. Otherwise retain the same ordinary projection helper used by full inference.
   at::Tensor cached_prefix_linear(const at::Tensor& x,
                                   const at::Tensor& w,
                                   const at::Tensor& b,
@@ -104,6 +108,7 @@ class Decoder final : public Model {
     return it == weights.end() ? at::Tensor() : it->second;
   }
 
+  /// Borrow a required checkpoint matrix after validating its complete expected shape.
   at::Tensor checked_weight(const std::string& name, std::initializer_list<int64_t> shape) const {
     auto tensor = weight(name);
     TORCH_CHECK(tensor.sizes() == at::IntArrayRef(shape),
@@ -134,6 +139,9 @@ class Decoder final : public Model {
     return options.boolean("_transformers_math", false);
   }
 
+  /// Apply RMSNorm with the selected reference rounding. Transformers math converts normalized
+  /// activations to model dtype before the affine multiply; ordinary paths use their
+  /// existing ATen norm operator.
   at::Tensor norm(const at::Tensor& x, const at::Tensor& w) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (transformers_fused_norm)
@@ -181,6 +189,9 @@ class Decoder final : public Model {
            (!fp8_dynamic && dtype == at::kBFloat16 && family == "llama" && hidden == 4096);
   }
 
+  /// Return normalized rows and the residual stream used by the next sublayer. Select the
+  /// Transformers, exact Candle, or ordinary fused recipe without changing its
+  /// residual-rounding boundary.
   std::pair<at::Tensor, at::Tensor>
   residual_norm(const at::Tensor& x, const at::Tensor& residual, const at::Tensor& weight) const {
     if (transformers_fused_norm)
@@ -190,6 +201,8 @@ class Decoder final : public Model {
     return fused_add_rms_norm(x, residual, weight, epsilon);
   }
 #endif
+  /// Apply the configured gate activation; accepted GELU aliases use the
+  /// decoder's tanh approximation.
   at::Tensor activate(const at::Tensor& x) const {
     if (activation == "silu" || activation == "swish")
       return at::silu(x);
@@ -202,12 +215,15 @@ class Decoder final : public Model {
     TORCH_CHECK(false, "Unsupported decoder activation: ", activation);
   }
 
+  /// Apply split-half RoPE to [rows, heads, head_dim] using phases broadcast over heads.
   at::Tensor rotate(const at::Tensor& x, const at::Tensor& cos, const at::Tensor& sin) const {
     const auto half = head_dim / 2;
     auto a = x.narrow(-1, 0, half), b = x.narrow(-1, half, half);
     return at::cat({a * cos - b * sin, b * cos + a * sin}, -1);
   }
 
+  /// Parse one bracketed per-layer list, rejecting empty entries and any length that differs
+  /// from the decoder layer count.
   std::vector<std::string> array_items(const std::string& key) const {
     auto value = options.string(key);
     value.erase(
@@ -230,6 +246,8 @@ class Decoder final : public Model {
     return items;
   }
 
+  /// Validate UltraBERT's bidirectional, bias-free contract and prepare per-layer windows/rotary
+  /// bases. Layers with the same theta share one phase-table pair.
   void load_ultrabert_attention() {
     TORCH_CHECK(!options.boolean("attention_bias", false) && !options.boolean("mlp_bias", false),
                 "UltraBERT requires bias-free projections");
@@ -503,6 +521,9 @@ class Decoder final : public Model {
                       input);
   }
 
+  /// Bridge compact projection rows and logical attention rows. Full execution may publish prefix
+  /// snapshots; compact execution unfolds Q/K/V for attention and folds outputs
+  /// back to representative rows.
   at::Tensor attend(const at::Tensor& q,
                     const at::Tensor& k,
                     const at::Tensor& v,
@@ -1162,6 +1183,8 @@ public:
                             const at::Tensor& sine,
                             const at::Tensor& visual_indices = at::Tensor(),
                             const std::vector<at::Tensor>& deepstack = {}) const {
+    // CUDA fused norms carry the accumulated residual separately from h, which holds the latest
+    // branch. The composed path instead materializes each residual addition directly in h.
     at::Tensor residual;
     const auto query_scales =
         query_scale.defined() ? query_scale.index_select(0, radix_positions(input)).view({-1, 1, 1})
@@ -1208,6 +1231,8 @@ public:
                                     layer.qkv_bias,
                                     {heads * head_dim, kvheads * head_dim, kvheads * head_dim})
                   : at::linear(normalized, layer.qkv, layer.qkv_bias);
+      // Projection layout is [Q heads | K heads | V heads]. GQA preserves fewer K/V heads rather
+      // than expanding the checkpoint projections to the query-head count.
       qkv = qkv.view({h.size(0), heads + 2 * kvheads, head_dim});
       auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, kvheads),
            v = qkv.narrow(1, heads + kvheads, kvheads);
@@ -1215,6 +1240,8 @@ public:
       if (q.is_cuda() && layer.q_norm.defined() && head_dim == 128) {
         if (input.prefix && input.prefix->collect_graph && !radix_enabled(input) &&
             (q.scalar_type() == at::kHalf || q.scalar_type() == at::kBFloat16)) {
+          // Write normalized/rotated suffix K and raw V directly into full-context arenas. Cached
+          // prefix rows stay intact; a validated row map handles mixed sequence lengths.
           auto& packed = input.prefix->prepare_graph_layer(layer_index, k, v);
           if (input.batch == 1) {
             auto key_target = packed.key.narrow(0, input.prefix->hits[0], k.size(0));
@@ -1320,6 +1347,8 @@ public:
         h = h + projected;
         h = h + mlp(norm(h, layer.post_norm), layer, input);
       }
+      // Deepstack additions operate on the complete residual stream at selected visual rows.
+      // Consolidate any deferred residual before injecting that layer's vision features.
       if (visual_indices.defined() && layer_index < deepstack.size()) {
         const auto& features = deepstack[layer_index];
         TORCH_CHECK(features.dim() == 2 && features.size(0) == visual_indices.numel() &&
@@ -1346,6 +1375,8 @@ public:
 #endif
         h = norm(h, final_norm);
     }
+    // This optional projection changes every token row, so the bridge must reserve its output width
+    // before sentence pooling or raw-token selection.
     if (projection.defined())
       h = at::linear(h, projection, projection_bias);
     return h;

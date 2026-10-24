@@ -223,6 +223,8 @@ struct Bert : tei::Model {
                 : at::linear(x, matrix, bias);
   }
 
+  /// Project [rows, input_width] using a named checkpoint layer. Registered FP8 layers quantize
+  /// activations; other layers use the classifier projection helper with the loaded bias.
   at::Tensor linear(const at::Tensor& x, const std::string& name) const {
     auto quantized = fp8_mlp.find(name);
     if (quantized != fp8_mlp.end())
@@ -230,6 +232,9 @@ struct Bert : tei::Model {
     return classifier_projection(x, w(name + ".weight"), w(name + ".bias"));
   }
 
+  /// Apply the intermediate projection and configured activation. Multi-vector GELU uses the exact
+  /// Transformers variant; qualified Candle paths retain their fused epilogue or
+  /// explicit model-dtype rounding.
   at::Tensor activated_linear(const at::Tensor& x, const std::string& name) const {
     if (options.boolean("_multi_vector", false) && options.string("hidden_act", "gelu") == "gelu")
       return at::gelu(linear(x, name), "none");
@@ -262,11 +267,14 @@ struct Bert : tei::Model {
                                     : at::gelu(projected, "tanh");
   }
 
+  /// Apply affine LayerNorm over hidden features; the checkpoint supplies both scale and bias.
   at::Tensor norm(const at::Tensor& x, const std::string& name) const {
     return at::layer_norm(
         x, {config.hidden}, w(name + ".weight"), w(name + ".bias"), config.epsilon);
   }
 
+  /// Normalize projected rows plus their residual. Qualified exact paths compute statistics from
+  /// the unrounded sum; other CUDA and CPU paths retain their existing fused or composed recipe.
   at::Tensor
   residual_norm(const at::Tensor& x, const at::Tensor& residual, const std::string& name) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -281,6 +289,8 @@ struct Bert : tei::Model {
     return norm(x + residual, name);
   }
 
+  /// Require the checkpoint tensor to match every expected dimension before
+  /// preparing inference state.
   void check(const std::string& name, std::initializer_list<int64_t> shape) const {
     TORCH_CHECK(w(name).sizes() == at::IntArrayRef(shape), "Invalid shape for ", name);
   }
@@ -406,11 +416,15 @@ struct Bert : tei::Model {
     return it == weights.end() ? 0 : it->second.size(0);
   }
 
+  /// Apply a task-head projection from the root checkpoint namespace,
+  /// independently of the backbone prefix.
   at::Tensor root_linear(const at::Tensor& h, const std::string& name) const {
     return classifier_projection(
         h, tei::weight(weights, name + ".weight"), tei::weight(weights, name + ".bias"));
   }
 
+  /// Apply a root task-head projection followed by its activation code: ReLU (2), SiLU
+  /// (3), or tanh GELU otherwise.
   at::Tensor head_activation(const at::Tensor& h,
                              const at::Tensor& matrix,
                              const at::Tensor& bias,
@@ -581,10 +595,14 @@ struct Bert : tei::Model {
     }
     for (int64_t i = 0; i < config.layers; ++i) {
       std::string p = "encoder.layer." + std::to_string(i) + ".";
+      // Q/K/V are disjoint views of one projection: [tokens, 3, heads, head_dim]. All query rows
+      // remain present even when ColBERT uses a shorter key sequence.
       auto qkv = linear(h, p + "attention.self.qkv").view({tokens, 3, config.heads, head});
       auto q = qkv.select(1, 0), k = qkv.select(1, 1), v = qkv.select(1, 2);
       at::Tensor attended;
       if (key_indices.defined()) {
+        // Only K/V follow selected_keys. Query boundaries still describe the complete sequence, so
+        // expansion MASK rows continue to produce output embeddings.
         auto keys = k.index_select(0, key_indices).contiguous(),
              values = v.index_select(0, key_indices).contiguous();
         if (device.is_cuda()) {
@@ -696,6 +714,8 @@ struct Bert : tei::Model {
         }
         attended = at::cat(sequences, 0);
       }
+      // Collapse heads only after attention. Each post-norm block consumes its own projected output
+      // and the preceding hidden residual before the next MLP begins.
       attended = attended.contiguous().view({tokens, config.hidden});
       h = residual_norm(
           linear(attended, p + "attention.output.dense"), h, p + "attention.output.LayerNorm");

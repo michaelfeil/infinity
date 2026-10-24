@@ -46,6 +46,8 @@ class Qwen35 final : public Model {
     std::vector<int32_t> offsets, history_offsets;
   };
 
+  /// Select the explicit block-bidirectional decision mode, whose representative prefixes use a
+  /// different execution path from causal radix sharing.
   bool block_attention() const {
     return cfg.string("_decision_attention_mode") == "block_bidirectional";
   }
@@ -120,6 +122,9 @@ class Qwen35 final : public Model {
   mutable std::shared_ptr<WorkspaceMemoryPermit> radix_linear_memory_permit;
   mutable at::Tensor radix_linear_workspace;
 #endif
+  /// Project compact rows using qualified logical-shape GEMM plans where available. Cached
+  /// descriptors preserve numerical planning; unsupported profiles retain the
+  /// existing logical-row fallback.
   at::Tensor linear_radix_projection(const at::Tensor& x,
                                      const std::string& name,
                                      const PackedInput& packed) const {
@@ -312,6 +317,8 @@ class Qwen35 final : public Model {
     return at::linear(x, w(name + ".weight"));
   }
 
+  /// Prefer a prepared FP8 projection when registered; otherwise preserve the full logical
+  /// projection recipe during suffix execution.
   at::Tensor
   prefix_projection(const at::Tensor& x, const std::string& name, const PackedInput& input) const {
     if (auto it = fp8_projections.find(name); it != fp8_projections.end())
@@ -319,6 +326,8 @@ class Qwen35 final : public Model {
     return prefix_linear(x, w(name + ".weight"), {}, input);
   }
 
+  /// Interpret the final dimension as [gate | up] and apply the reference SiLU/product stages,
+  /// returning half as many features.
   at::Tensor gated(const at::Tensor& gu) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kBFloat16)
@@ -358,6 +367,8 @@ class Qwen35 final : public Model {
                          : at::Tensor();
     if (!output.defined())
       output = decoder_moe_forward(x, m.router, m.experts, m.expert_down, top, renormalize);
+    // The shared expert is evaluated for every token in addition to selected routed experts. Its
+    // learned sigmoid gate scales the shared branch before the two branches are added.
     auto shared = prefix_linear(
         gated(prefix_linear(x, m.shared_gate_up, {}, input)), m.shared_down, {}, input);
     auto logits = prefix_linear(x, m.shared_gate, {}, input);
@@ -367,6 +378,8 @@ class Qwen35 final : public Model {
     return output + shared * gate;
   }
 
+  /// Apply Qwen3.5 RMSNorm with an offset affine weight: scale is 1 + checkpoint weight. Statistics
+  /// and affine scaling stay FP32 until the final cast back to model dtype.
   at::Tensor norm(const at::Tensor& x, const std::string& name) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     // Keep FP32 statistics and affine scaling in one CUDA kernel.
@@ -379,6 +392,9 @@ class Qwen35 final : public Model {
         .to(x.scalar_type());
   }
 
+  /// Rotate only the configured leading rotary features and copy the remaining head features
+  /// unchanged. Multimodal axes are selected in logical or compact row order to
+  /// match the input projection.
   at::Tensor rotate(const at::Tensor& x, const PackedInput& input) const {
     auto r = x.narrow(-1, 0, rotary);
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -425,6 +441,8 @@ class Qwen35 final : public Model {
       }
       return prefix_projection(x, name, input);
     };
+    // The three outputs represent different layouts by layer type: GDN uses [QKV, Z, A|B], whereas
+    // full attention uses [query|gate, K, V].
     if (linear)
       return {project(p + "in_proj_qkv").contiguous(),
               project(p + "in_proj_z").contiguous(),
@@ -443,6 +461,8 @@ class Qwen35 final : public Model {
                             const AttentionProjections* projected = nullptr) const {
     auto projections = projected ? *projected : project_attention(x, p, input, false);
     auto tokens = x.size(0);
+    // Each query head packs [query | output gate], while K/V use kv_heads * dim features. Normalize
+    // and rotate only query/key channels; the gate is applied after attention.
     auto qg = projections[0].view({tokens, heads, 2 * dim});
     auto q = rotate(norm(qg.narrow(-1, 0, dim), p + "q_norm"), input);
     auto k = rotate(norm(projections[1].view({tokens, kv_heads, dim}), p + "k_norm"), input);
@@ -596,6 +616,8 @@ class Qwen35 final : public Model {
         convolved.push_back(at::silu(sum.to(dtype)).to(dtype));
       }
       auto values = at::stack(convolved, 0);
+      // Depthwise-convolved rows contain [Q, K, V] with fixed feature width 128 per head. Q/K are
+      // normalized in FP32, then repeated to match the larger value-head count.
       auto q = values.narrow(-1, 0, kh * 128).view({length, kh, 128}).to(at::kFloat);
       auto k = values.narrow(-1, kh * 128, kh * 128).view({length, kh, 128}).to(at::kFloat);
       auto v = values.narrow(-1, 2 * kh * 128, vh * 128).view({length, vh, 128}).to(at::kFloat);
@@ -608,11 +630,15 @@ class Qwen35 final : public Model {
       auto beta = at::sigmoid(ab.narrow(0, start, length).narrow(-1, vh, vh).to(at::kFloat))
                       .to(dtype)
                       .to(at::kFloat);
+      // The FP32 state is [value_heads, key_dim, value_dim]. Clone retained state before mutation
+      // so separate suffixes never overwrite their representative prefix checkpoint.
       auto state = prior && prior->recurrent.defined() ? prior->recurrent.clone()
                    : cache && !prefill                 ? cache->state.select(0, source).clone()
                                                        : at::zeros({vh, 128, 128}, q.options());
       for (int64_t t = 0; t < length; ++t) {
         auto kt = k.select(0, t), qt = q.select(0, t);
+        // Decay old memory first, compute the value prediction at K, then apply the beta-weighted
+        // rank-one correction before reading the updated state with Q.
         state = state * decay.select(0, t).view({vh, 1, 1});
         auto memory = (state * kt.unsqueeze(-1)).sum(1);
         auto delta = (v.select(0, t) - memory) * beta.select(0, t).unsqueeze(-1);
@@ -716,6 +742,8 @@ class Qwen35 final : public Model {
       for (int64_t row = 0; row < input.batch; ++row) {
         auto n = std::min(int64_t(input.offsets[row + 1] - input.offsets[row]),
                           w(p + "conv1d.weight").size(-1) - 1);
+        // Retain raw projected QKV history, not activated convolution outputs. The next suffix must
+        // recompute its boundary convolution from at most kernel-1 preceding rows.
         histories.push_back(qkv.narrow(0, input.offsets[row + 1] - n, n));
         cache->history_offsets.push_back(cache->history_offsets.back() + n);
       }
@@ -875,6 +903,9 @@ class Qwen35 final : public Model {
       auto normalized = norm(hidden, p + "input_layernorm");
       const bool linear = string("layer_types." + std::to_string(layer)) == "linear_attention";
       const auto ap = p + (linear ? "linear_attn." : "self_attn.");
+      // Project the combined representative-prefix/suffix rows once per layer, then slice those
+      // projections for separate attention passes. Row-local output projections
+      // and MLPs can remain batched.
       auto projections = project_attention(normalized, ap, input, linear);
       auto attention = [&](const PackedInput& part, bool prefill) {
         const auto start = prefill ? 0 : prefix_tokens,
@@ -894,6 +925,8 @@ class Qwen35 final : public Model {
       hidden = hidden + feed_forward(norm(hidden, p + "post_attention_layernorm"), layer, input);
     }
     hidden = norm(hidden, "norm");
+    // Execution storage contains each representative prefix once. Reconstruction below repeats its
+    // hidden rows for every logical request and appends that request's own suffix.
     auto prefix_hidden = hidden.narrow(0, 0, prefix_tokens);
     auto suffix_hidden =
         has_suffix ? hidden.narrow(0, prefix_tokens, hidden.size(0) - prefix_tokens) : at::Tensor();

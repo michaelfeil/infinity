@@ -68,6 +68,9 @@ struct Attention {
                 "Invalid decision attention geometry");
   }
 
+  /// Attend [query_rows, width] to [memory_rows, width] without a causal mask, returning one
+  /// projected row per query. Fuse self-QKV only when exact tensor identity proves the query and
+  /// memory are the same input.
   at::Tensor operator()(const at::Tensor& query, const at::Tensor& memory) const {
     auto n = query.size(0), m = memory.size(0), width = query.size(1), dim = width / heads;
     at::Tensor q, k, v;
@@ -179,6 +182,8 @@ struct OptionHead final : DecisionHead {
   bool external, qwen, d3;
   double cap;
 
+  /// Resolve a vocabulary or external 255-row readout matrix without moving checkpoint tensors.
+  /// External D3 weights require FP32, while Perplexity readout weights require BF16.
   OptionHead(const std::string& kind,
              const Options& cfg,
              const Weights& head,
@@ -195,6 +200,9 @@ struct OptionHead final : DecisionHead {
                   "Decision readout precision does not match its checkpoint contract");
   }
 
+  /// Validate option/readout metadata before reserving output. InlineOptions uses token_ids as
+  /// per-marker option counts; ordinary option-token requests use actual
+  /// vocabulary/readout row IDs.
   int64_t output_count(const DecisionRequest& request) const override {
     if (request.kind == DecisionRequest::Kind::Warmup)
       return 1;
@@ -237,6 +245,9 @@ struct OptionHead final : DecisionHead {
                     "Inline readout marker outside sequence");
         auto index =
             at::tensor(request.markers, hidden.options().dtype(at::kLong)) + input.offsets[i];
+        // Inline decisions score every marker against the full external readout, then retain each
+        // marker's declared option count. Concatenation preserves marker order and row
+        // order within each marker.
         auto logits =
             at::linear(hidden.index_select(0, index).to(at::kBFloat16), weights).to(at::kFloat);
         std::vector<at::Tensor> valid;
@@ -254,10 +265,15 @@ struct OptionHead final : DecisionHead {
       for (size_t j = 0; j < ids.size(); ++j)
         TORCH_CHECK(ids[j] >= 0 && ids[j] < weights.size(0) && (!external || ids[j] == int64_t(j)),
                     "Invalid option-token/readout-row metadata");
+      // Ordinary option decisions read the last real token in each packed sequence. The selected
+      // rows and projection dtype below belong to that head's checkpoint contract.
       auto last = hidden.select(0, input.offsets[i + 1] - 1).unsqueeze(0);
       auto index = at::tensor(ids, hidden.options().dtype(at::kLong));
       auto selected = weights.index_select(0, index);
       at::Tensor logits;
+      // D3 projects the full FP32 readout before selecting logits, whereas other external heads
+      // project selected BF16 rows. Reordering selection and projection
+      // could change the GEMM recipe.
       if (d3)
         logits = at::linear(last.to(at::kFloat), weights).index_select(1, index);
       else if (external)
@@ -293,6 +309,8 @@ struct LayaLayer {
     return y + ff2(at::relu(ff1(n2(y))));
   }
 
+  /// Apply the Laya pre-norm self-attention and ReLU feed-forward residual block to packed rows,
+  /// keeping each request isolated by cumulative boundaries.
   at::Tensor packed(const at::Tensor& x, const PackedInput& input) const {
     auto y = x + attention.packed_self(n1(x), input);
     return y + ff2(at::relu(ff1(n2(y))));
@@ -391,6 +409,9 @@ struct LayaHead final : DecisionHead {
                             : forward(hidden, input, requests);
   }
 
+  /// Refine all Laya token rows in packed layers, score marker rows, and construct one action
+  /// probability per sequence. Prepared metadata stores [token types | packed marker rows | marker
+  /// offsets] in one int64 vector.
   std::vector<DecisionResult> forward_packed(const at::Tensor& hidden,
                                              const PackedInput& input,
                                              const std::vector<DecisionRequest>& requests,
@@ -406,6 +427,8 @@ struct LayaHead final : DecisionHead {
     auto h = hidden + types.index_select(0, indices.narrow(0, 0, tokens));
     for (const auto& layer : layers)
       h = layer.packed(h, input);
+    // Only marker rows enter the option scorer, but token refinement above runs over the complete
+    // sequence. Marker offsets partition the resulting logits back into independent requests.
     auto selected = h.index_select(0, indices.narrow(0, tokens, markers));
     auto all_logits =
         scorer2(at::gelu(scorer1(scorer_norm(selected)), "none")).flatten().to(at::kFloat);
@@ -413,6 +436,8 @@ struct LayaHead final : DecisionHead {
     auto features =
         laya_action_features(all_logits, indices.narrow(0, tokens + markers, marker_offsets.size()))
             .to(hidden.scalar_type());
+    // The action head combines each sequence's first refined token with top probability, margin,
+    // normalized entropy, and option-count features; it is separate from option-logit scoring.
     auto pooled = h.index_select(0, input.cumulative.narrow(0, 0, input.batch));
     auto actions =
         at::softmax(
@@ -517,6 +542,8 @@ struct Routing {
         feed(w, p + ".feedforward_norm", width), attention(w, p + ".attention", width, heads),
         ff1(w, p + ".feedforward.0", width, ff), ff2(w, p + ".feedforward.3", ff, width) {}
 
+  /// Refine option-query rows against normalized token memory, then apply the residual GELU
+  /// feed-forward block. Query and memory lengths may differ.
   at::Tensor operator()(const at::Tensor& q, const at::Tensor& m) const {
     auto x = q + attention(query(q), memory(m));
     return x + ff2(at::gelu(ff1(feed(x)), "none"));
@@ -534,6 +561,8 @@ struct FieldDecoder {
         self(w, p + ".self_attn", width, heads), cross(w, p + ".multihead_attn", width, heads),
         ff1(w, p + ".linear1", width, ff), ff2(w, p + ".linear2", ff, width) {}
 
+  /// Refine field rows with self-attention, cross-attention to token memory, and a feed-forward
+  /// residual. Each sublayer has its own pre-normalization parameters.
   at::Tensor operator()(const at::Tensor& x, const at::Tensor& m) const {
     auto n = n1(x), y = x + self(n, n);
     y = y + cross(n2(y), m);
@@ -628,6 +657,9 @@ struct ClefHead final : DecisionHead {
       queries.push_back(projections[4](at::stack(contexts)) + projections[5](lexical) +
                         projections[2](question.select(0, i).unsqueeze(0)));
     }
+    // Option rows from all fields share routing refinement against one token memory. Field
+    // boundaries remain in the original schema so summaries and final logits can
+    // be split deterministically.
     auto routed = at::cat(queries);
     for (const auto& layer : routing)
       routed = layer(routed, memory);
@@ -646,6 +678,8 @@ struct ClefHead final : DecisionHead {
     std::vector<int64_t> kinds;
     for (const auto& field : fields)
       kinds.push_back(field.kind);
+    // Each field combines its question representation, attention-weighted option summary, global
+    // last-token context, and kind embedding before field-to-field refinement.
     auto field = base + summary_norm(at::stack(summaries)) + projections[3](global.unsqueeze(0)) +
                  at::embedding(types, at::tensor(kinds, ids.options()));
     for (const auto& layer : decoder)

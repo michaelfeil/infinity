@@ -162,6 +162,9 @@ struct Encoder final : Model {
     return has(n + ".bias") ? w(n + ".bias") : at::Tensor();
   }
 
+  /// Dispatch a named projection through FP8, qualified CPU Half blocks, or an ordinary-linear
+  /// session. An undefined ordinary-executor result falls through to ATen,
+  /// retaining the checkpoint bias.
   at::Tensor linear(const at::Tensor& x,
                     const std::string& n,
                     const OrdinaryLinearExecutor::Session* session = nullptr) const {
@@ -183,6 +186,8 @@ struct Encoder final : Model {
     return at::linear(x, w(n + ".weight"), bias(n));
   }
 
+  /// Use the CUDA bias/activation epilogue for supported biased heads; otherwise apply the family
+  /// activation after the ordinary named projection.
   at::Tensor activated_linear(const at::Tensor& x, const std::string& n) const {
     const auto b = bias(n);
     if (x.is_cuda() && b.defined() && (activation == "gelu" || activation == "relu")) {
@@ -192,6 +197,8 @@ struct Encoder final : Model {
     return act(linear(x, n));
   }
 
+  /// Normalize the last feature dimension using family-specific scale/bias names. Qualified
+  /// JinaCode Q/K norms use their actual head-flattened width; ModernBERT norms omit affine bias.
   at::Tensor norm(const at::Tensor& x, const std::string& n) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (family == Family::JinaCode && alibi && x.is_cuda() &&
@@ -217,6 +224,8 @@ struct Encoder final : Model {
                           eps);
   }
 
+  /// Apply the family's residual-add/LayerNorm recipe. Nomic, GTE, and qualified JinaCode CUDA
+  /// paths retain FP32 sum statistics instead of first materializing a rounded residual tensor.
   at::Tensor
   residual_norm(const at::Tensor& x, const at::Tensor& residual, const std::string& n) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -244,6 +253,8 @@ struct Encoder final : Model {
     return norm(x + residual, n);
   }
 
+  /// Resolve the configured elementwise activation. Accepted GELU spellings use the tanh recipe
+  /// inherited by these encoder families; unsupported values raise an error.
   at::Tensor act(const at::Tensor& x) const {
     if (activation == "relu")
       return at::relu(x);
@@ -259,6 +270,8 @@ struct Encoder final : Model {
     return at::gelu(x, "tanh");
   }
 
+  /// Split the final dimension into equal gate/up halves and return [rows, width/2]. gate_first
+  /// selects which half is activated, including the reversed GTE/JinaCode layout.
   at::Tensor gated(const at::Tensor& x, bool gate_first = true) const {
     if (exact_cpu_half && gate_first)
       return modern_cpu::gated_gelu(x);
@@ -279,6 +292,8 @@ struct Encoder final : Model {
     return gate_first ? act(first) * second : first * act(second);
   }
 
+  /// Resolve the checkpoint layer namespace once per layer, including DistilBERT
+  /// transformer/encoder aliases.
   std::string layer_name(int64_t i) const {
     if (family == Family::Distil)
       return (has("transformer.layer.0.attention.q_lin.weight") ? "transformer.layer."
@@ -291,6 +306,8 @@ struct Encoder final : Model {
     return "encoder.layer." + std::to_string(i) + ".";
   }
 
+  /// Prepare full position tables for one rotary base. Family-specific scaling and reference CPU
+  /// trigonometry are applied before converting phases to model dtype.
   void rotary_cache(double theta, at::Tensor& cosine, at::Tensor& sine) {
     const int64_t d = hidden / heads;
     const int64_t length =
@@ -501,6 +518,8 @@ struct Encoder final : Model {
     }
   }
 
+  /// Rotate the two feature halves using already selected per-token phases, leaving
+  /// token/head axes unchanged.
   at::Tensor rotate(const at::Tensor& x, const at::Tensor& c, const at::Tensor& s) const {
     const auto d = x.size(-1) / 2;
     auto left = x.narrow(-1, 0, d), right = x.narrow(-1, d, d);
@@ -564,6 +583,9 @@ struct Encoder final : Model {
     return output + w(p + "mlp.experts.bias");
   }
 
+  /// Consume Q/K/V [tokens, heads, head_dim] with independent packed sequence boundaries. window is
+  /// a symmetric local radius; optional prepared bias and ALiBi determine
+  /// eligible attention providers.
   at::Tensor attend(const at::Tensor& q,
                     const at::Tensor& k,
                     const at::Tensor& v,
@@ -739,8 +761,13 @@ struct Encoder final : Model {
     }
     for (int64_t i = 0; i < layers; ++i) {
       const auto p = layer_name(i);
+      // ModernBERT alternates global and symmetric local attention by layer index. This choice
+      // selects both the visibility window and the corresponding rotary base.
       const bool local =
           family == Family::Modern && i % o.integer("global_attn_every_n_layers", 3) != 0;
+      // In the exact ModernBERT path, modern_residual holds the accumulated stream while h may
+      // contain only the latest MLP branch. Scratch normalization must
+      // consume that sum before reuse.
       auto source = h;
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (exact_norm && family == Family::Modern && h.is_cuda()) {
@@ -875,6 +902,8 @@ struct Encoder final : Model {
     if (family == Family::Modern) {
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (exact_norm && h.is_cuda())
+        // Merge the outstanding branch with the retained residual for final statistics; returning h
+        // alone here would omit accumulated model state.
         h = encoder_layer_norm_only(h, w("final_norm.weight"), eps, modern_residual);
       else
 #endif
@@ -883,6 +912,8 @@ struct Encoder final : Model {
     return h;
   }
 
+  /// Reduce one real sequence, preserving the qualified CPU Half reduction when enabled and the
+  /// base FP32 mean otherwise.
   at::Tensor mean_pool(const at::Tensor& value) const override {
     return exact_cpu_half ? modern_cpu::mean(value) : Model::mean_pool(value);
   }
@@ -1082,6 +1113,9 @@ struct Mpnet final : Model {
         .unsqueeze(0);
   }
 
+  /// Return MPNet token states with learned relative bias computed at each real sequence length.
+  /// Position IDs receive the checkpoint's +2 offset; attention remains
+  /// isolated per packed sequence.
   at::Tensor forward(const PackedInput& input) const override {
     auto h =
         norm(at::embedding(w("embeddings.word_embeddings.weight"), input.ids) +
@@ -1201,6 +1235,8 @@ struct Deberta final : Model {
 
   // Candle DeBERTa rounds its model-dtype residual sum before standalone
   // LayerNorm. Keep that contract while avoiding a separate add launch.
+  /// Qualify width-768 CUDA Half/BF16 DeBERTa normalization; other profiles retain composed ATen
+  /// operations.
   bool exact_cuda_norm() const {
     return device.is_cuda() && hidden == 768 && (dtype == at::kHalf || dtype == at::kBFloat16);
   }
@@ -1225,6 +1261,8 @@ struct Deberta final : Model {
     return norm(x + residual, n);
   }
 
+  /// Resolve DeBERTa's explicit activation, retaining exact GELU where configured and the
+  /// checkpoint's named convolution activation for its optional first-layer branch.
   at::Tensor activation(const at::Tensor& x, const std::string& kind) const {
     if (kind == "relu")
       return at::relu(x);
@@ -1357,6 +1395,8 @@ struct Deberta final : Model {
     if (has("embeddings.embed_proj.weight"))
       h = linear(h, "embeddings.embed_proj");
     h = norm(h, "embeddings.LayerNorm");
+    // Keep the original DeBERTa embedding rows for the optional convolution after layer zero.
+    // Convolution is applied to each exact sequence separately before its residual norm.
     auto embedding = h;
     std::vector<at::Tensor> indices;
     // Bucket values depend only on local i-j. Use the actual longest real
@@ -1404,6 +1444,8 @@ struct Deberta final : Model {
           at::linear(h, qkv_weight[layer], qkv_bias[layer]).view({h.size(0), 3 * heads, dim});
       auto q = qkv.narrow(1, 0, heads), k = qkv.narrow(1, heads, heads),
            v = qkv.narrow(1, 2 * heads, heads);
+      // Scale content keys by sqrt((1 + c2p + p2c) * head_dim). Relative projection tables below
+      // use the same divisor so enabled disentangled terms retain their joint attention scale.
       auto keys = k / scale;
       at::Tensor attended;
       if (use_fa4) {
