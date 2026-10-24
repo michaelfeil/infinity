@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0 AND MIT
+/// \file
+/// FP16 decoder MoE probability and selected-route normalization kernels.
+/// Retains the reference softmax and routing reduction arithmetic.
+
 #include "kernels/decoder_norm.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>

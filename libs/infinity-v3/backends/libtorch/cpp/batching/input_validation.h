@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Structural validation and upload-size accounting for native request descriptors.
+/// Checks counted pointers, packed boundaries, media layouts, and decision metadata.
+
 #pragma once
 #include "helpers/admission_error.h"
 #include "bridge.h"

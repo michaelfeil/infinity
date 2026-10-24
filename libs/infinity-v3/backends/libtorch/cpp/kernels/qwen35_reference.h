@@ -1,3 +1,6 @@
+/// \file
+/// Reference-arithmetic Qwen3.5 gated-delta and normalization interfaces.
+
 #pragma once
 #include "batching/packed_input.h"
 

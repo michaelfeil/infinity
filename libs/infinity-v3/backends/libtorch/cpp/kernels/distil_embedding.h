@@ -1,3 +1,6 @@
+/// \file
+/// DistilBERT embedding gather and normalization interface.
+
 #pragma once
 #include <ATen/ATen.h>
 

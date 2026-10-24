@@ -1,3 +1,6 @@
+/// \file
+/// Encoder model construction and qualified Nomic routing-policy query.
+
 #pragma once
 #include <memory>
 #include "models/model.h"

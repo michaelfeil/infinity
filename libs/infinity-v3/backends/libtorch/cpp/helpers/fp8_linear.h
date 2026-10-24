@@ -1,3 +1,7 @@
+/// \file
+/// FP8 row quantization, linear operators, and ordinary-GEMM execution sessions.
+/// Public wrappers expose eligibility and preserve their documented fallback paths.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <utility>
@@ -14,6 +18,7 @@ class OrdinaryLinearExecutor {
   std::shared_ptr<Impl> impl_;
 
 public:
+  /// Retains the execution state shared by ordinary linear calls in one session.
   class Session {
     struct State;
     std::shared_ptr<State> state_;

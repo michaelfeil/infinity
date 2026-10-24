@@ -1,3 +1,7 @@
+/// \file
+/// Process-wide admission and lifetime accounting for native pinned staging.
+/// Provides pinned allocations whose budget credit follows the backing storage.
+
 #include "env_config.h"
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
@@ -25,6 +29,7 @@
 #endif
 
 namespace tei {
+/// Process-wide retained pinned-byte accounting and its configured allowance.
 struct PinnedAdmissionState {
   std::mutex mutex;
   size_t bytes = 0;

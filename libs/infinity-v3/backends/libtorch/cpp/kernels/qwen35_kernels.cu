@@ -14,6 +14,7 @@
 
 namespace tei {
 namespace {
+/// Aligned four-value BF16 pack used by the native convolution path.
 struct alignas(8) ConvValues {
   __nv_bfloat16 values[4];
 };

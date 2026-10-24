@@ -32,6 +32,10 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 // The included CUDA kernel is distributed under the BSD-3-Clause license in
 // backends/candle/extensions/candle-layer-norm/LICENSE; retained in this source tree.
 // This adapter invokes that implementation rather than recreating its reductions.
+/// \file
+/// CUDA encoder layer normalization and embedding-normalization dispatch.
+/// Includes residual update variants and the registered reference reduction kernels.
+
 #include "kernels/encoder_norm.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>

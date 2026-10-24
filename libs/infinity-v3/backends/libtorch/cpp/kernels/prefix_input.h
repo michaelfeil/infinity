@@ -1,9 +1,13 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Suffix input buffers and packing interface for retained-prefix execution.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <span>
 
 namespace tei {
+/// Owned packed suffix tensors for token IDs, positions, and token types.
 struct PrefixInputs {
   at::Tensor ids, positions, types;
 };

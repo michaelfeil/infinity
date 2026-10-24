@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Eligibility and dispatch interface for batched prefix-state tensor copies.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <vector>

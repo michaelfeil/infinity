@@ -1,5 +1,9 @@
 // Native adaptation of backends/candle/src/models/gemma4_vision.rs.
 // Upstream Apache-2.0 notices remain in LICENSE and NOTICE.
+/// \file
+/// Model-owned cache for immutable image feature tensors.
+/// Tracks bounded retention and CUDA readiness before publishing cached results.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <array>
@@ -22,6 +26,7 @@ public:
   using Key = std::array<uint8_t, 32>;
 
 private:
+  /// Cached feature tensor, content key, and optional CUDA readiness event.
   struct Entry {
     Key key;
     at::Tensor value;

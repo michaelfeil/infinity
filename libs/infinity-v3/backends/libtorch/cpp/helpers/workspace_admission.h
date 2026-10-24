@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Per-device accounting for retained native workspace allocations.
+/// Live engine policies contribute limits and allocation permits return budget on release.
+
 #pragma once
 #include <algorithm>
 #include <memory>
@@ -8,6 +12,7 @@
 #include <unordered_map>
 
 namespace tei {
+/// Per-device retained-workspace accounting and contributions from live engine policies.
 struct WorkspaceAdmissionState {
   std::mutex mutex;
   size_t limit = 0, retained = 0;
@@ -24,6 +29,7 @@ inline std::shared_ptr<WorkspaceAdmissionState> workspace_admission_state(int in
   return state;
 }
 
+/// Registers a live engine allowance in the shared device workspace budget.
 class WorkspaceMemoryPolicy {
   std::shared_ptr<WorkspaceAdmissionState> state;
   std::multiset<size_t>::iterator contribution;
@@ -53,6 +59,7 @@ inline std::shared_ptr<WorkspaceMemoryPolicy> configure_workspace_admission(int 
   return std::make_shared<WorkspaceMemoryPolicy>(workspace_admission_state(index), limit);
 }
 
+/// Returns reserved workspace bytes to the shared budget when its owner releases it.
 class WorkspaceMemoryPermit {
   std::shared_ptr<WorkspaceAdmissionState> state;
   size_t bytes;

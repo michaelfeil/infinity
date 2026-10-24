@@ -1,4 +1,7 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
+/// \file
+/// Optional InfinityFA4 packed-attention and DeBERTa execution interfaces.
+
 #pragma once
 #include <ATen/ATen.h>
 

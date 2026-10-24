@@ -71,6 +71,7 @@ __global__ void quant_kernel(const T* x, __nv_fp8_e4m3* y, float* scales, int wi
   tei_fp8_quant_row(x, y, scales, width);
 }
 
+/// Aligned scalar pack for vectorized row-wise FP8 quantization.
 template <class T, int N> struct alignas(sizeof(T) * N) QuantPack {
   T value[N];
 };

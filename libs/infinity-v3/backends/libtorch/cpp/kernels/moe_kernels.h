@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: MIT
+/// \file
+/// Native routed-expert execution and Hopper-availability interfaces.
+
 #pragma once
 #include <ATen/ATen.h>
 

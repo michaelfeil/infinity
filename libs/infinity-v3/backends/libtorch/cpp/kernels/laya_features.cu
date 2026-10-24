@@ -1,4 +1,7 @@
 // Fork contribution; see LICENSE and LICENSING.md at the repository root.
+/// \file
+/// CUDA extraction of Laya action features from packed option logits.
+
 #include "kernels/laya_features.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>

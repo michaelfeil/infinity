@@ -28,6 +28,7 @@ inline cudaError_t flash_set_attribute(Kernel function, cudaFuncAttribute attrib
   if (!get_context_id || get_context_id(nullptr, &context_id) != CUDA_SUCCESS)
     return cudaFuncSetAttribute(kernel, attribute, value);
 
+  /// Successful dynamic-shared-memory setting scoped to a CUDA context and kernel.
   struct Entry {
     unsigned long long context;
     const void* kernel;

@@ -1,3 +1,7 @@
+/// \file
+/// Packed BERT/RoBERTa backbone and task-head implementation.
+/// Includes encoder attention, ColBERT query-key selection, and native linear paths.
+
 #pragma once
 #include "bridge.h"
 #include "models/model.h"
@@ -27,6 +31,7 @@
 #include <map>
 
 namespace {
+/// Packed BERT/RoBERTa backbone with native attention and optional task readouts.
 struct Bert : tei::Model {
   TeiConfig config;
   c10::Device device;
@@ -44,6 +49,7 @@ struct Bert : tei::Model {
 #ifdef TEI_TORCH_CUDA_KERNELS
   bool cached_classifier_gemm = false;
 
+  /// Owns cuBLASLt descriptors and algorithm metadata for a cached classifier GEMM.
   struct ClassifierPlan {
     cublasLtMatmulDesc_t operation{};
     cublasLtMatrixLayout_t weight{}, input{}, output{};

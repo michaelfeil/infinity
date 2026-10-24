@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// CUDA graph capture, admission, replay, and eviction for exact packed shapes.
+/// Retained execution buffers and prefix publication are managed with each entry.
+
 #include "batching/cuda_graph.h"
 #include <algorithm>
 #include <iterator>
@@ -21,6 +25,7 @@
 #include <unordered_set>
 #endif
 namespace tei {
+/// Admission counters, retained entries, and capture resources for one graph cache.
 struct CudaGraphCache::Impl {
   size_t limit;
   int64_t max_tokens;
@@ -30,6 +35,7 @@ struct CudaGraphCache::Impl {
   bool budget_exhausted = false, retain_prefix = false;
   Stats counters;
 #ifdef TEI_TORCH_CUDA_KERNELS
+  /// RAII owner of the CUDA stream used for graph capture on one device.
   struct CaptureLane {
     cudaStream_t raw = nullptr;
     c10::DeviceIndex device;
@@ -59,6 +65,7 @@ struct CudaGraphCache::Impl {
   // Destroy owned streams only after graphs and their workspaces are gone.
   std::unordered_map<c10::DeviceIndex, std::vector<std::unique_ptr<CaptureLane>>> capture_streams;
 
+  /// Captured execution buffers, prefix state, and replay bookkeeping for one cache key.
   struct Entry {
     std::vector<int32_t> offsets;
     PackedInput input;

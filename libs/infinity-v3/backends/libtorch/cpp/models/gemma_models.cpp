@@ -1,3 +1,6 @@
+/// \file
+/// Native Gemma-family text execution and supported vision/audio tower composition.
+
 #include "helpers/vision_batch.h"
 #include "helpers/attention.h"
 // Native adaptations of backends/candle/src/models/{gemma3,gemma4,embedding_gemma2}.rs.
@@ -37,6 +40,7 @@
 
 namespace tei {
 namespace {
+/// Gemma-family text backbone and supported multimodal tower composition.
 class Gemma final : public Model {
   Options cfg;
   Weights& weights;
@@ -50,6 +54,7 @@ class Gemma final : public Model {
   bool embedding2_reference_cuda = false;
   bool fused_legacy_residual = false;
 
+  /// Prepared attention/MLP projections, rotary tables, and Gemma layer policy.
   struct Layer {
     std::string p;
     at::Tensor qkv, gate_up;
@@ -70,6 +75,7 @@ class Gemma final : public Model {
   // Choose the same accumulation tree as the original logical-row GEMM,
   // using descriptors only. Execute on actual compact rows, with no padding.
 #ifdef TEI_TORCH_CUDA_KERNELS
+  /// Retained cuBLASLt plan and workspace ownership for logical-row projections.
   struct RadixLinearPlan {
     cublasLtMatmulDesc_t operation{};
     cublasLtMatrixLayout_t weight{}, input{}, output{};
@@ -172,6 +178,7 @@ class Gemma final : public Model {
         if (found == radix_linear_plans.end() && radix_linear_plans.size() < 64) {
           auto plan = std::make_unique<RadixLinearPlan>();
 
+          /// Temporary cuBLASLt layouts and preference used to select a projection algorithm.
           struct Planning {
             cublasLtMatrixLayout_t input{}, output{};
             cublasLtMatmulPreference_t preference{};

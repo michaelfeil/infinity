@@ -1,3 +1,7 @@
+/// \file
+/// Prefix identities, retained model snapshots, and per-submission reuse context.
+/// Defines cache budgets and the interface used by native model adapters.
+
 #pragma once
 #include "batching/packed_input.h"
 #include "helpers/math_policy.h"
@@ -21,6 +25,7 @@ struct PrefixToken {
   bool operator==(const PrefixToken&) const = default;
 };
 
+/// Media placement, layout, and content identity participating in prefix matching.
 struct PrefixMedia {
   int64_t start = 0, count = 0;
   std::vector<int64_t> layout;
@@ -30,11 +35,13 @@ struct PrefixMedia {
   bool operator==(const PrefixMedia&) const = default;
 };
 
+/// Two-part advisory digest used to rank prefix candidates before exact comparison.
 struct PrefixFingerprint {
   uint64_t low = 0, high = 0;
   bool operator==(const PrefixFingerprint&) const = default;
 };
 
+/// Token/media identity and context flags used to scope reusable prefix state.
 struct PrefixIdentity {
   std::vector<PrefixToken> tokens;
   std::vector<PrefixMedia> media;
@@ -43,14 +50,17 @@ struct PrefixIdentity {
   std::vector<PrefixFingerprint> fingerprints;
 };
 
+/// Retained attention, recurrent, and convolution tensors for one model layer.
 struct PrefixLayer {
   at::Tensor key, value, recurrent, convolution;
 };
 
+/// Shared accounting for live and reserved resident-prefix storage.
 struct PrefixBudget {
   uint64_t live_bytes = 0, reserved_bytes = 0;
 };
 
+/// Retained per-layer state and output data for one exact input-prefix identity.
 struct PrefixEntry {
   PrefixIdentity identity;
   // Full-result reuse retains the original projection/attention batch recipe.
@@ -69,6 +79,7 @@ struct PrefixEntry {
   ~PrefixEntry();
 };
 
+/// Submission-local links between logical inputs, cached readers, and new snapshots.
 struct PrefixContext {
   const PackedInput& original;
   std::vector<int32_t> offsets;
@@ -131,6 +142,7 @@ at::Tensor prefix_attention(const at::Tensor& q,
                             bool capture = true,
                             bool cudnn = false);
 
+/// Recurrent-history and checkpoint metadata for uncached-suffix execution.
 struct PrefixRecurrent {
   at::Tensor initial_sources, history, history_lengths;
   at::Tensor checkpoint_positions, checkpoint_rows, checkpoints;
@@ -145,12 +157,14 @@ void prefix_recurrent_commit(const PackedInput&,
                              int64_t kernel,
                              const PrefixRecurrent&);
 
+/// Coordinates admission and reuse of bounded, engine-scoped prefix snapshots.
 class PrefixCache {
 public:
   // EngineOrdered requires GPU ordering between every run submission. Host
   // serialization alone is insufficient; independent callers retain events.
   enum class StreamOrder { Independent, EngineOrdered };
 
+  /// Prefix reuse, admission, eviction, and bypass counters.
   struct Stats {
     uint64_t hits = 0, misses = 0, reused_tokens = 0, admissions = 0, evictions = 0, bypasses = 0;
   };
@@ -181,6 +195,7 @@ private:
   MathPolicy math_policy{};
   std::unique_ptr<PrefixLinearPlans> linear;
 
+  /// Reuse count for a recently observed prefix admission candidate.
   struct Recent {
     PrefixFingerprint key;
     size_t uses = 0;
@@ -188,7 +203,9 @@ private:
 
   std::array<Recent, 64> recent{};
 
+  /// Bounded frequency observations for short-prefix admission candidates.
   struct ShortRecent {
+    /// One fingerprint observation with its use count and recency marker.
     struct Counter {
       uint64_t key = 0;
       size_t uses = 0;
@@ -203,6 +220,7 @@ private:
 
   std::unique_ptr<ShortRecent> short_recent;
 
+  /// Cached host/device sequence boundaries and their consumption callback.
   struct Boundaries {
     std::vector<int32_t> offsets;
     at::Tensor host, device;

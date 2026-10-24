@@ -16,11 +16,13 @@ namespace tei::modern_cpu {
 bool supported_profile();
 at::Tensor norm(const at::Tensor&, const at::Tensor&, float);
 
+/// Input-column range and prepared weights for one CPU linear reduction block.
 struct LinearBlock {
   int64_t start, end;
   at::Tensor weight;
 };
 
+/// Input width and ordered weight blocks used by the reference CPU linear recipe.
 struct LinearWeights {
   int64_t input_width;
   std::vector<LinearBlock> blocks;

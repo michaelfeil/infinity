@@ -1,3 +1,7 @@
+/// \file
+/// Interface and counters for the bounded native CUDA graph cache.
+/// Model execution is captured separately from pooling and host transfers.
+
 #pragma once
 #include <memory>
 #include "models/model.h"
@@ -15,6 +19,7 @@ class CudaGraphCache {
       const Model&, const PackedInput&, int, const MathPolicy*, PrefixContext* publish = nullptr);
 
 public:
+  /// Graph-cache reuse, capture, eviction, and retained-memory counters.
   struct Stats {
     uint64_t hits = 0, misses = 0, captures = 0, attempts = 0, evictions = 0, live_bytes = 0,
              admitted_bytes = 0, prefix_hits = 0, prefix_captures = 0;

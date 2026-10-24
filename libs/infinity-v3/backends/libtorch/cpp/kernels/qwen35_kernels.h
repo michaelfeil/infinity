@@ -1,3 +1,6 @@
+/// \file
+/// Native Gemma vision/audio primitives and Qwen3.5 gated-delta entry points.
+
 #pragma once
 #include "batching/packed_input.h"
 

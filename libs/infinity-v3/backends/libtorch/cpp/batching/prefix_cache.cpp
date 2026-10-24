@@ -1,3 +1,7 @@
+/// \file
+/// Resident prefix admission, snapshot publication, and suffix execution.
+/// Combines cached attention/recurrent state with request-local packed metadata.
+
 #include "batching/prefix_cache.h"
 #include "kernels/infinity_fa4.h"
 #include "batching/cuda_graph.h"
@@ -779,6 +783,7 @@ uint64_t PrefixCache::bytes() const {
   return budget->live_bytes;
 }
 
+/// Borrowed host token views used to construct and compare exact prefix identities.
 struct HostPrefixTokens {
   const int64_t *ids, *positions, *types, *rotary;
   int64_t total;

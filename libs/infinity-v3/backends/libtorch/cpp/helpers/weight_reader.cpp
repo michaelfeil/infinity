@@ -1,3 +1,7 @@
+/// \file
+/// Native safetensors tensor loading through the non-GDS worker reader.
+/// Handles descriptor policy, destination allocation, conversion, and copy completion.
+
 #include "weight_reader.h"
 #include "../vendor/fastsafetensors/nogds_reader.h"
 #include <algorithm>
@@ -44,6 +48,7 @@ int cpu_sync() {
 const fastsafetensors::ext_funcs_t cpu_ops{
     cpu_device, cpu_allocate, cpu_free, cpu_copy, cpu_sync, nullptr, nullptr, nullptr, nullptr};
 
+/// Completes worker device copies before weight-reader resources leave scope.
 struct Drain {
   const fastsafetensors::ext_funcs_t* operations;
   bool complete = false;
@@ -109,6 +114,7 @@ const fastsafetensors::ext_funcs_t cuda_ops{gpu_device,
                                             gpu_destroy};
 #endif
 
+/// Owns a duplicated file descriptor and restores any temporarily changed flags.
 struct Descriptor {
   int value;
   int original_flags = -1;

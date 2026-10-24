@@ -30,6 +30,10 @@ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 */
+/// \file
+/// Device implementation of DistilBERT token/position gather and layer normalization.
+/// Instantiated by the native DistilBERT embedding wrapper.
+
 #pragma once
 
 // #ifdef OLD_GENERATOR_PATH

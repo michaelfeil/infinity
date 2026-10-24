@@ -26,6 +26,9 @@ OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
 IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
+/// \file
+/// CUDA encoder GELU and bias-plus-GELU kernels with reference rounding.
+
 #include "kernels/encoder_activation.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -56,6 +59,7 @@ template <class T> __device__ __forceinline__ T gelu(T x) {
   return T(T(T(0.5) * x) * T(T(1.0) + tangent));
 }
 
+/// Aligned group of four scalar values used by vectorized activation loads and stores.
 template <class T> struct alignas(sizeof(T) * 4) Four {
   T values[4];
 };

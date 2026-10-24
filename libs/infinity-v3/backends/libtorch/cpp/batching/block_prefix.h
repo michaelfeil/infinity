@@ -1,3 +1,7 @@
+/// \file
+/// Exact request-local prefix comparison over borrowed token and image descriptors.
+/// Used to select representatives only when their attention inputs agree.
+
 #pragma once
 #include "bridge.h"
 #include <algorithm>

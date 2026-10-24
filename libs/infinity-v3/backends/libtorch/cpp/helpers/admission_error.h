@@ -1,9 +1,14 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Native admission and allocation-failure signals shared with the C ABI bridge.
+/// Separates configured budget rejection from allocator and nested-call failures.
+
 #pragma once
 #include <stdexcept>
 #include <c10/util/Exception.h>
 
 namespace tei {
+/// Signals rejection by a configured native memory-admission budget.
 class MemoryAdmissionError final : public std::runtime_error {
 public:
   explicit MemoryAdmissionError(const char* message) : std::runtime_error(message) {}

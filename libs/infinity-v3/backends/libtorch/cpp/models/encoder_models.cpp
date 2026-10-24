@@ -1,3 +1,7 @@
+/// \file
+/// Packed encoder-family implementations and architecture-specific attention paths.
+/// Constructs supported encoders and their optional embedding/classification heads.
+
 #include "env_config.h"
 #include "helpers/attention.h"
 #include "helpers/modern_cpu_math.h"
@@ -55,6 +59,7 @@ gte_ntk_inverse_frequencies(int64_t dimension, double theta, double factor, c10:
   return inverse * static_cast<double>(multiplier);
 }
 
+/// Shared packed encoder implementation parameterized by family-specific math.
 struct Encoder final : Model {
   Options o;
   Weights& weights;
@@ -88,6 +93,7 @@ struct Encoder final : Model {
   bool exact_distil_flash = false;
   std::unordered_map<std::string, modern_cpu::LinearWeights> cpu_linear_weights;
 
+  /// Prepared attention and gated-MLP projections for one shared encoder layer.
   struct Layer {
     at::Tensor qkv_weight, qkv_bias;
     at::Tensor gate_weight, gate_bias;
@@ -1138,6 +1144,7 @@ struct Mpnet final : Model {
   }
 };
 
+/// Packed DeBERTa encoder with disentangled relative-position attention.
 struct Deberta final : Model {
   Options o;
   Weights& weights;

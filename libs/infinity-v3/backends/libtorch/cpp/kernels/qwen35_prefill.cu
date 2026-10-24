@@ -1,4 +1,7 @@
 // Native adapter to FlashInfer 0.6.13; upstream kernel retains Apache-2.0.
+/// \file
+/// Hopper prefill adapter for the packed Qwen3.5 gated-delta path.
+
 #include "kernels/qwen35_chunk.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <cuda_bf16.h>

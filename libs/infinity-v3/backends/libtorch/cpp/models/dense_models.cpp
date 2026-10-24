@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Loading, validation, and execution of pooled Sentence Transformers Dense modules.
+
 #include "models/dense_models.h"
 
 namespace tei {

@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: Apache-2.0
 // The included Q/K normalization kernel retains its original MIT notice.
+/// \file
+/// Shared CUDA implementations for normalization, activation, rotary, and routing.
+/// Model adapters select the operation and its rounding contract through these wrappers.
+
 #include "kernels/fast_kernels.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/ops/_fused_rms_norm.h>

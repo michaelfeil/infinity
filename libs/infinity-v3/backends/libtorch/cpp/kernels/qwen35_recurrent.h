@@ -1,3 +1,6 @@
+/// \file
+/// Qwen3.5 recurrent and cached-convolution execution interfaces.
+
 #pragma once
 #include "batching/packed_input.h"
 

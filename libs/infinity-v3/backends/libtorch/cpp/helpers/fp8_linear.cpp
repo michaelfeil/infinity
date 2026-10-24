@@ -1,3 +1,7 @@
+/// \file
+/// Native FP8 linear execution and qualified ordinary cuBLASLt plan reuse.
+/// Keeps plan, stream, workspace, and model-dtype rounding policies explicit.
+
 #include "helpers/fp8_linear.h"
 #include "helpers/workspace_admission.h"
 #include "helpers/vendor_error.h"
@@ -110,6 +114,7 @@ POSSIBILITY OF SUCH DAMAGE.
 // Ordinary Modern projections: no quantization or scale descriptors.
 struct OrdinaryLinearExecutor::Impl {
 #if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
+  /// Owns cuBLASLt descriptors, a selected algorithm, and optional retained workspace.
   struct Plan {
     cublasLtMatmulDesc_t operation{};
     cublasLtMatrixLayout_t a{}, b{}, c{}, d{};
@@ -132,6 +137,7 @@ struct OrdinaryLinearExecutor::Impl {
     }
   };
 
+  /// Execution-lane identity, cuBLASLt handle, and retained workspace for ordinary GEMMs.
   struct Lane {
     int device;
     CUcontext context;
@@ -142,6 +148,7 @@ struct OrdinaryLinearExecutor::Impl {
     at::Tensor workspace;
   };
 
+  /// Cached GEMM geometry and algorithm plan associated with an execution lane.
   struct Entry {
     size_t lane, workspace_bytes;
     int64_t m, n, k;
@@ -162,6 +169,7 @@ struct OrdinaryLinearExecutor::Impl {
 
 OrdinaryLinearExecutor::OrdinaryLinearExecutor() : impl_(std::make_shared<Impl>()) {}
 
+/// Execution identity and shared executor state retained by an ordinary-linear session.
 struct OrdinaryLinearExecutor::Session::State {
 #if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
   std::shared_ptr<Impl> owner;
@@ -322,6 +330,7 @@ at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x,
         !ok(cublasLtMatrixLayoutCreate(&plan->d, type, n, m, n)))
       return {};
 
+    /// RAII owner of a cuBLASLt heuristic preference descriptor.
     struct Preference {
       cublasLtMatmulPreference_t value{};
 

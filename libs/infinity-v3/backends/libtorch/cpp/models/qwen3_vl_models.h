@@ -1,3 +1,6 @@
+/// \file
+/// Qwen3-VL model interface for vision features and packed multimodal execution.
+
 #pragma once
 #include <memory>
 #include "models/model.h"

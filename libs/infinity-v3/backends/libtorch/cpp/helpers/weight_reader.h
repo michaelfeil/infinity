@@ -1,3 +1,7 @@
+/// \file
+/// Weight-reader interface for Rust-validated safetensors ranges.
+/// Produced tensors own their storage; the supplied file descriptor is borrowed.
+
 #pragma once
 #include <ATen/ATen.h>
 #include "../bridge.h"

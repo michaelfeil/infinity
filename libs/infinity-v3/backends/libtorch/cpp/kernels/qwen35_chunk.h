@@ -1,3 +1,6 @@
+/// \file
+/// Chunked and Hopper-prefill gated-delta interfaces for packed Qwen3.5 inputs.
+
 #pragma once
 #include "batching/packed_input.h"
 

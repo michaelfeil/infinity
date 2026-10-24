@@ -81,6 +81,7 @@ __global__ void swiglu_quant_kernel(const T* input, __nv_fp8_e4m3* out, float* s
   }
 }
 
+/// Aligned scalar pack used by fused normalization and FP8 conversion kernels.
 template <class T, int N> struct alignas(sizeof(T) * N) Packed {
   T value[N];
 };

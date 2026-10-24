@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: MIT
+/// \file
+/// Native routed-MoE dispatch across compiled expert implementations.
+/// Validates layouts and supplies on-device routing/workspace buffers.
+
 #include "kernels/moe_kernels.h"
 #ifdef TEI_TORCH_MOE_KERNELS
 #include <ATen/cuda/CUDAContext.h>

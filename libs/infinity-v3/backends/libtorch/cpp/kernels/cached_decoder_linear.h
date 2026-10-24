@@ -101,7 +101,9 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <mutex>
 
 namespace tei {
+/// Caches qualified bias-free decoder GEMM plans with an ordinary ATen fallback.
 class CachedNoBiasLt {
+  /// Owns matrix descriptors and algorithm metadata for one cached decoder GEMM.
   struct Plan {
     cublasLtMatmulDesc_t operation{};
     cublasLtMatrixLayout_t a{}, b{}, c{};
