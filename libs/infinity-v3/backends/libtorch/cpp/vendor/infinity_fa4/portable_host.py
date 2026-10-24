@@ -51,5 +51,8 @@ def validate_host_object(path):
     # VEX/EVEX prefixes identify AVX-family instructions, including masked
     # XMM operations that a search for YMM/ZMM registers alone would miss.
     disassembly = subprocess.check_output(["objdump", "-d", "--insn-width=16", str(path)], text=True)
-    if re.search(r"^\s*[0-9a-f]+:\s+(?:c4|c5|62)\s", disassembly, re.MULTILINE):
+    # Address-size and segment overrides can precede VEX/EVEX. Match only
+    # instruction prefixes, not prefix-looking immediate or displacement bytes.
+    legacy = r"(?:(?:26|2e|36|3e|64|65|66|67|f0|f2|f3)\s+)*"
+    if re.search(r"^\s*[0-9a-f]+:\s+" + legacy + r"(?:c4|c5|62)\s", disassembly, re.MULTILINE):
         raise RuntimeError(f"Nonportable AVX host instructions in {path}")
