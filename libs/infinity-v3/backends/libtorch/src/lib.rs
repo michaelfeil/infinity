@@ -512,6 +512,10 @@ impl LibtorchBackend {
     ) -> Result<Self, BackendError> {
         Self::new_with_dense_paths_and_fp8(path, dtype, model_type, device, dense_paths, false)
     }
+    #[tracing::instrument(
+        name = "model_load", skip_all,
+        fields(path = %path.display(), device = device, pid = std::process::id())
+    )]
     pub fn new_with_dense_paths_and_fp8(
         path: &Path,
         dtype: &str,
@@ -1202,6 +1206,8 @@ impl LibtorchBackend {
             };
             files.push((format!("{dense_path}/{filename}"), format!("_dense.{i}.")));
         }
+        let weights_started = std::time::Instant::now();
+        tracing::info!(files = files.len(), "Starting checkpoint load");
         for (file, prefix) in files {
             if file.ends_with(".bin") {
                 // Parse checkpoint data in Rust; no Python or inference engine is
@@ -1255,6 +1261,10 @@ impl LibtorchBackend {
                 }
             }
         }
+        tracing::info!(
+            seconds = weights_started.elapsed().as_secs_f64(),
+            "Finished checkpoint load"
+        );
         // SAFETY: the live handle is owned by model; this checks every required weight and its shape.
         if unsafe { tei_ready(handle.as_ptr()) } != 0 {
             return Err(start(native_error()));
