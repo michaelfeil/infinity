@@ -1,3 +1,8 @@
+/// \file
+/// Configuration accessors and named weight lookup shared by native model families.
+/// Required weights are checked by name; option accessors provide typed reads
+/// with defaults for missing keys.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <string>
@@ -6,6 +11,8 @@
 namespace tei {
 using Weights = std::unordered_map<std::string, at::Tensor>;
 
+/// String-valued model configuration with typed lookups and missing-key defaults.
+/// Present numeric values are parsed with the standard string conversion functions.
 struct Options {
   std::unordered_map<std::string, std::string> values;
 

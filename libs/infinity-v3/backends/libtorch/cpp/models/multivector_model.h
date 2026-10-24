@@ -1,3 +1,7 @@
+/// \file
+/// Native adapter for returning token matrices from a backbone model.
+/// Applies an optional learned projection and per-token L2 normalization.
+
 #pragma once
 #include <memory>
 #include "models/model.h"
