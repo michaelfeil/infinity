@@ -510,8 +510,14 @@ class Qwen35 final : public Model {
         auto x=normalized.narrow(0,start,count);
         return linear?delta_attention(x,ap,part,&cache,prefill,-1,&block):full_attention(x,ap,part,&cache,prefill,-1,&block);
       };
-      auto prefix_attention=attention(prefixes,true);
-      auto attended=has_suffix?at::cat({prefix_attention,attention(suffixes,false)},0):prefix_attention;
+      at::Tensor attended;
+      // GDN stays causal across the state/question boundary.
+      if(linear&&input.batch==1)
+        attended=delta_attention(normalized,ap,input,&cache,true,-1,&projections);
+      else {
+        auto prefix_attention=attention(prefixes,true);
+        attended=has_suffix?at::cat({prefix_attention,attention(suffixes,false)},0):prefix_attention;
+      }
       attended=prefix_projection(attended,ap+(linear?"out_proj":"o_proj"),input);
       hidden=hidden+attended;
       hidden=hidden+feed_forward(norm(hidden,p+"post_attention_layernorm"),layer,input);
