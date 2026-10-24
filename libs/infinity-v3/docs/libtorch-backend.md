@@ -119,7 +119,7 @@ and the Candle backend are unchanged.
 | Environment variable | Default | Behavior |
 | --- | --- | --- |
 | `INFINITY_TORCH_WEIGHT_READER_THREADS` | `16` | Maximum workers per file, from `1` to `64`; small files use fewer workers. |
-| `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES` | `16777216` for shards up to 1 GiB; `268435456` otherwise | Budget for the host buffer pool and, separately, each transient tensor stage, from `65536` to `1073741824` bytes. Host buffers add alignment padding. Tiny files are capped by their data size. An explicit setting overrides the size-based default. |
+| `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES` | `33554432` | Budget for the host buffer pool and, separately, each transient tensor stage, from `65536` to `1073741824` bytes. Host buffers add alignment padding. Tiny files are capped by their data size. An explicit setting overrides the default. |
 | `INFINITY_TORCH_WEIGHT_READER_DIRECT_IO` | `true` | Set to `false` or `0` to use the filesystem page cache, for example for repeated loads or a managed model-cache mount. |
 
 Header validation remains in Rust, including offset, shape and complete-file

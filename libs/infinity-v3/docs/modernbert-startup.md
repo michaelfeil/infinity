@@ -1,5 +1,7 @@
 # ModernBERT startup draft measurements
 
+The draft now uses one **32 MiB** default staging budget for every shard, with the existing explicit override. Earlier measurements below used the provisional 16/256 MiB size policy; the final comparison is in the uniform-pool section.
+
 Goal: less than one second from process launch to successful HTTP health, with weights already local. Full configured warmup remains required before readiness; no warmup limits or execution were changed.
 
 ## Method
@@ -69,3 +71,20 @@ The same candidate binary was tested with explicit reader budgets on an idle H10
 The smaller pool was about 13% faster in checkpoint loading and 7% faster overall on this node. The first 256 MiB start took 17.089 s (15.599 s loading weights), with uncontrolled underlying storage caches. Retaining all runs gives the medians above. Excluding the entire initial pair gives 1.384 vs 1.229 s loading and 2.772 vs 2.583 s HTTP readiness, so the repeat-start direction is unchanged. This does not establish which budget is faster on a genuinely cold new node.
 
 A 16 MiB pool is therefore not inherently a large-model throughput regression. This comparison covers one 8B model, one storage setup, and H100; larger checkpoints, dtype conversion, slower PCIe GPUs, and different storage still need coverage before changing the large-shard default.
+
+## Uniform 32 MiB default
+
+A follow-up sweep used explicit 16, 32, and 256 MiB budgets on the same candidate executable, five fresh processes per setting per model. Settings and full 16K warmup were unchanged. Budgets were interleaved and their order reversed each round; 32 MiB remained in the middle. This is still an exercised-node comparison, not a new-node cold-start experiment. Explicit-budget measurements exercise the same reader path as the selected default.
+
+| Model | Budget | Median checkpoint loading | Median HTTP readiness | HTTP range |
+|---|---:|---:|---:|---:|
+| ModernBERT-base | 16 MiB | 0.070 s | 0.949 s | 0.922–1.880 s |
+| ModernBERT-base | **32 MiB** | **0.069 s** | **0.945 s** | 0.930–1.264 s |
+| ModernBERT-base | 256 MiB | 0.150 s | 1.025 s | 1.006–1.105 s |
+| Qwen3-8B | 16 MiB | 1.146 s | 2.519 s | 2.501–4.323 s |
+| Qwen3-8B | **32 MiB** | **1.090 s** | **2.486 s** | 2.406–2.613 s |
+| Qwen3-8B | 256 MiB | 1.294 s | 2.665 s | 2.642–3.877 s |
+
+All embeddings were finite and exactly equal within each model across all 15 runs. Four of five 32 MiB ModernBERT runs completed below one second; tail latency remains unresolved.
+
+These results support choosing one 32 MiB default instead of a shard-size cutoff. They do not establish an optimum across storage/GPU types. Explicit 16/64/256 MiB overrides remain available and are covered by the existing options test. Tiny files still cap allocations by their data size in the native reader. The final default passed 20 LibTorch tests (five manual tests ignored); the unchanged router implementation previously passed 78 tests.

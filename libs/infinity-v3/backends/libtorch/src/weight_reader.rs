@@ -31,7 +31,7 @@ impl Options {
             .parse::<usize>()
             .map_err(|e| format!("Invalid {THREADS}: {e}"))?;
         let buffer_bytes = buffer
-            .unwrap_or("268435456")
+            .unwrap_or("33554432")
             .parse::<usize>()
             .map_err(|e| format!("Invalid {BUFFER}: {e}"))?;
         let direct = match direct.unwrap_or("true").to_ascii_lowercase().as_str() {
@@ -52,26 +52,15 @@ impl Options {
         })
     }
 
-    fn default_buffer(data_bytes: usize) -> &'static str {
-        if data_bytes <= 1 << 30 {
-            "16777216"
-        } else {
-            "268435456"
-        }
-    }
-
-    fn from_env(data_bytes: usize) -> Result<Self, String> {
+    fn from_env() -> Result<Self, String> {
         let read = |key: &str| match std::env::var(key) {
             Ok(value) => Ok(Some(value)),
             Err(std::env::VarError::NotPresent) => Ok(None),
             Err(error) => Err(format!("Invalid {key}: {error}")),
         };
-        let buffer = read(BUFFER)?;
-        // Small checkpoints do not amortize pinning a 256 MiB staging pool.
-        let default_buffer = Self::default_buffer(data_bytes);
         Self::parse(
             read(THREADS)?.as_deref(),
-            buffer.as_deref().or(Some(default_buffer)),
+            read(BUFFER)?.as_deref(),
             read(DIRECT)?.as_deref(),
         )
     }
@@ -133,9 +122,9 @@ fn read_header(file: &mut File) -> Result<(u64, Metadata), String> {
 pub(super) fn load(handle: NonNull<c_void>, path: &Path, prefix: &str) -> Result<(), BackendError> {
     let load = || -> Result<(), String> {
         let started = std::time::Instant::now();
+        let options = Options::from_env()?;
         let mut file = File::open(path).map_err(|e| e.to_string())?;
         let (start, metadata) = read_header(&mut file)?;
-        let options = Options::from_env(metadata.data_len())?;
         let mut names = Vec::new();
         let mut shapes = Vec::new();
         let mut ranges = Vec::new();
@@ -305,28 +294,18 @@ mod tests {
     }
 
     #[test]
-    fn small_shards_use_less_staging_and_explicit_budgets_are_preserved() {
-        for (bytes, expected) in [
-            (0, 16 << 20),
-            (1 << 30, 16 << 20),
-            ((1 << 30) + 1, 256 << 20),
-        ] {
-            let options = Options::parse(None, Some(Options::default_buffer(bytes)), None).unwrap();
-            assert_eq!(options.buffer_bytes, expected);
-        }
-        assert_eq!(
-            Options::parse(None, Some("67108864"), None)
-                .unwrap()
-                .buffer_bytes,
-            64 << 20
-        );
-    }
-
-    #[test]
     fn options_are_bounded_and_accept_buffered_mode() {
         let options = Options::parse(None, None, None).unwrap();
         assert_eq!(options.threads, 16);
-        assert_eq!(options.buffer_bytes, 256 << 20);
+        assert_eq!(options.buffer_bytes, 32 << 20);
+        for bytes in [16 << 20, 64 << 20, 256 << 20] {
+            assert_eq!(
+                Options::parse(None, Some(&bytes.to_string()), None)
+                    .unwrap()
+                    .buffer_bytes,
+                bytes
+            );
+        }
         assert!(options.direct);
         assert!(!Options::parse(None, None, Some("0")).unwrap().direct);
         assert!(!Options::parse(None, None, Some("false")).unwrap().direct);
