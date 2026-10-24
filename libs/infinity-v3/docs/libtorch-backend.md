@@ -719,3 +719,5 @@ checkpoint. Run `onejev_block_parity` with `ONEJEV_BLOCK_REFERENCE` pointing to
 `reference.json`; set `ONEJEV_DEVICE=cuda:0 ONEJEV_DTYPE=bfloat16` for GPU checks.
 
 Startup overlaps configuration validation (including CUDA discovery) with model frontend initialization. All models must pass validation before checkpoint loading begins. The CUDA preflight, health check, and full configured warmup remain required before readiness. Startup logs report frontend and configuration-validation durations; these phases overlap and must not be added together.
+
+See [ModernBERT startup measurements](modernbert-startup.md) for the draft baseline, candidate results, and remaining cold-start limitations.
