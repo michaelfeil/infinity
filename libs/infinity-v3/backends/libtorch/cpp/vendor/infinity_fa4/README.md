@@ -27,4 +27,3 @@ of the GPU SM target. Linking rejects exports without matching host provenance;
 x86-64 builds also reject AVX/VEX/EVEX instructions in the wrapper objects and
 library. Re-export old bundles instead of reusing build-host-specialized objects.
 The LibTorch runtime falls back when a bundle lacks the portable-host marker.
-
