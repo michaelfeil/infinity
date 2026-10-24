@@ -85,7 +85,7 @@ void concurrent_first_use() {
     future.get();
 }
 
-void standard(at::ScalarType dtype, int mode, bool cross, bool replay = true) {
+void standard(at::ScalarType dtype, int mode, bool cross) {
   const int64_t d = mode < 2 ? 64 : 128,
                 h = mode < 2    ? 6
                     : mode == 2 ? 12
@@ -112,8 +112,6 @@ void standard(at::ScalarType dtype, int mode, bool cross, bool replay = true) {
   };
   auto output = forward();
   close(output, expected(), "packed attention");
-  if (!replay)
-    return;
   auto stream = c10::cuda::getCurrentCUDAStream();
   stream.synchronize();
   at::cuda::CUDAGraph graph;
@@ -323,13 +321,19 @@ int main(int argc, char** argv) {
     return 0;
   }
   if (mode == "--extended-gqa") {
-    auto stream = c10::cuda::getStreamFromPool();
-    c10::cuda::CUDAStreamGuard guard(stream);
-    for (auto dtype : {at::kHalf, at::kBFloat16})
-      for (int family : {4, 5})
-        for (bool cross : {false, true})
-          standard(dtype, family, cross, false);
-    return 0;
+    const auto* props = at::cuda::getCurrentDeviceProperties();
+    bool exported = false;
+    for (int i = 2; i < argc; ++i)
+      exported |= std::stoi(argv[i]) == 10 * props->major + props->minor;
+    if (exported) {
+      auto stream = c10::cuda::getStreamFromPool();
+      c10::cuda::CUDAStreamGuard guard(stream);
+      for (auto dtype : {at::kHalf, at::kBFloat16})
+        for (int family : {4, 5})
+          for (bool cross : {false, true})
+            standard(dtype, family, cross);
+      return 0;
+    }
   }
   // The opt-in is off by default. An older portable bundle also lacks these modes
   // and must retain ordinary attention even when the opt-in is set.
