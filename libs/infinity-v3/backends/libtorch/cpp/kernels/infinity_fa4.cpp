@@ -81,21 +81,6 @@ bool enabled() {
   return value;
 }
 
-// Wider grouped-query exports use different softmax reductions. Keep their model-output
-// change opt-in until the deployment has validated retrieval/reranking quality.
-bool extended_gqa_enabled() {
-  static const bool value = [] {
-    const auto* setting = std::getenv(INFINITY_ENV("TORCH_FA4_EXTENDED_GQA"));
-    if (!setting)
-      return false;
-    const std::string s(setting);
-    TORCH_CHECK(s == "0" || s == "1" || s == "false" || s == "true",
-                "TORCH_FA4_EXTENDED_GQA must be 0, 1, false or true");
-    return s == "1" || s == "true";
-  }();
-  return value;
-}
-
 void library_anchor() {}
 
 Bundle* bundle(const at::Tensor& q) {
@@ -192,7 +177,7 @@ at::Tensor infinity_fa4(const at::Tensor& q,
     mode = 2;
   if (d == 128 && h == 2 * hk && !causal && left < 0 && right < 0)
     mode = 3;
-  if (d == 128 && !causal && left < 0 && right < 0 && extended_gqa_enabled()) {
+  if (d == 128 && !causal && left < 0 && right < 0) {
     if (h == 6 * hk)
       mode = 4;
     else if (h == 8 * hk)

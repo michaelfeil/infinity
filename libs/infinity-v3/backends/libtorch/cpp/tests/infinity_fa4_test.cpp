@@ -335,17 +335,17 @@ int main(int argc, char** argv) {
       return 0;
     }
   }
-  // The opt-in is off by default. An older portable bundle also lacks these modes
-  // and must retain ordinary attention even when the opt-in is set.
-  for (int ratio : {6, 8}) {
-    auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
-    auto q = at::zeros({7, 2 * ratio, 128}, opts), k = at::zeros({7, 2, 128}, opts);
-    auto cu = offsets({0, 7}, opts);
-    TORCH_CHECK(!tei::infinity_fa4(q, k, k, cu, cu, 7, .125).defined(),
-                "Unavailable extended GQA intercepted ordinary attention");
-  }
-  if (mode == "--extended-gqa-unavailable")
+  if (mode == "--extended-gqa" || mode == "--extended-gqa-unavailable") {
+    // Older portable bundles retain ordinary attention for the added modes.
+    for (int ratio : {6, 8}) {
+      auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
+      auto q = at::zeros({7, 2 * ratio, 128}, opts), k = at::zeros({7, 2, 128}, opts);
+      auto cu = offsets({0, 7}, opts);
+      TORCH_CHECK(!tei::infinity_fa4(q, k, k, cu, cu, 7, .125).defined(),
+                  "Unavailable extended GQA intercepted ordinary attention");
+    }
     return 0;
+  }
   concurrent_first_use();
   // Every reference and launch uses a non-default stream.
   auto stream = c10::cuda::getStreamFromPool();
