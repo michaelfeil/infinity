@@ -11,7 +11,7 @@
 #include "kernels/prefix_state_copy.h"
 #endif
 
-namespace tei {
+namespace infinity {
 // Foreach's fast copy route requires a homogeneous tensor list. Graph inputs
 // mix integer metadata with model values, so group them before dispatch.
 /// Enqueue paired copies on the current stream; callers retain buffers through completion. With

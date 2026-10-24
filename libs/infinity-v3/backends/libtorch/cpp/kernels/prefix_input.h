@@ -6,7 +6,7 @@
 #include <ATen/ATen.h>
 #include <span>
 
-namespace tei {
+namespace infinity {
 /// Owned packed suffix tensors for token IDs, positions, and token types.
 struct PrefixInputs {
   at::Tensor ids, positions, types;

@@ -37,7 +37,7 @@ DEALINGS IN THE SOFTWARE.
 #include <climits>
 #include <cstdint>
 
-namespace tei {
+namespace infinity {
 namespace {
 template <typename T>
 __device__ void tei_fp8_quant_row(const T* x, __nv_fp8_e4m3* y, float* scales, int k) {

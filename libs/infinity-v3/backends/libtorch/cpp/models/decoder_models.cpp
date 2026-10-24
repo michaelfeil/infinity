@@ -31,7 +31,7 @@
 #include <map>
 #include <cctype>
 
-namespace tei {
+namespace infinity {
 namespace {
 /// Attention, normalization, MLP/MoE weights, and execution metadata for one layer.
 struct DecoderLayer {

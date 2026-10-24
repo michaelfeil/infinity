@@ -39,7 +39,7 @@ DEALINGS IN THE SOFTWARE.
 */
 extern "C" __device__ float __nv_expf(float);
 
-namespace tei {
+namespace infinity {
 namespace {
 __global__ void qwen_half_moe_softmax(const float* x, float* dst) {
   const int64_t row = blockIdx.x;

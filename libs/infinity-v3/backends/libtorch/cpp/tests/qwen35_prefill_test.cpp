@@ -30,30 +30,30 @@ void production_prefill(int64_t heads) {
   auto alog = at::zeros({heads}, opts.dtype(at::kFloat)), dt = at::zeros_like(alog),
        norm = at::ones({128}, opts);
   std::vector<int32_t> offsets{0, 1, 14, tokens};
-  tei::PackedInput input;
+  infinity::PackedInput input;
   input.batch = 3;
   input.offsets = offsets.data();
   input.max_sequence = tokens - 14;
   input.cumulative = at::tensor(offsets, opts.dtype(at::kInt));
-  auto budget = std::make_shared<tei::PrefixBudget>();
+  auto budget = std::make_shared<infinity::PrefixBudget>();
   budget->reserved_bytes = 64 << 20;
-  std::vector<std::shared_ptr<tei::PrefixEntry>> saved;
+  std::vector<std::shared_ptr<infinity::PrefixEntry>> saved;
   for (int row = 0; row < 3; ++row) {
-    auto entry = std::make_shared<tei::PrefixEntry>();
+    auto entry = std::make_shared<infinity::PrefixEntry>();
     entry->budget = budget;
     entry->reserved_bytes = (64 << 20) / 3;
     entry->identity.tokens.resize(offsets[row + 1] - offsets[row]);
     saved.push_back(entry);
   }
-  tei::PrefixContext capture{
+  infinity::PrefixContext capture{
       input, offsets, {0, 0, 0}, {nullptr, nullptr, nullptr}, saved, 64 << 20, budget};
   auto reference = input;
   reference.prefix = &capture;
-  auto expected = tei::qwen35_reference_delta_cuda(
+  auto expected = infinity::qwen35_reference_delta_cuda(
       qkv, z, ab, conv, alog, dt, norm, reference, kh, heads, 1e-6, 0);
   at::Tensor state;
-  auto actual =
-      tei::qwen35_delta_cuda(qkv, z, ab, conv, alog, dt, norm, input, kh, heads, 1e-6, {}, &state);
+  auto actual = infinity::qwen35_delta_cuda(
+      qkv, z, ab, conv, alog, dt, norm, input, kh, heads, 1e-6, {}, &state);
   std::vector<at::Tensor> states;
   for (const auto& entry : saved)
     states.push_back(entry->layers.at(0).recurrent);
@@ -103,7 +103,7 @@ int main() {
           }
           states.push_back(state);
         }
-        tei::PackedInput input;
+        infinity::PackedInput input;
         input.batch = 3;
         input.cumulative = at::tensor(offsets, options.dtype(at::kInt)).to(at::kCUDA);
         auto values =
@@ -112,7 +112,7 @@ int main() {
         auto gates = at::cat({decay, beta}, -1).to(at::kCUDA);
         auto output = at::empty({tokens, heads, 128}, values.options());
         at::Tensor state;
-        tei::qwen35_prefill_cuda(values, qk, gates, input, output, kh, heads, &state);
+        infinity::qwen35_prefill_cuda(values, qk, gates, input, output, kh, heads, &state);
         check(output, at::stack(outputs), .007);
         check(state, at::stack(states), .006);
       }

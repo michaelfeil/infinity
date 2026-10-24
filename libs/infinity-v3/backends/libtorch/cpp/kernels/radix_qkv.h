@@ -4,7 +4,7 @@
 #include <ATen/ATen.h>
 #include <array>
 
-namespace tei {
+namespace infinity {
 // Metadata-only check: no device reads, synchronization or token-row padding.
 bool radix_qkv_cuda_supported(const at::Tensor& q,
                               const at::Tensor& k,

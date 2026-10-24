@@ -5,7 +5,7 @@
 #pragma once
 #include <ATen/ATen.h>
 
-namespace tei {
+namespace infinity {
 // The captured routed path is qualified only when the Hopper implementation
 // was compiled and the selected device is SM90.
 bool native_hopper_moe_available(const c10::Device& device);

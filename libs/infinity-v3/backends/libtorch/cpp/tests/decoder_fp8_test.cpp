@@ -17,8 +17,8 @@
 #include <iostream>
 
 namespace {
-tei::Options config(const std::string& family) {
-  tei::Options options;
+infinity::Options config(const std::string& family) {
+  infinity::Options options;
   options.values = {{"model_type", family},
                     {"hidden_size", "32"},
                     {"num_attention_heads", "4"},
@@ -33,8 +33,9 @@ tei::Options config(const std::string& family) {
   return options;
 }
 
-tei::Weights weights(const tei::Options& options, c10::Device device, at::ScalarType dtype) {
-  tei::Weights tensors;
+infinity::Weights
+weights(const infinity::Options& options, c10::Device device, at::ScalarType dtype) {
+  infinity::Weights tensors;
   const auto hidden = options.integer("hidden_size", 32);
   auto add = [&](const std::string& name, std::initializer_list<int64_t> shape, bool norm = false) {
     int64_t count = 1;
@@ -82,14 +83,15 @@ void close(const at::Tensor& a, const at::Tensor& b) {
 
 // Independent all-linear FP8 recipe: explicit projection quantization and
 // unfused normalization/activation operations, with direct cuBLASLt GEMMs.
-at::Tensor all_linear_reference(const tei::Options& options,
-                                const tei::Weights& weights,
-                                const tei::PackedInput& input,
+at::Tensor all_linear_reference(const infinity::Options& options,
+                                const infinity::Weights& weights,
+                                const infinity::PackedInput& input,
                                 at::ScalarType dtype) {
   auto get = [&](const std::string& name) { return weights.at("model." + name); };
   auto project =
       [&](const at::Tensor& x, const at::Tensor& w, const at::Tensor& bias = at::Tensor()) {
-        auto a = tei::fp8_quantize_rows(x.contiguous()), b = tei::fp8_quantize_rows(w.contiguous());
+        auto a = infinity::fp8_quantize_rows(x.contiguous()),
+             b = infinity::fp8_quantize_rows(w.contiguous());
         auto out = fp8_original_recipe(a.first, b.first, a.second, b.second, dtype);
         return bias.defined() ? out + bias : out;
       };
@@ -109,7 +111,7 @@ at::Tensor all_linear_reference(const tei::Options& options,
   at::Tensor residual;
   for (int i = 0; i < 2; ++i) {
     const auto p = "layers." + std::to_string(i) + ".";
-    auto norm = tei::fused_add_rms_norm(h, residual, get(p + "input_layernorm.weight"), 1e-6);
+    auto norm = infinity::fused_add_rms_norm(h, residual, get(p + "input_layernorm.weight"), 1e-6);
     residual = norm.second;
     auto weight = at::cat({get(p + "self_attn.q_proj.weight"),
                            get(p + "self_attn.k_proj.weight"),
@@ -126,7 +128,7 @@ at::Tensor all_linear_reference(const tei::Options& options,
       k = std::get<0>(
           at::_fused_rms_norm(k.contiguous(), {8}, get(p + "self_attn.k_norm.weight"), 1e-6));
     }
-    auto rotated = tei::fused_rotary(q, k, cos, sin, options.string("model_type") == "llama");
+    auto rotated = infinity::fused_rotary(q, k, cos, sin, options.string("model_type") == "llama");
     auto attended = std::get<0>(at::_flash_attention_forward(rotated.first,
                                                              rotated.second,
                                                              v,
@@ -143,13 +145,14 @@ at::Tensor all_linear_reference(const tei::Options& options,
                         .contiguous()
                         .view({h.size(0), 32});
     auto out = project(attended, get(p + "self_attn.o_proj.weight"));
-    norm = tei::fused_add_rms_norm(out, residual, get(p + "post_attention_layernorm.weight"), 1e-6);
+    norm = infinity::fused_add_rms_norm(
+        out, residual, get(p + "post_attention_layernorm.weight"), 1e-6);
     residual = norm.second;
     auto gu = project(norm.first,
                       at::cat({get(p + "mlp.gate_proj.weight"), get(p + "mlp.up_proj.weight")}, 0));
-    h = project(tei::fused_gated_activation(gu, 5), get(p + "mlp.down_proj.weight"));
+    h = project(infinity::fused_gated_activation(gu, 5), get(p + "mlp.down_proj.weight"));
   }
-  return tei::fused_add_rms_norm(h, residual, get("norm.weight"), 1e-6).first;
+  return infinity::fused_add_rms_norm(h, residual, get("norm.weight"), 1e-6).first;
 }
 
 void check_family(const std::string& family,
@@ -169,7 +172,7 @@ void check_family(const std::string& family,
       quantized_weights.at("model.layers.0.mlp.down_proj.weight").storage().getWeakStorageImpl();
   auto original_attention =
       quantized_weights.at("model.layers.0.self_attn.o_proj.weight").storage().getWeakStorageImpl();
-  auto model = tei::create_decoder(enabled, quantized_weights, device, dtype);
+  auto model = infinity::create_decoder(enabled, quantized_weights, device, dtype);
   model->ready();
   TORCH_CHECK(original_down.expired(),
               "FP8 cache retained original model-dtype down-projection storage");
@@ -178,19 +181,19 @@ void check_family(const std::string& family,
   auto dense_weights = weights(options, device, dtype);
   auto dense_down =
       dense_weights.at("model.layers.0.mlp.down_proj.weight").storage().getWeakStorageImpl();
-  auto dense = tei::create_decoder(options, dense_weights, device, dtype);
+  auto dense = infinity::create_decoder(options, dense_weights, device, dtype);
   dense->ready();
   TORCH_CHECK(!dense_down.expired(), "Disabled FP8 unexpectedly replaced dense projection weights");
 
   auto index = at::TensorOptions().device(device).dtype(at::kLong);
   std::vector<int32_t> offsets = {0, 3, 7};
-  tei::PackedInput input{at::tensor({3, 4, 5, 3, 4, 6, 7}, index),
-                         at::zeros({7}, index),
-                         at::tensor({0, 1, 2, 0, 1, 2, 3}, index),
-                         at::tensor({0, 3, 7}, index.dtype(at::kInt)),
-                         offsets.data(),
-                         2,
-                         4};
+  infinity::PackedInput input{at::tensor({3, 4, 5, 3, 4, 6, 7}, index),
+                              at::zeros({7}, index),
+                              at::tensor({0, 1, 2, 0, 1, 2, 3}, index),
+                              at::tensor({0, 3, 7}, index.dtype(at::kInt)),
+                              offsets.data(),
+                              2,
+                              4};
   auto full = model->forward(input), reference = dense->forward(input);
   TORCH_CHECK(full.sizes() == at::IntArrayRef({7, hidden}) && full.scalar_type() == dtype &&
                   at::isfinite(full).all().item<bool>(),
@@ -220,7 +223,7 @@ void check_family(const std::string& family,
   input.fold_gather = at::tensor({0, 1, 2, 5, 6}, index);
   auto folded = model->forward(input);
   close(folded, full);
-  TORCH_CHECK(folded.size(0) == 7 && tei::radix_ids(input).numel() == 5,
+  TORCH_CHECK(folded.size(0) == 7 && infinity::radix_ids(input).numel() == 5,
               "FP8 decoder introduced padded compact rows");
   input.ids.index_put_({6}, 8);
   input.compact_ids.index_put_({4}, 8);
@@ -239,7 +242,7 @@ void check_family(const std::string& family,
 // norm/rotary/attention primitives have independent exact-reference tests.
 void check_registered_causal_contract(c10::Device device) {
   constexpr int64_t hidden = 2048, heads = 32, kvheads = 4, head = 64, intermediate = 64;
-  tei::Options options = config("llama");
+  infinity::Options options = config("llama");
   options.values["hidden_size"] = "2048";
   options.values["num_attention_heads"] = "32";
   options.values["num_key_value_heads"] = "4";
@@ -247,7 +250,7 @@ void check_registered_causal_contract(c10::Device device) {
   options.values["intermediate_size"] = "64";
   options.values["num_hidden_layers"] = "1";
   options.values["rms_norm_eps"] = "0.00001";
-  tei::Weights checkpoint;
+  infinity::Weights checkpoint;
   auto add = [&](const std::string& name, std::initializer_list<int64_t> shape, bool norm = false) {
     int64_t count = 1;
     float offset = 0;
@@ -276,7 +279,7 @@ void check_registered_causal_contract(c10::Device device) {
   add(p + "mlp.down_proj.weight", {hidden, intermediate});
   std::vector<int32_t> offsets = {0, 9, 17};
   auto index = at::TensorOptions().device(device).dtype(at::kLong);
-  tei::PackedInput input{
+  infinity::PackedInput input{
       at::tensor({1, 2, 3, 4, 5, 6, 7, 8, 9, 1, 2, 3, 10, 11, 12, 13, 14}, index),
       at::zeros({17}, index),
       at::tensor({0, 1, 2, 3, 4, 5, 6, 7, 8, 0, 1, 2, 3, 4, 5, 6, 7}, index),
@@ -285,8 +288,8 @@ void check_registered_causal_contract(c10::Device device) {
       2,
       9};
   auto embedding = at::embedding(checkpoint.at("model.embed_tokens.weight"), input.ids);
-  auto first =
-      tei::decoder_exact_rms_norm(embedding, {}, checkpoint.at(p + "input_layernorm.weight"), 1e-5);
+  auto first = infinity::decoder_exact_rms_norm(
+      embedding, {}, checkpoint.at(p + "input_layernorm.weight"), 1e-5);
   auto qkv_weight = at::cat({checkpoint.at(p + "self_attn.q_proj.weight"),
                              checkpoint.at(p + "self_attn.k_proj.weight"),
                              checkpoint.at(p + "self_attn.v_proj.weight")},
@@ -299,22 +302,22 @@ void check_registered_causal_contract(c10::Device device) {
                        .clone()
                        .to(device);
   auto angles = input.positions.to(at::kFloat).unsqueeze(1) * frequency;
-  auto rotated = tei::fused_rotary(packed.narrow(1, 0, heads),
-                                   packed.narrow(1, heads, kvheads),
-                                   at::cos(angles).to(at::kBFloat16).unsqueeze(1),
-                                   at::sin(angles).to(at::kBFloat16).unsqueeze(1),
-                                   true);
-  auto attended = tei::torch_flash_fma(rotated.first,
-                                       rotated.second,
-                                       packed.narrow(1, heads + kvheads, kvheads),
-                                       input.cumulative,
-                                       9,
-                                       .125,
-                                       true)
+  auto rotated = infinity::fused_rotary(packed.narrow(1, 0, heads),
+                                        packed.narrow(1, heads, kvheads),
+                                        at::cos(angles).to(at::kBFloat16).unsqueeze(1),
+                                        at::sin(angles).to(at::kBFloat16).unsqueeze(1),
+                                        true);
+  auto attended = infinity::torch_flash_fma(rotated.first,
+                                            rotated.second,
+                                            packed.narrow(1, heads + kvheads, kvheads),
+                                            input.cumulative,
+                                            9,
+                                            .125,
+                                            true)
                       .contiguous()
                       .view({17, heads * head});
   auto projected = at::linear(attended, checkpoint.at(p + "self_attn.o_proj.weight"));
-  auto post = tei::decoder_exact_rms_norm(
+  auto post = infinity::decoder_exact_rms_norm(
       projected, first.second, checkpoint.at(p + "post_attention_layernorm.weight"), 1e-5);
   auto gate_weight = at::cat(
       {checkpoint.at(p + "mlp.gate_proj.weight"), checkpoint.at(p + "mlp.up_proj.weight")}, 0);
@@ -323,20 +326,21 @@ void check_registered_causal_contract(c10::Device device) {
     enabled.values["_fp8_dynamic"] = fp8 ? "true" : "false";
     enabled.values["_fp8_scope"] = "mlp"; // Original Candle projection recipe.
     auto owned = checkpoint;
-    auto model = tei::create_decoder(enabled, owned, device, at::kBFloat16);
+    auto model = infinity::create_decoder(enabled, owned, device, at::kBFloat16);
     model->ready();
     auto original = [&](const at::Tensor& x, const at::Tensor& weight) {
       if (!fp8)
         return at::linear(x, weight);
-      auto activations = tei::fp8_quantize_rows(x), weights = tei::fp8_quantize_rows(weight);
+      auto activations = infinity::fp8_quantize_rows(x),
+           weights = infinity::fp8_quantize_rows(weight);
       return fp8_original_recipe(
           activations.first, weights.first, activations.second, weights.second, at::kBFloat16);
     };
-    auto gated = tei::fused_gated_activation(original(post.first, gate_weight), 5);
+    auto gated = infinity::fused_gated_activation(original(post.first, gate_weight), 5);
     auto down = original(gated, checkpoint.at(p + "mlp.down_proj.weight"));
-    auto expected =
-        tei::decoder_exact_rms_norm(down, post.second, checkpoint.at("model.norm.weight"), 1e-5)
-            .first;
+    auto expected = infinity::decoder_exact_rms_norm(
+                        down, post.second, checkpoint.at("model.norm.weight"), 1e-5)
+                        .first;
     auto actual = model->forward(input);
     TORCH_CHECK(
         actual.sizes() == at::IntArrayRef({17, hidden}) && at::equal(actual, expected),
@@ -347,10 +351,10 @@ void check_registered_causal_contract(c10::Device device) {
       << "Registered causal BF16 width2048 reference: dense and FP8 bitwise,17 actual rows passed\n";
 }
 
-void rejects(tei::Options options, c10::Device device, at::ScalarType dtype) {
+void rejects(infinity::Options options, c10::Device device, at::ScalarType dtype) {
   options.values["_fp8_dynamic"] = "true";
-  tei::Weights empty;
-  auto model = tei::create_decoder(options, empty, device, dtype);
+  infinity::Weights empty;
+  auto model = infinity::create_decoder(options, empty, device, dtype);
   bool rejected = false;
   try {
     model->ready();
@@ -397,7 +401,7 @@ int main(int argc, char** argv) {
     auto options = config("qwen3");
     options.values["_fp8_scope"] = scope;
     auto original = weights(options, device, at::kBFloat16);
-    auto model = tei::create_decoder(options, original, device, at::kBFloat16);
+    auto model = infinity::create_decoder(options, original, device, at::kBFloat16);
     bool rejected = false;
     try {
       model->ready();

@@ -137,12 +137,12 @@ void native_allocator_error_test(const at::Device& device, int pressure = 0) {
     TORCH_CHECK(before, tei_error());
     std::array<float, 16> saved;
     std::copy_n(before, 16, saved.begin());
-    auto state = tei::pinned_admission_state();
+    auto state = infinity::pinned_admission_state();
     const auto previous_limit = state->max_bytes;
     // Retained native storage fills the cap even after reclaiming Torch cache.
     state->max_bytes = state->bytes;
     // Exact RAW capacity exceeds one platform host page, without padding.
-    const auto sequences = tei::pinned_host_page_size() / (4 * 16 * sizeof(float)) + 1;
+    const auto sequences = infinity::pinned_host_page_size() / (4 * 16 * sizeof(float)) + 1;
     TORCH_CHECK(sequences <= static_cast<size_t>(std::numeric_limits<int32_t>::max() / 4),
                 "Host page geometry is unrepresentable");
     std::vector<int64_t> packed_ids(4 * sequences), packed_types(4 * sequences),
@@ -370,11 +370,11 @@ void native_allocator_error_test(const at::Device& device, int pressure = 0) {
   valid();
 }
 
-class Model final : public tei::Model {
+class Model final : public infinity::Model {
 public:
   void ready() override {}
 
-  at::Tensor forward(const tei::PackedInput& input) const override {
+  at::Tensor forward(const infinity::PackedInput& input) const override {
     return (input.ids.to(at::kFloat) + input.positions.to(at::kFloat))
         .unsqueeze(1)
         .repeat({1, 768});
@@ -383,25 +383,25 @@ public:
 
 int main() {
   try {
-    TORCH_CHECK(tei::pinned_allocation_bytes(1, 4096) == 4096 &&
-                    tei::pinned_allocation_bytes(4097, 4096) == 8192,
+    TORCH_CHECK(infinity::pinned_allocation_bytes(1, 4096) == 4096 &&
+                    infinity::pinned_allocation_bytes(4097, 4096) == 8192,
                 "4 KiB host page accounting regressed");
-    TORCH_CHECK(tei::pinned_allocation_bytes(1, 65536) == 65536 &&
-                    tei::pinned_allocation_bytes(65537, 65536) == 131072,
+    TORCH_CHECK(infinity::pinned_allocation_bytes(1, 65536) == 65536 &&
+                    infinity::pinned_allocation_bytes(65537, 65536) == 131072,
                 "64 KiB host page accounting regressed");
-    TORCH_CHECK(tei::pinned_cached_bytes(8192, 2, 65536) == 8192 + 2 * 2 * 65535,
+    TORCH_CHECK(infinity::pinned_cached_bytes(8192, 2, 65536) == 8192 + 2 * 2 * 65535,
                 "Cached Torch block start/end page rounding is not reserved");
     c10::InferenceMode inference;
     const at::Device device("cuda:0");
     c10::cuda::CUDAGuard guard(device);
     // Aggregate admission is tied to actual storage across independent engines,
     // including idle retained slots and views that survive their pool.
-    auto pinned_state = tei::pinned_admission_state();
+    auto pinned_state = infinity::pinned_admission_state();
     auto* host_allocator = at::getHostAllocator(at::kCUDA);
     host_allocator->empty_cache();
     const auto original_pinned_limit = pinned_state->max_bytes;
     TORCH_CHECK(pinned_state->bytes == 0, "Unexpected initial native pinned storage");
-    const auto page = tei::pinned_host_page_size();
+    const auto page = infinity::pinned_host_page_size();
     std::cout
         << "PINNED_ALLOCATOR_SCOPE host_page_bytes=" << page << " host_register="
         << c10::cuda::CUDACachingAllocator::CUDAAllocatorConfig::pinned_use_cuda_host_register()
@@ -409,13 +409,13 @@ int main() {
         << c10::cuda::CUDACachingAllocator::CUDAAllocatorConfig::pinned_reserve_segment_size_mb()
         << '\n';
     const auto foreign_stats = host_allocator->get_stats();
-    const auto foreign_pins = tei::pinned_cached_bytes(foreign_stats.allocated_bytes.current,
-                                                       foreign_stats.allocations.current);
+    const auto foreign_pins = infinity::pinned_cached_bytes(foreign_stats.allocated_bytes.current,
+                                                            foreign_stats.allocations.current);
     pinned_state->max_bytes = foreign_pins + 2 * page;
-    auto engine_a = std::make_shared<tei::OutputPool>();
-    auto engine_b = std::make_shared<tei::OutputPool>();
+    auto engine_a = std::make_shared<infinity::OutputPool>();
+    auto engine_b = std::make_shared<infinity::OutputPool>();
     for (auto engine : {engine_a, engine_b}) {
-      tei::OutputLease lease(engine, device, 1);
+      infinity::OutputLease lease(engine, device, 1);
       lease.allocate();
       lease.record();
       lease.wait();
@@ -424,10 +424,10 @@ int main() {
                 "Pinned replicas did not share physical staging accounting");
     bool process_rejected = false;
     try {
-      auto engine_c = std::make_shared<tei::OutputPool>();
-      tei::OutputLease lease(engine_c, device, 1);
+      auto engine_c = std::make_shared<infinity::OutputPool>();
+      infinity::OutputLease lease(engine_c, device, 1);
       lease.allocate();
-    } catch (const tei::MemoryAdmissionError&) {
+    } catch (const infinity::MemoryAdmissionError&) {
       process_rejected = true;
     }
     TORCH_CHECK(process_rejected && pinned_state->bytes == 2 * page,
@@ -444,8 +444,8 @@ int main() {
                                at::TensorOptions().dtype(at::kFloat).pinned_memory(true));
     process_rejected = false;
     try {
-      auto blocked = tei::allocate_pinned_staging(1, at::TensorOptions().dtype(at::kFloat));
-    } catch (const tei::MemoryAdmissionError&) {
+      auto blocked = infinity::allocate_pinned_staging(1, at::TensorOptions().dtype(at::kFloat));
+    } catch (const infinity::MemoryAdmissionError&) {
       process_rejected = true;
     }
     TORCH_CHECK(process_rejected && pinned_state->bytes == 0 && torch_pin.is_pinned(),
@@ -455,7 +455,7 @@ int main() {
     TORCH_CHECK(cached_pins.allocated_bytes.current >= cached_pins.active_bytes.current + 2 * page,
                 "Torch pinned size-class cache fixture was not retained");
     pinned_state->max_bytes = foreign_pins + page;
-    auto reclaimed = tei::allocate_pinned_staging(1, at::TensorOptions().dtype(at::kFloat));
+    auto reclaimed = infinity::allocate_pinned_staging(1, at::TensorOptions().dtype(at::kFloat));
     TORCH_CHECK(pinned_state->bytes == page &&
                     host_allocator->get_stats().allocated_bytes.current <= foreign_pins,
                 "Pinned admission did not reclaim completed Torch cache before allocation");
@@ -468,10 +468,10 @@ int main() {
     reclaimed = at::Tensor();
     TORCH_CHECK(pinned_state->bytes == 0, "Direct pinned staging was cached after release");
     pinned_state->max_bytes = original_pinned_limit;
-    auto pool = std::make_shared<tei::OutputPool>();
-    tei::CudaGraphCache cache(2, 4096, 1);
+    auto pool = std::make_shared<infinity::OutputPool>();
+    infinity::CudaGraphCache cache(2, 4096, 1);
     Model model;
-    std::array<std::unique_ptr<tei::OutputLease>, 2> pending;
+    std::array<std::unique_ptr<infinity::OutputLease>, 2> pending;
     std::array<int, 2> patterns{};
     std::array<int64_t, 2> rows{};
     const float* previous_host = nullptr;
@@ -491,7 +491,7 @@ int main() {
       }
       // Exact shapes change and evict cached graphs while another result is pending.
       const int64_t tokens = step < 4 ? 4096 : step % 3 == 0 ? 32 : step % 3 == 1 ? 128 : 4096;
-      auto lease = std::make_unique<tei::OutputLease>(pool, device, tokens * 768);
+      auto lease = std::make_unique<infinity::OutputLease>(pool, device, tokens * 768);
       lease->allocate();
       const int pattern = step * 7;
       auto host = at::full({tokens}, pattern, at::TensorOptions().dtype(at::kLong));
@@ -500,7 +500,7 @@ int main() {
       auto positions = lease->upload(at::arange(tokens, host.options()));
       std::array<int32_t, 2> offsets{0, static_cast<int32_t>(tokens)};
       auto cu = lease->upload(at::from_blob(offsets.data(), {2}, host.options().dtype(at::kInt)));
-      tei::PackedInput input{
+      infinity::PackedInput input{
           ids, lease->upload(at::zeros_like(host)), positions, cu, offsets.data(), 1, tokens};
       lease->copy(cache.forward(model, input), 0);
       lease->record();
@@ -519,16 +519,16 @@ int main() {
     }
     // Dropping unfinished work must drain before reusing either input or output pins.
     {
-      tei::OutputLease abandoned(pool, device, 4096 * 768);
+      infinity::OutputLease abandoned(pool, device, 4096 * 768);
       abandoned.allocate();
       abandoned.copy(at::ones({4096, 768}, at::TensorOptions().device(device).dtype(at::kHalf)), 0);
       abandoned.record();
     }
     at::Tensor partial_upload;
-    auto partial_pool = std::make_shared<tei::OutputPool>();
+    auto partial_pool = std::make_shared<infinity::OutputPool>();
     const auto before_partial = pinned_state->bytes;
     {
-      tei::OutputLease partial(partial_pool, device, 1);
+      infinity::OutputLease partial(partial_pool, device, 1);
       partial.allocate();
       partial_upload =
           partial.upload(at::full({1024 * 1024}, 123, at::TensorOptions().dtype(at::kInt)));
@@ -539,7 +539,7 @@ int main() {
     TORCH_CHECK(at::equal(partial_upload.cpu(),
                           at::full({1024 * 1024}, 123, at::TensorOptions().dtype(at::kInt))),
                 "Partial upload released its external pin before H2D completion");
-    tei::OutputLease reused(pool, device, 768);
+    infinity::OutputLease reused(pool, device, 768);
     reused.allocate();
     reused.copy(at::full({1, 768}, 42, at::TensorOptions().device(device)), 0);
     reused.record();
@@ -560,14 +560,14 @@ int main() {
     second_reader.get();
     // GPU completion alone must not release A while CPU packing still owns it.
     // Even if B is free, C waits for A rather than selecting any free slot.
-    auto alternating = std::make_shared<tei::OutputPool>();
-    auto first = std::make_unique<tei::OutputLease>(alternating, device, 1);
+    auto alternating = std::make_shared<infinity::OutputPool>();
+    auto first = std::make_unique<infinity::OutputLease>(alternating, device, 1);
     first->allocate();
     first->copy(at::ones({1}, at::TensorOptions().device(device)), 0);
     first->record();
     const auto first_host = first->wait();
     {
-      tei::OutputLease second(alternating, device, 1);
+      infinity::OutputLease second(alternating, device, 1);
       second.allocate();
       second.copy(at::full({1}, 2, at::TensorOptions().device(device)), 0);
       second.record();
@@ -578,7 +578,7 @@ int main() {
       c10::InferenceMode worker_inference;
       c10::cuda::CUDAGuard worker_guard(device);
       started.set_value();
-      tei::OutputLease lease(alternating, device, 1);
+      infinity::OutputLease lease(alternating, device, 1);
       lease.allocate();
       lease.copy(at::full({1}, 3, at::TensorOptions().device(device)), 0);
       lease.record();
@@ -592,17 +592,17 @@ int main() {
     TORCH_CHECK(waiting == std::future_status::timeout, "C reused free B while A was still owned");
     TORCH_CHECK(third_host == first_host && third_value == 3, "C did not reuse A safely");
     // Admission protects pending results; only completed idle buffers may be evicted.
-    auto bounded = std::make_shared<tei::OutputPool>();
+    auto bounded = std::make_shared<infinity::OutputPool>();
     bounded->max_bytes = 256;
-    auto held = std::make_unique<tei::OutputLease>(bounded, device, 8);
+    auto held = std::make_unique<infinity::OutputLease>(bounded, device, 8);
     held->allocate();
     held->copy(at::ones({8}, at::TensorOptions().device(device)), 0);
     held->record();
     bool rejected = false;
     try {
-      tei::OutputLease oversized(bounded, device, 32);
+      infinity::OutputLease oversized(bounded, device, 32);
       oversized.allocate();
-    } catch (const tei::MemoryAdmissionError&) {
+    } catch (const infinity::MemoryAdmissionError&) {
       rejected = true;
     }
     TORCH_CHECK(rejected && bounded->retained_bytes() == 64,
@@ -611,20 +611,20 @@ int main() {
     held.reset();
     // Next submission uses the other slot and releases the completed idle cache.
     {
-      tei::OutputLease small(bounded, device, 8);
+      infinity::OutputLease small(bounded, device, 8);
       small.allocate();
       small.record();
       small.wait();
     }
     {
-      tei::OutputLease larger(bounded, device, 32);
+      infinity::OutputLease larger(bounded, device, 32);
       larger.allocate();
       TORCH_CHECK(bounded->retained_bytes() == 256,
                   "Idle staging eviction did not respect the budget");
       rejected = false;
       try {
         larger.upload(at::ones({1}, at::TensorOptions().dtype(at::kFloat)));
-      } catch (const tei::MemoryAdmissionError&) {
+      } catch (const infinity::MemoryAdmissionError&) {
         rejected = true;
       }
       TORCH_CHECK(rejected && bounded->retained_bytes() == 256,
@@ -635,16 +635,16 @@ int main() {
     }
     rejected = false;
     try {
-      tei::OutputLease oversized(bounded, device, std::numeric_limits<size_t>::max());
+      infinity::OutputLease oversized(bounded, device, std::numeric_limits<size_t>::max());
       oversized.allocate();
     } catch (const c10::Error&) {
       rejected = true;
     }
     TORCH_CHECK(rejected, "Oversized capacity overflow bypassed staging admission");
-    auto varied = std::make_shared<tei::OutputPool>();
+    auto varied = std::make_shared<infinity::OutputPool>();
     varied->max_bytes = 4096;
     {
-      tei::OutputLease many_inputs(varied, device, 8);
+      infinity::OutputLease many_inputs(varied, device, 8);
       many_inputs.allocate();
       many_inputs.upload(at::ones({256}, at::TensorOptions().dtype(at::kFloat)));
       many_inputs.upload(at::ones({256}, at::TensorOptions().dtype(at::kFloat)));
@@ -652,26 +652,26 @@ int main() {
       many_inputs.wait();
     }
     {
-      tei::OutputLease other(varied, device, 8);
+      infinity::OutputLease other(varied, device, 8);
       other.allocate();
       other.record();
       other.wait();
     }
     {
-      tei::OutputLease larger(varied, device, 500);
+      infinity::OutputLease larger(varied, device, 500);
       larger.allocate();
       TORCH_CHECK(varied->slots[0].inputs.empty(), "Selected slot retained unused input pins");
       larger.record();
       larger.wait();
     }
     {
-      tei::OutputLease other(varied, device, 8);
+      infinity::OutputLease other(varied, device, 8);
       other.allocate();
       other.record();
       other.wait();
     }
     {
-      tei::OutputLease smaller(varied, device, 8);
+      infinity::OutputLease smaller(varied, device, 8);
       smaller.allocate();
       smaller.upload(at::ones({32}, at::TensorOptions().dtype(at::kFloat)));
       TORCH_CHECK(varied->retained_bytes() <= varied->max_bytes,
@@ -682,13 +682,13 @@ int main() {
     }
     // Simulate device allocation pressure without consuming the GPU's memory.
     // An allocation failure must release the slot and its partial host allocation.
-    auto pressured = std::make_shared<tei::OutputPool>();
+    auto pressured = std::make_shared<infinity::OutputPool>();
     const auto fraction = c10::cuda::CUDACachingAllocator::getMemoryFraction(0);
     c10::cuda::CUDACachingAllocator::emptyCache();
     c10::cuda::CUDACachingAllocator::setMemoryFraction(0, 0);
     bool allocation_failed = false;
     try {
-      tei::OutputLease failed(pressured, device, 8 * 1024 * 1024);
+      infinity::OutputLease failed(pressured, device, 8 * 1024 * 1024);
       failed.allocate();
     } catch (const c10::OutOfMemoryError&) {
       allocation_failed = true;
@@ -700,7 +700,7 @@ int main() {
     TORCH_CHECK(allocation_failed && pressured->retained_bytes() == 0,
                 "Failed allocation retained partial staging buffers");
     {
-      tei::OutputLease recovered(pressured, device, 8);
+      infinity::OutputLease recovered(pressured, device, 8);
       recovered.allocate();
       recovered.copy(at::full({8}, 11, at::TensorOptions().device(device)), 0);
       recovered.record();

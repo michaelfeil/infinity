@@ -21,7 +21,7 @@
 #include <algorithm>
 #include <map>
 
-namespace tei {
+namespace infinity {
 // Adapted from Candle qwen3_vl/vision.rs; upstream Apache-2.0 notices retained.
 const at::Tensor& Qwen3VL::w(const std::string& name) const {
   return weight(visual_weights, "model.visual." + name);

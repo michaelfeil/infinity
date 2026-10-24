@@ -22,7 +22,7 @@
 #include <c10/cuda/CUDAStream.h>
 #endif
 
-namespace tei {
+namespace infinity {
 // Two reusable slots bound pinned memory and pending GPU outputs per replica.
 // A lease stays alive through CPU result construction, including cancellation.
 struct OutputSlot {

@@ -6,7 +6,7 @@
 #pragma once
 #include <ATen/ATen.h>
 
-namespace tei {
+namespace infinity {
 // CUDA pooling over selected exact sequence spans, preserving Candle's
 // model-dtype reduction tree and reciprocal rounding.
 /// Reduce [tokens, width] hidden rows over int32 [selected_sequences, 2] start/length spans.

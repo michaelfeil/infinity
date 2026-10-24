@@ -23,7 +23,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #endif
 
-namespace tei {
+namespace infinity {
 /*
 From PyTorch:
 

@@ -16,7 +16,7 @@
 #if defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
 #include <immintrin.h>
 #endif
-namespace tei::modern_cpu {
+namespace infinity::modern_cpu {
 namespace {
 std::string read(const std::filesystem::path& path) {
   std::ifstream file(path);
@@ -378,4 +378,4 @@ at::Tensor mean(const at::Tensor& x) {
   }
   return output;
 }
-} // namespace tei::modern_cpu
+} // namespace infinity::modern_cpu

@@ -23,20 +23,20 @@ int main() {
   for (auto dtype : {at::kHalf, at::kBFloat16}) {
     auto options = at::TensorOptions().device(at::kCUDA, 0).dtype(dtype);
     if (at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt) {
-      tei::OrdinaryLinearExecutor ordinary;
+      infinity::OrdinaryLinearExecutor ordinary;
       auto x = at::randn({32, 768}, options) * .3;
       auto w = at::randn({2304, 768}, options) * .05;
       auto expected = at::linear(x, w);
       c10::cuda::getCurrentCUDAStream().synchronize();
       {
-        tei::OrdinaryLinearExecutor retry;
-        auto state = tei::workspace_admission_state(0);
+        infinity::OrdinaryLinearExecutor retry;
+        auto state = infinity::workspace_admission_state(0);
         size_t available;
         {
           std::lock_guard lock(state->mutex);
           available = (state->limit ? state->limit : size_t(512) << 20) - state->retained;
         }
-        auto pressure = tei::reserve_workspace_memory(0, available);
+        auto pressure = infinity::reserve_workspace_memory(0, available);
         TORCH_CHECK(pressure, "Workspace pressure fixture failed to reserve remaining allowance");
         auto session = retry.prepare(x);
         TORCH_CHECK(!retry.forward(x, w, session).defined(), "Workspace cap pressure was ignored");
@@ -78,15 +78,15 @@ int main() {
         stream.synchronize();
       }
       TORCH_CHECK(at::equal(retained, expected), "Session destruction invalidated owned output");
-      tei::OrdinaryLinearExecutor::Session retired;
+      infinity::OrdinaryLinearExecutor::Session retired;
       at::Tensor lifetime_output;
       {
-        tei::OrdinaryLinearExecutor temporary;
+        infinity::OrdinaryLinearExecutor temporary;
         retired = temporary.prepare(x);
         lifetime_output = temporary.forward(x, w, retired);
         TORCH_CHECK(lifetime_output.defined(), "Lifetime fixture declined");
       }
-      tei::OrdinaryLinearExecutor different;
+      infinity::OrdinaryLinearExecutor different;
       TORCH_CHECK(!different.forward(x, w, retired).defined(),
                   "Session admitted a different executor");
       std::exception_ptr worker_failure;
@@ -99,7 +99,7 @@ int main() {
           CUcontext before{}, after{};
           auto get = c10::cuda::DriverAPI::get()->cuCtxGetCurrent_;
           TORCH_CHECK(get(&before) == CUDA_SUCCESS, "Missing worker context");
-          session = tei::OrdinaryLinearExecutor::Session{};
+          session = infinity::OrdinaryLinearExecutor::Session{};
           TORCH_CHECK(
               c10::cuda::current_device() == device && get(&after) == CUDA_SUCCESS &&
                   after == before,
@@ -138,7 +138,7 @@ int main() {
                 << " passed\n";
     }
     auto weight = at::randn({512, 256}, options) * .05;
-    tei::Fp8Linear linear(weight);
+    infinity::Fp8Linear linear(weight);
     for (int64_t rows : {1, 3, 7, 17, 35, 128}) {
       auto input = at::randn({rows, 256}, options) * .3;
       // Exact zero and sub-floor rows exercise the scale clamp, including
@@ -146,7 +146,7 @@ int main() {
       input.select(0, 0).zero_();
       if (rows > 1)
         input.select(0, 1).fill_(1e-14);
-      auto quantized = tei::fp8_quantize_rows(input);
+      auto quantized = infinity::fp8_quantize_rows(input);
       auto cpu = input.to(at::kCPU).to(at::kFloat);
       auto scale = at::amax(cpu.abs(), {1}, true).clamp_min(1e-12) * (1.f / 448.f);
       auto reference = (cpu / scale).clamp(-448., 448.).to(at::kFloat8_e4m3fn);
@@ -181,7 +181,7 @@ int main() {
         auto x = storage.narrow(0, offset, 17 * width).view({17, width});
         x.select(0, 0).zero_();
         x.select(0, 1).fill_(1e-14);
-        auto q = tei::fp8_quantize_rows(x);
+        auto q = infinity::fp8_quantize_rows(x);
         auto cpu = x.to(at::kCPU).to(at::kFloat);
         auto scale = at::amax(cpu.abs(), {1}, true).clamp_min(1e-12) * (1.f / 448.f);
         auto expected = (cpu / scale).clamp(-448., 448.).to(at::kFloat8_e4m3fn);
@@ -194,13 +194,13 @@ int main() {
          {256, 2048, 4096, 6144, 8192, 12288, 14336, 17408, 18432, 24576, 28672, 32768}) {
       auto gate_up = at::randn({17, 2 * width}, options) * 8;
       gate_up.select(0, 0).zero_();
-      auto activated = tei::fused_gated_activation(gate_up, 5);
-      auto reference = tei::fp8_quantize_rows(activated);
-      auto fused = tei::fp8_swiglu_quantize(gate_up);
+      auto activated = infinity::fused_gated_activation(gate_up, 5);
+      auto reference = infinity::fp8_quantize_rows(activated);
+      auto fused = infinity::fp8_swiglu_quantize(gate_up);
       TORCH_CHECK(at::equal(fused.first.view(at::kByte), reference.first.view(at::kByte)) &&
                       at::equal(fused.second, reference.second),
                   "Fused SwiGLU changed FP8 bytes/scales");
-      tei::Fp8Linear down(at::randn({256, width}, options) * .05);
+      infinity::Fp8Linear down(at::randn({256, width}, options) * .05);
       auto bias = at::randn({256}, options) * .01;
       TORCH_CHECK(at::equal(down.forward_quantized(fused.first, fused.second, bias),
                             down.forward(activated, bias)),
@@ -211,10 +211,10 @@ int main() {
       for (bool add : {false, true})
         for (double epsilon : {1e-6, 1e-5}) {
           auto residual = add ? at::randn_like(input) : at::Tensor();
-          auto norm = tei::fused_add_rms_norm(input, residual, weight, epsilon);
-          auto reference = tei::fp8_quantize_rows(norm.first);
+          auto norm = infinity::fused_add_rms_norm(input, residual, weight, epsilon);
+          auto reference = infinity::fp8_quantize_rows(norm.first);
           auto [quantized, summed, scales] =
-              tei::fp8_add_rms_quantize(input, residual, weight, epsilon);
+              infinity::fp8_add_rms_quantize(input, residual, weight, epsilon);
           TORCH_CHECK(at::equal(quantized.view(at::kByte), reference.first.view(at::kByte)) &&
                           at::equal(scales, reference.second) && at::equal(summed, norm.second),
                       "Fused RMS changed FP8 bytes, scales or residual rounding");
@@ -226,8 +226,8 @@ int main() {
   for (auto shape : {std::pair<int64_t, int64_t>{511, 256}, {512, 255}}) {
     bool rejected = false;
     try {
-      tei::Fp8Linear invalid(at::zeros({shape.first, shape.second},
-                                       at::TensorOptions().device(at::kCUDA, 0).dtype(at::kHalf)));
+      infinity::Fp8Linear invalid(at::zeros(
+          {shape.first, shape.second}, at::TensorOptions().device(at::kCUDA, 0).dtype(at::kHalf)));
     } catch (const c10::Error&) {
       rejected = true;
     }

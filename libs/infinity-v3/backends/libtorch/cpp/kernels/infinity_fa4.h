@@ -5,7 +5,7 @@
 #pragma once
 #include <ATen/ATen.h>
 
-namespace tei {
+namespace infinity {
 // Undefined means this layout/mask has no exported kernel. A failed supported
 // launch raises an error; it must never silently retry another implementation.
 /// Consume [tokens, heads, head_dim] Q/K/V and device int32 cumulative Q/K boundaries. Unsupported

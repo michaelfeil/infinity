@@ -5,7 +5,7 @@
 #include "batching/packed_input.h"
 #include <array>
 
-namespace tei {
+namespace infinity {
 /// Whether any compact metadata was supplied; validate_radix() checks that it is complete.
 bool radix_enabled(const PackedInput& input);
 /// Borrow compact token IDs when sharing is enabled, otherwise the original packed IDs.

@@ -5,7 +5,7 @@
 #include <c10/core/InferenceMode.h>
 #include <ATen/Parallel.h>
 #include <iostream>
-using namespace tei;
+using namespace infinity;
 
 namespace {
 void close(const at::Tensor& a, const at::Tensor& b, double tol = 1e-5) {

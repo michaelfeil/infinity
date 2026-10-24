@@ -7,7 +7,7 @@
 #include <stdexcept>
 #include <c10/util/Exception.h>
 
-namespace tei {
+namespace infinity {
 /// Signals rejection by a configured native memory-admission budget.
 class MemoryAdmissionError final : public std::runtime_error {
 public:

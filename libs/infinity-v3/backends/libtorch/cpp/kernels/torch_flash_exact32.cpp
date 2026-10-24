@@ -16,7 +16,7 @@ namespace tei_torch_flash_exact32 {
 void launch(Flash_fwd_params&, cudaStream_t);
 }
 
-namespace tei {
+namespace infinity {
 /// Launch the twelve-head width-32 noncausal SM90 specialization over actual FP16/BF16 token rows.
 at::Tensor torch_flash_exact32(const at::Tensor& q,
                                const at::Tensor& k,

@@ -24,7 +24,7 @@
 #include <unordered_map>
 #include <unordered_set>
 #endif
-namespace tei {
+namespace infinity {
 /// Admission counters, retained entries, and capture resources for one graph cache.
 struct CudaGraphCache::Impl {
   size_t limit;

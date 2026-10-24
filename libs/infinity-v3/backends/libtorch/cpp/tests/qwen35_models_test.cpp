@@ -9,7 +9,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #endif
 #include <iostream>
-using namespace tei;
+using namespace infinity;
 
 void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
 #ifdef TEI_TORCH_CUDA_KERNELS

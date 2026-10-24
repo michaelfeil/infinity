@@ -5,7 +5,7 @@
 #pragma once
 #include <ATen/ATen.h>
 
-namespace tei {
+namespace infinity {
 constexpr int64_t kNomicGroupedMaxTokens = 8192;
 constexpr int64_t kNomicGroupedMaxRoutes = 2 * kNomicGroupedMaxTokens;
 // Prepared at model load, without reading any request's router counts. Returns
@@ -24,4 +24,4 @@ at::Tensor nomic_grouped_experts(const at::Tensor& input,
                                  const at::Tensor& ids,
                                  const at::Tensor& scores,
                                  const at::Tensor& split_policy);
-} // namespace tei
+} // namespace infinity

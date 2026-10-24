@@ -19,7 +19,7 @@
 #include <ATen/cuda/CUDAEvent.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #endif
-namespace tei {
+namespace infinity {
 // Cached tensors are immutable to callers. The model owns one device/dtype.
 class ImageFeatureCache {
 public:

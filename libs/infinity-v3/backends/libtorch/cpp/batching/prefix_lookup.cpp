@@ -13,7 +13,7 @@
 #define XXH_NAMESPACE tei_prefix_
 #include "vendor/xxhash/xxhash.h"
 
-namespace tei {
+namespace infinity {
 PrefixFingerprint prefix_admission_fingerprint(const PrefixIdentity& key, int operation) {
   return prefix_admission_fingerprint(key.tokens, operation, key.image_context, key.rotary_context);
 }

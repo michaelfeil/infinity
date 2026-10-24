@@ -12,17 +12,17 @@ void overflowing_bias_storage_test() {
   const auto huge = std::numeric_limits<int64_t>::max() / 128;
   // A zero-stride CPU view describes huge geometry using one actual scalar.
   auto q = at::zeros({1}).as_strided({huge, 2, 1}, {0, 0, 0});
-  tei::PackedInput input;
+  infinity::PackedInput input;
   input.batch = 1;
   input.max_sequence = huge;
   bool sequence_rejected = false, alibi_rejected = false;
   try {
-    tei::packed_sequence_bias(q, input);
+    infinity::packed_sequence_bias(q, input);
   } catch (const c10::Error&) {
     sequence_rejected = true;
   }
   try {
-    tei::packed_alibi_bias(q, input, at::ones({2}));
+    infinity::packed_alibi_bias(q, input, at::ones({2}));
   } catch (const c10::Error&) {
     alibi_rejected = true;
   }
@@ -35,26 +35,27 @@ int main(int argc, char** argv) {
   overflowing_bias_storage_test();
   {
     auto q = at::zeros({1}).as_strided({4096, 12, 1}, {0, 0, 0});
-    tei::PackedInput input;
+    infinity::PackedInput input;
     input.batch = 1;
     input.max_sequence = 4096;
     for (bool alibi : {false, true}) {
       bool rejected = false;
       try {
         if (alibi)
-          tei::packed_alibi_bias(q, input, at::ones({12}), -1, -1, 1024);
+          infinity::packed_alibi_bias(q, input, at::ones({12}), -1, -1, 1024);
         else
-          tei::packed_sequence_bias(q, input, 1024);
-      } catch (const tei::MemoryAdmissionError& ex) {
+          infinity::packed_sequence_bias(q, input, 1024);
+      } catch (const infinity::MemoryAdmissionError& ex) {
         rejected = std::string(ex.what()).find("exceeds its memory budget") != std::string::npos;
       }
       TORCH_CHECK(rejected, "Finite attention geometry bypassed byte admission");
     }
     input.max_sequence = 1;
     auto small = q.narrow(0, 0, 1);
-    TORCH_CHECK(tei::packed_sequence_bias(small, input, 1024).defined() &&
-                    tei::packed_alibi_bias(small, input, at::ones({12}), -1, -1, 1024).defined(),
-                "Valid bias failed after admission rejection");
+    TORCH_CHECK(
+        infinity::packed_sequence_bias(small, input, 1024).defined() &&
+            infinity::packed_alibi_bias(small, input, at::ones({12}), -1, -1, 1024).defined(),
+        "Valid bias failed after admission rejection");
   }
   const c10::Device device(argc > 1 ? argv[1] : "cuda:0");
   at::manual_seed(2718);
@@ -78,8 +79,8 @@ int main(int argc, char** argv) {
       auto slopes = at::pow(2., -at::arange(1, H + 1, opt.dtype(at::kFloat)) / 3.);
       const int stride = ((m + 7) / 8) * 8, tile = m * stride;
       const long backing = (H - 1L) * tile + (total - 1L) * stride + total;
-      tei::PackedInput input{{}, {}, {}, cu, offsets.data(), (int64_t)lengths.size(), m};
-      auto logical = tei::packed_alibi_bias(q, input, slopes);
+      infinity::PackedInput input{{}, {}, {}, cu, offsets.data(), (int64_t)lengths.size(), m};
+      auto logical = infinity::packed_alibi_bias(q, input, slopes);
       auto storage = logical.as_strided({backing}, {1});
       auto local = storage.as_strided({H, m, m}, {tile, stride, 1});
       // Poison all unused storage, including alignment gaps and the logical
@@ -87,8 +88,8 @@ int main(int argc, char** argv) {
       auto saved = local.clone();
       storage.fill_(NAN);
       local.copy_(saved);
-      auto got =
-          tei::packed_attention(q, k, v, input, 1. / std::sqrt(D), false, -1, -1, slopes, logical);
+      auto got = infinity::packed_attention(
+          q, k, v, input, 1. / std::sqrt(D), false, -1, -1, slopes, logical);
       TORCH_CHECK(at::isfinite(got).all().item<bool>(), "Unused bias storage was read");
       double max_perseq = 0, max_reference = 0, max_isolation = 0;
       for (size_t row = 0; row < lengths.size(); ++row) {
@@ -117,7 +118,7 @@ int main(int argc, char** argv) {
       }
       auto changed = v.clone();
       changed.narrow(0, 0, lengths[0]).add_(100);
-      auto isolate = tei::packed_attention(
+      auto isolate = infinity::packed_attention(
           q, k, changed, input, 1. / std::sqrt(D), false, -1, -1, slopes, logical);
       if (total > lengths[0])
         max_isolation = (got.narrow(0, lengths[0], total - lengths[0]) -

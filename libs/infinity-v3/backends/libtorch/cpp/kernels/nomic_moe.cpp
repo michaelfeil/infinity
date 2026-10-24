@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <vector>
 
-namespace tei {
+namespace infinity {
 at::Tensor nomic_moe_up(const at::Tensor&, const at::Tensor&, const at::Tensor&);
 at::Tensor
 nomic_moe_down(const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&);
@@ -167,4 +167,4 @@ at::Tensor nomic_grouped_experts(const at::Tensor& input,
                     .gather(1, slots.unsqueeze(-1).expand({input.size(0), 2, 768}));
   return (at::zeros_like(input) + routed.select(1, 0)) + routed.select(1, 1);
 }
-} // namespace tei
+} // namespace infinity

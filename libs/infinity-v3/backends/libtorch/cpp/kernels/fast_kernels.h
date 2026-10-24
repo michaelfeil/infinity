@@ -6,7 +6,7 @@
 #include <ATen/ATen.h>
 #include <utility>
 
-namespace tei {
+namespace infinity {
 // Eight-expert CUDA router: pinned Candle descending bitonic ordering,
 // including its strict-comparison tie behavior. FP32 scores, int64 indices.
 std::pair<at::Tensor, at::Tensor> nomic_router_topk8(const at::Tensor& probabilities, int64_t k);

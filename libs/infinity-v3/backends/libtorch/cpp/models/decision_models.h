@@ -8,7 +8,7 @@
 #include "models/model.h"
 #include "helpers/options.h"
 
-namespace tei {
+namespace infinity {
 /// Question and option token spans for one field of a structured decision.
 struct DecisionField {
   /// Head-specific field kind (validated in the range 0..2); fields and options

@@ -4,7 +4,7 @@
 
 #include "models/dense_models.h"
 
-namespace tei {
+namespace infinity {
 /// Load ordered Sentence Transformers Dense modules, checking width continuity and supported
 /// Identity/Tanh activations. Tensor handles share loaded parameter storage; inference
 /// transforms pooled rows only.

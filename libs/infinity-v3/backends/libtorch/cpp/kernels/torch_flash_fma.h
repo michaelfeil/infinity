@@ -5,7 +5,7 @@
 #pragma once
 #include <ATen/ATen.h>
 
-namespace tei {
+namespace infinity {
 // Exact-token native Torch Flash attention with fused softmax arithmetic.
 // The supported head dimensions require no token or head-dimension padding.
 bool torch_flash_fma_supported(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v);

@@ -44,7 +44,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../../../candle/extensions/candle-layer-norm/kernels/ln_fwd_kernels.cuh"
 #include "kernels/encoder_embedding_norm.cuh"
 
-namespace tei {
+namespace infinity {
 namespace {
 template <class T, int Width, int Rows = 4>
 void launch(layer_norm::FwdParams& p, cudaStream_t stream) {

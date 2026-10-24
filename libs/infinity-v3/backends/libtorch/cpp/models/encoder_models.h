@@ -6,7 +6,7 @@
 #include "models/model.h"
 #include "helpers/options.h"
 
-namespace tei {
+namespace infinity {
 // Requires a loaded, qualified device routing policy and its current math settings.
 /// Return false for other model classes or when current execution settings no longer match the
 /// prepared Nomic routing policy. This is a capability query, not a request-time policy rebuild.

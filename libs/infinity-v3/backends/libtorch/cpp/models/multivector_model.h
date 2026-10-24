@@ -7,7 +7,7 @@
 #include "models/model.h"
 #include "helpers/options.h"
 
-namespace tei {
+namespace infinity {
 // Token projections are part of the model, not sentence pooling. Keep their
 // output width visible to the packed bridge before it reserves host buffers.
 class MultiVectorModel final : public Model {

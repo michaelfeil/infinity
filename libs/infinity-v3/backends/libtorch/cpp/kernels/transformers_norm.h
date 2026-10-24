@@ -6,7 +6,7 @@
 #include <ATen/ATen.h>
 #include <utility>
 
-namespace tei {
+namespace infinity {
 // Transformers RMSNorm rounds the normalized activation to model dtype before
 // multiplying by its affine weight. Residual additions also round before the
 // FP32 statistics, unlike the unrounded-residual Candle path.

@@ -26,7 +26,7 @@
 #include <c10/cuda/CUDACachingAllocator.h>
 #endif
 
-namespace tei {
+namespace infinity {
 PrefixEntry::~PrefixEntry() {
   if (budget) {
     budget->live_bytes -= bytes;

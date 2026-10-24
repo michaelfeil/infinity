@@ -7,7 +7,7 @@
 #endif
 #include <vector>
 
-namespace tei {
+namespace infinity {
 // Full rows retain each request's sequence boundaries. Compact rows deduplicate
 // tokens only when their attention context is identical. scatter_unfold maps
 // full -> compact; fold_gather selects one full representative per compact row.

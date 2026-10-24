@@ -9,7 +9,7 @@
 #include <algorithm>
 #include <cstdint>
 
-namespace tei {
+namespace infinity {
 namespace {
 /// Byte-addressed row-strided source and contiguous destination copy descriptor.
 struct Copy {

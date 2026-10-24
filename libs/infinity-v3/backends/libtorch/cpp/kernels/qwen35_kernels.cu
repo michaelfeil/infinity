@@ -12,7 +12,7 @@
 #include "../../../candle/src/kernels/qwen35_gdn.cu"
 #include "../../../candle/src/kernels/gemma_rms_norm.cu"
 
-namespace tei {
+namespace infinity {
 namespace {
 /// Aligned four-value BF16 pack used by the native convolution path.
 struct alignas(8) ConvValues {
@@ -1258,7 +1258,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
     if (final_state)
       *final_state =
           at::empty({input.batch, value_heads, 128, 128}, qkv.options().dtype(at::kFloat));
-    // Wider column tiles amortize shared loads once enough heads fill the GPU.
+      // Wider column tiles amortize shared loads once enough heads fill the GPU.
 #define CACHED(L)                                                                                  \
   qwen35_gdn_cached<L><<<dim3(input.batch, value_heads, L / 4), 512, 0, stream>>>(                 \
       bf(convolution),                                                                             \
@@ -1303,7 +1303,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
 // SPDX-License-Identifier: MIT
 // Adapted from Candle036f39e candle-kernels/src/reduce.cu gemma4_rope2d.
 // Preserve original MIT terms and explicit BF16 product rounding on Torch stream.
-namespace tei {
+namespace infinity {
 namespace {
 __global__ void rope2d(const __nv_bfloat16* x,
                        const __nv_bfloat16* c,

@@ -80,7 +80,7 @@ int main(int argc, char** argv) {
                     tensor_byte_hash(residual) == 4182254403794363395ull &&
                     tensor_byte_hash(weight) == 14218794327604558931ull,
                 "Captured RMS operands changed");
-    auto actual = tei::fused_add_rms_norm(x, residual, weight, 1e-5);
+    auto actual = infinity::fused_add_rms_norm(x, residual, weight, 1e-5);
     TORCH_CHECK(
         tensor_byte_hash(actual.first) == 13182671632785942803ull,
         "Half4096 RMS differs from independently executed original registered Candle kernel");
@@ -104,8 +104,8 @@ int main(int argc, char** argv) {
         auto x = at::randn({rows, 4096}, opts), r = at::randn_like(x), w = at::randn({4096}, opts);
         for (double eps : {1e-6, 1e-5}) {
           auto expected =
-              tei::fused_add_rms_norm(unaligned(x), residual ? r : at::Tensor(), w, eps);
-          auto actual = tei::fused_add_rms_norm(x, residual ? r : at::Tensor(), w, eps);
+              infinity::fused_add_rms_norm(unaligned(x), residual ? r : at::Tensor(), w, eps);
+          auto actual = infinity::fused_add_rms_norm(x, residual ? r : at::Tensor(), w, eps);
           close(actual.first, expected.first, 0, "BF16 vector RMS versus scalar fallback");
           close(actual.second, expected.second, 0, "BF16 vector RMS residual");
           if (!residual)
@@ -114,8 +114,8 @@ int main(int argc, char** argv) {
       }
     for (int width : {12288, 14336}) {
       auto both = at::randn({17, 2 * width}, opts) * 8;
-      close(tei::fused_gated_activation(both, 5),
-            tei::fused_gated_activation(unaligned(both), 5),
+      close(infinity::fused_gated_activation(both, 5),
+            infinity::fused_gated_activation(unaligned(both), 5),
             0,
             "BF16 paired SiLU at Qwen3/Llama MLP widths");
     }
@@ -145,9 +145,9 @@ int main(int argc, char** argv) {
                           0x3df423d3u})
       reference.push_back(std::bit_cast<float>(bits));
     auto expected = at::tensor(reference, logits.options()).view({1, 8});
-    auto probabilities = tei::qwen35_vision_softmax(logits);
+    auto probabilities = infinity::qwen35_vision_softmax(logits);
     close(probabilities, expected, 0, "Candle router FP32 midpoint");
-    auto selected = tei::nomic_router_topk8(probabilities, 2);
+    auto selected = infinity::nomic_router_topk8(probabilities, 2);
     close(selected.first.to(at::kHalf),
           at::tensor({.26171875f, .1934814453125f}, logits.options()).to(at::kHalf).view({1, 2}),
           0,
@@ -201,7 +201,7 @@ int main(int argc, char** argv) {
                         .view({4, 8})
                         .cuda();
     for (int k : {1, 2, 8}) {
-      auto selected = tei::nomic_router_topk8(p, k);
+      auto selected = infinity::nomic_router_topk8(p, k);
       auto ids = expected.narrow(-1, 0, k);
       TORCH_CHECK(at::equal(selected.second, ids),
                   "Nomic router must match pinned Candle bitonic tie order");
@@ -234,10 +234,10 @@ int main(int argc, char** argv) {
          pp = at::tensor(position_ids, longs);
     auto word = at::embedding(words, ids), type = at::embedding(types, tt),
          position = at::embedding(positions, pp);
-    auto actual =
-        tei::fused_embedding_layer_norm(ids, tt, pp, words, types, positions, weight, bias, 1e-5);
+    auto actual = infinity::fused_embedding_layer_norm(
+        ids, tt, pp, words, types, positions, weight, bias, 1e-5);
     close(actual,
-          tei::fused_add_layer_norm(word, type, weight, bias, 1e-5, position),
+          infinity::fused_add_layer_norm(word, type, weight, bias, 1e-5, position),
           0,
           "Embedding fusion preserves staged model-dtype kernel bits");
     // Independent CPU formula: dtype-rounded additions, FP32 mean/variance,
@@ -251,7 +251,7 @@ int main(int argc, char** argv) {
                          .to(actual.device());
     close(actual, reference, .006, "Embedding fusion independent rounded CPU oracle");
     auto empty = ids.narrow(0, 0, 0);
-    TORCH_CHECK(tei::fused_embedding_layer_norm(
+    TORCH_CHECK(infinity::fused_embedding_layer_norm(
                     empty, empty, empty, words, types, positions, weight, bias, 1e-5)
                         .sizes() == at::IntArrayRef({0, 768}),
                 "Empty embedding shape");
@@ -263,21 +263,21 @@ int main(int argc, char** argv) {
       auto x = at::randn({33, width}, opts), r = at::randn_like(x), r2 = at::randn_like(x);
       auto w = at::randn({width}, opts), b = at::randn({width}, opts);
       auto tol = dtype == at::kBFloat16 ? 0.04 : dtype == at::kHalf ? 0.006 : 0.00001;
-      close(tei::fused_add_layer_norm(x, r, w, b, 1e-5),
+      close(infinity::fused_add_layer_norm(x, r, w, b, 1e-5),
             at::layer_norm(x + r, {width}, w, b, 1e-5),
             tol,
             "residual LN");
-      close(tei::fused_add_layer_norm(x, r, w, b, 1e-5, r2),
+      close(infinity::fused_add_layer_norm(x, r, w, b, 1e-5, r2),
             at::layer_norm(x + r + r2, {width}, w, b, 1e-5),
             tol,
             "two residual LN");
-      auto rms = tei::fused_add_rms_norm(x, r, w, 1e-5);
+      auto rms = infinity::fused_add_rms_norm(x, r, w, 1e-5);
       close(rms.second, x + r, 0, "RMS residual output");
       auto unrounded = x.to(at::kFloat) + r.to(at::kFloat);
       auto rms_reference =
           (unrounded * at::rsqrt(unrounded.square().mean(-1, true) + 1e-5)) * w.to(at::kFloat);
       close(rms.first, rms_reference.to(dtype), tol, "unrounded residual RMSNorm");
-      auto initial = tei::fused_add_rms_norm(x, {}, w, 1e-5);
+      auto initial = infinity::fused_add_rms_norm(x, {}, w, 1e-5);
       close(initial.second, x, 0, "Initial RMS residual aliases original input");
       TORCH_CHECK(initial.second.data_ptr() == x.data_ptr(),
                   "Initial RMS residual must reuse input storage");
@@ -290,7 +290,7 @@ int main(int argc, char** argv) {
                            : code == 1 ? at::gelu(gate, "none")
                            : code == 2 ? at::gelu(gate, "tanh")
                                        : at::relu(gate);
-          close(tei::fused_gated_activation(both, code, gate_first),
+          close(infinity::fused_gated_activation(both, code, gate_first),
                 activated * up,
                 tol,
                 "gated activation");
@@ -307,7 +307,7 @@ int main(int argc, char** argv) {
                          .to(dtype);
         auto tangent = at::tanh(scalar(.7978845608028654) * alpha);
         auto precise = (scalar(.5) * gate) * (scalar(1) + tangent);
-        close(tei::fused_gated_activation(both, 4, gate_first),
+        close(infinity::fused_gated_activation(both, 4, gate_first),
               precise * up,
               tol,
               "Candle precise gated GELU");
@@ -316,7 +316,7 @@ int main(int argc, char** argv) {
         auto gate = both.narrow(-1, gate_first ? 0 : width, width),
              up = both.narrow(-1, gate_first ? width : 0, width);
         auto exponential = at::exp(-gate), denominator = at::ones_like(gate) + exponential;
-        close(tei::fused_gated_activation(both, 5, gate_first),
+        close(infinity::fused_gated_activation(both, 5, gate_first),
               (gate / denominator) * up,
               tol,
               "Candle precise gated SiLU");
@@ -328,15 +328,15 @@ int main(int argc, char** argv) {
           unaligned.copy_(both);
           for (int code = 0; code <= 5; ++code)
             for (bool gate_first : {false, true})
-              close(tei::fused_gated_activation(both, code, gate_first),
-                    tei::fused_gated_activation(unaligned, code, gate_first),
+              close(infinity::fused_gated_activation(both, code, gate_first),
+                    infinity::fused_gated_activation(unaligned, code, gate_first),
                     0,
                     "aligned/misaligned gated activation parity");
         }
       }
       for (bool approx : {false, true}) {
-        close(tei::fused_gelu(x, approx), at::gelu(x, approx ? "tanh" : "none"), tol, "GELU");
-        close(tei::fused_bias_gelu(x, b, approx),
+        close(infinity::fused_gelu(x, approx), at::gelu(x, approx ? "tanh" : "none"), tol, "GELU");
+        close(infinity::fused_bias_gelu(x, b, approx),
               at::gelu(x + b, approx ? "tanh" : "none"),
               tol,
               "bias GELU");
@@ -348,7 +348,7 @@ int main(int argc, char** argv) {
       auto qw = at::randn({128}, opts), kw = at::randn({128}, opts);
       auto angle = at::randn({7, 1, 64}, opts);
       auto cosine = at::cos(angle), sine = at::sin(angle);
-      auto rotary = tei::fused_rotary(q, k, cosine, sine);
+      auto rotary = infinity::fused_rotary(q, k, cosine, sine);
       auto rope = [&](const at::Tensor& x) {
         auto a = x.narrow(-1, 0, 64), b = x.narrow(-1, 64, 64);
         return at::cat({a * cosine - b * sine, b * cosine + a * sine}, -1);
@@ -364,12 +364,12 @@ int main(int argc, char** argv) {
         auto bs = (b * s).to(dtype).to(at::kDouble), as = (a * s).to(dtype).to(at::kDouble);
         return round_model_double(at::cat({a * c - bs, b * c + as}, -1), dtype).to(x.device());
       };
-      auto contracted = tei::fused_rotary(q, k, cosine, sine, true);
+      auto contracted = infinity::fused_rotary(q, k, cosine, sine, true);
       close(contracted.first, contracted_ref(q), 0, "Q contracted rotary");
       close(contracted.second, contracted_ref(k), 0, "K contracted rotary");
       auto inplace_qkv = qkv.clone(), inplace_q = inplace_qkv.narrow(1, 0, 4),
            inplace_k = inplace_qkv.narrow(1, 4, 2);
-      tei::encoder_rotary_inplace(inplace_q, inplace_k, cosine, sine);
+      infinity::encoder_rotary_inplace(inplace_q, inplace_k, cosine, sine);
       close(inplace_q, contracted.first, 0, "Q inplace encoder rotary");
       close(inplace_k, contracted.second, 0, "K inplace encoder rotary");
       close(inplace_qkv.narrow(1, 6, 2),
@@ -378,15 +378,15 @@ int main(int argc, char** argv) {
             "Inplace encoder rotary preserves V");
       auto positions = at::tensor(std::vector<int64_t>{2, 1, 4, 0, 3, 2, 1}, opts.dtype(at::kLong));
       auto expected_indexed = qkv.clone(), actual_indexed = qkv.clone();
-      tei::encoder_rotary_inplace(expected_indexed.narrow(1, 0, 4),
-                                  expected_indexed.narrow(1, 4, 2),
-                                  cosine.squeeze(1).index_select(0, positions).unsqueeze(1),
-                                  sine.squeeze(1).index_select(0, positions).unsqueeze(1));
-      tei::encoder_rotary_indexed_inplace(actual_indexed.narrow(1, 0, 4),
-                                          actual_indexed.narrow(1, 4, 2),
-                                          cosine.squeeze(1),
-                                          sine.squeeze(1),
-                                          positions);
+      infinity::encoder_rotary_inplace(expected_indexed.narrow(1, 0, 4),
+                                       expected_indexed.narrow(1, 4, 2),
+                                       cosine.squeeze(1).index_select(0, positions).unsqueeze(1),
+                                       sine.squeeze(1).index_select(0, positions).unsqueeze(1));
+      infinity::encoder_rotary_indexed_inplace(actual_indexed.narrow(1, 0, 4),
+                                               actual_indexed.narrow(1, 4, 2),
+                                               cosine.squeeze(1),
+                                               sine.squeeze(1),
+                                               positions);
       TORCH_CHECK(
           at::equal(actual_indexed.view(at::kByte), expected_indexed.view(at::kByte)),
           "Indexed rotary differs IEEE bits on repeated/irregular positions or overwrites V");
@@ -402,15 +402,16 @@ int main(int argc, char** argv) {
                  ks = packed.narrow(1, 4, 2);
             auto angle = at::randn({17, 1, 32}, opts), c = at::cos(angle), s = at::sin(angle);
             auto positions = at::arange(17, opts.dtype(at::kLong)).flip({0});
-            auto expected = tei::fused_rotary(qs,
-                                              ks,
-                                              indexed ? c.index_select(0, positions) : c,
-                                              indexed ? s.index_select(0, positions) : s,
-                                              true);
+            auto expected = infinity::fused_rotary(qs,
+                                                   ks,
+                                                   indexed ? c.index_select(0, positions) : c,
+                                                   indexed ? s.index_select(0, positions) : s,
+                                                   true);
             if (indexed)
-              tei::encoder_rotary_indexed_inplace(qs, ks, c.squeeze(1), s.squeeze(1), positions);
+              infinity::encoder_rotary_indexed_inplace(
+                  qs, ks, c.squeeze(1), s.squeeze(1), positions);
             else
-              tei::encoder_rotary_inplace(qs, ks, c, s);
+              infinity::encoder_rotary_inplace(qs, ks, c, s);
             TORCH_CHECK(at::equal(qs, expected.first) && at::equal(ks, expected.second),
                         "Odd-width rotary changed head offsets or tail lanes");
             TORCH_CHECK(at::equal(packed.narrow(1, 6, 2), original.narrow(1, 6, 2)),
@@ -423,7 +424,7 @@ int main(int argc, char** argv) {
             auto qs = packed.narrow(1, 0, 12), ks = packed.narrow(1, 12, 2);
             const int half = partial ? dim / 4 : dim / 2;
             auto c = at::randn({17, 1, half}, opts), s = at::randn_like(c);
-            auto result = tei::fused_rotary(qs, ks, c, s, contract);
+            auto result = infinity::fused_rotary(qs, ks, c, s, contract);
             auto reference = [&](const at::Tensor& input) {
               auto f = input.to(at::kCPU, at::kDouble), cd = c.to(at::kCPU, at::kDouble),
                    sd = s.to(at::kCPU, at::kDouble);
@@ -449,14 +450,14 @@ int main(int argc, char** argv) {
                   "K paired/partial rotary independent rounded oracle");
             close(packed, original, 0, "Out-of-place rotary preserves all QKV storage");
           }
-      auto actual = tei::fused_qk_norm_rope(q, k, qw, kw, cosine, sine, 1e-6);
+      auto actual = infinity::fused_qk_norm_rope(q, k, qw, kw, cosine, sine, 1e-6);
       auto vstore = at::randn({k.size(0), 2 * k.size(1), 128}, k.options()),
            v = vstore.narrow(1, k.size(1), k.size(1));
       auto key_owner = at::full({k.size(0) + 3, k.size(1), 128}, 17, k.options());
       auto value_owner = at::full_like(key_owner, -17);
       auto key_target = key_owner.narrow(0, 3, k.size(0)),
            value_target = value_owner.narrow(0, 3, k.size(0));
-      auto direct = tei::fused_qkv_norm_rope_into(
+      auto direct = infinity::fused_qkv_norm_rope_into(
           q, k, v, qw, kw, cosine, sine, 1e-6, key_target, value_target);
       close(direct, actual.first, 0, "Direct Q normalization retains original arithmetic");
       close(key_target, actual.second, 0, "Direct K normalization retains original arithmetic");
@@ -473,7 +474,7 @@ int main(int argc, char** argv) {
       auto rows = at::tensor(mapping, k.options().dtype(at::kInt)), indices = rows.to(at::kLong);
       auto mapped_key = at::full({k.size(0) + 6, k.size(1), 128}, 17, k.options()),
            mapped_value = at::full_like(mapped_key, -17);
-      auto mapped_q = tei::fused_qkv_norm_rope_into(
+      auto mapped_q = infinity::fused_qkv_norm_rope_into(
           q, k, v, qw, kw, cosine, sine, 1e-6, mapped_key, mapped_value, rows);
       auto expected_key = at::full_like(mapped_key, 17),
            expected_value = at::full_like(mapped_value, -17);
@@ -486,7 +487,7 @@ int main(int argc, char** argv) {
       auto contiguous_k = k.contiguous();
       bool alias_rejected = false;
       try {
-        tei::fused_qkv_norm_rope_into(
+        infinity::fused_qkv_norm_rope_into(
             q, contiguous_k, v, qw, kw, cosine, sine, 1e-6, contiguous_k, value_target);
       } catch (const c10::Error&) {
         alias_rejected = true;
@@ -518,7 +519,7 @@ int main(int argc, char** argv) {
     auto wrong = std::get<0>(at::_fused_rms_norm(rounded, {256}, weight, 1e-5));
     TORCH_CHECK((wrong - reference).abs().max().item<float>() >= .125,
                 "Residual rounding fixture must distinguish semantics");
-    close(tei::fused_add_rms_norm(x, residual, weight, 1e-5).first,
+    close(infinity::fused_add_rms_norm(x, residual, weight, 1e-5).first,
           reference,
           0,
           "RMS statistics retain FP32 residual sum");
@@ -529,21 +530,22 @@ int main(int argc, char** argv) {
     const auto preferred = context.blasPreferredBackend();
     for (auto fallback : {at::BlasBackend::Default, at::BlasBackend::Cublas}) {
       context.setBlasPreferredBackend(fallback);
-      TORCH_CHECK(
-          !tei::nomic_moe_split_policy(c10::Device(at::kCUDA, 0), at::kBFloat16, 768, 3072, 8, 2)
-               .defined(),
-          "Default/cuBLAS must retain reference Nomic dispatch");
+      TORCH_CHECK(!infinity::nomic_moe_split_policy(
+                       c10::Device(at::kCUDA, 0), at::kBFloat16, 768, 3072, 8, 2)
+                       .defined(),
+                  "Default/cuBLAS must retain reference Nomic dispatch");
     }
     context.setBlasPreferredBackend(preferred);
     auto policy =
-        tei::nomic_moe_split_policy(c10::Device(at::kCUDA, 0), at::kBFloat16, 768, 3072, 8, 2);
+        infinity::nomic_moe_split_policy(c10::Device(at::kCUDA, 0), at::kBFloat16, 768, 3072, 8, 2);
     auto* properties = at::cuda::getCurrentDeviceProperties();
     if (properties->major == 9 && properties->minor == 0 && cublasLtGetVersion() == 130200)
       TORCH_CHECK(policy.defined(),
                   "Qualified Nomic grouped assertions require cuBLASLt preference");
-    TORCH_CHECK(!tei::nomic_moe_split_policy(c10::Device(at::kCPU), at::kBFloat16, 768, 3072, 8, 2)
-                     .defined(),
-                "CPU must retain the Nomic reference dispatch");
+    TORCH_CHECK(
+        !infinity::nomic_moe_split_policy(c10::Device(at::kCPU), at::kBFloat16, 768, 3072, 8, 2)
+             .defined(),
+        "CPU must retain the Nomic reference dispatch");
     if (policy.defined()) {
       // A single regression for packed uneven/empty experts, reversed slots and
       // the small-M split-K rounding boundary that unsplit grouped GEMM loses.
@@ -563,21 +565,21 @@ int main(int argc, char** argv) {
           if (!matches.size(0))
             continue;
           auto tokens = matches.select(1, 0), slots = matches.select(1, 1);
-          auto contribution =
-              at::matmul(tei::encoder_gelu(at::linear(x.index_select(0, tokens), first[expert])),
-                         second[expert]);
+          auto contribution = at::matmul(
+              infinity::encoder_gelu(at::linear(x.index_select(0, tokens), first[expert])),
+              second[expert]);
           reference.index_add_(0,
                                tokens,
                                contribution *
                                    scores.index_select(0, tokens).gather(1, slots.unsqueeze(1)));
         }
-        auto actual = tei::nomic_grouped_experts(x, first, second, ids, scores, policy);
+        auto actual = infinity::nomic_grouped_experts(x, first, second, ids, scores, policy);
         close(actual,
               reference,
               0,
               "Grouped Nomic preserves original GEMM split-K and BF16 weighting");
         auto saved = actual.clone();
-        auto changed = tei::nomic_grouped_experts(x * 2, first, second, ids, scores, policy);
+        auto changed = infinity::nomic_grouped_experts(x * 2, first, second, ids, scores, policy);
         TORCH_CHECK(!at::equal(actual, changed), "Grouped experts ignored changed tokens");
         close(actual, saved, 0, "Grouped requests retain earlier owned outputs");
       }
@@ -591,7 +593,7 @@ int main(int argc, char** argv) {
       auto sum = add_residual ? x + residual : x, fp32 = sum.to(at::kFloat);
       auto expected = (fp32 * at::rsqrt(fp32.square().mean(-1, true) + 1e-5)).to(dtype) * weight;
       auto actual =
-          tei::transformers_rms_norm(x, add_residual ? residual : at::Tensor(), weight, 1e-5);
+          infinity::transformers_rms_norm(x, add_residual ? residual : at::Tensor(), weight, 1e-5);
       TORCH_CHECK(at::equal(actual.second, sum),
                   "Transformers residual must round before normalization");
       auto difference = actual.first.to(at::kFloat) - expected.to(at::kFloat);

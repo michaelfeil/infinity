@@ -11,7 +11,7 @@
 #include <ATen/ops/_flash_attention_forward.h>
 #include <ATen/ops/_efficient_attention_forward.h>
 
-namespace tei {
+namespace infinity {
 // Per-sequence bias tiles for the native packed efficient attention operator.
 // Its bias indexing uses local Q/K positions and stride(0) for each sequence,
 // while public tensor metadata requires logical batch=1 and total-token axes.

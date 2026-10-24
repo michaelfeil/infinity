@@ -7,7 +7,7 @@
 #include "../bridge.h"
 #include <functional>
 
-namespace tei {
+namespace infinity {
 // Called only with Rust-validated offsets/shapes. Each result owns its storage.
 // The borrowed descriptor remains open until every worker and DMA has drained.
 void read_safetensors(

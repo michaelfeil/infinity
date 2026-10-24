@@ -5,7 +5,7 @@
 #include <c10/cuda/CUDAException.h>
 #include <cstdint>
 
-namespace tei {
+namespace infinity {
 template <class Word>
 __global__ void select_last_real_row(const Word* hidden,
                                      const int64_t* ids,

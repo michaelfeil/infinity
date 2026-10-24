@@ -11,7 +11,7 @@
 #include <stdexcept>
 #include <unordered_map>
 
-namespace tei {
+namespace infinity {
 /// Per-device retained-workspace accounting and contributions from live engine policies.
 struct WorkspaceAdmissionState {
   std::mutex mutex;

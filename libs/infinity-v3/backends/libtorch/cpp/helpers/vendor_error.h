@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <exception>
 
-namespace tei {
+namespace infinity {
 // Only vendor calls that expose an actual allocation-failure status use this
 // signal. Operation names have static storage; unwinding needs no message copy.
 struct VendorAllocationError final : std::exception {

@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace tei {
+namespace infinity {
 // Compare the exact borrowed host inputs before selecting a request-local
 // representative. Image marker IDs alone do not identify visual content.
 inline bool same_block_prefix(int64_t left,

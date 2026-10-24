@@ -17,17 +17,17 @@ int main() {
   std::vector<TeiImage> images{{pixels.data(), 4, 6, {1, 2, 2}, 2, 1, 1, 0},
                                {copy.data(), 4, 6, {1, 2, 2}, 2, 6, 1, 5}};
   auto same = [&] {
-    return tei::same_block_prefix(0,
-                                  1,
-                                  3,
-                                  ids.data(),
-                                  types.data(),
-                                  positions.data(),
-                                  axes.data(),
-                                  10,
-                                  offsets.data(),
-                                  images.data(),
-                                  images.size());
+    return infinity::same_block_prefix(0,
+                                       1,
+                                       3,
+                                       ids.data(),
+                                       types.data(),
+                                       positions.data(),
+                                       axes.data(),
+                                       10,
+                                       offsets.data(),
+                                       images.data(),
+                                       images.size());
   };
   require(same());
   copy[1] = 1;

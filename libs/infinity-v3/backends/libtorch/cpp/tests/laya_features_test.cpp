@@ -28,14 +28,14 @@ int main() {
   }
   auto logits = at::cat(rows).to(device),
        indices = at::tensor(offsets, at::TensorOptions().dtype(at::kLong)).to(device);
-  auto actual = tei::laya_action_features(logits, indices).cpu();
+  auto actual = infinity::laya_action_features(logits, indices).cpu();
   auto reference = at::stack(expected);
   TORCH_CHECK((actual - reference).abs().max().item<float>() < 2e-6,
               "Fused Laya features changed published formulas");
   TORCH_CHECK(at::isfinite(actual).all().item<bool>(), "Fused features produced nonfinite output");
   auto changed = logits.clone();
   changed.narrow(0, offsets[1], offsets[2] - offsets[1]).fill_(-37.);
-  auto updated = tei::laya_action_features(changed, indices).cpu();
+  auto updated = infinity::laya_action_features(changed, indices).cpu();
   TORCH_CHECK(at::equal(actual[0], updated[0]) &&
                   at::equal(actual.narrow(0, 2, actual.size(0) - 2),
                             updated.narrow(0, 2, actual.size(0) - 2)),

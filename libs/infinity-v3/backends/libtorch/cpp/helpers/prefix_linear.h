@@ -6,7 +6,7 @@
 #include <ATen/ATen.h>
 #include <memory>
 
-namespace tei {
+namespace infinity {
 // Retain the original logical GEMM recipe while computing only suffix rows.
 // Planning is bounded and workspace remains owned by ATen's current stream.
 class PrefixLinearPlans {

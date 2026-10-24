@@ -11,7 +11,7 @@
 #include <unordered_map>
 #include <algorithm>
 
-namespace tei {
+namespace infinity {
 // Native images are contiguous F32 matrices. Admission and the upload cache
 // must identify their storage/layout without reading any pixel values.
 struct ImageUploadLayout {

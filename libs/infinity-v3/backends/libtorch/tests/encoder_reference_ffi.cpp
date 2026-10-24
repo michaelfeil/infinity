@@ -5,9 +5,9 @@
 
 namespace {
 struct Fixture {
-  tei::Options options;
-  tei::Weights weights;
-  std::unique_ptr<tei::Model> model;
+  infinity::Options options;
+  infinity::Weights weights;
+  std::unique_ptr<infinity::Model> model;
 };
 
 thread_local std::string error;
@@ -57,7 +57,7 @@ int fixture_ready(void* p, int gpu) {
     auto dtype = gpu ? at::kHalf : at::kFloat;
     for (auto& [k, w] : f.weights)
       w = w.to(device, dtype);
-    f.model = tei::create_encoder(f.options, f.weights, device, dtype);
+    f.model = infinity::create_encoder(f.options, f.weights, device, dtype);
     TORCH_CHECK(f.model, "Unsupported encoder fixture");
     f.model->ready();
   });
@@ -83,7 +83,8 @@ int fixture_forward(void* p,
     };
     auto cu = at::from_blob(const_cast<int32_t*>(offsets), {batch + 1}, options.dtype(at::kInt))
                   .to(device);
-    tei::PackedInput in{tensor(ids), tensor(types), tensor(positions), cu, offsets, batch, maximum};
+    infinity::PackedInput in{
+        tensor(ids), tensor(types), tensor(positions), cu, offsets, batch, maximum};
     auto result = prediction ? f.model->predict(in, prediction == 2) : f.model->forward(in);
     result = result.to(at::kCPU, at::kFloat).contiguous();
     std::memcpy(output, result.data_ptr(), result.nbytes());

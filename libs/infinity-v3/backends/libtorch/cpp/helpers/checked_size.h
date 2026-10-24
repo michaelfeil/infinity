@@ -7,7 +7,7 @@
 #include <cstdint>
 #include <limits>
 
-namespace tei {
+namespace infinity {
 /// Multiply nonnegative sizes, throwing before a negative input or int64 overflow.
 inline int64_t checked_size_product(int64_t left, int64_t right) {
   TORCH_CHECK(left >= 0 && right >= 0 &&

@@ -4,7 +4,7 @@
 #pragma once
 #include "batching/packed_input.h"
 
-namespace tei {
+namespace infinity {
 /// Rotate vision Q/K rows using already selected spatial cosine/sine tables.
 at::Tensor gemma_vision_rotary_cuda(const at::Tensor&, const at::Tensor&, const at::Tensor&);
 /// Gather rotary phases by packed position IDs and rotate token/head rows.

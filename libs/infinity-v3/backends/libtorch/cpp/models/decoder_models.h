@@ -7,7 +7,7 @@
 #include "helpers/options.h"
 #include <functional>
 
-namespace tei {
+namespace infinity {
 /// Replace selected embedding rows with vision features before the decoder backbone runs.
 at::Tensor
 decoder_visual_forward(const Model&, const PackedInput&, const at::Tensor&, const at::Tensor&);

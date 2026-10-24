@@ -39,7 +39,7 @@
 #include <cublasLt.h>
 #endif
 
-namespace tei {
+namespace infinity {
 namespace {
 /// Gemma-family text backbone and supported multimodal tower composition.
 class Gemma final : public Model {
