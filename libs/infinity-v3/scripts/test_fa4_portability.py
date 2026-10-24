@@ -21,6 +21,10 @@ class HostAuditTests(unittest.TestCase):
             "baseline": ("pxor %xmm0, %xmm0", False),
             "vex": ("vxorps %xmm0, %xmm0, %xmm0", True),
             "evex": ("vmovaps %zmm0, %zmm1", True),
+            "address_vex": ("addr32 vxorps (%eax), %xmm0, %xmm0", True),
+            "segment_vex": ("vxorps %fs:(%rax), %xmm0, %xmm0", True),
+            "prefixed_evex": ("addr32 vmovaps %fs:(%eax), %zmm0", True),
+            "address_baseline": ("addr32 mov (%eax), %eax", False),
             "masked_xmm": ("vmovaps %xmm0, %xmm1{%k1}", True),
             # A prefix-looking immediate byte is not an instruction prefix.
             "immediate": ("movabs $0x6262626262626262, %rax", False),
