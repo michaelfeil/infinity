@@ -59,13 +59,19 @@ class Gemma final : public Model {
     std::string p;
     at::Tensor qkv, gate_up;
     std::unique_ptr<Fp8Linear> fp8_gate_up, fp8_down;
+    /// Per-layer head width and K/V head count may differ from global defaults. window applies
+    /// only when sliding is true.
     int64_t dim, kv, window;
+    /// shared consumes an earlier same-category K/V producer; store publishes this layer for later
+    /// reuse. k_equals_v ties projections before key normalization/rotary transforms.
     bool sliding, shared, store, k_equals_v;
     at::Tensor cos, sin;
   };
 
   std::vector<Layer> stack;
   std::unique_ptr<OrdinaryLinearExecutor> ordinary_ffn;
+  /// Separate lookup maps hold prepared affine scales and FP32 router parameters, preserving
+  /// family-specific offset and precision recipes without changing checkpoint names.
   Weights norm_scales;
   Weights router_f32;
   at::Tensor vision_frequency, legacy_embedding_scale;
@@ -1608,6 +1614,8 @@ public:
       states = radix_fold(states, input);
     }
 
+    // Index zero holds global-attention K/V and index one holds sliding-attention K/V. Both tensors
+    // use full logical token order; producer indices identify the matching retained prefix layer.
     std::array<std::pair<at::Tensor, at::Tensor>, 2> shared;
     std::array<int64_t, 2> producers{-1, -1};
     // Request-local gathers reuse identical shared RoPE tables across layers.
@@ -1816,6 +1824,8 @@ public:
       if (!legacy)
         states = states * w(p + "layer_scalar");
     }
+    // Final token normalization precedes the optional embedding projection. Restore compact/prefix
+    // rows only after both transforms so raw token outputs use the advertised embedding width.
     auto output = norm(states, "norm");
     output = embedding2 ? linear(output, "embedding_projection") : output;
     return prefix_restore(input, radix_unfold(output, input));

@@ -11,7 +11,11 @@
 namespace tei {
 /// Question and option token spans for one field of a structured decision.
 struct DecisionField {
+  /// Head-specific field kind (validated in the range 0..2); fields and options
+  /// retain caller schema order.
   int64_t kind;
+  /// Question and option intervals are nonempty [begin,end) token spans relative to this request's
+  /// sequence, before packed-batch offsets are added.
   std::pair<int64_t, int64_t> question;
   std::vector<std::pair<int64_t, int64_t>> options;
 };
@@ -20,13 +24,20 @@ struct DecisionField {
 struct DecisionRequest {
   enum class Kind { Laya, OptionTokens, Clef, Warmup, InlineOptions = 5 } kind;
   int64_t question_type = 0;
+  /// Laya uses sequence-relative marker positions. OptionTokens uses token/readout row IDs.
+  /// InlineOptions pairs each marker with an option count in token_ids, rather than vocabulary IDs.
   std::vector<int64_t> markers, token_ids;
+  /// Clef's per-field question/option spans; other head kinds use markers or token IDs instead.
   std::vector<DecisionField> fields;
 };
 
 /// Option-logit and action-probability tensors produced by a decision readout.
 struct DecisionResult {
+  /// Flattened F32 option logits; output_count() gives the required element count. Clef preserves
+  /// field/option order and inline readouts preserve marker/option order.
   at::Tensor logits;
+  /// Scalar F32 action probability. Heads without a learned action classifier return one
+  /// independently of the option logits.
   at::Tensor action_probability;
 };
 
@@ -63,6 +74,9 @@ public:
 // Clef head_weights: joint_head.safetensors; Pplx: readout.safetensors.
 // Option tokens and Clef use lm_head.weight or tied embed_tokens.weight from
 // backbone_weights, accepting the supported model/language_model prefixes.
+/// Validate the selected protocol/configuration and retain tensor handles from the supplied maps.
+/// Unknown kinds or incompatible contracts throw; construction does not
+/// take ownership of either map.
 std::unique_ptr<DecisionHead> create_decision_head(const std::string& kind,
                                                    const Options& head_config,
                                                    const Options& backbone_config,

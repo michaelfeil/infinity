@@ -35,6 +35,8 @@ namespace {
 class Qwen35 final : public Model {
   /// Packed attention/history boundaries shared by cached Qwen3.5 block execution.
   struct BlockMetadata {
+    /// Device int32 boundaries for assembled K/V and convolution-history rows. Reuse across layers
+    /// avoids repeated uploads when the request's block layout is unchanged.
     at::Tensor kv_cumulative, history_cumulative;
     std::vector<int32_t> history_offsets;
   };
@@ -42,7 +44,12 @@ class Qwen35 final : public Model {
   /// Per-block attention and recurrent buffers paired with their packed boundaries.
   struct BlockCache {
     BlockMetadata& metadata;
+    /// key/value retain representative-prefix attention rows; state is FP32
+    /// [prefixes,value_heads,128,128]. history retains raw QKV rows
+    /// preceding each suffix convolution.
     at::Tensor key, value, state, history;
+    /// Host boundaries index the representative prefix rows and their separately packed convolution
+    /// histories; suffixes select a prefix through block_prefix_sources.
     std::vector<int32_t> offsets, history_offsets;
   };
 
@@ -63,6 +70,8 @@ class Qwen35 final : public Model {
 
   /// Dense, routed, and shared-expert projections for one Qwen3.5 feed-forward block.
   struct Mlp {
+    /// Dense weights use gate_up/down. MoE layers add router plus [E,2I,H]/[E,H,I] expert tensors
+    /// and a sigmoid-gated shared expert; these layouts are distinct from grouped-GEMM transposes.
     at::Tensor gate_up, down, router, experts, expert_down, shared_gate_up, shared_down,
         shared_gate;
     std::unique_ptr<Fp8Linear> fp8_gate_up, fp8_down;
@@ -881,6 +890,8 @@ class Qwen35 final : public Model {
                       input.offsets[row + 1] - input.offsets[row] - prefix,
                       suffix_offsets[i]);
       }
+      // Each executed suffix maps to a representative prefix index, not its original batch row.
+      // Host indices drive structural assembly; the device copy selects cached recurrent state.
       suffixes.block_prefix_sources = suffix_sources;
       suffixes.block_cache_sources = at::tensor(suffix_sources, input.ids.options());
     }
