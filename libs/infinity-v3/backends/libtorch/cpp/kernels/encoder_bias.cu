@@ -11,7 +11,7 @@
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 
-namespace tei {
+namespace infinity {
 template <class T>
 __global__ void packed_bias_fill_kernel(T* out,
                                         const T* ck,

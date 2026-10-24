@@ -12,7 +12,7 @@
 #include <mutex>
 #include <set>
 
-namespace tei {
+namespace infinity {
 namespace {
 constexpr int CHUNK = 32, DIM = 128;
 

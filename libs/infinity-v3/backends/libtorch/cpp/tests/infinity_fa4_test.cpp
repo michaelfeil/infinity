@@ -76,7 +76,7 @@ void concurrent_first_use() {
       stream.synchronize();
       start.arrive_and_wait();
       for (int repeat = 0; repeat < 3; ++repeat)
-        close(tei::infinity_fa4(q, k, v, cu, cu, 10, .125),
+        close(infinity::infinity_fa4(q, k, v, cu, cu, 10, .125),
               reference(q, k, v, {0, 7, 17}, {0, 7, 17}, .125, false),
               "concurrent/device launch");
       stream.synchronize();
@@ -104,7 +104,7 @@ void standard(at::ScalarType dtype, int mode, bool cross) {
   auto cq = offsets(qe, opts), ck = offsets(ke, opts);
   auto window = mode == 1 ? 37 : -1;
   auto forward = [&] {
-    return tei::infinity_fa4(
+    return infinity::infinity_fa4(
         q, k, v, cq, ck, 513, .7 / std::sqrt(double(d)), mode == 2, window, window);
   };
   auto expected = [&] {
@@ -146,7 +146,7 @@ void deberta(at::ScalarType dtype) {
   auto cu = offsets(ends, opts);
   auto buckets =
       (at::arange(1 - length, length, opts.dtype(at::kInt)) + span).clamp(0, 2 * span - 1);
-  auto forward = [&] { return tei::infinity_fa4_deberta(q, k, v, cu, a, b, buckets, length); };
+  auto forward = [&] { return infinity::infinity_fa4_deberta(q, k, v, cu, a, b, buckets, length); };
   auto expected = [&] {
     std::vector<at::Tensor> rows;
     for (size_t row = 0; row + 1 < ends.size(); ++row) {
@@ -198,13 +198,13 @@ void deberta_p2c_direction(at::ScalarType dtype) {
       at::matmul(at::softmax(scores, -1), v.to(at::kFloat).transpose(0, 1)).transpose(0, 1);
   auto buckets = at::arange(span - n + 1, span + n, opts.dtype(at::kInt));
   auto cu = offsets({0, n}, opts);
-  close(tei::infinity_fa4_deberta(q, q, v, cu, c2p, p2c, buckets, n),
+  close(infinity::infinity_fa4_deberta(q, q, v, cu, c2p, p2c, buckets, n),
         expected,
         "DeBERTa p2c direction");
 }
 
 void deberta_model(at::ScalarType dtype, bool shared, const std::string& terms) {
-  tei::Options options;
+  infinity::Options options;
   options.values = {{"model_type", "deberta-v2"},
                     {"hidden_size", "128"},
                     {"num_attention_heads", "2"},
@@ -219,7 +219,7 @@ void deberta_model(at::ScalarType dtype, bool shared, const std::string& terms) 
                     {"norm_rel_ebd", "layer_norm"},
                     {"layer_norm_eps", "0.00001"},
                     {"_attention_bias_max_bytes", "2097152"}};
-  tei::Weights weights, cpu_weights;
+  infinity::Weights weights, cpu_weights;
   auto opts = at::TensorOptions().device(at::kCUDA).dtype(dtype);
   auto add = [&](const std::string& name, std::vector<int64_t> shape, bool ones = false) {
     weights[name] = (ones ? at::ones(shape, opts) : at::randn(shape, opts) * .02);
@@ -244,13 +244,14 @@ void deberta_model(at::ScalarType dtype, bool shared, const std::string& terms) 
   linear(prefix + "intermediate.dense", 256, 128);
   linear(prefix + "output.dense", 128, 256);
   norm(prefix + "output.LayerNorm");
-  auto model = tei::create_encoder(options, weights, at::Device(at::kCUDA), dtype);
+  auto model = infinity::create_encoder(options, weights, at::Device(at::kCUDA), dtype);
   model->ready();
   for (const auto& [name, value] : weights)
     cpu_weights[name] = value.to(at::kCPU).to(at::kFloat);
   auto reference_options = options;
   reference_options.values["_attention_bias_max_bytes"] = "67108864";
-  auto cpu = tei::create_encoder(reference_options, cpu_weights, at::Device(at::kCPU), at::kFloat);
+  auto cpu =
+      infinity::create_encoder(reference_options, cpu_weights, at::Device(at::kCPU), at::kFloat);
   cpu->ready();
   const std::vector<int32_t> ends = {0, 7, 136, 649};
   auto ids = at::arange(649, opts.dtype(at::kLong)) % 32;
@@ -258,9 +259,9 @@ void deberta_model(at::ScalarType dtype, bool shared, const std::string& terms) 
                             at::arange(129, ids.options()),
                             at::arange(513, ids.options())});
   auto types = at::zeros_like(ids), cu = offsets({0, 7, 136, 649}, opts);
-  tei::PackedInput input{ids, types, positions, cu, ends.data(), 3, 513};
+  infinity::PackedInput input{ids, types, positions, cu, ends.data(), 3, 513};
   auto ci = ids.cpu(), ct = types.cpu(), cp = positions.cpu(), cc = cu.cpu();
-  tei::PackedInput cpu_input{ci, ct, cp, cc, ends.data(), 3, 513};
+  infinity::PackedInput cpu_input{ci, ct, cp, cc, ends.data(), 3, 513};
   // The old quadratic bucket table alone exceeds 32 MiB for length 513.
   // This complete model must run within a 2 MiB attention auxiliary budget.
   auto expected = cpu->forward(cpu_input).to(at::kCUDA);
@@ -274,12 +275,12 @@ void deberta_model(at::ScalarType dtype, bool shared, const std::string& terms) 
   graph.replay();
   close(captured, cpu->forward(cpu_input).to(at::kCUDA), "DeBERTa model graph replay");
   options.values["_attention_bias_max_bytes"] = "1024";
-  auto limited = tei::create_encoder(options, weights, at::Device(at::kCUDA), dtype);
+  auto limited = infinity::create_encoder(options, weights, at::Device(at::kCUDA), dtype);
   limited->ready();
   bool rejected = false;
   try {
     limited->forward(input);
-  } catch (const tei::MemoryAdmissionError&) {
+  } catch (const infinity::MemoryAdmissionError&) {
     rejected = true;
   }
   TORCH_CHECK(rejected, "DeBERTa FA4 ignored the auxiliary memory budget");
@@ -298,7 +299,7 @@ int main(int argc, char** argv) {
     if (mode == "--missing-bundle") {
       bool rejected = false;
       try {
-        tei::infinity_fa4(q, q, q, cu, cu, 7, .125);
+        infinity::infinity_fa4(q, q, q, cu, cu, 7, .125);
       } catch (const c10::Error& e) {
         rejected = std::string(e.what()).find("Missing InfinityFA4 bundle") != std::string::npos;
       }
@@ -306,7 +307,7 @@ int main(int argc, char** argv) {
       return 0;
     }
     if (mode == "--standard-only") {
-      TORCH_CHECK(!tei::infinity_fa4_deberta_supported(q),
+      TORCH_CHECK(!infinity::infinity_fa4_deberta_supported(q),
                   "Standard-only bundle advertised DeBERTa");
       auto stream = c10::cuda::getStreamFromPool();
       c10::cuda::CUDAStreamGuard guard(stream);
@@ -315,8 +316,8 @@ int main(int argc, char** argv) {
           standard(dtype, mode, false);
       return 0;
     }
-    TORCH_CHECK(!tei::infinity_fa4(q, q, q, cu, cu, 7, .125).defined() &&
-                    !tei::infinity_fa4_deberta_supported(q),
+    TORCH_CHECK(!infinity::infinity_fa4(q, q, q, cu, cu, 7, .125).defined() &&
+                    !infinity::infinity_fa4_deberta_supported(q),
                 "Unavailable InfinityFA4 intercepted attention");
     return 0;
   }
@@ -341,7 +342,7 @@ int main(int argc, char** argv) {
       auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
       auto q = at::zeros({7, 2 * ratio, 128}, opts), k = at::zeros({7, 2, 128}, opts);
       auto cu = offsets({0, 7}, opts);
-      TORCH_CHECK(!tei::infinity_fa4(q, k, k, cu, cu, 7, .125).defined(),
+      TORCH_CHECK(!infinity::infinity_fa4(q, k, k, cu, cu, 7, .125).defined(),
                   "Unavailable extended GQA intercepted ordinary attention");
     }
     return 0;
@@ -363,8 +364,9 @@ int main(int argc, char** argv) {
   auto unsupported =
       at::zeros({7, 2, 80}, at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16));
   auto cu = offsets({0, 7}, unsupported.options());
-  TORCH_CHECK(!tei::infinity_fa4(unsupported, unsupported, unsupported, cu, cu, 7, 1).defined(),
-              "Unsupported geometry did not retain the original attention path");
+  TORCH_CHECK(
+      !infinity::infinity_fa4(unsupported, unsupported, unsupported, cu, cu, 7, 1).defined(),
+      "Unsupported geometry did not retain the original attention path");
   std::cout
       << "InfinityFA4 packed/cross attention, DeBERTa model/budget, concurrent devices and graph replay passed\n";
 }

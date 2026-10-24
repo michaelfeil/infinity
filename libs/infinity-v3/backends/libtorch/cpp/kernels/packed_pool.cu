@@ -58,7 +58,7 @@ __global__ void packed_mean_cumulative_bf16(const __nv_bfloat16* x,
 }
 }
 
-namespace tei {
+namespace infinity {
 /// Launch one sequence/feature-tile reduction for each validated [start, length] span. Span
 /// contents are supplied by the caller; this wrapper validates tensor metadata, not device values.
 at::Tensor packed_mean_pool(const at::Tensor& hidden, const at::Tensor& spans) {

@@ -33,8 +33,8 @@ int main(int argc, char** argv) {
       const int stride = ((m + 7) / 8) * 8, tile = m * stride;
       const long backing = std::max((long)lengths.size() * H * tile,
                                     (H - 1L) * tile + (total - 1L) * stride + total);
-      tei::PackedInput input{{}, {}, {}, cu, offsets.data(), (int64_t)lengths.size(), m};
-      auto logical = tei::packed_sequence_bias(q, input);
+      infinity::PackedInput input{{}, {}, {}, cu, offsets.data(), (int64_t)lengths.size(), m};
+      auto logical = infinity::packed_sequence_bias(q, input);
       auto storage = logical.as_strided({backing}, {1});
       storage.fill_(NAN);
       auto local = storage.as_strided({(long)lengths.size(), H, m, m}, {H * tile, tile, stride, 1});
@@ -56,7 +56,7 @@ int main(int argc, char** argv) {
         auto use_ck = (mode == 0 || mode == 2) ? ck : at::Tensor(),
              use_pc = (mode == 1 || mode == 2) ? pc : at::Tensor();
         storage.fill_(NAN);
-        tei::packed_bias_fill(logical, use_ck, use_pc, packed_indices, ix, cu, m);
+        infinity::packed_bias_fill(logical, use_ck, use_pc, packed_indices, ix, cu, m);
         for (size_t r = 0; r < lengths.size(); ++r) {
           int n = lengths[r], start = offsets[r];
           auto idx = index_rows[r].view({n, n}).cpu();
@@ -82,7 +82,7 @@ int main(int argc, char** argv) {
         auto use_ck = (mode == 0 || mode == 2) ? ck : at::Tensor(),
              use_pc = (mode == 1 || mode == 2) ? pc : at::Tensor();
         storage.fill_(NAN);
-        tei::packed_bias_fill(logical, use_ck, use_pc, shared_indices, at::Tensor(), cu, m);
+        infinity::packed_bias_fill(logical, use_ck, use_pc, shared_indices, at::Tensor(), cu, m);
         for (size_t r = 0; r < lengths.size(); ++r) {
           int n = lengths[r], start = offsets[r];
           auto idx = shared_cpu.narrow(0, 0, n).narrow(1, 0, n);
@@ -108,8 +108,8 @@ int main(int argc, char** argv) {
         c10::cuda::CUDAStreamGuard stream_guard(stream);
         at::cuda::CUDAGraph graph;
         graph.capture_begin();
-        tei::packed_bias_fill(logical, ck, pc, packed_indices, ix, cu, m);
-        tei::packed_bias_fill(logical, ck, pc, shared_indices, at::Tensor(), cu, m);
+        infinity::packed_bias_fill(logical, ck, pc, packed_indices, ix, cu, m);
+        infinity::packed_bias_fill(logical, ck, pc, shared_indices, at::Tensor(), cu, m);
         graph.capture_end();
         packed_indices.zero_();
         shared_indices.zero_();

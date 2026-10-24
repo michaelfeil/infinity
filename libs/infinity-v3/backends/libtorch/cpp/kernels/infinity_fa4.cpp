@@ -18,7 +18,7 @@
 #include <memory>
 #include <mutex>
 
-namespace tei {
+namespace infinity {
 namespace {
 using Forward = int (*)(int,
                         int,
@@ -283,7 +283,7 @@ at::Tensor infinity_fa4_deberta(const at::Tensor& q,
 }
 }
 #else
-namespace tei {
+namespace infinity {
 at::Tensor infinity_fa4(const at::Tensor&,
                         const at::Tensor&,
                         const at::Tensor&,

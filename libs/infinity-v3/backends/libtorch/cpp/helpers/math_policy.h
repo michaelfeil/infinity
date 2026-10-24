@@ -11,7 +11,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #endif
 
-namespace tei {
+namespace infinity {
 using MathPolicy = std::array<int64_t, 22 + at::num_sdp_backends>;
 
 // Both resident snapshots and captured shaders must use the same policy.

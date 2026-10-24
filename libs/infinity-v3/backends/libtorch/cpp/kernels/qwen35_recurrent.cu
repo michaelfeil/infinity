@@ -35,7 +35,7 @@ DEALINGS IN THE SOFTWARE.
 #include <cuda_bf16.h>
 #include <type_traits>
 
-namespace tei {
+namespace infinity {
 namespace {
 template <bool FMA> __device__ float accumulate(float sum, float a, float b) {
   if constexpr (FMA)

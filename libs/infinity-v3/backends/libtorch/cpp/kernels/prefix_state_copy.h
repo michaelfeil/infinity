@@ -6,7 +6,7 @@
 #include <ATen/ATen.h>
 #include <vector>
 
-namespace tei {
+namespace infinity {
 // Batched, bit-preserving copies from row-strided state into contiguous owners.
 // Returns false without submitting work if any layout is unsupported.
 // leading_rows copies the target's row count from a possibly longer source.

@@ -10,7 +10,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #endif
-using namespace tei;
+using namespace infinity;
 
 void batched_tower_test(Qwen3VL& tower, const at::Tensor& pixels) {
   std::vector<ImageInput> images{{pixels.repeat({2, 1}), {1, 2, 4}, 2, 0, 2, 0},

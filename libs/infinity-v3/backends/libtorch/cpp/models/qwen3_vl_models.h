@@ -8,7 +8,7 @@
 #include <unordered_map>
 #include "helpers/options.h"
 
-namespace tei {
+namespace infinity {
 // Native Candle Qwen3-VL adaptation; upstream notices retained in LICENSE/NOTICE.
 class Qwen3VL final : public Model {
   Options cfg;

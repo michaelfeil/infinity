@@ -144,6 +144,7 @@ at::ScalarType dtype(int32_t value) {
 bool direct_filesystem(int fd) {
 #ifdef __linux__
   struct statfs info{};
+
   if (fstatfs(fd, &info) == 0) {
     // As upstream, preserve page caching on RAM and common network mounts.
     switch (static_cast<unsigned long>(info.f_type)) {
@@ -162,7 +163,7 @@ bool direct_filesystem(int fd) {
 }
 }
 
-namespace tei {
+namespace infinity {
 /// Validate ordered byte ranges, then read bounded groups into independently owned tensors. The
 /// insert callback receives each completed tensor; file/DMA cleanup drains work on failure too.
 void read_safetensors(
@@ -183,7 +184,9 @@ void read_safetensors(
   TORCH_CHECK(data_start <= INT64_MAX && data_length <= INT64_MAX - data_start,
               "Safetensors file is too large");
   TORCH_CHECK(weights || count == 0, "Missing weight descriptors");
+
   struct stat info{};
+
   TORCH_CHECK(fstat(fd, &info) == 0 && S_ISREG(info.st_mode) &&
                   static_cast<uint64_t>(info.st_size) == data_start + data_length,
               "Safetensors file size changed or is not a regular file");

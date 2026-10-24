@@ -6,7 +6,7 @@
 #include <optional>
 #include <string>
 
-namespace tei {
+namespace infinity {
 enum class MlpPrecision { Model, Fp8 };
 enum class MlpActivation { Identity, Relu, Silu, Gelu, GeluTanh, Tanh, RoundedSilu, RoundedGelu };
 enum class MlpEpilogue { None, Relu, Gelu };

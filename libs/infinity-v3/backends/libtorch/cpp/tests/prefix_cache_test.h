@@ -2,12 +2,13 @@
 #include "batching/prefix_cache.h"
 #include "models/model.h"
 
-inline void check_complete_classifier_cache(tei::Model& model, const tei::PackedInput& input) {
-  struct Observed final : tei::Model {
-    tei::Model& inner;
+inline void check_complete_classifier_cache(infinity::Model& model,
+                                            const infinity::PackedInput& input) {
+  struct Observed final : infinity::Model {
+    infinity::Model& inner;
     mutable size_t predictions = 0;
 
-    explicit Observed(tei::Model& model) : inner(model) {}
+    explicit Observed(infinity::Model& model) : inner(model) {}
 
     void ready() override {}
 
@@ -27,22 +28,22 @@ inline void check_complete_classifier_cache(tei::Model& model, const tei::Packed
       return inner.prefix_checkpoint_only();
     }
 
-    at::Tensor forward(const tei::PackedInput& value) const override {
+    at::Tensor forward(const infinity::PackedInput& value) const override {
       return inner.forward(value);
     }
 
-    at::Tensor predict(const tei::PackedInput& value, bool tokens) const override {
+    at::Tensor predict(const infinity::PackedInput& value, bool tokens) const override {
       ++predictions;
       return inner.predict(value, tokens);
     }
 
-    at::Tensor classify_hidden(const tei::PackedInput& value,
+    at::Tensor classify_hidden(const infinity::PackedInput& value,
                                const at::Tensor& hidden) const override {
       return inner.classify_hidden(value, hidden);
     }
   } observed(model);
 
-  tei::PrefixCache cache(16 << 20, 4096, 8);
+  infinity::PrefixCache cache(16 << 20, 4096, 8);
   auto expected = model.predict(input, false);
   TORCH_CHECK(at::equal(cache.run(observed, input, 1), expected), "Cold classifier changed logits");
   const auto bytes = cache.bytes();
@@ -63,12 +64,12 @@ inline void check_complete_classifier_cache(tei::Model& model, const tei::Packed
   TORCH_CHECK(cache.bytes() == 0, "Classifier cache retained state after clear");
 }
 
-inline void check_prefix_cache(tei::Model& model,
-                               const tei::PackedInput& input,
+inline void check_prefix_cache(infinity::Model& model,
+                               const infinity::PackedInput& input,
                                int operation = 0,
                                double rtol = 1e-5,
                                double atol = 2e-5) {
-  tei::PrefixCache cache(16 << 20, 32, 8);
+  infinity::PrefixCache cache(16 << 20, 32, 8);
   auto reference = operation ? model.predict(input, operation == 2) : model.forward(input);
   auto first = cache.run(model, input, operation);
   TORCH_CHECK(at::allclose(first, reference, rtol, atol),

@@ -4,7 +4,7 @@
 #pragma once
 #include "batching/packed_input.h"
 
-namespace tei {
+namespace infinity {
 // Packed BF16 values, normalized/scaled FP32 Q/K, and FP32 decay/beta.
 // Prefix snapshots and initial states remain FP32. Chunk tails are exact-length.
 /// Write real-token BF16 output with F32 intermediate state; optional final_state is allocated per

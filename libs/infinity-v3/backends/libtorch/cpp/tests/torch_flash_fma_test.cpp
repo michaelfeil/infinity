@@ -23,19 +23,19 @@ static void cached_suffix_spans(const c10::Device& device) {
        v = combined.narrow(1, heads + kvheads, kvheads);
   auto cumulative = at::tensor(std::vector<int32_t>{0, total}, options.dtype(at::kInt));
   auto reference =
-      tei::torch_flash_fma(q, k, v, cumulative, total, 1. / std::sqrt(double(dim)), true);
+      infinity::torch_flash_fma(q, k, v, cumulative, total, 1. / std::sqrt(double(dim)), true);
   for (int64_t prefix : {1, 13, 127, 129, 383, 511}) {
     auto count = total - prefix;
     auto suffix_cu = at::tensor(std::vector<int32_t>{0, int32_t(count)}, options.dtype(at::kInt));
-    auto direct = tei::torch_flash_fma_varlen(q.narrow(0, prefix, count),
-                                              k,
-                                              v,
-                                              suffix_cu,
-                                              cumulative,
-                                              count,
-                                              total,
-                                              1. / std::sqrt(double(dim)),
-                                              true);
+    auto direct = infinity::torch_flash_fma_varlen(q.narrow(0, prefix, count),
+                                                   k,
+                                                   v,
+                                                   suffix_cu,
+                                                   cumulative,
+                                                   count,
+                                                   total,
+                                                   1. / std::sqrt(double(dim)),
+                                                   true);
     TORCH_CHECK(at::equal(direct, reference.narrow(0, prefix, count)),
                 "Matched-operand rectangular suffix attention changed outputs prefix=",
                 prefix,
@@ -57,16 +57,17 @@ static void single_query_tiles(const c10::Device& device) {
       auto operands = at::randn({2754, 16 + 2 * kvheads, 128}, generator, at::kFloat).to(options);
       auto q = operands.narrow(1, 0, 16), k = operands.narrow(1, 16, kvheads),
            v = operands.narrow(1, 16 + kvheads, kvheads);
-      auto reference = tei::torch_flash_fma(q, k, v, cumulative, 2048, 1. / std::sqrt(128.), true);
-      auto actual = tei::torch_flash_fma_varlen(q.index_select(0, selected),
-                                                k,
-                                                v,
-                                                suffix_cu,
-                                                cumulative,
-                                                1,
-                                                2048,
-                                                1. / std::sqrt(128.),
-                                                true);
+      auto reference =
+          infinity::torch_flash_fma(q, k, v, cumulative, 2048, 1. / std::sqrt(128.), true);
+      auto actual = infinity::torch_flash_fma_varlen(q.index_select(0, selected),
+                                                     k,
+                                                     v,
+                                                     suffix_cu,
+                                                     cumulative,
+                                                     1,
+                                                     2048,
+                                                     1. / std::sqrt(128.),
+                                                     true);
       TORCH_CHECK(at::equal(actual, reference.index_select(0, selected)),
                   "Single-query tile changed original BF16 arithmetic seed=",
                   seed,
@@ -105,16 +106,16 @@ static void default_torch_suffix_spans(const c10::Device& device, bool extended_
             at::randn({full_offsets.back(), 16 + 2 * kvheads, 128}, generator, at::kFloat).to(opts);
         auto q = values.narrow(1, 0, 16), k = values.narrow(1, 16, kvheads),
              v = values.narrow(1, 16 + kvheads, kvheads);
-        auto reference = tei::torch_flash_fma(q, k, v, cu, 2048, 1. / std::sqrt(128.), true);
-        auto actual = tei::torch_flash_fma_varlen(q.index_select(0, indices),
-                                                  k,
-                                                  v,
-                                                  suffix_cu,
-                                                  cu,
-                                                  maximum,
-                                                  2048,
-                                                  1. / std::sqrt(128.),
-                                                  true);
+        auto reference = infinity::torch_flash_fma(q, k, v, cu, 2048, 1. / std::sqrt(128.), true);
+        auto actual = infinity::torch_flash_fma_varlen(q.index_select(0, indices),
+                                                       k,
+                                                       v,
+                                                       suffix_cu,
+                                                       cu,
+                                                       maximum,
+                                                       2048,
+                                                       1. / std::sqrt(128.),
+                                                       true);
         TORCH_CHECK(at::equal(actual, reference.index_select(0, indices)),
                     "Short-query tile changed fused BF16 attention bits seed=",
                     seed,
@@ -140,7 +141,7 @@ static void default_torch_suffix_spans(const c10::Device& device, bool extended_
       auto reference = std::get<0>(at::_flash_attention_forward(
           q, k, v, cumulative, cumulative, total, total, 0., true, false, scale, -1, -1));
       auto suffix_cu = at::tensor(std::vector<int32_t>{0, 1}, options.dtype(at::kInt));
-      auto actual = tei::torch_flash_unfused_varlen(
+      auto actual = infinity::torch_flash_unfused_varlen(
           q.narrow(0, total - 1, 1), k, v, suffix_cu, cumulative, 1, total, scale);
       auto expected = reference.narrow(0, total - 1, 1);
       bool agrees = at::equal(actual, expected);
@@ -181,7 +182,7 @@ static void cudnn_cached_suffix(const c10::Device& device) {
   auto q = at::randn({tokens, heads, dim}, options), k = at::randn({tokens, kvheads, dim}, options),
        v = at::randn_like(k);
   int32_t full_offsets[] = {0, tokens};
-  tei::PackedInput original;
+  infinity::PackedInput original;
   original.offsets = full_offsets;
   original.batch = 1;
   original.max_sequence = tokens;
@@ -200,11 +201,11 @@ static void cudnn_cached_suffix(const c10::Device& device) {
                                                             false));
   for (int64_t boundary : {1, 13, 384, 448, 511}) {
     auto count = tokens - boundary;
-    auto source = std::make_shared<tei::PrefixEntry>();
+    auto source = std::make_shared<infinity::PrefixEntry>();
     source->layers[0] = {
         k.narrow(0, 0, boundary).clone(), v.narrow(0, 0, boundary).clone(), {}, {}};
-    auto budget = std::make_shared<tei::PrefixBudget>();
-    tei::PrefixContext context{
+    auto budget = std::make_shared<infinity::PrefixBudget>();
+    infinity::PrefixContext context{
         original, {0, int32_t(count)}, {boundary}, {source}, {nullptr}, 16 << 20, budget};
     int32_t suffix_offsets[] = {0, int32_t(count)};
     auto input = original;
@@ -212,17 +213,17 @@ static void cudnn_cached_suffix(const c10::Device& device) {
     input.cumulative = at::tensor(std::vector<int32_t>{0, int32_t(count)}, options.dtype(at::kInt));
     input.max_sequence = count;
     input.prefix = &context;
-    auto actual = tei::prefix_attention(q.narrow(0, boundary, count),
-                                        k.narrow(0, boundary, count),
-                                        v.narrow(0, boundary, count),
-                                        input,
-                                        0,
-                                        1. / std::sqrt(double(dim)),
-                                        -1,
-                                        -1,
-                                        false,
-                                        true,
-                                        true);
+    auto actual = infinity::prefix_attention(q.narrow(0, boundary, count),
+                                             k.narrow(0, boundary, count),
+                                             v.narrow(0, boundary, count),
+                                             input,
+                                             0,
+                                             1. / std::sqrt(double(dim)),
+                                             -1,
+                                             -1,
+                                             false,
+                                             true,
+                                             true);
     TORCH_CHECK(actual.sizes() == reference.narrow(0, boundary, count).sizes() &&
                     at::equal(actual, reference.narrow(0, boundary, count)),
                 "cuDNN cache attention changed packed-provider output boundary=",
@@ -249,7 +250,7 @@ static void large_local_spans(const c10::Device& device) {
            v = combined.narrow(1, heads + key_heads, key_heads);
       auto cumulative = at::tensor(offsets, at::TensorOptions().dtype(at::kInt)).to(device);
       auto output =
-          tei::torch_flash_fma(q, k, v, cumulative, maximum, 1. / 8., false, window, window);
+          infinity::torch_flash_fma(q, k, v, cumulative, maximum, 1. / 8., false, window, window);
       for (size_t row = 0; row + 1 < offsets.size(); ++row) {
         const int start = offsets[row], n = offsets[row + 1] - start;
         auto cpu = [&](const at::Tensor& x) {
@@ -274,8 +275,8 @@ static void large_local_spans(const c10::Device& device) {
       }
       auto changed = v.clone();
       changed.narrow(0, 0, offsets[1]).add_(20);
-      auto isolated =
-          tei::torch_flash_fma(q, k, changed, cumulative, maximum, 1. / 8., false, window, window);
+      auto isolated = infinity::torch_flash_fma(
+          q, k, changed, cumulative, maximum, 1. / 8., false, window, window);
       TORCH_CHECK(at::equal(output.narrow(0, offsets[1], offsets.back() - offsets[1]),
                             isolated.narrow(0, offsets[1], offsets.back() - offsets[1])),
                   "Large local attention leaks across sequences");
@@ -288,15 +289,15 @@ static void media_spans(const c10::Device& device) {
   const auto* properties = at::cuda::getDeviceProperties(device.index());
   bool supported = properties->major == 9 && properties->minor == 0 &&
                    properties->sharedMemPerBlockOptin >= 48 * 1024;
-  TORCH_CHECK(tei::torch_flash_fma_supported(probe, probe, probe) == supported,
+  TORCH_CHECK(infinity::torch_flash_fma_supported(probe, probe, probe) == supported,
               "Head72 architecture guard");
-  TORCH_CHECK(!tei::torch_flash_fma_supported(probe, probe, probe, true, -1, -1),
+  TORCH_CHECK(!infinity::torch_flash_fma_supported(probe, probe, probe, true, -1, -1),
               "Head72 causal fallback");
-  TORCH_CHECK(!tei::torch_flash_fma_supported(probe, probe, probe, false, 2, 2),
+  TORCH_CHECK(!infinity::torch_flash_fma_supported(probe, probe, probe, false, 2, 2),
               "Head72 local fallback");
   auto half = probe.to(at::kHalf), cpu = probe.cpu();
-  TORCH_CHECK(!tei::torch_flash_fma_supported(half, half, half), "Head72 FP16 fallback");
-  TORCH_CHECK(!tei::torch_flash_fma_supported(cpu, cpu, cpu), "Head72 CPU fallback");
+  TORCH_CHECK(!infinity::torch_flash_fma_supported(half, half, half), "Head72 FP16 fallback");
+  TORCH_CHECK(!infinity::torch_flash_fma_supported(cpu, cpu, cpu), "Head72 CPU fallback");
   if (!supported)
     return;
   for (int64_t dim : {72, 256})
@@ -309,7 +310,7 @@ static void media_spans(const c10::Device& device) {
       auto qstore = at::randn({11, 6, dim}, options) * .1,
            kstore = at::randn({24, 4, dim}, options) * .1;
       auto q = qstore.narrow(1, 0, 4), k = kstore.narrow(1, 0, 2), v = kstore.narrow(1, 2, 2);
-      auto result = tei::torch_flash_fma_varlen(q, k, v, cuq, cuk, 7, 13, 1., causal);
+      auto result = infinity::torch_flash_fma_varlen(q, k, v, cuq, cuk, 7, 13, 1., causal);
       TORCH_CHECK(result.sizes() == q.sizes(),
                   "Media attention allocated synthetic rows/head width");
       double worst = 0;
@@ -336,7 +337,7 @@ static void media_spans(const c10::Device& device) {
       TORCH_CHECK(worst < .003, "Unequal media spans FP64 reference", worst);
       auto changed = v.clone();
       changed.narrow(0, 0, 3).add_(1);
-      auto isolated = tei::torch_flash_fma_varlen(q, k, changed, cuq, cuk, 7, 13, 1., causal);
+      auto isolated = infinity::torch_flash_fma_varlen(q, k, changed, cuq, cuk, 7, 13, 1., causal);
       TORCH_CHECK(at::equal(result.narrow(0, 1, 10), isolated.narrow(0, 1, 10)),
                   "Unequal media span sequence isolation");
     }
@@ -346,12 +347,12 @@ static void media_spans(const c10::Device& device) {
 // it does not share the Flash kernel's pre-scaled ALiBi implementation.
 static void alibi32_spans(const c10::Device& device) {
   const bool supported = at::cuda::getDeviceProperties(device.index())->major >= 8;
-  TORCH_CHECK(tei::torch_flash_fma_alibi32_supported(device, at::kHalf, 32) == supported,
+  TORCH_CHECK(infinity::torch_flash_fma_alibi32_supported(device, at::kHalf, 32) == supported,
               "Head32 ALiBi architecture guard mismatch");
-  TORCH_CHECK(!tei::torch_flash_fma_alibi32_supported(c10::Device(at::kCPU), at::kHalf, 32) &&
-                  !tei::torch_flash_fma_alibi32_supported(device, at::kBFloat16, 32) &&
-                  !tei::torch_flash_fma_alibi32_supported(device, at::kFloat, 32) &&
-                  !tei::torch_flash_fma_alibi32_supported(device, at::kHalf, 64),
+  TORCH_CHECK(!infinity::torch_flash_fma_alibi32_supported(c10::Device(at::kCPU), at::kHalf, 32) &&
+                  !infinity::torch_flash_fma_alibi32_supported(device, at::kBFloat16, 32) &&
+                  !infinity::torch_flash_fma_alibi32_supported(device, at::kFloat, 32) &&
+                  !infinity::torch_flash_fma_alibi32_supported(device, at::kHalf, 64),
               "Head32 ALiBi unsupported geometry/dtype must retain fallback");
   if (!supported)
     return;
@@ -387,7 +388,7 @@ static void alibi32_spans(const c10::Device& device) {
            v = combined.narrow(1, 2 * heads, heads);
       auto cumulative = at::tensor(offsets, at::TensorOptions().dtype(at::kInt)).to(device);
       const double scale = 1. / std::sqrt(static_cast<double>(dim));
-      auto result = tei::torch_flash_fma_alibi32(q, k, v, cumulative, slopes, maximum, scale);
+      auto result = infinity::torch_flash_fma_alibi32(q, k, v, cumulative, slopes, maximum, scale);
       TORCH_CHECK(result.sizes() == q.sizes() && result.numel() == total * heads * dim &&
                       at::isfinite(result).all().item<bool>(),
                   "Head32 ALiBi changed real token/head geometry or finiteness");
@@ -411,7 +412,7 @@ static void alibi32_spans(const c10::Device& device) {
       auto changed = v.clone();
       changed.select(0, lengths[0] - 1).add_(5.);
       auto isolated =
-          tei::torch_flash_fma_alibi32(q, k, changed, cumulative, slopes, maximum, scale);
+          infinity::torch_flash_fma_alibi32(q, k, changed, cumulative, slopes, maximum, scale);
       TORCH_CHECK(at::equal(result.narrow(0, lengths[0], total - lengths[0]),
                             isolated.narrow(0, lengths[0], total - lengths[0])),
                   "Head32 ALiBi packed sequence isolation failed");
@@ -465,8 +466,8 @@ int main(int argc, char** argv) {
               auto cu = at::tensor(offsets, at::TensorOptions().dtype(at::kInt)).to(device);
               const double scale = 1. / std::sqrt(dim);
               auto output = dim == 32
-                                ? tei::torch_flash_exact32(q, k, v, cu, max_sequence, scale)
-                                : tei::torch_flash_fma(
+                                ? infinity::torch_flash_exact32(q, k, v, cu, max_sequence, scale)
+                                : infinity::torch_flash_fma(
                                       q, k, v, cu, max_sequence, scale, causal, window, window);
               TORCH_CHECK(at::isfinite(output).all().item<bool>(),
                           "Nonfinite native Torch Flash output");
@@ -508,8 +509,8 @@ int main(int argc, char** argv) {
               auto changed = v.clone();
               changed.narrow(0, 0, lengths[0]).add_(20);
               auto isolated =
-                  dim == 32 ? tei::torch_flash_exact32(q, k, changed, cu, max_sequence, scale)
-                            : tei::torch_flash_fma(
+                  dim == 32 ? infinity::torch_flash_exact32(q, k, changed, cu, max_sequence, scale)
+                            : infinity::torch_flash_fma(
                                   q, k, changed, cu, max_sequence, scale, causal, window, window);
               TORCH_CHECK(at::isfinite(isolated).all().item<bool>() &&
                               at::equal(output.narrow(0, lengths[0], total - lengths[0]),
@@ -526,16 +527,17 @@ int main(int argc, char** argv) {
   const auto* properties = at::cuda::getDeviceProperties(device.index());
   const bool hopper = properties->major == 9 && properties->minor == 0 &&
                       properties->sharedMemPerBlockOptin >= 128 * 1024;
-  TORCH_CHECK(tei::torch_flash_fma_supported(probe, probe, probe, false, -1, -1) == hopper,
+  TORCH_CHECK(infinity::torch_flash_fma_supported(probe, probe, probe, false, -1, -1) == hopper,
               "Wide-head architecture guard mismatch");
-  TORCH_CHECK(tei::torch_flash_fma_supported(probe, probe, probe, true, -1, -1) == hopper,
+  TORCH_CHECK(infinity::torch_flash_fma_supported(probe, probe, probe, true, -1, -1) == hopper,
               "Wide-head causal architecture guard mismatch");
-  TORCH_CHECK(!tei::torch_flash_fma_supported(probe, probe, probe, false, 2, 2),
+  TORCH_CHECK(!infinity::torch_flash_fma_supported(probe, probe, probe, false, 2, 2),
               "Wide-head local mask must retain fallback");
   auto half_probe = probe.to(at::kHalf), cpu_probe = probe.cpu();
-  TORCH_CHECK(!tei::torch_flash_fma_supported(half_probe, half_probe, half_probe, false, -1, -1),
-              "Wide-head FP16 must retain fallback");
-  TORCH_CHECK(!tei::torch_flash_fma_supported(cpu_probe, cpu_probe, cpu_probe, false, -1, -1),
+  TORCH_CHECK(
+      !infinity::torch_flash_fma_supported(half_probe, half_probe, half_probe, false, -1, -1),
+      "Wide-head FP16 must retain fallback");
+  TORCH_CHECK(!infinity::torch_flash_fma_supported(cpu_probe, cpu_probe, cpu_probe, false, -1, -1),
               "Wide-head CPU must retain fallback");
   if (hopper)
     for (bool causal : {false, true})
@@ -553,7 +555,7 @@ int main(int argc, char** argv) {
           auto q = combined.narrow(1, 0, heads), k = combined.narrow(1, heads, key_heads),
                v = combined.narrow(1, heads + key_heads, key_heads);
           auto cu = at::tensor(offsets, at::TensorOptions().dtype(at::kInt)).to(device);
-          auto output = tei::torch_flash_fma(q, k, v, cu, maximum, 1., causal, -1, -1);
+          auto output = infinity::torch_flash_fma(q, k, v, cu, maximum, 1., causal, -1, -1);
           TORCH_CHECK(output.sizes() == q.sizes() && at::isfinite(output).all().item<bool>(),
                       "Wide-head packed result geometry/finiteness mismatch");
           double worst = 0;
@@ -583,14 +585,14 @@ int main(int argc, char** argv) {
           TORCH_CHECK(worst < .003, "Wide-head independent FP64 ragged/GQA mismatch: ", worst);
           auto changed = v.clone();
           changed.narrow(0, 0, lengths[0]).add_(1.);
-          auto isolated = tei::torch_flash_fma(q, k, changed, cu, maximum, 1., causal, -1, -1);
+          auto isolated = infinity::torch_flash_fma(q, k, changed, cu, maximum, 1., causal, -1, -1);
           TORCH_CHECK(at::equal(output.narrow(0, lengths[0], total - lengths[0]),
                                 isolated.narrow(0, lengths[0], total - lengths[0])),
                       "Wide-head packed sequence isolation failed");
           if (causal) {
             auto one = at::tensor(std::vector<int32_t>{0, 1}, at::TensorOptions().dtype(at::kInt))
                            .to(device);
-            auto prefix = tei::torch_flash_fma(
+            auto prefix = infinity::torch_flash_fma(
                 q.narrow(0, 0, 1), k.narrow(0, 0, 1), v.narrow(0, 0, 1), one, 1, 1., true, -1, -1);
             TORCH_CHECK(at::equal(prefix, output.narrow(0, 0, 1)),
                         "Wide-head causal prefix preservation failed");

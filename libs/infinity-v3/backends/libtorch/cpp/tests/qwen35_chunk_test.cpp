@@ -46,7 +46,7 @@ int main(int argc, char** argv) {
         }
         final.select(0, seq).copy_(state);
       }
-      tei::PackedInput input;
+      infinity::PackedInput input;
       input.offsets = offsets.data();
       input.batch = sequences;
       input.max_sequence = 257;
@@ -59,15 +59,15 @@ int main(int argc, char** argv) {
            device_gates = gates.to(device), device_initial = initial.to(device);
       auto immutable = device_initial.clone();
       at::Tensor actual_state;
-      tei::qwen35_chunk_delta_cuda(device_values,
-                                   device_qk,
-                                   device_gates,
-                                   input,
-                                   actual,
-                                   kh,
-                                   vh,
-                                   cached ? device_initial : at::Tensor(),
-                                   &actual_state);
+      infinity::qwen35_chunk_delta_cuda(device_values,
+                                        device_qk,
+                                        device_gates,
+                                        input,
+                                        actual,
+                                        kh,
+                                        vh,
+                                        cached ? device_initial : at::Tensor(),
+                                        &actual_state);
       auto host = actual.cpu().to(at::kFloat), oracle = expected.to(at::kBFloat16).to(at::kFloat),
            host_state = actual_state.cpu().to(at::kDouble);
       TORCH_CHECK(at::isfinite(host).all().item<bool>() &&
@@ -87,7 +87,7 @@ int main(int argc, char** argv) {
       input.block_prefix_sources[0] = 3;
       bool rejected = false;
       try {
-        tei::qwen35_chunk_delta_cuda(
+        infinity::qwen35_chunk_delta_cuda(
             device_values, device_qk, device_gates, input, actual, kh, vh, device_initial, nullptr);
       } catch (const c10::Error&) {
         rejected = true;

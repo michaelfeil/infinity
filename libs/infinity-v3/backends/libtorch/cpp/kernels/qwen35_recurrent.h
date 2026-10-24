@@ -4,7 +4,7 @@
 #pragma once
 #include "batching/packed_input.h"
 
-namespace tei {
+namespace infinity {
 /// Check the device architecture and head geometry qualified for the register-state recurrent path.
 bool qwen35_recurrent_supported(c10::Device, int64_t, int64_t);
 /// Write BF16 [tokens, value_heads, 128] output from packed convolution values and F32 Q/K/gates.

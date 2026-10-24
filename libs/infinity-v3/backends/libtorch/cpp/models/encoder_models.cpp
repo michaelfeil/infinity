@@ -31,7 +31,7 @@
 #include <cstdlib>
 #include <map>
 
-namespace tei {
+namespace infinity {
 namespace {
 enum class Family { Distil, Modern, Nomic, Gte, Jina, JinaCode };
 

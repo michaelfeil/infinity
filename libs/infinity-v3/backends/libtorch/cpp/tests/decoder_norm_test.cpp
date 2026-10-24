@@ -17,7 +17,7 @@ void verify_subnormal_router(const c10::Device& device) {
   logits[0] = 0.f;
   for (int rank = 0; rank < 7; ++rank)
     logits[127 - rank] = -90.f - rank;
-  auto probabilities = tei::decoder_half_moe_probabilities(host.to(device));
+  auto probabilities = infinity::decoder_half_moe_probabilities(host.to(device));
   auto observed = probabilities.cpu();
   const auto* values = observed.const_data_ptr<float>();
   for (int expert = 121; expert < 128; ++expert)
@@ -81,14 +81,14 @@ int main(int argc, char** argv) {
         for (int64_t start = 0; start < rows; start += 64) {
           auto count = std::min(int64_t(64), rows - start);
           auto part =
-              tei::decoder_exact_rms_norm(x.narrow(0, start, count),
-                                          residual ? r.narrow(0, start, count) : at::Tensor(),
-                                          w,
-                                          eps);
+              infinity::decoder_exact_rms_norm(x.narrow(0, start, count),
+                                               residual ? r.narrow(0, start, count) : at::Tensor(),
+                                               w,
+                                               eps);
           normalized.push_back(part.first);
           summed.push_back(part.second);
         }
-        auto actual = tei::decoder_exact_rms_norm(x, residual ? r : at::Tensor(), w, eps);
+        auto actual = infinity::decoder_exact_rms_norm(x, residual ? r : at::Tensor(), w, eps);
         TORCH_CHECK(at::equal(actual.first, at::cat(normalized)),
                     "BF16 prefill RMS changed adapter output");
         TORCH_CHECK(at::equal(actual.second, at::cat(summed)), "BF16 prefill RMS changed residual");
@@ -102,7 +102,7 @@ int main(int argc, char** argv) {
            w = at::ones({width}, options);
       for (bool residual : {false, true})
         for (double eps : {1e-6, 1e-3}) {
-          auto result = tei::decoder_exact_rms_norm(x, residual ? r : at::Tensor(), w, eps);
+          auto result = infinity::decoder_exact_rms_norm(x, residual ? r : at::Tensor(), w, eps);
           auto unrounded = residual ? x.to(at::kFloat) + r.to(at::kFloat) : x.to(at::kFloat);
           auto expected =
               (unrounded * at::rsqrt(unrounded.square().mean(-1, true) + eps)).to(at::kBFloat16);
@@ -119,7 +119,7 @@ int main(int argc, char** argv) {
     auto x = at::ones({1, width}, options);
     x.narrow(1, width / 2, width / 2).fill_(2);
     auto r = at::full_like(x, .005), w = at::full({width}, 64., options);
-    auto result = tei::decoder_exact_rms_norm(x, r, w, 1e-6);
+    auto result = infinity::decoder_exact_rms_norm(x, r, w, 1e-6);
     auto full = x.to(at::kFloat) + r.to(at::kFloat);
     auto expected = (full * at::rsqrt(full.square().mean(-1, true) + 1e-6) * w.to(at::kFloat))
                         .to(at::kBFloat16);
@@ -132,7 +132,7 @@ int main(int argc, char** argv) {
                 "Fixture must distinguish pre-rounded residual statistics");
     bool rejected = false;
     try {
-      tei::decoder_exact_rms_norm(x.to(at::kHalf), r.to(at::kHalf), w.to(at::kHalf), 1e-6);
+      infinity::decoder_exact_rms_norm(x.to(at::kHalf), r.to(at::kHalf), w.to(at::kHalf), 1e-6);
     } catch (const c10::Error&) {
       rejected = true;
     }
@@ -147,7 +147,7 @@ int main(int argc, char** argv) {
       for (bool residual : {false, true}) {
         auto x = at::rand({rows, width}, half_options) - .5, r = at::rand_like(x) - .5;
         auto w = at::ones({width}, half_options);
-        auto result = tei::decoder_exact_rms_norm(x, residual ? r : at::Tensor(), w, 1e-6);
+        auto result = infinity::decoder_exact_rms_norm(x, residual ? r : at::Tensor(), w, 1e-6);
         auto full = residual ? x.to(at::kFloat) + r.to(at::kFloat) : x.to(at::kFloat);
         auto expected = (full * at::rsqrt(full.square().mean(-1, true) + 1e-6)).to(at::kHalf);
         TORCH_CHECK((result.first - expected).abs().max().item<float>() <= .001953125,
@@ -161,7 +161,7 @@ int main(int argc, char** argv) {
   bool rejected_width = false;
   try {
     auto x = at::ones({1, 512}, options);
-    tei::decoder_exact_rms_norm(x, {}, at::ones({512}, options), 1e-6);
+    infinity::decoder_exact_rms_norm(x, {}, at::ones({512}, options), 1e-6);
   } catch (const c10::Error&) {
     rejected_width = true;
   }
@@ -176,22 +176,23 @@ int main(int argc, char** argv) {
                           options.dtype(at::kLong));
     auto cu = at::tensor({0, 4, 6, 10}, options.dtype(at::kInt));
     auto expected = hidden.index_select(0, at::tensor({2, 4, 9}, options.dtype(at::kLong)));
-    auto selected = tei::decoder_packed_classifier_rows(hidden, ids, cu, 3, pad);
+    auto selected = infinity::decoder_packed_classifier_rows(hidden, ids, cu, 3, pad);
     TORCH_CHECK(at::equal(selected, expected),
                 "Packed classifier readout changed selected hidden bits");
     ids.copy_(at::tensor(at::IntArrayRef{5, pad, 6, 7, pad, 7, pad, 9, pad, pad},
                          options.dtype(at::kLong)));
     expected = hidden.index_select(0, at::tensor({3, 5, 7}, options.dtype(at::kLong)));
-    TORCH_CHECK(at::equal(tei::decoder_packed_classifier_rows(hidden, ids, cu, 3, pad), expected),
-                "Packed readout reused stale ID selection");
+    TORCH_CHECK(
+        at::equal(infinity::decoder_packed_classifier_rows(hidden, ids, cu, 3, pad), expected),
+        "Packed readout reused stale ID selection");
     auto half_hidden = hidden.to(at::kHalf);
     TORCH_CHECK(
-        at::equal(tei::decoder_packed_classifier_rows(half_hidden, ids, cu, 3, pad),
-                  tei::decoder_packed_classifier_rows(hidden, ids, cu, 3, pad).to(at::kHalf)),
+        at::equal(infinity::decoder_packed_classifier_rows(half_hidden, ids, cu, 3, pad),
+                  infinity::decoder_packed_classifier_rows(hidden, ids, cu, 3, pad).to(at::kHalf)),
         "Packed FP16 gather must preserve every original bit");
     auto last = hidden.index_select(0, at::tensor({3, 5, 9}, options.dtype(at::kLong)));
     TORCH_CHECK(
-        at::equal(tei::decoder_packed_classifier_rows(hidden, ids, cu, 3, pad, false), last),
+        at::equal(infinity::decoder_packed_classifier_rows(hidden, ids, cu, 3, pad, false), last),
         "Absent PAD configuration changed end-row selection");
     auto bits = (at::arange(10 * width, options.dtype(at::kInt)) * 73)
                     .remainder(65536)
@@ -199,7 +200,7 @@ int main(int argc, char** argv) {
                     .view({10, width});
     auto indices = at::tensor({3, 5, 7}, options.dtype(at::kLong));
     for (auto type : {at::kHalf, at::kBFloat16}) {
-      auto rows = tei::decoder_packed_classifier_rows(bits.view(type), ids, cu, 3, pad);
+      auto rows = infinity::decoder_packed_classifier_rows(bits.view(type), ids, cu, 3, pad);
       TORCH_CHECK(at::equal(rows.view(at::kShort), bits.index_select(0, indices)),
                   "Packed gather changed raw16-bit payloads");
     }
@@ -207,12 +208,12 @@ int main(int argc, char** argv) {
                           .to(at::kInt)
                           .view({10, width});
     auto float_rows =
-        tei::decoder_packed_classifier_rows(float_bits.view(at::kFloat), ids, cu, 3, pad);
+        infinity::decoder_packed_classifier_rows(float_bits.view(at::kFloat), ids, cu, 3, pad);
     TORCH_CHECK(at::equal(float_rows.view(at::kInt), float_bits.index_select(0, indices)),
                 "Packed gather changed raw32-bit payloads");
     bool rejected = false;
     try {
-      tei::decoder_packed_classifier_rows(hidden.to(at::kDouble), ids, cu, 3, pad);
+      infinity::decoder_packed_classifier_rows(hidden.to(at::kDouble), ids, cu, 3, pad);
     } catch (const c10::Error&) {
       rejected = true;
     }
@@ -224,7 +225,7 @@ int main(int argc, char** argv) {
       at::cuda::getCurrentDeviceProperties()->minor == 0) {
     const auto prior = at::globalContext().blasPreferredBackend();
     at::globalContext().setBlasPreferredBackend(at::BlasBackend::Cublaslt);
-    tei::DecoderCacheUnderTest cache;
+    infinity::DecoderCacheUnderTest cache;
     auto weight = at::randn({64, 896}, options) * .03, x = at::randn({8, 896}, options) * .03;
     auto expected = at::linear(x, weight);
     auto first = cache.forward(x, weight);
@@ -237,7 +238,7 @@ int main(int argc, char** argv) {
     const auto calls = cached_matmul_calls;
     TORCH_CHECK(at::equal(cache.forward(x, weight), expected) && cached_matmul_calls == calls,
                 "Rejected cached plan must not be retried");
-    tei::DecoderCacheUnderTest full;
+    infinity::DecoderCacheUnderTest full;
     for (int64_t rows = 1; rows <= 64; ++rows)
       full.forward(at::randn({rows, 896}, options), weight);
     auto unseen = at::randn({65, 896}, options);
@@ -256,7 +257,7 @@ int main(int argc, char** argv) {
       auto stream = c10::cuda::getStreamFromPool(false, options.device().index());
       c10::cuda::CUDAStreamGuard stream_guard(stream);
       for (int width : {24576, 28672}) {
-        tei::DecoderCacheUnderTest prefill;
+        infinity::DecoderCacheUnderTest prefill;
         auto input = at::randn({2048, 4096}, options),
              projection = at::randn({width, 4096}, options) * .02;
         auto reference = at::linear(input, projection);

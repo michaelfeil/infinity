@@ -4,7 +4,7 @@
 #pragma once
 #include "batching/packed_input.h"
 
-namespace tei {
+namespace infinity {
 /// Evaluate convolution, recurrent update, and gated normalization with the reference operation
 /// order. cache_layer connects suffix execution to resident
 /// recurrent/history snapshots when present.

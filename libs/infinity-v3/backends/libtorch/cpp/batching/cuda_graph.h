@@ -7,7 +7,7 @@
 #include "models/model.h"
 #include "helpers/math_policy.h"
 
-namespace tei {
+namespace infinity {
 // The caller serializes model inference and orders CUDA streams. Graphs cache exact packed shapes only;
 // pooling and all transfers remain outside capture. Outputs are overwritten by
 // the next replay of the same entry, so consume them before another inference.

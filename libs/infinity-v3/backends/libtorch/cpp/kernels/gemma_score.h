@@ -4,7 +4,7 @@
 #pragma once
 #include <ATen/ATen.h>
 
-namespace tei {
+namespace infinity {
 // Gather from the complete all-token score GEMM. Every capped operation rounds
 // to BF16 before the next operation, preserving the declared publisher readout.
 at::Tensor gemma4_bf16_sequence_score_readout(

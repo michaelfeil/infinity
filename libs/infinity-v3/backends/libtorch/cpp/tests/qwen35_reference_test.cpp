@@ -18,43 +18,43 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
   auto alog = at::zeros({vh}, opts.dtype(at::kFloat)), dt = at::zeros_like(alog);
   auto norm = at::ones({128}, opts);
   int32_t offsets[] = {0, tokens};
-  tei::PackedInput full;
+  infinity::PackedInput full;
   full.offsets = offsets;
   full.batch = 1;
   full.max_sequence = tokens;
   full.cumulative = at::tensor(std::vector<int32_t>{0, tokens}, opts.dtype(at::kInt));
-  auto run = [&](const tei::PackedInput& input, int64_t start) {
+  auto run = [&](const infinity::PackedInput& input, int64_t start) {
     auto count = tokens - start;
     if (fma)
-      return tei::qwen35_delta_cuda(qkv.narrow(0, start, count),
-                                    z.narrow(0, start, count),
-                                    ab.narrow(0, start, count),
-                                    conv,
-                                    alog,
-                                    dt,
-                                    norm,
-                                    input,
-                                    kh,
-                                    vh,
-                                    1e-6,
-                                    {},
-                                    nullptr,
-                                    {},
-                                    {},
-                                    false,
-                                    0);
-    return tei::qwen35_reference_delta_cuda(qkv.narrow(0, start, count),
-                                            z.narrow(0, start, count),
-                                            ab.narrow(0, start, count),
-                                            conv,
-                                            alog,
-                                            dt,
-                                            norm,
-                                            input,
-                                            kh,
-                                            vh,
-                                            1e-6,
-                                            0);
+      return infinity::qwen35_delta_cuda(qkv.narrow(0, start, count),
+                                         z.narrow(0, start, count),
+                                         ab.narrow(0, start, count),
+                                         conv,
+                                         alog,
+                                         dt,
+                                         norm,
+                                         input,
+                                         kh,
+                                         vh,
+                                         1e-6,
+                                         {},
+                                         nullptr,
+                                         {},
+                                         {},
+                                         false,
+                                         0);
+    return infinity::qwen35_reference_delta_cuda(qkv.narrow(0, start, count),
+                                                 z.narrow(0, start, count),
+                                                 ab.narrow(0, start, count),
+                                                 conv,
+                                                 alog,
+                                                 dt,
+                                                 norm,
+                                                 input,
+                                                 kh,
+                                                 vh,
+                                                 1e-6,
+                                                 0);
   };
   auto expected = run(full, 0);
   for (int64_t boundary : {1, 13, 34}) {
@@ -66,22 +66,22 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
       prefill.cumulative =
           at::tensor(std::vector<int32_t>{0, int32_t(boundary)}, opts.dtype(at::kInt));
       at::Tensor state;
-      auto prefix = tei::qwen35_delta_cuda(qkv.narrow(0, 0, boundary),
-                                           z.narrow(0, 0, boundary),
-                                           ab.narrow(0, 0, boundary),
-                                           conv,
-                                           alog,
-                                           dt,
-                                           norm,
-                                           prefill,
-                                           kh,
-                                           vh,
-                                           1e-6,
-                                           {},
-                                           &state,
-                                           {},
-                                           {},
-                                           false);
+      auto prefix = infinity::qwen35_delta_cuda(qkv.narrow(0, 0, boundary),
+                                                z.narrow(0, 0, boundary),
+                                                ab.narrow(0, 0, boundary),
+                                                conv,
+                                                alog,
+                                                dt,
+                                                norm,
+                                                prefill,
+                                                kh,
+                                                vh,
+                                                1e-6,
+                                                {},
+                                                &state,
+                                                {},
+                                                {},
+                                                false);
       TORCH_CHECK(at::equal(prefix, expected.narrow(0, 0, boundary)),
                   "Block prefill changed recurrent arithmetic");
       auto immutable = state.clone();
@@ -98,22 +98,22 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
       auto history_cu =
           at::tensor(std::vector<int32_t>{0, int32_t(history.size(0))}, opts.dtype(at::kInt));
       at::Tensor final_state;
-      auto resumed = tei::qwen35_delta_cuda(qkv.narrow(0, boundary, tokens - boundary),
-                                            z.narrow(0, boundary, tokens - boundary),
-                                            ab.narrow(0, boundary, tokens - boundary),
-                                            conv,
-                                            alog,
-                                            dt,
-                                            norm,
-                                            suffix,
-                                            kh,
-                                            vh,
-                                            1e-6,
-                                            state,
-                                            &final_state,
-                                            history,
-                                            history_cu,
-                                            false);
+      auto resumed = infinity::qwen35_delta_cuda(qkv.narrow(0, boundary, tokens - boundary),
+                                                 z.narrow(0, boundary, tokens - boundary),
+                                                 ab.narrow(0, boundary, tokens - boundary),
+                                                 conv,
+                                                 alog,
+                                                 dt,
+                                                 norm,
+                                                 suffix,
+                                                 kh,
+                                                 vh,
+                                                 1e-6,
+                                                 state,
+                                                 &final_state,
+                                                 history,
+                                                 history_cu,
+                                                 false);
       TORCH_CHECK(at::equal(resumed, expected.narrow(0, boundary, tokens - boundary)) &&
                       at::equal(state, immutable),
                   "Block resume changed outputs or mutated shared state");
@@ -128,35 +128,35 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
       batched.block_cache_sources = at::zeros({8}, opts.dtype(at::kLong));
       at::Tensor batch_state;
       auto repeated =
-          tei::qwen35_delta_cuda(qkv.narrow(0, boundary, tokens - boundary).repeat({8, 1}),
-                                 z.narrow(0, boundary, tokens - boundary).repeat({8, 1}),
-                                 ab.narrow(0, boundary, tokens - boundary).repeat({8, 1}),
-                                 conv,
-                                 alog,
-                                 dt,
-                                 norm,
-                                 batched,
-                                 kh,
-                                 vh,
-                                 1e-6,
-                                 state,
-                                 &batch_state,
-                                 history,
-                                 history_cu,
-                                 false);
+          infinity::qwen35_delta_cuda(qkv.narrow(0, boundary, tokens - boundary).repeat({8, 1}),
+                                      z.narrow(0, boundary, tokens - boundary).repeat({8, 1}),
+                                      ab.narrow(0, boundary, tokens - boundary).repeat({8, 1}),
+                                      conv,
+                                      alog,
+                                      dt,
+                                      norm,
+                                      batched,
+                                      kh,
+                                      vh,
+                                      1e-6,
+                                      state,
+                                      &batch_state,
+                                      history,
+                                      history_cu,
+                                      false);
       TORCH_CHECK(at::equal(repeated, resumed.repeat({8, 1})) &&
                       at::equal(batch_state, final_state.repeat({8, 1, 1, 1})) &&
                       at::equal(state, immutable),
                   "Batched recurrence changed outputs, final states or shared prefix");
     }
-    auto budget = std::make_shared<tei::PrefixBudget>();
-    auto saved = std::make_shared<tei::PrefixEntry>();
+    auto budget = std::make_shared<infinity::PrefixBudget>();
+    auto saved = std::make_shared<infinity::PrefixEntry>();
     saved->budget = budget;
     // This kernel-level fixture supplies the admission reservation normally
     // established by PrefixCache before requesting any checkpoint buffers.
     saved->reserved_bytes = budget->reserved_bytes = 64 << 20;
     saved->identity.tokens.resize(boundary);
-    tei::PrefixContext capture{full, {0, tokens}, {0}, {nullptr}, {saved}, 64 << 20, budget};
+    infinity::PrefixContext capture{full, {0, tokens}, {0}, {nullptr}, {saved}, 64 << 20, budget};
     auto cold = full;
     cold.prefix = &capture;
     TORCH_CHECK(at::equal(run(cold, 0), expected),
@@ -170,7 +170,7 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
     TORCH_CHECK(state != saved->layers.end() && state->second.recurrent.defined(),
                 "DeltaNet checkpoint was not exported");
     int32_t suffix_offsets[] = {0, int32_t(tokens - boundary)};
-    tei::PrefixContext resume{
+    infinity::PrefixContext resume{
         full, {0, int32_t(tokens - boundary)}, {boundary}, {saved}, {nullptr}, 64 << 20, budget};
     auto suffix = full;
     suffix.offsets = suffix_offsets;
@@ -196,7 +196,7 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
 
 // CPU oracle for the original 32-lane recurrence; does not call a CUDA dispatcher.
 void independent_recurrent(c10::Device device, int kh, int vh, bool fma) {
-  if (!tei::qwen35_recurrent_supported(device, kh, vh))
+  if (!infinity::qwen35_recurrent_supported(device, kh, vh))
     return;
   constexpr int tokens = 13;
   auto values = (at::randn({tokens, (2 * kh + vh) * 128}) * .2).to(at::kBFloat16);
@@ -244,14 +244,14 @@ void independent_recurrent(c10::Device device, int kh, int vh, bool fma) {
       }
     }
   int32_t offsets[] = {0, tokens};
-  tei::PackedInput input;
+  infinity::PackedInput input;
   input.offsets = offsets;
   input.batch = 1;
   input.max_sequence = tokens;
   input.cumulative = at::tensor(std::vector<int32_t>{0, tokens},
                                 at::TensorOptions().dtype(at::kInt).device(device));
   auto actual = at::empty_like(expected, expected.options().device(device));
-  tei::qwen35_recurrent_cuda(
+  infinity::qwen35_recurrent_cuda(
       values.to(device), qk.to(device), gates.to(device), input, actual, kh, vh, fma);
   TORCH_CHECK(at::equal(actual.cpu(), expected),
               "Independent recurrence oracle failed kh=",
@@ -313,7 +313,7 @@ int main(int argc, char** argv) {
       auto cuda_gamma =
           at::zeros({width + offset}, gamma.options().device(device)).narrow(0, offset, width);
       cuda_gamma.copy_(gamma);
-      auto actual = tei::qwen35_reference_norm_cuda(cuda_x, cuda_gamma, 1e-6).cpu();
+      auto actual = infinity::qwen35_reference_norm_cuda(cuda_x, cuda_gamma, 1e-6).cpu();
       TORCH_CHECK(at::equal(actual, independent_norm(x, gamma, 1e-6)),
                   "Independent original binary-tree norm oracle failed width=",
                   width,
@@ -323,7 +323,7 @@ int main(int argc, char** argv) {
   auto rejects = [&](const at::Tensor& x, const at::Tensor& gamma) {
     bool rejected = false;
     try {
-      (void)tei::qwen35_reference_norm_cuda(x, gamma, 1e-6);
+      (void)infinity::qwen35_reference_norm_cuda(x, gamma, 1e-6);
     } catch (const c10::Error&) {
       rejected = true;
     }
@@ -339,42 +339,42 @@ int main(int argc, char** argv) {
   auto alog = at::zeros({1}, opts.dtype(at::kFloat));
   auto dt = at::zeros({1}, opts.dtype(at::kFloat)), weight = at::ones({128}, opts);
   int32_t offsets[3] = {0, 32, 64};
-  tei::PackedInput input;
+  infinity::PackedInput input;
   input.offsets = offsets;
   input.batch = 1;
   input.max_sequence = 32;
   input.cumulative =
       at::from_blob(offsets, {2}, at::TensorOptions().dtype(at::kInt)).clone().to(device);
   auto expected =
-      tei::qwen35_reference_delta_cuda(q, z, ab, conv, alog, dt, weight, input, 1, 1, 1e-6);
+      infinity::qwen35_reference_delta_cuda(q, z, ab, conv, alog, dt, weight, input, 1, 1, 1e-6);
   TORCH_CHECK(at::isfinite(expected).all().item<bool>(), "Synthetic recurrence must be finite");
   input.batch = 2;
   input.cumulative =
       at::from_blob(offsets, {3}, at::TensorOptions().dtype(at::kInt)).clone().to(device);
-  auto twice = tei::qwen35_reference_delta_cuda(at::cat({q, q}, 0),
-                                                at::cat({z, z}, 0),
-                                                at::cat({ab, ab}, 0),
-                                                conv,
-                                                alog,
-                                                dt,
-                                                weight,
-                                                input,
-                                                1,
-                                                1,
-                                                1e-6);
+  auto twice = infinity::qwen35_reference_delta_cuda(at::cat({q, q}, 0),
+                                                     at::cat({z, z}, 0),
+                                                     at::cat({ab, ab}, 0),
+                                                     conv,
+                                                     alog,
+                                                     dt,
+                                                     weight,
+                                                     input,
+                                                     1,
+                                                     1,
+                                                     1e-6);
   TORCH_CHECK(at::equal(twice, at::cat({expected, expected}, 0)),
               "Packed sequence recurrence state leaked");
-  auto poisoned = tei::qwen35_reference_delta_cuda(at::cat({q, at::full_like(q, NAN)}, 0),
-                                                   at::cat({z, z}, 0),
-                                                   at::cat({ab, ab}, 0),
-                                                   conv,
-                                                   alog,
-                                                   dt,
-                                                   weight,
-                                                   input,
-                                                   1,
-                                                   1,
-                                                   1e-6);
+  auto poisoned = infinity::qwen35_reference_delta_cuda(at::cat({q, at::full_like(q, NAN)}, 0),
+                                                        at::cat({z, z}, 0),
+                                                        at::cat({ab, ab}, 0),
+                                                        conv,
+                                                        alog,
+                                                        dt,
+                                                        weight,
+                                                        input,
+                                                        1,
+                                                        1,
+                                                        1e-6);
   TORCH_CHECK(at::equal(poisoned.narrow(0, 0, 32), expected),
               "Independent sequence contaminated by later NaNs");
   for (bool fma : {false, true})

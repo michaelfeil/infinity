@@ -46,7 +46,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "../../../candle/extensions/candle-layer-norm/kernels/ln_fwd_kernels.cuh"
 #undef layer_norm
 
-namespace tei {
+namespace infinity {
 namespace {
 // Specialize the retained Candle 1x4-warp contract: the same 32 values per
 // thread, XOR warp reductions and Chan merges, with fixed group sizes.

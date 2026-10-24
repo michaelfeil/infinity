@@ -10,7 +10,7 @@
 #include <cuda_fp16.h>
 #include <cmath>
 
-namespace tei {
+namespace infinity {
 namespace {
 /// Aligned four-scalar pack used by the RMS-normalization kernel.
 template <class T> struct alignas(sizeof(T) * 4) Four {

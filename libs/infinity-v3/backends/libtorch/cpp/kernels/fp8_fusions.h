@@ -5,7 +5,7 @@
 #include <ATen/ATen.h>
 #include <tuple>
 
-namespace tei {
+namespace infinity {
 // Native Candle SiLU rounding followed by dynamic per-row E4M3 quantization.
 std::pair<at::Tensor, at::Tensor> fp8_swiglu_quantize(const at::Tensor& gate_up);
 // BF16 residual/RMS rounding and reduction match fused_add_rms_norm.

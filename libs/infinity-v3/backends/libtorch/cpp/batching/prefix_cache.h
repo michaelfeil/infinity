@@ -13,7 +13,7 @@
 #include <span>
 #include <vector>
 
-namespace tei {
+namespace infinity {
 class Model;
 class PrefixLinearPlans;
 class CudaGraphCache;

@@ -8,7 +8,7 @@
 #include <string>
 #include <unordered_map>
 
-namespace tei {
+namespace infinity {
 using Weights = std::unordered_map<std::string, at::Tensor>;
 
 /// String-valued model configuration with typed lookups and missing-key defaults.

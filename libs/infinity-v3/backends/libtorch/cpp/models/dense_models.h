@@ -7,7 +7,7 @@
 #include "helpers/dense_mlp.h"
 #include "helpers/options.h"
 
-namespace tei {
+namespace infinity {
 // Sentence Transformers projections transform pooled rows only. Raw token
 // embeddings retain the backbone width, including when both outputs are requested.
 class DenseChain {

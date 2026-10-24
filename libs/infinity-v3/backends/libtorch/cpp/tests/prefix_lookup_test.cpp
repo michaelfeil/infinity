@@ -4,7 +4,7 @@
 #include <random>
 #include <stdexcept>
 
-using namespace tei;
+using namespace infinity;
 
 static void check(bool ok, const char* message) {
   if (!ok)

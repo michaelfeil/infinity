@@ -30,7 +30,7 @@
 #include <cublasLt.h>
 #endif
 
-namespace tei {
+namespace infinity {
 namespace {
 // Adapted from Candle qwen3_vl/vision.rs; upstream Apache-2.0 notices retained.
 class Qwen35 final : public Model {

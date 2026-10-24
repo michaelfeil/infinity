@@ -31,7 +31,7 @@ int main(int argc, char** argv) {
           auto cos = angles.cos().to(bf), sin = angles.sin().to(bf);
           auto pos = (at::arange(tokens, at::TensorOptions().dtype(at::kLong).device(device)) * 17)
                          .remainder(257);
-          auto actual = tei::gemma_rotary_cuda(x, cos, sin, pos),
+          auto actual = infinity::gemma_rotary_cuda(x, cos, sin, pos),
                expected = reference(x, cos, sin, pos);
           TORCH_CHECK(at::equal(actual, expected),
                       "Staged rotary mismatch T/H/D ",
@@ -71,11 +71,11 @@ int main(int argc, char** argv) {
         auto cos = angles.cos().to(bf), sin = angles.sin().to(bf);
         auto pos = (at::arange(tokens, at::TensorOptions().dtype(at::kLong).device(device)) * 37)
                        .remainder(257);
-        auto expected_q = tei::gemma_norm_cuda(q, qs, 1e-6, false);
-        auto expected_k = tei::gemma_norm_cuda(k, ks, 1e-6, false);
-        tei::encoder_rotary_inplace(
+        auto expected_q = infinity::gemma_norm_cuda(q, qs, 1e-6, false);
+        auto expected_k = infinity::gemma_norm_cuda(k, ks, 1e-6, false);
+        infinity::encoder_rotary_inplace(
             expected_q, expected_k, cos.index_select(0, pos), sin.index_select(0, pos));
-        auto actual = tei::gemma3_qk_norm_rotary_cuda(q, k, qs, ks, cos, sin, pos, 1e-6);
+        auto actual = infinity::gemma3_qk_norm_rotary_cuda(q, k, qs, ks, cos, sin, pos, 1e-6);
         TORCH_CHECK(at::equal(actual.first.view(at::kShort), expected_q.view(at::kShort)) &&
                         at::equal(actual.second.view(at::kShort), expected_k.view(at::kShort)),
                     "Gemma3 norm/rotary IEEE mismatch T/H/D ",
@@ -112,14 +112,14 @@ int main(int argc, char** argv) {
         auto pre = at::randn({768}, bf.dtype(at::kFloat)) + 1.f;
         // Exercise exact BF16 cancellation in a complete real input row.
         residual.select(0, 0).copy_(
-            -tei::gemma_norm_cuda(x.narrow(0, 0, 1), post, eps, false).select(0, 0));
+            -infinity::gemma_norm_cuda(x.narrow(0, 0, 1), post, eps, false).select(0, 0));
         auto xb = xs.clone(), rb = rs.clone();
-        auto expected_states =
-            tei::gemma3_legacy_residual_norm_cuda(residual.contiguous(), x.contiguous(), post, eps);
+        auto expected_states = infinity::gemma3_legacy_residual_norm_cuda(
+            residual.contiguous(), x.contiguous(), post, eps);
         TORCH_CHECK(expected_states.defined(),
                     "Existing legacy residual reference must admit width768");
-        auto expected_normalized = tei::gemma_norm_cuda(expected_states, pre, eps, false);
-        auto actual = tei::gemma3_residual_prenorm_cuda(residual, x, post, pre, eps);
+        auto expected_normalized = infinity::gemma_norm_cuda(expected_states, pre, eps, false);
+        auto actual = infinity::gemma3_residual_prenorm_cuda(residual, x, post, pre, eps);
         TORCH_CHECK(actual.first.defined() && actual.second.defined(),
                     "Fused pair must admit original or strided BF16 width768");
         TORCH_CHECK(
@@ -137,11 +137,12 @@ int main(int argc, char** argv) {
       }
   auto unsupported = at::zeros({3, 768}, bf.dtype(at::kFloat));
   auto scales = at::ones({768}, bf.dtype(at::kFloat));
-  auto declined = tei::gemma3_residual_prenorm_cuda(unsupported, unsupported, scales, scales, 1e-6);
+  auto declined =
+      infinity::gemma3_residual_prenorm_cuda(unsupported, unsupported, scales, scales, 1e-6);
   TORCH_CHECK(!declined.first.defined() && !declined.second.defined(),
               "F32 fallback eligibility changed");
   auto short_input = at::zeros({3, 512}, bf);
-  declined = tei::gemma3_residual_prenorm_cuda(short_input, short_input, scales, scales, 1e-6);
+  declined = infinity::gemma3_residual_prenorm_cuda(short_input, short_input, scales, scales, 1e-6);
   TORCH_CHECK(!declined.first.defined() && !declined.second.defined(),
               "Other hidden-width fallback eligibility changed");
   std::cout << "Gemma staged rotary, 54 QK-fusion and 24 residual/prenorm packed cases passed\n";

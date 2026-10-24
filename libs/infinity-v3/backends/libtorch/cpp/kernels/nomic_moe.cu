@@ -87,7 +87,7 @@ int nomic_grouped_f32(void* sizes,
   return nomic_split_grouped_gemm<float>(sizes, groups, a, b, c, lda, ldb, ldc, stream);
 }
 
-namespace tei {
+namespace infinity {
 __global__ void setup_split(const char* input,
                             const char* weights,
                             float* output,
@@ -186,12 +186,12 @@ at::Tensor nomic_moe_down(const at::Tensor& a,
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return result;
 }
-} // namespace tei
+} // namespace infinity
 
 extern "C" int
 tei_gemma4_grouped_gemm_bf16(void*, int, void*, void*, void*, void*, void*, void*, cudaStream_t);
 
-namespace tei {
+namespace infinity {
 namespace {
 __global__ void setup_up(const char* input,
                          const char* weights,
@@ -247,4 +247,4 @@ at::Tensor nomic_moe_up(const at::Tensor& a, const at::Tensor& first, const at::
   TORCH_CHECK(status == 0, "Grouped Nomic up failed:", status);
   return result;
 }
-} // namespace tei
+} // namespace infinity

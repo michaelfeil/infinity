@@ -9,7 +9,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace tei {
+namespace infinity {
 namespace {
 /// Validated learned linear projection used inside native decision heads.
 struct Linear {

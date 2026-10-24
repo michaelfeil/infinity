@@ -33,15 +33,15 @@
 
 namespace {
 /// Packed BERT/RoBERTa backbone with native attention and optional task readouts.
-struct Bert : tei::Model {
+struct Bert : infinity::Model {
   TeiConfig config;
   c10::Device device;
   at::ScalarType dtype;
   std::unordered_map<std::string, at::Tensor> weights;
   std::string prefix;
-  tei::Options options;
-  std::unordered_map<std::string, tei::DenseMlp> mlps;
-  std::optional<tei::DenseMlp> classifier_mlp;
+  infinity::Options options;
+  std::unordered_map<std::string, infinity::DenseMlp> mlps;
+  std::optional<infinity::DenseMlp> classifier_mlp;
   bool roberta = false;
   bool cudnn_varlen = false;
   bool private_flash_embedding = false;
@@ -73,7 +73,7 @@ struct Bert : tei::Model {
 
   // All projections execute serially on the model's stream. Keep one stable
   // allocation for every plan, including addresses retained by CUDA graphs.
-  mutable std::shared_ptr<tei::WorkspaceMemoryPermit> classifier_workspace_permit;
+  mutable std::shared_ptr<infinity::WorkspaceMemoryPermit> classifier_workspace_permit;
   mutable at::Tensor classifier_workspace;
   mutable std::map<std::array<int64_t, 5>, std::unique_ptr<ClassifierPlan>> classifier_plans;
 #endif
@@ -181,7 +181,7 @@ struct Bert : tei::Model {
         auto& plan = *found->second;
         auto pointer = bias.const_data_ptr();
         if (plan.bytes > 0 && !classifier_workspace.defined()) {
-          auto permit = tei::reserve_workspace_memory(device.index(), limit);
+          auto permit = infinity::reserve_workspace_memory(device.index(), limit);
           // Keep supported descriptors retryable while another model owns the
           // credit. The stable tensor and permit outlive all captured uses.
           if (!permit)
@@ -214,8 +214,8 @@ struct Bert : tei::Model {
                              plan.bytes,
                              at::cuda::getCurrentCUDAStream());
           if (status == CUBLAS_STATUS_ALLOC_FAILED)
-            throw tei::VendorAllocationError{"BERT classifier cublasLtMatmul",
-                                             static_cast<int32_t>(status)};
+            throw infinity::VendorAllocationError{"BERT classifier cublasLtMatmul",
+                                                  static_cast<int32_t>(status)};
           if (status == CUBLAS_STATUS_SUCCESS)
             return output;
         }
@@ -234,18 +234,20 @@ struct Bert : tei::Model {
     return classifier_projection(x, w(name + ".weight"), w(name + ".bias"));
   }
 
-  tei::MlpContext mlp_context() const {
-    tei::MlpContext context;
-    context.gemm = [this](const tei::MlpProjection& projection, const at::Tensor& rows) {
+  infinity::MlpContext mlp_context() const {
+    infinity::MlpContext context;
+    context.gemm = [this](const infinity::MlpProjection& projection, const at::Tensor& rows) {
       return classifier_projection(rows, projection.weight(), projection.gemm_bias());
     };
-    context.activated_gemm = [this](const tei::MlpProjection& projection,
+    context.activated_gemm = [this](const infinity::MlpProjection& projection,
                                     const at::Tensor& rows,
-                                    tei::MlpEpilogue epilogue) {
-      if (epilogue == tei::MlpEpilogue::Relu)
+                                    infinity::MlpEpilogue epilogue) {
+      if (epilogue == infinity::MlpEpilogue::Relu)
         return at::_addmm_activation(projection.bias(), rows, projection.weight().t(), 1, 1, false);
-      return classifier_projection(
-          rows, projection.weight(), projection.gemm_bias(), epilogue == tei::MlpEpilogue::Gelu);
+      return classifier_projection(rows,
+                                   projection.weight(),
+                                   projection.gemm_bias(),
+                                   epilogue == infinity::MlpEpilogue::Gelu);
     };
     return context;
   }
@@ -267,10 +269,10 @@ struct Bert : tei::Model {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (x.is_cuda() && (exact_biased_norm || config.hidden == 384 ||
                         (private_flash_embedding && options.boolean("_fp8_dynamic", false))))
-      return tei::encoder_layer_norm_only(
+      return infinity::encoder_layer_norm_only(
           x, w(name + ".weight"), config.epsilon, residual, w(name + ".bias"), false);
     if (x.is_cuda())
-      return tei::fused_add_layer_norm(
+      return infinity::fused_add_layer_norm(
           x, residual, w(name + ".weight"), w(name + ".bias"), config.epsilon);
 #endif
     return norm(x + residual, name);
@@ -389,40 +391,43 @@ struct Bert : tei::Model {
       norm_check(p + "output.LayerNorm");
       const bool exact_gelu =
           options.boolean("_multi_vector", false) && options.string("hidden_act", "gelu") == "gelu";
-      tei::MlpActivationRecipe activation(exact_gelu               ? tei::MlpActivation::Gelu
-                                          : config.activation == 3 ? tei::MlpActivation::Silu
-                                          : config.activation == 2 ? tei::MlpActivation::Relu
-                                                                   : tei::MlpActivation::GeluTanh);
+      infinity::MlpActivationRecipe activation(
+          exact_gelu               ? infinity::MlpActivation::Gelu
+          : config.activation == 3 ? infinity::MlpActivation::Silu
+          : config.activation == 2 ? infinity::MlpActivation::Relu
+                                   : infinity::MlpActivation::GeluTanh);
       if (!exact_gelu && config.activation != 3) {
         activation.epilogue =
-            config.activation == 2 ? tei::MlpEpilogue::Relu : tei::MlpEpilogue::Gelu;
+            config.activation == 2 ? infinity::MlpEpilogue::Relu : infinity::MlpEpilogue::Gelu;
       }
       if (!exact_gelu && config.activation != 2) {
-        const auto kind = config.activation == 3 ? tei::MlpActivation::RoundedSilu
-                                                 : tei::MlpActivation::RoundedGelu;
+        const auto kind = config.activation == 3 ? infinity::MlpActivation::RoundedSilu
+                                                 : infinity::MlpActivation::RoundedGelu;
         activation.quantized_custom = [kind](const at::Tensor& rows) {
-          return tei::mlp_activation(rows, kind);
+          return infinity::mlp_activation(rows, kind);
         };
         if (private_flash_embedding && config.activation != 3)
-          activation.fusion = tei::MlpFusion::RoundedBiasGelu;
+          activation.fusion = infinity::MlpFusion::RoundedBiasGelu;
       }
       auto& mlp = mlps[p];
-      mlp = tei::DenseMlp({w(p + "intermediate.dense.weight"), w(p + "intermediate.dense.bias")},
-                          {w(p + "output.dense.weight"), w(p + "output.dense.bias")},
-                          std::move(activation));
+      mlp =
+          infinity::DenseMlp({w(p + "intermediate.dense.weight"), w(p + "intermediate.dense.bias")},
+                             {w(p + "output.dense.weight"), w(p + "output.dense.bias")},
+                             std::move(activation));
       if (options.boolean("_fp8_dynamic", false)) {
-        mlp.prepare(tei::MlpPrecision::Fp8);
+        mlp.prepare(infinity::MlpPrecision::Fp8);
         for (const auto& name : {p + "intermediate.dense", p + "output.dense"}) {
           weights.erase(prefix + name + ".weight");
         }
       }
     }
     if (weights.count("classifier.dense.weight"))
-      classifier_mlp.emplace(tei::MlpProjection{tei::weight(weights, "classifier.dense.weight"),
-                                                tei::weight(weights, "classifier.dense.bias")},
-                             tei::MlpProjection{tei::weight(weights, "classifier.out_proj.weight"),
-                                                tei::weight(weights, "classifier.out_proj.bias")},
-                             tei::MlpActivationRecipe{tei::MlpActivation::Tanh});
+      classifier_mlp.emplace(
+          infinity::MlpProjection{infinity::weight(weights, "classifier.dense.weight"),
+                                  infinity::weight(weights, "classifier.dense.bias")},
+          infinity::MlpProjection{infinity::weight(weights, "classifier.out_proj.weight"),
+                                  infinity::weight(weights, "classifier.out_proj.bias")},
+          infinity::MlpActivationRecipe{infinity::MlpActivation::Tanh});
   }
 
   int64_t classification_width() const override {
@@ -436,7 +441,7 @@ struct Bert : tei::Model {
   /// independently of the backbone prefix.
   at::Tensor root_linear(const at::Tensor& h, const std::string& name) const {
     return classifier_projection(
-        h, tei::weight(weights, name + ".weight"), tei::weight(weights, name + ".bias"));
+        h, infinity::weight(weights, name + ".weight"), infinity::weight(weights, name + ".bias"));
   }
 
   /// Apply a root task-head projection followed by its activation code: ReLU (2), SiLU
@@ -457,7 +462,7 @@ struct Bert : tei::Model {
   /// Classify every token or each sequence's first packed token using the checkpoint's task head.
   /// Optional BERT pooler and RoBERTa dense/tanh stages are part
   /// of sequence readout, not embeddings.
-  at::Tensor predict(const tei::PackedInput& input, bool tokenwise) const override {
+  at::Tensor predict(const infinity::PackedInput& input, bool tokenwise) const override {
     auto h = forward(input);
     if (!tokenwise) {
       auto indices = input.cumulative.narrow(0, 0, input.batch).to(at::kLong);
@@ -486,32 +491,33 @@ struct Bert : tei::Model {
     at::Tensor transformed, matrix, bias;
     if (roberta) {
       transformed = head_activation(h,
-                                    tei::weight(weights, "lm_head.dense.weight"),
-                                    tei::weight(weights, "lm_head.dense.bias"),
+                                    infinity::weight(weights, "lm_head.dense.weight"),
+                                    infinity::weight(weights, "lm_head.dense.bias"),
                                     1);
       transformed = at::layer_norm(transformed,
                                    {config.hidden},
-                                   tei::weight(weights, "lm_head.layer_norm.weight"),
-                                   tei::weight(weights, "lm_head.layer_norm.bias"),
+                                   infinity::weight(weights, "lm_head.layer_norm.weight"),
+                                   infinity::weight(weights, "lm_head.layer_norm.bias"),
                                    config.epsilon);
       matrix = weights.count("lm_head.decoder.weight") ? weights.at("lm_head.decoder.weight")
                                                        : w("embeddings.word_embeddings.weight");
-      bias = tei::weight(weights, "lm_head.bias");
+      bias = infinity::weight(weights, "lm_head.bias");
     } else {
-      transformed = head_activation(h,
-                                    tei::weight(weights, "cls.predictions.transform.dense.weight"),
-                                    tei::weight(weights, "cls.predictions.transform.dense.bias"),
-                                    config.activation);
+      transformed =
+          head_activation(h,
+                          infinity::weight(weights, "cls.predictions.transform.dense.weight"),
+                          infinity::weight(weights, "cls.predictions.transform.dense.bias"),
+                          config.activation);
       transformed =
           at::layer_norm(transformed,
                          {config.hidden},
-                         tei::weight(weights, "cls.predictions.transform.LayerNorm.weight"),
-                         tei::weight(weights, "cls.predictions.transform.LayerNorm.bias"),
+                         infinity::weight(weights, "cls.predictions.transform.LayerNorm.weight"),
+                         infinity::weight(weights, "cls.predictions.transform.LayerNorm.bias"),
                          config.epsilon);
       matrix = weights.count("cls.predictions.decoder.weight")
                    ? weights.at("cls.predictions.decoder.weight")
                    : w("embeddings.word_embeddings.weight");
-      bias = tei::weight(weights, "cls.predictions.bias");
+      bias = infinity::weight(weights, "cls.predictions.bias");
     }
     return at::log1p(head_activation(transformed, matrix, bias, 2));
   }
@@ -522,7 +528,7 @@ struct Bert : tei::Model {
 
   /// Return [packed_tokens, hidden] states with sequence-local bidirectional attention. Selected
   /// native embedding, norm, and activation paths preserve their qualified rounding stages.
-  at::Tensor forward(const tei::PackedInput& input) const override {
+  at::Tensor forward(const infinity::PackedInput& input) const override {
     const auto& ids = input.ids;
     const auto& types = input.types;
     const auto& positions = input.positions;
@@ -532,15 +538,15 @@ struct Bert : tei::Model {
     at::Tensor h;
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (private_flash_roberta_embedding && !exact_biased_norm) {
-      h = tei::fused_embedding_layer_norm(ids,
-                                          types,
-                                          positions,
-                                          w("embeddings.word_embeddings.weight"),
-                                          w("embeddings.token_type_embeddings.weight"),
-                                          w("embeddings.position_embeddings.weight"),
-                                          w("embeddings.LayerNorm.weight"),
-                                          w("embeddings.LayerNorm.bias"),
-                                          config.epsilon);
+      h = infinity::fused_embedding_layer_norm(ids,
+                                               types,
+                                               positions,
+                                               w("embeddings.word_embeddings.weight"),
+                                               w("embeddings.token_type_embeddings.weight"),
+                                               w("embeddings.position_embeddings.weight"),
+                                               w("embeddings.LayerNorm.weight"),
+                                               w("embeddings.LayerNorm.bias"),
+                                               config.epsilon);
     } else
 #endif
     {
@@ -550,34 +556,34 @@ struct Bert : tei::Model {
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (word.is_cuda() && exact_biased_norm && config.hidden == 768 &&
           word.scalar_type() == at::kHalf)
-        h = tei::encoder_embedding_layer_norm(word,
-                                              token_type,
-                                              position,
-                                              w("embeddings.LayerNorm.weight"),
-                                              config.epsilon,
-                                              w("embeddings.LayerNorm.bias"));
+        h = infinity::encoder_embedding_layer_norm(word,
+                                                   token_type,
+                                                   position,
+                                                   w("embeddings.LayerNorm.weight"),
+                                                   config.epsilon,
+                                                   w("embeddings.LayerNorm.bias"));
       else if (word.is_cuda() && (exact_biased_norm || (private_flash_embedding &&
                                                         options.boolean("_fp8_dynamic", false))))
-        h = tei::encoder_layer_norm_only(word + token_type,
-                                         w("embeddings.LayerNorm.weight"),
-                                         config.epsilon,
-                                         position,
-                                         w("embeddings.LayerNorm.bias"),
-                                         false);
+        h = infinity::encoder_layer_norm_only(word + token_type,
+                                              w("embeddings.LayerNorm.weight"),
+                                              config.epsilon,
+                                              position,
+                                              w("embeddings.LayerNorm.bias"),
+                                              false);
       else if (word.is_cuda() && config.hidden == 384)
-        h = tei::encoder_layer_norm_only(word + token_type + position,
-                                         w("embeddings.LayerNorm.weight"),
-                                         config.epsilon,
-                                         at::Tensor(),
-                                         w("embeddings.LayerNorm.bias"),
-                                         false);
+        h = infinity::encoder_layer_norm_only(word + token_type + position,
+                                              w("embeddings.LayerNorm.weight"),
+                                              config.epsilon,
+                                              at::Tensor(),
+                                              w("embeddings.LayerNorm.bias"),
+                                              false);
       else if (word.is_cuda())
-        h = tei::fused_add_layer_norm(word,
-                                      token_type,
-                                      w("embeddings.LayerNorm.weight"),
-                                      w("embeddings.LayerNorm.bias"),
-                                      config.epsilon,
-                                      position);
+        h = infinity::fused_add_layer_norm(word,
+                                           token_type,
+                                           w("embeddings.LayerNorm.weight"),
+                                           w("embeddings.LayerNorm.bias"),
+                                           config.epsilon,
+                                           position);
       else
 #endif
         h = norm(word + token_type + position, "embeddings.LayerNorm");
@@ -665,24 +671,24 @@ struct Bert : tei::Model {
         // to preserve quantization inputs; normal FP16 larger totals retain
         // the measured cuDNN advantage.
         if (!cudnn_varlen)
-          attended = tei::infinity_fa4(q,
-                                       k,
-                                       v,
-                                       cumulative,
-                                       cumulative,
-                                       max_sequence,
-                                       1.0 / std::sqrt(static_cast<double>(head)));
+          attended = infinity::infinity_fa4(q,
+                                            k,
+                                            v,
+                                            cumulative,
+                                            cumulative,
+                                            max_sequence,
+                                            1.0 / std::sqrt(static_cast<double>(head)));
         if (attended.defined()) {
           // InfinityFA4 consumed the original packed views on this stream.
         } else if (private_flash_exact_classifier && head == 32) {
-          attended = tei::torch_flash_exact32(
+          attended = infinity::torch_flash_exact32(
               q, k, v, cumulative, max_sequence, 1.0 / std::sqrt(static_cast<double>(head)));
         } else if ((private_flash_exact_classifier ||
                     ((private_flash_embedding || private_flash_roberta_embedding) &&
                      (tokens <= 4096 ||
                       (private_flash_embedding && options.boolean("_fp8_dynamic", false))))) &&
-                   tei::torch_flash_fma_supported(q, k, v)) {
-          attended = tei::torch_flash_fma(
+                   infinity::torch_flash_fma_supported(q, k, v)) {
+          attended = infinity::torch_flash_fma(
               q, k, v, cumulative, max_sequence, 1.0 / std::sqrt(static_cast<double>(head)), false);
         } else
 #endif

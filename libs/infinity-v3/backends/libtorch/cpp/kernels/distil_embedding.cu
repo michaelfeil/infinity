@@ -7,7 +7,7 @@
 #include <c10/cuda/CUDAException.h>
 #include "distil_embedding_kernel.cuh"
 
-namespace tei {
+namespace infinity {
 /// Gather token and position embeddings directly into the exact biased normalization recipe.
 at::Tensor distil_embedding_norm(const at::Tensor& words,
                                  const at::Tensor& positions,

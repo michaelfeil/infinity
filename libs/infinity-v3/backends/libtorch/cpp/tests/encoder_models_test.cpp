@@ -9,7 +9,7 @@
 namespace {
 constexpr int64_t H = 32, I = 48;
 
-void add(tei::Weights& w,
+void add(infinity::Weights& w,
          const std::string& name,
          std::vector<int64_t> dims,
          c10::Device device,
@@ -19,7 +19,7 @@ void add(tei::Weights& w,
   w[name] = value.to(device, dtype);
 }
 
-void linear(tei::Weights& w,
+void linear(infinity::Weights& w,
             const std::string& n,
             int64_t output,
             int64_t input,
@@ -31,7 +31,7 @@ void linear(tei::Weights& w,
     add(w, n + ".bias", {output}, device, dtype);
 }
 
-void norm(tei::Weights& w,
+void norm(infinity::Weights& w,
           const std::string& n,
           c10::Device device,
           at::ScalarType dtype,
@@ -41,8 +41,8 @@ void norm(tei::Weights& w,
     add(w, n + ".bias", {H}, device, dtype);
 }
 
-tei::Options config(const std::string& type) {
-  tei::Options o;
+infinity::Options config(const std::string& type) {
+  infinity::Options o;
   o.values = {{"model_type", type},
               {"hidden_size", "32"},
               {"dim", "32"},
@@ -68,8 +68,8 @@ tei::Options config(const std::string& type) {
   return o;
 }
 
-tei::Weights weights(const std::string& type, c10::Device d, at::ScalarType dt) {
-  tei::Weights w;
+infinity::Weights weights(const std::string& type, c10::Device d, at::ScalarType dt) {
+  infinity::Weights w;
   add(w,
       type == "modernbert" ? "embeddings.tok_embeddings.weight"
                            : "embeddings.word_embeddings.weight",
@@ -169,7 +169,7 @@ void nomic_expert_shape_validation(c10::Device device, at::ScalarType dtype) {
     add(checkpoint, p + "experts.mlp." + name, {experts * I, H}, device, dtype);
   add(checkpoint, p + "experts.bias", {H}, device, dtype);
 
-  auto valid = tei::create_encoder(o, checkpoint, device, dtype);
+  auto valid = infinity::create_encoder(o, checkpoint, device, dtype);
   valid->ready();
   auto opts = at::TensorOptions().device(device).dtype(at::kLong);
   auto ids = at::tensor({1, 2, 3}, opts), types = at::zeros_like(ids);
@@ -187,7 +187,7 @@ void nomic_expert_shape_validation(c10::Device device, at::ScalarType dtype) {
     for (auto elements : {experts * I * H + 1, experts * (I * H + 1), experts * (I + 1) * H}) {
       auto malformed = checkpoint;
       malformed[key] = at::zeros({elements}, output.options());
-      auto model = tei::create_encoder(o, malformed, device, dtype);
+      auto model = infinity::create_encoder(o, malformed, device, dtype);
       bool rejected = false;
       try {
         model->ready();
@@ -206,7 +206,7 @@ void nomic_expert_shape_validation(c10::Device device, at::ScalarType dtype) {
     dense.values["moe_every_n_layers"] = std::to_string(every);
     auto unused = checkpoint;
     unused[p + "experts.mlp.w1"] = at::zeros({1}, output.options());
-    auto model = tei::create_encoder(dense, unused, device, dtype);
+    auto model = infinity::create_encoder(dense, unused, device, dtype);
     model->ready();
     TORCH_CHECK(at::isfinite(model->forward({ids, types, positions, cumulative, offsets, 1, 3}))
                     .all()
@@ -222,14 +222,14 @@ int main(int argc, char** argv) {
   // Keep this in the existing encoder target; unsupported CPUs remain valid.
   const int saved_threads = at::get_num_threads();
   at::set_num_threads(1);
-  const bool single_thread_profile = tei::modern_cpu::supported_profile();
+  const bool single_thread_profile = infinity::modern_cpu::supported_profile();
   for (int threads : {2, 4}) {
     at::set_num_threads(threads);
-    TORCH_CHECK(!tei::modern_cpu::supported_profile(),
+    TORCH_CHECK(!infinity::modern_cpu::supported_profile(),
                 "Modern exact CPU Half profile must reject multicore intra-op threads");
   }
   at::set_num_threads(1);
-  TORCH_CHECK(tei::modern_cpu::supported_profile() == single_thread_profile,
+  TORCH_CHECK(infinity::modern_cpu::supported_profile() == single_thread_profile,
               "Restoring one intra-op thread changed Modern CPU hardware eligibility");
   at::set_num_threads(saved_threads);
   {
@@ -241,7 +241,7 @@ int main(int argc, char** argv) {
                      .to(at::kHalf)
                      .view({3, 1})
                      .repeat({1, 768});
-    auto half_mean = tei::modern_cpu::mean(spans);
+    auto half_mean = infinity::modern_cpu::mean(spans);
     auto float_mean = spans.mean(0, true, at::kFloat);
     TORCH_CHECK((half_mean.to(at::kFloat) - float_mean).abs().max().item<float>() > .3,
                 "Mean pooling fixture must discriminate Half and F32 accumulation");
@@ -250,7 +250,7 @@ int main(int argc, char** argv) {
     modern.values["num_attention_heads"] = "12";
     modern.values["intermediate_size"] = "1152";
     modern.values["num_hidden_layers"] = "1";
-    tei::Weights modern_weights;
+    infinity::Weights modern_weights;
     modern_weights["embeddings.tok_embeddings.weight"] = at::zeros({64, 768}, cpu_half);
     modern_weights["embeddings.norm.weight"] = at::ones({768}, cpu_half);
     modern_weights["final_norm.weight"] = at::ones({768}, cpu_half);
@@ -264,10 +264,10 @@ int main(int argc, char** argv) {
     for (int threads : {1, 2}) {
       at::set_num_threads(threads);
       auto modern_model =
-          tei::create_encoder(modern, modern_weights, c10::Device(at::kCPU), at::kHalf);
+          infinity::create_encoder(modern, modern_weights, c10::Device(at::kCPU), at::kHalf);
       modern_model->ready();
       auto pooled = modern_model->mean_pool(spans);
-      const bool eligible = tei::modern_cpu::supported_profile();
+      const bool eligible = infinity::modern_cpu::supported_profile();
       TORCH_CHECK(pooled.scalar_type() == (eligible ? at::kHalf : at::kFloat),
                   "Modern mean pooling dtype did not follow ready-established profile");
       TORCH_CHECK(at::equal(pooled, eligible ? half_mean : float_mean),
@@ -292,7 +292,7 @@ int main(int argc, char** argv) {
     o.values["dim"] = o.values["hidden_size"] = "768";
     o.values["n_heads"] = o.values["num_attention_heads"] = "12";
     o.values["n_layers"] = o.values["num_hidden_layers"] = "1";
-    tei::Weights w;
+    infinity::Weights w;
     add(w, "embeddings.word_embeddings.weight", {64, width}, device, dtype);
     add(w, "embeddings.position_embeddings.weight", {32, width}, device, dtype);
     add(w, "embeddings.token_type_embeddings.weight", {2, width}, device, dtype);
@@ -308,7 +308,7 @@ int main(int argc, char** argv) {
     linear(w, p + "ffn.lin2", width, inner, device, dtype);
     wide_norm(p + "sa_layer_norm");
     wide_norm(p + "output_layer_norm");
-    auto model = tei::create_encoder(o, w, device, dtype);
+    auto model = infinity::create_encoder(o, w, device, dtype);
     model->ready();
     auto baseline = model->forward({ids, types, positions, cu, offsets, 2, 5});
     auto changed_types = types.clone();
@@ -323,7 +323,7 @@ int main(int argc, char** argv) {
        {"distilbert", "modernbert", "nomic_bert", "new", "jina", "jina-code", "mpnet"}) {
     auto o = config(type);
     auto w = weights(type, device, dtype);
-    auto model = tei::create_encoder(o, w, device, dtype);
+    auto model = infinity::create_encoder(o, w, device, dtype);
     model->ready();
     auto packed = model->forward({ids, types, positions, cu, offsets, 2, 5});
     TORCH_CHECK(
@@ -337,7 +337,7 @@ int main(int argc, char** argv) {
       for (const auto* pool : {"cls", "mean", "last_token"}) {
         auto options = o;
         options.values["classifier_pooling"] = pool;
-        auto classifier = tei::create_encoder(options, heads, device, dtype);
+        auto classifier = infinity::create_encoder(options, heads, device, dtype);
         classifier->ready();
         TORCH_CHECK(
             at::equal(
@@ -356,7 +356,7 @@ int main(int argc, char** argv) {
     if (std::string(type) == "nomic_bert") {
       auto alias = o;
       alias.values["activation_function"] = "gelu_pytorch_tanh";
-      auto alias_model = tei::create_encoder(alias, w, device, dtype);
+      auto alias_model = infinity::create_encoder(alias, w, device, dtype);
       alias_model->ready();
       auto alias_output = alias_model->forward({ids, types, positions, cu, offsets, 2, 5});
       TORCH_CHECK(at::equal(packed, alias_output),
@@ -368,7 +368,7 @@ int main(int argc, char** argv) {
         dense.values["moe_every_n_layers"] = std::to_string(every);
         if (every)
           dense.values["moe_top_k"] = "2";
-        auto dense_model = tei::create_encoder(dense, w, device, dtype);
+        auto dense_model = infinity::create_encoder(dense, w, device, dtype);
         dense_model->ready();
         auto actual = dense_model->forward({ids, types, positions, cu, offsets, 2, 5});
         TORCH_CHECK(actual.sizes() == packed.sizes() && at::isfinite(actual).all().item<bool>(),
@@ -384,7 +384,7 @@ int main(int argc, char** argv) {
       const std::string preferred =
           std::string(type) == "new" ? "new.pooler.dense" : "bert.pooler.dense";
       linear(head_weights, preferred, H, H, device, dtype);
-      auto head_model = tei::create_encoder(o, head_weights, device, dtype);
+      auto head_model = infinity::create_encoder(o, head_weights, device, dtype);
       head_model->ready();
       auto cls = at::cat({packed.narrow(0, 0, 1), packed.narrow(0, 3, 1)}, 0);
       auto expected_head = [&](const std::string& key) {
@@ -404,7 +404,7 @@ int main(int argc, char** argv) {
                   "Classifier pooler namespace/precedence mismatch for ",
                   type);
       head_weights.erase(preferred + ".bias");
-      auto partial_model = tei::create_encoder(o, head_weights, device, dtype);
+      auto partial_model = infinity::create_encoder(o, head_weights, device, dtype);
       partial_model->ready();
       if (std::string(type) == "new") {
         auto fallback = partial_model->predict({ids, types, positions, cu, offsets, 2, 5}, false);

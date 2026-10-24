@@ -17,7 +17,7 @@
 #include <thread>
 #include <chrono>
 #include <set>
-using namespace tei;
+using namespace infinity;
 
 void prefix_input_test() {
   for (int batch : {1, 32, 65}) {
@@ -994,8 +994,8 @@ int main(int argc, char** argv) {
   auto initial = at::embedding(fixture.at("model.embed_tokens.weight"), ids);
   initial.index_copy_(0, visual_indices, visual);
   const std::string p = "model.layers.0.";
-  auto n =
-      tei::fused_add_rms_norm(initial, {}, fixture.at(p + "input_layernorm.weight"), 1e-6).first;
+  auto n = infinity::fused_add_rms_norm(initial, {}, fixture.at(p + "input_layernorm.weight"), 1e-6)
+               .first;
   auto projection = at::cat({fixture.at(p + "self_attn.q_proj.weight"),
                              fixture.at(p + "self_attn.k_proj.weight"),
                              fixture.at(p + "self_attn.v_proj.weight")},
@@ -1005,7 +1005,7 @@ int main(int argc, char** argv) {
       qkv.narrow(1, 0, 2).contiguous(), {8}, fixture.at(p + "self_attn.q_norm.weight"), 1e-6));
   auto k = std::get<0>(at::_fused_rms_norm(
       qkv.narrow(1, 2, 1).contiguous(), {8}, fixture.at(p + "self_attn.k_norm.weight"), 1e-6));
-  auto rotated = tei::fused_rotary(q, k, cosine.view({3, 1, 4}), sine.view({3, 1, 4}));
+  auto rotated = infinity::fused_rotary(q, k, cosine.view({3, 1, 4}), sine.view({3, 1, 4}));
   auto attention =
       std::get<0>(
           at::_flash_attention_forward(
@@ -1013,19 +1013,19 @@ int main(int argc, char** argv) {
           .contiguous()
           .view({3, 16});
   auto post =
-      tei::fused_add_rms_norm(at::linear(attention, fixture.at(p + "self_attn.o_proj.weight")),
-                              initial,
-                              fixture.at(p + "post_attention_layernorm.weight"),
-                              1e-6);
+      infinity::fused_add_rms_norm(at::linear(attention, fixture.at(p + "self_attn.o_proj.weight")),
+                                   initial,
+                                   fixture.at(p + "post_attention_layernorm.weight"),
+                                   1e-6);
   auto gu = at::linear(
       post.first,
       at::cat({fixture.at(p + "mlp.gate_proj.weight"), fixture.at(p + "mlp.up_proj.weight")}, 0));
   auto materialized =
-      at::linear(tei::fused_gated_activation(gu, 5), fixture.at(p + "mlp.down_proj.weight")) +
+      at::linear(infinity::fused_gated_activation(gu, 5), fixture.at(p + "mlp.down_proj.weight")) +
       post.second;
   materialized = materialized.index_add(0, visual_indices, at::zeros_like(visual));
   auto reference =
-      tei::fused_add_rms_norm(materialized, {}, fixture.at("model.norm.weight"), 1e-6).first;
+      infinity::fused_add_rms_norm(materialized, {}, fixture.at("model.norm.weight"), 1e-6).first;
   TORCH_CHECK((withzero - reference).abs().max().item<float>() < 0.0001,
               "Deepstack did not follow Candle residual materialization ordering");
   auto deepstack = at::arange(16, options.dtype(at::kHalf)).view({1, 16}) * .07;

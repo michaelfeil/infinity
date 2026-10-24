@@ -11,10 +11,10 @@ int main(int argc, char** argv) {
     {
       auto x = at::randn({4097, 1024}, opts), residual = at::randn_like(x);
       auto weight = at::randn({1024}, opts), bias = at::randn_like(weight);
-      auto actual = tei::encoder_layer_norm(x, weight, 1e-5, residual, bias, true);
-      auto a = tei::encoder_layer_norm(
+      auto actual = infinity::encoder_layer_norm(x, weight, 1e-5, residual, bias, true);
+      auto a = infinity::encoder_layer_norm(
           x.narrow(0, 0, 4095), weight, 1e-5, residual.narrow(0, 0, 4095), bias, true);
-      auto b = tei::encoder_layer_norm(
+      auto b = infinity::encoder_layer_norm(
           x.narrow(0, 4095, 2), weight, 1e-5, residual.narrow(0, 4095, 2), bias, true);
       TORCH_CHECK(
           at::equal(actual.first.view(at::kByte), at::cat({a.first, b.first}, 0).view(at::kByte)),
@@ -22,8 +22,8 @@ int main(int argc, char** argv) {
       TORCH_CHECK(at::equal(actual.second, residual + x), "Large norm residual mismatch");
       auto scratch = at::empty_like(x), owned = residual.clone();
       auto reused =
-          tei::encoder_layer_norm_update_residual_scratch(x, weight, 1e-5, owned, scratch);
-      auto expected = tei::encoder_layer_norm(x, weight, 1e-5, residual);
+          infinity::encoder_layer_norm_update_residual_scratch(x, weight, 1e-5, owned, scratch);
+      auto expected = infinity::encoder_layer_norm(x, weight, 1e-5, residual);
       TORCH_CHECK(at::equal(reused.first.view(at::kByte), expected.first.view(at::kByte)) &&
                       at::equal(reused.second, expected.second),
                   "Large norm scratch update changes output");
@@ -33,7 +33,7 @@ int main(int argc, char** argv) {
                      .to(dtype)
                      .repeat({2, 1});
     auto gamma = at::ones({768}, opts), beta = at::full({768}, .25, opts);
-    auto exact = tei::encoder_layer_norm(base, gamma, 1e-5, delta, beta, false);
+    auto exact = infinity::encoder_layer_norm(base, gamma, 1e-5, delta, beta, false);
     auto unrounded = base.to(at::kFloat) + delta.to(at::kFloat);
     auto oracle =
         at::layer_norm(unrounded, {768}, gamma.to(at::kFloat), beta.to(at::kFloat), 1e-5).to(dtype);
@@ -42,13 +42,13 @@ int main(int argc, char** argv) {
                 "Unrounded residual statistics or beta differs");
     TORCH_CHECK(at::equal(exact.second, base + delta),
                 "Returned residual sum must retain model dtype");
-    auto only = tei::encoder_layer_norm_only(base, gamma, 1e-5, delta, beta, false);
+    auto only = infinity::encoder_layer_norm_only(base, gamma, 1e-5, delta, beta, false);
     TORCH_CHECK(
         (only - oracle).abs().max().item<float>() <= (dtype == at::kHalf ? .003 : .03125),
         "Normalized-only unrounded statistics or beta differs from independent FP32 oracle");
     TORCH_CHECK(at::equal(only, exact.first),
                 "Suppressing residual output changed exact arithmetic");
-    auto rounded = tei::encoder_layer_norm(base, gamma, 1e-5, delta, beta, true);
+    auto rounded = infinity::encoder_layer_norm(base, gamma, 1e-5, delta, beta, true);
     TORCH_CHECK((exact.first - rounded.first).abs().max().item<float>() > .5,
                 "Rounding discriminator did not exercise distinct normalization contracts");
     {
@@ -57,7 +57,7 @@ int main(int argc, char** argv) {
       auto stats = x.to(at::kFloat) + residual.to(at::kFloat);
       auto reference =
           at::layer_norm(stats, {384}, scale.to(at::kFloat), bias.to(at::kFloat), 1e-12).to(dtype);
-      auto actual = tei::encoder_layer_norm_only(x, scale, 1e-12, residual, bias, false);
+      auto actual = infinity::encoder_layer_norm_only(x, scale, 1e-12, residual, bias, false);
       TORCH_CHECK((actual - reference).abs().max().item<float>() <=
                       (dtype == at::kHalf ? .003 : .03125),
                   "Width384 biased unrounded norm differs from independent FP32 reference");
@@ -71,8 +71,9 @@ int main(int argc, char** argv) {
       auto position = (at::arange(768, opts.dtype(at::kFloat)).remainder(2) * .008 - .004)
                           .to(dtype)
                           .repeat({17, 1});
-      auto fused = tei::encoder_embedding_layer_norm(word, type, position, gamma, 1e-5, beta);
-      auto separate = tei::encoder_layer_norm_only(word + type, gamma, 1e-5, position, beta, false);
+      auto fused = infinity::encoder_embedding_layer_norm(word, type, position, gamma, 1e-5, beta);
+      auto separate =
+          infinity::encoder_layer_norm_only(word + type, gamma, 1e-5, position, beta, false);
       TORCH_CHECK(at::equal(fused, separate),
                   "Three-input embedding norm changed sequential Half addition or norm arithmetic");
       auto all_float = word.to(at::kFloat) + type.to(at::kFloat) + position.to(at::kFloat);
@@ -80,7 +81,7 @@ int main(int argc, char** argv) {
           at::layer_norm(all_float, {768}, gamma.to(at::kFloat), beta.to(at::kFloat), 1e-5)
               .to(dtype);
       auto wrong_second =
-          tei::encoder_layer_norm_only(word + type, gamma, 1e-5, position, beta, true);
+          infinity::encoder_layer_norm_only(word + type, gamma, 1e-5, position, beta, true);
       TORCH_CHECK((fused - wrong_first).abs().max().item<float>() > .1,
                   "Embedding fixture does not discriminate missing first Half rounding");
       TORCH_CHECK((fused - wrong_second).abs().max().item<float>() > .1,
@@ -89,9 +90,9 @@ int main(int argc, char** argv) {
            random_position = at::randn_like(random_word);
       auto random_gamma = at::randn({768}, opts) * .1 + 1,
            random_beta = at::randn({768}, opts) * .1;
-      auto actual = tei::encoder_embedding_layer_norm(
+      auto actual = infinity::encoder_embedding_layer_norm(
           random_word, random_type, random_position, random_gamma, 1e-12, random_beta);
-      auto expected = tei::encoder_layer_norm_only(
+      auto expected = infinity::encoder_layer_norm_only(
           random_word + random_type, random_gamma, 1e-12, random_position, random_beta, false);
       TORCH_CHECK(at::equal(actual, expected),
                   "Three-input embedding norm differs from original exact adapter");
@@ -102,13 +103,13 @@ int main(int argc, char** argv) {
       auto x = at::randn({7, width}, options), residual = at::randn_like(x);
       auto weight = at::randn({width}, options) * 0.1 + 1;
       for (bool add : {false, true}) {
-        auto result = tei::encoder_layer_norm(x, weight, 1e-5, add ? residual : at::Tensor());
+        auto result = infinity::encoder_layer_norm(x, weight, 1e-5, add ? residual : at::Tensor());
         auto sum = add ? x + residual : x;
         auto expected =
             at::layer_norm(sum.to(at::kFloat), {width}, weight.to(at::kFloat), at::Tensor(), 1e-5)
                 .to(dtype);
         auto normalized_only =
-            tei::encoder_layer_norm_only(x, weight, 1e-5, add ? residual : at::Tensor());
+            infinity::encoder_layer_norm_only(x, weight, 1e-5, add ? residual : at::Tensor());
         TORCH_CHECK((normalized_only - expected).abs().max().item<float>() <=
                         (dtype == at::kHalf ? 0.003 : 0.03125),
                     "Normalized-only differs from independent FP32 oracle at width ",
@@ -126,7 +127,7 @@ int main(int argc, char** argv) {
           TORCH_CHECK(at::equal(result.second, sum),
                       "Residual sum must round exactly to model dtype");
           auto owned = residual.clone(), saved_x = x.clone();
-          auto updated = tei::encoder_layer_norm_update_residual(x, weight, 1e-5, owned);
+          auto updated = infinity::encoder_layer_norm_update_residual(x, weight, 1e-5, owned);
           TORCH_CHECK(at::equal(updated.first, result.first) &&
                           at::equal(updated.second, result.second),
                       "Private residual update changed original bytes at width ",
@@ -135,8 +136,8 @@ int main(int argc, char** argv) {
           if (width <= 1536)
             TORCH_CHECK(updated.second.const_data_ptr() == owned.const_data_ptr(),
                         "Supported private residual norm allocated replacement storage");
-          auto next_expected = tei::encoder_layer_norm(x, weight, 1e-5, updated.second);
-          auto next = tei::encoder_layer_norm_update_residual(x, weight, 1e-5, updated.second);
+          auto next_expected = infinity::encoder_layer_norm(x, weight, 1e-5, updated.second);
+          auto next = infinity::encoder_layer_norm_update_residual(x, weight, 1e-5, updated.second);
           TORCH_CHECK(at::equal(next.first, next_expected.first) &&
                           at::equal(next.second, next_expected.second),
                       "Repeated residual updates changed rounded normalization bytes");
@@ -144,16 +145,16 @@ int main(int argc, char** argv) {
             auto model_stream = c10::cuda::getStreamFromPool(false, options.device().index());
             c10::cuda::CUDAStreamGuard model_guard(model_stream);
             auto scratch = at::empty_like(x), private_sum = residual.clone();
-            auto reused = tei::encoder_layer_norm_update_residual_scratch(
+            auto reused = infinity::encoder_layer_norm_update_residual_scratch(
                 x, weight, 1e-5, private_sum, scratch);
             TORCH_CHECK(reused.first.is_alias_of(scratch) && at::equal(reused.first, result.first),
                         "Private norm scratch changed original bytes");
             auto matrix = at::randn({width, 32}, options), read = at::matmul(reused.first, matrix);
             auto expected_read = at::matmul(result.first, matrix);
-            auto final = tei::encoder_layer_norm_only(x, weight, 1e-5, private_sum),
+            auto final = infinity::encoder_layer_norm_only(x, weight, 1e-5, private_sum),
                  saved_final = final.clone();
-            auto next_expected = tei::encoder_layer_norm(x, weight, 1e-5, private_sum);
-            auto overwritten = tei::encoder_layer_norm_update_residual_scratch(
+            auto next_expected = infinity::encoder_layer_norm(x, weight, 1e-5, private_sum);
+            auto overwritten = infinity::encoder_layer_norm_update_residual_scratch(
                 x, weight, 1e-5, private_sum, scratch);
             TORCH_CHECK(at::equal(read, expected_read) &&
                             at::equal(overwritten.first, next_expected.first),
@@ -166,7 +167,7 @@ int main(int argc, char** argv) {
                                         at::empty({width, 7}, options).t(),
                                         at::empty(x.sizes(), options.device(at::kCPU))}) {
               auto before = residual.clone(), saved = invalid.clone();
-              auto fallback = tei::encoder_layer_norm_update_residual_scratch(
+              auto fallback = infinity::encoder_layer_norm_update_residual_scratch(
                   x, weight, 1e-5, residual, invalid);
               TORCH_CHECK(!fallback.first.is_alias_of(invalid) &&
                               at::equal(fallback.first, result.first) &&

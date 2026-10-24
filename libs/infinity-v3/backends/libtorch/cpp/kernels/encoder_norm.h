@@ -5,7 +5,7 @@
 #include <ATen/ATen.h>
 #include <utility>
 
-namespace tei {
+namespace infinity {
 // Reuses Candle's exact CUDA normalization kernel up to width 1536 and rounded
 // residual semantics. Wider custom configurations fall back to ATen LayerNorm.
 /// Return normalized rows and an optional residual sum; without

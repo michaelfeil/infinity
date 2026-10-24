@@ -9,7 +9,7 @@
 #include <limits>
 #include "batching/packed_input.h"
 
-namespace tei {
+namespace infinity {
 // Saturating estimates reject impossible admissions instead of overflowing a
 // configured byte budget. Adapters report owned tensor payloads, not scratch.
 inline uint64_t prefix_storage_bytes(uint64_t rows, uint64_t width, uint64_t element_size) {

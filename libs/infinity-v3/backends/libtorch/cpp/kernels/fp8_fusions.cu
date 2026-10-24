@@ -12,7 +12,7 @@
 #include <cstdint>
 #include <cmath>
 
-namespace tei {
+namespace infinity {
 namespace {
 __device__ float sum256(float value) {
   __shared__ float warps[8];

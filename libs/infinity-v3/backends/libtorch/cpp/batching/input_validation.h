@@ -12,7 +12,7 @@
 #include <algorithm>
 #include <limits>
 
-namespace tei {
+namespace infinity {
 /// Validate selected sequence indices and count their raw token rows. Requires already validated
 /// cumulative sequence boundaries; duplicate selections count again.
 inline size_t validate_output_indices(const int32_t* cumulative,

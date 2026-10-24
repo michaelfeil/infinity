@@ -90,7 +90,7 @@ extern "C" int hopper_gemma4_moe_forward_bf16(const float*,
                                               cudaStream_t);
 #endif
 #endif
-namespace tei {
+namespace infinity {
 bool native_hopper_moe_available(const c10::Device& device) {
 #if defined(TEI_TORCH_MOE_KERNELS) && defined(TEI_TORCH_MOE_HOPPER)
   if (!device.is_cuda())

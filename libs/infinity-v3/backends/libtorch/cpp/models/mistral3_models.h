@@ -6,7 +6,7 @@
 #include "models/model.h"
 #include "helpers/options.h"
 
-namespace tei {
+namespace infinity {
 /// Construct Mistral3/Pixtral by consuming and clearing the loader weight map, splitting
 /// tower/projector and text parameters. Other model types return null; call
 /// ready() before inference.

@@ -24,7 +24,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <chrono>
 #endif
-using namespace tei;
+using namespace infinity;
 
 namespace {
 void input_descriptor_test() {

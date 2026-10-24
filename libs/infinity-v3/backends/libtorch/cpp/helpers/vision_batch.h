@@ -8,7 +8,7 @@
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAGuard.h>
 #endif
-namespace tei {
+namespace infinity {
 // Bound layer intermediates rather than just uploaded pixels. A single large
 // image remains executable; batching uses a conservative share of headroom.
 /// Return contiguous [begin, end) image ranges without changing input order. The estimate bounds

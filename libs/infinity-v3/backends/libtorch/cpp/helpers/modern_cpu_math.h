@@ -9,7 +9,7 @@
 #include <utility>
 #include <vector>
 
-namespace tei::modern_cpu {
+namespace infinity::modern_cpu {
 // Conservative eligibility for the independently proved AVX2 / gemm-f16 FMA
 // cache profile with one ATen intra-op thread. Other CPUs or thread counts
 // retain the existing ATen implementation; eligibility is checked during ready().
@@ -48,4 +48,4 @@ at::Tensor attention(const at::Tensor&,
 std::pair<at::Tensor, at::Tensor> trig(const at::Tensor&, at::ScalarType);
 /// Reduce one sequence to [1, width] with sequential Half additions and a Half reciprocal.
 at::Tensor mean(const at::Tensor&);
-} // namespace tei::modern_cpu
+} // namespace infinity::modern_cpu

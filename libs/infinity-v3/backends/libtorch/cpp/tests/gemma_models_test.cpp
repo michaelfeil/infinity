@@ -13,7 +13,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #endif
 
-using namespace tei;
+using namespace infinity;
 
 namespace {
 void batched_vision_test(Model& model, const PackedInput& input) {

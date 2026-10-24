@@ -17,7 +17,7 @@ int main() {
         auto logits = at::randn({tokens, experts}, opts.dtype(at::kFloat));
         // Stable ties and experts with no routed rows are both valid.
         logits[0].fill_(0);
-        auto actual = tei::routed_moe_cuda(x, logits, gu, down, renormalize);
+        auto actual = infinity::routed_moe_cuda(x, logits, gu, down, renormalize);
         TORCH_CHECK(actual.defined(), "Native BF16 routed kernel unavailable");
         auto p = at::softmax(logits, -1);
         auto ids = at::argsort(p, true, -1, true).narrow(-1, 0, 8);
@@ -28,7 +28,7 @@ int main() {
                             gu.to(at::kFloat).transpose(-2, -1))
                         .to(at::kBFloat16);
         auto activation =
-            tei::fused_gated_activation(both.reshape({experts * tokens, 2 * intermediate}), 0)
+            infinity::fused_gated_activation(both.reshape({experts * tokens, 2 * intermediate}), 0)
                 .reshape({experts, tokens, intermediate});
         // FP32 down accumulators are weighted before each route's BF16 store.
         auto acc = at::bmm(activation.to(at::kFloat), down.to(at::kFloat).transpose(-2, -1))
@@ -55,7 +55,7 @@ int main() {
       auto down = at::randn({experts, hidden, intermediate}, opts) * .02;
       auto logits = at::randn({tokens, experts}, opts.dtype(at::kFloat));
       auto scales = at::linspace(.25, 1.5, experts, logits.options());
-      auto actual = tei::routed_moe_cuda(x, logits, gu, down, true, scales);
+      auto actual = infinity::routed_moe_cuda(x, logits, gu, down, true, scales);
       TORCH_CHECK(actual.defined(), "Native Gemma weighted epilogue unavailable");
       auto p = at::softmax(logits, -1);
       auto ids = at::argsort(p, true, -1, true).narrow(-1, 0, 8);
@@ -66,7 +66,7 @@ int main() {
                           gu.to(at::kFloat).transpose(-2, -1))
                       .to(at::kBFloat16);
       auto activation =
-          tei::gemma_gated_cuda(both.reshape({experts * tokens, 2 * intermediate}), true)
+          infinity::gemma_gated_cuda(both.reshape({experts * tokens, 2 * intermediate}), true)
               .reshape({experts, tokens, intermediate});
       auto acc =
           at::bmm(activation.to(at::kFloat), down.to(at::kFloat).transpose(-2, -1)).transpose(0, 1);
@@ -87,7 +87,7 @@ int main() {
                   cos);
       std::cout << "Gemma learned expert scales max_abs=" << delta << " cosine=" << cos << "\n";
     }
-    TORCH_CHECK(!tei::routed_moe_cuda(at::zeros({2, 16}), {}, {}, {}, true).defined(),
+    TORCH_CHECK(!infinity::routed_moe_cuda(at::zeros({2, 16}), {}, {}, {}, true).defined(),
                 "CPU must retain reference path");
     std::cout << "Native routed MoE FP32 epilogue tests passed\n";
   } catch (const std::exception& e) {

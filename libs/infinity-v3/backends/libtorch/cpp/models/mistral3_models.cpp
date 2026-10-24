@@ -13,7 +13,7 @@
 #include <cmath>
 #include <algorithm>
 
-namespace tei {
+namespace infinity {
 namespace {
 /// Pixtral vision composition with a native text decoder and optional classification head.
 class Mistral3 final : public Model {

@@ -6,7 +6,7 @@
 #include "kernels/fp8_fusions.h"
 #endif
 
-namespace tei {
+namespace infinity {
 at::Tensor mlp_activation(const at::Tensor& x, MlpActivation kind) {
   switch (kind) {
   case MlpActivation::Identity:

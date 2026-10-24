@@ -4,7 +4,7 @@
 #include "kernels/moe_kernels.h"
 #include <c10/core/InferenceMode.h>
 #include <iostream>
-using namespace tei;
+using namespace infinity;
 
 int main() {
   try {

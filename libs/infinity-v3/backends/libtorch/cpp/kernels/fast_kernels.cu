@@ -32,7 +32,7 @@ extern "C" __global__ void qk_norm_rope_bf16(const __nv_bfloat16*,
                                              float);
 #include "../../../candle/src/kernels/qk_norm_rope.cu"
 
-namespace tei {
+namespace infinity {
 namespace {
 #include "kernels/prefix_qkv_norm_rope.cuh"
 

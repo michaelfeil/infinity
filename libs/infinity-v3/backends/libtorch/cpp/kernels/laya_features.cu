@@ -9,7 +9,7 @@
 #include <cmath>
 #include <limits>
 
-namespace tei {
+namespace infinity {
 namespace {
 constexpr int threads = 128;
 
@@ -98,4 +98,4 @@ at::Tensor laya_action_features(const at::Tensor& logits, const at::Tensor& offs
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output;
 }
-} // namespace tei
+} // namespace infinity

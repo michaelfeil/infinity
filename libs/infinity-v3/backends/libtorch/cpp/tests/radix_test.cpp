@@ -1,6 +1,6 @@
 #include "batching/radix.h"
 #include <iostream>
-using namespace tei;
+using namespace infinity;
 
 static at::Tensor vector(std::initializer_list<int64_t> x) {
   return at::tensor(x, at::TensorOptions().dtype(at::kLong));

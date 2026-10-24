@@ -5,7 +5,7 @@
 #include "models/model.h"
 #include "helpers/options.h"
 
-namespace tei {
+namespace infinity {
 // Audio convolutions preserve actual frame dimensions; linear bias rounds after GEMM.
 /// Consume FP32 NCHW input and [out_channels,in_channels,kernel_h,kernel_w] weights on the same
 /// device. The positive stride applies to both spatial axes; output is contiguous NCHW with

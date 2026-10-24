@@ -158,7 +158,7 @@ __global__ void exact_ln_kernel(const __half* x,
   layernorm<__half>(x, y, weight, bias, cols, threads, eps);
 }
 
-namespace tei {
+namespace infinity {
 /// Apply the reference warp softmax to actual last-dimension rows without padding scores.
 at::Tensor qwen35_vision_softmax(const at::Tensor& x) {
   TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kFloat && x.is_contiguous(),

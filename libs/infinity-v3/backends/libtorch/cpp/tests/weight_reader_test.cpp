@@ -50,18 +50,18 @@ int main(int argc, char**) {
     int original_flags = fcntl(fd, F_GETFL);
     for (bool direct : {false, true}) {
       std::map<std::string, at::Tensor> result;
-      tei::read_safetensors(fd,
-                            header,
-                            offset,
-                            weights.data(),
-                            weights.size(),
-                            device,
-                            4,
-                            1 << 20,
-                            direct,
-                            [&](const char* name, at::Tensor tensor) {
-                              TORCH_CHECK(result.emplace(name, std::move(tensor)).second);
-                            });
+      infinity::read_safetensors(fd,
+                                 header,
+                                 offset,
+                                 weights.data(),
+                                 weights.size(),
+                                 device,
+                                 4,
+                                 1 << 20,
+                                 direct,
+                                 [&](const char* name, at::Tensor tensor) {
+                                   TORCH_CHECK(result.emplace(name, std::move(tensor)).second);
+                                 });
       for (const auto& weight : weights) {
         const auto& tensor = result.at(weight.name);
         TORCH_CHECK(tensor.device() == device && tensor.nbytes() == weight.length);
@@ -79,7 +79,7 @@ int main(int argc, char**) {
     invalid.length = 1;
     bool rejected = false;
     try {
-      tei::read_safetensors(
+      infinity::read_safetensors(
           fd, header, offset, &invalid, 1, device, 4, 65536, true, [](const char*, at::Tensor) {});
     } catch (const std::exception&) {
       rejected = true;
@@ -88,19 +88,19 @@ int main(int argc, char**) {
     rejected = false;
     std::map<std::string, at::Tensor> partial;
     try {
-      tei::read_safetensors(fd,
-                            header,
-                            offset,
-                            weights.data(),
-                            weights.size(),
-                            device,
-                            4,
-                            1 << 20,
-                            true,
-                            [&](const char* name, at::Tensor tensor) {
-                              partial.emplace(name, std::move(tensor));
-                              throw std::runtime_error("injected insertion error");
-                            });
+      infinity::read_safetensors(fd,
+                                 header,
+                                 offset,
+                                 weights.data(),
+                                 weights.size(),
+                                 device,
+                                 4,
+                                 1 << 20,
+                                 true,
+                                 [&](const char* name, at::Tensor tensor) {
+                                   partial.emplace(name, std::move(tensor));
+                                   throw std::runtime_error("injected insertion error");
+                                 });
     } catch (const std::exception&) {
       rejected = true;
     }
@@ -122,7 +122,7 @@ int main(int argc, char**) {
     TeiWeight convert{"convert", &size, 1, 0, 0, source_bytes};
     for (auto type : {at::kHalf, at::kBFloat16}) {
       at::Tensor result;
-      tei::read_safetensors(
+      infinity::read_safetensors(
           fd,
           header,
           source_bytes,

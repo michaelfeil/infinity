@@ -116,15 +116,15 @@ struct Engine {
   TeiConfig config;
   c10::Device device;
   at::ScalarType dtype;
-  tei::Options options;
-  tei::Weights weights;
-  std::shared_ptr<tei::WorkspaceMemoryPolicy> workspace_policy;
-  std::unique_ptr<tei::Model> model;
-  std::shared_ptr<tei::OutputPool> outputs = std::make_shared<tei::OutputPool>();
-  std::unique_ptr<tei::DenseChain> dense;
-  std::unique_ptr<tei::DecisionHead> decision;
-  std::unique_ptr<tei::CudaGraphCache> graphs;
-  std::unique_ptr<tei::PrefixCache> prefix;
+  infinity::Options options;
+  infinity::Weights weights;
+  std::shared_ptr<infinity::WorkspaceMemoryPolicy> workspace_policy;
+  std::unique_ptr<infinity::Model> model;
+  std::shared_ptr<infinity::OutputPool> outputs = std::make_shared<infinity::OutputPool>();
+  std::unique_ptr<infinity::DenseChain> dense;
+  std::unique_ptr<infinity::DecisionHead> decision;
+  std::unique_ptr<infinity::CudaGraphCache> graphs;
+  std::unique_ptr<infinity::PrefixCache> prefix;
   std::atomic<bool> prefix_probe = false;
   bool media_graphs = false;
   bool nomic_moe_graphs = false;
@@ -152,7 +152,7 @@ struct Engine {
   }
 
   bool graph_policy_ready() const {
-    return !nomic_moe_graphs || tei::encoder_nomic_device_routing_ready(*model);
+    return !nomic_moe_graphs || infinity::encoder_nomic_device_routing_ready(*model);
   }
 
   Engine(TeiConfig cfg, c10::Device dev, at::ScalarType type)
@@ -175,12 +175,12 @@ struct Engine {
                     uint64_t(workspace_bytes) <= std::numeric_limits<size_t>::max(),
                 "Invalid native retained workspace allowance");
     if (device.is_cuda())
-      workspace_policy =
-          tei::configure_workspace_admission(device.index(), static_cast<size_t>(workspace_bytes));
+      workspace_policy = infinity::configure_workspace_admission(
+          device.index(), static_cast<size_t>(workspace_bytes));
     auto staging_bytes = options.integer("_output_staging_max_bytes", 512LL << 20);
     TORCH_CHECK(staging_bytes > 0, "Output staging memory budget must be positive");
     outputs->max_bytes = static_cast<size_t>(staging_bytes);
-    dense = std::make_unique<tei::DenseChain>(options, weights);
+    dense = std::make_unique<infinity::DenseChain>(options, weights);
     auto family = options.string("model_type", "bert");
     if (options.boolean("_fp8_dynamic", false)) {
       TORCH_CHECK(family == "bert" || family == "roberta" || family == "xlm-roberta" ||
@@ -195,8 +195,8 @@ struct Engine {
     }
     auto decision_kind = options.string("_decision.kind");
     if (!decision_kind.empty()) {
-      tei::Options head_config;
-      tei::Weights head_weights;
+      infinity::Options head_config;
+      infinity::Weights head_weights;
       constexpr std::string_view config_prefix = "_decision.config.",
                                  weight_prefix = "__tei_decision.";
       for (const auto& [key, value] : options.values)
@@ -209,14 +209,14 @@ struct Engine {
         } else
           ++it;
       }
-      decision = tei::create_decision_head(decision_kind,
-                                           head_config,
-                                           options,
-                                           decision_kind == "laya" ? weights : head_weights,
-                                           weights);
+      decision = infinity::create_decision_head(decision_kind,
+                                                head_config,
+                                                options,
+                                                decision_kind == "laya" ? weights : head_weights,
+                                                weights);
       if (decision_kind == "laya") {
         TORCH_CHECK(family == "modernbert", "Laya requires a ModernBERT encoder");
-        tei::Weights encoder;
+        infinity::Weights encoder;
         for (const auto& [key, value] : weights)
           if (key.starts_with("encoder."))
             encoder[key.substr(8)] = value;
@@ -232,7 +232,7 @@ struct Engine {
       token_norm_eps = dtype == at::kBFloat16 ? 1.0 / 128
                        : dtype == at::kHalf   ? 1.0 / 1024
                                               : std::numeric_limits<float>::epsilon();
-      tei::Weights canonical;
+      infinity::Weights canonical;
       for (const auto& [name, value] : weights) {
         auto key = name.starts_with("vlm.") ? name.substr(4) : name;
         TORCH_CHECK(!canonical.count(key), "Duplicate ColQwen3 weight: ", key);
@@ -247,17 +247,17 @@ struct Engine {
       if (weights.count("linear.bias"))
         token_bias = weights.at("linear.bias");
     }
-    model = tei::create_encoder(options, weights, device, dtype);
+    model = infinity::create_encoder(options, weights, device, dtype);
     if (!model)
-      model = tei::create_mistral3(options, weights, device, dtype);
+      model = infinity::create_mistral3(options, weights, device, dtype);
     if (!model)
-      model = tei::create_decoder(options, weights, device, dtype);
+      model = infinity::create_decoder(options, weights, device, dtype);
     if (!model)
-      model = tei::create_gemma(options, weights, device, dtype);
+      model = infinity::create_gemma(options, weights, device, dtype);
     if (!model)
-      model = tei::create_qwen35(options, weights, device, dtype);
+      model = infinity::create_qwen35(options, weights, device, dtype);
     if (!model)
-      model = tei::create_qwen3_vl(options, weights, device, dtype);
+      model = infinity::create_qwen3_vl(options, weights, device, dtype);
     if (!model && (family == "bert" || family == "roberta" || family == "xlm-roberta" ||
                    family == "camembert")) {
       const auto activation = options.string("hidden_act", "gelu");
@@ -275,7 +275,7 @@ struct Engine {
     if (multi_vector) {
       TORCH_CHECK(token_projection.defined() || options.boolean("_skip_final_norm", false),
                   "Multi-vector checkpoint is missing its token projection");
-      model = std::make_unique<tei::MultiVectorModel>(
+      model = std::make_unique<infinity::MultiVectorModel>(
           std::move(model), token_projection, token_bias, token_norm_eps);
     }
     model->ready();
@@ -285,18 +285,19 @@ struct Engine {
     TORCH_CHECK(cache_bytes >= 0 && cache_tokens > 0 && cache_entries > 0,
                 "Invalid prefix cache bounds");
     if (cache_bytes)
-      prefix = std::make_unique<tei::PrefixCache>(cache_bytes,
-                                                  cache_tokens,
-                                                  cache_entries,
-                                                  2,
-                                                  tei::PrefixCache::StreamOrder::EngineOrdered);
+      prefix = std::make_unique<infinity::PrefixCache>(
+          cache_bytes,
+          cache_tokens,
+          cache_entries,
+          2,
+          infinity::PrefixCache::StreamOrder::EngineOrdered);
     TORCH_CHECK(model->output_width() > 0, "Model must declare a positive output width");
     dense->output_width(options.string("_pooling") == "splade" ? config.vocab
                                                                : model->output_width());
     media_graphs = options.boolean("_media_cuda_graphs", false);
     // These Hopper BF16 geometries use device-only routing. Other MoE
     // geometries retain eager execution rather than synchronizing in capture.
-    nomic_moe_graphs = tei::encoder_nomic_device_routing_ready(*model);
+    nomic_moe_graphs = infinity::encoder_nomic_device_routing_ready(*model);
     bool native_moe_graphs = nomic_moe_graphs;
 #if defined(TEI_TORCH_MOE_KERNELS) && defined(TEI_TORCH_MOE_HOPPER)
     if (device.is_cuda() && dtype == at::kBFloat16 && family == "qwen3_moe" &&
@@ -305,7 +306,7 @@ struct Engine {
         options.integer("moe_intermediate_size", 0) == 768 &&
         options.integer("head_dim", 0) == 128 && options.integer("num_attention_heads", 0) == 32 &&
         options.integer("num_key_value_heads", 0) == 4)
-      native_moe_graphs = tei::native_hopper_moe_available(device);
+      native_moe_graphs = infinity::native_hopper_moe_available(device);
     if (device.is_cuda() && dtype == at::kBFloat16 &&
         (family == "qwen3_5_moe" || family == "qwen3_5_moe_text")) {
       auto ti = [&](const char* key) {
@@ -314,7 +315,7 @@ struct Engine {
       if (ti("hidden_size") == 2048 && ti("num_experts") == 256 && ti("num_experts_per_tok") == 8 &&
           ti("moe_intermediate_size") == 512 && ti("head_dim") == 256 &&
           ti("num_attention_heads") == 16 && ti("num_key_value_heads") == 2)
-        native_moe_graphs = tei::native_hopper_moe_available(device);
+        native_moe_graphs = infinity::native_hopper_moe_available(device);
     }
     if (device.is_cuda() && dtype == at::kBFloat16 &&
         (family == "gemma4" || family == "gemma4_text")) {
@@ -326,7 +327,7 @@ struct Engine {
       if (text_integer("hidden_size") == 2816 && text_integer("num_experts") == 128 &&
           text_integer("top_k_experts", 8) == 8 && text_integer("moe_intermediate_size") == 704 &&
           (act == "gelu_pytorch_tanh" || act == "gelu_new"))
-        native_moe_graphs = tei::native_hopper_moe_available(device);
+        native_moe_graphs = infinity::native_hopper_moe_available(device);
     }
 #endif
     if (device.is_cuda() && !multi_vector && options.boolean("_cuda_graphs", false) &&
@@ -355,7 +356,8 @@ struct Engine {
       // Larger Nomic batches use host-count reference routing and remain eager.
       if (nomic_moe_graphs)
         max_tokens = std::min<int64_t>(max_tokens, 8192);
-      graphs = std::make_unique<tei::CudaGraphCache>(entries, max_tokens, reuse, bytes, captures);
+      graphs =
+          std::make_unique<infinity::CudaGraphCache>(entries, max_tokens, reuse, bytes, captures);
       graphs->retain_prefix_states(bool(prefix));
     }
   }
@@ -475,31 +477,31 @@ size_t validate_request_input(Engine& model,
                               const TeiRadix* radix) {
   const auto family = model.options.string("model_type");
   const bool gemma = family == "gemma4" || family == "gemma4_text" || family == "embedding_gemma2";
-  const auto tokens = tei::validate_input_descriptors(ids,
-                                                      types,
-                                                      positions,
-                                                      cumulative,
-                                                      batch,
-                                                      max_sequence,
-                                                      media_positions,
-                                                      images,
-                                                      image_count,
-                                                      audios,
-                                                      audio_count,
-                                                      gemma);
+  const auto tokens = infinity::validate_input_descriptors(ids,
+                                                           types,
+                                                           positions,
+                                                           cumulative,
+                                                           batch,
+                                                           max_sequence,
+                                                           media_positions,
+                                                           images,
+                                                           image_count,
+                                                           audios,
+                                                           audio_count,
+                                                           gemma);
   const auto image_dtype = model.dtype;
-  return tei::validate_input_upload_budget(tokens,
-                                           batch,
-                                           media_positions,
-                                           images,
-                                           image_count,
-                                           audios,
-                                           audio_count,
-                                           radix,
-                                           c10::elementSize(image_dtype),
-                                           input_upload_limit(model),
-                                           gemma,
-                                           share_image_uploads(model));
+  return infinity::validate_input_upload_budget(tokens,
+                                                batch,
+                                                media_positions,
+                                                images,
+                                                image_count,
+                                                audios,
+                                                audio_count,
+                                                radix,
+                                                c10::elementSize(image_dtype),
+                                                input_upload_limit(model),
+                                                gemma,
+                                                share_image_uploads(model));
 }
 
 void validate_forward_descriptors(Engine& model,
@@ -536,7 +538,7 @@ void validate_forward_descriptors(Engine& model,
                          audio_count,
                          radix);
   const auto raw_rows =
-      tei::validate_output_indices(cumulative, batch, pooled, pooled_count, raw, raw_count);
+      infinity::validate_output_indices(cumulative, batch, pooled, pooled_count, raw, raw_count);
   TORCH_CHECK(model.model && model.dense, "Native model is not ready");
   TORCH_CHECK(!image_count || model.model->supports_images(),
               "This native model does not yet support images");
@@ -547,7 +549,7 @@ void validate_forward_descriptors(Engine& model,
   const auto pooled_width =
       pool >= 4 ? raw_width : model.dense->output_width(pool == 3 ? model.config.vocab : raw_width);
   const auto expected =
-      tei::expected_output_elements(pooled_count, raw_rows, pooled_width, raw_width);
+      infinity::expected_output_elements(pooled_count, raw_rows, pooled_width, raw_width);
   TORCH_CHECK(expected <= capacity, "Native output exceeds provided capacity");
   TORCH_CHECK(!deferred || expected == capacity,
               "Deferred output capacity must exactly match requested output");
@@ -579,34 +581,34 @@ struct SynchronousStreamGuard {
 
 /// Validate host descriptors and construct packed token/media tensors for one submission. Host
 /// identity/offset views remain borrowed; deferred token uploads use completion-owned pins.
-tei::PackedInput packed_input(Engine& model,
-                              const int64_t* ids,
-                              const int64_t* types,
-                              const int64_t* positions,
-                              const int32_t* cumulative,
-                              int64_t batch,
-                              int64_t max_sequence,
-                              const int64_t* media_positions,
-                              const TeiImage* images,
-                              size_t image_count,
-                              const TeiAudio* audios,
-                              size_t audio_count,
-                              tei::OutputLease* completion = nullptr) {
+infinity::PackedInput packed_input(Engine& model,
+                                   const int64_t* ids,
+                                   const int64_t* types,
+                                   const int64_t* positions,
+                                   const int32_t* cumulative,
+                                   int64_t batch,
+                                   int64_t max_sequence,
+                                   const int64_t* media_positions,
+                                   const TeiImage* images,
+                                   size_t image_count,
+                                   const TeiAudio* audios,
+                                   size_t audio_count,
+                                   infinity::OutputLease* completion = nullptr) {
   const auto family = model.options.string("model_type");
   const bool gemma_image =
       family == "gemma4" || family == "gemma4_text" || family == "embedding_gemma2";
-  const auto tokens = tei::validate_input_descriptors(ids,
-                                                      types,
-                                                      positions,
-                                                      cumulative,
-                                                      batch,
-                                                      max_sequence,
-                                                      media_positions,
-                                                      images,
-                                                      image_count,
-                                                      audios,
-                                                      audio_count,
-                                                      gemma_image);
+  const auto tokens = infinity::validate_input_descriptors(ids,
+                                                           types,
+                                                           positions,
+                                                           cumulative,
+                                                           batch,
+                                                           max_sequence,
+                                                           media_positions,
+                                                           images,
+                                                           image_count,
+                                                           audios,
+                                                           audio_count,
+                                                           gemma_image);
   TORCH_CHECK(!image_count || model.model->supports_images(),
               "This native model does not yet support images");
   TORCH_CHECK(!audio_count || model.model->supports_audio(),
@@ -621,7 +623,7 @@ tei::PackedInput packed_input(Engine& model,
   };
   auto cu =
       upload(at::from_blob(const_cast<int32_t*>(cumulative), {batch + 1}, options.dtype(at::kInt)));
-  tei::PackedInput packed{
+  infinity::PackedInput packed{
       input(ids), input(types), input(positions), cu, cumulative, batch, max_sequence};
   packed.host_ids = at::from_blob(const_cast<int64_t*>(ids), {tokens}, options);
   packed.host_types = at::from_blob(const_cast<int64_t*>(types), {tokens}, options);
@@ -636,13 +638,13 @@ tei::PackedInput packed_input(Engine& model,
   if (media_positions)
     packed.host_multimodal_positions =
         at::from_blob(const_cast<int64_t*>(media_positions), {3, tokens}, options);
-  tei::RequestImageUploads shared_images;
+  infinity::RequestImageUploads shared_images;
   for (size_t i = 0; i < image_count; ++i) {
     const auto& item = images[i];
     auto host_pixels = at::from_blob(
         const_cast<float*>(item.pixels), {item.rows, item.patch_dim}, options.dtype(at::kFloat));
     auto upload = [&] {
-      return tei::upload_image_pixels(host_pixels, model.device, model.dtype, family);
+      return infinity::upload_image_pixels(host_pixels, model.device, model.dtype, family);
     };
     auto pixels = share_image_uploads(model) ? shared_images.get(host_pixels, upload) : upload();
     packed.images.push_back({pixels,
@@ -670,7 +672,7 @@ tei::PackedInput packed_input(Engine& model,
 
 /// Validate compact maps and causal/media equivalence before attaching uploaded radix metadata.
 void attach_radix(Engine& model,
-                  tei::PackedInput& packed,
+                  infinity::PackedInput& packed,
                   const int64_t* ids,
                   const int64_t* types,
                   const int64_t* positions,
@@ -682,7 +684,7 @@ void attach_radix(Engine& model,
                   size_t image_count,
                   size_t audio_count,
                   const TeiRadix* radix,
-                  tei::OutputLease* completion = nullptr) {
+                  infinity::OutputLease* completion = nullptr) {
   if (radix) {
     TORCH_CHECK(model.model->supports_radix(), "This native model does not support radix folding");
     TORCH_CHECK(!audio_count, "Radix audio inference is not supported");
@@ -694,7 +696,7 @@ void attach_radix(Engine& model,
     auto host = [&](const int64_t* data, int64_t rows) {
       return at::from_blob(const_cast<int64_t*>(data), {rows}, options);
     };
-    tei::PackedInput metadata{
+    infinity::PackedInput metadata{
         host(ids, total),
         host(types, total),
         host(positions, total),
@@ -709,7 +711,7 @@ void attach_radix(Engine& model,
     metadata.fold_gather = host(radix->fold, compact);
     packed.host_scatter_unfold = metadata.scatter_unfold;
     // Validate complete causal contexts on host before capture or map upload.
-    tei::validate_radix(metadata, true);
+    infinity::validate_radix(metadata, true);
     if (image_count || media_positions) {
       // Token IDs alone cannot establish equivalent image contexts. Compare
       // host pixel bits, placement and all rotary axes before map upload.
@@ -787,15 +789,16 @@ void attach_radix(Engine& model,
 }
 
 /// Copy counted FFI metadata into request-owned vectors and translate protocol kind values.
-std::vector<tei::DecisionRequest> decision_requests(const TeiDecision* requests, size_t count) {
+std::vector<infinity::DecisionRequest> decision_requests(const TeiDecision* requests,
+                                                         size_t count) {
   TORCH_CHECK(requests || !count, "Missing decision metadata buffer");
-  std::vector<tei::DecisionRequest> result;
+  std::vector<infinity::DecisionRequest> result;
   result.reserve(count);
   for (size_t i = 0; i < count; ++i) {
     const auto& request = requests[i];
     TORCH_CHECK(request.kind >= 0 && request.kind <= 5, "Invalid decision metadata kind");
-    tei::DecisionRequest converted{
-        static_cast<tei::DecisionRequest::Kind>(request.kind == 4 ? 1 : request.kind)};
+    infinity::DecisionRequest converted{
+        static_cast<infinity::DecisionRequest::Kind>(request.kind == 4 ? 1 : request.kind)};
     converted.question_type = request.question_type;
     TORCH_CHECK((!request.marker_count || request.markers) &&
                     (!request.token_count || request.token_ids) &&
@@ -808,7 +811,7 @@ std::vector<tei::DecisionRequest> decision_requests(const TeiDecision* requests,
     for (size_t j = 0; j < request.field_count; ++j) {
       const auto& field = request.fields[j];
       TORCH_CHECK(!field.option_count || field.options, "Missing Clef option spans");
-      tei::DecisionField f{field.kind, {field.question_start, field.question_end}, {}};
+      infinity::DecisionField f{field.kind, {field.question_start, field.question_end}, {}};
       for (size_t k = 0; k < field.option_count; ++k)
         f.options.emplace_back(field.options[2 * k], field.options[2 * k + 1]);
       converted.fields.push_back(std::move(f));
@@ -828,10 +831,10 @@ template <class F> int32_t checked(F&& f) {
     c10::InferenceMode guard;
     f();
     return 0;
-  } catch (const tei::NativeCallError& ex) {
+  } catch (const infinity::NativeCallError& ex) {
     error_kind = ex.kind;
     return -1;
-  } catch (const tei::VendorAllocationError& ex) {
+  } catch (const infinity::VendorAllocationError& ex) {
     char diagnostic[192];
     std::snprintf(diagnostic,
                   sizeof(diagnostic),
@@ -840,14 +843,14 @@ template <class F> int32_t checked(F&& f) {
                   ex.status);
     set_error(3, diagnostic);
     return -1;
-  } catch (const tei::MemoryAdmissionError& ex) {
+  } catch (const infinity::MemoryAdmissionError& ex) {
     set_error(2, ex.what());
     return -1;
   } catch (const c10::OutOfMemoryError& ex) {
     set_error(3, ex.what());
     return -1;
   } catch (const c10::AcceleratorError& ex) {
-    set_error(tei::accelerator_error_kind(ex), ex.what());
+    set_error(infinity::accelerator_error_kind(ex), ex.what());
     return -1;
   } catch (const std::bad_alloc& ex) {
     set_error(3, ex.what());
@@ -936,7 +939,7 @@ int32_t tei_load_safetensors(void* handle,
   return checked([&] {
     EngineCall access(handle);
     auto& model = *static_cast<Engine*>(handle);
-    tei::read_safetensors(
+    infinity::read_safetensors(
         fd,
         start,
         length,
@@ -994,7 +997,7 @@ int32_t tei_prefix_cache_stats(void* handle, uint64_t* counters, size_t count) {
     EngineCall access(handle);
     TORCH_CHECK(counters && count >= 7, "Prefix-cache stats require seven counters");
     const auto& engine = *static_cast<Engine*>(handle);
-    auto s = engine.prefix ? engine.prefix->stats() : tei::PrefixCache::Stats{};
+    auto s = engine.prefix ? engine.prefix->stats() : infinity::PrefixCache::Stats{};
     counters[0] = s.hits;
     counters[1] = s.misses;
     counters[2] = s.reused_tokens;
@@ -1040,7 +1043,7 @@ int32_t tei_graph_stats(void* handle, uint64_t* counters, size_t count) {
     EngineCall access(handle);
     TORCH_CHECK(counters && count >= 7, "CUDA graph stats require seven counters");
     const auto& engine = *static_cast<Engine*>(handle);
-    auto s = engine.graphs ? engine.graphs->stats() : tei::CudaGraphCache::Stats{};
+    auto s = engine.graphs ? engine.graphs->stats() : infinity::CudaGraphCache::Stats{};
     counters[0] = s.hits;
     counters[1] = s.misses;
     counters[2] = s.captures;
@@ -1091,7 +1094,7 @@ tei_decision_counts(void* handle, const TeiDecision* requests, size_t count, int
     auto& engine = *static_cast<Engine*>(handle);
     TORCH_CHECK(engine.decision, "Model was not loaded for typed decisions");
     TORCH_CHECK(counts || !count, "Missing decision counts buffer");
-    tei::validate_decision_metadata_budget(requests, count, input_upload_limit(engine));
+    infinity::validate_decision_metadata_budget(requests, count, input_upload_limit(engine));
     auto converted = decision_requests(requests, count);
     for (size_t i = 0; i < count; ++i)
       counts[i] = engine.decision->output_count(converted[i]);
@@ -1170,7 +1173,7 @@ int32_t tei_decide_radix(void* handle,
     TORCH_CHECK(!blocks || !image_count || media_positions,
                 "OneJev block images require mRoPE coordinates");
     TORCH_CHECK(engine.decision && batch > 0, "Model was not loaded for typed decisions");
-    tei::validate_decision_metadata_budget(
+    infinity::validate_decision_metadata_budget(
         requests, batch, input_upload_limit(engine), input_bytes);
     auto converted = decision_requests(requests, batch);
     size_t expected = 0;
@@ -1219,17 +1222,17 @@ int32_t tei_decide_radix(void* handle,
         int64_t source = row;
         for (int64_t prev = 0; prev < row; ++prev)
           if (packed.block_prefix_lengths[prev] == boundary &&
-              tei::same_block_prefix(row,
-                                     prev,
-                                     boundary,
-                                     ids,
-                                     types,
-                                     positions,
-                                     media_positions,
-                                     cumulative[batch],
-                                     cumulative,
-                                     images,
-                                     image_count)) {
+              infinity::same_block_prefix(row,
+                                          prev,
+                                          boundary,
+                                          ids,
+                                          types,
+                                          positions,
+                                          media_positions,
+                                          cumulative[batch],
+                                          cumulative,
+                                          images,
+                                          image_count)) {
             source = packed.block_prefix_sources[prev];
             break;
           }
@@ -1243,7 +1246,7 @@ int32_t tei_decide_radix(void* handle,
     const bool cached = !blocks && !engine.prefix_probe.load(std::memory_order_relaxed) &&
                         engine.prefix && engine.model->supports_prefix_cache(0) &&
                         std::none_of(converted.begin(), converted.end(), [](const auto& request) {
-                          return request.kind == tei::DecisionRequest::Kind::Warmup;
+                          return request.kind == infinity::DecisionRequest::Kind::Warmup;
                         });
     const bool use_graph =
         !blocks && engine.graphs && engine.graph_policy_ready() &&
@@ -1294,7 +1297,7 @@ static int32_t forward_radix(void* handle,
                              const TeiAudio* audios,
                              size_t audio_count,
                              const TeiRadix* radix,
-                             tei::OutputLease* completion);
+                             infinity::OutputLease* completion);
 
 int32_t tei_forward(void* handle,
                     const int64_t* ids,
@@ -1357,7 +1360,7 @@ static int32_t forward_radix(void* handle,
                              const TeiAudio* audios,
                              size_t audio_count,
                              const TeiRadix* radix,
-                             tei::OutputLease* completion) {
+                             infinity::OutputLease* completion) {
   return checked([&] {
     EngineCall access(handle, true);
     auto& model = *static_cast<Engine*>(handle);
@@ -1460,7 +1463,7 @@ static int32_t forward_radix(void* handle,
       }
       auto host = at::from_blob(
           spans.data(), {int64_t(pooled_count), 2}, at::TensorOptions().dtype(at::kInt));
-      outputs.push_back(tei::packed_mean_pool(h, upload(host)));
+      outputs.push_back(infinity::packed_mean_pool(h, upload(host)));
       mean_pooled = true;
     }
 #endif
@@ -1591,9 +1594,9 @@ void* tei_forward_submit(void* handle,
                          const TeiAudio* audios,
                          size_t audio_count,
                          const TeiRadix* radix) {
-  std::unique_ptr<tei::OutputLease> lease;
+  std::unique_ptr<infinity::OutputLease> lease;
   const auto status = checked([&] {
-    std::shared_ptr<tei::OutputPool> output_pool;
+    std::shared_ptr<infinity::OutputPool> output_pool;
     auto device = c10::Device(c10::kCPU);
     {
       EngineCall access(handle);
@@ -1624,7 +1627,7 @@ void* tei_forward_submit(void* handle,
     }
     // Waiting for the A/B slot must not hold the engine lock. Completion and
     // cancellation own the pool independently of the model's submission lock.
-    lease = std::make_unique<tei::OutputLease>(std::move(output_pool), device, capacity);
+    lease = std::make_unique<infinity::OutputLease>(std::move(output_pool), device, capacity);
     lease->allocate();
     if (forward_radix(handle,
                       ids,
@@ -1647,19 +1650,19 @@ void* tei_forward_submit(void* handle,
                       audio_count,
                       radix,
                       lease.get()) != 0)
-      throw tei::NativeCallError(error_kind);
+      throw infinity::NativeCallError(error_kind);
   });
   return status == 0 ? lease.release() : nullptr;
 }
 
 const float* tei_output_wait(void* handle) {
   const float* output = nullptr;
-  checked([&] { output = static_cast<tei::OutputLease*>(handle)->wait(); });
+  checked([&] { output = static_cast<infinity::OutputLease*>(handle)->wait(); });
   return output;
 }
 
 void tei_output_destroy(void* handle) {
-  delete static_cast<tei::OutputLease*>(handle);
+  delete static_cast<infinity::OutputLease*>(handle);
 }
 
 void tei_destroy(void* handle) {

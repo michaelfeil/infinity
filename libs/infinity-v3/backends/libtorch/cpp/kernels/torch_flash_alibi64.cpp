@@ -13,7 +13,7 @@ namespace tei_torch_flash_alibi64 {
 void launch_alibi64(Flash_fwd_params&, cudaStream_t);
 }
 
-namespace tei {
+namespace infinity {
 bool torch_flash_alibi64_supported(c10::Device device, at::ScalarType dtype, int64_t dim) {
   return device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16) && dim == 64 &&
          at::cuda::getDeviceProperties(device.index())->major >= 8;

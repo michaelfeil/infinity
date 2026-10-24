@@ -100,7 +100,7 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <memory>
 #include <mutex>
 
-namespace tei {
+namespace infinity {
 /// Caches qualified bias-free decoder GEMM plans with an ordinary ATen fallback.
 class CachedNoBiasLt {
   /// Owns matrix descriptors and algorithm metadata for one cached decoder GEMM.

@@ -7,7 +7,7 @@
 #include <algorithm>
 #include <cstdint>
 
-namespace tei {
+namespace infinity {
 namespace {
 __global__ void unfold_qkv_kernel(const uint4* q,
                                   const uint4* k,

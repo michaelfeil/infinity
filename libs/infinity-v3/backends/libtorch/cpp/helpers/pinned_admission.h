@@ -28,7 +28,7 @@
 #include <cuda_runtime_api.h>
 #endif
 
-namespace tei {
+namespace infinity {
 /// Process-wide retained pinned-byte accounting and its configured allowance.
 struct PinnedAdmissionState {
   std::mutex mutex;

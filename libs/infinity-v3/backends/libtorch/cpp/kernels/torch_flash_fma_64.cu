@@ -5,7 +5,7 @@
 #endif
 #define FLASH_NAMESPACE tei_torch_flash
 #include "flash_launch_setup.h"
-#define cudaFuncSetAttribute tei::flash_set_attribute
+#define cudaFuncSetAttribute infinity::flash_set_attribute
 #include "vendor/torch_flash_attention/flash_fwd_launch_template.h"
 #undef cudaFuncSetAttribute
 

@@ -5,7 +5,7 @@
 #pragma once
 #include <ATen/ATen.h>
 
-namespace tei {
+namespace infinity {
 // Fill only real sequence-local bias tiles. Metadata is derived from validated
 // packed lengths/bucket construction; no token rows are padded or transferred.
 // Indices may be packed 1D with offsets, or the actual longest real sequence

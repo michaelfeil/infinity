@@ -8,7 +8,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
 
-namespace tei {
+namespace infinity {
 namespace {
 __global__ void gemma4_sequence_readout_kernel(const c10::BFloat16* logits,
                                                const int32_t* ends,

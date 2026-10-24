@@ -37,7 +37,7 @@ DEALINGS IN THE SOFTWARE.
 #include <cuda_bf16.h>
 #include <cstdint>
 
-namespace tei {
+namespace infinity {
 namespace {
 __device__ __forceinline__ half model_fma(half a, half b, half c) {
   return __hfma(a, b, c);

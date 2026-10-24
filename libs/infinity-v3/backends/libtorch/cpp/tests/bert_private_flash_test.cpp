@@ -26,7 +26,7 @@ static void classifier_workspace_recovery(const TeiConfig& cfg,
   } restore;
 
   at::globalContext().setBlasPreferredBackend(at::BlasBackend::Cublaslt);
-  auto state = tei::workspace_admission_state(device.index());
+  auto state = infinity::workspace_admission_state(device.index());
   auto retained = [&] {
     std::lock_guard lock(state->mutex);
     return state->retained;
@@ -81,7 +81,7 @@ static void classifier_workspace_recovery(const TeiConfig& cfg,
         std::lock_guard lock(state->mutex);
         available = (state->limit ? state->limit : size_t(512) << 20) - state->retained;
       }
-      auto pressure = tei::reserve_workspace_memory(device.index(), available);
+      auto pressure = infinity::reserve_workspace_memory(device.index(), available);
       TORCH_CHECK(pressure, "Unable to saturate BERT classifier workspace credit");
       auto model = build();
       auto fallback = model->classifier_projection(x, matrix, bias, gelu).cpu();
@@ -97,10 +97,10 @@ static void classifier_workspace_recovery(const TeiConfig& cfg,
       auto ids = at::arange(32, at::TensorOptions().device(device).dtype(at::kLong));
       auto types = at::zeros_like(ids), positions = ids;
       auto cumulative = at::tensor({0, 32}, at::TensorOptions().device(device).dtype(at::kInt));
-      tei::PackedInput input{ids, types, positions, cumulative, offsets.data(), 1, 32};
+      infinity::PackedInput input{ids, types, positions, cumulative, offsets.data(), 1, 32};
       auto expected = model->forward(input).cpu();
       {
-        tei::CudaGraphCache graphs(1, 4096, 1);
+        infinity::CudaGraphCache graphs(1, 4096, 1);
         for (int repeat = 0; repeat < 2; ++repeat)
           TORCH_CHECK(at::equal(expected, graphs.forward(*model, input).cpu()),
                       "Captured BERT classifier workspace changed full outputs");

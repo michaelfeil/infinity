@@ -4,7 +4,7 @@
 #pragma once
 #include <ATen/ATen.h>
 
-namespace tei {
+namespace infinity {
 // Newly authored packed row gather: actual last non-PAD row, or first row
 // when every ID is PAD. Cumulative offsets and IDs remain on device so graph
 // replay selects the current input, without padding or host index uploads.

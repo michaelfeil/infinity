@@ -8,7 +8,7 @@
 #include <c10/cuda/CUDAException.h>
 #include <algorithm>
 
-namespace tei {
+namespace infinity {
 namespace {
 constexpr int batch_limit = 64, threads = 256;
 

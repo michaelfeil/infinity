@@ -30,7 +30,7 @@ template <class T> void exhaustive(at::ScalarType dtype) {
   auto options = at::TensorOptions().dtype(dtype);
   auto input = at::from_blob(inputs.data(), {static_cast<int64_t>(inputs.size())}, options).clone();
   auto oracle = at::from_blob(expected.data(), input.sizes(), options).to(at::kFloat);
-  auto actual = tei::encoder_gelu(input.to(at::Device(at::kCUDA, 0))).cpu().to(at::kFloat);
+  auto actual = infinity::encoder_gelu(input.to(at::Device(at::kCUDA, 0))).cpu().to(at::kFloat);
   if (!at::isfinite(actual).all().template item<bool>())
     throw std::runtime_error("Nonfinite GELU output for finite input");
   // CPU libm and CUDA libdevice tanhf may straddle one model-dtype rounding boundary.
@@ -51,18 +51,18 @@ int main() {
     auto options = at::TensorOptions().dtype(dtype).device(at::Device(at::kCUDA, 0));
     for (int64_t length : {0, 1, 7, 1025}) {
       auto x = at::linspace(-4, 4, length, options);
-      auto result = tei::encoder_gelu(x);
+      auto result = infinity::encoder_gelu(x);
       if (result.sizes() != x.sizes() || result.scalar_type() != dtype)
         throw std::runtime_error("GELU changed shape or dtype");
       if (length && !at::isfinite(result).all().template item<bool>())
         throw std::runtime_error("GELU tail produced nonfinite values");
     }
     auto shifted = at::linspace(-4, 4, 1030, options).narrow(0, 1, 1025);
-    if (!at::equal(tei::encoder_gelu(shifted), tei::encoder_gelu(shifted.clone())))
+    if (!at::equal(infinity::encoder_gelu(shifted), infinity::encoder_gelu(shifted.clone())))
       throw std::runtime_error("GELU misaligned contiguous input differs");
     bool rejected = false;
     try {
-      tei::encoder_gelu(at::ones({3, 4}, options).transpose(0, 1));
+      infinity::encoder_gelu(at::ones({3, 4}, options).transpose(0, 1));
     } catch (const c10::Error&) {
       rejected = true;
     }
@@ -77,9 +77,9 @@ int main() {
            bias = (at::randn({width}, options) * .25).contiguous();
       // Same-input original GELU already has an exhaustive independent oracle.
       // This checks the additional separate model-dtype bias-rounding boundary.
-      auto reference = tei::encoder_gelu(x + bias);
+      auto reference = infinity::encoder_gelu(x + bias);
       c10::cuda::set_device(0);
-      auto result = tei::encoder_bias_gelu(x, bias);
+      auto result = infinity::encoder_bias_gelu(x, bias);
       TORCH_CHECK(c10::cuda::current_device() == 0, "Fused bias/GELU changed caller device");
       TORCH_CHECK(at::equal(result.view(at::kByte), reference.view(at::kByte)),
                   "Fused bias/GELU changed model-dtype arithmetic");

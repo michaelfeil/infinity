@@ -5,7 +5,7 @@
 #include <array>
 #include <cstddef>
 
-namespace tei {
+namespace infinity {
 // Entries are thread-local and bounded. Context IDs are unique for the process,
 // so a destroyed/reset CUDA context cannot reuse an old success entry.
 /// Cache only successful dynamic-shared-memory settings for this thread/context/kernel. Other
@@ -59,4 +59,4 @@ inline cudaError_t flash_set_attribute(Kernel function, cudaFuncAttribute attrib
   }
   return status;
 }
-} // namespace tei
+} // namespace infinity

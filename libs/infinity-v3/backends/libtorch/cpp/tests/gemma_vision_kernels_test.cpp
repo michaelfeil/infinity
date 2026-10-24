@@ -17,24 +17,24 @@ int main(int argc, char** argv) {
     auto options = at::TensorOptions().device(device).dtype(at::kBFloat16);
     for (auto shape : {std::vector<int64_t>{0, 12}, std::vector<int64_t>{3, 0}}) {
       auto input = at::empty(shape, options);
-      auto gated = tei::gemma_gated_cuda(input, gelu);
+      auto gated = infinity::gemma_gated_cuda(input, gelu);
       TORCH_CHECK(gated.size(0) == shape[0] && gated.size(1) == shape[1] / 2 &&
                       gated.numel() == 0 && gated.device() == device &&
                       gated.scalar_type() == at::kBFloat16,
                   "Empty expert gate changed its tensor contract");
-      auto unary = tei::gemma_activation_cuda(input, gelu);
+      auto unary = infinity::gemma_activation_cuda(input, gelu);
       TORCH_CHECK(unary.sizes() == input.sizes() && unary.device() == device &&
                       unary.scalar_type() == at::kBFloat16,
                   "Empty expert activation changed its tensor contract");
     }
-    auto valid = tei::gemma_gated_cuda(at::ones({1, 12}, options), gelu);
+    auto valid = infinity::gemma_gated_cuda(at::ones({1, 12}, options), gelu);
     TORCH_CHECK(at::isfinite(valid).all().item<bool>(),
                 "Empty expert activation poisoned nonempty recovery");
   }
   for (int64_t width : {4, 64, 768, 2048}) {
     auto input = at::randn({7, 3, width}, at::TensorOptions().device(device).dtype(at::kBFloat16));
     auto scale = at::randn({width}, input.options()).to(at::kFloat);
-    auto actual = tei::gemma_vision_norm_cuda(input, scale, 1e-6);
+    auto actual = infinity::gemma_vision_norm_cuda(input, scale, 1e-6);
     auto host = input.cpu().to(at::kFloat).contiguous(), weights = scale.cpu();
     auto expected = at::empty_like(host);
     auto x = host.const_data_ptr<float>();
@@ -71,7 +71,7 @@ int main(int argc, char** argv) {
     auto input = at::randn({height * width, hidden},
                            at::TensorOptions().device(device).dtype(at::kBFloat16)) *
                  13.;
-    auto actual = tei::gemma_vision_pool_cuda(input, height, width, kernel);
+    auto actual = infinity::gemma_vision_pool_cuda(input, height, width, kernel);
     auto host = input.cpu().to(at::kFloat).contiguous();
     auto expected = at::empty({height * width / 9, hidden}, at::kFloat);
     auto x = host.const_data_ptr<float>();
@@ -99,7 +99,7 @@ int main(int argc, char** argv) {
   for (int64_t width : {4, 64, 1024, 1536, 2048}) {
     auto input = at::randn({7, 3, width}, at::TensorOptions().device(device).dtype(at::kBFloat16));
     auto scale = at::randn({width}, input.options()).to(at::kFloat);
-    auto actual = tei::gemma_audio_norm_cuda(input, scale, 1e-6);
+    auto actual = infinity::gemma_audio_norm_cuda(input, scale, 1e-6);
     auto host = input.cpu().to(at::kFloat).contiguous(), weights = scale.cpu();
     auto expected = at::empty_like(host);
     auto x = host.const_data_ptr<float>();
@@ -137,7 +137,7 @@ int main(int argc, char** argv) {
     auto input =
         at::randn({257, 1, width}, at::TensorOptions().device(device).dtype(at::kBFloat16));
     auto scale = at::randn({width}, input.options()).to(at::kFloat);
-    auto actual = tei::gemma_norm_cuda(input, scale, 1e-6, true);
+    auto actual = infinity::gemma_norm_cuda(input, scale, 1e-6, true);
     auto host = input.cpu().to(at::kFloat).contiguous(), weights = scale.cpu();
     auto expected = at::empty_like(host);
     auto x = host.const_data_ptr<float>();
@@ -183,7 +183,7 @@ int main(int argc, char** argv) {
       auto t = sin.narrow(-1, axis * dim / 4, dim / 4).repeat({1, 1, 2});
       axes.push_back(x * c + rotated * t);
     }
-    TORCH_CHECK(at::equal(tei::gemma_vision_rotary_cuda(input, cos, sin), at::cat(axes, -1)),
+    TORCH_CHECK(at::equal(infinity::gemma_vision_rotary_cuda(input, cos, sin), at::cat(axes, -1)),
                 "Gemma two-axis vision rotation changed staged BF16 products or packed strides");
   }
   std::cout

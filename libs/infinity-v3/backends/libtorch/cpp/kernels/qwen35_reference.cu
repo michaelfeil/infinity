@@ -46,7 +46,7 @@ DEALINGS IN THE SOFTWARE.
 #undef qwen35_gdn_recurrent
 #undef qwen35_gdn_norm
 
-namespace tei {
+namespace infinity {
 namespace {
 // Each thread owns V adjacent logical lanes; preserve the original reduction tree.
 template <int V> struct alignas(V * 2) NormValues {

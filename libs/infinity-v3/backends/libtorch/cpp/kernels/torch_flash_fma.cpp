@@ -27,7 +27,7 @@ namespace tei_torch_flash_unfused {
 void launch(const void*, size_t, cudaStream_t);
 }
 
-namespace tei {
+namespace infinity {
 bool torch_flash_fma_supported(const at::Tensor& q, const at::Tensor& k, const at::Tensor& v) {
   return torch_flash_fma_supported(q, k, v, false, -1, -1);
 }

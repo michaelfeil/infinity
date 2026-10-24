@@ -12,7 +12,7 @@
 #include <cublasLt.h>
 #endif
 
-namespace tei {
+namespace infinity {
 /// Retained cuBLASLt plans and lookup state for suffix-only linear execution.
 struct PrefixLinearPlans::Impl {
 #ifdef TEI_TORCH_CUDA_KERNELS

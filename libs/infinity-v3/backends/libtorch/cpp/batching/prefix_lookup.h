@@ -6,7 +6,7 @@
 #include "batching/prefix_cache.h"
 #include <span>
 
-namespace tei {
+namespace infinity {
 constexpr int64_t prefix_block_tokens = 64;
 /// Extend parent-chained block digests up to the requested token count for candidate ranking.
 void prefix_fingerprints(PrefixIdentity&, int64_t tokens);
