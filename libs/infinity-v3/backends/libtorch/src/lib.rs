@@ -543,16 +543,17 @@ impl LibtorchBackend {
         })?;
         // Head tensors can also be present when the requested operation is embedding.
         options["_classifier"] = serde_json::json!(model_type == ModelType::Classifier);
-        let multi_vector = options["architectures"]
+        let colbert = options["architectures"]
             .as_array()
             .is_some_and(|values| values.iter().any(|value| value == "HF_ColBERT"));
+        let multi_vector = colbert || options["model_type"] == "colqwen3";
         if multi_vector && !matches!(model_type, ModelType::Embedding(_)) {
             return Err(start("ColBERT requires token embeddings"));
         }
         options["_multi_vector"] = multi_vector.into();
         let mut skip_tokens = Vec::new();
         let mut query_marker = None;
-        if multi_vector {
+        if colbert {
             if let Ok(bytes) = fs::read(path.join("tokenizer.json")) {
                 let tokenizer: serde_json::Value = serde_json::from_slice(&bytes).map_err(start)?;
                 query_marker = tokenizer["model"]["vocab"]["[unused0]"]
@@ -644,6 +645,7 @@ impl LibtorchBackend {
             .to_owned();
         let normalized_family = match family.as_str() {
             "bidirectional_pplx_qwen3" => "qwen3",
+            "colqwen3" => "qwen3_vl",
             "llama_bidirec" => "llama",
             "ministral3" => "mistral",
             "new" => "gte",
@@ -652,6 +654,9 @@ impl LibtorchBackend {
         }
         .to_owned();
         options["model_type"] = normalized_family.clone().into();
+        if family == "colqwen3" {
+            options["_transformers_math"] = true.into();
+        }
         if family == "bidirectional_pplx_qwen3" {
             options["use_bidirectional_attention"] = true.into();
             if !options["rope_theta"].is_number() {
@@ -965,6 +970,17 @@ impl LibtorchBackend {
                     .ok_or_else(|| start("Missing module type"))?;
                 // Output quantization is omitted: serve floating-point embeddings.
                 if family == "bidirectional_pplx_qwen3" && kind == "st_quantize.FlexibleQuantizer" {
+                    continue;
+                }
+                if family == "colqwen3" && kind == "sentence_transformers.multi_vector_encoder.modules.multi_vector_mask.MultiVectorMask" {
+                    let mask_path = module["path"].as_str().ok_or_else(|| start("Missing multi-vector mask path"))?;
+                    if mask_path.is_empty() || Path::new(mask_path).components().any(|part| !matches!(part, std::path::Component::Normal(_))) {
+                        return Err(start("Multi-vector mask path must stay inside the model directory"));
+                    }
+                    let mask = read_config(&format!("{mask_path}/config.json"))?;
+                    if mask.as_object().is_none_or(|fields| !fields.is_empty()) {
+                        return Err(start("ColQwen3 currently requires an empty MultiVectorMask configuration"));
+                    }
                     continue;
                 }
                 if !kind.starts_with("sentence_transformers.")

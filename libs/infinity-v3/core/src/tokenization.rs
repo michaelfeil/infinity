@@ -242,6 +242,19 @@ impl Tokenization {
             });
         }
         if let Some(processor) = &self.multimodal {
+            if processor.accepts_raw_text()
+                && matches!(&inputs, EncodingInput::Single(_) | EncodingInput::Ids(_))
+            {
+                return self
+                    .encode_request(
+                        inputs,
+                        truncate,
+                        truncation_direction,
+                        prompt_name,
+                        EncodeMode::Embedding,
+                    )
+                    .await;
+            }
             if inputs.is_empty() {
                 return Err(TextEmbeddingsError::Empty(
                     "`inputs` cannot be empty".into(),

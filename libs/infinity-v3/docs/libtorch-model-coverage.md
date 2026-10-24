@@ -24,6 +24,7 @@ exact-length biased attention without padded token activations.
 | Perplexity `pplx-embed-v1-0.6b` / `pplx-embed-v1-4b` | Bidirectional Qwen3, mean pooling; floating-point output only |
 | Qwen3 / Qwen3 MoE | Packed Q/K norm, GQA, dense/routed MLP and optional projection; sequence heads and dense Qwen3 token classification |
 | Gemma3 text | Packed local/global attention, Gemma norm semantics |
+| ColQwen3 (TomoroAI 4B) | Qwen3-VL backbone, learned 320-wide token projection, normalized multi-vector text/image outputs |
 | EmbeddingGemma2 | Packed text model, shared KV, PLE, embedding projection and image/audio towers |
 | Gemma4 / Gemma4 unified | Packed text plus image tower implementation |
 | Qwen3-VL | Native vision tower, mRoPE, patch/deepstack mergers and decoder injection |
@@ -63,3 +64,9 @@ isolation. Some Candle model/head combinations cannot execute the corresponding
 packed request, so a direct Candle comparison is unavailable for those cases.
 The latency target remains within 5% of Candle for comparable workloads; this PR
 does not claim that target for every model, checkpoint, precision or GPU.
+
+ColQwen3 uses the same matrix response formats as ColBERT. Supply the trained
+query suffix (ten `<|endoftext|>` tokens) in text inputs. For image documents, use
+a user conversation with an image and `Describe the image.`; the processor ends
+the user turn with EOS, without an assistant prefix. ColQwen2/2.5 adapter
+checkpoints require separate architecture and adapter support.
