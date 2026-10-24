@@ -140,6 +140,9 @@ encoder_layer_norm_impl(const at::Tensor& x,
   auto normalized = normalized_scratch.defined() ? normalized_scratch : at::empty_like(x);
   auto sum =
       residual.defined() && save_residual ? (reuse ? residual : at::empty_like(x)) : at::Tensor();
+  // 1536 is the largest width handled by this exact-kernel dispatcher. Wider features remain
+  // supported through ATen; extending native coverage also requires adding the
+  // corresponding reduction registration.
   if (x.size(-1) > 1536) {
     if (residual.defined() && save_residual)
       sum = x + residual;

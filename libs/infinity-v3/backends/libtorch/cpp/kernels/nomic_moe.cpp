@@ -51,6 +51,9 @@ at::Tensor nomic_moe_split_policy(const c10::Device& device,
     return {};
   c10::cuda::CUDAGuard guard(device);
   auto* properties = at::cuda::getCurrentDeviceProperties();
+  // The stored split policy reproduces this device/library/provider's reference heuristic. A new
+  // library version needs per-route-count policy qualification, even when it
+  // supports the same BF16 matrices.
   if (properties->major != 9 || properties->minor != 0 || cublasLtGetVersion() != 130200 ||
       at::globalContext().blasPreferredBackend() != at::BlasBackend::Cublaslt ||
       at::globalContext().allowBF16ReductionCuBLAS() !=
@@ -104,6 +107,9 @@ at::Tensor nomic_moe_split_policy(const c10::Device& device,
                                              &written) != CUBLAS_STATUS_SUCCESS)
       return {};
     factor = std::max(1, factor);
+    // The down kernel materializes at most two K partitions and reduces them in FP32. Larger
+    // factors or another reduction scheme need an implementation change, not just a wider
+    // device/version allowlist.
     if ((factor != 1 && factor != 2) ||
         (factor == 2 && reduction != CUBLASLT_REDUCTION_SCHEME_COMPUTE_TYPE))
       return {};

@@ -91,6 +91,9 @@ struct Bert : tei::Model {
                                    const at::Tensor& bias,
                                    bool gelu = false) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
+    // This cache stores GEMM+bias/activation descriptors. Feature multiples, operand alignment, and
+    // the scalar-output exception bound that epilogue path; an ineligible projection still
+    // uses its original operator.
     if (cached_classifier_gemm && x.dim() == 2 && x.size(0) > 0 && x.is_contiguous() &&
         matrix.dim() == 2 && matrix.is_contiguous() && bias.defined() && bias.is_contiguous() &&
         (x.scalar_type() == at::kHalf || x.scalar_type() == at::kBFloat16) &&

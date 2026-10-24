@@ -43,6 +43,9 @@ bool torch_flash_fma_supported(const at::Tensor& q,
         k.size(2) == q.size(2) && v.size(2) == q.size(2) && q.stride(2) == 1 && k.stride(2) == 1 &&
         v.stride(2) == 1))
     return false;
+  // Head widths correspond to separately compiled launch units. The width-72 BF16/noncausal/SM90
+  // profile has its own launch; advertising another dtype or mask also requires checking that
+  // unit's template dispatch.
   if (q.size(2) == 72) {
     if (q.scalar_type() != at::kBFloat16 || causal || window_left != -1 || window_right != -1 ||
         k.device() != q.device() || v.device() != q.device() ||
@@ -54,6 +57,8 @@ bool torch_flash_fma_supported(const at::Tensor& q,
   }
   if (q.size(2) == 64 || q.size(2) == 128 || q.size(2) == 256)
     return at::cuda::getDeviceProperties(q.device().index())->major >= 8;
+  // The wide-head branch is a separate exported specialization, not a generic extension of the
+  // <=256-head path. Preserve its dtype/mask constraints and dynamic-shared-memory checks together.
   if (q.size(2) != 512 || q.scalar_type() != at::kBFloat16 || window_left != -1 ||
       window_right != -1)
     return false;

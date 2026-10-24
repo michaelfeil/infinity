@@ -150,6 +150,9 @@ class Gemma final : public Model {
         supplied.defined() && x.scalar_type() == at::kFloat && matrix.scalar_type() == at::kFloat &&
         !at::globalContext().allowTF32CuBLAS() &&
         at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt;
+    // The Gemma4 geometry allowlist scopes logical-versus-compact GEMM recipe preservation. Tensor
+    // layout checks protect the descriptors; the hidden/head/model checks additionally
+    // bound the validated profile.
     if (!legacy && !embedding2 && boolean("enable_moe_block", false) && device.is_cuda() &&
         dtype == at::kBFloat16 && hidden == 2816 && heads == 16 && x.dim() == 2 &&
         (x.size(1) == 4096 || x.size(1) == 8192 || x.size(1) == 2816) && x.size(0) > 0 &&

@@ -182,6 +182,9 @@ std::pair<at::Tensor, at::Tensor> decoder_exact_rms_norm(const at::Tensor& x,
                                                          const at::Tensor& residual,
                                                          const at::Tensor& w,
                                                          double epsilon) {
+  // The following width list matches explicit template registrations below, including masked width
+  // 896. Adding a width requires a matching reduction/warp layout; accepting it here alone would
+  // select the wrong registration.
   TORCH_CHECK(
       x.is_cuda() && x.dim() == 2 && x.is_contiguous() &&
           ((x.scalar_type() == at::kBFloat16 &&
@@ -197,6 +200,9 @@ std::pair<at::Tensor, at::Tensor> decoder_exact_rms_norm(const at::Tensor& x,
                   (residual.device() == x.device() && residual.scalar_type() == x.scalar_type() &&
                    residual.sizes() == x.sizes() && residual.is_contiguous()),
               "Invalid exact decoder RMS residual");
+  // Width and 16-byte alignment match the vectorized kernel's loads. The row threshold selects that
+  // implementation; smaller batches retain the registered reduction path
+  // instead of rejecting the input.
   if (x.scalar_type() == at::kBFloat16 && x.size(1) == 4096 && x.size(0) >= 128 &&
       reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 16 == 0 &&
       reinterpret_cast<uintptr_t>(w.const_data_ptr()) % 16 == 0 &&

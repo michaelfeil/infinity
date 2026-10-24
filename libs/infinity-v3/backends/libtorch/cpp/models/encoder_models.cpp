@@ -361,6 +361,8 @@ struct Encoder final : Model {
                       activation == "gelu_new" || activation == "gelu_pytorch_tanh") &&
                      modern_cpu::supported_profile();
     ordinary_executor.reset();
+    // The outer ModernBERT geometry gate and the executor's inner (K,N) allowlist jointly bound
+    // this optimization. Broadening only model construction leaves other projections on ATen.
     if (family == Family::Modern && device.is_cuda() &&
         (dtype == at::kHalf || dtype == at::kBFloat16) && hidden == 768 && heads == 12 &&
         o.integer("intermediate_size", 1152) == 1152 && !o.boolean("_fp8_dynamic", false))

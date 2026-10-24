@@ -45,6 +45,8 @@ bool supported_profile() {
   if (at::get_num_threads() != 1)
     return false;
 #if defined(__linux__) && defined(__x86_64__) && (defined(__GNUC__) || defined(__clang__))
+  // Instruction availability is only the first requirement. The cache-sharing checks below also
+  // select the reference GEMM blocking profile, whose Half rounding depends on K-block boundaries.
   if (!__builtin_cpu_supports("avx2") || !__builtin_cpu_supports("fma"))
     return false;
   // gemm-common discovers all sysfs CPUs and divides each cache by its sharing
@@ -68,6 +70,9 @@ bool supported_profile() {
         else if (size.ends_with("M"))
           bytes *= 1024 * 1024;
         const auto shared = sharing(read(cache.path() / "shared_cpu_list"));
+        // Cache size, associativity, and line size scope the reproduced reference blocking recipe.
+        // They are not general requirements for ModernBERT CPU inference, which retains
+        // ATen outside this profile.
         if (shared <= 0 || bytes / shared != 32768 ||
             read(cache.path() / "ways_of_associativity") != "8" ||
             read(cache.path() / "coherency_line_size") != "64")
