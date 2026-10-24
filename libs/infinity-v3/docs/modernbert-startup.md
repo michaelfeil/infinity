@@ -1,6 +1,8 @@
 # ModernBERT startup draft measurements
 
-The draft now uses one **32 MiB** default staging budget for every shard, with the existing explicit override. Earlier measurements below used the provisional 16/256 MiB size policy; the final comparison is in the uniform-pool section.
+**Known large-MoE regression:** Qwen3-30B-A3B loads materially faster with 256 MiB than 32 MiB (follow-up below). The unconditional 32 MiB default remains a draft and is not established as a universal choice.
+
+The draft currently uses one **32 MiB** default staging budget for every shard, with the existing explicit override. Earlier measurements below used the provisional 16/256 MiB size policy; the final comparison is in the uniform-pool section.
 
 Goal: less than one second from process launch to successful HTTP health, with weights already local. Full configured warmup remains required before readiness; no warmup limits or execution were changed.
 
@@ -88,3 +90,23 @@ A follow-up sweep used explicit 16, 32, and 256 MiB budgets on the same candidat
 All embeddings were finite and exactly equal within each model across all 15 runs. Four of five 32 MiB ModernBERT runs completed below one second; tail latency remains unresolved.
 
 These results support choosing one 32 MiB default instead of a shard-size cutoff. They do not establish an optimum across storage/GPU types. Explicit 16/64/256 MiB overrides remain available and are covered by the existing options test. Tiny files still cap allocations by their data size in the native reader. The final default passed 20 LibTorch tests (five manual tests ignored); the unchanged router implementation previously passed 78 tests.
+
+## Qwen3-30B-A3B follow-up: large MoE regression
+
+Checkpoint: `Qwen/Qwen3-30B-A3B`, pinned revision `ad44e777bcd18fa416d9da3bd8f70d33ebb85d39`. Original BF16 checkpoint: 61,066,575,648 bytes in 16 shards, 18,867 tensors including 18,432 expert tensors. Download time is excluded.
+
+Same candidate binary, H100 physical GPU 1, last-token pooling, BF16 execution, no FP8/graphs, full 16K token budget/warmup unchanged. Three complete rounds per budget, with rotated/reversed order: `16,32,256`; `16,256,32`; `256,16,32`. The originally planned five-round sweep was stopped after three complete rounds once the large-model regression was established. A fourth-round startup was interrupted during cleanup and is not a measured result.
+
+| Budget | Checkpoint-loading seconds, all three runs | Median loading | Median HTTP readiness |
+|---|---|---:|---:|
+| 16 MiB | 110.685, 74.080, 74.029 | 74.080 s | 75.889 s |
+| 32 MiB | 78.497, 66.232, 58.656 | 66.232 s | 68.117 s |
+| **256 MiB** | 50.179, 45.242, 51.097 | **50.179 s** | **51.963 s** |
+
+HTTP readiness ranges: 75.849–112.772 s (16 MiB), 60.420–80.284 s (32 MiB), 47.081–52.875 s (256 MiB). The first 16 MiB start was especially slow, with underlying storage state uncontrolled. Repeat rounds still favored 256 MiB; these measurements are not a controlled new-node comparison. Another native test briefly shared the GPU during the first start, and the host was shared throughout.
+
+32 MiB was about 32% slower loading and 31% slower to readiness at the median than 256 MiB. All nine measured starts passed HTTP health and finite 2048-dimensional embeddings, with maximum absolute embedding difference 0 across settings.
+
+This setting bounds both host pinned buffers and GPU staging groups, so the experiment does not isolate pinning cost. The much larger number of expert tensors makes a batching effect plausible, but this was not separately profiled. A useful next experiment would hold the GPU staging budget fixed while varying the host pinned pool.
+
+For this large MoE, use `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES=268435456`. Keep 32 MiB as the small/dense-model candidate; this result blocks treating the current unconditional default as generally validated.

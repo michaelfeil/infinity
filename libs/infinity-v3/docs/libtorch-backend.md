@@ -721,3 +721,5 @@ checkpoint. Run `onejev_block_parity` with `ONEJEV_BLOCK_REFERENCE` pointing to
 Startup overlaps configuration validation (including CUDA discovery) with model frontend initialization. All models must pass validation before checkpoint loading begins. The CUDA preflight, health check, and full configured warmup remain required before readiness. Startup logs report frontend and configuration-validation durations; these phases overlap and must not be added together.
 
 See [ModernBERT startup measurements](modernbert-startup.md) for the draft baseline, candidate results, and remaining cold-start limitations.
+
+The draft uniform 32 MiB default regresses Qwen3-30B-A3B startup versus 256 MiB. For large MoE checkpoints, use `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES=268435456`; see the measurement report before treating the smaller default as universal.
