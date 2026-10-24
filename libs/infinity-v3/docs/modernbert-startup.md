@@ -56,3 +56,16 @@ Three alternating starts per binary also loaded Qwen3-8B BF16, revision `b968826
 | 3 | 3.138 | 3.007 |
 
 The large first-start storage variation makes this a correctness/regression smoke, not evidence of a storage-independent speedup.
+
+## Qwen3-8B: explicit 16 MiB versus 256 MiB pools
+
+The same candidate binary was tested with explicit reader budgets on an idle H100 (physical GPU 1). Six fresh processes per budget, alternating order each round, BF16 checkpoint/execution, 16K token budget and full warmup unchanged. The checkpoint is 16.38 GB across five shards. All embeddings were finite and exactly equal across both budgets.
+
+| Pinned budget | Median checkpoint loading | Median HTTP readiness |
+|---|---:|---:|
+| 256 MiB | 1.414 s | 2.782 s |
+| 16 MiB | 1.235 s | 2.596 s |
+
+The smaller pool was about 13% faster in checkpoint loading and 7% faster overall on this node. The first 256 MiB start took 17.089 s (15.599 s loading weights), with uncontrolled underlying storage caches. Retaining all runs gives the medians above. Excluding the entire initial pair gives 1.384 vs 1.229 s loading and 2.772 vs 2.583 s HTTP readiness, so the repeat-start direction is unchanged. This does not establish which budget is faster on a genuinely cold new node.
+
+A 16 MiB pool is therefore not inherently a large-model throughput regression. This comparison covers one 8B model, one storage setup, and H100; larger checkpoints, dtype conversion, slower PCIe GPUs, and different storage still need coverage before changing the large-shard default.
