@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Checked nonnegative size arithmetic for native attention storage estimates.
+
 #pragma once
 #include <c10/util/Exception.h>
 #include <cstdint>

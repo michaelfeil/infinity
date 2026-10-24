@@ -1,3 +1,8 @@
+/// \file
+/// Packed token/media descriptors and request-local image reuse for native inference.
+/// Host views, sequence offsets, and prefix contexts are borrowed for the submission;
+/// callers must keep their backing data alive while native code uses it.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <array>
@@ -39,6 +44,7 @@ inline at::Tensor upload_image_pixels(const at::Tensor& pixels,
 // The caller's pixels are immutable for one native request. Keep this cache local
 // to packed_input: no borrowed host view or cache entry survives that call.
 class RequestImageUploads {
+  /// Host tensor metadata paired with its request-local upload result.
   struct Entry {
     at::Tensor host, uploaded;
   };
@@ -62,6 +68,7 @@ public:
 
 struct PrefixContext;
 
+/// Image patches, grid metadata, token placement, and optional prepared vision features.
 struct ImageInput {
   at::Tensor pixels;
   std::array<int64_t, 3> grid_thw;
@@ -75,6 +82,7 @@ struct ImageInput {
 // Tensor identity comes from the request-local upload cache; no content hash,
 // caller feature key, or cross-request reuse can alias distinct media.
 class RequestImageFeatures {
+  /// Image identity, cached features, and remaining uses within this request.
   struct Entry {
     ImageInput image;
     at::Tensor features;
@@ -154,6 +162,7 @@ public:
   }
 };
 
+/// Audio features, validity metadata, and token placement for one packed audio span.
 struct AudioInput {
   at::Tensor features, validity;
   int64_t token_start = 0, token_count = 0;

@@ -1,4 +1,7 @@
 // Copyright Infinity Core Contributors. See the repository LICENSE.
+/// \file
+/// CUDA RMS normalization with Transformers residual and affine rounding semantics.
+
 #include "kernels/transformers_norm.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -9,6 +12,7 @@
 
 namespace tei {
 namespace {
+/// Aligned four-scalar pack used by the RMS-normalization kernel.
 template <class T> struct alignas(sizeof(T) * 4) Four {
   T value[4];
 };

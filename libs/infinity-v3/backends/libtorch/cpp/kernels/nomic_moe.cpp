@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Qualified Nomic MoE routing-policy setup and grouped expert execution.
+/// Combines native grouped GEMMs with the encoder activation contract.
+
 #include "kernels/nomic_moe.h"
 #include "kernels/encoder_activation.h"
 #include <ATen/cuda/CUDAContext.h>
@@ -13,6 +17,7 @@ at::Tensor
 nomic_moe_down(const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&);
 
 namespace {
+/// RAII owner of cuBLASLt descriptors used to qualify Nomic grouped-GEMM policy.
 struct LtPolicy {
   cublasLtMatmulDesc_t operation = nullptr;
   cublasLtMatmulPreference_t preference = nullptr;

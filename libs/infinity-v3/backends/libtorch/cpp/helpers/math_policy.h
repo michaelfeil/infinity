@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Snapshot of math settings that affect native execution and cache compatibility.
+/// Captured graphs and resident prefix snapshots use this policy to scope reuse.
+
 #pragma once
 #include <ATen/Context.h>
 #include <c10/core/Device.h>

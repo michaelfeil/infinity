@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: MIT
 // Adapted Candle norm kernels retain their notices in qwen35_kernels.cu and
 // backends/candle/src/kernels/gemma_rms_norm.cu.
+/// \file
+/// Native Gemma2 RMS-normalization and residual-normalization entry points.
+
 #pragma once
 #include <ATen/ATen.h>
 

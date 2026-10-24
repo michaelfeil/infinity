@@ -1,3 +1,6 @@
+/// \file
+/// Vision softmax and layer-normalization interfaces using the reference reductions.
+
 #pragma once
 #include <ATen/ATen.h>
 

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// CUDA batching of bit-preserving copies from strided state to contiguous storage.
+
 #include "kernels/prefix_state_copy.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -8,12 +11,14 @@
 
 namespace tei {
 namespace {
+/// Byte-addressed row-strided source and contiguous destination copy descriptor.
 struct Copy {
   const uint8_t* source;
   uint8_t* target;
   int64_t rows, width, stride;
 };
 
+/// Fixed-capacity batch of state-copy descriptors passed to the CUDA kernel.
 struct Copies {
   Copy items[64];
 };

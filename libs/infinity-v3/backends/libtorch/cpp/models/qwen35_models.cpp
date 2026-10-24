@@ -1,3 +1,6 @@
+/// \file
+/// Packed Qwen3.5 execution across full attention, gated-delta, and MLP/MoE blocks.
+
 #include "batching/prefix_cache.h"
 #include "helpers/attention.h"
 #include "helpers/fp8_linear.h"
@@ -30,11 +33,13 @@ namespace tei {
 namespace {
 // Adapted from Candle qwen3_vl/vision.rs; upstream Apache-2.0 notices retained.
 class Qwen35 final : public Model {
+  /// Packed attention/history boundaries shared by cached Qwen3.5 block execution.
   struct BlockMetadata {
     at::Tensor kv_cumulative, history_cumulative;
     std::vector<int32_t> history_offsets;
   };
 
+  /// Per-block attention and recurrent buffers paired with their packed boundaries.
   struct BlockCache {
     BlockMetadata& metadata;
     at::Tensor key, value, state, history;
@@ -54,6 +59,7 @@ class Qwen35 final : public Model {
   double epsilon;
   at::Tensor cos_cache, sin_cache;
 
+  /// Dense, routed, and shared-expert projections for one Qwen3.5 feed-forward block.
   struct Mlp {
     at::Tensor gate_up, down, router, experts, expert_down, shared_gate_up, shared_down,
         shared_gate;
@@ -84,6 +90,7 @@ class Qwen35 final : public Model {
   // Choose the same accumulation tree as the original logical-row GEMM,
   // using descriptors only. Execute on actual compact rows, with no padding.
 #ifdef TEI_TORCH_CUDA_KERNELS
+  /// Retained projection plan and workspace ownership for logical-row GEMMs.
   struct RadixLinearPlan {
     cublasLtMatmulDesc_t operation{};
     cublasLtMatrixLayout_t weight{}, input{}, output{};
@@ -154,6 +161,7 @@ class Qwen35 final : public Model {
         if (found == radix_linear_plans.end() && radix_linear_plans.size() < 64) {
           auto plan = std::make_unique<RadixLinearPlan>();
 
+          /// Temporary cuBLASLt layouts and preference used during projection-plan selection.
           struct Planning {
             cublasLtMatrixLayout_t input{}, output{};
             cublasLtMatmulPreference_t preference{};

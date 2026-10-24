@@ -1,3 +1,7 @@
+/// \file
+/// Plan-cache interface for suffix-only linear execution.
+/// Logical row counts retain the original projection recipe during prefix reuse.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <memory>

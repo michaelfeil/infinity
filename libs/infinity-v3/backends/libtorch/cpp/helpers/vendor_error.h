@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Allocation-failure carrier for vendor operations with explicit status codes.
+
 #pragma once
 #include <cstdint>
 #include <exception>

@@ -1,3 +1,7 @@
+/// \file
+/// Packed decoder-family backbones with attention, dense/MoE layers, and task heads.
+/// Shared helpers support multimodal insertion and selected expert dispatch.
+
 #include "batching/radix.h"
 #include "batching/prefix_cache.h"
 #include "models/decoder_models.h"
@@ -28,6 +32,7 @@
 
 namespace tei {
 namespace {
+/// Attention, normalization, MLP/MoE weights, and execution metadata for one layer.
 struct DecoderLayer {
   int64_t rotary_index = -1, left_window = -1, right_window = -1;
   at::Tensor qkv, qkv_bias, out, out_bias, input_norm, post_norm, q_norm, k_norm;
@@ -39,6 +44,7 @@ struct DecoderLayer {
   at::Tensor grouped_gate_up, grouped_down;
 };
 
+/// Packed decoder-family backbone with dense/MoE layers and optional task heads.
 class Decoder final : public Model {
 #ifdef TEI_TORCH_CUDA_KERNELS
   mutable CachedNoBiasLt no_bias_cache;

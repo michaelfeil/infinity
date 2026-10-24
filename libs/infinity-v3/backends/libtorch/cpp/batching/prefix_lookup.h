@@ -1,3 +1,7 @@
+/// \file
+/// Prefix fingerprint, exact-comparison, and candidate-index interfaces.
+/// The index borrows snapshot references rather than extending their ownership.
+
 #pragma once
 #include "batching/prefix_cache.h"
 #include <span>
@@ -17,6 +21,7 @@ prefix_document_fingerprint(std::span<const PrefixToken>, int operation, bool ro
 int64_t prefix_common(const PrefixIdentity&, const PrefixIdentity&, int64_t limit);
 bool prefix_same(const PrefixIdentity&, const PrefixIdentity&);
 
+/// Selected resident entry, verified prefix length, and collision-fallback status.
 struct PrefixLookup {
   std::shared_ptr<PrefixEntry> entry;
   int64_t length = 0;

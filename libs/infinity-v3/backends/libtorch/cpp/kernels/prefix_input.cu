@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// CUDA copies that pack uncached token suffixes into independently owned inputs.
+
 #include "kernels/prefix_input.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -9,10 +12,12 @@ namespace tei {
 namespace {
 constexpr int batch_limit = 64, threads = 256;
 
+/// Source and destination row span for one sequence suffix copy.
 struct Slice {
   int64_t input = 0, output = 0, count = 0;
 };
 
+/// Batched ID/position/type pointers and validated sequence-copy spans.
 struct InputCopies {
   const int64_t* source[3]{};
   int64_t* target[3]{};

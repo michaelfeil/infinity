@@ -1,3 +1,6 @@
+/// \file
+/// Encoder normalization interfaces for residuals, scratch buffers, and embeddings.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <utility>

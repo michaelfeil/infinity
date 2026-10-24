@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Interface for filling packed disentangled-attention bias storage.
+
 #pragma once
 #include <ATen/ATen.h>
 

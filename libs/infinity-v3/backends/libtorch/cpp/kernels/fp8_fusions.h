@@ -1,3 +1,6 @@
+/// \file
+/// Fused activation/normalization and per-row FP8 quantization interfaces.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <tuple>

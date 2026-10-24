@@ -1,3 +1,6 @@
+/// \file
+/// Device-side selection of packed classifier rows without host index uploads.
+
 #pragma once
 #include <ATen/ATen.h>
 

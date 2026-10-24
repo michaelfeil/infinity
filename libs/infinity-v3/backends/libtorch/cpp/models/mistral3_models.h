@@ -1,4 +1,7 @@
 // Copyright Infinity Core Contributors. See repository LICENSE and NOTICE.
+/// \file
+/// Native Mistral3/Pixtral model construction interface.
+
 #pragma once
 #include "models/model.h"
 #include "helpers/options.h"

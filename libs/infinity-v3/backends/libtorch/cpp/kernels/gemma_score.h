@@ -1,3 +1,6 @@
+/// \file
+/// Gemma BF16 scoring and residual-scaling interfaces.
+
 #pragma once
 #include <ATen/ATen.h>
 

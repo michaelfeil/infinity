@@ -1,3 +1,6 @@
+/// \file
+/// Native Qwen3.5 dense and MoE model construction interface.
+
 #pragma once
 #include <memory>
 #include "models/model.h"

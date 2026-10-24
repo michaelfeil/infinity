@@ -1,3 +1,6 @@
+/// \file
+/// Native packed Flash attention interface for the head-width-32 specialization.
+
 #pragma once
 #include <ATen/ATen.h>
 

@@ -1,3 +1,6 @@
+/// \file
+/// Decoder construction and shared multimodal/expert execution interfaces.
+
 #pragma once
 #include <memory>
 #include "models/model.h"

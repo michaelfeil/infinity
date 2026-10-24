@@ -1,3 +1,7 @@
+/// \file
+/// Batched copies for graph inputs and retained prefix state.
+/// Groups compatible tensor layouts and uses the specialized copy path when eligible.
+
 #pragma once
 #include <ATen/ops/_foreach_copy.h>
 #include <array>

@@ -1,4 +1,7 @@
 // Fork contribution; see LICENSE and LICENSING.md at the repository root.
+/// \file
+/// Laya action-feature interface over packed logits and question offsets.
+
 #pragma once
 #include <ATen/ATen.h>
 

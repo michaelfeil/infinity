@@ -1,3 +1,7 @@
+/// \file
+/// Native Qwen3-VL vision encoding and multimodal text-backbone composition.
+/// Builds spatial/temporal positions and injects image features into packed token rows.
+
 #include "helpers/vision_batch.h"
 #include "batching/prefix_cache.h"
 #include "helpers/attention.h"

@@ -1,3 +1,6 @@
+/// \file
+/// Encoder GELU entry points with explicit model-dtype intermediate rounding.
+
 #pragma once
 #include <ATen/ATen.h>
 

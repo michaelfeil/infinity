@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Packed CUDA mean-pooling entry points for exact sequence spans.
+/// Implementations retain the model-dtype reduction contract described below.
+
 #pragma once
 #include <ATen/ATen.h>
 

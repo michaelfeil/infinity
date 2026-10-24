@@ -1,16 +1,22 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Native decision-head request/result contracts and head construction interface.
+/// Heads consume packed backbone hidden states and protocol-specific request metadata.
+
 #pragma once
 #include <memory>
 #include "models/model.h"
 #include "helpers/options.h"
 
 namespace tei {
+/// Question and option token spans for one field of a structured decision.
 struct DecisionField {
   int64_t kind;
   std::pair<int64_t, int64_t> question;
   std::vector<std::pair<int64_t, int64_t>> options;
 };
 
+/// Protocol selector and request-owned token/marker metadata for a decision head.
 struct DecisionRequest {
   enum class Kind { Laya, OptionTokens, Clef, Warmup, InlineOptions = 5 } kind;
   int64_t question_type = 0;
@@ -18,11 +24,13 @@ struct DecisionRequest {
   std::vector<DecisionField> fields;
 };
 
+/// Option-logit and action-probability tensors produced by a decision readout.
 struct DecisionResult {
   at::Tensor logits;
   at::Tensor action_probability;
 };
 
+/// Common interface for native readouts over packed backbone hidden states.
 class DecisionHead {
 public:
   virtual ~DecisionHead() = default;

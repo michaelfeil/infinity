@@ -1,4 +1,7 @@
 // Pinned Torch Flash implementation and its BSD notices remain in vendor/torch_flash_attention.
+/// \file
+/// Native packed Flash attention interface for the head-width-64 ALiBi path.
+
 #pragma once
 #include <ATen/ATen.h>
 

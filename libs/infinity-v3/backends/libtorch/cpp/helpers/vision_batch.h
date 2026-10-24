@@ -1,3 +1,7 @@
+/// \file
+/// Memory-aware grouping of image descriptors for native vision layers.
+/// Estimates layer intermediates when choosing request-local image batches.
+
 #pragma once
 #include "batching/packed_input.h"
 #ifdef TEI_TORCH_CUDA_KERNELS

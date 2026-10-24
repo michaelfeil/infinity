@@ -1,3 +1,7 @@
+/// \file
+/// Shared native CUDA primitives for normalization, activations, rotary positions,
+/// and expert routing.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <utility>

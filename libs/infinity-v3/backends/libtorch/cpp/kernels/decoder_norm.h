@@ -1,3 +1,7 @@
+/// \file
+/// Decoder normalization and FP16 MoE probability entry points.
+/// The declarations below specify their rounding and supported-layout contracts.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <utility>

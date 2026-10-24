@@ -1,3 +1,7 @@
+/// \file
+/// cuBLASLt planning for uncached suffix rows under the logical full-input recipe.
+/// Owns cached descriptors while obtaining workspace through the execution path.
+
 #include "helpers/prefix_linear.h"
 #include <array>
 #include <map>
@@ -9,8 +13,10 @@
 #endif
 
 namespace tei {
+/// Retained cuBLASLt plans and lookup state for suffix-only linear execution.
 struct PrefixLinearPlans::Impl {
 #ifdef TEI_TORCH_CUDA_KERNELS
+  /// Owns cuBLASLt descriptors and algorithm metadata for one cached linear layout.
   struct Plan {
     cublasLtMatmulDesc_t operation{};
     cublasLtMatrixLayout_t weight{}, input{}, output{};
@@ -112,6 +118,7 @@ at::Tensor PrefixLinearPlans::forward(const at::Tensor& x,
       }
       auto plan = std::make_unique<Impl::Plan>();
 
+      /// Temporary logical-input layouts and preference used during GEMM plan selection.
       struct Logical {
         cublasLtMatrixLayout_t input{}, output{};
         cublasLtMatmulPreference_t preference{};

@@ -1,4 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Nomic MoE policy-preparation and grouped-expert interfaces.
+
 #pragma once
 #include <ATen/ATen.h>
 

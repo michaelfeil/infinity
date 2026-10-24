@@ -1,4 +1,7 @@
 // Copyright Infinity Core Contributors. See the repository LICENSE.
+/// \file
+/// Transformers-style RMS-normalization and residual-update interface.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <utility>

@@ -1,3 +1,7 @@
+/// \file
+/// Packed attention composition and bounded sequence-local bias construction.
+/// Provides native CUDA dispatch and independent per-sequence attention fallbacks.
+
 #pragma once
 #include <ATen/ATen.h>
 #include "batching/packed_input.h"

@@ -1,3 +1,8 @@
+/// \file
+/// C ABI declarations mirrored by the Rust LibTorch adapter.
+/// Input descriptors borrow caller storage; engine and output handles have explicit
+/// destruction entry points.
+
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
@@ -10,6 +15,7 @@ struct TeiConfig {
   int32_t activation;
 };
 
+/// Borrowed image-patch matrix with packed-token placement and optional cache identity.
 struct TeiImage {
   const float* pixels;
   int64_t rows, patch_dim, grid[3], merge_size, token_start, token_count, sequence_start;
@@ -17,12 +23,14 @@ struct TeiImage {
   uint8_t has_feature_key = 0;
 };
 
+/// Borrowed audio features and validity mask with packed-token placement.
 struct TeiAudio {
   const float* values;
   const uint8_t* mask;
   int64_t frames, feature_size, token_start, token_count;
 };
 
+/// Borrowed compact token rows and maps between compact and logical token layouts.
 struct TeiRadix {
   const int64_t* ids;
   const int64_t* types;
@@ -32,12 +40,14 @@ struct TeiRadix {
   int64_t compact_tokens;
 };
 
+/// Question and option spans for one field of a structured decision request.
 struct TeiDecisionField {
   int64_t kind, question_start, question_end;
   const int64_t* options;
   size_t option_count;
 };
 
+/// Counted, borrowed metadata selecting a supported decision-head request contract.
 struct TeiDecision {
   // kind 4 is block option-token scoring; question_type holds its prefix length.
   int32_t kind;

@@ -1,4 +1,8 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
+/// \file
+/// Loading and dispatch for optional architecture-specific InfinityFA4 bundles.
+/// Validates supported layouts and keeps loaded bundle code resident for later calls.
+
 #include "kernels/infinity_fa4.h"
 
 #if defined(TEI_TORCH_CUDA_KERNELS) && defined(INFINITY_FA4_ROOT)
@@ -54,6 +58,7 @@ using Deberta = int (*)(int,
                         int64_t,
                         int);
 
+/// Loaded bundle handle and exported attention/error entry points kept resident.
 struct Bundle {
   void* handle;
   Forward forward;

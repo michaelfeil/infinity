@@ -1,3 +1,7 @@
+/// \file
+/// Qualified native Flash attention interfaces with explicit packed Q/K boundaries.
+/// Exposes fused, reference, and ALiBi variants used by model adapters.
+
 #pragma once
 #include <ATen/ATen.h>
 

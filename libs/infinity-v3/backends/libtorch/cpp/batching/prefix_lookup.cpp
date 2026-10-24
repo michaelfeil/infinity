@@ -1,3 +1,7 @@
+/// \file
+/// Fingerprinting and candidate lookup for retained prefix snapshots.
+/// Indexed candidates are checked against exact identities before reuse.
+
 #include "batching/prefix_lookup.h"
 #include "models/model.h"
 #include <algorithm>
@@ -256,6 +260,7 @@ PrefixLookup prefix_lookup(PrefixIdentity& key,
   return best;
 }
 
+/// Position-indexed weak snapshot references grouped by compatible execution scopes.
 struct PrefixIndex::Impl {
   static constexpr int64_t stride = 8;
   static constexpr int64_t short_positions = 16;
@@ -266,6 +271,7 @@ struct PrefixIndex::Impl {
                : short_positions + (tokens - short_positions) / stride * stride;
   }
 
+  /// Operation, rotary, and packed-layout attributes that separate index namespaces.
   struct Scope {
     int operation = 0;
     bool rotary = false, layout = false;
@@ -274,6 +280,7 @@ struct PrefixIndex::Impl {
     bool operator==(const Scope&) const = default;
   };
 
+  /// Combines execution-scope attributes and packed offsets for hash-table lookup.
   struct ScopeHash {
     size_t operator()(const Scope& scope) const {
       std::array<int64_t, 5> values = {
@@ -284,12 +291,14 @@ struct PrefixIndex::Impl {
     }
   };
 
+  /// Prefix endpoint and fingerprint used to select a candidate bucket.
   struct Key {
     int64_t position = 0;
     PrefixFingerprint hash;
     bool operator==(const Key&) const = default;
   };
 
+  /// Hashes a prefix endpoint together with its two-part fingerprint.
   struct KeyHash {
     size_t operator()(const Key& key) const {
       return key.hash.low ^ (key.hash.high << 1) ^ uint64_t(key.position) * 0x9e3779b97f4a7c15ULL;
@@ -298,6 +307,7 @@ struct PrefixIndex::Impl {
 
   using Bucket = std::vector<std::weak_ptr<PrefixEntry>>;
 
+  /// Prefix/exact-match buckets and observed depths within one execution scope.
   struct Table {
     std::unordered_map<Key, Bucket, KeyHash> prefixes, exact;
     std::map<int64_t, size_t> depths;

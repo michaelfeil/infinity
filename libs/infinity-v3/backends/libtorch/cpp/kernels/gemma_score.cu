@@ -1,3 +1,7 @@
+/// \file
+/// CUDA Gemma sequence-score readout and residual/normalization stages.
+/// Keeps the declared BF16 rounding boundaries between fused operations.
+
 #include "kernels/gemma_score.h"
 #include <cuda_bf16.h>
 #include <ATen/cuda/CUDAContext.h>

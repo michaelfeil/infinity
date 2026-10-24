@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// CUDA construction of sequence-local disentangled-attention bias tiles.
+/// Combines content/position scores using packed relative-position indices.
+
 #include "encoder_bias.h"
 #include <limits>
 #include <ATen/cuda/CUDAContext.h>

@@ -10,6 +10,7 @@
 
 namespace tei {
 namespace {
+/// Validated learned linear projection used inside native decision heads.
 struct Linear {
   at::Tensor w, b;
   Linear() = default;
@@ -29,6 +30,7 @@ struct Linear {
   }
 };
 
+/// Learned affine layer normalization used by decision-head blocks.
 struct Norm {
   at::Tensor w, b;
   Norm() = default;
@@ -46,6 +48,7 @@ struct Norm {
   }
 };
 
+/// Decision-head attention projections and query/key/value composition.
 struct Attention {
   at::Tensor qkv, bias;
   Linear out;
@@ -162,6 +165,7 @@ void validate(const at::Tensor& hidden,
                 "Typed decisions require nonempty sequences");
 }
 
+/// Option-token readout for supported language-model and protocol-specific decisions.
 struct OptionHead final : DecisionHead {
   at::Tensor weights;
   bool external, qwen, d3;
@@ -264,6 +268,7 @@ struct OptionHead final : DecisionHead {
   }
 };
 
+/// One Laya self-attention and feed-forward refinement block.
 struct LayaLayer {
   Norm n1, n2;
   Attention attention;
@@ -286,6 +291,7 @@ struct LayaLayer {
   }
 };
 
+/// Laya marker refinement, answer scoring, and action-probability readout.
 struct LayaHead final : DecisionHead {
   at::Tensor types;
   std::vector<LayaLayer> layers;
@@ -314,6 +320,7 @@ struct LayaHead final : DecisionHead {
     return request.markers.size();
   }
 
+  /// Packed marker row/type metadata prepared for a Laya request batch.
   struct Metadata {
     std::vector<int64_t> token_types, marker_rows, marker_offsets{0};
   };
@@ -487,6 +494,7 @@ struct LayaHead final : DecisionHead {
   }
 };
 
+/// Clef query-to-memory routing block with normalization and feed-forward refinement.
 struct Routing {
   Norm query, memory, feed;
   Attention attention;
@@ -503,6 +511,7 @@ struct Routing {
   }
 };
 
+/// Clef field-decoder block combining self attention, cross attention, and an MLP.
 struct FieldDecoder {
   Norm n1, n2, n3;
   Attention self, cross;
@@ -520,6 +529,7 @@ struct FieldDecoder {
   }
 };
 
+/// Clef routing, field decoding, and joint option-scoring head.
 struct ClefHead final : DecisionHead {
   Norm hidden_norm, summary_norm, field_norm, option_norm;
   std::vector<Linear> projections;
