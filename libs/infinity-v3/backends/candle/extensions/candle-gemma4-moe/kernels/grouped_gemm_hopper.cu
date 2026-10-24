@@ -141,23 +141,17 @@ struct Buffers {
   uint32_t *ids, *mapping;
   float* weights;
   Element *packed, *gate_up, *activated;
-  void* expert_output;
+  Element* expert_output;
   float* sorted_weights;
   float** row_weights;
   Problem::UnderlyingProblemShape* problems;
   Element **a, **b, **c;
-  float** c_f32;
   StrideA* lda;
   StrideB* ldb;
   StrideC* ldc;
   void* workspace;
 
-  Buffers(Workspace& w,
-          size_t tokens,
-          size_t hidden,
-          size_t intermediate,
-          size_t experts = 128,
-          bool weighted = false) {
+  Buffers(Workspace& w, size_t tokens, size_t hidden, size_t intermediate, size_t experts = 128) {
     const size_t slots = tokens * 8;
     counts = w.take<int>(experts);
     offsets = w.take<int>(experts + 1);
@@ -168,15 +162,13 @@ struct Buffers {
     packed = w.take<Element>(slots * hidden);
     gate_up = w.take<Element>(slots * 2 * intermediate);
     activated = w.take<Element>(slots * intermediate);
-    expert_output = weighted ? static_cast<void*>(w.take<Element>(slots * hidden))
-                             : static_cast<void*>(w.take<float>(slots * hidden));
-    sorted_weights = weighted ? w.take<float>(slots) : nullptr;
-    row_weights = weighted ? w.take<float*>(experts) : nullptr;
+    expert_output = w.take<Element>(slots * hidden);
+    sorted_weights = w.take<float>(slots);
+    row_weights = w.take<float*>(experts);
     problems = w.take<Problem::UnderlyingProblemShape>(experts);
     a = w.take<Element*>(experts);
     b = w.take<Element*>(experts);
     c = w.take<Element*>(experts);
-    c_f32 = w.take<float*>(experts);
     lda = w.take<StrideA>(experts);
     ldb = w.take<StrideB>(experts);
     ldc = w.take<StrideC>(experts);
@@ -240,8 +232,7 @@ __global__ void combine_weighted(const __nv_bfloat16* input,
 
 using namespace hopper_detail;
 
-static size_t routed_workspace_bytes(
-    int tokens, int hidden, int intermediate, int experts = 128, bool weighted = false) {
+static size_t routed_workspace_bytes(int tokens, int hidden, int intermediate, int experts = 128) {
   if (tokens <= 0 || tokens > INT_MAX / 8 || hidden <= 0 || hidden % 8 || intermediate <= 0 ||
       intermediate % 8 || intermediate > INT_MAX / 2)
     return 0;
@@ -249,13 +240,13 @@ static size_t routed_workspace_bytes(
       (SIZE_MAX - 4 * 1024 * 1024) / (uint64_t(hidden) * 6 + uint64_t(intermediate) * 6 + 64))
     return 0;
   Workspace w{nullptr};
-  Buffers b(w, tokens, hidden, intermediate, experts, weighted);
+  Buffers b(w, tokens, hidden, intermediate, experts);
   return (w.offset + 255) & ~size_t(255);
 }
 
 extern "C" size_t hopper_gemma4_moe_workspace_bytes(int tokens, int hidden, int intermediate) {
   return hidden == 2816 && intermediate == 704
-             ? routed_workspace_bytes(tokens, hidden, intermediate, 128, true)
+             ? routed_workspace_bytes(tokens, hidden, intermediate, 128)
              : 0;
 }
 
@@ -285,7 +276,7 @@ static int routed_forward_bf16(const float* logits,
   if (!required || scratch_bytes < required || !scratch)
     return -1;
   Workspace w{static_cast<char*>(scratch)};
-  Buffers b(w, tokens, hidden, intermediate, experts, !qwen);
+  Buffers b(w, tokens, hidden, intermediate, experts);
   int slots = tokens * 8;
   if (cudaMemsetAsync(b.counts, 0, experts * sizeof(int), stream) != cudaSuccess ||
       cudaMemsetAsync(b.cursors, 0, experts * sizeof(int), stream) != cudaSuccess)
@@ -344,80 +335,34 @@ static int routed_forward_bf16(const float* logits,
                                                    slots,
                                                    intermediate);
   }
-  if (qwen) {
-    setup_problems<<<1, experts, 0, stream>>>(b.counts,
-                                              b.offsets,
-                                              b.activated,
-                                              static_cast<Element*>(down_weight),
-                                              static_cast<float*>(b.expert_output),
-                                              intermediate,
-                                              hidden,
-                                              b.problems,
-                                              b.a,
-                                              b.b,
-                                              b.c_f32,
-                                              b.lda,
-                                              b.ldb,
-                                              b.ldc);
-    status = grouped_gemm<float>(
-        b.problems, experts, b.a, b.b, b.c_f32, b.lda, b.ldb, b.ldc, b.workspace, stream);
-    if (status)
-      return status;
-    if ((reinterpret_cast<uintptr_t>(output) & 15) == 0) {
-      gemma4_moe_combine_vec8<<<(uint64_t(tokens) * (hidden / 8) + 255) / 256, 256, 0, stream>>>(
-          static_cast<float*>(b.expert_output),
-          b.mapping,
-          b.weights,
-          static_cast<__nv_bfloat16*>(output),
-          tokens,
-          hidden);
-    } else {
-      gemma4_moe_unpermute_combine<<<(uint64_t(tokens) * hidden + 255) / 256, 256, 0, stream>>>(
-          static_cast<float*>(b.expert_output),
-          b.mapping,
-          b.weights,
-          static_cast<__nv_bfloat16*>(output),
-          tokens,
-          hidden);
-    }
-  } else {
-    setup_problems<<<1, experts, 0, stream>>>(b.counts,
-                                              b.offsets,
-                                              b.activated,
-                                              static_cast<Element*>(down_weight),
-                                              static_cast<Element*>(b.expert_output),
-                                              intermediate,
-                                              hidden,
-                                              b.problems,
-                                              b.a,
-                                              b.b,
-                                              b.c,
-                                              b.lda,
-                                              b.ldb,
-                                              b.ldc);
-    sort_weights<<<(uint64_t(slots) + 255) / 256, 256, 0, stream>>>(
-        b.mapping, b.weights, b.sorted_weights, slots);
-    weight_pointers<<<1, experts, 0, stream>>>(b.offsets, b.sorted_weights, b.row_weights);
-    status = grouped_gemm<Element, true>(b.problems,
-                                         experts,
-                                         b.a,
-                                         b.b,
-                                         b.c,
-                                         b.lda,
-                                         b.ldb,
-                                         b.ldc,
-                                         b.workspace,
-                                         stream,
-                                         b.row_weights);
-    if (status)
-      return status;
-    combine_weighted<<<(uint64_t(tokens) * hidden + 255) / 256, 256, 0, stream>>>(
-        static_cast<const __nv_bfloat16*>(b.expert_output),
-        b.mapping,
-        static_cast<__nv_bfloat16*>(output),
-        tokens,
-        hidden);
-  }
+  // Weight FP32 accumulators before the BF16 store for every model family.
+  setup_problems<<<1, experts, 0, stream>>>(b.counts,
+                                            b.offsets,
+                                            b.activated,
+                                            static_cast<Element*>(down_weight),
+                                            b.expert_output,
+                                            intermediate,
+                                            hidden,
+                                            b.problems,
+                                            b.a,
+                                            b.b,
+                                            b.c,
+                                            b.lda,
+                                            b.ldb,
+                                            b.ldc);
+  sort_weights<<<(uint64_t(slots) + 255) / 256, 256, 0, stream>>>(
+      b.mapping, b.weights, b.sorted_weights, slots);
+  weight_pointers<<<1, experts, 0, stream>>>(b.offsets, b.sorted_weights, b.row_weights);
+  status = grouped_gemm<Element, true>(
+      b.problems, experts, b.a, b.b, b.c, b.lda, b.ldb, b.ldc, b.workspace, stream, b.row_weights);
+  if (status)
+    return status;
+  combine_weighted<<<(uint64_t(tokens) * hidden + 255) / 256, 256, 0, stream>>>(
+      reinterpret_cast<const __nv_bfloat16*>(b.expert_output),
+      b.mapping,
+      static_cast<__nv_bfloat16*>(output),
+      tokens,
+      hidden);
   return cudaGetLastError() == cudaSuccess ? 0 : -3;
 }
 
