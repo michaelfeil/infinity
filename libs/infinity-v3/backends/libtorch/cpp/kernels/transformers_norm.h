@@ -7,7 +7,8 @@ namespace tei {
 // Transformers RMSNorm rounds the normalized activation to model dtype before
 // multiplying by its affine weight. Residual additions also round before the
 // FP32 statistics, unlike the unrounded-residual Candle path.
-std::pair<at::Tensor, at::Tensor> transformers_rms_norm(
-    const at::Tensor& input, const at::Tensor& residual,
-    const at::Tensor& weight, double epsilon);
+std::pair<at::Tensor, at::Tensor> transformers_rms_norm(const at::Tensor& input,
+                                                        const at::Tensor& residual,
+                                                        const at::Tensor& weight,
+                                                        double epsilon);
 }

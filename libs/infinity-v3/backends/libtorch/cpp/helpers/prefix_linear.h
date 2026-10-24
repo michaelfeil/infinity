@@ -10,8 +10,12 @@ public:
   PrefixLinearPlans();
   ~PrefixLinearPlans();
   void clear();
-  at::Tensor forward(const at::Tensor& input,const at::Tensor& weight,
-    const at::Tensor& bias,int64_t logical_rows,bool float32=false);
+  at::Tensor forward(const at::Tensor& input,
+                     const at::Tensor& weight,
+                     const at::Tensor& bias,
+                     int64_t logical_rows,
+                     bool float32 = false);
+
 private:
   struct Impl;
   std::unique_ptr<Impl> impl;

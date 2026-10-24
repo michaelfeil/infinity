@@ -5,11 +5,12 @@
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
+
 // Match the evaluated per-token recipe: FP32 absmax times the FP32 reciprocal
 // of 448, followed by correctly-rounded division and saturating E4M3
 // conversion.
 template <int K, int T>
-__device__ void packed_quant(const half *x, __nv_fp8_e4m3 *y, float *scales) {
+__device__ void packed_quant(const half* x, __nv_fp8_e4m3* y, float* scales) {
   __shared__ float partial[T / 32];
   int row = blockIdx.x, lane = threadIdx.x % 32, warp = threadIdx.x / 32;
   float4 values[(K + T * 4 - 1) / (T * 4)];
@@ -19,14 +20,13 @@ __device__ void packed_quant(const half *x, __nv_fp8_e4m3 *y, float *scales) {
     int i = (threadIdx.x + j * T) * 4;
     float4 v = make_float4(0, 0, 0, 0);
     if (i < K) {
-      uint2 raw = ((const uint2 *)(x + size_t(row) * K))[i / 4];
-      auto lo = __half22float2(*reinterpret_cast<half2 *>(&raw.x));
-      auto hi = __half22float2(*reinterpret_cast<half2 *>(&raw.y));
+      uint2 raw = ((const uint2*)(x + size_t(row) * K))[i / 4];
+      auto lo = __half22float2(*reinterpret_cast<half2*>(&raw.x));
+      auto hi = __half22float2(*reinterpret_cast<half2*>(&raw.y));
       v = make_float4(lo.x, lo.y, hi.x, hi.y);
     }
     values[j] = v;
-    mx = fmaxf(mx, fmaxf(fmaxf(fabsf(v.x), fabsf(v.y)),
-                         fmaxf(fabsf(v.z), fabsf(v.w))));
+    mx = fmaxf(mx, fmaxf(fmaxf(fabsf(v.x), fabsf(v.y)), fmaxf(fabsf(v.z), fabsf(v.w))));
   }
   for (int d = 16; d; d /= 2)
     mx = fmaxf(mx, __shfl_down_sync(0xffffffff, mx, d));
@@ -53,14 +53,14 @@ __device__ void packed_quant(const half *x, __nv_fp8_e4m3 *y, float *scales) {
       v.y = __fdiv_rn(v.y, s);
       v.z = __fdiv_rn(v.z, s);
       v.w = __fdiv_rn(v.w, s);
-      ((__nv_fp8x4_e4m3 *)(y + size_t(row) * K))[i / 4] = __nv_fp8x4_e4m3(v);
+      ((__nv_fp8x4_e4m3*)(y + size_t(row) * K))[i / 4] = __nv_fp8x4_e4m3(v);
     }
   }
 }
-#define SPECIAL(K, T)                                                          \
-  extern "C" __global__ void quant_f16_##K(const half *x, __nv_fp8_e4m3 *y,    \
-                                           float *s) {                         \
-    packed_quant<K, T>(x, y, s);                                               \
+
+#define SPECIAL(K, T)                                                                              \
+  extern "C" __global__ void quant_f16_##K(const half* x, __nv_fp8_e4m3* y, float* s) {            \
+    packed_quant<K, T>(x, y, s);                                                                   \
   }
 // clang-format off
 SPECIAL(768, 64)
@@ -88,7 +88,7 @@ ROW_LAUNCH(12288, 1024)
 // clang-format on
 
 template <typename T>
-__device__ void generic_quant(const T *x, __nv_fp8_e4m3 *y, float *scales, int k) {
+__device__ void generic_quant(const T* x, __nv_fp8_e4m3* y, float* scales, int k) {
   __shared__ float partial[4];
   int row = blockIdx.x, lane = threadIdx.x % 32, warp = threadIdx.x / 32;
   float mx = 0;
@@ -111,18 +111,16 @@ __device__ void generic_quant(const T *x, __nv_fp8_e4m3 *y, float *scales, int k
   if (threadIdx.x == 0)
     scales[row] = s;
   for (int i = threadIdx.x; i < k; i += 128)
-    y[size_t(row) * k + i] =
-        __nv_fp8_e4m3(__fdiv_rn(float(x[size_t(row) * k + i]), s));
+    y[size_t(row) * k + i] = __nv_fp8_e4m3(__fdiv_rn(float(x[size_t(row) * k + i]), s));
 }
 
-extern "C" __global__ void quant_f16_generic(const half *x, __nv_fp8_e4m3 *y,
-                                             float *scales, int k) {
+extern "C" __global__ void
+quant_f16_generic(const half* x, __nv_fp8_e4m3* y, float* scales, int k) {
   generic_quant(x, y, scales, k);
 }
 
-extern "C" __global__ void quant_bf16_generic(const __nv_bfloat16 *x,
-                                              __nv_fp8_e4m3 *y,
-                                              float *scales, int k) {
+extern "C" __global__ void
+quant_bf16_generic(const __nv_bfloat16* x, __nv_fp8_e4m3* y, float* scales, int k) {
   generic_quant(x, y, scales, k);
 }
 
@@ -136,8 +134,7 @@ __device__ __forceinline__ half fp8_precise_silu(half x) {
 // One block per token. Keep the rounded SwiGLU values in registers while
 // reducing the row scale, avoiding an intermediate activation tensor.
 template <int K, int T>
-__device__ void packed_quant_glu(const half *x, __nv_fp8_e4m3 *y,
-                               float *scales) {
+__device__ void packed_quant_glu(const half* x, __nv_fp8_e4m3* y, float* scales) {
   static_assert(K % 4 == 0 && T % 32 == 0 && T <= 1024);
   __shared__ float partial[T / 32];
   const int row = blockIdx.x;
@@ -151,16 +148,15 @@ __device__ void packed_quant_glu(const half *x, __nv_fp8_e4m3 *y,
     const int i = (threadIdx.x + j * T) * 4;
     float4 v = make_float4(0, 0, 0, 0);
     if (i < K) {
-      const half *gate = x + size_t(row) * 2 * K + i;
-      const half *up = gate + K;
+      const half* gate = x + size_t(row) * 2 * K + i;
+      const half* up = gate + K;
       v = make_float4(float(fp8_precise_silu(gate[0]) * up[0]),
                       float(fp8_precise_silu(gate[1]) * up[1]),
                       float(fp8_precise_silu(gate[2]) * up[2]),
                       float(fp8_precise_silu(gate[3]) * up[3]));
     }
     values[j] = v;
-    mx = fmaxf(mx, fmaxf(fmaxf(fabsf(v.x), fabsf(v.y)),
-                         fmaxf(fabsf(v.z), fabsf(v.w))));
+    mx = fmaxf(mx, fmaxf(fmaxf(fabsf(v.x), fabsf(v.y)), fmaxf(fabsf(v.z), fabsf(v.w))));
   }
   for (int d = 16; d; d /= 2)
     mx = fmaxf(mx, __shfl_down_sync(0xffffffff, mx, d));
@@ -187,34 +183,27 @@ __device__ void packed_quant_glu(const half *x, __nv_fp8_e4m3 *y,
       v.y = __fdiv_rn(v.y, s);
       v.z = __fdiv_rn(v.z, s);
       v.w = __fdiv_rn(v.w, s);
-      reinterpret_cast<__nv_fp8x4_e4m3 *>(y + size_t(row) * K)[i / 4] =
-          __nv_fp8x4_e4m3(v);
+      reinterpret_cast<__nv_fp8x4_e4m3*>(y + size_t(row) * K)[i / 4] = __nv_fp8x4_e4m3(v);
     }
   }
 }
 
-extern "C" __global__ void swiglu_quant_3072_256(const half *x,
-                                                       __nv_fp8_e4m3 *y,
-                                                       float *scales) {
+extern "C" __global__ void swiglu_quant_3072_256(const half* x, __nv_fp8_e4m3* y, float* scales) {
   packed_quant_glu<3072, 256>(x, y, scales);
 }
-extern "C" __global__ void swiglu_quant_3072_1024(const half *x,
-                                                       __nv_fp8_e4m3 *y,
-                                                       float *scales) {
+
+extern "C" __global__ void swiglu_quant_3072_1024(const half* x, __nv_fp8_e4m3* y, float* scales) {
   packed_quant_glu<3072, 1024>(x, y, scales);
 }
-extern "C" __global__ void swiglu_quant_8192_1024(const half *x,
-                                                       __nv_fp8_e4m3 *y,
-                                                       float *scales) {
+
+extern "C" __global__ void swiglu_quant_8192_1024(const half* x, __nv_fp8_e4m3* y, float* scales) {
   packed_quant_glu<8192, 1024>(x, y, scales);
 }
-extern "C" __global__ void swiglu_quant_12288_512(const half *x,
-                                                       __nv_fp8_e4m3 *y,
-                                                       float *scales) {
+
+extern "C" __global__ void swiglu_quant_12288_512(const half* x, __nv_fp8_e4m3* y, float* scales) {
   packed_quant_glu<12288, 512>(x, y, scales);
 }
-extern "C" __global__ void swiglu_quant_12288_1024(const half *x,
-                                                       __nv_fp8_e4m3 *y,
-                                                       float *scales) {
+
+extern "C" __global__ void swiglu_quant_12288_1024(const half* x, __nv_fp8_e4m3* y, float* scales) {
   packed_quant_glu<12288, 1024>(x, y, scales);
 }

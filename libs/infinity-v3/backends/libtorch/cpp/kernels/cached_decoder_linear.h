@@ -99,106 +99,240 @@ POSSIBILITY OF SUCH DAMAGE.
 #include <map>
 #include <memory>
 #include <mutex>
+
 namespace tei {
 class CachedNoBiasLt {
- struct Plan {
-  cublasLtMatmulDesc_t operation{};
-  cublasLtMatrixLayout_t a{},b{},c{};
-  cublasLtMatmulAlgo_t algorithm{};
-  bool valid=false;
-  ~Plan(){if(c)cublasLtMatrixLayoutDestroy(c);if(b)cublasLtMatrixLayoutDestroy(b);if(a)cublasLtMatrixLayoutDestroy(a);if(operation)cublasLtMatmulDescDestroy(operation);}
- };
- using Key=std::array<int64_t,17>;
- mutable std::mutex mutex;
- mutable std::map<Key,std::shared_ptr<Plan>> plans;
- static uint32_t alignment(const void* ptr){uint32_t a=256;while(reinterpret_cast<uintptr_t>(ptr)%a)a/=2;return a;}
- public:
- at::Tensor forward(const at::Tensor& x,const at::Tensor& weight,bool prefill=false) const {
-  at::Tensor output;
-  auto fallback=[&]{output=at::Tensor();return at::linear(x,weight);};
-  if(!x.is_cuda()||x.scalar_type()!=at::kBFloat16||weight.scalar_type()!=x.scalar_type()||weight.device()!=x.device()||x.dim()!=2||weight.dim()!=2||x.size(0)<=0||x.size(1)<=0||weight.size(0)<=0||weight.size(1)!=x.size(1)||!x.is_contiguous()||!weight.is_contiguous()||at::globalContext().blasPreferredBackend()!=at::BlasBackend::Cublaslt||at::globalContext()._SMCarveout_EXPERIMENTAL().has_value())return fallback();
-  // The alternate tile retains full FP32 accumulation and the model-dtype
-  // rounding boundary. Unknown library versions and policies retain ATen.
-  if(prefill && (cublasLtGetVersion()!=130101 || x.size(0)<2048 || x.size(0)%256
-    || x.size(1)!=4096 || (weight.size(0)!=24576 && weight.size(0)!=28672)
-    || at::globalContext().deterministicAlgorithms()
-    || at::cuda::tunable::getTuningContext()->IsTunableOpEnabled()
-    || at::globalContext().allowBF16ReductionCuBLAS()!=at::CuBLASReductionOption::AllowReducedPrecisionWithSplitK))return fallback();
-  c10::cuda::CUDAGuard guard(x.device());
-  auto property=at::cuda::getCurrentDeviceProperties();if(property->major!=9||property->minor!=0)return fallback();
-  auto stream=at::cuda::getCurrentCUDAStream(x.get_device()).stream();cudaStreamCaptureStatus capturing;TORCH_CHECK(cudaStreamIsCapturing(stream,&capturing)==cudaSuccess,"Unable to query current stream");if(capturing!=cudaStreamCaptureStatusNone&&!prefill)return fallback();
-  output=at::empty({x.size(0),weight.size(0)},x.options());
-  const auto m=x.size(0),n=weight.size(0),k=x.size(1);const auto limit=at::cuda::getCUDABlasLtWorkspaceSize();
-  const auto policy=at::globalContext().allowBF16ReductionCuBLAS();
-  const auto aa=alignment(weight.const_data_ptr()),ba=alignment(x.const_data_ptr()),ca=alignment(output.const_data_ptr());
-  const Key key{{x.get_device(),m,n,k,x.stride(0),x.stride(1),weight.stride(0),weight.stride(1),output.stride(0),output.stride(1),static_cast<int64_t>(x.scalar_type()),static_cast<int64_t>(policy),static_cast<int64_t>(limit),aa,ba,ca,prefill?1:0}};
-  std::shared_ptr<Plan> plan;
-  {
-   std::lock_guard lock(mutex);auto found=plans.find(key);
-   if(found!=plans.end())plan=found->second;
-   else if(plans.size()<64 && capturing==cudaStreamCaptureStatusNone){
-    plan=std::make_shared<Plan>();cublasLtMatmulPreference_t preference{};
-    bool good=cublasLtMatmulDescCreate(&plan->operation,CUBLAS_COMPUTE_32F,CUDA_R_32F)==CUBLAS_STATUS_SUCCESS;
-    const cublasOperation_t transpose=CUBLAS_OP_T,no_transpose=CUBLAS_OP_N;
-    if(good)good=cublasLtMatmulDescSetAttribute(plan->operation,CUBLASLT_MATMUL_DESC_TRANSA,&transpose,sizeof(transpose))==CUBLAS_STATUS_SUCCESS;
-    if(good)good=cublasLtMatmulDescSetAttribute(plan->operation,CUBLASLT_MATMUL_DESC_TRANSB,&no_transpose,sizeof(no_transpose))==CUBLAS_STATUS_SUCCESS;
-    if(good)good=cublasLtMatrixLayoutCreate(&plan->a,CUDA_R_16BF,k,n,k)==CUBLAS_STATUS_SUCCESS;
-    if(good)good=cublasLtMatrixLayoutCreate(&plan->b,CUDA_R_16BF,k,m,k)==CUBLAS_STATUS_SUCCESS;
-    if(good)good=cublasLtMatrixLayoutCreate(&plan->c,CUDA_R_16BF,n,m,n)==CUBLAS_STATUS_SUCCESS;
-    if(good)good=cublasLtMatmulPreferenceCreate(&preference)==CUBLAS_STATUS_SUCCESS;
-    if(good)good=cublasLtMatmulPreferenceSetAttribute(preference,CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,&limit,sizeof(limit))==CUBLAS_STATUS_SUCCESS;
-    if(good)good=cublasLtMatmulPreferenceSetAttribute(preference,CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_A_BYTES,&aa,sizeof(aa))==CUBLAS_STATUS_SUCCESS;
-    if(good)good=cublasLtMatmulPreferenceSetAttribute(preference,CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_B_BYTES,&ba,sizeof(ba))==CUBLAS_STATUS_SUCCESS;
-    if(good)good=cublasLtMatmulPreferenceSetAttribute(preference,CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_C_BYTES,&ca,sizeof(ca))==CUBLAS_STATUS_SUCCESS;
-    if(good&&policy!=at::CuBLASReductionOption::AllowReducedPrecisionWithSplitK){
-     const uint32_t mask=policy==at::CuBLASReductionOption::DisallowReducedPrecisionAllowSplitK?CUBLASLT_REDUCTION_SCHEME_COMPUTE_TYPE|CUBLASLT_REDUCTION_SCHEME_NONE:CUBLASLT_REDUCTION_SCHEME_NONE;
-     good=cublasLtMatmulPreferenceSetAttribute(preference,CUBLASLT_MATMUL_PREF_REDUCTION_SCHEME_MASK,&mask,sizeof(mask))==CUBLAS_STATUS_SUCCESS;
+  struct Plan {
+    cublasLtMatmulDesc_t operation{};
+    cublasLtMatrixLayout_t a{}, b{}, c{};
+    cublasLtMatmulAlgo_t algorithm{};
+    bool valid = false;
+
+    ~Plan() {
+      if (c)
+        cublasLtMatrixLayoutDestroy(c);
+      if (b)
+        cublasLtMatrixLayoutDestroy(b);
+      if (a)
+        cublasLtMatrixLayoutDestroy(a);
+      if (operation)
+        cublasLtMatmulDescDestroy(operation);
     }
-    std::array<cublasLtMatmulHeuristicResult_t,8> candidates{};int count=0;
-    if(good)good=cublasLtMatmulAlgoGetHeuristic(at::cuda::getCurrentCUDABlasLtHandle(),plan->operation,
-      plan->a,plan->b,plan->c,plan->c,preference,prefill?8:1,candidates.data(),&count)==CUBLAS_STATUS_SUCCESS&&count>0;
-    auto heuristic=candidates[0];
-    if(good&&prefill) {
-     good=false;
-     for(int i=0;i<count;++i) {
-      auto candidate=candidates[i];
-      auto attribute=[&](cublasLtMatmulAlgoConfigAttributes_t key,int expected) {
-       int value=0;size_t written=0;
-       return cublasLtMatmulAlgoConfigGetAttribute(&candidate.algo,key,&value,sizeof(value),&written)==CUBLAS_STATUS_SUCCESS
-         &&written==sizeof(value)&&value==expected;
-      };
-      if(candidate.state==CUBLAS_STATUS_SUCCESS && candidate.workspaceSize<=limit
-        &&attribute(CUBLASLT_ALGO_CONFIG_ID,66)
-        &&attribute(CUBLASLT_ALGO_CONFIG_TILE_ID,CUBLASLT_MATMUL_TILE_176x128)
-        &&attribute(CUBLASLT_ALGO_CONFIG_STAGES_ID,CUBLASLT_MATMUL_STAGES_64xAUTO)
-        &&attribute(CUBLASLT_ALGO_CONFIG_SPLITK_NUM,1)
-        &&attribute(CUBLASLT_ALGO_CONFIG_CTA_SWIZZLING,0)
-        &&attribute(CUBLASLT_ALGO_CONFIG_CUSTOM_OPTION,2)) {heuristic=candidate;good=true;break;}
-     }
+  };
+
+  using Key = std::array<int64_t, 17>;
+  mutable std::mutex mutex;
+  mutable std::map<Key, std::shared_ptr<Plan>> plans;
+
+  static uint32_t alignment(const void* ptr) {
+    uint32_t a = 256;
+    while (reinterpret_cast<uintptr_t>(ptr) % a)
+      a /= 2;
+    return a;
+  }
+
+public:
+  at::Tensor forward(const at::Tensor& x, const at::Tensor& weight, bool prefill = false) const {
+    at::Tensor output;
+    auto fallback = [&] {
+      output = at::Tensor();
+      return at::linear(x, weight);
+    };
+    if (!x.is_cuda() || x.scalar_type() != at::kBFloat16 ||
+        weight.scalar_type() != x.scalar_type() || weight.device() != x.device() || x.dim() != 2 ||
+        weight.dim() != 2 || x.size(0) <= 0 || x.size(1) <= 0 || weight.size(0) <= 0 ||
+        weight.size(1) != x.size(1) || !x.is_contiguous() || !weight.is_contiguous() ||
+        at::globalContext().blasPreferredBackend() != at::BlasBackend::Cublaslt ||
+        at::globalContext()._SMCarveout_EXPERIMENTAL().has_value())
+      return fallback();
+    // The alternate tile retains full FP32 accumulation and the model-dtype
+    // rounding boundary. Unknown library versions and policies retain ATen.
+    if (prefill && (cublasLtGetVersion() != 130101 || x.size(0) < 2048 || x.size(0) % 256 ||
+                    x.size(1) != 4096 || (weight.size(0) != 24576 && weight.size(0) != 28672) ||
+                    at::globalContext().deterministicAlgorithms() ||
+                    at::cuda::tunable::getTuningContext()->IsTunableOpEnabled() ||
+                    at::globalContext().allowBF16ReductionCuBLAS() !=
+                        at::CuBLASReductionOption::AllowReducedPrecisionWithSplitK))
+      return fallback();
+    c10::cuda::CUDAGuard guard(x.device());
+    auto property = at::cuda::getCurrentDeviceProperties();
+    if (property->major != 9 || property->minor != 0)
+      return fallback();
+    auto stream = at::cuda::getCurrentCUDAStream(x.get_device()).stream();
+    cudaStreamCaptureStatus capturing;
+    TORCH_CHECK(cudaStreamIsCapturing(stream, &capturing) == cudaSuccess,
+                "Unable to query current stream");
+    if (capturing != cudaStreamCaptureStatusNone && !prefill)
+      return fallback();
+    output = at::empty({x.size(0), weight.size(0)}, x.options());
+    const auto m = x.size(0), n = weight.size(0), k = x.size(1);
+    const auto limit = at::cuda::getCUDABlasLtWorkspaceSize();
+    const auto policy = at::globalContext().allowBF16ReductionCuBLAS();
+    const auto aa = alignment(weight.const_data_ptr()), ba = alignment(x.const_data_ptr()),
+               ca = alignment(output.const_data_ptr());
+    const Key key{{x.get_device(),
+                   m,
+                   n,
+                   k,
+                   x.stride(0),
+                   x.stride(1),
+                   weight.stride(0),
+                   weight.stride(1),
+                   output.stride(0),
+                   output.stride(1),
+                   static_cast<int64_t>(x.scalar_type()),
+                   static_cast<int64_t>(policy),
+                   static_cast<int64_t>(limit),
+                   aa,
+                   ba,
+                   ca,
+                   prefill ? 1 : 0}};
+    std::shared_ptr<Plan> plan;
+    {
+      std::lock_guard lock(mutex);
+      auto found = plans.find(key);
+      if (found != plans.end())
+        plan = found->second;
+      else if (plans.size() < 64 && capturing == cudaStreamCaptureStatusNone) {
+        plan = std::make_shared<Plan>();
+        cublasLtMatmulPreference_t preference{};
+        bool good = cublasLtMatmulDescCreate(&plan->operation, CUBLAS_COMPUTE_32F, CUDA_R_32F) ==
+                    CUBLAS_STATUS_SUCCESS;
+        const cublasOperation_t transpose = CUBLAS_OP_T, no_transpose = CUBLAS_OP_N;
+        if (good)
+          good = cublasLtMatmulDescSetAttribute(
+                     plan->operation, CUBLASLT_MATMUL_DESC_TRANSA, &transpose, sizeof(transpose)) ==
+                 CUBLAS_STATUS_SUCCESS;
+        if (good)
+          good = cublasLtMatmulDescSetAttribute(plan->operation,
+                                                CUBLASLT_MATMUL_DESC_TRANSB,
+                                                &no_transpose,
+                                                sizeof(no_transpose)) == CUBLAS_STATUS_SUCCESS;
+        if (good)
+          good =
+              cublasLtMatrixLayoutCreate(&plan->a, CUDA_R_16BF, k, n, k) == CUBLAS_STATUS_SUCCESS;
+        if (good)
+          good =
+              cublasLtMatrixLayoutCreate(&plan->b, CUDA_R_16BF, k, m, k) == CUBLAS_STATUS_SUCCESS;
+        if (good)
+          good =
+              cublasLtMatrixLayoutCreate(&plan->c, CUDA_R_16BF, n, m, n) == CUBLAS_STATUS_SUCCESS;
+        if (good)
+          good = cublasLtMatmulPreferenceCreate(&preference) == CUBLAS_STATUS_SUCCESS;
+        if (good)
+          good = cublasLtMatmulPreferenceSetAttribute(
+                     preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &limit, sizeof(limit)) ==
+                 CUBLAS_STATUS_SUCCESS;
+        if (good)
+          good = cublasLtMatmulPreferenceSetAttribute(
+                     preference, CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_A_BYTES, &aa, sizeof(aa)) ==
+                 CUBLAS_STATUS_SUCCESS;
+        if (good)
+          good = cublasLtMatmulPreferenceSetAttribute(
+                     preference, CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_B_BYTES, &ba, sizeof(ba)) ==
+                 CUBLAS_STATUS_SUCCESS;
+        if (good)
+          good = cublasLtMatmulPreferenceSetAttribute(
+                     preference, CUBLASLT_MATMUL_PREF_MIN_ALIGNMENT_C_BYTES, &ca, sizeof(ca)) ==
+                 CUBLAS_STATUS_SUCCESS;
+        if (good && policy != at::CuBLASReductionOption::AllowReducedPrecisionWithSplitK) {
+          const uint32_t mask =
+              policy == at::CuBLASReductionOption::DisallowReducedPrecisionAllowSplitK
+                  ? CUBLASLT_REDUCTION_SCHEME_COMPUTE_TYPE | CUBLASLT_REDUCTION_SCHEME_NONE
+                  : CUBLASLT_REDUCTION_SCHEME_NONE;
+          good = cublasLtMatmulPreferenceSetAttribute(
+                     preference, CUBLASLT_MATMUL_PREF_REDUCTION_SCHEME_MASK, &mask, sizeof(mask)) ==
+                 CUBLAS_STATUS_SUCCESS;
+        }
+        std::array<cublasLtMatmulHeuristicResult_t, 8> candidates{};
+        int count = 0;
+        if (good)
+          good = cublasLtMatmulAlgoGetHeuristic(at::cuda::getCurrentCUDABlasLtHandle(),
+                                                plan->operation,
+                                                plan->a,
+                                                plan->b,
+                                                plan->c,
+                                                plan->c,
+                                                preference,
+                                                prefill ? 8 : 1,
+                                                candidates.data(),
+                                                &count) == CUBLAS_STATUS_SUCCESS &&
+                 count > 0;
+        auto heuristic = candidates[0];
+        if (good && prefill) {
+          good = false;
+          for (int i = 0; i < count; ++i) {
+            auto candidate = candidates[i];
+            auto attribute = [&](cublasLtMatmulAlgoConfigAttributes_t key, int expected) {
+              int value = 0;
+              size_t written = 0;
+              return cublasLtMatmulAlgoConfigGetAttribute(
+                         &candidate.algo, key, &value, sizeof(value), &written) ==
+                         CUBLAS_STATUS_SUCCESS &&
+                     written == sizeof(value) && value == expected;
+            };
+            if (candidate.state == CUBLAS_STATUS_SUCCESS && candidate.workspaceSize <= limit &&
+                attribute(CUBLASLT_ALGO_CONFIG_ID, 66) &&
+                attribute(CUBLASLT_ALGO_CONFIG_TILE_ID, CUBLASLT_MATMUL_TILE_176x128) &&
+                attribute(CUBLASLT_ALGO_CONFIG_STAGES_ID, CUBLASLT_MATMUL_STAGES_64xAUTO) &&
+                attribute(CUBLASLT_ALGO_CONFIG_SPLITK_NUM, 1) &&
+                attribute(CUBLASLT_ALGO_CONFIG_CTA_SWIZZLING, 0) &&
+                attribute(CUBLASLT_ALGO_CONFIG_CUSTOM_OPTION, 2)) {
+              heuristic = candidate;
+              good = true;
+              break;
+            }
+          }
+        }
+        if (good)
+          good = heuristic.state == CUBLAS_STATUS_SUCCESS && heuristic.workspaceSize <= limit;
+        if (preference)
+          cublasLtMatmulPreferenceDestroy(preference);
+        if (good) {
+          plan->algorithm = heuristic.algo;
+          plan->valid = true;
+        }
+        plans.emplace(key, plan);
+      }
     }
-    if(good)good=heuristic.state==CUBLAS_STATUS_SUCCESS&&heuristic.workspaceSize<=limit;
-    if(preference)cublasLtMatmulPreferenceDestroy(preference);
-    if(good){plan->algorithm=heuristic.algo;plan->valid=true;}plans.emplace(key,plan);
-   }
+    if (!plan || !plan->valid)
+      return fallback();
+    // Retain ATen's current-handle/current-stream workspace ownership and policy.
+    // No retained raw workspace pointer, and no reuse across different streams.
+    auto workspace = at::cuda::getCUDABlasLtWorkspace();
+    if (!workspace)
+      return fallback();
+    const float alpha = 1.f, beta = 0.f;
+    auto result = cublasLtMatmul(at::cuda::getCurrentCUDABlasLtHandle(),
+                                 plan->operation,
+                                 &alpha,
+                                 weight.const_data_ptr(),
+                                 plan->a,
+                                 x.const_data_ptr(),
+                                 plan->b,
+                                 &beta,
+                                 output.const_data_ptr(),
+                                 plan->c,
+                                 output.mutable_data_ptr(),
+                                 plan->c,
+                                 &plan->algorithm,
+                                 workspace,
+                                 limit,
+                                 stream);
+    if (result == CUBLAS_STATUS_ALLOC_FAILED)
+      throw VendorAllocationError{"Cached decoder cublasLtMatmul", static_cast<int32_t>(result)};
+    if (result != CUBLAS_STATUS_SUCCESS) {
+      // Retire only this generation. Other callers may still own the immutable
+      // plan; a negative entry prevents repeatedly retrying a rejected algorithm.
+      {
+        std::lock_guard lock(mutex);
+        auto found = plans.find(key);
+        if (found != plans.end() && found->second == plan)
+          found->second = std::make_shared<Plan>();
+      }
+      return fallback();
+    }
+    return output;
   }
-  if(!plan||!plan->valid)return fallback();
-  // Retain ATen's current-handle/current-stream workspace ownership and policy.
-  // No retained raw workspace pointer, and no reuse across different streams.
-  auto workspace=at::cuda::getCUDABlasLtWorkspace();if(!workspace)return fallback();
-  const float alpha=1.f,beta=0.f;
-  auto result=cublasLtMatmul(at::cuda::getCurrentCUDABlasLtHandle(),plan->operation,&alpha,weight.const_data_ptr(),plan->a,x.const_data_ptr(),plan->b,&beta,output.const_data_ptr(),plan->c,output.mutable_data_ptr(),plan->c,&plan->algorithm,workspace,limit,stream);
-  if(result==CUBLAS_STATUS_ALLOC_FAILED)
-   throw VendorAllocationError{"Cached decoder cublasLtMatmul",static_cast<int32_t>(result)};
-  if(result!=CUBLAS_STATUS_SUCCESS) {
-   // Retire only this generation. Other callers may still own the immutable
-   // plan; a negative entry prevents repeatedly retrying a rejected algorithm.
-   {
-    std::lock_guard lock(mutex);auto found=plans.find(key);
-    if(found!=plans.end()&&found->second==plan)found->second=std::make_shared<Plan>();
-   }
-   return fallback();
-  }
-  return output;
- }
 };
 }

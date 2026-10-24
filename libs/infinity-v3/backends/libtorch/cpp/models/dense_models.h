@@ -9,15 +9,21 @@ namespace tei {
 class DenseChain {
 public:
   DenseChain(const Options&, const Weights&);
-  bool empty() const { return layers.empty(); }
+
+  bool empty() const {
+    return layers.empty();
+  }
+
   int64_t output_width(int64_t input_width) const;
   at::Tensor forward(const at::Tensor&) const;
+
 private:
   struct Layer {
     at::Tensor weight, bias;
     int64_t in_features, out_features;
     bool tanh;
   };
+
   std::vector<Layer> layers;
 };
 }

@@ -27,6 +27,20 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  native-format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install clang-format
+        run: python -m pip install clang-format==20.1.8
+      - name: Check C++ and CUDA formatting
+        run: |
+          git ls-files -z -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hpp' '*.cu' '*.cuh' |
+            xargs -0 clang-format --dry-run --Werror
+
   cpu:
     runs-on: ubuntu-latest
     steps:

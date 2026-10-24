@@ -23,3 +23,4 @@ RemoveSemicolon: false
 SeparateDefinitionBlocks: Always
 SortIncludes: Never
 SortUsingDeclarations: Never
+SpacesInAngles: Leave
