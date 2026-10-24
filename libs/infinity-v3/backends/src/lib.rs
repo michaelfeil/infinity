@@ -550,15 +550,18 @@ async fn init_backend(
                 None
             };
             let device = torch_device.resolved()?.name(device_id);
+            let startup_span = Span::current();
             let model = tokio::task::spawn_blocking(move || {
-                infinity_backend_libtorch::LibtorchBackend::new_with_dense_paths_and_fp8(
-                    &model_path,
-                    &dtype.to_string(),
-                    model_type,
-                    &device,
-                    dense_paths,
-                    enable_fp8_dynamic,
-                )
+                startup_span.in_scope(|| {
+                    infinity_backend_libtorch::LibtorchBackend::new_with_dense_paths_and_fp8(
+                        &model_path,
+                        &dtype.to_string(),
+                        model_type,
+                        &device,
+                        dense_paths,
+                        enable_fp8_dynamic,
+                    )
+                })
             })
             .await
             .map_err(|e| {
