@@ -152,6 +152,9 @@ public:
       return fallback();
     // The alternate tile retains full FP32 accumulation and the model-dtype
     // rounding boundary. Unknown library versions and policies retain ATen.
+    // These dimensions, row multiples, and policy/version checks scope the explicit alternate
+    // algorithm selected below. They describe the validated prefill recipe, not all
+    // layouts accepted by cuBLASLt.
     if (prefill && (cublasLtGetVersion() != 130101 || x.size(0) < 2048 || x.size(0) % 256 ||
                     x.size(1) != 4096 || (weight.size(0) != 24576 && weight.size(0) != 28672) ||
                     at::globalContext().deterministicAlgorithms() ||
@@ -276,6 +279,9 @@ public:
                          CUBLAS_STATUS_SUCCESS &&
                      written == sizeof(value) && value == expected;
             };
+            // Algorithm ID, tile, stages, split-K, and custom option identify one exact candidate
+            // in this library version. Removing a shape/version guard requires rechecking this
+            // selection and its numerical/latency behavior together.
             if (candidate.state == CUBLAS_STATUS_SUCCESS && candidate.workspaceSize <= limit &&
                 attribute(CUBLASLT_ALGO_CONFIG_ID, 66) &&
                 attribute(CUBLASLT_ALGO_CONFIG_TILE_ID, CUBLASLT_MATMUL_TILE_176x128) &&

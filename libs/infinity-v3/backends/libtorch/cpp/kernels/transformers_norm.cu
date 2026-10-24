@@ -84,6 +84,9 @@ std::pair<at::Tensor, at::Tensor> transformers_rms_norm(const at::Tensor& input,
                                       residual.scalar_type() == input.scalar_type() &&
                                       residual.sizes() == input.sizes()),
               "Invalid Transformers RMSNorm residual");
+  // The native kernel dereferences four-element vector packs without a scalar tail. Pointer
+  // alignment and width divisibility protect those accesses; nonmatching layouts
+  // use the composed fallback.
   const auto alignment = input.element_size() * 4;
   const bool aligned = reinterpret_cast<uintptr_t>(input.const_data_ptr()) % alignment == 0 &&
                        reinterpret_cast<uintptr_t>(weight.const_data_ptr()) % alignment == 0 &&

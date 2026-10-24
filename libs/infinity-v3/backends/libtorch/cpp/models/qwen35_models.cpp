@@ -141,6 +141,9 @@ class Qwen35 final : public Model {
       return it->second->forward(x);
 #ifdef TEI_TORCH_CUDA_KERNELS
     const auto& matrix = w(name + ".weight");
+    // This profile qualifies logical-shape planning for the MoE output projection. Other matrices
+    // deliberately unfold to their real logical rows in the fallback, preserving the
+    // original projection recipe.
     if (integer("num_experts", 0) > 0 && device.is_cuda() && dtype == at::kBFloat16 &&
         hidden == 2048 && at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt &&
         x.dim() == 2 && x.size(1) == 4096 && x.size(0) > 0 && x.is_contiguous() &&

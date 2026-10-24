@@ -211,6 +211,8 @@ OrdinaryLinearExecutor::Session OrdinaryLinearExecutor::prepare(const at::Tensor
       at::globalContext().blasPreferredBackend() != at::BlasBackend::Cublaslt)
     return session;
   const auto* properties = at::cuda::getDeviceProperties(x.get_device());
+  // SM90 scopes the validated ordinary-GEMM recipe. This restriction is separate from
+  // CUDA/Half/BF16 layout eligibility and does not limit the ordinary ATen fallback to SM90.
   if (properties->major != 9 || properties->minor != 0)
     return session;
   // Reuse Torch's dynamically loaded driver API; no direct libcuda dependency.
@@ -260,6 +262,8 @@ at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x,
       x.size(1) != weight.size(1) || !x.is_contiguous() || !weight.is_contiguous())
     return {};
   const auto m = x.size(0), n = weight.size(0), k = x.size(1);
+  // These (K,N) pairs cover the validated ModernBERT projections; M remains the actual request row
+  // count. This is a recipe allowlist rather than a general cuBLAS matrix-size requirement.
   if (!((k == 768 && (n == 2304 || n == 768)) || (k == 1152 && n == 768)))
     return {};
   const auto output_dtype = x.scalar_type();
@@ -281,6 +285,9 @@ at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x,
   const auto aligned = [](const at::Tensor& tensor) {
     return reinterpret_cast<uintptr_t>(tensor.const_data_ptr()) % 256 == 0;
   };
+  // Cached preferences below promise 256-byte operand alignment to cuBLASLt. Keep this pointer
+  // check consistent with those descriptors; shape divisibility alone does
+  // not prove address alignment.
   if (!aligned(x) || !aligned(weight))
     return {};
   auto& cache = *impl_;
@@ -293,6 +300,8 @@ at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x,
       break;
   }
   if (lane == cache.lanes.size()) {
+    // Lane/plan caps bound retained descriptors and workspace. Reaching a cap declines caching, not
+    // inference; the caller retains the ordinary projection path.
     if (lane == Impl::max_lanes)
       return {};
     cache.lanes.push_back({x.get_device(), context, thread, stream.stream(), handle, {}, {}});
@@ -434,6 +443,8 @@ Fp8Linear::Fp8Linear(const at::Tensor& weight) : dtype_(weight.scalar_type()), r
               "Dynamic FP8 requires nonempty CUDA matrix weights");
   TORCH_CHECK(dtype_ == at::kHalf || dtype_ == at::kBFloat16,
               "Dynamic FP8 requires an unquantized float16/bfloat16 checkpoint");
+  // This FP8 projection interface requires aligned input/output feature widths. Its token-row count
+  // is independent of that constraint and must not be padded to satisfy it.
   TORCH_CHECK(weight.size(0) % 16 == 0 && weight.size(1) % 16 == 0,
               "Dynamic FP8 projection widths must be divisible by16; tokens are never padded");
 #ifdef TEI_TORCH_CUDA_KERNELS

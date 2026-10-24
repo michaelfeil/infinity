@@ -60,10 +60,15 @@ class Decoder final : public Model {
   at::Tensor
   cached_linear(const at::Tensor& x, const at::Tensor& w, const at::Tensor& b = {}) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
+    // These family/width checks select the validated alternate prefill recipe, rather than defining
+    // which decoder shapes can execute. Widening this call site also requires widening and checking
+    // CachedNoBiasLt's prefill guard.
     if (!b.defined() && !fp8_dynamic && !transformers_math() && dtype == at::kBFloat16 &&
         hidden == 4096 && (family == "qwen3" || family == "llama") && w.size(1) == 4096 &&
         (w.size(0) == 24576 || w.size(0) == 28672))
       return no_bias_cache.forward(x, w, true);
+    // This second profile uses ordinary heuristic caching, not the alternate prefill tactic. Other
+    // decoder shapes retain ATen even when their matrix layout could be represented by the cache.
     if (!b.defined() && !fp8_dynamic && dtype == at::kBFloat16 && family == "qwen2" &&
         hidden == 896 && head_dim == 64)
       return no_bias_cache.forward(x, w);
