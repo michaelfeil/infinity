@@ -12,6 +12,8 @@ namespace tei {
 // output width visible to the packed bridge before it reserves host buffers.
 class MultiVectorModel final : public Model {
   std::unique_ptr<Model> backbone;
+  /// Optional token projection [output_width,backbone_width] and matching bias. An absent
+  /// projection preserves backbone width while still applying per-token normalization.
   at::Tensor projection, bias;
   double epsilon;
 

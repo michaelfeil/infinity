@@ -239,6 +239,8 @@ public:
     patch = cfg.integer("vision_config.patch_size");
     merge = cfg.integer("spatial_merge_size", 2);
     feature_layer = cfg.integer("vision_feature_layer", -1);
+    // Feature indices address depth+1 snapshots, including pre-transformer embeddings at zero.
+    // Negative checkpoint indices count backward across that same snapshot sequence.
     if (feature_layer < 0)
       feature_layer += depth + 1;
   }

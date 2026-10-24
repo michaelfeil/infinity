@@ -34,12 +34,18 @@ namespace tei {
 namespace {
 /// Attention, normalization, MLP/MoE weights, and execution metadata for one layer.
 struct DecoderLayer {
+  /// rotary_index selects a per-layer table, with -1 selecting the shared default. Window -1 is
+  /// unbounded; explicit left/right distances are passed unchanged to attention.
   int64_t rotary_index = -1, left_window = -1, right_window = -1;
+  /// qkv packs query heads, key heads, then value heads along its output dimension.
+  /// input_norm/post_norm act on hidden rows; optional q_norm/k_norm act on each head.
   at::Tensor qkv, qkv_bias, out, out_bias, input_norm, post_norm, q_norm, k_norm;
   at::Tensor gate_up, gate_up_bias, down, down_bias, router;
 #ifdef TEI_TORCH_CUDA_KERNELS
   std::unique_ptr<Fp8Linear> fp8_gate_up, fp8_down, fp8_qkv, fp8_out;
 #endif
+  /// Per-expert matrices use [2I,H] and [H,I]. Prepared grouped tensors use transposed GEMM
+  /// layouts, so native checkpoint-layout callers transpose them back at dispatch.
   std::vector<at::Tensor> expert_gate_up, expert_down;
   at::Tensor grouped_gate_up, grouped_down;
 };
@@ -722,6 +728,9 @@ public:
   /// rotary tables, and optional task heads.
   void ready() override {
     fp8_dynamic = options.boolean("_fp8_dynamic", false);
+    // Scope controls which original floating-point checkpoint matrices are quantized during
+    // preparation. It is separate from loading an already quantized checkpoint,
+    // which this adapter rejects.
     const auto fp8_scope = options.string("_fp8_scope", fp8_dynamic ? "all" : "mlp");
     TORCH_CHECK(fp8_scope == "mlp" || fp8_scope == "all", "FP8 scope must be mlp or all");
     fp8_all_linear = fp8_scope == "all";
@@ -784,6 +793,9 @@ public:
                                                                                      : "";
     if (family == "ultrabert")
       load_ultrabert_attention();
+    // Resolve and validate foundational parameters before constructing per-layer fused matrices.
+    // Once ready returns, forward uses these cached tensor handles rather than
+    // repeating checkpoint lookup.
     embedding = checked_weight("embed_tokens.weight", {options.integer("vocab_size", 0), hidden});
     final_norm = checked_weight("norm.weight", {hidden});
     auto window = options.integer("sliding_window", -1);

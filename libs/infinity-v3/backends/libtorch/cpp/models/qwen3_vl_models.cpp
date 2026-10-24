@@ -331,6 +331,9 @@ Qwen3VL::Qwen3VL(const Options& options,
   text = create_decoder(tc, text_weights, device, dtype);
 }
 
+/// Prepare vision frequencies and optional temporal projection slices, then validate interleaved
+/// text mRoPE sections. Tower-only instances stop before text setup; full adapters
+/// prepare their decoder last.
 void Qwen3VL::ready() {
   TORCH_CHECK(hidden > 0 && heads > 0 && hidden % heads == 0 && dim % 4 == 0 && merge > 0 &&
                   depth > 0,
@@ -376,6 +379,8 @@ void Qwen3VL::ready() {
        s2 = cfg.integer("text_config.rope_scaling.mrope_section.2");
   for (int64_t j = 0; j < text_dim / 2; ++j) {
     freqs.push_back(float(1. / std::pow(theta, double(2 * j) / text_dim)));
+    // Assign each rotary frequency to one of the three supplied position axes, with section lengths
+    // limiting the interleaved spatial axes and the remaining frequencies using axis zero.
     axes.push_back(j % 3 == 1 && j < s1 * 3 ? 1 : j % 3 == 2 && j < s2 * 3 ? 2 : 0);
   }
   text_frequency =

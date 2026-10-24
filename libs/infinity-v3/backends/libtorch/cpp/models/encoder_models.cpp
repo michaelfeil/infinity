@@ -351,6 +351,9 @@ struct Encoder final : Model {
     }
   }
 
+  /// Resolve family namespaces, validate supported geometry/activations, and prepare rotary/bias
+  /// metadata plus fused projection handles. Optional CPU and native routing policies are qualified
+  /// here before requests arrive.
   void ready() override {
     exact_cpu_half = family == Family::Modern && device.is_cpu() && dtype == at::kHalf &&
                      hidden == 768 && heads == 12 && o.integer("intermediate_size", 0) == 1152 &&
@@ -491,6 +494,8 @@ struct Encoder final : Model {
         const std::string q = a + (family == Family::Distil ? "q_lin" : "query"),
                           k = a + (family == Family::Distil ? "k_lin" : "key"),
                           v = a + (family == Family::Distil ? "v_lin" : "value");
+        // Concatenate Q/K/V only along output features, preserving each projection's input width.
+        // Forward splits this same Q-then-K-then-V ordering after one packed GEMM.
         fused[i].qkv_weight = at::cat({w(q + ".weight"), w(k + ".weight"), w(v + ".weight")}, 0);
         if (has(q + ".bias"))
           fused[i].qkv_bias = at::cat({w(q + ".bias"), w(k + ".bias"), w(v + ".bias")}, 0);
@@ -1082,6 +1087,8 @@ struct Mpnet final : Model {
     return hidden;
   }
 
+  /// Validate MPNet geometry and required embedding/relative-bias tensors, then pack Q/K/V matrices
+  /// and biases per layer. The resulting vectors are model-lifetime preparation state.
   void ready() override {
     TORCH_CHECK(hidden > 0 && heads > 0 && hidden % heads == 0 && layers > 0,
                 "Invalid MPNet dimensions");
@@ -1285,6 +1292,9 @@ struct Deberta final : Model {
     return it == weights.end() ? 0 : it->second.size(0);
   }
 
+  /// Prepare DeBERTa relative embeddings and optional content-to-position/position-to-content
+  /// projections. Disabled terms remain undefined; optional convolution geometry is
+  /// checked before forward().
   void ready() override {
     TORCH_CHECK(hidden > 0 && heads > 0 && dim > 0 && layers > 0 && span > 0,
                 "Invalid DeBERTa configuration");
@@ -1306,6 +1316,8 @@ struct Deberta final : Model {
       qkv_bias.push_back(
           at::cat({w(p + "query_proj.bias"), w(p + "key_proj.bias"), w(p + "value_proj.bias")}, 0));
       const auto share = o.boolean("share_att_key", false);
+      // Relative projections are stored [heads,head_dim,2*span], ready for head-major content dot
+      // products. Each enabled term uses shared or dedicated projection weights as configured.
       position_key.push_back(relative.defined() && c2p
                                  ? linear(relative, p + (share ? "key_proj" : "pos_key_proj"))
                                        .view({2 * span, heads, dim})
