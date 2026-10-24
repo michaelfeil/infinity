@@ -677,59 +677,54 @@ async fn initialize_model(
     )?;
     tracing::info!("Starting model backend");
     let api_repo = api_repo.map(std::sync::Arc::new);
-    let backends =
-        replicas::initialize_all(devices.iter().enumerate().map(|(replica, &device)| {
-            let model_root = model_root.clone();
-            let api_repo = api_repo.clone();
-            let dtype = dtype.clone();
-            let backend_model_type = backend_model_type.clone();
-            let dense_path = dense_path.clone();
-            let startup_span = tracing::info_span!(
-                "backend_startup", model = %model_root.display(), replica, device,
-                pid = std::process::id()
-            );
-            let initialize = async move {
-                let started = std::time::Instant::now();
-                tracing::info!(
-                    device,
-                    replica,
-                    "Initializing backend replica"
-                );
-                let backend = infinity_v3_backend::Backend::new_selected(
-                    model_root,
-                    api_repo,
-                    dtype,
-                    backend_model_type,
-                    dense_path,
-                    device,
-                    enable_fp8_dynamic,
-                    backend_kind,
-                    torch_device,
-                )
+    let initializers = devices.iter().enumerate().map(|(replica, &device)| {
+        let model_root = model_root.clone();
+        let api_repo = api_repo.clone();
+        let dtype = dtype.clone();
+        let backend_model_type = backend_model_type.clone();
+        let dense_path = dense_path.clone();
+        let startup_span = tracing::info_span!(
+            "backend_startup", model = %model_root.display(), replica, device,
+            pid = std::process::id()
+        );
+        let initialize = async move {
+            let started = std::time::Instant::now();
+            tracing::info!(device, replica, "Initializing backend replica");
+            let backend = infinity_v3_backend::Backend::new_selected(
+                model_root,
+                api_repo,
+                dtype,
+                backend_model_type,
+                dense_path,
+                device,
+                enable_fp8_dynamic,
+                backend_kind,
+                torch_device,
+            )
+            .await
+            .inspect_err(|error| {
+                tracing::error!(seconds = started.elapsed().as_secs_f64(), %error,
+                    "Backend initialization failed");
+            })
+            .with_context(|| format!("Could not create backend on device {device}"))?;
+            backend
+                .health()
                 .await
-                .with_context(|| format!("Could not create backend on device {device}"))?;
-                backend
-                    .health()
-                    .await
-                    .with_context(|| format!("Model backend on device {device} is not healthy"))?;
-                let replica_batch_limit = match (max_batch_requests, backend.max_batch_size) {
-                    (Some(a), Some(b)) => Some(a.min(b)),
-                    (a, b) => a.or(b),
-                };
-                backend
-                    .warmup(
-                        max_input_length,
-                        max_batch_tokens,
-                        replica_batch_limit,
-                    )
-                    .await
-                    .with_context(|| format!("Warmup failed on device {device}"))?;
-                tracing::info!(device, replica, elapsed = ?started.elapsed(), "Backend replica ready");
-                Ok(backend)
+                .with_context(|| format!("Model backend on device {device} is not healthy"))?;
+            let replica_batch_limit = match (max_batch_requests, backend.max_batch_size) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
             };
-            initialize.instrument(startup_span)
-        }))
-        .await?;
+            backend
+                .warmup(max_input_length, max_batch_tokens, replica_batch_limit)
+                .await
+                .with_context(|| format!("Warmup failed on device {device}"))?;
+            tracing::info!(device, replica, elapsed = ?started.elapsed(), "Backend replica ready");
+            Ok(backend)
+        };
+        initialize.instrument(startup_span)
+    });
+    let backends = replicas::initialize_all(initializers).await?;
     let backend = infinity_v3_core::backend_pool::BackendPool::new_named(
         backends,
         metric_model_name.clone(),

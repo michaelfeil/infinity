@@ -512,6 +512,10 @@ impl LibtorchBackend {
     ) -> Result<Self, BackendError> {
         Self::new_with_dense_paths_and_fp8(path, dtype, model_type, device, dense_paths, false)
     }
+    #[tracing::instrument(
+        name = "model_load", skip_all,
+        fields(path = %path.display(), device = device, pid = std::process::id())
+    )]
     pub fn new_with_dense_paths_and_fp8(
         path: &Path,
         dtype: &str,
@@ -1202,90 +1206,65 @@ impl LibtorchBackend {
             };
             files.push((format!("{dense_path}/{filename}"), format!("_dense.{i}.")));
         }
+        let weights_started = std::time::Instant::now();
+        tracing::info!(files = files.len(), "Starting checkpoint load");
         for (file, prefix) in files {
-            let file_path = path.join(&file);
-            let reader = if file.ends_with(".bin") {
-                "pytorch"
-            } else if cfg!(unix) {
-                "fastsafetensors"
-            } else {
-                "safetensors"
-            };
-            let started = std::time::Instant::now();
-            let read_span = tracing::info_span!(
-                "checkpoint_load", path = %file_path.display(),
-                device = %device.to_string_lossy(), reader, pid = std::process::id()
-            );
-            let _read_guard = read_span.enter();
-            tracing::info!("Starting checkpoint load");
-            let result = (|| -> Result<(), BackendError> {
-                if file.ends_with(".bin") {
-                    // Parse checkpoint data in Rust; no Python or inference engine is
-                    // involved. The reader gathers strided/shared-storage views.
-                    let reader =
-                        pytorch_reader::PytorchReader::new(path.join(&file)).map_err(start)?;
-                    for (name, tensor) in reader.tensors() {
-                        if name.ends_with("position_ids") || name.ends_with("token_type_ids") {
-                            continue;
-                        }
-                        let dtype = match tensor.dtype() {
-                            pytorch_reader::DType::F32 => 0,
-                            pytorch_reader::DType::F16 => 1,
-                            pytorch_reader::DType::BF16 => 2,
-                            other => {
-                                return Err(start(format!("Unsupported weight dtype {other:?}")))
-                            }
-                        };
-                        let data = tensor.read().map_err(start)?;
-                        upload_weight(
-                            handle,
-                            &format!("{prefix}{name}"),
-                            &data,
-                            tensor.shape(),
-                            dtype,
-                        )?;
+            if file.ends_with(".bin") {
+                // Parse checkpoint data in Rust; no Python or inference engine is
+                // involved. The reader gathers strided/shared-storage views.
+                let reader = pytorch_reader::PytorchReader::new(path.join(&file)).map_err(start)?;
+                for (name, tensor) in reader.tensors() {
+                    if name.ends_with("position_ids") || name.ends_with("token_type_ids") {
+                        continue;
                     }
-                    return Ok(());
+                    let dtype = match tensor.dtype() {
+                        pytorch_reader::DType::F32 => 0,
+                        pytorch_reader::DType::F16 => 1,
+                        pytorch_reader::DType::BF16 => 2,
+                        other => return Err(start(format!("Unsupported weight dtype {other:?}"))),
+                    };
+                    let data = tensor.read().map_err(start)?;
+                    upload_weight(
+                        handle,
+                        &format!("{prefix}{name}"),
+                        &data,
+                        tensor.shape(),
+                        dtype,
+                    )?;
                 }
-                #[cfg(unix)]
-                weight_reader::load(handle, &path.join(&file), &prefix)?;
-                #[cfg(not(unix))]
-                {
-                    let data = fs::read(path.join(&file)).map_err(start)?;
-                    let tensors = SafeTensors::deserialize(&data).map_err(start)?;
-                    for (name, tensor) in tensors.tensors() {
-                        // Integer buffers are derived from packed positions rather than uploaded as weights.
-                        if name.ends_with("position_ids") || name.ends_with("token_type_ids") {
-                            continue;
-                        }
-                        let dtype = match tensor.dtype() {
-                            Dtype::F32 => 0,
-                            Dtype::F16 => 1,
-                            Dtype::BF16 => 2,
-                            other => {
-                                return Err(start(format!("Unsupported weight dtype {other:?}")))
-                            }
-                        };
-                        upload_weight(
-                            handle,
-                            &format!("{prefix}{name}"),
-                            tensor.data(),
-                            tensor.shape(),
-                            dtype,
-                        )?;
+                continue;
+            }
+            #[cfg(unix)]
+            weight_reader::load(handle, &path.join(&file), &prefix)?;
+            #[cfg(not(unix))]
+            {
+                let data = fs::read(path.join(&file)).map_err(start)?;
+                let tensors = SafeTensors::deserialize(&data).map_err(start)?;
+                for (name, tensor) in tensors.tensors() {
+                    // Integer buffers are derived from packed positions rather than uploaded as weights.
+                    if name.ends_with("position_ids") || name.ends_with("token_type_ids") {
+                        continue;
                     }
-                }
-                Ok(())
-            })();
-            let seconds = started.elapsed().as_secs_f64();
-            match result {
-                Ok(()) => tracing::info!(seconds, "Finished checkpoint load"),
-                Err(error) => {
-                    tracing::error!(seconds, %error, "Checkpoint load failed");
-                    return Err(error);
+                    let dtype = match tensor.dtype() {
+                        Dtype::F32 => 0,
+                        Dtype::F16 => 1,
+                        Dtype::BF16 => 2,
+                        other => return Err(start(format!("Unsupported weight dtype {other:?}"))),
+                    };
+                    upload_weight(
+                        handle,
+                        &format!("{prefix}{name}"),
+                        tensor.data(),
+                        tensor.shape(),
+                        dtype,
+                    )?;
                 }
             }
         }
+        tracing::info!(
+            seconds = weights_started.elapsed().as_secs_f64(),
+            "Finished checkpoint load"
+        );
         // SAFETY: the live handle is owned by model; this checks every required weight and its shape.
         if unsafe { tei_ready(handle.as_ptr()) } != 0 {
             return Err(start(native_error()));

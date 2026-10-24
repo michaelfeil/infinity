@@ -119,14 +119,14 @@ Header validation remains in Rust, including offset, shape and complete-file
 length checks. Read errors and truncated files fail initialization. Native code
 drains reads and CUDA copies before returning or releasing their buffers.
 
-At INFO level, each checkpoint file logs `Starting checkpoint load`, followed by
-`Finished checkpoint load` with elapsed seconds, or `Checkpoint load failed` with
-the error. This covers safetensors shards, PyTorch `.bin` files and sidecar weights.
-The `checkpoint_load` span identifies the path, device, reader and process ID;
-when started by the router, its parent `backend_startup` span identifies the model
-and replica index. Context is preserved into the blocking loader thread, so
-concurrent replica loads remain distinguishable in text and JSON logs. JSON
-`--disable-spans` intentionally omits these span fields.
+At INFO level, each replica logs `Starting checkpoint load` before reading its
+weight files and `Finished checkpoint load` with elapsed seconds after all weights
+are loaded. Existing safetensors completion events retain per-file timing and
+size details. The `model_load` span identifies the model path, device and process
+ID; the router's `backend_startup` parent adds the replica index. Context survives
+the blocking loader thread, so concurrent loads remain distinguishable in text
+and JSON logs. Initialization failures report the error and elapsed startup time
+with the replica context. JSON `--disable-spans` omits these span fields.
 
 ## Build and run
 
