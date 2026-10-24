@@ -64,6 +64,7 @@ struct Bundle {
   Forward forward;
   Deberta deberta;
   const char* (*error)();
+  int modes; // Optional capability mask; older portable bundles retain the first four modes.
   // Keep loaded code alive for CUDA graphs and concurrent in-flight requests.
 };
 
@@ -126,7 +127,9 @@ Bundle* bundle(const at::Tensor& q) {
   TORCH_CHECK(capability && forward && error && capability() == sm,
               "Incompatible InfinityFA4 bundle: ",
               path.string());
-  auto result = std::make_unique<Bundle>(Bundle{handle, forward, deberta, error});
+  auto modes = reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_modes_v1"));
+  auto result =
+      std::make_unique<Bundle>(Bundle{handle, forward, deberta, error, modes ? modes() : 0xf});
   auto* ptr = result.get();
   bundles.emplace(sm, std::move(result));
   return ptr;
@@ -174,10 +177,16 @@ at::Tensor infinity_fa4(const at::Tensor& q,
     mode = 2;
   if (d == 128 && h == 2 * hk && !causal && left < 0 && right < 0)
     mode = 3;
+  if (d == 128 && !causal && left < 0 && right < 0) {
+    if (h == 6 * hk)
+      mode = 4;
+    else if (h == 8 * hk)
+      mode = 5;
+  }
   if (mode < 0)
     return {};
   auto* native = bundle(q);
-  if (!native)
+  if (!native || !(native->modes & (1 << mode)))
     return {};
   c10::cuda::CUDAGuard guard(q.device());
   check_offsets(q, cu_q);

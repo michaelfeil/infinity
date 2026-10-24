@@ -57,7 +57,7 @@ tests do not establish trained checkpoint accuracy.
 
 The NVIDIA image includes native FP16/BF16 FlashAttention-4 bundles for SM80,
 SM86, SM89, SM90, SM100 and SM120. Supported shapes are global/windowed d64
-MHA, causal d128 GQA4, global d128 GQA2, and d64 DeBERTa relative attention.
+MHA, causal d128 GQA4, global d128 GQA2/GQA6/GQA8, and d64 DeBERTa relative attention.
 DeBERTa avoids quadratic relative-position bucket and attention-bias storage.
 FP8 projections retain their existing attention dtype.
 
