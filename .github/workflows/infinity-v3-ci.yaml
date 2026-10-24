@@ -27,6 +27,30 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  native-tidy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install native analysis dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake
+          python -m pip install clang-tidy==20.1.0
+          python -m pip install torch==2.14.1+cpu --index-url https://download.pytorch.org/whl/cpu
+      - name: Configure CPU LibTorch compilation database
+        run: |
+          cmake -S backends/libtorch/cpp -B build/native-tidy \
+            -DCMAKE_PREFIX_PATH="$(python -c 'import torch; print(torch.utils.cmake_prefix_path)')" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DINFINITY_BUILD_NATIVE_TESTS=ON
+      - name: Check native C++ correctness
+        run: python scripts/check-native-tidy.py build/native-tidy
+
   native-format:
     runs-on: ubuntu-latest
     steps:
