@@ -37,32 +37,112 @@ at::Tensor mlp_activation(const at::Tensor& x, MlpActivation kind) {
   TORCH_CHECK(false, "Unsupported MLP activation");
 }
 
+namespace {
+class ModelLinearMethod final : public MlpLinearMethod {
+  at::Tensor weight_;
+
+public:
+  explicit ModelLinearMethod(at::Tensor weight) : weight_(std::move(weight)) {}
+
+  MlpPrecision precision() const override {
+    return MlpPrecision::Model;
+  }
+
+  const at::Tensor& weight() const override {
+    return weight_;
+  }
+
+  bool supports_epilogue() const override {
+    return true;
+  }
+
+  at::Tensor apply(const MlpProjection& projection,
+                   const at::Tensor& x,
+                   const at::Tensor& bias,
+                   const MlpContext& context,
+                   MlpEpilogue epilogue,
+                   const at::Tensor& scales) const override {
+    TORCH_CHECK(!scales.defined(), "Model-dtype method cannot consume FP8 rows");
+    at::Tensor output;
+    if (epilogue != MlpEpilogue::None) {
+      if (context.activated_gemm)
+        output = context.activated_gemm(projection, x, epilogue);
+    } else if (context.gemm)
+      output = context.gemm(projection, x);
+    if (output.defined())
+      return output;
+    return epilogue == MlpEpilogue::None
+               ? at::linear(x, weight_, bias)
+               : at::_addmm_activation(bias, x, weight_.t(), 1, 1, epilogue == MlpEpilogue::Gelu);
+  }
+};
+
+class Fp8LinearMethod final : public MlpLinearMethod {
+  Fp8Linear linear_;
+  at::Tensor ordinary_weight_; // No ordinary matrix retained after preparation.
+
+public:
+  explicit Fp8LinearMethod(const at::Tensor& weight) : linear_(weight) {}
+
+  MlpPrecision precision() const override {
+    return MlpPrecision::Fp8;
+  }
+
+  const at::Tensor& weight() const override {
+    return ordinary_weight_;
+  }
+
+  bool accepts_fp8_rows() const override {
+    return true;
+  }
+
+  at::Tensor apply(const MlpProjection& projection,
+                   const at::Tensor& x,
+                   const at::Tensor& bias,
+                   const MlpContext&,
+                   MlpEpilogue epilogue,
+                   const at::Tensor& scales) const override {
+    TORCH_CHECK(epilogue == MlpEpilogue::None, "FP8 method has no GEMM activation epilogue");
+    auto rows = x.dim() == 2
+                    ? x
+                    : x.reshape({x.numel() / projection.input_width(), projection.input_width()});
+    auto output = scales.defined() ? linear_.forward_quantized(rows, scales, bias)
+                                   : linear_.forward(rows, bias);
+    if (x.dim() != 2) {
+      auto shape = x.sizes().vec();
+      shape.back() = projection.output_width();
+      output = output.reshape(shape);
+    }
+    return output;
+  }
+};
+}
+
 MlpProjection::MlpProjection(at::Tensor weight,
                              at::Tensor bias,
                              ProjectionRecipe recipe,
                              std::string name)
-    : weight_(std::move(weight)), bias_(std::move(bias)), recipe_(recipe), name_(std::move(name)) {
-  TORCH_CHECK(weight_.dim() == 2 && weight_.size(0) > 0 && weight_.size(1) > 0,
+    : bias_(std::move(bias)), recipe_(recipe), name_(std::move(name)) {
+  TORCH_CHECK(weight.dim() == 2 && weight.size(0) > 0 && weight.size(1) > 0,
               "MLP projection requires a nonempty matrix: ",
               name_);
-  TORCH_CHECK(!bias_.defined() || (bias_.dim() == 1 && bias_.size(0) == weight_.size(0) &&
-                                   bias_.device() == weight_.device() &&
-                                   bias_.scalar_type() == weight_.scalar_type()),
+  TORCH_CHECK(!bias_.defined() || (bias_.dim() == 1 && bias_.size(0) == weight.size(0) &&
+                                   bias_.device() == weight.device() &&
+                                   bias_.scalar_type() == weight.scalar_type()),
               "Invalid MLP projection bias: ",
               name_);
   for (const auto& bounds : {recipe_.input_clip, recipe_.output_clip})
     TORCH_CHECK(!bounds || (*bounds)[0] <= (*bounds)[1], "Invalid MLP clipping bounds: ", name_);
-  dtype_ = weight_.scalar_type();
-  input_width_ = weight_.size(1);
-  output_width_ = weight_.size(0);
+  dtype_ = weight.scalar_type();
+  input_width_ = weight.size(1);
+  output_width_ = weight.size(0);
+  method_ = std::make_shared<ModelLinearMethod>(std::move(weight));
 }
 
-void MlpProjection::prepare_fp8() {
-  if (quantized_)
-    return;
-  auto quantized = std::make_shared<Fp8Linear>(weight_);
-  quantized_ = std::move(quantized);
-  weight_ = at::Tensor();
+void MlpProjection::prepare(const MlpMethodFactory& factory) {
+  auto method = factory(*this);
+  TORCH_CHECK(method, "MLP method factory returned no method: ", name_);
+  method_ = std::move(method);
 }
 
 at::Tensor MlpProjection::execute(const at::Tensor& input,
@@ -73,7 +153,8 @@ at::Tensor MlpProjection::execute(const at::Tensor& input,
   TORCH_CHECK(input_width_ && input.dim() > 0 && input.size(-1) == input_width_,
               "Invalid MLP projection input: ",
               name_);
-  TORCH_CHECK(!scales.defined() || (fp8() && !recipe_.input_clip && !recipe_.cast_input),
+  TORCH_CHECK(!scales.defined() ||
+                  (method_->accepts_fp8_rows() && !recipe_.input_clip && !recipe_.cast_input),
               "Prequantized MLP input bypasses a projection transform: ",
               name_);
   auto x = input;
@@ -81,31 +162,8 @@ at::Tensor MlpProjection::execute(const at::Tensor& input,
     x = x.clamp((*recipe_.input_clip)[0], (*recipe_.input_clip)[1]);
   if (recipe_.cast_input)
     x = x.to(dtype_);
-  at::Tensor output;
-  if (quantized_) {
-    auto rows = x.dim() == 2 ? x : x.reshape({x.numel() / input_width_, input_width_});
-    auto bias = omit_bias || recipe_.separate_bias ? at::Tensor() : bias_;
-    output = scales.defined() ? quantized_->forward_quantized(rows, scales, bias)
-                              : quantized_->forward(rows, bias);
-    if (x.dim() != 2) {
-      auto shape = x.sizes().vec();
-      shape.back() = output_width_;
-      output = output.reshape(shape);
-    }
-  } else {
-    TORCH_CHECK(!omit_bias, "Unquantized MLP bias cannot be omitted");
-    if (epilogue != MlpEpilogue::None) {
-      if (context.activated_gemm)
-        output = context.activated_gemm(*this, x, epilogue);
-    } else if (context.gemm)
-      output = context.gemm(*this, x);
-    if (!output.defined()) {
-      output =
-          epilogue == MlpEpilogue::None
-              ? at::linear(x, weight_, gemm_bias())
-              : at::_addmm_activation(bias_, x, weight_.t(), 1, 1, epilogue == MlpEpilogue::Gelu);
-    }
-  }
+  auto bias = omit_bias || recipe_.separate_bias ? at::Tensor() : bias_;
+  auto output = method_->apply(*this, x, bias, context, epilogue, scales);
   if (recipe_.separate_bias && bias_.defined() && !omit_bias)
     output = output + bias_;
   if (recipe_.output_clip)
@@ -168,16 +226,29 @@ DenseMlp::DenseMlp(MlpProjection gate,
 }
 
 void DenseMlp::prepare(MlpPrecision precision) {
-  TORCH_CHECK(precision == MlpPrecision::Fp8 || !fp8(),
-              "Cannot restore released model-dtype MLP weights");
-  if (precision == MlpPrecision::Model)
-    return;
+  prepare([precision](const MlpProjection& projection) -> std::shared_ptr<const MlpLinearMethod> {
+    if (precision == projection.method().precision())
+      return projection.method_;
+    TORCH_CHECK(precision == MlpPrecision::Fp8 || !projection.fp8(),
+                "Cannot restore released model-dtype MLP weights");
+    if (precision == MlpPrecision::Fp8)
+      return std::make_shared<Fp8LinearMethod>(projection.weight());
+    return std::make_shared<ModelLinearMethod>(projection.weight());
+  });
+}
+
+void DenseMlp::prepare(const MlpMethodFactory& factory) {
+  TORCH_CHECK(bool(factory) && input_.input_width() && output_.input_width(),
+              "MLP preparation requires initialized projections and a method factory");
   auto input = input_, output = output_;
   auto up = up_;
-  input.prepare_fp8();
-  output.prepare_fp8();
+  input.prepare(factory);
+  output.prepare(factory);
   if (up)
-    up->prepare_fp8();
+    up->prepare(factory);
+  TORCH_CHECK(input.method().precision() == output.method().precision() &&
+                  (!up || input.method().precision() == up->method().precision()),
+              "MLP projections require the same numerical precision recipe");
   input_ = std::move(input);
   output_ = std::move(output);
   up_ = std::move(up);
@@ -186,9 +257,11 @@ void DenseMlp::prepare(MlpPrecision precision) {
 at::Tensor DenseMlp::forward(const at::Tensor& x,
                              const MlpContext& context,
                              const at::Tensor& input_scales) const {
-  TORCH_CHECK(!input_scales.defined() || fp8(), "Quantized MLP input requires FP8 preparation");
-  auto epilogue = !fp8() && x.is_cuda() && x.dim() == 2 && input_.bias_.defined() &&
-                          !input_.recipe_.separate_bias && !input_.recipe_.output_clip
+  TORCH_CHECK(!input_scales.defined() || input_.method().accepts_fp8_rows(),
+              "Quantized MLP input requires FP8 preparation");
+  auto epilogue = input_.method().supports_epilogue() && x.is_cuda() && x.dim() == 2 &&
+                          input_.bias_.defined() && !input_.recipe_.separate_bias &&
+                          !input_.recipe_.output_clip
                       ? activation_.epilogue
                       : MlpEpilogue::None;
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -200,9 +273,10 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
 #endif
   auto middle = input_.execute(x, context, input_scales, epilogue);
 #ifdef TEI_TORCH_CUDA_KERNELS
-  if (fp8() && activation_.fusion == MlpFusion::RoundedSwiGlu && activation_.packed && !up_ &&
-      !output_.recipe_.input_clip && !output_.recipe_.cast_input && middle.is_cuda() &&
-      middle.dim() == 2 && middle.is_contiguous() && middle.size(1) / 2 <= 32768) {
+  if (output_.method().accepts_fp8_rows() && activation_.fusion == MlpFusion::RoundedSwiGlu &&
+      activation_.packed && !up_ && !output_.recipe_.input_clip && !output_.recipe_.cast_input &&
+      middle.is_cuda() && middle.dim() == 2 && middle.is_contiguous() &&
+      middle.size(1) / 2 <= 32768) {
     auto quantized = fp8_swiglu_quantize(middle);
     return output_.execute(quantized.first, context, quantized.second);
   }

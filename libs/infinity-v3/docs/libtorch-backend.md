@@ -87,6 +87,15 @@ plans or qualified fused epilogues, using the supplied projection metadata;
 it does not own model mathematics. Residuals and normalization remain outside
 the MLP. Prequantized input can carry row scales explicitly.
 
+Dense MLP projections own an immutable `MlpLinearMethod`. The ordinary method
+owns checkpoint matrices and uses request-local GEMM plans; the FP8 method owns
+quantized matrices and scales. A loader selects methods through
+`DenseMlp::prepare`, either by precision or by a projection-aware factory.
+Preparation replaces all projection methods together only after success.
+Clipping, casts, separate bias rounding, and activation recipes stay in the MLP
+layers, outside the execution method. Methods advertise GEMM epilogue and
+prequantized FP8 input capabilities; the forward interface stays the same.
+
 The executor has no model-name eligibility checks. Server FP8 eligibility and
 defaults remain explicit: sharing execution does not qualify additional
 checkpoints for FP8 accuracy.

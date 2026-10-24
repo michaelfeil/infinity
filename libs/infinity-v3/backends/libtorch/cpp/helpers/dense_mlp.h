@@ -22,6 +22,7 @@ struct ProjectionRecipe {
 };
 
 class MlpProjection;
+class MlpLinearMethod;
 
 struct MlpContext {
   // Kernel selection only: implementations consume the supplied weight/bias
@@ -30,9 +31,38 @@ struct MlpContext {
   std::function<at::Tensor(const MlpProjection&, const at::Tensor&, MlpEpilogue)> activated_gemm;
 };
 
+// Immutable execution state, prepared once per projection. Methods own their
+// weight representation; clipping, casts and separate bias remain the layer's
+// numerical contract. The supplied GEMM bias must be applied exactly once.
+class MlpLinearMethod {
+public:
+  virtual ~MlpLinearMethod() = default;
+  virtual MlpPrecision precision() const = 0;
+  virtual const at::Tensor& weight() const = 0;
+
+  virtual bool accepts_fp8_rows() const {
+    return false;
+  }
+
+  virtual bool supports_epilogue() const {
+    return false;
+  }
+
+  virtual at::Tensor apply(const MlpProjection&,
+                           const at::Tensor& input,
+                           const at::Tensor& bias,
+                           const MlpContext&,
+                           MlpEpilogue,
+                           const at::Tensor& scales) const = 0;
+};
+
+// A loader selects a method using projection metadata, without changing forward.
+using MlpMethodFactory =
+    std::function<std::shared_ptr<const MlpLinearMethod>(const MlpProjection&)>;
+
 class MlpProjection {
-  at::Tensor weight_, bias_;
-  std::shared_ptr<Fp8Linear> quantized_;
+  at::Tensor bias_;
+  std::shared_ptr<const MlpLinearMethod> method_;
   ProjectionRecipe recipe_;
   std::string name_;
   at::ScalarType dtype_ = at::kFloat;
@@ -44,7 +74,7 @@ class MlpProjection {
                      const at::Tensor& scales,
                      MlpEpilogue = MlpEpilogue::None,
                      bool omit_bias = false) const;
-  void prepare_fp8();
+  void prepare(const MlpMethodFactory&);
 
 public:
   MlpProjection() = default;
@@ -54,7 +84,7 @@ public:
                 std::string name = {});
 
   const at::Tensor& weight() const {
-    return weight_;
+    return method().weight();
   }
 
   const at::Tensor& bias() const {
@@ -74,7 +104,12 @@ public:
   }
 
   bool fp8() const {
-    return bool(quantized_);
+    return method_ && method_->precision() == MlpPrecision::Fp8;
+  }
+
+  const MlpLinearMethod& method() const {
+    TORCH_CHECK(method_, "MLP projection has not been initialized: ", name_);
+    return *method_;
   }
 
   int64_t input_width() const {
@@ -119,6 +154,7 @@ public:
            MlpProjection output,
            MlpActivationRecipe activation);
   void prepare(MlpPrecision precision);
+  void prepare(const MlpMethodFactory& factory);
 
   bool fp8() const {
     return input_.fp8();
