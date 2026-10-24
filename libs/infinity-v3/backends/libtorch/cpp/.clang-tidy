@@ -1,0 +1,13 @@
+# Keep the initial gate focused on correctness. Dimension-division and
+# preprocessor-indentation checks need separate triage before enabling them.
+Checks: >-
+  -*,
+  clang-analyzer-core.*,
+  clang-analyzer-cplusplus.*,
+  bugprone-suspicious-semicolon,
+  bugprone-branch-clone,
+  bugprone-sizeof-expression,
+  bugprone-use-after-move,
+  performance-unnecessary-copy-initialization
+WarningsAsErrors: '*'
+SystemHeaders: false
