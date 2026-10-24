@@ -1,4 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
+/// \file
+/// Bounded staging storage and completion leases for deferred native outputs.
+/// A leased slot stays busy until its output lease is destroyed.
+
 #pragma once
 #include "helpers/admission_error.h"
 #include <ATen/ATen.h>
@@ -28,6 +32,8 @@ struct OutputSlot {
   std::vector<at::Tensor> inputs;
 };
 
+/// Shared staging slots and memory-budget state for one replica's deferred results.
+/// The mutex protects slot selection and memory-budget bookkeeping.
 struct OutputPool {
   std::mutex mutex;
   std::condition_variable available;
@@ -50,6 +56,9 @@ struct OutputPool {
   }
 };
 
+/// Reserves a staging slot and retains buffers needed by asynchronous transfers.
+/// Keep the lease alive while consuming the host pointer returned by wait().
+/// Destruction drains unfinished CUDA work before returning the slot to the pool.
 class OutputLease {
   std::shared_ptr<OutputPool> pool;
   OutputSlot* slot = nullptr;
