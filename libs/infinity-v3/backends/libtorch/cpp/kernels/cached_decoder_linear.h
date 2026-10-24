@@ -257,7 +257,7 @@ public:
                      preference, CUBLASLT_MATMUL_PREF_REDUCTION_SCHEME_MASK, &mask, sizeof(mask)) ==
                  CUBLAS_STATUS_SUCCESS;
         }
-        std::array<cublasLtMatmulHeuristicResult_t, 8> candidates{};
+        std::array<cublasLtMatmulHeuristicResult_t, 32> candidates{};
         int count = 0;
         if (good)
           good = cublasLtMatmulAlgoGetHeuristic(at::cuda::getCurrentCUDABlasLtHandle(),
@@ -267,7 +267,7 @@ public:
                                                 plan->c,
                                                 plan->c,
                                                 preference,
-                                                prefill ? 8 : 1,
+                                                prefill ? (k == 2048 ? 32 : 8) : 1,
                                                 candidates.data(),
                                                 &count) == CUBLAS_STATUS_SUCCESS &&
                  count > 0;
