@@ -83,7 +83,7 @@ pub async fn download_artifacts(api: &ApiRepo, pool_config: bool) -> Result<Path
             if serde_json::from_slice::<serde_json::Value>(&bytes)
                 .is_ok_and(|config| config["model_type"] == "colqwen3")
             {
-                download_file(api, "1_MultiVectorMask/config.json").await?;
+                let _ = download_file(api, "1_MultiVectorMask/config.json").await;
             }
         } else if serde_json::from_slice::<serde_json::Value>(&bytes).is_ok_and(|config| {
             matches!(
