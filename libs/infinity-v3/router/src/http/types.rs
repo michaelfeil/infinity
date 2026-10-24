@@ -677,10 +677,8 @@ pub(super) fn exclusive_input_schema(schema: RefOr<Schema>) -> RefOr<Schema> {
 #[serde(untagged)]
 pub(crate) enum Embedding {
     Float(Vec<f32>),
-    MultiVector(Vec<Vec<f32>>),
-    MultiVectorBase64(Vec<String>),
+    All(AllEmbedding),
     Base64(String),
-    Tensor(Tensor),
 }
 
 #[derive(Serialize, ToSchema)]
@@ -689,31 +687,6 @@ pub(crate) enum AllEmbedding {
     Float(Vec<Vec<f32>>),
     Base64(Vec<String>),
     Tensor(Tensor),
-}
-
-impl From<AllEmbedding> for Embedding {
-    fn from(value: AllEmbedding) -> Self {
-        match value {
-            AllEmbedding::Float(values) => Self::MultiVector(values),
-            AllEmbedding::Base64(values) => Self::MultiVectorBase64(values),
-            AllEmbedding::Tensor(value) => Self::Tensor(value),
-        }
-    }
-}
-
-#[cfg(test)]
-mod multi_vector_tests {
-    use super::*;
-
-    #[test]
-    fn openai_embeddings_preserve_token_rows_and_encoding() {
-        let matrix = vec![vec![0.5, -0.5], vec![1.0, 0.0]];
-        let encoded = Embedding::from(AllEmbedding::Float(matrix.clone()));
-        assert_eq!(serde_json::to_value(encoded).unwrap(), json!(matrix));
-        let rows = vec!["AAAAAA==".to_string(), "AACAPw==".to_string()];
-        let encoded = Embedding::from(AllEmbedding::Base64(rows.clone()));
-        assert_eq!(serde_json::to_value(encoded).unwrap(), json!(rows));
-    }
 }
 
 #[derive(Serialize, ToSchema)]

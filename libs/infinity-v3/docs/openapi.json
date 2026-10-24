@@ -1761,26 +1761,10 @@
             }
           },
           {
-            "type": "array",
-            "items": {
-              "type": "array",
-              "items": {
-                "type": "number",
-                "format": "float"
-              }
-            }
-          },
-          {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
+            "$ref": "#/components/schemas/AllEmbedding"
           },
           {
             "type": "string"
-          },
-          {
-            "$ref": "#/components/schemas/Tensor"
           }
         ]
       },

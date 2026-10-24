@@ -1224,7 +1224,7 @@ async fn embed_inner(
         return Ok((
             headers,
             Json(EmbedResponse(
-                values.0.into_iter().map(Embedding::from).collect(),
+                values.0.into_iter().map(Embedding::All).collect(),
             )),
         ));
     }
@@ -1844,20 +1844,15 @@ async fn openai_embed_inner(
 ) -> Result<(HeaderMap, Json<OpenAICompatResponse>), (StatusCode, Json<OpenAICompatErrorResponse>)>
 {
     if info.is_multi_vector() {
-        if req.dimensions.is_some() {
-            return Err(ErrorResponse {
-                error: "Multi-vector embeddings do not support dimensions".into(),
-                error_type: ErrorType::Validation,
-            }
-            .into());
-        }
         let model = info.model_id.clone();
-        let (headers, Json(values)) = embed_all_inner(
+        let (headers, Json(values)) = embed_inner(
             infer,
             info,
             Extension(context),
-            Json(EmbedAllRequest {
+            Json(EmbedRequest {
                 encoding_format: req.encoding_format,
+                dimensions: req.dimensions,
+                normalize: true,
                 model: req.model,
                 inputs: req.input,
                 truncate: None,
@@ -1878,7 +1873,7 @@ async fn openai_embed_inner(
             .enumerate()
             .map(|(index, value)| OpenAICompatEmbedding {
                 object: "embedding",
-                embedding: value.into(),
+                embedding: value,
                 index,
             })
             .collect();

@@ -1313,7 +1313,7 @@ fn pack_output(
     lengths: Vec<i64>,
     hidden: usize,
     raw_width: usize,
-    keep_tokens: Vec<(usize, Vec<bool>)>,
+    keep_tokens: Vec<bool>,
 ) -> Result<Embeddings, BackendError> {
     let mut result = Embeddings::default();
     result
@@ -1334,25 +1334,17 @@ fn pack_output(
         );
         offset += hidden;
     }
+    let mut keep_tokens = keep_tokens.into_iter();
     for index in raw {
         let size = lengths[index as usize] as usize * raw_width;
-        let values = collect_results(
-            output[offset..offset + size]
-                .chunks_exact(raw_width)
-                .map(|row| collect_fallible(row.iter().copied())),
-        )?;
+        let mut values = reserved_vec(lengths[index as usize] as usize)?;
+        for row in output[offset..offset + size].chunks_exact(raw_width) {
+            if keep_tokens.next().unwrap_or(true) {
+                values.push(collect_fallible(row.iter().copied())?);
+            }
+        }
         result.insert(index as usize, Embedding::All(values));
         offset += size;
-    }
-    for (index, keep) in keep_tokens {
-        if let Some(Embedding::All(rows)) = result.get_mut(&index) {
-            let mut offset = 0;
-            rows.retain(|_| {
-                let retain = keep[offset];
-                offset += 1;
-                retain
-            });
-        }
     }
     Ok(result)
 }
@@ -1635,32 +1627,28 @@ impl LibtorchBackend {
         if pooled.iter().chain(&raw).any(|&n| n as usize >= b) {
             return Err(inference("Invalid output index"));
         }
-        let keep_tokens = if self.multi_vector && !self.skip_tokens.is_empty() {
-            collect_results(raw.iter().map(|&index| {
-                let index = index as usize;
-                let begin = ends[index] as usize;
-                let tokens = &batch.input_ids[begin..ends[index + 1] as usize];
-                // Explicit ColBERT query-marker inputs keep punctuation tokens.
-                let query = tokens
-                    .get(1)
-                    .is_some_and(|id| Some(*id) == self.query_marker);
-                Ok((
-                    index,
-                    collect_fallible(
-                        tokens
-                            .iter()
-                            .map(|id| query || self.skip_tokens.binary_search(id).is_err()),
-                    )?,
-                ))
-            }))?
-        } else {
-            Vec::new()
-        };
         let raw_width = if pool >= 4 { hidden } else { self.output_width };
         let raw_rows = raw.iter().try_fold(0usize, |rows, &i| {
             rows.checked_add(lengths[i as usize] as usize)
                 .ok_or_else(|| inference("Raw output row count overflow"))
         })?;
+        let filter_tokens = self.multi_vector && !self.skip_tokens.is_empty();
+        let mut keep_tokens = reserved_vec(if filter_tokens { raw_rows } else { 0 })?;
+        if filter_tokens {
+            for &index in &raw {
+                let index = index as usize;
+                let tokens = &batch.input_ids[ends[index] as usize..ends[index + 1] as usize];
+                // Explicit ColBERT query-marker inputs keep punctuation tokens.
+                let query = tokens
+                    .get(1)
+                    .is_some_and(|id| Some(*id) == self.query_marker);
+                keep_tokens.extend(
+                    tokens
+                        .iter()
+                        .map(|id| query || self.skip_tokens.binary_search(id).is_err()),
+                );
+            }
+        }
         let size = pooled
             .len()
             .checked_mul(hidden)
