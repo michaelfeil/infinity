@@ -73,6 +73,33 @@ Performance and numerical differences depend on the checkpoint and precision.
 
 ## Model support
 
+Dense feed-forward blocks use persistent `DenseMlp` objects from
+`helpers/dense_mlp.h`. Each `MlpProjection` owns its matrix, bias, cast policy and
+input/output clipping bounds. A prepared activation recipe records plain,
+packed-gated or separate gate/up arithmetic. Text, vision, merger/projector,
+audio and decision-head blocks bind these objects during loading; pooled Dense
+chains use the same projection contract.
+
+`prepare(MlpPrecision::Fp8)` quantizes the owned matrices once. Calls use the same
+`forward(input, context)` interface in model precision and FP8. Bias and
+projection transforms apply in either mode. `MlpContext` selects ordinary GEMM
+plans or qualified fused epilogues, using the supplied projection metadata;
+it does not own model mathematics. Residuals and normalization remain outside
+the MLP. Prequantized input can carry row scales explicitly.
+
+Dense MLP projections own an immutable `MlpLinearMethod`. The ordinary method
+owns checkpoint matrices and uses request-local GEMM plans; the FP8 method owns
+quantized matrices and scales. A loader selects methods through
+`DenseMlp::prepare`, either by precision or by a projection-aware factory.
+Preparation replaces all projection methods together only after success.
+Clipping, casts, separate bias rounding, and activation recipes stay in the MLP
+layers, outside the execution method. Methods advertise GEMM epilogue and
+prequantized FP8 input capabilities; the forward interface stays the same.
+
+The executor has no model-name eligibility checks. Server FP8 eligibility and
+defaults remain explicit: sharing execution does not qualify additional
+checkpoints for FP8 accuracy.
+
 Native implementations cover the encoder, decoder and multimodal families in
 [model coverage](libtorch-model-coverage.md). Classifier, SPLADE and typed decision
 heads are architecture-specific; arbitrary custom checkpoint modules are rejected.

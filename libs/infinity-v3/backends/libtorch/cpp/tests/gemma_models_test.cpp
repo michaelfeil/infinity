@@ -630,6 +630,18 @@ int main(int argc, char** argv) {
     auto dense_model = create_gemma(dense_metadata, f.weights, c10::Device("cpu"), at::kFloat);
     dense_model->ready();
     auto output = model->forward(input(packed, po));
+    if (f.legacy) {
+      auto with_vision = f.cfg;
+      with_vision.values["vision_config.hidden_size"] = "8";
+      with_vision.values["vision_config.num_attention_heads"] = "2";
+      with_vision.values["vision_config.num_hidden_layers"] = "1";
+      auto text_model = create_gemma(with_vision, f.weights, c10::Device("cpu"), at::kFloat);
+      text_model->ready();
+      TORCH_CHECK(!text_model->supports_images() &&
+                      at::equal(output, text_model->forward(input(packed, po))),
+                  "Unused Gemma3 vision metadata changed text startup or inference");
+    }
+
     TORCH_CHECK(at::equal(output, dense_model->forward(input(packed, po))),
                 "Disabled Gemma expert metadata changed full dense outputs");
     check_prefix_cache(*model, input(packed, po));

@@ -1,6 +1,7 @@
 // Pixtral/Mistral3 adaptation of Hugging Face Transformers 5.12.1 (Apache-2.0).
 // See vendor/transformers_pixtral/NOTICE; fork modifications follow repository LICENSE.
 #include "models/mistral3_models.h"
+#include "helpers/dense_mlp.h"
 #include "models/decoder_models.h"
 #include "helpers/attention.h"
 #include "helpers/vision_batch.h"
@@ -22,6 +23,8 @@ class Mistral3 final : public Model {
   at::ScalarType dtype;
   std::unique_ptr<Model> text;
   at::Tensor score;
+  std::vector<DenseMlp> vision_mlps;
+  DenseMlp projector_mlp;
   bool classifier = false, fused_vision = false;
   int64_t hidden, heads, dim, depth, patch, merge, feature_layer;
 
@@ -159,20 +162,13 @@ class Mistral3 final : public Model {
         auto pair = transformers_rms_norm(projected, x, w(p + "ffn_norm.weight"), 1e-5);
         x = pair.second;
         norm = pair.first;
-        auto activated = fused_gated_activation(
-            linear(norm, p + "feed_forward.gate_up"),
-            cfg.string("vision_config.hidden_act", "silu") == "silu" ? 0 : 1);
-        x = x + linear(activated, p + "feed_forward.down_proj");
+        x = x + vision_mlps[i].forward(norm);
       } else
 #endif
       {
         x = x + projected;
         norm = rms(x, w(p + "ffn_norm.weight"), 1e-5);
-        auto gate = linear(norm, p + "feed_forward.gate_proj");
-        auto act = cfg.string("vision_config.hidden_act", "silu") == "silu" ? at::silu(gate)
-                                                                            : at::gelu(gate);
-        x = x +
-            linear(act * linear(norm, p + "feed_forward.up_proj"), p + "feed_forward.down_proj");
+        x = x + vision_mlps[i].forward(norm);
       }
       if (feature_layer == i + 1)
         selected = x;
@@ -197,12 +193,7 @@ class Mistral3 final : public Model {
     }
     x = at::cat(merged);
     x = linear(x, "multi_modal_projector.patch_merger.merging_layer");
-    x = linear(x, "multi_modal_projector.linear_1");
-    auto act = cfg.string("projector_hidden_act", "gelu");
-    TORCH_CHECK(act == "gelu" || act == "gelu_pytorch_tanh" || act == "silu",
-                "Unsupported Mistral3 projector activation");
-    x = act == "silu" ? at::silu(x) : at::gelu(x, act == "gelu_pytorch_tanh" ? "tanh" : "none");
-    return linear(x, "multi_modal_projector.linear_2");
+    return projector_mlp.forward(x);
   }
 
 public:
@@ -339,6 +330,41 @@ public:
              {p + "feed_forward.gate_proj", p + "feed_forward.up_proj"});
       }
 #endif
+    auto projection = [&](const std::string& name) {
+      const auto bias = weights.find(name + ".bias");
+      return MlpProjection{
+          w(name + ".weight"), bias == weights.end() ? at::Tensor() : bias->second, {}, name};
+    };
+    for (int64_t i = 0; i < depth; ++i) {
+      const auto p = "vision_tower.transformer.layers." + std::to_string(i) + ".feed_forward.";
+      const bool silu = cfg.string("vision_config.hidden_act", "silu") == "silu";
+      if (fused_vision) {
+        auto recipe = MlpActivationRecipe::numerical(
+            [silu](const at::Tensor& rows) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+              return fused_gated_activation(rows, silu ? 0 : 1);
+#else
+              TORCH_CHECK(false, "Fused vision MLP requires CUDA");
+              return rows;
+#endif
+            },
+            true);
+        vision_mlps.emplace_back(
+            projection(p + "gate_up"), projection(p + "down_proj"), std::move(recipe));
+      } else {
+        vision_mlps.emplace_back(
+            projection(p + "gate_proj"),
+            projection(p + "up_proj"),
+            projection(p + "down_proj"),
+            MlpActivationRecipe{silu ? MlpActivation::Silu : MlpActivation::Gelu});
+      }
+    }
+    projector_mlp =
+        DenseMlp(projection("multi_modal_projector.linear_1"),
+                 projection("multi_modal_projector.linear_2"),
+                 MlpActivationRecipe{act == "silu"                ? MlpActivation::Silu
+                                     : act == "gelu_pytorch_tanh" ? MlpActivation::GeluTanh
+                                                                  : MlpActivation::Gelu});
   }
 
   bool supports_images() const override {

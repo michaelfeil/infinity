@@ -5,6 +5,7 @@
 #include "batching/radix.h"
 #include "batching/prefix_cache.h"
 #include "models/decoder_models.h"
+#include "helpers/dense_mlp.h"
 #include "kernels/moe_kernels.h"
 #include "kernels/infinity_fa4.h"
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -41,8 +42,9 @@ struct DecoderLayer {
   /// input_norm/post_norm act on hidden rows; optional q_norm/k_norm act on each head.
   at::Tensor qkv, qkv_bias, out, out_bias, input_norm, post_norm, q_norm, k_norm;
   at::Tensor gate_up, gate_up_bias, down, down_bias, router;
+  DenseMlp dense_mlp;
 #ifdef TEI_TORCH_CUDA_KERNELS
-  std::unique_ptr<Fp8Linear> fp8_gate_up, fp8_down, fp8_qkv, fp8_out;
+  std::unique_ptr<Fp8Linear> fp8_qkv, fp8_out;
 #endif
   /// Per-expert matrices use [2I,H] and [H,I]. Prepared grouped tensors use transposed GEMM
   /// layouts, so native checkpoint-layout callers transpose them back at dispatch.
@@ -564,37 +566,21 @@ class Decoder final : public Model {
                  const PackedInput& input,
                  const at::Tensor& row_scales = {}) const {
     if (!layer.router.defined()) {
+      MlpContext context;
+      context.gemm = [&](const MlpProjection& projection, const at::Tensor& rows) {
 #ifdef TEI_TORCH_CUDA_KERNELS
-      auto both =
-          layer.fp8_gate_up
-              ? (row_scales.defined()
-                     ? layer.fp8_gate_up->forward_quantized(x, row_scales, layer.gate_up_bias)
-                     : layer.fp8_gate_up->forward(x, layer.gate_up_bias))
-          : transformers_math() && !x.is_cuda()
-              ? separate_linear(x, layer.gate_up, layer.gate_up_bias, {intermediate, intermediate})
-              : cached_prefix_linear(x, layer.gate_up, layer.gate_up_bias, input);
-#else
-      auto both = at::linear(x, layer.gate_up, layer.gate_up_bias);
-#endif
-      auto width = both.size(-1) / 2;
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if (both.is_cuda()) {
-        int code = activation == "silu" || activation == "swish" ? (transformers_math() ? 0 : 5)
-                   : activation == "relu"                        ? 3
-                                                                 : (transformers_math() ? 2 : 4);
-        if (layer.fp8_down && code == 5 && width <= 32768 && both.is_contiguous()) {
-          auto quantized = fp8_swiglu_quantize(both);
-          return layer.fp8_down->forward_quantized(
-              quantized.first, quantized.second, layer.down_bias);
+        if (projection.role() == MlpProjectionRole::Input) {
+          if (transformers_math() && !rows.is_cuda())
+            return separate_linear(
+                rows, projection.weight(), projection.gemm_bias(), {intermediate, intermediate});
+          return cached_prefix_linear(rows, projection.weight(), projection.gemm_bias(), input);
         }
-        auto activated = fused_gated_activation(both, code);
-        return layer.fp8_down ? layer.fp8_down->forward(activated, layer.down_bias)
-                              : cached_prefix_linear(activated, layer.down, layer.down_bias, input);
-      }
+        if (rows.is_cuda())
+          return cached_prefix_linear(rows, projection.weight(), projection.gemm_bias(), input);
 #endif
-      return at::linear(activate(both.narrow(-1, 0, width)) * both.narrow(-1, width, width),
-                        layer.down,
-                        layer.down_bias);
+        return at::linear(rows, projection.weight(), projection.gemm_bias());
+      };
+      return layer.dense_mlp.forward(x, context, row_scales);
     }
     auto logits = at::linear(x, layer.router).to(at::kFloat);
     if (top_k == 8 && layer.grouped_down.defined()) {
@@ -895,12 +881,29 @@ public:
           layer.gate_up_bias = at::cat({gb, ub}, 0);
         layer.down = checked_weight(p + "mlp.down_proj.weight", {hidden, intermediate});
         layer.down_bias = optional(p + "mlp.down_proj.bias");
+        const int code = activation == "silu" || activation == "swish"
+                             ? (transformers_math() ? 0 : 5)
+                         : activation == "relu" ? 3
+                                                : (transformers_math() ? 2 : 4);
+        auto recipe = MlpActivationRecipe::numerical(
+            [this, code](const at::Tensor& both) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+              if (both.is_cuda())
+                return fused_gated_activation(both, code);
+#endif
+              const auto width = both.size(-1) / 2;
+              return activate(both.narrow(-1, 0, width)) * both.narrow(-1, width, width);
+            },
+            true);
+        if (code == 5)
+          recipe.fusion = MlpFusion::RoundedSwiGlu;
+        layer.dense_mlp = DenseMlp(
+            {layer.gate_up, layer.gate_up_bias}, {layer.down, layer.down_bias}, std::move(recipe));
 #ifdef TEI_TORCH_CUDA_KERNELS
         if (fp8_dynamic) {
           // Shape checks above precede one-time row quantization. Bias and the
           // gated activation retain their existing model-dtype arithmetic.
-          layer.fp8_gate_up = std::make_unique<Fp8Linear>(layer.gate_up);
-          layer.fp8_down = std::make_unique<Fp8Linear>(layer.down);
+          layer.dense_mlp.prepare(MlpPrecision::Fp8);
           if (fp8_all_linear) {
             layer.fp8_qkv = std::make_unique<Fp8Linear>(layer.qkv);
             layer.fp8_out = std::make_unique<Fp8Linear>(layer.out);
@@ -1347,7 +1350,7 @@ public:
         projected = cached_prefix_linear(attended, layer.out, layer.out_bias, input);
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
-        if (layer.fp8_gate_up && dtype == at::kBFloat16 && hidden == 4096 &&
+        if (layer.dense_mlp.fp8() && dtype == at::kBFloat16 && hidden == 4096 &&
             !exact_decoder_math() && projected.is_contiguous() &&
             (!residual.defined() || residual.is_contiguous())) {
           auto [quantized, summed, scales] =

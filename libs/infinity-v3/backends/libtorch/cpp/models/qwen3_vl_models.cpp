@@ -7,6 +7,7 @@
 #include "helpers/attention.h"
 // Native adaptation of Candle Qwen3.5. Upstream notices retained in LICENSE/NOTICE.
 #include "models/qwen3_vl_models.h"
+#include "helpers/dense_mlp.h"
 #include "models/decoder_models.h"
 #include "kernels/qwen35_kernels.h"
 #include "kernels/qwen35_reference.h"
@@ -54,16 +55,7 @@ at::Tensor Qwen3VL::merger(const at::Tensor& x, const std::string& p, bool post)
   auto grouped = x.view({-1, hidden * merge * merge});
   auto normalized = post ? ln(grouped, p + ".norm") : ln(x, p + ".norm").view_as(grouped);
   // Retrieval checkpoints use Transformers' exact merger GELU; Candle uses tanh.
-  auto mid = linear(normalized, p + ".linear_fc1");
-  auto act = at::Tensor();
-#ifdef TEI_TORCH_CUDA_KERNELS
-  if (exact_vision)
-    act = encoder_gelu(mid);
-  else
-#endif
-    act = at::gelu(mid, cfg.boolean("_multi_vector", false) ? "none" : "tanh");
-  auto out = linear(act, p + ".linear_fc2");
-  return out;
+  return mlps.at(p).forward(normalized);
 }
 
 /// Batch patch projections and transformer layers while isolating individual frames in attention.
@@ -91,6 +83,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
       stacked.push_back(at::cat(rows, 0));
     return {at::cat(features, 0), std::move(stacked)};
   }
+  const bool multi_vector = cfg.boolean("_multi_vector", false);
   std::vector<at::Tensor> patches, cosines, sines;
   std::vector<int32_t> offsets{0};
   int64_t max_frame = 0;
@@ -111,7 +104,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
       auto first = at::linear(patch.select(2, 0).contiguous().view({-1, 768}), temporal_first);
       auto second = at::linear(patch.select(2, 1).contiguous().view({-1, 768}), temporal_second);
       states = (first + second) + w("patch_embed.proj.bias");
-    } else if (cfg.boolean("_multi_vector", false)) {
+    } else if (multi_vector) {
       const auto& kernel = w("patch_embed.proj.weight");
       TORCH_CHECK(kernel.dim() == 5, "Invalid Qwen3-VL patch kernel");
       states = at::conv3d(
@@ -152,7 +145,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
                               interpolate(r1, c0, dr * (1 - dc)),
                               interpolate(r1, c1, dr * dc)},
                              0);
-    auto positional = cfg.boolean("_multi_vector", false)
+    auto positional = multi_vector
                           ? ((corners.select(0, 0) + corners.select(0, 1)) + corners.select(0, 2)) +
                                 corners.select(0, 3)
                       : exact_vision ? (corners.select(0, 0) + corners.select(0, 2)) +
@@ -184,7 +177,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
   };
   std::vector<at::Tensor> deep;
   std::map<int64_t, std::vector<size_t>> frame_groups;
-  if (cfg.boolean("_multi_vector", false))
+  if (multi_vector)
     for (size_t i = 0; i + 1 < offsets.size(); ++i)
       // Only equal-length frames share a dense SDPA batch in the retrieval path. Grouping preserves
       // the reference provider without padding shorter frames or merging their attention contexts.
@@ -199,7 +192,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     at::Tensor attention;
     // Round rotary Q/K back to BF16 before attention, matching the
     // model dtype, and keep frames independent through cu_seqlens.
-    if (cfg.boolean("_multi_vector", false)) {
+    if (multi_vector) {
       // Match SDPA's arithmetic while batching equally sized frames without padding.
       std::vector<at::Tensor> outputs(offsets.size() - 1);
       for (const auto& [length, frames] : frame_groups) {
@@ -265,15 +258,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     auto projected = linear(attention.reshape({states.size(0), hidden}).to(dtype), p + "attn.proj");
     states = states + projected;
     auto normalized2 = ln(states, p + "norm2");
-    auto ff = linear(normalized2, p + "mlp.linear_fc1");
-    auto act = cfg.string("vision_config.hidden_act", "gelu_pytorch_tanh");
-#ifdef TEI_TORCH_CUDA_KERNELS
-    if (exact_vision && act != "silu" && act != "gelu")
-      ff = encoder_gelu(ff);
-    else
-#endif
-      ff = act == "silu" ? at::silu(ff) : at::gelu(ff, act == "gelu" ? "none" : "tanh");
-    auto down = linear(ff, p + "mlp.linear_fc2");
+    auto down = mlps.at(p + "mlp").forward(normalized2);
     states = states + down;
     for (int64_t i = 0;
          cfg.values.count("vision_config.deepstack_visual_indexes." + std::to_string(i));
@@ -363,6 +348,46 @@ void Qwen3VL::ready() {
       at::from_blob(frequencies.data(), {dim / 4}, at::TensorOptions().dtype(at::kFloat))
           .clone()
           .to(device);
+  auto projection = [&](const std::string& name) {
+    ProjectionRecipe recipe;
+    recipe.separate_bias = exact_vision;
+    return MlpProjection{w(name + ".weight"), w(name + ".bias"), recipe, name};
+  };
+  auto bind_merger = [&](const std::string& p) {
+    const bool exact = exact_vision, multi_vector = cfg.boolean("_multi_vector", false);
+    auto activation = MlpActivationRecipe::numerical([exact, multi_vector](const at::Tensor& rows) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+      if (exact)
+        return encoder_gelu(rows);
+#endif
+      return at::gelu(rows, multi_vector ? "none" : "tanh");
+    });
+    mlps.insert_or_assign(p,
+                          DenseMlp(projection(p + ".linear_fc1"),
+                                   projection(p + ".linear_fc2"),
+                                   std::move(activation)));
+  };
+  bind_merger("merger");
+  for (int64_t i = 0;
+       cfg.values.count("vision_config.deepstack_visual_indexes." + std::to_string(i));
+       ++i)
+    bind_merger("deepstack_merger_list." + std::to_string(i));
+  for (int64_t i = 0; i < depth; ++i) {
+    const auto p = "blocks." + std::to_string(i) + ".mlp";
+    const auto act = cfg.string("vision_config.hidden_act", "gelu_pytorch_tanh");
+    const bool exact = exact_vision;
+    auto activation = MlpActivationRecipe::numerical([act, exact](const at::Tensor& rows) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+      if (exact && act != "silu" && act != "gelu")
+        return encoder_gelu(rows);
+#endif
+      return act == "silu" ? at::silu(rows) : at::gelu(rows, act == "gelu" ? "none" : "tanh");
+    });
+    mlps.insert_or_assign(p,
+                          DenseMlp(projection(p + ".linear_fc1"),
+                                   projection(p + ".linear_fc2"),
+                                   std::move(activation)));
+  }
   if (tower_only)
     return;
   TORCH_CHECK(text, "Qwen3-VL text decoder missing");

@@ -4,6 +4,8 @@
 #pragma once
 #include <memory>
 #include "models/model.h"
+#include "helpers/dense_mlp.h"
+#include <unordered_map>
 #include "helpers/options.h"
 
 namespace tei {
@@ -11,6 +13,7 @@ namespace tei {
 class Qwen3VL final : public Model {
   Options cfg;
   Weights visual_weights;
+  std::unordered_map<std::string, DenseMlp> mlps;
   std::unique_ptr<Model> text;
   c10::Device device;
   at::ScalarType dtype;

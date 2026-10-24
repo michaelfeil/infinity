@@ -9,6 +9,7 @@
 #include "helpers/workspace_admission.h"
 // Native adaptation of Candle Qwen3.5. Upstream notices retained in LICENSE/NOTICE.
 #include "models/qwen35_models.h"
+#include "helpers/dense_mlp.h"
 #include "models/qwen3_vl_models.h"
 #include "models/decoder_models.h"
 #include "kernels/qwen35_kernels.h"
@@ -74,7 +75,7 @@ class Qwen35 final : public Model {
     /// and a sigmoid-gated shared expert; these layouts are distinct from grouped-GEMM transposes.
     at::Tensor gate_up, down, router, experts, expert_down, shared_gate_up, shared_down,
         shared_gate;
-    std::unique_ptr<Fp8Linear> fp8_gate_up, fp8_down;
+    DenseMlp dense_mlp, shared_mlp;
   };
 
   std::vector<Mlp> mlps;
@@ -354,18 +355,12 @@ class Qwen35 final : public Model {
   /// selected activation and prefix recipe.
   at::Tensor feed_forward(const at::Tensor& x, int64_t layer, const PackedInput& input) const {
     const auto& m = mlps[layer];
-    if (m.fp8_gate_up) {
-      auto both = m.fp8_gate_up->forward(x);
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if (both.size(1) / 2 <= 32768) {
-        auto quantized = fp8_swiglu_quantize(both);
-        return m.fp8_down->forward_quantized(quantized.first, quantized.second);
-      }
-#endif
-      return m.fp8_down->forward(gated(both));
-    }
+    MlpContext context;
+    context.gemm = [&](const MlpProjection& projection, const at::Tensor& rows) {
+      return prefix_linear(rows, projection.weight(), projection.gemm_bias(), input);
+    };
     if (!m.router.defined())
-      return prefix_linear(gated(prefix_linear(x, m.gate_up, {}, input)), m.down, {}, input);
+      return m.dense_mlp.forward(x, context);
     auto top = integer("num_experts_per_tok", 8);
     auto renormalize = cfg.boolean(key("norm_topk_prob"), true);
     const bool native = top == 8 && device.is_cuda() && dtype == at::kBFloat16 &&
@@ -381,8 +376,7 @@ class Qwen35 final : public Model {
       output = decoder_moe_forward(x, m.router, m.experts, m.expert_down, top, renormalize);
     // The shared expert is evaluated for every token in addition to selected routed experts. Its
     // learned sigmoid gate scales the shared branch before the two branches are added.
-    auto shared = prefix_linear(
-        gated(prefix_linear(x, m.shared_gate_up, {}, input)), m.shared_down, {}, input);
+    auto shared = m.shared_mlp.forward(x, context);
     auto logits = prefix_linear(x, m.shared_gate, {}, input);
     auto gate = device.is_cuda() && dtype == at::kBFloat16
                     ? at::reciprocal(at::ones_like(logits) + at::exp(-logits))
@@ -1070,10 +1064,13 @@ public:
       if (experts == 0) {
         m.gate_up = at::cat({w(mp + "gate_proj.weight"), w(mp + "up_proj.weight")}, 0);
         m.down = w(mp + "down_proj.weight");
+        auto recipe = MlpActivationRecipe::numerical(
+            [this](const at::Tensor& rows) { return gated(rows); }, true);
+        recipe.fusion = MlpFusion::RoundedSwiGlu;
+        m.dense_mlp = DenseMlp({m.gate_up}, {m.down}, std::move(recipe));
         consumed = {mp + "gate_proj.weight", mp + "up_proj.weight", mp + "down_proj.weight"};
         if (fp8) {
-          m.fp8_gate_up = std::make_unique<Fp8Linear>(m.gate_up);
-          m.fp8_down = std::make_unique<Fp8Linear>(m.down);
+          m.dense_mlp.prepare(MlpPrecision::Fp8);
           m.gate_up = at::Tensor();
           m.down = at::Tensor();
         }
@@ -1102,6 +1099,10 @@ public:
         m.shared_gate_up = at::cat(
             {w(mp + "shared_expert.gate_proj.weight"), w(mp + "shared_expert.up_proj.weight")}, 0);
         m.shared_down = w(mp + "shared_expert.down_proj.weight");
+        m.shared_mlp = DenseMlp({m.shared_gate_up},
+                                {m.shared_down},
+                                MlpActivationRecipe::numerical(
+                                    [this](const at::Tensor& rows) { return gated(rows); }, true));
         m.shared_gate = w(mp + "shared_expert_gate.weight");
         for (const auto& name : {"shared_expert.gate_proj.weight",
                                  "shared_expert.up_proj.weight",

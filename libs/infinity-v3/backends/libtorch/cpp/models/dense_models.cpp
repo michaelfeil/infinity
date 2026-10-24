@@ -34,7 +34,10 @@ DenseChain::DenseChain(const Options& options, const Weights& weights) {
                 activation);
     if (!layers.empty())
       TORCH_CHECK(layers.back().out_features == in, "Dense module chain dimensions disagree");
-    layers.push_back({w, b, in, out, activation == "torch.nn.modules.activation.Tanh"});
+    ProjectionRecipe recipe;
+    recipe.cast_input = true;
+    layers.push_back(
+        {MlpProjection{w, b, recipe}, in, out, activation == "torch.nn.modules.activation.Tanh"});
   }
 }
 
@@ -55,7 +58,7 @@ at::Tensor DenseChain::forward(const at::Tensor& value) const {
     // precision before projection, matching Candle's pooled-output contract.
     // Pooling may produce FP32 rows even when weights use Half/BF16. Round to this layer's
     // checkpoint dtype before projection, then apply its optional tanh stage.
-    result = at::linear(result.to(layer.weight.scalar_type()), layer.weight, layer.bias);
+    result = layer.projection.forward(result);
     if (layer.tanh)
       result = at::tanh(result);
   }
