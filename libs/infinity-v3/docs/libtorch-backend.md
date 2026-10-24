@@ -119,7 +119,7 @@ and the Candle backend are unchanged.
 | Environment variable | Default | Behavior |
 | --- | --- | --- |
 | `INFINITY_TORCH_WEIGHT_READER_THREADS` | `16` | Maximum workers per file, from `1` to `64`; small files use fewer workers. |
-| `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES` | `268435456` | Budget for the host buffer pool and, separately, each transient tensor stage, from `65536` to `1073741824` bytes. Host buffers add alignment padding. Small files use a smaller pool. |
+| `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES` | `16777216` for shards up to 1 GiB; `268435456` otherwise | Budget for the host buffer pool and, separately, each transient tensor stage, from `65536` to `1073741824` bytes. Host buffers add alignment padding. Tiny files are capped by their data size. An explicit setting overrides the size-based default. |
 | `INFINITY_TORCH_WEIGHT_READER_DIRECT_IO` | `true` | Set to `false` or `0` to use the filesystem page cache, for example for repeated loads or a managed model-cache mount. |
 
 Header validation remains in Rust, including offset, shape and complete-file
@@ -717,3 +717,7 @@ This creates a small random hybrid model without downloading weights. Add
 `--model /path/to/checkpoint --device cuda --dtype bfloat16` to validate a trained
 checkpoint. Run `onejev_block_parity` with `ONEJEV_BLOCK_REFERENCE` pointing to
 `reference.json`; set `ONEJEV_DEVICE=cuda:0 ONEJEV_DTYPE=bfloat16` for GPU checks.
+
+Startup overlaps configuration validation (including CUDA discovery) with model frontend initialization. All models must pass validation before checkpoint loading begins. The CUDA preflight, health check, and full configured warmup remain required before readiness. Startup logs report frontend and configuration-validation durations; these phases overlap and must not be added together.
+
+See [ModernBERT startup measurements](modernbert-startup.md) for the draft baseline, candidate results, and remaining cold-start limitations.
