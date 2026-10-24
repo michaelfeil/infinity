@@ -24,6 +24,9 @@ int __tvm_ffi_fa4_voyage_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
 #define FA4_COMPUTE_CAPABILITY 90
 #endif
 extern "C" int infinity_fa4_compute_capability_v1(){return FA4_COMPUTE_CAPABILITY;}
+#ifdef INFINITY_FA4_PORTABLE_HOST
+extern "C" int infinity_fa4_portable_host_v1(){return 1;}
+#endif
 thread_local std::string last_error;
 extern "C" const char* infinity_fa4_error_v1(){return last_error.c_str();}
 struct StreamScope {

@@ -13,6 +13,7 @@
     "Multi-architecture native bundle dispatch",
     "SM100 export ABI",
     "DeBERTa score-hook export on SM8x",
-    "Offline target SM count for persistent scheduling"
+    "Offline target SM count for persistent scheduling",
+    "Portable baseline CPU targets for AOT host wrappers"
   ]
 }
