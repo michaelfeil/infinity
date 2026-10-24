@@ -69,6 +69,9 @@ at::Tensor radix_fold(const at::Tensor& x, const PackedInput& p) {
 // Validate host metadata before moving it to the inference device. Token
 // equality alone cannot justify sharing: causal tokens must have the same past,
 // and bidirectional tokens must belong to the same complete sequence.
+/// Validate exact token/position/type and causal-parent equivalence using host metadata.
+/// Bidirectional aliases must share complete sequences; the bridge
+/// checks media equivalence separately.
 void validate_radix(const PackedInput& p, bool causal) {
   if (!radix_enabled(p))
     return;

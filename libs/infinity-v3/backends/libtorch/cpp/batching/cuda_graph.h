@@ -34,9 +34,13 @@ public:
   CudaGraphCache(const CudaGraphCache&) = delete;
   CudaGraphCache& operator=(const CudaGraphCache&) = delete;
   // operation: 0 hidden states, 1 sequence classification, 2 token classification.
+  /// Execute or replay an exact-shape entry; returned graph outputs
+  /// may be overwritten by its next replay.
   at::Tensor forward(const Model&, const PackedInput&, int operation = 0);
   size_t size() const;
   Stats stats() const;
+  /// Enable capture of full layer/output views needed to publish
+  /// independent resident prefix snapshots.
   void retain_prefix_states(bool enabled = true);
 };
 }

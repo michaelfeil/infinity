@@ -134,6 +134,7 @@ at::Tensor encoder_gelu(const at::Tensor& input) {
   return output;
 }
 
+/// Validate broadcast bias and launch the reference rounded bias-then-GELU elementwise recipe.
 at::Tensor encoder_bias_gelu(const at::Tensor& input, const at::Tensor& bias) {
   TORCH_CHECK(input.is_cuda() && input.is_contiguous() && input.dim() == 2 && bias.dim() == 1 &&
                   bias.size(0) == input.size(1) && bias.is_contiguous() &&

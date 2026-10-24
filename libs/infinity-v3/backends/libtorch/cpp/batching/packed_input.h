@@ -21,6 +21,7 @@ struct ImageUploadLayout {
   bool operator==(const ImageUploadLayout&) const = default;
 };
 
+/// Build a storage/layout identity without hashing pixels; the matrix remains borrowed.
 inline ImageUploadLayout image_upload_layout(const at::Tensor& host) {
   TORCH_CHECK(host.dim() == 2, "Native image upload requires a matrix");
   return {host.const_data_ptr(),
@@ -52,6 +53,8 @@ class RequestImageUploads {
   std::unordered_map<const void*, std::vector<Entry>> entries;
 
 public:
+  /// Reuse an upload only for the same host pointer, dtype, shape, and strides. The caller must
+  /// keep host pixels immutable throughout this request.
   template <class Upload> at::Tensor get(const at::Tensor& host, Upload&& upload) {
     auto& matches = entries[host.const_data_ptr()];
     for (const auto& entry : matches)
@@ -92,6 +95,7 @@ class RequestImageFeatures {
   std::unordered_map<const at::TensorImpl*, std::vector<Entry>> entries;
 
 public:
+  /// Count uses of each tensor/layout pair so features can be released after their last use.
   explicit RequestImageFeatures(const std::vector<ImageInput>& images, bool enabled = true) {
     if (!enabled)
       return;
@@ -107,6 +111,8 @@ public:
     }
   }
 
+  /// Compute distinct cache misses together and return features in input image order. The callback
+  /// returns one tensor per missing image; duplicate layouts share its result.
   template <class Compute>
   std::vector<at::Tensor> get_batch(const std::vector<ImageInput>& images, Compute compute) {
     std::vector<ImageInput> missing;
@@ -140,6 +146,7 @@ public:
     return values;
   }
 
+  /// Consume one registered use, retaining an independent feature allocation only if needed again.
   template <class Compute> at::Tensor get(const ImageInput& image, Compute&& compute) {
     auto found = entries.find(image.pixels.unsafeGetTensorImpl());
     if (found != entries.end())

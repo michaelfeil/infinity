@@ -12,6 +12,7 @@ struct PrefixInputs {
   at::Tensor ids, positions, types;
 };
 
+/// Check same-device contiguous CUDA int64 token vectors using metadata only; no device reads.
 bool prefix_inputs_supported(const at::Tensor&, const at::Tensor&, const at::Tensor&);
 // Select the uncached suffix of each sequence into one independently owned
 // allocation. All metadata is validated before any GPU work is submitted.

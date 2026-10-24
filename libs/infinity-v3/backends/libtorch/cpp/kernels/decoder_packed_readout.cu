@@ -36,6 +36,8 @@ __global__ void select_last_real_row(const Word* hidden,
     out[int64_t(row) * width + col] = hidden[int64_t(selected) * width + col];
 }
 
+/// Gather one owned hidden row per sequence using IDs/offsets already on device. The last non-PAD
+/// token wins; all-PAD sequences select their first row.
 at::Tensor decoder_packed_classifier_rows(const at::Tensor& hidden,
                                           const at::Tensor& ids,
                                           const at::Tensor& cu,

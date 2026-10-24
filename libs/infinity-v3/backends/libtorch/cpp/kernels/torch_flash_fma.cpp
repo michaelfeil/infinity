@@ -64,6 +64,9 @@ bool torch_flash_fma_supported(const at::Tensor& q,
          properties->sharedMemPerBlockOptin >= 128 * 1024;
 }
 
+/// Translate packed Q/K/V metadata to the private Flash launch contract and allocate independent
+/// output. Rounded launch dimensions describe tile bounds only; tensor
+/// storage still contains exact token rows.
 static at::Tensor torch_flash_fma_impl(const at::Tensor& q,
                                        const at::Tensor& k,
                                        const at::Tensor& v,

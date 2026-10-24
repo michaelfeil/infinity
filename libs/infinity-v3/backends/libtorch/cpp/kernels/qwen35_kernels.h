@@ -5,12 +5,18 @@
 #include "batching/packed_input.h"
 
 namespace tei {
+/// Rotate vision Q/K rows using already selected spatial cosine/sine tables.
 at::Tensor gemma_vision_rotary_cuda(const at::Tensor&, const at::Tensor&, const at::Tensor&);
+/// Gather rotary phases by packed position IDs and rotate token/head rows.
 at::Tensor
 gemma_rotary_cuda(const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&);
+/// Normalize audio rows with the audio tower's reduction and affine precision recipe.
 at::Tensor gemma_audio_norm_cuda(const at::Tensor&, const at::Tensor&, double);
+/// Normalize vision rows with FP32 statistics and the tower's affine rounding recipe.
 at::Tensor gemma_vision_norm_cuda(const at::Tensor&, const at::Tensor&, double);
+/// Pool a height/width patch grid into spatial kernel groups without mixing separate images.
 at::Tensor gemma_vision_pool_cuda(const at::Tensor&, int64_t, int64_t, int64_t);
+/// Return per-head normalized Q/K with position-indexed rotary phases applied.
 std::pair<at::Tensor, at::Tensor> gemma3_qk_norm_rotary_cuda(const at::Tensor&,
                                                              const at::Tensor&,
                                                              const at::Tensor&,
@@ -19,14 +25,20 @@ std::pair<at::Tensor, at::Tensor> gemma3_qk_norm_rotary_cuda(const at::Tensor&,
                                                              const at::Tensor&,
                                                              const at::Tensor&,
                                                              double);
+/// Apply a prepared Gemma affine scale, selecting the reference reduction when requested.
 at::Tensor gemma_norm_cuda(const at::Tensor&, const at::Tensor&, double, bool);
 // Undefined result preserves the ordinary legacy norm-plus-add fallback.
 std::pair<at::Tensor, at::Tensor> gemma3_residual_prenorm_cuda(
     const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&, double);
 at::Tensor
 gemma3_legacy_residual_norm_cuda(const at::Tensor&, const at::Tensor&, const at::Tensor&, double);
+/// Split concatenated gate/up channels, activate the gate, and return their elementwise product.
 at::Tensor gemma_gated_cuda(const at::Tensor&, bool);
+/// Activate rows using the selected GELU or SiLU recipe without changing their shape.
 at::Tensor gemma_activation_cuda(const at::Tensor&, bool);
+/// Compose packed depthwise convolution, F32 gated-delta state updates, and gated RMS output.
+/// Optional initial/history buffers resume block execution;
+/// cache_layer enables resident checkpoints.
 at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              const at::Tensor& z,
                              const at::Tensor& ab,

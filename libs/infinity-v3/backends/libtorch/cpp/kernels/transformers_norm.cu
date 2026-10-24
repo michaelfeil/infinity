@@ -71,6 +71,7 @@ __global__ void transformers_norm_kernel(const T* input,
 }
 }
 
+/// Preserve the rounded residual and normalized-activation stages before affine multiplication.
 std::pair<at::Tensor, at::Tensor> transformers_rms_norm(const at::Tensor& input,
                                                         const at::Tensor& residual,
                                                         const at::Tensor& weight,

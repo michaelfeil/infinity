@@ -109,6 +109,9 @@ template <class T> void dispatch(layer_norm::FwdParams& p, cudaStream_t stream) 
 }
 }
 
+/// Share validation and numerical dispatch between allocating, residual-update, and scratch paths.
+/// Only qualified widths reuse residual storage; save_residual
+/// controls materialization independently.
 static std::pair<at::Tensor, at::Tensor>
 encoder_layer_norm_impl(const at::Tensor& x,
                         const at::Tensor& weight,

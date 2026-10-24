@@ -134,6 +134,9 @@ class CachedNoBiasLt {
   }
 
 public:
+  /// Project contiguous BF16 [rows, input_width] with [output_width, input_width] weights. Cache
+  /// only qualified immutable plans; unsupported policies or rejected plans use ordinary ATen
+  /// linear. Workspace follows the current ATen handle/stream rather than a retained raw pointer.
   at::Tensor forward(const at::Tensor& x, const at::Tensor& weight, bool prefill = false) const {
     at::Tensor output;
     auto fallback = [&] {

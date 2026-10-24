@@ -15,6 +15,8 @@ namespace tei {
 using MathPolicy = std::array<int64_t, 22 + at::num_sdp_backends>;
 
 // Both resident snapshots and captured shaders must use the same policy.
+/// Snapshot precision, backend, determinism, and workspace choices used to scope cached execution.
+/// A policy change invalidates reuse even when tensor shapes and token identities still match.
 static inline MathPolicy execution_math_policy(const c10::Device& device) {
   auto& global = at::globalContext();
   MathPolicy policy = {int64_t(global.allowTF32CuBLAS()),

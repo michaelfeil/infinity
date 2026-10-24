@@ -105,6 +105,8 @@ struct Attention {
     return out(attended.contiguous().view({n, width}));
   }
 
+  /// Run one packed self-attention call while cumulative boundaries
+  /// isolate separate decision requests.
   at::Tensor packed_self(const at::Tensor& x, const PackedInput& input) const {
     auto tokens = x.size(0), width = x.size(1), dim = width / heads;
     TORCH_CHECK(x.is_cuda() && (x.scalar_type() == at::kHalf || x.scalar_type() == at::kBFloat16) &&
@@ -126,18 +128,23 @@ struct Attention {
   }
 };
 
+/// Mean-pool a nonempty [begin, end) token interval in FP32, then convert back to the hidden dtype.
 at::Tensor span(const at::Tensor& x, std::pair<int64_t, int64_t> interval) {
   auto [a, b] = interval;
   TORCH_CHECK(a >= 0 && a < b && b <= x.size(0), "Invalid decision token span");
   return x.narrow(0, a, b - a).to(at::kFloat).mean(0).to(x.scalar_type());
 }
 
+/// Normalize rows along the final dimension using FP32 norm
+/// calculation and the head's dtype rounding.
 at::Tensor normalize(const at::Tensor& x) {
   auto denominator =
       x.to(at::kFloat).square().sum(-1, true).sqrt().clamp_min(1e-12).to(x.scalar_type());
   return x / denominator;
 }
 
+/// Resolve the decision vocabulary matrix from an explicit LM head or
+/// supported tied embedding namespace.
 at::Tensor lexical(const Options& cfg, const Weights& weights) {
   auto tied = cfg.boolean("tie_word_embeddings", false) ||
               cfg.boolean("text_config.tie_word_embeddings", false);
@@ -154,6 +161,7 @@ at::Tensor lexical(const Options& cfg, const Weights& weights) {
   TORCH_CHECK(false, "Decision checkpoint has no tied token embedding weights");
 }
 
+/// Require one decision request per nonempty packed sequence and matching hidden token-row count.
 void validate(const at::Tensor& hidden,
               const PackedInput& input,
               const std::vector<DecisionRequest>& requests) {
@@ -325,6 +333,8 @@ struct LayaHead final : DecisionHead {
     std::vector<int64_t> token_types, marker_rows, marker_offsets{0};
   };
 
+  /// Translate sequence-relative markers into packed row indices
+  /// and count boundaries for Laya readout.
   Metadata metadata(const PackedInput& input, const std::vector<DecisionRequest>& requests) const {
     TORCH_CHECK(input.batch > 0 && int64_t(requests.size()) == input.batch && input.offsets,
                 "Invalid packed Laya metadata");
@@ -357,6 +367,8 @@ struct LayaHead final : DecisionHead {
     return value;
   }
 
+  /// Upload token types, marker rows, and marker offsets as one
+  /// int64 buffer before backbone execution.
   at::Tensor upload_metadata(const Metadata& value) const {
     auto combined = value.token_types;
     combined.insert(combined.end(), value.marker_rows.begin(), value.marker_rows.end());
@@ -586,6 +598,9 @@ struct ClefHead final : DecisionHead {
     return total;
   }
 
+  /// Score Clef field options using contextual span means, lexical priors, and joint field
+  /// refinement. Return concatenated F32 option logits in field order,
+  /// preserving each field's option order.
   at::Tensor score(const at::Tensor& raw,
                    const at::Tensor& ids,
                    const std::vector<DecisionField>& fields) const {

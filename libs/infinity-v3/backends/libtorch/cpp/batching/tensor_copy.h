@@ -14,6 +14,8 @@
 namespace tei {
 // Foreach's fast copy route requires a homogeneous tensor list. Graph inputs
 // mix integer metadata with model values, so group them before dispatch.
+/// Enqueue paired copies on the current stream; callers retain buffers through completion. With
+/// leading_rows, each destination receives only its own leading-row extent.
 inline void tensor_copies(const std::vector<at::Tensor>& targets,
                           const std::vector<at::Tensor>& sources,
                           bool leading_rows = false) {

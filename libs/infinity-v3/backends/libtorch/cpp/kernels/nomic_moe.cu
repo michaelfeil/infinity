@@ -141,6 +141,8 @@ __global__ void reduce_split(const float* partials,
   }
 }
 
+/// Use the prepared per-route-count split-K factor, then reduce FP32 partials before BF16
+/// conversion. Scratch covers only actual routed rows, including the two possible K partitions.
 at::Tensor nomic_moe_down(const at::Tensor& a,
                           const at::Tensor& b,
                           const at::Tensor& ends,
@@ -218,6 +220,7 @@ __global__ void setup_up(const char* input,
 }
 }
 
+/// Build grouped-GEMM descriptors from device expert boundaries and project actual routed rows.
 at::Tensor nomic_moe_up(const at::Tensor& a, const at::Tensor& first, const at::Tensor& ends) {
   const auto E = first.size(0), rows = a.size(0), K = a.size(1), N = first.size(1);
   auto result = at::empty({rows, N}, a.options());

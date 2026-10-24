@@ -9,6 +9,8 @@
 
 namespace tei {
 // Real rows only: the first dimension is never aligned or padded.
+/// Return dynamically quantized activation rows and their per-row scale tensor. The non-CUDA
+/// implementation throws; callers must select an eligible execution path first.
 std::pair<at::Tensor, at::Tensor> fp8_quantize_rows(const at::Tensor& input);
 
 // Undefined output preserves the original ordinary ATen linear path.
@@ -33,8 +35,11 @@ public:
   // stream and handle once. It stores no thread-local guard. Callers must keep
   // the same device, stream and policy while dispatching with it.
   Session prepare(const at::Tensor& input) const;
+  /// Attempt a bias-free matrix projection using this session's captured execution context. An
+  /// undefined tensor asks the caller to retain its ordinary ATen linear fallback.
   at::Tensor
   forward(const at::Tensor& input, const at::Tensor& weight, const Session& session) const;
+  /// Prepare a one-call session and attempt the same qualified ordinary projection.
   at::Tensor forward(const at::Tensor& input, const at::Tensor& weight) const;
 };
 
@@ -46,7 +51,9 @@ class Fp8Linear {
   bool rowwise_;
 
 public:
+  /// Quantize checkpoint weights once and retain scales for subsequent activation projections.
   explicit Fp8Linear(const at::Tensor& weight);
+  /// Quantize activation rows and project them, returning model-dtype rows with optional bias.
   at::Tensor forward(const at::Tensor& input, const at::Tensor& bias = {}) const;
   // Accept the identical rowwise recipe from a fused activation producer.
   at::Tensor forward_quantized(const at::Tensor& input,

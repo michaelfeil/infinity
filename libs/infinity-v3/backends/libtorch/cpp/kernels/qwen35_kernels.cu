@@ -1130,6 +1130,8 @@ __global__ void qwen35_gdn_cached(const __nv_bfloat16* qkv,
       final_state[((int64_t(seq) * vh + head) * 128 + lane + i * Lanes) * 128 + col] = state[i];
 }
 
+/// Build normalized Q/K and decay buffers, then select cached, chunked, or recurrent execution.
+/// Convolution history is sequence-local; prefix snapshots retain FP32 recurrent state.
 at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              const at::Tensor& z,
                              const at::Tensor& ab,

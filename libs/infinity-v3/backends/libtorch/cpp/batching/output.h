@@ -41,6 +41,7 @@ struct OutputPool {
   size_t next_slot = 0;
   size_t max_bytes = 512ULL << 20;
 
+  /// Count retained host, output, and input storage; callers hold the pool mutex.
   size_t retained_bytes() const {
     size_t bytes = 0;
     for (const auto& slot : slots) {
@@ -162,6 +163,7 @@ public:
     pool->available.notify_one();
   }
 
+  /// Reserve F32 host/device output capacity under the pool budget before any output copies.
   void allocate() {
     // Keep wait() non-null even when no output rows were requested.
     TORCH_CHECK(size <= static_cast<size_t>(std::numeric_limits<int64_t>::max()) &&
@@ -191,6 +193,8 @@ public:
           at::empty({capacity}, at::TensorOptions().dtype(at::kFloat).device(device));
   }
 
+  /// Copy contiguous CPU input into lease-owned pinned storage, then enqueue its device upload. The
+  /// original host tensor may be released after this call; the lease retains transfer buffers.
   at::Tensor upload(const at::Tensor& host) {
     TORCH_CHECK(host.device().is_cpu() && host.is_contiguous(), "Invalid staged input");
     std::unique_lock lock(pool->mutex);
@@ -210,6 +214,8 @@ public:
     return result;
   }
 
+  /// Append flattened values at a float-element offset, converting through the F32 device buffer.
+  /// The host copy is asynchronous; reading it requires record() followed by wait().
   void copy(const at::Tensor& tensor, size_t offset) {
     output_started = true;
     auto source = tensor.contiguous().view({-1});
@@ -221,6 +227,7 @@ public:
     slot->gpu.push_back(std::move(source));
   }
 
+  /// Record completion after all submission work on the lease stream has been enqueued.
   void record() {
 #ifdef TEI_TORCH_CUDA_KERNELS
     // H2D, graph replay and D2H use this same stream. The next replay cannot
@@ -230,6 +237,7 @@ public:
 #endif
   }
 
+  /// Wait for recorded CUDA completion and borrow the host result until this lease is destroyed.
   const float* wait() {
 #ifdef TEI_TORCH_CUDA_KERNELS
     c10::cuda::CUDAGuard guard(stream.device());

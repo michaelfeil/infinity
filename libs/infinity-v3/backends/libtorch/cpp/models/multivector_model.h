@@ -23,6 +23,7 @@ public:
       : backbone(std::move(model)), projection(std::move(weight)), bias(std::move(offset)),
         epsilon(eps) {}
 
+  /// Prepare the backbone and reject projection/bias shapes that disagree with its token width.
   void ready() override {
     backbone->ready();
     TORCH_CHECK(!projection.defined() ||
@@ -41,6 +42,8 @@ public:
     return backbone->supports_images();
   }
 
+  /// Return projected token rows normalized independently along their final dimension. The norm
+  /// floor protects zero rows; sequence pooling is outside this adapter.
   at::Tensor forward(const PackedInput& input) const override {
     auto states = backbone->forward(input);
     if (projection.defined())

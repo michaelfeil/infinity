@@ -94,6 +94,8 @@ at::Tensor decoder_half_moe_probabilities(const at::Tensor& logits) {
   return result;
 }
 
+/// Return Half top-eight route weights, with optional sequential
+/// FP32 normalization before conversion.
 at::Tensor decoder_half_moe_route_weights(const at::Tensor& selected, bool renormalize) {
   TORCH_CHECK(selected.is_cuda() && selected.scalar_type() == at::kFloat && selected.dim() == 2 &&
                   selected.size(1) == 8 && selected.is_contiguous(),

@@ -21,22 +21,26 @@ struct Options {
     return it == values.end() ? fallback : it->second;
   }
 
+  /// Parse a present value with stoll; only a missing key uses the fallback.
   int64_t integer(const std::string& key, int64_t fallback = 0) const {
     auto it = values.find(key);
     return it == values.end() ? fallback : std::stoll(it->second);
   }
 
+  /// Parse a present value with stod; only a missing key uses the fallback.
   double real(const std::string& key, double fallback = 0) const {
     auto it = values.find(key);
     return it == values.end() ? fallback : std::stod(it->second);
   }
 
+  /// A present value is true only for the literal "true"; a missing key uses the fallback.
   bool boolean(const std::string& key, bool fallback = false) const {
     auto it = values.find(key);
     return it == values.end() ? fallback : it->second == "true";
   }
 };
 
+/// Borrow a required named tensor from the map; missing parameters raise a descriptive error.
 inline const at::Tensor& weight(const Weights& weights, const std::string& name) {
   auto it = weights.find(name);
   TORCH_CHECK(it != weights.end(), "Missing model weight: ", name);

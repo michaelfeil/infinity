@@ -125,6 +125,8 @@ __global__ void quant_vector(const T* x, __nv_fp8_e4m3* y, float* scales, int wi
 }
 }
 
+/// Quantize each real activation row to E4M3 with an F32 [rows, 1] dequantization scale. Output row
+/// counts stay exact; projection alignment requirements do not add padded tokens.
 std::pair<at::Tensor, at::Tensor> fp8_quantize_rows(const at::Tensor& input) {
   TORCH_CHECK(input.is_cuda() && input.dim() == 2 && input.is_contiguous() &&
                   (input.scalar_type() == at::kHalf || input.scalar_type() == at::kBFloat16),

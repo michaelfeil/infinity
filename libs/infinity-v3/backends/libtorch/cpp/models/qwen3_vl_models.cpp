@@ -41,6 +41,8 @@ at::Tensor Qwen3VL::ln(const at::Tensor& x, const std::string& name) const {
   return at::layer_norm(x, {x.size(-1)}, w(name + ".weight"), w(name + ".bias"), 1e-6);
 }
 
+/// Group merge-by-merge patches and project vision width to text width using
+/// checkpoint-specific norm/GELU order.
 at::Tensor Qwen3VL::merger(const at::Tensor& x, const std::string& p, bool post) const {
   auto grouped = x.view({-1, hidden * merge * merge});
   auto normalized = post ? ln(grouped, p + ".norm") : ln(x, p + ".norm").view_as(grouped);
@@ -57,6 +59,9 @@ at::Tensor Qwen3VL::merger(const at::Tensor& x, const std::string& p, bool post)
   return out;
 }
 
+/// Batch patch projections and transformer layers while isolating individual frames in attention.
+/// Return concatenated merged features and ordered deepstack
+/// feature tensors for text-layer injection.
 std::pair<at::Tensor, std::vector<at::Tensor>>
 Qwen3VL::vision(const std::vector<ImageInput>& images) const {
   TORCH_CHECK(!images.empty(), "Empty Qwen3-VL image batch");
@@ -404,6 +409,8 @@ int64_t Qwen3VL::output_width() const {
   return text->output_width();
 }
 
+/// Build multimodal rotary phases and inject current vision/deepstack rows into the text decoder. A
+/// cached visual prefix skips its tower work but retains the suffix's original deepstack stages.
 at::Tensor Qwen3VL::forward(const PackedInput& input) const {
   auto positions = input.multimodal_positions.defined()
                        ? input.multimodal_positions

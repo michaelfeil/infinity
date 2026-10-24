@@ -59,6 +59,8 @@ bool radix_qkv_cuda_supported(const at::Tensor& q,
   return true;
 }
 
+/// Allocate three logical-row outputs and copy Q/K/V bits
+/// together; scatter values are prevalidated.
 std::array<at::Tensor, 3> radix_unfold_qkv_cuda(const at::Tensor& q,
                                                 const at::Tensor& k,
                                                 const at::Tensor& v,

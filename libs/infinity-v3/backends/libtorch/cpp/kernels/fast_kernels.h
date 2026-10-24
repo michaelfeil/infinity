@@ -11,6 +11,8 @@ namespace tei {
 // including its strict-comparison tie behavior. FP32 scores, int64 indices.
 std::pair<at::Tensor, at::Tensor> nomic_router_topk8(const at::Tensor& probabilities, int64_t k);
 
+/// Normalize the final dimension after required residual and optional second-residual additions.
+/// Inputs remain unchanged; the result owns fresh storage on the input device.
 at::Tensor fused_add_layer_norm(const at::Tensor& x,
                                 const at::Tensor& residual,
                                 const at::Tensor& weight,
@@ -28,6 +30,8 @@ at::Tensor fused_embedding_layer_norm(const at::Tensor& ids,
                                       const at::Tensor& weight,
                                       const at::Tensor& bias,
                                       double epsilon);
+/// Return normalized rows and the model-dtype residual sum. Without a residual, the second result
+/// aliases x; callers must not assume two new allocations.
 std::pair<at::Tensor, at::Tensor> fused_add_rms_norm(const at::Tensor& x,
                                                      const at::Tensor& residual,
                                                      const at::Tensor& weight,
@@ -36,6 +40,9 @@ std::pair<at::Tensor, at::Tensor> fused_add_rms_norm(const at::Tensor& x,
 // 4 Candle GELU tanh, 5 Candle SiLU, with model-dtype intermediate rounding.
 at::Tensor
 fused_gated_activation(const at::Tensor& gate_up, int32_t activation, bool gate_first = true);
+/// Rotate packed Q/K into separate outputs using per-token cosine/sine values. Outputs are disjoint
+/// views of one fresh allocation; neither aliases the inputs. contract_first_product selects the
+/// qualified floating-point contraction recipe.
 std::pair<at::Tensor, at::Tensor> fused_rotary(const at::Tensor& q,
                                                const at::Tensor& k,
                                                const at::Tensor& cosine,
@@ -54,7 +61,10 @@ void encoder_rotary_indexed_inplace(const at::Tensor& q,
                                     const at::Tensor& sine,
                                     const at::Tensor& positions);
 at::Tensor fused_gelu(const at::Tensor& x, bool approximate_tanh);
+/// Add broadcast feature bias before GELU, preserving the selected exact or tanh activation recipe.
 at::Tensor fused_bias_gelu(const at::Tensor& x, const at::Tensor& bias, bool approximate_tanh);
+/// Normalize Q/K per head and apply rotary phases into storage independent of the inputs. The
+/// specialized CUDA path returns disjoint views of one shared output allocation.
 std::pair<at::Tensor, at::Tensor> fused_qk_norm_rope(const at::Tensor& q,
                                                      const at::Tensor& k,
                                                      const at::Tensor& q_weight,

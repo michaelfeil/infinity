@@ -34,6 +34,8 @@ namespace tei {
 namespace {
 enum class Family { Distil, Modern, Nomic, Gte, Jina, JinaCode };
 
+/// Build GTE's scaled rotary frequencies from head dimension,
+/// base theta, and the NTK scaling factor.
 at::Tensor
 gte_ntk_inverse_frequencies(int64_t dimension, double theta, double factor, c10::Device device) {
   const float base = static_cast<float>(theta), scale_factor = static_cast<float>(factor);
@@ -505,6 +507,9 @@ struct Encoder final : Model {
     return at::cat({left * c - right * s, right * c + left * s}, -1);
   }
 
+  /// Select Nomic experts using the qualified router ordering, then combine model-dtype
+  /// contributions. A prepared device-routing profile enables grouped execution;
+  /// other profiles retain the expert loop.
   at::Tensor nomic_moe(const at::Tensor& h, const std::string& p) const {
     // Route packed tokens without expanding or padding any sequence. Only the
     // selected token rows are sent to each expert, matching Candle's dispatch.
@@ -621,6 +626,9 @@ struct Encoder final : Model {
         q, k, v, input, 1.0 / std::sqrt(hidden / heads), false, window, window, alibi, bias);
   }
 
+  /// Run the shared encoder families over real packed tokens, with family-specific embeddings and
+  /// norms. An ordinary-linear session is local to this call so all its
+  /// projections share one stream/context policy.
   at::Tensor forward(const PackedInput& input) const override {
 #ifdef TEI_TORCH_CUDA_KERNELS
     // The guard belongs to this synchronous call, never to a copyable session.
@@ -888,6 +896,7 @@ struct Encoder final : Model {
         h, weight(weights, n + ".weight"), b == weights.end() ? at::Tensor() : b->second);
   }
 
+  /// Apply the DistilBERT vocabulary transform, norm, and nonnegative log1p readout for SPLADE.
   at::Tensor token_scores(const at::Tensor& h) const override {
     TORCH_CHECK(family == Family::Distil,
                 "SPLADE is only supported for DistilBERT in this encoder family");
@@ -928,6 +937,8 @@ struct Encoder final : Model {
     return sequence_readout(input, states);
   }
 
+  /// Pool each exact sequence span using its configured CLS/last/mean rule, then apply the task
+  /// head. Modern CPU and CUDA means preserve their qualified reduction recipes.
   at::Tensor sequence_readout(const PackedInput& input, at::Tensor h) const {
     std::vector<at::Tensor> rows;
     const auto pool = family == Family::Modern ? o.string("classifier_pooling", "cls") : "cls";
@@ -1056,6 +1067,7 @@ struct Mpnet final : Model {
     }
   }
 
+  /// Construct MPNet's signed 32-bucket relative bias for one actual sequence length.
   at::Tensor position_bias(int64_t length) const {
     auto idx = at::arange(length, at::TensorOptions().device(device).dtype(at::kLong));
     auto relative = idx.unsqueeze(0) - idx.unsqueeze(1), distance = relative.abs();
@@ -1286,6 +1298,8 @@ struct Deberta final : Model {
     return relative_buckets(idx.unsqueeze(1) - idx.unsqueeze(0));
   }
 
+  /// Map signed relative distances to clipped DeBERTa indices,
+  /// logarithmically bucketing distant positions.
   at::Tensor relative_buckets(at::Tensor delta) const {
     if (o.integer("position_buckets", -1) > 0) {
       const double mid = span / 2.;
@@ -1299,6 +1313,7 @@ struct Deberta final : Model {
     return (delta + span).clamp(0, 2 * span - 1);
   }
 
+  /// Cache the compact signed-distance table under shared entry/byte bounds for the FA4 path.
   at::Tensor signed_buckets(int64_t length) const {
     const auto found = signed_bucket_cache.find(length);
     if (found != signed_bucket_cache.end())
@@ -1314,6 +1329,8 @@ struct Deberta final : Model {
     return table;
   }
 
+  /// Retain exact-length DeBERTa bucket tables without eviction
+  /// because graphs may keep their addresses.
   at::Tensor cached_buckets(int64_t length) const {
     const auto found = shared_bucket_cache.find(length);
     if (found != shared_bucket_cache.end())
@@ -1329,6 +1346,8 @@ struct Deberta final : Model {
     return table;
   }
 
+  /// Evaluate DeBERTa disentangled attention over packed rows with bounded relative-bias storage.
+  /// FA4 uses compact signed buckets; other paths fill only sequence-local bias tiles.
   at::Tensor forward(const PackedInput& input) const override {
     auto h = at::embedding(w("embeddings.word_embeddings.weight"), input.ids);
     if (o.boolean("position_biased_input", true))

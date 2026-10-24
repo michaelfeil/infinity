@@ -181,6 +181,8 @@ struct GraphKey {
   }
 };
 
+/// Clone replay inputs into stable storage and retain copied host offsets for the entry lifetime.
+/// Repeated image tensors share one owned clone so replay preserves request-local identity.
 static PackedInput clone_graph_input(const PackedInput& input, std::vector<int32_t>& offsets) {
   offsets.assign(input.offsets, input.offsets + input.batch + 1);
   PackedInput owned{input.ids.clone(),
@@ -224,6 +226,8 @@ static PackedInput clone_graph_input(const PackedInput& input, std::vector<int32
   return owned;
 }
 
+/// Collect current request values into existing graph input
+/// buffers without replacing their addresses.
 static void graph_input_copies(const PackedInput& target,
                                const PackedInput& source,
                                std::vector<at::Tensor>& targets,

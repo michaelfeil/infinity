@@ -333,6 +333,7 @@ void qwen35_cached_conv_cuda(const at::Tensor& input,
   C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
+/// Resume each sequence from its retained F32 state pointer and capture requested checkpoint rows.
 void qwen35_cached_recurrent_cuda(const at::Tensor& values,
                                   const at::Tensor& qk,
                                   const at::Tensor& gates,

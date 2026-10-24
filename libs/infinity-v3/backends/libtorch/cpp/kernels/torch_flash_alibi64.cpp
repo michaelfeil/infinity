@@ -19,6 +19,7 @@ bool torch_flash_alibi64_supported(c10::Device device, at::ScalarType dtype, int
          at::cuda::getDeviceProperties(device.index())->major >= 8;
 }
 
+/// Validate the qualified packed width-64 profile and pass one contiguous F32 ALiBi slope per head.
 at::Tensor torch_flash_alibi64(const at::Tensor& q,
                                const at::Tensor& k,
                                const at::Tensor& v,

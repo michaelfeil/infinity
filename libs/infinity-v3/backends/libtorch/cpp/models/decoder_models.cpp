@@ -113,6 +113,8 @@ class Decoder final : public Model {
     return tensor;
   }
 
+  /// Project concatenated checkpoint slices separately when the reference uses distinct GEMMs.
+  /// Keeping their output widths separate preserves each projection's accumulation/rounding recipe.
   at::Tensor separate_linear(const at::Tensor& x,
                              const at::Tensor& weight,
                              const at::Tensor& bias,
@@ -265,6 +267,7 @@ class Decoder final : public Model {
     }
   }
 
+  /// Prepare model-specific rotary tables, including configured scaling and layer-local variants.
   void load_rope() {
     auto theta = options.real("rope_theta", 10000.0);
     auto scale = options.real("rope_scaling.factor", 1.0);
@@ -344,6 +347,9 @@ class Decoder final : public Model {
     }
   }
 
+  /// Attend complete packed sequences with the configured causal/window mask and qualified
+  /// provider. CPU sequences are sliced independently; CUDA cumulative
+  /// offsets enforce the same isolation.
   at::Tensor attend_full(const at::Tensor& q,
                          const at::Tensor& k,
                          const at::Tensor& v,
@@ -444,6 +450,8 @@ class Decoder final : public Model {
     return at::cat(outputs, 0);
   }
 
+  /// Combine suffix queries with retained full-context K/V while
+  /// preserving the decoder attention recipe.
   at::Tensor attend_cached(const at::Tensor& q,
                            const at::Tensor& k,
                            const at::Tensor& v,
@@ -516,6 +524,8 @@ class Decoder final : public Model {
     return radix_fold(full, input);
   }
 
+  /// Apply the layer's dense or expert feed-forward path, reusing
+  /// prepared FP8 row scales when supplied.
   at::Tensor mlp(const at::Tensor& x,
                  const DecoderLayer& layer,
                  const PackedInput& input,
@@ -687,6 +697,8 @@ public:
       causal = cfg.boolean("is_causal", true);
   }
 
+  /// Validate layer/head geometry and cache loaded projections, norms,
+  /// rotary tables, and optional task heads.
   void ready() override {
     fp8_dynamic = options.boolean("_fp8_dynamic", false);
     const auto fp8_scope = options.string("_fp8_scope", fp8_dynamic ? "all" : "mlp");
@@ -1026,6 +1038,9 @@ public:
     return classify_hidden(input, forward(input));
   }
 
+  /// Read sequence logits from complete logical hidden rows without rerunning the backbone.
+  /// UltraBERT selects the first token; other decoders select the
+  /// last non-PAD token or the packed end.
   at::Tensor classify_hidden(const PackedInput& input,
                              const at::Tensor& hidden_states) const override {
     const auto& logical = prefix_logical_input(input);
@@ -1072,6 +1087,8 @@ public:
     return at::linear(hidden_states.index_select(0, selected), score, score_bias);
   }
 
+  /// Embed compact causal rows when enabled, run decoder layers, then restore logical/prefix rows.
+  /// The returned token matrix follows the original full request order used by downstream readouts.
   at::Tensor forward(const PackedInput& input) const override {
     TORCH_CHECK(!radix_enabled(input) || supports_radix(),
                 "Radix folding currently requires a causal text decoder");
@@ -1085,6 +1102,9 @@ public:
     return prefix_restore(input, radix_unfold(compact, input));
   }
 
+  /// Inject visual embeddings into selected packed token rows and use externally prepared rotary
+  /// phases. Deepstack features are added at their corresponding text
+  /// layers; radix folding is rejected here.
   at::Tensor multimodal_forward(const PackedInput& input,
                                 const at::Tensor& indices,
                                 const at::Tensor& visual,
@@ -1133,6 +1153,9 @@ public:
                               {});
   }
 
+  /// Run transformer layers over supplied embedding rows while retaining explicit residual state.
+  /// Compact projections unfold for attention and fold back for row-local
+  /// work; output heads remain separate.
   at::Tensor forward_states(const PackedInput& input,
                             at::Tensor h,
                             const at::Tensor& cosine,
@@ -1361,6 +1384,9 @@ at::Tensor decoder_moe_forward(const at::Tensor& x,
   return decoder_moe_dispatch(x, gate_up, down, ids, routing, activate);
 }
 
+/// Group preselected token routes by expert, apply its gated MLP, and scatter weighted
+/// contributions. The callback supplies the model-specific activation;
+/// routing dtype controls accumulation.
 at::Tensor decoder_moe_dispatch(const at::Tensor& x,
                                 const at::Tensor& gate_up,
                                 const at::Tensor& down,

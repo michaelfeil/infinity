@@ -208,6 +208,7 @@ at::Tensor gemma4_bf16_norm_residual(const at::Tensor& residual,
   return out;
 }
 
+/// Select sequence-end scores from the full score projection, preserving BF16 soft-cap stages.
 at::Tensor gemma4_bf16_sequence_score_readout(const at::Tensor& logits,
                                               const at::Tensor& cumulative,
                                               int64_t batch,

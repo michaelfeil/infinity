@@ -7,6 +7,8 @@
 namespace tei {
 // Packed BF16 values, normalized/scaled FP32 Q/K, and FP32 decay/beta.
 // Prefix snapshots and initial states remain FP32. Chunk tails are exact-length.
+/// Write real-token BF16 output with F32 intermediate state; optional final_state is allocated per
+/// sequence. Initial states are selected through the input's block-cache source mapping.
 void qwen35_chunk_delta_cuda(const at::Tensor& values,
                              const at::Tensor& qk,
                              const at::Tensor& gates,

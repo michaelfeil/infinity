@@ -10,6 +10,8 @@ bool radix_qkv_cuda_supported(const at::Tensor& q,
                               const at::Tensor& k,
                               const at::Tensor& v,
                               const at::Tensor& scatter);
+/// Gather compact Q/K/V into three owned logical-row tensors using one int64 scatter map. The
+/// caller must validate map contents before this CUDA launch; only layout is checked here.
 std::array<at::Tensor, 3> radix_unfold_qkv_cuda(const at::Tensor& q,
                                                 const at::Tensor& k,
                                                 const at::Tensor& v,

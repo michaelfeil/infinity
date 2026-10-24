@@ -67,6 +67,7 @@ inline size_t pinned_host_page_size() {
   return page;
 }
 
+/// Round at least one byte up to host-page granularity, rejecting arithmetic overflow.
 inline size_t pinned_allocation_bytes(size_t bytes, size_t page = pinned_host_page_size()) {
   TORCH_CHECK(page > 0 && bytes <= std::numeric_limits<size_t>::max() - (page - 1),
               "Native pinned staging capacity overflow");
@@ -150,6 +151,8 @@ public:
   }
 };
 #endif
+/// Allocate a one-dimensional CPU staging tensor whose views retain its pinned-byte charge. CUDA
+/// builds use budgeted host allocation; CPU-only builds return ordinary CPU storage.
 inline at::Tensor allocate_pinned_staging(int64_t count, at::TensorOptions options) {
   TORCH_CHECK(options.device().is_cpu() && options.layout() == at::kStrided,
               "Native pinned staging requires a strided CPU tensor");

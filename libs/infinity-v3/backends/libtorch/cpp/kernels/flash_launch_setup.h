@@ -8,6 +8,8 @@
 namespace tei {
 // Entries are thread-local and bounded. Context IDs are unique for the process,
 // so a destroyed/reset CUDA context cannot reuse an old success entry.
+/// Cache only successful dynamic-shared-memory settings for this thread/context/kernel. Other
+/// attributes and unavailable context IDs call the runtime directly; failures are never cached.
 template <typename Kernel>
 inline cudaError_t flash_set_attribute(Kernel function, cudaFuncAttribute attribute, int value) {
   const void* kernel = reinterpret_cast<const void*>(function);

@@ -17,7 +17,9 @@ public:
     return layers.empty();
   }
 
+  /// Resolve the final pooled width and check the backbone width against the first projection.
   int64_t output_width(int64_t input_width) const;
+  /// Apply ordered linear/tanh modules to pooled rows; the backbone's raw token rows stay separate.
   at::Tensor forward(const at::Tensor&) const;
 
 private:
