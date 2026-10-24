@@ -248,6 +248,18 @@ int main(int argc, char** argv) {
   auto model = create_qwen3_vl(cfg, weights, c10::Device("cpu"), at::kFloat);
   model->ready();
   batched_tower_test(*dynamic_cast<Qwen3VL*>(model.get()), at::rand({4, 6}));
+  // Prepared numerical recipes must remain valid when the public tower object moves.
+  auto move_cfg = cfg;
+  move_cfg.values["_multi_vector"] = "true";
+  move_cfg.values["vision_config.hidden_act"] = "silu";
+  auto move_weights = weights;
+  Qwen3VL original(move_cfg, move_weights, c10::Device("cpu"), at::kFloat, true);
+  original.ready();
+  ImageInput move_image{at::rand({4, 6}), {1, 2, 2}, 2, 0, 1, 0};
+  auto before_move = original.image_features(move_image);
+  Qwen3VL moved(std::move(original));
+  TORCH_CHECK(at::equal(before_move, moved.image_features(move_image)),
+              "Moving a prepared vision tower changed its MLP numerical recipe");
   TORCH_CHECK(model->supports_images(), "Qwen3-VL image capability unavailable");
   std::vector<int64_t> ids = {1, 2, 3, 4, 5, 6}, pos = {0, 1, 2, 3, 0, 1};
   std::vector<int32_t> offsets = {0, 4, 6};

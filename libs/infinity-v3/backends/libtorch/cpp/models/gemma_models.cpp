@@ -6,6 +6,7 @@
 // Native adaptations of backends/candle/src/models/{gemma3,gemma4,embedding_gemma2}.rs.
 // Upstream Apache-2.0 notices remain in LICENSE and NOTICE.
 #include "models/gemma_models.h"
+#include "helpers/dense_mlp.h"
 #include "helpers/image_feature_cache.h"
 #include "helpers/fp8_linear.h"
 #include "helpers/workspace_admission.h"
@@ -58,7 +59,7 @@ class Gemma final : public Model {
   struct Layer {
     std::string p;
     at::Tensor qkv, gate_up;
-    std::unique_ptr<Fp8Linear> fp8_gate_up, fp8_down;
+    DenseMlp dense_mlp;
     /// Per-layer head width and K/V head count may differ from global defaults. window applies
     /// only when sliding is true.
     int64_t dim, kv, window;
@@ -78,6 +79,7 @@ class Gemma final : public Model {
   mutable ImageFeatureCache image_features;
   std::unordered_map<int64_t, at::Tensor> norm_ones;
   std::unordered_map<std::string, std::array<double, 4>> audio_bounds;
+  std::unordered_map<std::string, DenseMlp> media_mlps;
   // Choose the same accumulation tree as the original logical-row GEMM,
   // using descriptors only. Execute on actual compact rows, with no padding.
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -484,9 +486,7 @@ class Gemma final : public Model {
     auto ff = [&](const at::Tensor& value, const std::string& p) {
       auto x = an(value.clamp(-clip, clip), p + "pre_layer_norm");
 
-      x = al(x, p + "ffw_layer_1");
-      x = at::silu(x.to(at::kFloat)).to(dtype);
-      x = al(x, p + "ffw_layer_2").clamp(-clip, clip);
+      x = media_mlps.at(root + p).forward(x).clamp(-clip, clip);
       x = an(x, p + "post_layer_norm");
       x = value + x * cfg.real("audio_config.residual_weight", .5);
       return x;
@@ -700,17 +700,7 @@ class Gemma final : public Model {
       auto output = attention_output.reshape({states.size(0), nh * dim});
       states = states + vn(vl(output, p + "self_attn.o_proj"), p + "post_attention_layernorm");
       normalized = vn(states, p + "pre_feedforward_layernorm");
-      auto gate = vl(normalized, p + "mlp.gate_proj");
-      auto activation = cfg.string("vision_config.hidden_activation", "gelu_pytorch_tanh");
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if (device.is_cuda() && dtype == at::kBFloat16 && activation != "silu" &&
-          activation != "gelu")
-        gate = gemma_activation_cuda(gate, true);
-      else
-#endif
-        gate = activation == "silu" ? at::silu(gate)
-                                    : at::gelu(gate, activation == "gelu" ? "none" : "tanh");
-      auto mlp = vl(gate * vl(normalized, p + "mlp.up_proj"), p + "mlp.down_proj");
+      auto mlp = media_mlps.at(root + p + "mlp").forward(normalized);
       states = states + vn(mlp, p + "post_feedforward_layernorm");
     }
     std::vector<at::Tensor> pools;
@@ -1379,6 +1369,55 @@ public:
                               weight(weights, base + ".output_max").item<double>()};
       }
     }
+    // Media projections carry their rounding/clipping contract in both precisions.
+    auto media_projection = [&](const std::string& base, bool audio) {
+      const auto key = weights.count(base + ".weight") ? base + ".weight" : base + ".linear.weight";
+      ProjectionRecipe recipe;
+      at::Tensor bias;
+      if (audio) {
+        recipe.cast_input = true;
+        recipe.separate_bias = true;
+        if (weights.count(base + ".bias"))
+          bias = weight(weights, base + ".bias");
+        const auto bounds = audio_bounds.find(base);
+        if (bounds != audio_bounds.end()) {
+          recipe.input_clip = std::array<double, 2>{bounds->second[0], bounds->second[1]};
+          recipe.output_clip = std::array<double, 2>{bounds->second[2], bounds->second[3]};
+        }
+      }
+      return MlpProjection{weight(weights, key), bias, recipe, base};
+    };
+    for (const auto& [name, value] : weights) {
+      if (name.find("audio_tower.layers.") == std::string::npos ||
+          !(name.ends_with(".ffw_layer_1.weight") || name.ends_with(".ffw_layer_1.linear.weight")))
+        continue;
+      const auto base = name.substr(0, name.rfind("ffw_layer_1"));
+      media_mlps.insert_or_assign(
+          base,
+          DenseMlp(media_projection(base + "ffw_layer_1", true),
+                   media_projection(base + "ffw_layer_2", true),
+                   MlpActivationRecipe::numerical([type = dtype](const at::Tensor& rows) {
+                     return at::silu(rows.to(at::kFloat)).to(type);
+                   })));
+    }
+    const std::string vision_root =
+        weights.count("model.vision_tower.patch_embedder.input_proj.weight") ? "model." : "";
+    for (int64_t i = 0; i < cfg.integer("vision_config.num_hidden_layers", 0); ++i) {
+      const auto p = vision_root + "vision_tower.encoder.layers." + std::to_string(i) + ".mlp";
+      auto activation = MlpActivationRecipe::numerical([this](const at::Tensor& gate) {
+        const auto kind = cfg.string("vision_config.hidden_activation", "gelu_pytorch_tanh");
+#ifdef TEI_TORCH_CUDA_KERNELS
+        if (device.is_cuda() && dtype == at::kBFloat16 && kind != "silu" && kind != "gelu")
+          return gemma_activation_cuda(gate, true);
+#endif
+        return kind == "silu" ? at::silu(gate) : at::gelu(gate, kind == "gelu" ? "none" : "tanh");
+      });
+      media_mlps.insert_or_assign(p,
+                                  DenseMlp(media_projection(p + ".gate_proj", false),
+                                           media_projection(p + ".up_proj", false),
+                                           media_projection(p + ".down_proj", false),
+                                           std::move(activation)));
+    }
     fused_legacy_residual = legacy && device.is_cuda() && dtype == at::kBFloat16 && hidden == 768 &&
                             heads == 3 && layers == 24 && integer("intermediate_size", 0) == 1152 &&
                             integer("num_key_value_heads", heads) == 1 &&
@@ -1452,9 +1491,24 @@ public:
       }
       layer.gate_up =
           at::cat({w(layer.p + "mlp.gate_proj.weight"), w(layer.p + "mlp.up_proj.weight")}, 0);
+      auto activation = MlpActivationRecipe::numerical(
+          [this](const at::Tensor& gu) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+            const auto act = string("hidden_activation", "gelu_pytorch_tanh");
+            if (device.is_cuda() && dtype == at::kBFloat16 && act != "relu" && act != "gelu")
+              return gemma_gated_cuda(gu, act != "silu" && act != "swish");
+#endif
+            const auto width = gu.size(-1) / 2;
+            return activate(gu.narrow(-1, 0, width)) * gu.narrow(-1, width, width);
+          },
+          true);
+      layer.dense_mlp = DenseMlp(
+          {layer.gate_up},
+          {w(layer.p + "mlp.down_proj.weight"),
+           has(layer.p + "mlp.down_proj.bias") ? w(layer.p + "mlp.down_proj.bias") : at::Tensor()},
+          std::move(activation));
       if (fp8) {
-        layer.fp8_gate_up = std::make_unique<Fp8Linear>(layer.gate_up);
-        layer.fp8_down = std::make_unique<Fp8Linear>(w(layer.p + "mlp.down_proj.weight"));
+        layer.dense_mlp.prepare(MlpPrecision::Fp8);
         layer.gate_up = at::Tensor();
         for (const auto* projection : {"gate_proj", "up_proj", "down_proj"})
           weights.erase(prefix + layer.p + "mlp." + projection + ".weight");
@@ -1758,36 +1812,18 @@ public:
         normalized = norm(states, p + "pre_feedforward_layernorm");
       }
 
-      auto gu = layer.fp8_gate_up ? layer.fp8_gate_up->forward(normalized)
-                : !input.prefix && ordinary_ffn
-                    ? ordinary_ffn->forward(normalized, layer.gate_up, ordinary_session)
-                    : at::Tensor();
-      if (!gu.defined())
-        gu = prefix_linear(normalized, layer.gate_up, {}, input);
-      auto width = gu.size(-1) / 2;
-      at::Tensor mlp;
-#ifdef TEI_TORCH_CUDA_KERNELS
-      auto act = string("hidden_activation", "gelu_pytorch_tanh");
-      if (device.is_cuda() && dtype == at::kBFloat16 && act != "relu" && act != "gelu")
-        mlp = gemma_gated_cuda(gu, act != "silu" && act != "swish");
-      else
-#endif
-        mlp = activate(gu.narrow(-1, 0, width)) * gu.narrow(-1, width, width);
-      auto down =
-          layer.fp8_down
-              ? layer.fp8_down->forward(
-                    mlp, has(p + "mlp.down_proj.bias") ? w(p + "mlp.down_proj.bias") : at::Tensor())
-          : !input.prefix && ordinary_ffn && !has(p + "mlp.down_proj.bias")
-              ? ordinary_ffn->forward(mlp, w(p + "mlp.down_proj.weight"), ordinary_session)
-              : at::Tensor();
-      mlp = down.defined() ? down
-            : input.prefix
-                ? prefix_linear(mlp,
-                                w(p + "mlp.down_proj.weight"),
-                                has(p + "mlp.down_proj.bias") ? w(p + "mlp.down_proj.bias")
-                                                              : at::Tensor(),
-                                input)
-                : linear(mlp, p + "mlp.down_proj");
+      MlpContext mlp_context;
+      mlp_context.gemm = [&](const MlpProjection& projection, const at::Tensor& rows) {
+        if (!input.prefix && ordinary_ffn && !projection.gemm_bias().defined()) {
+          auto result = ordinary_ffn->forward(rows, projection.weight(), ordinary_session);
+          if (result.defined())
+            return result;
+        }
+        if (projection.role() == MlpProjectionRole::Input || input.prefix)
+          return prefix_linear(rows, projection.weight(), projection.gemm_bias(), input);
+        return at::linear(rows, projection.weight(), projection.gemm_bias());
+      };
+      auto mlp = layer.dense_mlp.forward(normalized, mlp_context);
 
       if (boolean("enable_moe_block", false))
         mlp = moe(states, mlp, p, input);

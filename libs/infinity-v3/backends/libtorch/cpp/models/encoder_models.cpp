@@ -8,6 +8,7 @@
 #include "models/encoder_models.h"
 #include "batching/packed_pool.h"
 #include "helpers/fp8_linear.h"
+#include "helpers/dense_mlp.h"
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include "kernels/distil_embedding.h"
@@ -99,10 +100,10 @@ struct Encoder final : Model {
   struct Layer {
     at::Tensor qkv_weight, qkv_bias;
     at::Tensor gate_weight, gate_bias;
+    DenseMlp mlp;
   };
 
   std::vector<Layer> fused;
-  std::unordered_map<std::string, Fp8Linear> fp8_mlp;
   std::shared_ptr<OrdinaryLinearExecutor> ordinary_executor;
   at::Tensor global_cos, global_sin, local_cos, local_sin;
   std::optional<at::Tensor> alibi;
@@ -162,15 +163,12 @@ struct Encoder final : Model {
     return has(n + ".bias") ? w(n + ".bias") : at::Tensor();
   }
 
-  /// Dispatch a named projection through FP8, qualified CPU Half blocks, or an ordinary-linear
-  /// session. An undefined ordinary-executor result falls through to ATen,
-  /// retaining the checkpoint bias.
+  /// Dispatch model-dtype projections through qualified CPU Half blocks or an ordinary-linear
+  /// session. DenseMlp owns quantized feed-forward projections. An undefined ordinary-executor
+  /// result falls through to ATen, retaining the checkpoint bias.
   at::Tensor linear(const at::Tensor& x,
                     const std::string& n,
                     const OrdinaryLinearExecutor::Session* session = nullptr) const {
-    auto quantized = fp8_mlp.find(n);
-    if (quantized != fp8_mlp.end())
-      return quantized->second.forward(x, bias(n));
     if (exact_cpu_half) {
       const auto cached = cpu_linear_weights.find(n);
       if (cached != cpu_linear_weights.end())
@@ -184,17 +182,6 @@ struct Encoder final : Model {
         return result;
     }
     return at::linear(x, w(n + ".weight"), bias(n));
-  }
-
-  /// Use the CUDA bias/activation epilogue for supported biased heads; otherwise apply the family
-  /// activation after the ordinary named projection.
-  at::Tensor activated_linear(const at::Tensor& x, const std::string& n) const {
-    const auto b = bias(n);
-    if (x.is_cuda() && b.defined() && (activation == "gelu" || activation == "relu")) {
-      // Candle MlpLinear uses the cuBLASLt bias/activation epilogue for these heads.
-      return at::_addmm_activation(b, x, w(n + ".weight").t(), 1, 1, activation == "gelu");
-    }
-    return act(linear(x, n));
   }
 
   /// Normalize the last feature dimension using family-specific scale/bias names. Qualified
@@ -290,6 +277,29 @@ struct Encoder final : Model {
     const auto width = x.size(-1) / 2;
     auto first = x.narrow(-1, 0, width), second = x.narrow(-1, width, width);
     return gate_first ? act(first) * second : first * act(second);
+  }
+
+  at::Tensor mlp(const at::Tensor& x,
+                 int64_t layer,
+                 const std::string&,
+                 const OrdinaryLinearExecutor::Session* session = nullptr) const {
+    MlpContext context;
+    context.gemm = [&](const MlpProjection& projection, const at::Tensor& rows) {
+      if (exact_cpu_half) {
+        const auto cached = cpu_linear_weights.find(projection.name());
+        return cached != cpu_linear_weights.end()
+                   ? modern_cpu::linear(rows, cached->second, projection.gemm_bias())
+                   : modern_cpu::linear(rows, projection.weight(), projection.gemm_bias());
+      }
+      if (ordinary_executor && !projection.gemm_bias().defined()) {
+        auto result = session ? ordinary_executor->forward(rows, projection.weight(), *session)
+                              : ordinary_executor->forward(rows, projection.weight());
+        if (result.defined())
+          return result;
+      }
+      return at::linear(rows, projection.weight(), projection.gemm_bias());
+    };
+    return fused[layer].mlp.forward(x, context);
   }
 
   /// Resolve the checkpoint layer namespace once per layer, including DistilBERT
@@ -516,9 +526,42 @@ struct Encoder final : Model {
         if (has(gate + ".bias"))
           fused[i].gate_bias = at::cat({w(gate + ".bias"), w(up + ".bias")}, 0);
       }
+      const bool routed = family == Family::Nomic && o.integer("moe_every_n_layers", 0) > 0 &&
+                          i % o.integer("moe_every_n_layers", 1) == 1;
+      if (!routed) {
+        const bool is_gated =
+            family != Family::Distil && !(family == Family::Nomic && activation == "gelu");
+        const auto up = p + (family == Family::Modern     ? "mlp.Wi"
+                             : family == Family::Distil   ? "ffn.lin1"
+                             : family == Family::Nomic    ? "mlp.fc1"
+                             : family == Family::Gte      ? "mlp.up_gate_proj"
+                             : family == Family::JinaCode ? "mlp.up_gated_layer"
+                                                          : "mlp.gated_layers");
+        const auto down = p + (family == Family::Modern     ? "mlp.Wo"
+                               : family == Family::Distil   ? "ffn.lin2"
+                               : family == Family::Nomic    ? "mlp.fc2"
+                               : family == Family::Gte      ? "mlp.down_proj"
+                               : family == Family::JinaCode ? "mlp.down_layer"
+                                                            : "mlp.wo");
+        auto recipe = MlpActivationRecipe::numerical(
+            [this, is_gated](const at::Tensor& rows) {
+              return is_gated ? gated(rows, family != Family::Gte && family != Family::JinaCode)
+                              : act(rows);
+            },
+            is_gated);
+        if (!is_gated && (activation == "gelu" || activation == "relu"))
+          recipe.epilogue = activation == "gelu" ? MlpEpilogue::Gelu : MlpEpilogue::Relu;
+        const bool fused_gate = family == Family::Nomic && is_gated;
+        fused[i].mlp = DenseMlp({fused_gate ? fused[i].gate_weight : w(up + ".weight"),
+                                 fused_gate ? fused[i].gate_bias : bias(up),
+                                 {},
+                                 up},
+                                {w(down + ".weight"), bias(down), {}, down},
+                                std::move(recipe));
+      }
       if (o.boolean("_fp8_dynamic", false)) {
+        fused[i].mlp.prepare(MlpPrecision::Fp8);
         for (const auto& name : {p + "mlp.Wi", p + "mlp.Wo"}) {
-          fp8_mlp.try_emplace(name, w(name + ".weight"));
           weights.erase(prefix + name + ".weight");
         }
       }
@@ -861,49 +904,33 @@ struct Encoder final : Model {
           auto normalized = encoder_layer_norm_update_residual_scratch(
               projected, w(p + "mlp_norm.weight"), eps, modern_residual, modern_normalized);
           modern_residual = normalized.second;
-          h = linear(gated(linear(normalized.first, p + "mlp.Wi", &ordinary_session)),
-                     p + "mlp.Wo",
-                     &ordinary_session);
+          h = mlp(normalized.first, i, p, &ordinary_session);
         } else
 #endif
         {
           h = h + projected;
-          auto middle = linear(norm(h, p + "mlp_norm"), p + "mlp.Wi");
-          h = h + linear(gated(middle), p + "mlp.Wo");
+          h = h + mlp(norm(h, p + "mlp_norm"), i, p);
         }
       } else if (family == Family::Distil) {
         h = residual_norm(projected, h, p + "sa_layer_norm");
-        h = residual_norm(linear(activated_linear(h, p + "ffn.lin1"), p + "ffn.lin2"),
-                          h,
-                          p + "output_layer_norm");
+        h = residual_norm(mlp(h, i, p), h, p + "output_layer_norm");
       } else if (family == Family::Nomic) {
         h = residual_norm(projected, h, p + "norm1");
-        at::Tensor middle;
         const auto every = o.integer("moe_every_n_layers", 0);
         if (every > 0 && i % every == 1)
           h = residual_norm(nomic_moe(h, p), h, p + "norm2");
         else {
-          if (activation == "gelu")
-            middle = activated_linear(h, p + "mlp.fc1");
-          else
-            middle = gated(at::linear(h, fused[i].gate_weight, fused[i].gate_bias));
-          h = residual_norm(linear(middle, p + "mlp.fc2"), h, p + "norm2");
+          h = residual_norm(mlp(h, i, p), h, p + "norm2");
         }
       } else if (family == Family::Gte) {
         h = residual_norm(projected, h, p + "attn_ln");
-        auto middle = linear(h, p + "mlp.up_gate_proj");
-        h = residual_norm(linear(gated(middle, false), p + "mlp.down_proj"), h, p + "mlp_ln");
+        h = residual_norm(mlp(h, i, p), h, p + "mlp_ln");
       } else {
         h = residual_norm(projected, h, p + "attention.output.LayerNorm");
         if (family == Family::JinaCode)
           h = residual_norm(h, residual, p + "layer_norm_1");
-        auto middle =
-            linear(h, p + (family == Family::JinaCode ? "mlp.up_gated_layer" : "mlp.gated_layers"));
-        auto activated = gated(middle, family != Family::JinaCode);
         h = residual_norm(
-            linear(activated, p + (family == Family::JinaCode ? "mlp.down_layer" : "mlp.wo")),
-            h,
-            p + (family == Family::JinaCode ? "layer_norm_2" : "mlp.layernorm"));
+            mlp(h, i, p), h, p + (family == Family::JinaCode ? "layer_norm_2" : "mlp.layernorm"));
       }
     }
     if (family == Family::Modern) {
@@ -1067,6 +1094,7 @@ struct Mpnet final : Model {
   int64_t hidden, heads, layers;
   std::string prefix;
   std::vector<at::Tensor> qkv_weights, qkv_biases;
+  std::vector<DenseMlp> mlps;
 
   Mpnet(const Options& options, Weights& w, c10::Device dev, at::ScalarType dt)
       : o(options), weights(w), device(dev), dtype(dt), hidden(o.integer("hidden_size", 768)),
@@ -1104,6 +1132,18 @@ struct Mpnet final : Model {
       const auto p = "encoder.layer." + std::to_string(i) + ".attention.attn.";
       qkv_weights.push_back(at::cat({w(p + "q.weight"), w(p + "k.weight"), w(p + "v.weight")}, 0));
       qkv_biases.push_back(at::cat({w(p + "q.bias"), w(p + "k.bias"), w(p + "v.bias")}, 0));
+      const auto block = "encoder.layer." + std::to_string(i) + ".";
+      const auto act = o.string("hidden_act", "gelu");
+      TORCH_CHECK(act == "relu" || act == "silu" || act == "gelu" || act == "gelu_pytorch_tanh",
+                  "Unsupported MPNet activation");
+      mlps.emplace_back(
+          MlpProjection{w(block + "intermediate.dense.weight"),
+                        w(block + "intermediate.dense.bias")},
+          MlpProjection{w(block + "output.dense.weight"), w(block + "output.dense.bias")},
+          MlpActivationRecipe{act == "relu"   ? MlpActivation::Relu
+                              : act == "silu" ? MlpActivation::Silu
+                              : act == "gelu" ? MlpActivation::Gelu
+                                              : MlpActivation::GeluTanh});
     }
   }
 
@@ -1182,18 +1222,8 @@ struct Mpnet final : Model {
       }
       auto attended = at::cat(results, 0).contiguous().view_as(h);
       h = norm(h + linear(attended, p + "attention.attn.o"), p + "attention.LayerNorm");
-      auto intermediate = linear(h, p + "intermediate.dense");
-      const auto activation = o.string("hidden_act", "gelu");
-      if (activation == "relu")
-        intermediate = at::relu(intermediate);
-      else if (activation == "silu")
-        intermediate = at::silu(intermediate);
-      else {
-        TORCH_CHECK(activation == "gelu" || activation == "gelu_pytorch_tanh",
-                    "Unsupported MPNet activation");
-        intermediate = at::gelu(intermediate, activation == "gelu" ? "none" : "tanh");
-      }
-      h = norm(h + linear(intermediate, p + "output.dense"), p + "output.LayerNorm");
+      auto ff = mlps[layer].forward(h);
+      h = norm(h + ff, p + "output.LayerNorm");
     }
     return h;
   }
@@ -1201,6 +1231,7 @@ struct Mpnet final : Model {
 
 /// Packed DeBERTa encoder with disentangled relative-position attention.
 struct Deberta final : Model {
+  std::vector<DenseMlp> mlps;
   Options o;
   Weights& weights;
   c10::Device device;
@@ -1312,7 +1343,15 @@ struct Deberta final : Model {
     if (relative.defined() && normalization.find("layer_norm") != std::string::npos)
       relative = norm(relative, "encoder.LayerNorm");
     for (int64_t layer = 0; layer < layers; ++layer) {
-      const auto p = "encoder.layer." + std::to_string(layer) + ".attention.self.";
+      const auto block = "encoder.layer." + std::to_string(layer) + ".";
+      const auto in = block + "intermediate.dense", out = block + "output.dense";
+      mlps.emplace_back(
+          MlpProjection{w(in + ".weight"), has(in + ".bias") ? w(in + ".bias") : at::Tensor()},
+          MlpProjection{w(out + ".weight"), has(out + ".bias") ? w(out + ".bias") : at::Tensor()},
+          MlpActivationRecipe::numerical([this](const at::Tensor& rows) {
+            return activation(rows, o.string("hidden_act", "gelu"));
+          }));
+      const auto p = block + "attention.self.";
       qkv_weight.push_back(at::cat(
           {w(p + "query_proj.weight"), w(p + "key_proj.weight"), w(p + "value_proj.weight")}, 0));
       qkv_bias.push_back(
@@ -1562,11 +1601,7 @@ struct Deberta final : Model {
                                p + "attention.output.dense"),
                         h,
                         p + "attention.output.LayerNorm");
-      h = residual_norm(
-          linear(activation(linear(h, p + "intermediate.dense"), o.string("hidden_act", "gelu")),
-                 p + "output.dense"),
-          h,
-          p + "output.LayerNorm");
+      h = residual_norm(mlps[layer].forward(h), h, p + "output.LayerNorm");
       if (layer == 0 && o.integer("conv_kernel_size", 0) > 0) {
         std::vector<at::Tensor> pieces;
         for (int64_t row = 0; row < input.batch; ++row) {

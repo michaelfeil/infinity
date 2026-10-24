@@ -23,6 +23,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #endif
 #include <ATen/ops/_addmm_activation.h>
+#include "helpers/dense_mlp.h"
 #include <ATen/ops/_cudnn_attention_forward.h>
 #include <memory>
 #include <string>
@@ -39,7 +40,8 @@ struct Bert : tei::Model {
   std::unordered_map<std::string, at::Tensor> weights;
   std::string prefix;
   tei::Options options;
-  std::unordered_map<std::string, tei::Fp8Linear> fp8_mlp;
+  std::unordered_map<std::string, tei::DenseMlp> mlps;
+  std::optional<tei::DenseMlp> classifier_mlp;
   bool roberta = false;
   bool cudnn_varlen = false;
   bool private_flash_embedding = false;
@@ -226,48 +228,30 @@ struct Bert : tei::Model {
                 : at::linear(x, matrix, bias);
   }
 
-  /// Project [rows, input_width] using a named checkpoint layer. Registered FP8 layers quantize
-  /// activations; other layers use the classifier projection helper with the loaded bias.
+  /// Project model-dtype rows through the classifier projection recipe and loaded bias.
+  /// Quantized feed-forward projections are owned by DenseMlp.
   at::Tensor linear(const at::Tensor& x, const std::string& name) const {
-    auto quantized = fp8_mlp.find(name);
-    if (quantized != fp8_mlp.end())
-      return quantized->second.forward(x, w(name + ".bias"));
     return classifier_projection(x, w(name + ".weight"), w(name + ".bias"));
   }
 
-  /// Apply the intermediate projection and configured activation. Multi-vector GELU uses the exact
-  /// Transformers variant; qualified Candle paths retain their fused epilogue or
-  /// explicit model-dtype rounding.
-  at::Tensor activated_linear(const at::Tensor& x, const std::string& name) const {
-    if (options.boolean("_multi_vector", false) && options.string("hidden_act", "gelu") == "gelu")
-      return at::gelu(linear(x, name), "none");
-    if (fp8_mlp.count(name)) {
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if (private_flash_embedding && options.boolean("_fp8_dynamic", false) &&
-          config.activation != 2 && config.activation != 3) {
-        // Preserve model-dtype GEMM rounding, then model-dtype bias rounding,
-        // then Candle unary GELU, without a separate bias launch.
-        return tei::encoder_bias_gelu(fp8_mlp.at(name).forward(x), w(name + ".bias"));
-      }
-#endif
-      auto projected = linear(x, name);
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if (config.activation != 2 && config.activation != 3)
-        return tei::encoder_gelu(projected);
-#endif
-      return config.activation == 3 ? projected / (at::exp(-projected) + 1) : at::relu(projected);
-    }
-    // Candle HiddenAct::Gelu is tanh GELU. Its CUDA linear fuses the same
-    // cuBLASLt epilogue; avoid writing then rereading the full intermediate.
-    if (x.is_cuda() && config.activation != 3) {
-      if (config.activation != 2)
-        return classifier_projection(x, w(name + ".weight"), w(name + ".bias"), true);
-      return at::_addmm_activation(w(name + ".bias"), x, w(name + ".weight").t(), 1, 1, false);
-    }
-    auto projected = linear(x, name);
-    return config.activation == 3   ? at::silu(projected)
-           : config.activation == 2 ? at::relu(projected)
-                                    : at::gelu(projected, "tanh");
+  tei::MlpContext mlp_context() const {
+    tei::MlpContext context;
+    context.gemm = [this](const tei::MlpProjection& projection, const at::Tensor& rows) {
+      return classifier_projection(rows, projection.weight(), projection.gemm_bias());
+    };
+    context.activated_gemm = [this](const tei::MlpProjection& projection,
+                                    const at::Tensor& rows,
+                                    tei::MlpEpilogue epilogue) {
+      if (epilogue == tei::MlpEpilogue::Relu)
+        return at::_addmm_activation(projection.bias(), rows, projection.weight().t(), 1, 1, false);
+      return classifier_projection(
+          rows, projection.weight(), projection.gemm_bias(), epilogue == tei::MlpEpilogue::Gelu);
+    };
+    return context;
+  }
+
+  at::Tensor mlp(const at::Tensor& x, const std::string& p) const {
+    return mlps.at(p).forward(x, mlp_context());
   }
 
   /// Apply affine LayerNorm over hidden features; the checkpoint supplies both scale and bias.
@@ -403,13 +387,42 @@ struct Bert : tei::Model {
       linear_check(p + "intermediate.dense", config.intermediate, config.hidden);
       linear_check(p + "output.dense", config.hidden, config.intermediate);
       norm_check(p + "output.LayerNorm");
+      const bool exact_gelu =
+          options.boolean("_multi_vector", false) && options.string("hidden_act", "gelu") == "gelu";
+      tei::MlpActivationRecipe activation(exact_gelu               ? tei::MlpActivation::Gelu
+                                          : config.activation == 3 ? tei::MlpActivation::Silu
+                                          : config.activation == 2 ? tei::MlpActivation::Relu
+                                                                   : tei::MlpActivation::GeluTanh);
+      if (!exact_gelu && config.activation != 3) {
+        activation.epilogue =
+            config.activation == 2 ? tei::MlpEpilogue::Relu : tei::MlpEpilogue::Gelu;
+      }
+      if (!exact_gelu && config.activation != 2) {
+        const auto kind = config.activation == 3 ? tei::MlpActivation::RoundedSilu
+                                                 : tei::MlpActivation::RoundedGelu;
+        activation.quantized_custom = [kind](const at::Tensor& rows) {
+          return tei::mlp_activation(rows, kind);
+        };
+        if (private_flash_embedding && config.activation != 3)
+          activation.fusion = tei::MlpFusion::RoundedBiasGelu;
+      }
+      auto& mlp = mlps[p];
+      mlp = tei::DenseMlp({w(p + "intermediate.dense.weight"), w(p + "intermediate.dense.bias")},
+                          {w(p + "output.dense.weight"), w(p + "output.dense.bias")},
+                          std::move(activation));
       if (options.boolean("_fp8_dynamic", false)) {
+        mlp.prepare(tei::MlpPrecision::Fp8);
         for (const auto& name : {p + "intermediate.dense", p + "output.dense"}) {
-          fp8_mlp.try_emplace(name, w(name + ".weight"));
           weights.erase(prefix + name + ".weight");
         }
       }
     }
+    if (weights.count("classifier.dense.weight"))
+      classifier_mlp.emplace(tei::MlpProjection{tei::weight(weights, "classifier.dense.weight"),
+                                                tei::weight(weights, "classifier.dense.bias")},
+                             tei::MlpProjection{tei::weight(weights, "classifier.out_proj.weight"),
+                                                tei::weight(weights, "classifier.out_proj.bias")},
+                             tei::MlpActivationRecipe{tei::MlpActivation::Tanh});
   }
 
   int64_t classification_width() const override {
@@ -450,9 +463,8 @@ struct Bert : tei::Model {
       auto indices = input.cumulative.narrow(0, 0, input.batch).to(at::kLong);
       h = h.index_select(0, indices);
     }
-    if (weights.count("classifier.dense.weight")) {
-      return root_linear(at::tanh(root_linear(h, "classifier.dense")), "classifier.out_proj");
-    }
+    if (classifier_mlp)
+      return classifier_mlp->forward(h, mlp_context());
     if (!tokenwise) {
       // Candle's optional classifier pooler namespace is independent of the backbone.
       const auto pooler = weights.find("bert.pooler.dense.weight");
@@ -722,8 +734,7 @@ struct Bert : tei::Model {
       attended = attended.contiguous().view({tokens, config.hidden});
       h = residual_norm(
           linear(attended, p + "attention.output.dense"), h, p + "attention.output.LayerNorm");
-      auto mid = activated_linear(h, p + "intermediate.dense");
-      h = residual_norm(linear(mid, p + "output.dense"), h, p + "output.LayerNorm");
+      h = residual_norm(mlp(h, p), h, p + "output.LayerNorm");
     }
     return h;
   }

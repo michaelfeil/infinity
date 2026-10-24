@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Ports the typed head contracts in Candle models/laya.rs and models/clef.rs.
 #include "models/decision_models.h"
+#include "helpers/dense_mlp.h"
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include "kernels/laya_features.h"
 #endif
@@ -29,6 +30,10 @@ struct Linear {
     return at::linear(x, w, b);
   }
 };
+
+DenseMlp make_mlp(const Linear& input, const Linear& output, MlpActivation activation) {
+  return DenseMlp({input.w, input.b}, {output.w, output.b}, MlpActivationRecipe{activation});
+}
 
 /// Learned affine layer normalization used by decision-head blocks.
 struct Norm {
@@ -296,24 +301,26 @@ struct OptionHead final : DecisionHead {
 struct LayaLayer {
   Norm n1, n2;
   Attention attention;
-  Linear ff1, ff2;
+  DenseMlp ffn;
 
   LayaLayer(const Weights& w, const std::string& p, int64_t h)
       : n1(w, p + ".norm1", h), n2(w, p + ".norm2", h),
         attention(w, p + ".self_attn", h, std::max(int64_t(1), h / 64), true),
-        ff1(w, p + ".linear1", h, 4 * h), ff2(w, p + ".linear2", 4 * h, h) {}
+        ffn(make_mlp(Linear(w, p + ".linear1", h, 4 * h),
+                     Linear(w, p + ".linear2", 4 * h, h),
+                     MlpActivation::Relu)) {}
 
   at::Tensor operator()(const at::Tensor& x) const {
     auto n = n1(x);
     auto y = x + attention(n, n);
-    return y + ff2(at::relu(ff1(n2(y))));
+    return y + ffn.forward(n2(y));
   }
 
   /// Apply the Laya pre-norm self-attention and ReLU feed-forward residual block to packed rows,
   /// keeping each request isolated by cumulative boundaries.
   at::Tensor packed(const at::Tensor& x, const PackedInput& input) const {
     auto y = x + attention.packed_self(n1(x), input);
-    return y + ff2(at::relu(ff1(n2(y))));
+    return y + ffn.forward(n2(y));
   }
 };
 
@@ -322,13 +329,17 @@ struct LayaHead final : DecisionHead {
   at::Tensor types;
   std::vector<LayaLayer> layers;
   Norm scorer_norm;
-  Linear scorer1, scorer2, action1, action2;
+  DenseMlp scorer_mlp, action_mlp;
   int64_t width;
 
   LayaHead(const Options& cfg, const Weights& w, int64_t h)
       : types(weight(w, "type_emb.weight")), scorer_norm(w, "scorer.0", h),
-        scorer1(w, "scorer.1", h, h), scorer2(w, "scorer.3", h, 1),
-        action1(w, "act_head.0", h + 4, 256), action2(w, "act_head.2", 256, 2), width(h) {
+        scorer_mlp(make_mlp(
+            Linear(w, "scorer.1", h, h), Linear(w, "scorer.3", h, 1), MlpActivation::Gelu)),
+        action_mlp(make_mlp(Linear(w, "act_head.0", h + 4, 256),
+                            Linear(w, "act_head.2", 256, 2),
+                            MlpActivation::Gelu)),
+        width(h) {
     TORCH_CHECK(types.sizes() == at::IntArrayRef({3, h}) && cfg.integer("head_layers") >= 0 &&
                     cfg.integer("head_layers") <= 16 && cfg.integer("max_len") > 0 &&
                     cfg.integer("head_max_len") > 0,
@@ -430,8 +441,7 @@ struct LayaHead final : DecisionHead {
     // Only marker rows enter the option scorer, but token refinement above runs over the complete
     // sequence. Marker offsets partition the resulting logits back into independent requests.
     auto selected = h.index_select(0, indices.narrow(0, tokens, markers));
-    auto all_logits =
-        scorer2(at::gelu(scorer1(scorer_norm(selected)), "none")).flatten().to(at::kFloat);
+    auto all_logits = scorer_mlp.forward(scorer_norm(selected)).flatten().to(at::kFloat);
 #ifdef TEI_TORCH_CUDA_KERNELS
     auto features =
         laya_action_features(all_logits, indices.narrow(0, tokens + markers, marker_offsets.size()))
@@ -440,8 +450,7 @@ struct LayaHead final : DecisionHead {
     // normalized entropy, and option-count features; it is separate from option-logit scoring.
     auto pooled = h.index_select(0, input.cumulative.narrow(0, 0, input.batch));
     auto actions =
-        at::softmax(
-            action2(at::gelu(action1(at::cat({pooled, features}, 1)), "none")).to(at::kFloat), -1)
+        at::softmax(action_mlp.forward(at::cat({pooled, features}, 1)).to(at::kFloat), -1)
             .select(1, 0);
     std::vector<DecisionResult> result;
     result.reserve(input.batch);
@@ -468,9 +477,7 @@ struct LayaHead final : DecisionHead {
           at::stack({top1, top1 - top2, entropy, normalized_count}).to(hidden.scalar_type());
       auto action =
           at::softmax(
-              action2(
-                  at::gelu(action1(at::cat({h.select(0, input.offsets[i]), features}).unsqueeze(0)),
-                           "none"))
+              action_mlp.forward(at::cat({h.select(0, input.offsets[i]), features}).unsqueeze(0))
                   .to(at::kFloat),
               -1)
               .select(0, 0)
@@ -506,9 +513,8 @@ struct LayaHead final : DecisionHead {
       for (const auto& layer : layers)
         h = layer(h);
       auto indices = at::tensor(request.markers, hidden.options().dtype(at::kLong));
-      auto logits = scorer2(at::gelu(scorer1(scorer_norm(h.index_select(0, indices))), "none"))
-                        .flatten()
-                        .to(at::kFloat);
+      auto logits =
+          scorer_mlp.forward(scorer_norm(h.index_select(0, indices))).flatten().to(at::kFloat);
       auto probabilities = at::softmax(logits, 0),
            sorted = std::get<0>(probabilities.sort(0, true));
       auto top1 = sorted.select(0, 0),
@@ -520,8 +526,7 @@ struct LayaHead final : DecisionHead {
       auto features = at::stack({top1, top1 - top2, entropy, count}).to(hidden.scalar_type());
       auto action =
           at::softmax(
-              action2(at::gelu(action1(at::cat({h.select(0, 0), features}).unsqueeze(0)), "none"))
-                  .to(at::kFloat),
+              action_mlp.forward(at::cat({h.select(0, 0), features}).unsqueeze(0)).to(at::kFloat),
               -1)
               .select(0, 0)
               .select(0, 0);
@@ -535,18 +540,20 @@ struct LayaHead final : DecisionHead {
 struct Routing {
   Norm query, memory, feed;
   Attention attention;
-  Linear ff1, ff2;
+  DenseMlp ffn;
 
   Routing(const Weights& w, const std::string& p, int64_t width, int64_t heads, int64_t ff)
       : query(w, p + ".query_norm", width), memory(w, p + ".memory_norm", width),
         feed(w, p + ".feedforward_norm", width), attention(w, p + ".attention", width, heads),
-        ff1(w, p + ".feedforward.0", width, ff), ff2(w, p + ".feedforward.3", ff, width) {}
+        ffn(make_mlp(Linear(w, p + ".feedforward.0", width, ff),
+                     Linear(w, p + ".feedforward.3", ff, width),
+                     MlpActivation::Gelu)) {}
 
   /// Refine option-query rows against normalized token memory, then apply the residual GELU
   /// feed-forward block. Query and memory lengths may differ.
   at::Tensor operator()(const at::Tensor& q, const at::Tensor& m) const {
     auto x = q + attention(query(q), memory(m));
-    return x + ff2(at::gelu(ff1(feed(x)), "none"));
+    return x + ffn.forward(feed(x));
   }
 };
 
@@ -554,19 +561,21 @@ struct Routing {
 struct FieldDecoder {
   Norm n1, n2, n3;
   Attention self, cross;
-  Linear ff1, ff2;
+  DenseMlp ffn;
 
   FieldDecoder(const Weights& w, const std::string& p, int64_t width, int64_t heads, int64_t ff)
       : n1(w, p + ".norm1", width), n2(w, p + ".norm2", width), n3(w, p + ".norm3", width),
         self(w, p + ".self_attn", width, heads), cross(w, p + ".multihead_attn", width, heads),
-        ff1(w, p + ".linear1", width, ff), ff2(w, p + ".linear2", ff, width) {}
+        ffn(make_mlp(Linear(w, p + ".linear1", width, ff),
+                     Linear(w, p + ".linear2", ff, width),
+                     MlpActivation::Gelu)) {}
 
   /// Refine field rows with self-attention, cross-attention to token memory, and a feed-forward
   /// residual. Each sublayer has its own pre-normalization parameters.
   at::Tensor operator()(const at::Tensor& x, const at::Tensor& m) const {
     auto n = n1(x), y = x + self(n, n);
     y = y + cross(n2(y), m);
-    return y + ff2(at::gelu(ff1(n3(y)), "none"));
+    return y + ffn.forward(n3(y));
   }
 };
 
@@ -577,7 +586,7 @@ struct ClefHead final : DecisionHead {
   at::Tensor types, words;
   std::vector<Routing> routing;
   std::vector<FieldDecoder> decoder;
-  Linear scorer1, scorer2;
+  DenseMlp scorer_mlp;
   double prior_scale, joint_scale, gate;
   int64_t width;
 
@@ -588,8 +597,11 @@ struct ClefHead final : DecisionHead {
         field_norm(w, "field_norm", cfg.integer("width")),
         option_norm(w, "option_norm", cfg.integer("width")),
         types(weight(w, "type_embedding.weight")), words(lexical(backbone, bw)),
-        scorer1(w, "residual_scorer.0", 4 * cfg.integer("width"), cfg.integer("width")),
-        scorer2(w, "residual_scorer.3", cfg.integer("width"), 1), width(cfg.integer("width")) {
+        scorer_mlp(
+            make_mlp(Linear(w, "residual_scorer.0", 4 * cfg.integer("width"), cfg.integer("width")),
+                     Linear(w, "residual_scorer.3", cfg.integer("width"), 1),
+                     MlpActivation::Gelu)),
+        width(cfg.integer("width")) {
     auto heads = cfg.integer("heads"), ff = cfg.integer("feedforward");
     TORCH_CHECK(cfg.integer("hidden_size") == h && width > 0 && heads > 0 && width % heads == 0 &&
                     ff > 0 && types.sizes() == at::IntArrayRef({3, width}),
@@ -693,7 +705,7 @@ struct ClefHead final : DecisionHead {
       auto option = option_norm(options[i]), f = field.select(0, i).expand_as(option).contiguous();
       auto cosine = (normalize(f) * normalize(option)).sum(-1);
       auto features = at::cat({f, option, f * option, (f - option).abs()}, 1);
-      auto residual = scorer2(at::gelu(scorer1(features), "none")).squeeze(1);
+      auto residual = scorer_mlp.forward(features).squeeze(1);
       logits.push_back(prior + (cosine * joint_scale + residual) * gate);
     }
     return at::cat(logits).to(at::kFloat);
