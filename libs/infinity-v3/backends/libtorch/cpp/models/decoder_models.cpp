@@ -859,11 +859,16 @@ public:
       }
       ++layer_index;
     }
+    if(options.boolean("_skip_final_norm",false)) {
+      // ColEmbed extracts the last residual stream before the final RMSNorm.
+      if(residual.defined())h=h+residual;
+    } else {
 #ifdef TEI_TORCH_CUDA_KERNELS
-    if (h.is_cuda()&&(!transformers_math()||transformers_fused_norm)) h=residual_norm(h,residual,final_norm).first;
-    else
+      if (h.is_cuda()&&(!transformers_math()||transformers_fused_norm)) h=residual_norm(h,residual,final_norm).first;
+      else
 #endif
-    h = norm(h, final_norm);
+      h = norm(h, final_norm);
+    }
     if (projection.defined()) h = at::linear(h, projection, projection_bias);
     return h;
   }

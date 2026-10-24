@@ -546,7 +546,11 @@ impl LibtorchBackend {
         let colbert = options["architectures"]
             .as_array()
             .is_some_and(|values| values.iter().any(|value| value == "HF_ColBERT"));
-        let multi_vector = colbert || options["model_type"] == "colqwen3";
+        let multi_vector = colbert
+            || matches!(
+                options["model_type"].as_str(),
+                Some("colqwen3" | "qwen3_vl_nemotron_embed")
+            );
         if multi_vector && !matches!(model_type, ModelType::Embedding(_)) {
             return Err(start("ColBERT requires token embeddings"));
         }
@@ -645,7 +649,7 @@ impl LibtorchBackend {
             .to_owned();
         let normalized_family = match family.as_str() {
             "bidirectional_pplx_qwen3" => "qwen3",
-            "colqwen3" => "qwen3_vl",
+            "colqwen3" | "qwen3_vl_nemotron_embed" => "qwen3_vl",
             "llama_bidirec" => "llama",
             "ministral3" => "mistral",
             "new" => "gte",
@@ -654,8 +658,23 @@ impl LibtorchBackend {
         }
         .to_owned();
         options["model_type"] = normalized_family.clone().into();
-        if family == "colqwen3" {
+        if matches!(family.as_str(), "colqwen3" | "qwen3_vl_nemotron_embed") {
             options["_transformers_math"] = true.into();
+        }
+        if family == "qwen3_vl_nemotron_embed" {
+            if options["pooling"] != "colbert" {
+                return Err(start("NVIDIA ColEmbed requires checkpoint pooling=colbert"));
+            }
+            options["use_bidirectional_attention"] = true.into();
+            options["_skip_final_norm"] = true.into();
+            if !options["text_config"]["rope_scaling"].is_object() {
+                options["text_config"]["rope_scaling"] =
+                    options["text_config"]["rope_parameters"].clone();
+            }
+            if !options["text_config"]["rope_theta"].is_number() {
+                options["text_config"]["rope_theta"] =
+                    options["text_config"]["rope_parameters"]["rope_theta"].clone();
+            }
         }
         if family == "bidirectional_pplx_qwen3" {
             options["use_bidirectional_attention"] = true.into();
