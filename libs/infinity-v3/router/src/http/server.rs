@@ -1081,6 +1081,13 @@ async fn similarity_inner(
     context: Extension<Option<opentelemetry::Context>>,
     Json(req): Json<SimilarityRequest>,
 ) -> Result<(HeaderMap, Json<SimilarityResponse>), (StatusCode, Json<ErrorResponse>)> {
+    if info.is_multi_vector() {
+        return Err(ErrorResponse {
+            error: "Multi-vector embeddings require late-interaction scoring".into(),
+            error_type: ErrorType::Validation,
+        }
+        .into());
+    }
     if req.inputs.sentences.is_empty() {
         let message = "`inputs.sentences` cannot be empty".to_string();
         tracing::warn!("{message}");
@@ -1192,6 +1199,35 @@ async fn embed_inner(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<EmbedRequest>,
 ) -> Result<(HeaderMap, Json<EmbedResponse>), (StatusCode, Json<ErrorResponse>)> {
+    if info.is_multi_vector() {
+        if req.dimensions.is_some() {
+            return Err(ErrorResponse {
+                error: "Multi-vector embeddings do not support dimensions".into(),
+                error_type: ErrorType::Validation,
+            }
+            .into());
+        }
+        let (headers, Json(values)) = embed_all_inner(
+            infer,
+            info,
+            Extension(context),
+            Json(EmbedAllRequest {
+                encoding_format: req.encoding_format,
+                model: req.model,
+                inputs: req.inputs,
+                truncate: req.truncate,
+                truncation_direction: req.truncation_direction,
+                prompt_name: req.prompt_name,
+            }),
+        )
+        .await?;
+        return Ok((
+            headers,
+            Json(EmbedResponse(
+                values.0.into_iter().map(Embedding::All).collect(),
+            )),
+        ));
+    }
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -1807,6 +1843,53 @@ async fn openai_embed_inner(
     Json(req): Json<OpenAICompatRequest>,
 ) -> Result<(HeaderMap, Json<OpenAICompatResponse>), (StatusCode, Json<OpenAICompatErrorResponse>)>
 {
+    if info.is_multi_vector() {
+        let model = info.model_id.clone();
+        let (headers, Json(values)) = embed_inner(
+            infer,
+            info,
+            Extension(context),
+            Json(EmbedRequest {
+                encoding_format: req.encoding_format,
+                dimensions: req.dimensions,
+                normalize: true,
+                model: req.model,
+                inputs: req.input,
+                truncate: None,
+                truncation_direction: TruncationDirection::Right,
+                prompt_name: None,
+            }),
+        )
+        .await
+        .map_err(|(status, Json(error))| (status, Json(OpenAICompatErrorResponse::from(error))))?;
+        let tokens = headers["x-compute-tokens"]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        let data = values
+            .0
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| OpenAICompatEmbedding {
+                object: "embedding",
+                embedding: value,
+                index,
+            })
+            .collect();
+        return Ok((
+            headers,
+            Json(OpenAICompatResponse {
+                object: "list",
+                data,
+                model,
+                usage: OpenAICompatUsage {
+                    prompt_tokens: tokens,
+                    total_tokens: tokens,
+                },
+            }),
+        ));
+    }
     let encode_embedding =
         |array: Vec<f32>| encode_vector(array, req.encoding_format).map_err(ErrorResponse::from);
 

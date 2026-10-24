@@ -1761,10 +1761,10 @@
             }
           },
           {
-            "type": "string"
+            "$ref": "#/components/schemas/AllEmbedding"
           },
           {
-            "$ref": "#/components/schemas/Tensor"
+            "type": "string"
           }
         ]
       },

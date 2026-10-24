@@ -469,6 +469,9 @@ pub struct LibtorchBackend {
     pooled_width: usize,
     classification_width: usize,
     decision: bool,
+    multi_vector: bool,
+    skip_tokens: Vec<u32>,
+    query_marker: Option<u32>,
     supports_radix: bool,
     cuda: bool,
     host_output_max_bytes: usize,
@@ -540,6 +543,41 @@ impl LibtorchBackend {
         })?;
         // Head tensors can also be present when the requested operation is embedding.
         options["_classifier"] = serde_json::json!(model_type == ModelType::Classifier);
+        let multi_vector = options["architectures"]
+            .as_array()
+            .is_some_and(|values| values.iter().any(|value| value == "HF_ColBERT"));
+        if multi_vector && !matches!(model_type, ModelType::Embedding(_)) {
+            return Err(start("ColBERT requires token embeddings"));
+        }
+        options["_multi_vector"] = multi_vector.into();
+        let mut skip_tokens = Vec::new();
+        let mut query_marker = None;
+        if multi_vector {
+            if let Ok(bytes) = fs::read(path.join("tokenizer.json")) {
+                let tokenizer: serde_json::Value = serde_json::from_slice(&bytes).map_err(start)?;
+                query_marker = tokenizer["model"]["vocab"]["[unused0]"]
+                    .as_u64()
+                    .map(u32::try_from)
+                    .transpose()
+                    .map_err(start)?;
+                if let Some(id) = query_marker {
+                    options["_colbert_query_marker"] = id.into();
+                }
+                if let Some(id) = tokenizer["model"]["vocab"]["[MASK]"].as_u64() {
+                    options["_colbert_mask_token"] = id.into();
+                }
+                for byte in b'!'..=b'~' {
+                    if byte.is_ascii_punctuation() {
+                        if let Some(id) =
+                            tokenizer["model"]["vocab"][(byte as char).to_string()].as_u64()
+                        {
+                            skip_tokens.push(u32::try_from(id).map_err(start)?);
+                        }
+                    }
+                }
+                skip_tokens.sort_unstable();
+            }
+        }
         if laya {
             if options["model_type"] != "modernbert" {
                 return Err(start("Laya requires a ModernBERT encoder"));
@@ -1044,6 +1082,9 @@ impl LibtorchBackend {
             cuda: device.to_bytes().starts_with(b"cuda")
                 || (device.to_bytes() == b"auto" && device_count("cuda").unwrap_or(0) > 0),
             decision,
+            multi_vector,
+            skip_tokens,
+            query_marker,
             host_output_max_bytes,
             host_result_pool,
         };
@@ -1281,6 +1322,7 @@ fn pack_output(
     lengths: Vec<i64>,
     hidden: usize,
     raw_width: usize,
+    keep_tokens: Vec<bool>,
 ) -> Result<Embeddings, BackendError> {
     let mut result = Embeddings::default();
     result
@@ -1301,13 +1343,15 @@ fn pack_output(
         );
         offset += hidden;
     }
+    let mut keep_tokens = keep_tokens.into_iter();
     for index in raw {
         let size = lengths[index as usize] as usize * raw_width;
-        let values = collect_results(
-            output[offset..offset + size]
-                .chunks_exact(raw_width)
-                .map(|row| collect_fallible(row.iter().copied())),
-        )?;
+        let mut values = reserved_vec(lengths[index as usize] as usize)?;
+        for row in output[offset..offset + size].chunks_exact(raw_width) {
+            if keep_tokens.next().unwrap_or(true) {
+                values.push(collect_fallible(row.iter().copied())?);
+            }
+        }
         result.insert(index as usize, Embedding::All(values));
         offset += size;
     }
@@ -1597,6 +1641,23 @@ impl LibtorchBackend {
             rows.checked_add(lengths[i as usize] as usize)
                 .ok_or_else(|| inference("Raw output row count overflow"))
         })?;
+        let filter_tokens = self.multi_vector && !self.skip_tokens.is_empty();
+        let mut keep_tokens = reserved_vec(if filter_tokens { raw_rows } else { 0 })?;
+        if filter_tokens {
+            for &index in &raw {
+                let index = index as usize;
+                let tokens = &batch.input_ids[ends[index] as usize..ends[index + 1] as usize];
+                // Explicit ColBERT query-marker inputs keep punctuation tokens.
+                let query = tokens
+                    .get(1)
+                    .is_some_and(|id| Some(*id) == self.query_marker);
+                keep_tokens.extend(
+                    tokens
+                        .iter()
+                        .map(|id| query || self.skip_tokens.binary_search(id).is_err()),
+                );
+            }
+        }
         let size = pooled
             .len()
             .checked_mul(hidden)
@@ -1654,8 +1715,15 @@ impl LibtorchBackend {
             .ok_or_else(native_failure)?;
             let output = NativeOutput { handle, size };
             return Ok(Inference::Deferred(Box::new(move || {
-                let mut result =
-                    pack_output(output.values()?, pooled, raw, lengths, hidden, raw_width)?;
+                let mut result = pack_output(
+                    output.values()?,
+                    pooled,
+                    raw,
+                    lengths,
+                    hidden,
+                    raw_width,
+                    keep_tokens,
+                )?;
                 result.memory = Some(memory);
                 Ok((result, vec![]))
             })));
@@ -1696,15 +1764,27 @@ impl LibtorchBackend {
         {
             return Err(native_failure());
         }
-        let mut results = pack_output(&output, pooled, raw, lengths, hidden, raw_width)?;
+        let mut results = pack_output(
+            &output,
+            pooled,
+            raw,
+            lengths,
+            hidden,
+            raw_width,
+            keep_tokens,
+        )?;
         results.memory = Some(memory);
         Ok(Inference::Ready((results, vec![])))
     }
 }
 
 impl Backend for LibtorchBackend {
-    fn probe(&self, batch: Batch, model_type: &ModelType) -> Result<(), BackendError> {
+    fn probe(&self, mut batch: Batch, model_type: &ModelType) -> Result<(), BackendError> {
         let _probe = PrefixProbe::new(self)?;
+        if self.multi_vector {
+            batch.raw_indices = collect_fallible(0..batch.len() as u32)?;
+            batch.pooled_indices.clear();
+        }
         match model_type {
             ModelType::Decision => {
                 let count = batch.len();
@@ -1716,6 +1796,11 @@ impl Backend for LibtorchBackend {
         }
     }
     fn submit_embed(&self, batch: Batch) -> Result<Inference<Embeddings>, BackendError> {
+        if self.multi_vector && !batch.pooled_indices.is_empty() {
+            return Err(inference(
+                "ColBERT returns token embeddings; pooling is unsupported",
+            ));
+        }
         let (pool, width) = match self.pool {
             Pool::Cls => (0, self.pooled_width),
             Pool::Mean => (1, self.pooled_width),
@@ -2087,6 +2172,66 @@ mod tests {
             Embedding::Pooled(v) => v.clone(),
             Embedding::All(v) => v.iter().flatten().copied().collect(),
         }
+    }
+
+    #[test]
+    fn colbert_projects_and_normalizes_ragged_token_embeddings() {
+        let fixture = fixture("", false);
+        let file = fixture.0.join("model.safetensors");
+        let bytes = fs::read(&file).unwrap();
+        let tensors = SafeTensors::deserialize(&bytes).unwrap();
+        let projection: Vec<f32> = (0..64).map(|i| ((i * 7) as f32).sin()).collect();
+        let weight: Vec<u8> = projection.iter().flat_map(|x| x.to_le_bytes()).collect();
+        let mut views = tensors.tensors();
+        views.push((
+            "linear.weight".into(),
+            TensorView::new(Dtype::F32, vec![4, 16], &weight).unwrap(),
+        ));
+        fs::write(&file, serialize(views, None).unwrap()).unwrap();
+        let kind = ModelType::Embedding(Pool::Mean);
+        let baseline = LibtorchBackend::new(&fixture.0, "float32", kind.clone(), "cpu").unwrap();
+        let mut input = batch();
+        input.pooled_indices.clear();
+        input.raw_indices = vec![0, 1];
+        let expected = baseline.embed(input.clone()).unwrap();
+        let config_file = fixture.0.join("config.json");
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&fs::read(&config_file).unwrap()).unwrap();
+        config["architectures"] = serde_json::json!(["HF_ColBERT"]);
+        fs::write(config_file, serde_json::to_vec(&config).unwrap()).unwrap();
+        let model = LibtorchBackend::new(&fixture.0, "float32", kind.clone(), "cpu").unwrap();
+        model.probe(batch(), &kind).unwrap();
+        let actual = model.embed(input).unwrap();
+        for index in [0, 1] {
+            let Embedding::All(tokens) = &actual[&index] else {
+                panic!("expected token vectors")
+            };
+            let Embedding::All(hidden) = &expected[&index] else {
+                panic!("expected hidden states")
+            };
+            assert_eq!(tokens.len(), hidden.len());
+            for (token, state) in tokens.iter().zip(hidden) {
+                let mut projected: Vec<f32> = projection
+                    .chunks_exact(16)
+                    .map(|row| row.iter().zip(state).map(|(a, b)| a * b).sum())
+                    .collect();
+                let norm = projected.iter().map(|x| x * x).sum::<f32>().sqrt();
+                projected.iter_mut().for_each(|x| *x /= norm);
+                assert_eq!(token.len(), 4);
+                for (a, b) in token.iter().zip(projected) {
+                    assert!((a - b).abs() < 2e-6, "{a} != {b}");
+                }
+            }
+        }
+        assert!(
+            model.embed(batch()).is_err(),
+            "pooled ColBERT output must be rejected"
+        );
+        fs::write(file, &bytes).unwrap();
+        let error = LibtorchBackend::new(&fixture.0, "float32", kind, "cpu")
+            .err()
+            .unwrap();
+        assert!(error.to_string().contains("missing its token projection"));
     }
     fn dense_fixture() -> (Fixture, Vec<String>) {
         let fixture = fixture("", false);

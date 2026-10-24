@@ -677,8 +677,8 @@ pub(super) fn exclusive_input_schema(schema: RefOr<Schema>) -> RefOr<Schema> {
 #[serde(untagged)]
 pub(crate) enum Embedding {
     Float(Vec<f32>),
+    All(AllEmbedding),
     Base64(String),
-    Tensor(Tensor),
 }
 
 #[derive(Serialize, ToSchema)]

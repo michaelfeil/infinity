@@ -142,6 +142,8 @@ struct Bert : tei::Model {
     return classifier_projection(x,w(name+".weight"),w(name+".bias"));
   }
   at::Tensor activated_linear(const at::Tensor& x,const std::string& name) const {
+    if(options.boolean("_multi_vector",false) && options.string("hidden_act","gelu")=="gelu")
+      return at::gelu(linear(x,name),"none");
     if(fp8_mlp.count(name)) {
 #ifdef TEI_TORCH_CUDA_KERNELS
       if(private_flash_embedding && options.boolean("_fp8_dynamic",false)
@@ -361,12 +363,49 @@ struct Bert : tei::Model {
     h = norm(word + token_type + position, "embeddings.LayerNorm");
     }
     const int64_t tokens = ids.size(0), head = config.hidden / config.heads;
+    // ColBERT query expansion keeps MASK tokens as output queries, but excludes
+    // them from attention keys. Pack real keys separately; never pad activations.
+    std::vector<int64_t> selected_keys;
+    std::vector<int32_t> key_offsets{0};
+    at::Tensor key_indices,key_cumulative;
+    int64_t max_keys=0;
+    const auto query_marker=options.integer("_colbert_query_marker",-1);
+    const auto mask_token=options.integer("_colbert_mask_token",-1);
+    if(options.boolean("_multi_vector",false) && query_marker>=0 && mask_token>=0 && input.host_ids.defined()) {
+      const auto* host=input.host_ids.const_data_ptr<int64_t>();
+      for(int64_t row=0;row<input.batch;++row) {
+        const auto begin=input.offsets[row],end=input.offsets[row+1];
+        const bool query=end-begin>1 && host[begin+1]==query_marker;
+        for(int64_t token=begin;token<end;++token)
+          if(!query || host[token]!=mask_token)selected_keys.push_back(token);
+        max_keys=std::max(max_keys,int64_t(selected_keys.size())-key_offsets.back());
+        key_offsets.push_back(selected_keys.size());
+      }
+      if(selected_keys.size()!=static_cast<size_t>(tokens)) {
+        key_indices=at::tensor(selected_keys,at::TensorOptions().dtype(at::kLong)).to(device);
+        key_cumulative=at::tensor(key_offsets,at::TensorOptions().dtype(at::kInt)).to(device);
+      }
+    }
     for (int64_t i = 0; i < config.layers; ++i) {
       std::string p = "encoder.layer." + std::to_string(i) + ".";
       auto qkv = linear(h, p + "attention.self.qkv").view({tokens, 3, config.heads, head});
       auto q = qkv.select(1, 0), k = qkv.select(1, 1), v = qkv.select(1, 2);
       at::Tensor attended;
-      if (device.is_cuda()) {
+      if (key_indices.defined()) {
+        auto keys=k.index_select(0,key_indices).contiguous(),values=v.index_select(0,key_indices).contiguous();
+        if(device.is_cuda()) {
+          attended=std::get<0>(at::_flash_attention_forward(q.contiguous(),keys,values,cumulative,key_cumulative,
+            max_sequence,max_keys,0.,false,false,std::nullopt,-1,-1));
+        } else {
+          std::vector<at::Tensor> sequences;
+          for(int64_t row=0;row<input.batch;++row) {
+            auto queries=q.narrow(0,input.offsets[row],input.offsets[row+1]-input.offsets[row]).transpose(0,1).unsqueeze(0);
+            auto slice=[&](const at::Tensor& x){return x.narrow(0,key_offsets[row],key_offsets[row+1]-key_offsets[row]).transpose(0,1).unsqueeze(0);};
+            sequences.push_back(at::scaled_dot_product_attention(queries,slice(keys),slice(values),std::nullopt,0.,false).squeeze(0).transpose(0,1));
+          }
+          attended=at::cat(sequences,0).reshape({tokens,config.hidden});
+        }
+      } else if (device.is_cuda()) {
         // The same ATen operator used by torch.nn.attention.varlen.varlen_attn's
         // Flash Attention path. Q/K/V stay [total_tokens, heads, head_dim].
         // Cumulative INT32 offsets are on-device. No padded batch or mask exists.
