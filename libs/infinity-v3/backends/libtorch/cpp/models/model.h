@@ -1,3 +1,8 @@
+/// \file
+/// Shared contract for the native LibTorch model families.
+/// Declares packed-input inference, optional task and media capabilities, and
+/// prefix-cache size estimates consumed by the bridge.
+
 #pragma once
 #include <ATen/ATen.h>
 #include <atomic>
@@ -20,6 +25,9 @@ inline uint64_t prefix_storage_sum(uint64_t a, uint64_t b) {
                                                       : a + b;
 }
 
+/// Base interface for packed model execution and optional inference capabilities.
+/// Implementations prepare parameters in ready() and evaluate inputs in forward().
+/// The bridge uses capability methods to select supported execution paths.
 class Model {
 public:
   Model() : prefix_epoch(next_prefix_epoch.fetch_add(1, std::memory_order_relaxed)) {}

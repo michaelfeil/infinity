@@ -1,3 +1,8 @@
+/// \file
+/// Rust-facing C ABI for native LibTorch model loading and packed inference.
+/// Dispatches synchronous calls and exposes output leases for deferred completion.
+/// Bridge failures are reported through thread-local error accessors.
+
 #include "env_config.h"
 #include "models/bert_model.h"
 #include "bridge.h"
@@ -103,6 +108,9 @@ c10::Device device(const char* name) {
   return c10::Device(name);
 }
 
+/// Holds the loaded model, optional task heads, and execution caches for a C handle.
+/// EngineCall serializes request access; drain() completes submitted CUDA work
+/// before the engine reloads or destroys native state.
 struct Engine {
   std::mutex mutex;
   TeiConfig config;
