@@ -106,6 +106,8 @@ class Gemma final : public Model {
   mutable std::shared_ptr<WorkspaceMemoryPermit> radix_linear_memory_permit;
   mutable at::Tensor radix_linear_workspace;
 #endif
+  /// Use the original named projection for full input and logical-shape planning for suffix input,
+  /// retaining optional checkpoint bias in both cases.
   at::Tensor
   prefix_projection(const at::Tensor& x, const std::string& name, const PackedInput& input) const {
     // Keep the original projection recipe when a cache hit leaves only suffix rows.
@@ -117,6 +119,8 @@ class Gemma final : public Model {
                         : linear(x, name);
   }
 
+  /// Project real compact/suffix rows while preserving the qualified logical-row GEMM recipe. An
+  /// optional supplied matrix supports the router's FP32 weights independently of the model dtype.
   at::Tensor linear_radix_projection(const at::Tensor& x,
                                      const std::string& name,
                                      const PackedInput& packed,
@@ -325,6 +329,9 @@ class Gemma final : public Model {
     return prefix_projection(x, name, packed);
   }
 
+  /// Combine independently post-normalized dense and routed branches. Router inputs preserve BF16
+  /// scale stages before FP32 logits; selected probabilities are renormalized and
+  /// multiplied by per-expert scales.
   at::Tensor moe(const at::Tensor& residual,
                  const at::Tensor& dense,
                  const std::string& p,
@@ -779,6 +786,9 @@ class Gemma final : public Model {
                                           : std::nullopt);
   }
 
+  /// Normalize the final dimension with prepared affine scales, or a unit scale when requested.
+  /// Legacy and newer families retain their rsqrt versus sqrt/divide arithmetic before
+  /// converting to the input dtype.
   at::Tensor norm(const at::Tensor& x, const std::string& name, bool unit = false) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kBFloat16 && x.size(-1) <= 8192) {
@@ -798,6 +808,8 @@ class Gemma final : public Model {
     return f.to(x.scalar_type());
   }
 
+  /// Return residual + norm(x), using qualified fused implementations when available. This helper
+  /// applies post-normalization to the branch before adding it to the residual stream.
   at::Tensor
   residual_norm(const at::Tensor& residual, const at::Tensor& x, const std::string& name) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -819,6 +831,8 @@ class Gemma final : public Model {
     return residual + norm(x, name);
   }
 
+  /// Resolve exact GELU, SiLU, ReLU, or the composed tanh-GELU recipe. Model-dtype tensor
+  /// operations preserve intermediate rounding in the composed fallback.
   at::Tensor activate(const at::Tensor& x) const {
     const auto act = string("hidden_activation", "gelu_pytorch_tanh");
     if (act == "gelu")
@@ -837,6 +851,8 @@ class Gemma final : public Model {
     return (at::scalar_tensor(.5, x.options()) * x) * (at::ones({}, x.options()) + value);
   }
 
+  /// Gather the current layer's rotary phases by token position and rotate split head halves.
+  /// Layer-local tables support different sliding/global attention settings.
   at::Tensor rotate(const at::Tensor& x, const Layer& layer, const at::Tensor& positions) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (!legacy && (!embedding2 || embedding2_reference_cuda) && x.is_cuda() &&
@@ -862,6 +878,8 @@ class Gemma final : public Model {
                        bool use_causal,
                        int64_t cache_layer = -1) const {
     const bool causal = use_causal;
+    // Sliding causal layers see window-1 preceding tokens; bidirectional layers use a symmetric
+    // half-window. Legacy query scaling is explicit, while newer layers use a scale of one.
     auto left = layer.sliding ? (causal ? layer.window - 1 : layer.window / 2) : -1;
     auto right = layer.sliding ? (causal ? 0 : layer.window / 2) : -1;
     auto scale = legacy ? 1.0 / std::sqrt(real("query_pre_attn_scalar", layer.dim)) : 1.0;
@@ -871,6 +889,9 @@ class Gemma final : public Model {
       TORCH_CHECK(causal, "Noncausal Gemma cannot reuse prefix state");
       auto output =
           prefix_attention(q, k, v, input, cache_layer, scale, left, right, true, !layer.shared);
+      // Image queries use bidirectional visibility within their own image span, bounded on the left
+      // by the sliding window. Correct those rows using full prefix-plus-suffix K/V after
+      // ordinary suffix attention.
       if (causal && layer.sliding && !input.images.empty()) {
         auto kv = input.prefix->attention(cache_layer, k, v, false);
         for (const auto& image : input.images) {
@@ -989,6 +1010,8 @@ class Gemma final : public Model {
                                                           right));
       if (causal && layer.sliding) {
         for (const auto& image : input.images) {
+          // Recompute only this image's query rows against its allowed context. The replacement
+          // keeps text queries causal and avoids constructing a dense multimodal attention mask.
           auto key_start = std::max(image.sequence_start, image.token_start - (layer.window - 1));
           auto key_len = image.token_start + image.token_count - key_start;
           auto cuq = at::arange(2, q.options().dtype(at::kInt)) * image.token_count;
@@ -1065,6 +1088,8 @@ class Gemma final : public Model {
     return at::cat(rows, 0);
   }
 
+  /// Canonicalize valid layer-index aliases while preserving root/nested option precedence. Reject
+  /// aliases whose effective head geometry disagrees; leave unrelated or unused keys untouched.
   void normalize_layer_overrides() {
     // Match Rust usize::from_str: ASCII digits, optional +, checked overflow.
     // Normalize only actual layers once; invalid/unused keys remain ignored.
@@ -1131,6 +1156,8 @@ class Gemma final : public Model {
     }
   }
 
+  /// Read a per-layer geometry override using canonical or zero-padded index spellings, then fall
+  /// back to the already resolved family default.
   int64_t override_int(int64_t index, const std::string& name, int64_t fallback) const {
     // Accept both "05" (released checkpoints) and "5" layer keys.
     for (auto stem : {"per_layer_config." + std::to_string(index),
@@ -1611,6 +1638,8 @@ public:
                    ? linear_radix_projection(normalized, p + "self_attn.k_proj", input)
                    : prefix_projection(normalized, p + "self_attn.k_proj", input))
                   .view({tokens, layer.kv, layer.dim});
+          // When the checkpoint ties K and V, take the shared projection before K
+          // normalization/rotation. Later reassignments of K must not retroactively transform V.
           v = layer.k_equals_v ? k
                                : prefix_projection(normalized, p + "self_attn.v_proj", input)
                                      .view({tokens, layer.kv, layer.dim});
@@ -1636,6 +1665,9 @@ public:
 #endif
       if (!fused_qk_rotary)
         q = norm(q, p + "self_attn.q_norm");
+      // Shared layers project their own queries but reuse the preceding producer's complete logical
+      // K/V for the same sliding/global category. Preserve that producer
+      // layer index for prefix lookup.
       if (layer.shared) {
         q = radix_unfold(rotate(q, layer, positions), input);
         k = shared[layer.sliding].first;
@@ -1677,6 +1709,8 @@ public:
         q = full[0];
         k = full[1];
         v = full[2];
+        // Publish unfolded K/V only after per-head transforms. Later shared layers require logical
+        // token rows even if this layer projected compact representatives.
         if (layer.store) {
           shared[layer.sliding] = {k, v};
           producers[layer.sliding] = i;

@@ -16,6 +16,9 @@ class MultiVectorModel final : public Model {
   double epsilon;
 
 public:
+  /// Take ownership of the backbone and retain optional projection/bias tensor handles. epsilon
+  /// floors the per-token L2 denominator; it does not add a pooling or
+  /// sequence-level normalization step.
   MultiVectorModel(std::unique_ptr<Model> model,
                    at::Tensor weight,
                    at::Tensor offset,

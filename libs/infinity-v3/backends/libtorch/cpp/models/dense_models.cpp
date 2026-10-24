@@ -5,6 +5,9 @@
 #include "models/dense_models.h"
 
 namespace tei {
+/// Load ordered Sentence Transformers Dense modules, checking width continuity and supported
+/// Identity/Tanh activations. Tensor handles share loaded parameter storage; inference
+/// transforms pooled rows only.
 DenseChain::DenseChain(const Options& options, const Weights& weights) {
   const auto count = options.integer("_dense_count", 0);
   TORCH_CHECK(count >= 0, "Dense module count must be nonnegative");
@@ -50,6 +53,8 @@ at::Tensor DenseChain::forward(const at::Tensor& value) const {
                 "Dense module input shape mismatch");
     // Mean pooling accumulates in FP32, then rounds back to the checkpoint
     // precision before projection, matching Candle's pooled-output contract.
+    // Pooling may produce FP32 rows even when weights use Half/BF16. Round to this layer's
+    // checkpoint dtype before projection, then apply its optional tanh stage.
     result = at::linear(result.to(layer.weight.scalar_type()), layer.weight, layer.bias);
     if (layer.tanh)
       result = at::tanh(result);
