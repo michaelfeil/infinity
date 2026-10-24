@@ -664,6 +664,10 @@ impl LibtorchBackend {
             }
             options["use_bidirectional_attention"] = true.into();
             options["_skip_final_norm"] = true.into();
+            if !options["text_config"]["rope_scaling"].is_object() {
+                options["text_config"]["rope_scaling"] =
+                    options["text_config"]["rope_parameters"].clone();
+            }
             if !options["text_config"]["rope_theta"].is_number() {
                 options["text_config"]["rope_theta"] =
                     options["text_config"]["rope_parameters"]["rope_theta"].clone();
