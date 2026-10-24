@@ -94,6 +94,31 @@ Gemma image features use a bounded per-model cache (32 entries, 64 MiB). CUDA
 events protect cached values across streams, and graph replay uses independent
 storage. Cache hits, misses and eviction have different serving costs.
 
+## Disk reader
+
+On Unix, LibTorch loads safetensors with the bundled fastsafetensors non-GDS
+reader by default. It reads validated tensor ranges concurrently, using two
+aligned host buffers per worker and overlapping CUDA uploads. Model weights own
+their allocations; bounded staging avoids retaining an entire shard through a
+small tensor or an FP8-converted layer. Large dtype conversions also use bounded
+pieces. The same path loads single files, shards, dense modules and decision heads.
+
+The reader uses ordinary `pread` workers. It requires no Python, GDS, io_uring,
+libaio, NUMA configuration or additional container capabilities. Direct I/O is
+requested for suitable local filesystems; RAM/network/FUSE filesystems and
+filesystems that reject direct reads use buffered reads. PyTorch `.bin` loading
+and the Candle backend are unchanged.
+
+| Environment variable | Default | Behavior |
+| --- | --- | --- |
+| `INFINITY_TORCH_WEIGHT_READER_THREADS` | `16` | Maximum workers per file, from `1` to `64`; small files use fewer workers. |
+| `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES` | `268435456` | Budget for the host buffer pool and, separately, each transient tensor stage, from `65536` to `1073741824` bytes. Host buffers add alignment padding. Small files use a smaller pool. |
+| `INFINITY_TORCH_WEIGHT_READER_DIRECT_IO` | `true` | Set to `false` or `0` to use the filesystem page cache, for example for repeated loads or a managed model-cache mount. |
+
+Header validation remains in Rust, including offset, shape and complete-file
+length checks. Read errors and truncated files fail initialization. Native code
+drains reads and CUDA copies before returning or releasing their buffers.
+
 ## Build and run
 
 ### NVIDIA Docker image
@@ -325,12 +350,19 @@ cargo test -p infinity-backend-libtorch --lib
 # Requires a working NVIDIA GPU and the CUDA LibTorch distribution.
 cargo test -p infinity-backend-libtorch \
   cuda_varlen_matches_cpu_for_ragged_outputs -- --ignored
+
+# Manual startup/inference smoke test with a local supported checkpoint.
+INFINITY_TEST_CHECKPOINT_PATH=/path/to/model cargo test -p infinity-backend-libtorch \
+  cuda_real_checkpoint_startup -- --ignored --nocapture
 ```
 
 CPU parity checks cover ragged pooled/raw output, all three pooling modes,
 sequence isolation, sharded checkpoints and weight prefixes. Error tests cover
 malformed batches and missing native weights. The GPU parity test exercises the
 actual packed CUDA varlen operator and moving a model onto the inference worker.
+Reader tests additionally cover malformed headers, exact dtype bytes, unaligned
+tensor offsets, independent tensor storage, bounded dtype conversion, direct and
+buffered reads, truncated files, asynchronous buffer reuse and cleanup on errors.
 
 Native model and kernel fixtures can also be built independently:
 

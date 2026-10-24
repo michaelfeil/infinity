@@ -8,6 +8,9 @@
 #include "helpers/workspace_admission.h"
 #include "models/model.h"
 #include "helpers/options.h"
+#ifndef _WIN32
+#include "helpers/weight_reader.h"
+#endif
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include "kernels/fast_kernels.h"
 #include "kernels/encoder_norm.h"
@@ -232,6 +235,25 @@ struct Engine {
     }
   }
 };
+at::ScalarType weight_dtype(const Engine& model, const char* name) {
+    const std::string key(name);
+    // DeltaNet decay parameters are FP32 in Candle and in the checkpoint's compute contract.
+    const bool fp32_audio_filter = key.find("audio_tower.") != std::string::npos
+      && ((key.find("subsample_conv_projection.") != std::string::npos && key.ends_with(".conv.weight"))
+        || key.ends_with(".lconv1d.depthwise_conv1d.weight"));
+    auto target_dtype = key.ends_with(".A_log") || key.ends_with(".dt_bias") || fp32_audio_filter ? at::kFloat : model.dtype;
+    if(key.starts_with("__tei_decision.")) {
+      auto kind=model.options.string("_decision.kind");
+      if(kind=="pplx")target_dtype=at::kBFloat16;
+      if(kind=="d3")target_dtype=at::kFloat;
+    }
+    return target_dtype;
+}
+void insert_weight(Engine& model, const char* name, at::Tensor tensor) {
+    TORCH_CHECK(model.weights.emplace(name, tensor.to(model.device, weight_dtype(model, name))).second,
+                "Duplicate weight: ", name);
+}
+
 // Host serialization protects model/graph mutation. A CUDA event also orders
 // queued work across callers' streams; a host mutex alone cannot do that.
 class EngineCall {
@@ -489,21 +511,27 @@ int32_t tei_weight(void* handle, const char* name, const uint8_t* data,
     auto& model = *static_cast<Engine*>(handle);
     auto tensor = at::empty(at::IntArrayRef(shape, rank), at::TensorOptions().dtype(scalar(dtype)).device(at::kCPU));
     std::memcpy(tensor.data_ptr(), data, tensor.nbytes());
-    const std::string key(name);
-    // DeltaNet decay parameters are FP32 in Candle and in the checkpoint's compute contract.
-    const bool fp32_audio_filter = key.find("audio_tower.") != std::string::npos
-      && ((key.find("subsample_conv_projection.") != std::string::npos && key.ends_with(".conv.weight"))
-        || key.ends_with(".lconv1d.depthwise_conv1d.weight"));
-    auto target_dtype = key.ends_with(".A_log") || key.ends_with(".dt_bias") || fp32_audio_filter ? at::kFloat : model.dtype;
-    if(key.starts_with("__tei_decision.")) {
-      auto kind=model.options.string("_decision.kind");
-      if(kind=="pplx")target_dtype=at::kBFloat16;
-      if(kind=="d3")target_dtype=at::kFloat;
-    }
-    TORCH_CHECK(model.weights.emplace(name, tensor.to(model.device, target_dtype)).second,
-                "Duplicate weight: ", name);
+    insert_weight(model, name, std::move(tensor));
   });
 }
+#ifndef _WIN32
+int32_t tei_load_safetensors(void* handle, int fd, uint64_t start, uint64_t length,
+                            const TeiWeight* weights, size_t count, size_t threads,
+                            size_t buffer_bytes, int32_t direct_io) {
+  return checked([&] {
+    EngineCall access(handle);
+    auto& model = *static_cast<Engine*>(handle);
+    tei::read_safetensors(fd, start, length, weights, count, model.device,
+                         threads, buffer_bytes, direct_io != 0,
+                         [&](const char* name, at::Tensor tensor) {
+                           insert_weight(model, name, std::move(tensor));
+                         }, [&](const char* name, at::ScalarType) {
+                           return weight_dtype(model, name);
+                         });
+  });
+}
+#endif
+
 int32_t tei_option(void* handle, const char* key, const char* value) {
   return checked([&] { EngineCall access(handle);static_cast<Engine*>(handle)->options.values[key] = value; });
 }

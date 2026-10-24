@@ -1,0 +1,26 @@
+{
+  "repository": "https://github.com/foundation-model-stack/fastsafetensors",
+  "revision": "f22d8abbffd4c5b9f894538f14cd2dc9dd71f021",
+  "tag": "0.5.0",
+  "license": "Apache-2.0",
+  "files": {
+    "fastsafetensors/cpp/ext.cpp": {
+      "sha256": "eb3e31889db5b73b3c273c937044fa9386bcc384669b636f56ec27a606454f52"
+    },
+    "fastsafetensors/cpp/ext.hpp": {
+      "sha256": "f3840f80d45ab516e7d16954d9647c2bd9d8a2a170ec85ba568ba37ec8c3da33"
+    },
+    "LICENSE": {
+      "sha256": "16bac6624a5ba9860fa634a692ba7997d95046f57f1ce30a63a106fe7a7ba4b1"
+    }
+  },
+  "usage": "Adapted nogds_file_reader state, constructor, submit/wait methods and destructor. Standard pread workers and two pinned buffers/streams per worker. Framework operations injected; no Python, GDS, io_uring, libaio, dlopen or NUMA dependency. Buffered fallback additionally accepts EPERM/EOPNOTSUPP. ABI wrapper and bounded tensor staging are local.",
+  "modifications": [
+    "Extract the non-GDS worker reader into a private C++ namespace and minimal header.",
+    "Inject CPU/CUDA runtime operations from LibTorch; remove Python, dynamic loading, NUMA and global memory counters.",
+    "Retain the two-buffer per-worker read/upload pipeline and drain semantics.",
+    "Also fall back to buffered reads on EPERM/EOPNOTSUPP and remove ignored const return qualifiers.",
+    "The local wrapper validates Rust-provided ranges, reads bounded chunks, owns each tensor allocation, converts large tensors in bounded pieces, and drains CUDA copies before returning.",
+    "Retry successful short pread results and EINTR until the tensor range is complete, preserving true EOF/error failures and the direct-I/O buffered fallback."
+  ]
+}

@@ -46,6 +46,16 @@ struct TeiDecision {
   size_t field_count;
 };
 
+// A tensor range from a Rust-validated safetensors header, ordered by offset.
+struct TeiWeight {
+  const char* name;
+  const int64_t* shape;
+  size_t rank;
+  int32_t dtype;
+  uint64_t offset;
+  uint64_t length;
+};
+
 // Every fallible entry point catches C++ exceptions; the error string is thread-local.
 extern "C" {
 const char* tei_error();
@@ -57,6 +67,11 @@ int64_t tei_device_count(const char* device);
 void* tei_create(const TeiConfig*, const char* device, int32_t dtype);
 int32_t tei_weight(void*, const char* name, const uint8_t* data,
                    const int64_t* shape, size_t rank, int32_t dtype);
+#ifndef _WIN32
+int32_t tei_load_safetensors(void*, int fd, uint64_t data_start, uint64_t data_length,
+                            const TeiWeight*, size_t count, size_t threads,
+                            size_t buffer_bytes, int32_t direct_io);
+#endif
 int32_t tei_option(void*, const char* key, const char* value);
 int64_t tei_output_width(void*);
 int64_t tei_pooled_width(void*);
