@@ -193,6 +193,7 @@ extern "C" {
     fn tei_error() -> *const c_char;
     fn tei_last_error_kind() -> i32;
     fn tei_device_count(device: *const c_char) -> i64;
+    fn tei_device_preflight(device: *const c_char) -> i32;
     fn tei_create(config: *const NativeConfig, device: *const c_char, dtype: i32) -> *mut c_void;
     fn tei_weight(
         handle: *mut c_void,
@@ -1096,6 +1097,23 @@ impl LibtorchBackend {
             "bfloat16" => 2,
             _ => return Err(start("Unsupported LibTorch dtype")),
         };
+        if device != "cpu" {
+            let name = CString::new(device).map_err(start)?;
+            let started = std::time::Instant::now();
+            tracing::info!("Starting LibTorch device check");
+            // SAFETY: the device string outlives this synchronous call; native
+            // code catches C++ exceptions and completes the CUDA check/readback.
+            if unsafe { tei_device_preflight(name.as_ptr()) } != 0 {
+                return Err(start(format!(
+                    "Device preflight failed for {device}: {}",
+                    native_error()
+                )));
+            }
+            tracing::info!(
+                seconds = started.elapsed().as_secs_f64(),
+                "LibTorch device check passed"
+            );
+        }
         let device = CString::new(device).map_err(start)?;
         // SAFETY: config and device stay valid during creation, and the bridge copies them.
         let host_result_pool = text_embeddings_backend_core::result_memory::global_pool()?;
@@ -1937,6 +1955,26 @@ mod pytorch_checkpoint;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invalid_device_fails_before_weight_access() {
+        let fixture = fixture("", false);
+        fs::remove_file(fixture.0.join("model.safetensors")).unwrap();
+        let error = LibtorchBackend::new(
+            &fixture.0,
+            "bfloat16",
+            ModelType::Embedding(Pool::Mean),
+            "cuda:999",
+        )
+        .err()
+        .expect("Invalid device must fail initialization");
+        assert!(
+            error
+                .to_string()
+                .contains("Device preflight failed for cuda:999"),
+            "{error}"
+        );
+    }
 
     #[test]
     fn host_output_admission_and_reservation_failures_are_recoverable() {

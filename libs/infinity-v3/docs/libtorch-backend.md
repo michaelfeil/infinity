@@ -94,6 +94,13 @@ Gemma image features use a bounded per-model cache (32 entries, 64 MiB). CUDA
 events protect cached values across streams, and graph replay uses independent
 storage. Cache hits, misses and eviction have different serving costs.
 
+After configuration validation and before loading checkpoint weights, LibTorch
+checks the selected CUDA device by allocating a small FP32 tensor, computing
+`1 + 1`, synchronizing its stream and verifying the result on the CPU. INFO events identify the check's
+start and success in the replica context; CUDA exceptions fail initialization
+through the normal startup-error path. CPU devices skip GPU arithmetic. This
+preflight does not catch a process-fatal SIGSEGV or validate every model kernel.
+
 ## Disk reader
 
 On Unix, LibTorch loads safetensors with the bundled fastsafetensors non-GDS
