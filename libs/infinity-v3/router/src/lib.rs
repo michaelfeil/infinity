@@ -169,11 +169,22 @@ pub async fn run(
     .await
 }
 
+async fn finish_startup_validation(
+    validation: &mut Option<tokio::task::JoinHandle<Result<()>>>,
+) -> Result<()> {
+    if let Some(task) = validation.take() {
+        task.await.context("Startup validation task failed")??;
+    }
+    Ok(())
+}
+
 async fn initialize_model(
     config: ModelSettings,
     hf_token: Option<String>,
     huggingface_hub_cache: Option<String>,
+    validation: &mut Option<tokio::task::JoinHandle<Result<()>>>,
 ) -> Result<ModelRuntime> {
+    let frontend_started = std::time::Instant::now();
     let ModelSettings {
         served_model_name,
         model_id,
@@ -403,7 +414,7 @@ async fn initialize_model(
         "tokenizer.json"
     });
     let mut tokenizer = Tokenizer::from_file(tokenizer_path)
-        .expect("tokenizer.json not found. infinity_v3 only supports fast tokenizers");
+        .map_err(|error| anyhow!("Could not load fast tokenizer: {error}"))?;
     tokenizer.with_padding(None);
     // Old Qwen2  repos updates the post processor manually instead of into the tokenizer.json.
     // Newer ones (https://huggingface.co/jinaai/jina-code-embeddings-0.5b/tree/main) have it in the tokenizer.json. This is to support both cases.
@@ -649,6 +660,12 @@ async fn initialize_model(
         None => tokenization,
     };
 
+    tracing::info!(
+        seconds = frontend_started.elapsed().as_secs_f64(),
+        "Model frontend initialized"
+    );
+    // All models must pass validation before any checkpoint weights are loaded.
+    finish_startup_validation(validation).await?;
     let torch_device = backend_kind.resolve_device(torch_device)?;
     let model_dtype = config.dtype.as_deref().or(config.torch_dtype.as_deref());
     let dtype = match backend_kind {
@@ -832,10 +849,12 @@ pub async fn run_models(
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
     billing_input_tokens_header()?;
-    model_registry::validate_configs(&configs)?;
-    let mut models = Vec::with_capacity(configs.len());
+    anyhow::ensure!(!configs.is_empty(), "At least one model is required");
+    // CUDA discovery can block on the driver. Overlap it with frontend setup
+    // without blocking a Tokio worker or starting unvalidated weight loading.
     let multiple = configs.len() > 1;
-    for mut config in configs {
+    let mut configs = configs;
+    for config in &mut configs {
         if multiple && config.served_model_name.is_none() {
             config.served_model_name = Some(
                 model_aliases::resolve(
@@ -846,11 +865,33 @@ pub async fn run_models(
                 .0,
             );
         }
+    }
+    let validation_configs = configs.clone();
+    let mut validation = Some(tokio::task::spawn_blocking(move || {
+        let started = std::time::Instant::now();
+        let result = model_registry::validate_configs(&validation_configs);
+        tracing::info!(
+            seconds = started.elapsed().as_secs_f64(),
+            "Startup configuration validation finished"
+        );
+        result
+    }));
+    let mut models = Vec::with_capacity(configs.len());
+    for config in configs {
         let name = config
             .served_model_name
             .clone()
             .unwrap_or_else(|| config.model_id.clone());
-        match initialize_model(config, hf_token.clone(), huggingface_hub_cache.clone()).await {
+        let initialized = initialize_model(
+            config,
+            hf_token.clone(),
+            huggingface_hub_cache.clone(),
+            &mut validation,
+        )
+        .await;
+        // Drain validation even when frontend setup fails before the barrier.
+        let validated = finish_startup_validation(&mut validation).await;
+        match initialized.and_then(|model| validated.map(|()| model)) {
             Ok(model) => models.push(std::sync::Arc::new(model)),
             Err(error) => {
                 for model in &models {
