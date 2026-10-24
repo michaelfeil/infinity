@@ -16,6 +16,8 @@ at::Tensor nomic_moe_split_policy(const c10::Device& device,
                                   int64_t width,
                                   int64_t experts,
                                   int64_t top_k);
+/// Execute selected expert routes with the load-time split policy, combining weighted outputs.
+/// Requires the qualified geometry and policy; invalid arguments raise an error.
 at::Tensor nomic_grouped_experts(const at::Tensor& input,
                                  const at::Tensor& first,
                                  const at::Tensor& second,

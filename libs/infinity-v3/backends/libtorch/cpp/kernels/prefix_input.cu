@@ -49,6 +49,8 @@ bool prefix_inputs_supported(const at::Tensor& ids,
   return true;
 }
 
+/// Validate host full/suffix boundaries, then gather three token vectors into one owned allocation.
+/// Returned vectors are disjoint views of that allocation and do not retain full-input storage.
 PrefixInputs pack_prefix_inputs(const at::Tensor& ids,
                                 const at::Tensor& positions,
                                 const at::Tensor& types,

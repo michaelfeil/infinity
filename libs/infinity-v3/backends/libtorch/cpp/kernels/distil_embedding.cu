@@ -8,6 +8,7 @@
 #include "distil_embedding_kernel.cuh"
 
 namespace tei {
+/// Gather token and position embeddings directly into the exact biased normalization recipe.
 at::Tensor distil_embedding_norm(const at::Tensor& words,
                                  const at::Tensor& positions,
                                  const at::Tensor& ids,

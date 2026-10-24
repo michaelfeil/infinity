@@ -77,6 +77,8 @@ void prefix_fingerprints(PrefixIdentity& key, int64_t tokens) {
   }
 }
 
+/// Shorten a candidate prefix before unmatched or partially included
+/// media; images are atomic reuse units.
 static int64_t media_common(const PrefixIdentity& a, const PrefixIdentity& b, int64_t n) {
   for (const auto* key : {&a, &b})
     for (const auto& media : key->media)
@@ -107,6 +109,7 @@ static int64_t media_bound(const PrefixIdentity& a, const PrefixIdentity& b, int
   return ordered_media(a) && ordered_media(b) ? media_common(a, b, end) : end;
 }
 
+/// Compare exact token blocks, then locate the first differing token within a mismatched block.
 static int64_t
 token_common(const PrefixIdentity& a, const PrefixIdentity& b, int64_t n, int64_t end) {
   while (n < end) {

@@ -163,6 +163,8 @@ bool direct_filesystem(int fd) {
 }
 
 namespace tei {
+/// Validate ordered byte ranges, then read bounded groups into independently owned tensors. The
+/// insert callback receives each completed tensor; file/DMA cleanup drains work on failure too.
 void read_safetensors(
     int fd,
     uint64_t data_start,

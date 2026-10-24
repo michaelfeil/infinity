@@ -11,6 +11,8 @@
 namespace tei {
 // Bound layer intermediates rather than just uploaded pixels. A single large
 // image remains executable; batching uses a conservative share of headroom.
+/// Return contiguous [begin, end) image ranges without changing input order. The estimate bounds
+/// batching, not admission: an individually oversized image forms its own batch.
 inline std::vector<std::pair<size_t, size_t>> vision_batches(const std::vector<ImageInput>& images,
                                                              const c10::Device& device,
                                                              int64_t hidden,

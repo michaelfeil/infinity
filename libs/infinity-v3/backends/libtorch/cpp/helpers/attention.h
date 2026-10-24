@@ -18,11 +18,14 @@ namespace tei {
 // Allocate enough storage for BOTH the bounded logical view and actual tiles.
 inline constexpr int64_t default_attention_bias_max_bytes = 512LL << 20;
 
+/// Reject invalid or over-budget bias estimates before allocating attention storage.
 inline void admit_attention_bias(int64_t bytes, int64_t limit) {
   TORCH_CHECK(limit > 0 && bytes >= 0, "Invalid packed attention bias memory budget");
   require_memory_admission(bytes <= limit, "Packed attention bias exceeds its memory budget");
 }
 
+/// Allocate uninitialized strided bias storage for per-sequence tiles and its logical view. Callers
+/// must fill the tiles before attention; the budget covers backing storage, not just numel().
 inline at::Tensor packed_sequence_bias(const at::Tensor& q,
                                        const PackedInput& input,
                                        int64_t max_bytes = default_attention_bias_max_bytes) {
@@ -92,6 +95,10 @@ inline at::Tensor packed_alibi_bias(const at::Tensor& q,
 }
 
 // Q/K/V are packed [total_tokens, heads, head_dim]; cumulative offsets delimit sequences.
+/// Return packed [tokens, query_heads, head_dim] attention results without crossing sequence
+/// bounds. CUDA dispatches eligible native/ATen operators; CPU evaluates each sequence
+/// independently. Prepared bias belongs to the efficient ALiBi path; window
+/// distances use sequence-local positions.
 inline at::Tensor packed_attention(const at::Tensor& q,
                                    const at::Tensor& k,
                                    const at::Tensor& v,

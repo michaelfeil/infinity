@@ -286,6 +286,8 @@ void launch_swiglu(const at::Tensor& input, at::Tensor& output, at::Tensor& scal
 }
 }
 
+/// Produce FP8 gated-activation rows and F32 row scales without
+/// materializing a separate activation tensor.
 std::pair<at::Tensor, at::Tensor> fp8_swiglu_quantize(const at::Tensor& input) {
   validate_matrix(input);
   TORCH_CHECK(input.size(1) % 2 == 0 &&

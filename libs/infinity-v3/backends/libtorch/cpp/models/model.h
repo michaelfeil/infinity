@@ -20,6 +20,7 @@ inline uint64_t prefix_storage_bytes(uint64_t rows, uint64_t width, uint64_t ele
   return element_size && elements > maximum / element_size ? maximum : elements * element_size;
 }
 
+/// Add retained-byte estimates, saturating rather than wrapping on overflow.
 inline uint64_t prefix_storage_sum(uint64_t a, uint64_t b) {
   return b > std::numeric_limits<uint64_t>::max() - a ? std::numeric_limits<uint64_t>::max()
                                                       : a + b;
@@ -34,6 +35,7 @@ public:
 
   Model(const Model&) : Model() {}
 
+  /// Identifies this model instance for resident-cache reuse; copied models get a new namespace.
   uint64_t prefix_namespace() const {
     return prefix_epoch;
   }
@@ -48,12 +50,15 @@ public:
     return false;
   }
 
+  /// Validate and prepare loaded parameters before accepting inference requests.
   virtual void ready() = 0;
 
+  /// Width of each token row returned by forward(), before any pooled-only projection.
   virtual int64_t output_width() const {
     return 0;
   }
 
+  /// Number of classifier outputs per selected row; zero means no classification head.
   virtual int64_t classification_width() const {
     return 0;
   }
@@ -61,6 +66,8 @@ public:
   // Resolve data-dependent media indices before CUDA graph capture.
   virtual void prepare_input(PackedInput&) const {}
 
+  /// Evaluate packed sequences and return token rows in the adapter's output space. Sequence
+  /// boundaries come from PackedInput, rather than padding between sequences.
   virtual at::Tensor forward(const PackedInput&) const = 0;
 
   // Per-sequence embedding mean; preserve the bridge's F32 default unless a
@@ -78,10 +85,13 @@ public:
     return value;
   }
 
+  /// Convert hidden rows to sparse vocabulary scores; unsupported adapters throw.
   virtual at::Tensor token_scores(const at::Tensor&) const {
     TORCH_CHECK(false, "This model does not implement SPLADE");
   }
 
+  /// Run classification; the boolean selects tokenwise rather than sequence readout. Unsupported
+  /// adapters throw instead of returning embedding rows as logits.
   virtual at::Tensor predict(const PackedInput&, bool) const {
     TORCH_CHECK(false, "This model does not implement classification");
   }
@@ -93,10 +103,12 @@ public:
     return {};
   }
 
+  /// Whether identical causal prefixes may share compact projection rows in one request.
   virtual bool supports_radix() const {
     return false;
   }
 
+  /// Whether the specified execution operation can reuse resident prefix snapshots.
   virtual bool supports_prefix_cache(int) const {
     return false;
   }
@@ -105,10 +117,12 @@ public:
     return 0;
   }
 
+  /// Estimate retained state for this many prefix tokens, excluding transient workspace.
   virtual uint64_t prefix_payload_bytes(int64_t) const {
     return 0;
   }
 
+  /// Whether reuse requires a complete saved checkpoint rather than a shorter partial match.
   virtual bool prefix_checkpoint_only() const {
     return false;
   }

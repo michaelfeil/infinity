@@ -43,6 +43,8 @@ class Mistral3 final : public Model {
     return at::linear(x, w(name + ".weight"), it == weights.end() ? at::Tensor() : it->second);
   }
 
+  /// Validate one frame's patch/merge geometry against the Pixtral
+  /// position grid and return patch count.
   int64_t validate_image(const ImageInput& image) const {
     const auto h = image.grid_thw[1], width = image.grid_thw[2];
     TORCH_CHECK(image.grid_thw[0] == 1 && h > 0 && width > 0 && h % merge == 0 &&
@@ -55,6 +57,9 @@ class Mistral3 final : public Model {
     return h * width;
   }
 
+  /// Pack independent image patch sequences for shared vision layers, then spatially merge/project
+  /// them. Memory-aware subbatches preserve original image order and
+  /// never permit cross-image attention.
   at::Tensor vision(const std::vector<ImageInput>& images) const {
     auto batches = vision_batches(
         images, device, hidden, cfg.integer("vision_config.intermediate_size", hidden * 4));
@@ -362,6 +367,8 @@ public:
     return text->output_width();
   }
 
+  /// Replace validated image token spans with merged Pixtral
+  /// features before invoking the text decoder.
   at::Tensor forward(const PackedInput& input) const override {
     if (input.images.empty())
       return text->forward(input);

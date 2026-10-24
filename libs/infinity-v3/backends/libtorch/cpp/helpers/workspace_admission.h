@@ -19,6 +19,7 @@ struct WorkspaceAdmissionState {
   std::multiset<size_t> policies;
 };
 
+/// Return shared accounting for a device index; the registry lock protects creation only.
 inline std::shared_ptr<WorkspaceAdmissionState> workspace_admission_state(int index) {
   static std::mutex mutex;
   static std::unordered_map<int, std::shared_ptr<WorkspaceAdmissionState>> devices;
@@ -53,6 +54,7 @@ public:
   }
 };
 
+/// Register an engine allowance until the returned policy dies; the smallest live limit wins.
 inline std::shared_ptr<WorkspaceMemoryPolicy> configure_workspace_admission(int index,
                                                                             size_t limit) {
   // Only live engines contribute to the most restrictive positive policy.
@@ -76,6 +78,8 @@ public:
   }
 };
 
+/// Atomically charge retained bytes or return empty when no allowance remains. Keep the permit
+/// alive with the allocation so releasing it returns exactly that charge.
 inline std::shared_ptr<WorkspaceMemoryPermit> reserve_workspace_memory(int index, size_t bytes) {
   auto state = workspace_admission_state(index);
   std::lock_guard lock(state->mutex);

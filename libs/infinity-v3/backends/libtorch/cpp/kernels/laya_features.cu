@@ -75,6 +75,7 @@ __global__ void features_kernel(const float* logits, const int64_t* offsets, flo
 }
 } // namespace
 
+/// Compute four F32 action features per question from packed option logits and int64 boundaries.
 at::Tensor laya_action_features(const at::Tensor& logits, const at::Tensor& offsets) {
   TORCH_CHECK(logits.is_cuda() && logits.scalar_type() == at::kFloat && logits.dim() == 1 &&
                   logits.is_contiguous(),

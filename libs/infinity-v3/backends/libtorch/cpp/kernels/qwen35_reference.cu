@@ -164,6 +164,8 @@ at::Tensor qwen35_reference_norm_cuda(const at::Tensor& x, const at::Tensor& gam
   return out;
 }
 
+/// Keep convolution and recurrence arithmetic in the reference order,
+/// including prefix checkpoint publication.
 at::Tensor qwen35_reference_delta_cuda(const at::Tensor& qkv,
                                        const at::Tensor& z,
                                        const at::Tensor& ab,

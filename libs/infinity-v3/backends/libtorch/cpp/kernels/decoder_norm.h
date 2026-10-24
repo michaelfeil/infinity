@@ -11,6 +11,8 @@ namespace tei {
 // and FP16 widths 896 (masked1024), 1024 and 2048, using each registered decoder warp layout. Statistics
 // use the unrounded FP32 residual sum; the returned residual rounds to the
 // input dtype. No input rows are padded.
+/// Return normalized rows plus rounded residual rows; without
+/// residual, the second tensor aliases input.
 std::pair<at::Tensor, at::Tensor> decoder_exact_rms_norm(const at::Tensor& input,
                                                          const at::Tensor& residual,
                                                          const at::Tensor& weight,

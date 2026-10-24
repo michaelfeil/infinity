@@ -133,6 +133,8 @@ struct Engine {
   std::optional<c10::cuda::CUDAStream> producer;
   bool submission_failed = false;
 #endif
+  /// Finish the last producer submission before engine resources are replaced or destroyed. A
+  /// failed event submission requires draining the remembered producer stream instead.
   void drain() {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (submission_failed && producer)
@@ -156,6 +158,7 @@ struct Engine {
   Engine(TeiConfig cfg, c10::Device dev, at::ScalarType type)
       : config(cfg), device(dev), dtype(type) {}
 
+  /// Rebuild adapters and caches from current options/weights only after prior GPU work completes.
   void ready() {
     drain();
     // A reload can disable features as well as enable them. Retire old graph
@@ -401,6 +404,8 @@ class EngineCall {
   }
 
 public:
+  /// Serialize engine access; inference also orders this caller stream after the prior producer.
+  /// The host mutex alone cannot protect buffers reused by asynchronous GPU work.
   explicit EngineCall(void* handle, bool submits = false)
       : engine(get(handle)), lock(engine.mutex), inference(submits) {
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -415,6 +420,7 @@ public:
 #endif
   }
 
+  /// Publish this submission's completion fence before the engine lock is released.
   void finish() {
     if (finished)
       return;
@@ -571,6 +577,8 @@ struct SynchronousStreamGuard {
   }
 };
 
+/// Validate host descriptors and construct packed token/media tensors for one submission. Host
+/// identity/offset views remain borrowed; deferred token uploads use completion-owned pins.
 tei::PackedInput packed_input(Engine& model,
                               const int64_t* ids,
                               const int64_t* types,
@@ -660,6 +668,7 @@ tei::PackedInput packed_input(Engine& model,
   return packed;
 }
 
+/// Validate compact maps and causal/media equivalence before attaching uploaded radix metadata.
 void attach_radix(Engine& model,
                   tei::PackedInput& packed,
                   const int64_t* ids,
@@ -777,6 +786,7 @@ void attach_radix(Engine& model,
   }
 }
 
+/// Copy counted FFI metadata into request-owned vectors and translate protocol kind values.
 std::vector<tei::DecisionRequest> decision_requests(const TeiDecision* requests, size_t count) {
   TORCH_CHECK(requests || !count, "Missing decision metadata buffer");
   std::vector<tei::DecisionRequest> result;
@@ -808,6 +818,8 @@ std::vector<tei::DecisionRequest> decision_requests(const TeiDecision* requests,
   return result;
 }
 
+/// Run inference-mode work without letting C++ exceptions cross the C ABI. Reset thread-local
+/// status first, then preserve nested/admission/allocation error classifications.
 template <class F> int32_t checked(F&& f) {
   error_kind = 0;
   error_fallback = nullptr;

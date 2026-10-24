@@ -14,6 +14,8 @@ namespace tei::modern_cpu {
 // cache profile with one ATen intra-op thread. Other CPUs or thread counts
 // retain the existing ATen implementation; eligibility is checked during ready().
 bool supported_profile();
+/// Apply the qualified CPU Half LayerNorm recipe, preserving FP32
+/// statistics and Half affine rounding.
 at::Tensor norm(const at::Tensor&, const at::Tensor&, float);
 
 /// Input-column range and prepared weights for one CPU linear reduction block.
@@ -28,10 +30,13 @@ struct LinearWeights {
   std::vector<LinearBlock> blocks;
 };
 
+/// Preconvert ordered K-dimension blocks without changing the Half checkpoint rounding.
 LinearWeights prepare_linear(const at::Tensor& weight);
 at::Tensor linear(const at::Tensor& x, const LinearWeights& weights, const at::Tensor& bias);
 at::Tensor linear(const at::Tensor&, const at::Tensor&, const at::Tensor&);
+/// Split concatenated gate/up rows and preserve Half rounding after each reference GELU operation.
 at::Tensor gated_gelu(const at::Tensor&);
+/// Evaluate packed sequence-local CPU attention for the independently qualified Half profile.
 at::Tensor attention(const at::Tensor&,
                      const at::Tensor&,
                      const at::Tensor&,
@@ -39,6 +44,8 @@ at::Tensor attention(const at::Tensor&,
                      int64_t,
                      float,
                      int64_t);
+/// Evaluate scalar F32 sine/cosine before converting rotary tables to the requested model dtype.
 std::pair<at::Tensor, at::Tensor> trig(const at::Tensor&, at::ScalarType);
+/// Reduce one sequence to [1, width] with sequential Half additions and a Half reciprocal.
 at::Tensor mean(const at::Tensor&);
 } // namespace tei::modern_cpu

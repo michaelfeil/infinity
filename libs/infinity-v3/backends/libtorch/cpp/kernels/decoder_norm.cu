@@ -176,6 +176,8 @@ exact_norm(const at::Tensor& x, const at::Tensor& residual, const at::Tensor& w,
 }
 }
 
+/// Select the registered dtype/width reduction geometry after validating contiguous row layout. The
+/// vectorized BF16-4096 route retains the same statistics and residual-rounding boundaries.
 std::pair<at::Tensor, at::Tensor> decoder_exact_rms_norm(const at::Tensor& x,
                                                          const at::Tensor& residual,
                                                          const at::Tensor& w,

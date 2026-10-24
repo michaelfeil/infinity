@@ -7,6 +7,7 @@
 
 namespace tei {
 bool torch_flash_alibi64_supported(c10::Device, at::ScalarType, int64_t);
+/// Execute the qualified width-64 packed attention profile with per-head ALiBi slopes.
 at::Tensor torch_flash_alibi64(const at::Tensor&,
                                const at::Tensor&,
                                const at::Tensor&,

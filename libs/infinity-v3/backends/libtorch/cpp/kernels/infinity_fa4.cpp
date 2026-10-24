@@ -137,6 +137,9 @@ void check_offsets(const at::Tensor& q, const at::Tensor& cu) {
 }
 }
 
+/// Map eligible geometry/masks to exported kernel modes; undefined means no compatible export.
+/// After an export is chosen, validate metadata and surface its launch
+/// errors without retrying another provider.
 at::Tensor infinity_fa4(const at::Tensor& q,
                         const at::Tensor& k,
                         const at::Tensor& v,

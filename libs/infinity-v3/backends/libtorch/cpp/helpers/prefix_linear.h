@@ -14,6 +14,8 @@ public:
   PrefixLinearPlans();
   ~PrefixLinearPlans();
   void clear();
+  /// Project real suffix rows using the full logical row count to select the GEMM recipe. Falls
+  /// back to ordinary ATen linear when no qualified suffix plan is available.
   at::Tensor forward(const at::Tensor& input,
                      const at::Tensor& weight,
                      const at::Tensor& bias,

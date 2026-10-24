@@ -38,6 +38,8 @@ struct LtPolicy {
 };
 }
 
+/// Qualify the reference split-K choice for every bounded route count at model load. Return
+/// undefined if device, library, precision, or any heuristic falls outside the proved profile.
 at::Tensor nomic_moe_split_policy(const c10::Device& device,
                                   at::ScalarType dtype,
                                   int64_t hidden,
@@ -116,6 +118,8 @@ at::Tensor nomic_moe_split_policy(const c10::Device& device,
       .to(device);
 }
 
+/// Sort selected routes by expert, run grouped projections, then restore token/route order.
+/// Weighted contributions accumulate in expert order with a model-dtype rounding at each addition.
 at::Tensor nomic_grouped_experts(const at::Tensor& input,
                                  const at::Tensor& first,
                                  const at::Tensor& second,

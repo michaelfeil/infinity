@@ -103,6 +103,8 @@ bool native_hopper_moe_available(const c10::Device& device) {
 #endif
 }
 
+/// Reject unqualified layouts before allocating native route/workspace buffers. Eligible calls keep
+/// route counts and expert rows on device; launch failures propagate as errors.
 at::Tensor routed_moe_cuda(const at::Tensor& x,
                            const at::Tensor& logits,
                            const at::Tensor& gu,

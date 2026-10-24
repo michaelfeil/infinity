@@ -264,6 +264,8 @@ __global__ __launch_bounds__(SCAN_THREADS) void scan_chunks(const float* qk,
 }
 }
 
+/// Partition each real sequence into bounded chunks and propagate F32 state between its chunks.
+/// Tail lengths remain explicit so no synthetic token rows participate in the recurrent update.
 void qwen35_chunk_delta_cuda(const at::Tensor& values,
                              const at::Tensor& qk,
                              const at::Tensor& gates,

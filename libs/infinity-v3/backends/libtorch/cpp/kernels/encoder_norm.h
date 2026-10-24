@@ -8,6 +8,8 @@
 namespace tei {
 // Reuses Candle's exact CUDA normalization kernel up to width 1536 and rounded
 // residual semantics. Wider custom configurations fall back to ATen LayerNorm.
+/// Return normalized rows and an optional residual sum; without
+/// residual, the second tensor is undefined.
 std::pair<at::Tensor, at::Tensor> encoder_layer_norm(const at::Tensor& input,
                                                      const at::Tensor& weight,
                                                      double epsilon,

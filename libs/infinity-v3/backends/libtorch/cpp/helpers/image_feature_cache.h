@@ -40,6 +40,8 @@ private:
   mutable size_t bytes = 0;
   size_t byte_limit, entry_limit;
 
+  /// Look up and refresh LRU order under the mutex; CUDA hits wait on the producer event on the
+  /// current stream and register allocator use before returning immutable features.
   at::Tensor find(const Key& key) const {
     for (auto found = entries.begin(); found != entries.end(); ++found)
       if (found->key == key) {
@@ -57,6 +59,8 @@ private:
     return {};
   }
 
+  /// Retain an immutable result under the mutex, evicting oldest entries to honor both limits.
+  /// Views are cloned when necessary so accounting covers the actual retained allocation.
   at::Tensor publish(const Key& key, at::Tensor value) const {
     TORCH_CHECK(value.defined(), "Undefined image feature cache value");
     const size_t logical_bytes = value.numel() * value.element_size();
@@ -101,6 +105,9 @@ public:
     return value.defined() ? value : publish(key, compute());
   }
 
+  /// Compute distinct keyed misses in one callback and restore the original request order. Missing
+  /// keys always compute independently; the callback receives indices into keys. The mutex covers
+  /// lookup, computation submission, and publication; do not reenter this cache.
   template <class Compute>
   std::vector<at::Tensor> get_batch(const std::vector<std::optional<Key>>& keys,
                                     Compute compute) const {
@@ -132,6 +139,7 @@ public:
     return result;
   }
 
+  /// Return the retained entry count and owned storage bytes under the cache mutex.
   std::pair<size_t, size_t> usage() const {
     std::lock_guard<std::mutex> lock(mutex);
     return {entries.size(), bytes};

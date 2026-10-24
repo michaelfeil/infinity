@@ -72,6 +72,7 @@ struct TeiWeight {
 
 // Every fallible entry point catches C++ exceptions; the error string is thread-local.
 extern "C" {
+/// Borrow the calling thread's last error text; copy it before another fallible native call.
 const char* tei_error();
 // Thread-local status of the last fallible call: 0 success, 1 other error,
 // 2 memory admission rejection, 3 recoverable allocator OOM. Read immediately
@@ -80,7 +81,10 @@ int32_t tei_last_error_kind();
 int64_t tei_device_count(const char* device);
 // Synchronous CUDA allocation/add/readback check; CPU is a no-op.
 int32_t tei_device_preflight(const char* device);
+/// Create an owned engine handle, or return null with thread-local error details. Load options and
+/// weights, call tei_ready(), then release the handle with tei_destroy().
 void* tei_create(const TeiConfig*, const char* device, int32_t dtype);
+/// Copy the supplied checkpoint bytes into engine-owned storage; success is 0, failure is -1.
 int32_t tei_weight(
     void*, const char* name, const uint8_t* data, const int64_t* shape, size_t rank, int32_t dtype);
 #ifndef _WIN32
@@ -109,8 +113,12 @@ int32_t tei_prefix_cache_clear(void*);
 // Set probe bypass and return its previous value, or -1 on error.
 int32_t tei_prefix_cache_set_probe(void*, int32_t enabled);
 int32_t tei_supports_radix(void*);
+/// Prepare loaded weights and model/cache state; rebuilding drains previous engine submissions.
 int32_t tei_ready(void*);
+/// Validate one decision descriptor per requested count and fill caller-owned logit-count storage.
 int32_t tei_decision_counts(void*, const TeiDecision*, size_t count, int64_t* counts);
+/// Synchronously write concatenated request logits and one action probability per sequence.
+/// Capacity counts logit floats; inputs and output buffers remain valid throughout the call.
 int32_t tei_decide(void*,
                    const int64_t* ids,
                    const int64_t* types,
@@ -127,6 +135,8 @@ int32_t tei_decide(void*,
                    size_t image_count,
                    const TeiAudio* audios,
                    size_t audio_count);
+/// Perform synchronous decisions with optional compact
+/// causal-prefix maps; null maps disable sharing.
 int32_t tei_decide_radix(void*,
                          const int64_t* ids,
                          const int64_t* types,
@@ -144,6 +154,9 @@ int32_t tei_decide_radix(void*,
                          const TeiAudio* audios,
                          size_t audio_count,
                          const TeiRadix* radix);
+/// Synchronously write pooled selections first, then raw token spans, preserving selection order.
+/// Capacity counts float elements, including repetitions; input
+/// boundaries delimit unpadded sequences.
 int32_t tei_forward(void*,
                     const int64_t* ids,
                     const int64_t* types,
@@ -209,6 +222,9 @@ void* tei_forward_submit(void* handle,
                          const TeiRadix* radix);
 // Owned output lease: wait and construct host results before destroy.
 const float* tei_output_wait(void*);
+/// Release an owned output lease after consuming its results;
+/// unfinished transfers drain on destruction.
 void tei_output_destroy(void*);
+/// Destroy an owned engine handle after callers stop using it, draining pending producer work.
 void tei_destroy(void*);
 }

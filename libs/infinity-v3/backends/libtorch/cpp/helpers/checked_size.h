@@ -8,6 +8,7 @@
 #include <limits>
 
 namespace tei {
+/// Multiply nonnegative sizes, throwing before a negative input or int64 overflow.
 inline int64_t checked_size_product(int64_t left, int64_t right) {
   TORCH_CHECK(left >= 0 && right >= 0 &&
                   (!right || left <= std::numeric_limits<int64_t>::max() / right),
@@ -15,6 +16,7 @@ inline int64_t checked_size_product(int64_t left, int64_t right) {
   return left * right;
 }
 
+/// Add nonnegative sizes, throwing before a negative input or int64 overflow.
 inline int64_t checked_size_sum(int64_t left, int64_t right) {
   TORCH_CHECK(left >= 0 && right >= 0 && right <= std::numeric_limits<int64_t>::max() - left,
               "Attention storage size overflow");

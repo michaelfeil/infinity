@@ -13,6 +13,8 @@
 #include <limits>
 
 namespace tei {
+/// Validate selected sequence indices and count their raw token rows. Requires already validated
+/// cumulative sequence boundaries; duplicate selections count again.
 inline size_t validate_output_indices(const int32_t* cumulative,
                                       int64_t batch,
                                       const int64_t* pooled,
@@ -37,6 +39,7 @@ inline size_t validate_output_indices(const int32_t* cumulative,
   return rows;
 }
 
+/// Compute pooled plus raw output capacity in F32 elements, rejecting size/byte overflow.
 inline size_t expected_output_elements(size_t pooled_count,
                                        size_t raw_rows,
                                        int64_t pooled_width,
@@ -57,6 +60,7 @@ inline size_t expected_output_elements(size_t pooled_count,
   return elements;
 }
 
+/// Multiply positive descriptor dimensions with checked int64 arithmetic.
 inline int64_t input_product(int64_t left, int64_t right, const char* name) {
   TORCH_CHECK(left > 0 && right > 0 && left <= std::numeric_limits<int64_t>::max() / right,
               "Invalid or overflowing ",
@@ -65,6 +69,7 @@ inline int64_t input_product(int64_t left, int64_t right, const char* name) {
   return left * right;
 }
 
+/// Reject payload lengths whose byte count cannot be represented by native tensor/storage sizes.
 inline void input_bytes(int64_t elements, size_t element_size, const char* name) {
   TORCH_CHECK(elements > 0 &&
                   static_cast<uint64_t>(elements) <=
@@ -165,6 +170,8 @@ struct InputUploadBudget {
   }
 };
 
+/// Account for token/media staging and conversion peaks before allocating request buffers. Returns
+/// charged bytes; activations, workspace, and output staging have separate budgets.
 inline size_t validate_input_upload_budget(int64_t tokens,
                                            int64_t batch,
                                            bool media_positions,
@@ -235,6 +242,7 @@ inline size_t validate_input_upload_budget(int64_t tokens,
   return budget.bytes;
 }
 
+/// Extend an existing upload charge with owned decision metadata and validate counted pointers.
 inline size_t validate_decision_metadata_budget(const TeiDecision* requests,
                                                 size_t count,
                                                 size_t limit,

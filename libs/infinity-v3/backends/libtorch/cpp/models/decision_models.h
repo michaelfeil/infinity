@@ -34,7 +34,10 @@ struct DecisionResult {
 class DecisionHead {
 public:
   virtual ~DecisionHead() = default;
+  /// Validate head-specific request metadata and report the number of option logits to reserve.
   virtual int64_t output_count(const DecisionRequest&) const = 0;
+  /// Read packed [tokens, hidden] states and return one result per decision request. Token spans
+  /// and marker positions refer to each request's sequence, not the whole packed batch.
   virtual std::vector<DecisionResult> forward(const at::Tensor& packed_hidden,
                                               const PackedInput&,
                                               const std::vector<DecisionRequest>&) const = 0;
@@ -45,6 +48,7 @@ public:
     return {};
   }
 
+  /// Consume optional pre-uploaded head metadata; the default delegates to ordinary forward().
   virtual std::vector<DecisionResult> forward_prepared(const at::Tensor& hidden,
                                                        const PackedInput& input,
                                                        const std::vector<DecisionRequest>& requests,

@@ -186,6 +186,8 @@ struct OrdinaryLinearExecutor::Session::State {
 #endif
 };
 
+/// Snapshot an eligible device/context/stream/policy once for a synchronous forward. Unsupported or
+/// capturing contexts produce an empty session and retain ordinary ATen fallback.
 OrdinaryLinearExecutor::Session OrdinaryLinearExecutor::prepare(const at::Tensor& x) const {
   Session session;
 #if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
@@ -468,6 +470,9 @@ at::Tensor Fp8Linear::forward(const at::Tensor& input, const at::Tensor& bias) c
   return forward_quantized(quantized.first, quantized.second, bias);
 }
 
+/// Consume E4M3 [rows, input_width] activations and F32 [rows, 1] scales. Hopper uses rowwise
+/// scaled GEMM; other qualified devices scale FP32 output before model-dtype rounding. Bias is
+/// added after GEMM rounding, matching the unfused checkpoint recipe.
 at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
                                         const at::Tensor& row_scales,
                                         const at::Tensor& bias) const {

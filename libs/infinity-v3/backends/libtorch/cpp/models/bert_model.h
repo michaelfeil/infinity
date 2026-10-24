@@ -84,6 +84,8 @@ struct Bert : tei::Model {
     return entry->second;
   }
 
+  /// Apply a classifier projection with optional GELU using qualified cached cuBLASLt plans. Keep
+  /// the ordinary ATen path when layout/policy checks fail; retained workspace survives graph use.
   at::Tensor classifier_projection(const at::Tensor& x,
                                    const at::Tensor& matrix,
                                    const at::Tensor& bias,
@@ -283,6 +285,9 @@ struct Bert : tei::Model {
     TORCH_CHECK(w(name).sizes() == at::IntArrayRef(shape), "Invalid shape for ", name);
   }
 
+  /// Resolve checkpoint namespaces, validate parameter geometry, and prepare eligible native
+  /// kernels. This load-time qualification keeps per-request dispatch tied
+  /// to the supported numerical profile.
   void ready() override {
     TORCH_CHECK(
         device.is_cpu() || device.is_cuda(),
@@ -419,6 +424,9 @@ struct Bert : tei::Model {
                              : at::gelu(projected, "tanh");
   }
 
+  /// Classify every token or each sequence's first packed token using the checkpoint's task head.
+  /// Optional BERT pooler and RoBERTa dense/tanh stages are part
+  /// of sequence readout, not embeddings.
   at::Tensor predict(const tei::PackedInput& input, bool tokenwise) const override {
     auto h = forward(input);
     if (!tokenwise) {
@@ -443,6 +451,8 @@ struct Bert : tei::Model {
     return root_linear(h, "classifier");
   }
 
+  /// Return nonnegative log1p vocabulary scores for SPLADE before sequence-level max pooling. Use
+  /// the checkpoint decoder matrix when present, otherwise the tied word embedding matrix.
   at::Tensor token_scores(const at::Tensor& h) const override {
     at::Tensor transformed, matrix, bias;
     if (roberta) {
@@ -481,6 +491,8 @@ struct Bert : tei::Model {
     return config.hidden;
   }
 
+  /// Return [packed_tokens, hidden] states with sequence-local bidirectional attention. Selected
+  /// native embedding, norm, and activation paths preserve their qualified rounding stages.
   at::Tensor forward(const tei::PackedInput& input) const override {
     const auto& ids = input.ids;
     const auto& types = input.types;

@@ -122,6 +122,8 @@ __global__ void packed_bias_fill_tiled_kernel(T* out,
   }
 }
 
+/// Write sequence-local disentangled bias tiles into caller-owned strided storage. The host
+/// validates geometry; device indices select relative terms without transferring token rows.
 void packed_bias_fill(const at::Tensor& out,
                       const at::Tensor& ck,
                       const at::Tensor& pc,

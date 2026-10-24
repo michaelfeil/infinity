@@ -8,6 +8,8 @@
 #include <flashinfer/flat/prefill/prefill_kernel_delta_rule_sm90.cuh>
 
 namespace tei {
+/// Dispatch SM90 prefill into caller-owned output and assign FP32 state through final_state. The
+/// caller supplies a non-null final_state pointer and validates the eligible profile.
 void qwen35_prefill_cuda(const at::Tensor& values,
                          const at::Tensor& qk,
                          const at::Tensor& gates,

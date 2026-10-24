@@ -51,6 +51,8 @@ __global__ void copy_states(Copies copies) {
 }
 }
 
+/// Validate every copy before launching any, then submit bounded
+/// descriptor batches on the current stream.
 bool prefix_state_copies(const std::vector<at::Tensor>& targets,
                          const std::vector<at::Tensor>& sources,
                          bool leading_rows) {

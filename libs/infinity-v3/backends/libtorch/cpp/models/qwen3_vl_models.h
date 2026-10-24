@@ -37,6 +37,8 @@ public:
   bool supports_prefix_cache(int operation) const override;
   int64_t prefix_layers() const override;
   uint64_t prefix_payload_bytes(int64_t tokens) const override;
+  /// Return one merged vision feature matrix per image, preserving
+  /// image order and merged token counts.
   std::vector<at::Tensor> image_features(const std::vector<ImageInput>& images) const;
 
   at::Tensor image_features(const ImageInput& image) const {
@@ -44,6 +46,7 @@ public:
   }
 
   int64_t output_width() const override;
+  /// Insert projected image/frame features at packed marker spans, then execute the text backbone.
   at::Tensor forward(const PackedInput& input) const override;
 };
 

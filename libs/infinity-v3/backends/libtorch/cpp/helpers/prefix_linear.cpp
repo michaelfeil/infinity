@@ -47,6 +47,7 @@ PrefixLinearPlans::PrefixLinearPlans() : impl(std::make_unique<Impl>()) {}
 
 PrefixLinearPlans::~PrefixLinearPlans() = default;
 
+/// Discard cached descriptors when model identity or execution math policy changes.
 void PrefixLinearPlans::clear() {
   impl = std::make_unique<Impl>();
 }

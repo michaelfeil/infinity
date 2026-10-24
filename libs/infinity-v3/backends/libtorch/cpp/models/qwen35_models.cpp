@@ -329,6 +329,8 @@ class Qwen35 final : public Model {
            gu.narrow(-1, gu.size(-1) / 2, gu.size(-1) / 2);
   }
 
+  /// Run dense or routed feed-forward layers with the checkpoint's
+  /// selected activation and prefix recipe.
   at::Tensor feed_forward(const at::Tensor& x, int64_t layer, const PackedInput& input) const {
     const auto& m = mlps[layer];
     if (m.fp8_gate_up) {
@@ -408,6 +410,8 @@ class Qwen35 final : public Model {
 
   using AttentionProjections = std::array<at::Tensor, 3>;
 
+  /// Produce attention projections from real compact/suffix rows while
+  /// retaining their logical GEMM recipe.
   AttentionProjections project_attention(const at::Tensor& x,
                                          const std::string& p,
                                          const PackedInput& input,
@@ -428,6 +432,8 @@ class Qwen35 final : public Model {
     return {project(p + "q_proj"), project(p + "k_proj"), project(p + "v_proj")};
   }
 
+  /// Run a full-attention layer, combining retained block/prefix K/V with
+  /// the current query rows when supplied.
   at::Tensor full_attention(const at::Tensor& x,
                             const std::string& p,
                             const PackedInput& input,
@@ -544,6 +550,8 @@ class Qwen35 final : public Model {
                                 : prefix_projection(gated, p + "o_proj", input);
   }
 
+  /// Evaluate sequence-local convolution and gated-delta updates
+  /// on CPU with explicit recurrent state.
   at::Tensor delta_cpu(const at::Tensor& qkv,
                        const at::Tensor& z,
                        const at::Tensor& ab,
@@ -637,6 +645,8 @@ class Qwen35 final : public Model {
     return at::stack(outputs, 0);
   }
 
+  /// Run linear attention with recurrent and convolution history, publishing
+  /// state at requested cache boundaries.
   at::Tensor delta_attention(const at::Tensor& x,
                              const std::string& p,
                              const PackedInput& input,
@@ -725,6 +735,8 @@ class Qwen35 final : public Model {
                                 : prefix_projection(compact, p + "out_proj", input);
   }
 
+  /// Embed selected token rows, batch distinct image-feature misses, and replace packed image
+  /// spans. Fold image-injected rows only after token placement is complete.
   at::Tensor embeddings(const PackedInput& input, RequestImageFeatures& shared_features) const {
     auto states = at::embedding(w("embed_tokens.weight"),
                                 input.images.empty() ? radix_ids(input) : input.ids);
@@ -745,6 +757,9 @@ class Qwen35 final : public Model {
     return states;
   }
 
+  /// Execute distinct bidirectional prefixes once and route each suffix to its representative
+  /// prefix state. Host metadata separates real prefix/suffix rows; output
+  /// reconstruction restores every logical sequence.
   at::Tensor block_forward(const PackedInput& input) const {
     TORCH_CHECK(input.audios.empty() && !radix_enabled(input) &&
                     input.block_prefix_lengths.size() == size_t(input.batch) &&
@@ -1086,6 +1101,8 @@ public:
     return layer_count;
   }
 
+  /// Estimate output rows plus per-layer KV or FP32 recurrent state and bounded convolution
+  /// history. Saturating arithmetic keeps impossible admissions from wrapping the byte budget.
   uint64_t prefix_payload_bytes(int64_t tokens) const override {
     const auto element_size = w("embed_tokens.weight").element_size();
     auto bytes = prefix_storage_bytes(tokens, hidden, element_size);
@@ -1121,6 +1138,9 @@ public:
            !cfg.boolean("use_bidirectional_attention", false);
   }
 
+  /// Alternate full-attention and gated-delta layers according to checkpoint layer_types.
+  /// Block-attention checkpoints use their dedicated path; causal
+  /// compact/prefix paths restore logical rows.
   at::Tensor forward(const PackedInput& input) const override {
     if (block_attention())
       return block_forward(input);

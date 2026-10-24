@@ -8,6 +8,7 @@
 
 namespace tei {
 constexpr int64_t prefix_block_tokens = 64;
+/// Extend parent-chained block digests up to the requested token count for candidate ranking.
 void prefix_fingerprints(PrefixIdentity&, int64_t tokens);
 PrefixFingerprint prefix_admission_fingerprint(const PrefixIdentity&, int operation);
 PrefixFingerprint prefix_admission_fingerprint(std::span<const PrefixToken>,
@@ -18,7 +19,10 @@ uint64_t prefix_admission_step(uint64_t, const PrefixToken&);
 uint64_t prefix_admission_block(uint64_t, std::span<const PrefixToken>);
 PrefixFingerprint
 prefix_document_fingerprint(std::span<const PrefixToken>, int operation, bool rotary_context);
+/// Return an exact common-prefix length bounded by limit and complete matching media spans.
 int64_t prefix_common(const PrefixIdentity&, const PrefixIdentity&, int64_t limit);
+/// Require complete matching token/context identity; digests can
+/// reject but never authorize reuse alone.
 bool prefix_same(const PrefixIdentity&, const PrefixIdentity&);
 
 /// Selected resident entry, verified prefix length, and collision-fallback status.
@@ -28,6 +32,8 @@ struct PrefixLookup {
   bool collision_fallback = false;
 };
 
+/// Require the original packed geometry that qualified the
+/// retained CUDA projection/attention recipe.
 bool prefix_batch_compatible(const PrefixEntry&, const PackedInput&);
 // Fingerprints only rank candidates. A selected prefix is always verified
 // exactly; a collision falls back to the complete exact scan.
@@ -44,7 +50,9 @@ class PrefixIndex {
 public:
   explicit PrefixIndex(uint64_t fingerprint_mask = ~uint64_t{0});
   ~PrefixIndex();
+  /// Index a snapshot weakly; owners serialize this update with lookups and cache eviction.
   void insert(const std::shared_ptr<PrefixEntry>&, bool require_layout);
+  /// Remove borrowed index references before releasing the resident snapshot.
   void erase(const PrefixEntry&, bool require_layout);
   bool usable() const;
   bool possible(const PrefixToken&, int operation, bool rotary, const PackedInput*) const;

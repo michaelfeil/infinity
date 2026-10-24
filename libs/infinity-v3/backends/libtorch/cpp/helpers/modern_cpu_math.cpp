@@ -331,6 +331,8 @@ LinearWeights prepare_linear(const at::Tensor& weight) {
   return result;
 }
 
+/// Apply prepared K blocks in reference order, rounding each accumulated partial back to Half. The
+/// cache saves weight conversion only; it must not combine blocks into one different GEMM recipe.
 at::Tensor linear(const at::Tensor& x, const LinearWeights& weights, const at::Tensor& bias) {
   TORCH_CHECK(x.device().is_cpu() && x.scalar_type() == at::kHalf &&
                   x.size(-1) == weights.input_width,

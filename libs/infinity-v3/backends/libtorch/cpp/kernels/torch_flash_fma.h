@@ -15,6 +15,9 @@ bool torch_flash_fma_supported(const at::Tensor& q,
                                bool causal,
                                int64_t window_left,
                                int64_t window_right);
+/// Return packed attention rows on the current stream after the caller selects an eligible profile.
+/// Cumulative int32 boundaries isolate sequences; causal/window
+/// parameters use real sequence positions.
 at::Tensor torch_flash_fma(const at::Tensor& q,
                            const at::Tensor& k,
                            const at::Tensor& v,

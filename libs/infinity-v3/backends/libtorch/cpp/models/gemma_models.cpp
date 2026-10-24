@@ -378,6 +378,7 @@ class Gemma final : public Model {
            norm(output.to(dtype), p + "post_feedforward_layernorm_2");
   }
 
+  /// Encode one audio span and select valid subsampled frames for its packed text marker rows.
   at::Tensor audio(const AudioInput& media) const {
     auto channels = cfg.integer("audio_config.hidden_size", 1024);
     auto heads = cfg.integer("audio_config.num_attention_heads",
@@ -565,6 +566,8 @@ class Gemma final : public Model {
     return projected.index_select(0, selected);
   }
 
+  /// Encode actual image patches in memory-aware batches, isolating images with cumulative offsets.
+  /// Return one spatially pooled/projected feature matrix per input image in the same order.
   std::vector<at::Tensor> vision(const std::vector<ImageInput>& images) const {
     if (images.empty())
       return {};
@@ -849,6 +852,8 @@ class Gemma final : public Model {
     return at::cat({a * cos - b * sin, b * cos + a * sin}, -1).to(x.scalar_type());
   }
 
+  /// Apply the layer's local/global attention recipe over full logical sequence context. Prefix and
+  /// compact execution must preserve the same token visibility and numerical provider.
   at::Tensor attention(const at::Tensor& q,
                        const at::Tensor& k,
                        const at::Tensor& v,
@@ -1138,6 +1143,9 @@ class Gemma final : public Model {
   }
 
 public:
+  /// Prepare immutable vision features and data-dependent valid audio frame indices before graph
+  /// capture. Only cache misses enter the vision tower; prepared feature rows
+  /// must match their packed token spans.
   void prepare_input(PackedInput& input) const override {
     // CPU-side descriptor keys are supplied before any device transfer. The
     // tower runs outside CUDA capture; only immutable features enter forward.
@@ -1249,6 +1257,8 @@ public:
     }
   }
 
+  /// Validate the selected Gemma family and prepare layer metadata,
+  /// norms, towers, and optional score heads.
   void ready() override {
     const auto fp8 = cfg.boolean("_fp8_dynamic", false);
     TORCH_CHECK(cfg.string("_fp8_scope", "mlp") == "mlp", "Gemma FP8 supports MLP scope only");
@@ -1462,6 +1472,8 @@ public:
     return classify_hidden(input, forward_impl(input, true));
   }
 
+  /// Apply the loaded sequence score head to already restored logical
+  /// rows using the Gemma readout recipe.
   at::Tensor classify_hidden(const PackedInput& input, const at::Tensor& states) const override {
     const auto& logical = prefix_logical_input(input);
     if (publisher_sequence) {
@@ -1492,6 +1504,9 @@ public:
     return at::linear(states.index_select(0, ids), weight(weights, "score.weight"));
   }
 
+  /// Inject media and per-layer embeddings, then run local/global transformer blocks with explicit
+  /// residuals. Causal Gemma4 may compact identical prefixes; restored rows
+  /// retain the caller's full logical order.
   at::Tensor forward_impl(const PackedInput& input, bool is_causal) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     // The synchronous call owns the device guard; the session owns no guard.
@@ -1777,6 +1792,7 @@ public:
 // The actual Candle audio backend lowers convolution to row-major im2col and
 // FP32 GEMM. cuDNN chooses a different accumulation order at BF16 boundaries.
 // im2col represents only intrinsic filter boundaries, without appending frames.
+/// Apply audio subsampling convolution on actual frame dimensions without synthetic frame padding.
 at::Tensor gemma_audio_conv2d(const at::Tensor& input, const at::Tensor& filter, int64_t stride) {
   TORCH_CHECK(input.dim() == 4 && filter.dim() == 4 && input.scalar_type() == at::kFloat &&
                   filter.scalar_type() == at::kFloat && input.device() == filter.device() &&

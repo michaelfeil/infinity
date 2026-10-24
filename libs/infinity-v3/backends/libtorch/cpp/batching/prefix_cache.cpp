@@ -80,6 +80,7 @@ const PrefixLayer* PrefixContext::previous(int64_t row, int64_t layer) const {
   return found == readers[row]->layers.end() ? nullptr : &found->second;
 }
 
+/// Allocate independent snapshot storage, copying now or appending a deferred source/target pair.
 static at::Tensor snapshot_copy(const at::Tensor& source,
                                 std::vector<at::Tensor>* targets,
                                 std::vector<at::Tensor>* sources) {
@@ -681,6 +682,7 @@ at::Tensor PrefixCache::cumulative(const std::vector<int32_t>& offsets, const c1
   return at::tensor(offsets, at::TensorOptions().dtype(at::kInt)).to(device);
 }
 
+/// Track bounded frequency evidence for shared text stems without treating hashes as reuse proof.
 int64_t PrefixCache::observe_text(std::span<const PrefixToken> tokens,
                                   int operation,
                                   bool rotary_context,
@@ -815,6 +817,7 @@ struct HostPrefixTokens {
   }
 };
 
+/// Build exact token/media identity from host views, with media placement relative to its sequence.
 static PrefixIdentity
 identity(const PackedInput& input, int64_t row, const HostPrefixTokens& host) {
   auto start = input.offsets[row], end = input.offsets[row + 1];
