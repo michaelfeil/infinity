@@ -14,14 +14,16 @@ const THREADS: &str = infinity_v3_config::infinity_env!("TORCH_WEIGHT_READER_THR
 const BUFFER: &str = infinity_v3_config::infinity_env!("TORCH_WEIGHT_READER_BUFFER_BYTES");
 const DIRECT: &str = infinity_v3_config::infinity_env!("TORCH_WEIGHT_READER_DIRECT_IO");
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct Options {
     threads: usize,
     buffer_bytes: usize,
     direct: bool,
+    buffer_override: bool,
 }
 impl Options {
     fn parse(
+        checkpoint_bytes: u64,
         threads: Option<&str>,
         buffer: Option<&str>,
         direct: Option<&str>,
@@ -31,9 +33,10 @@ impl Options {
             .parse::<usize>()
             .map_err(|e| format!("Invalid {THREADS}: {e}"))?;
         let buffer_bytes = buffer
-            .unwrap_or("268435456")
-            .parse::<usize>()
-            .map_err(|e| format!("Invalid {BUFFER}: {e}"))?;
+            .map(str::parse::<usize>)
+            .transpose()
+            .map_err(|e| format!("Invalid {BUFFER}: {e}"))?
+            .unwrap_or_else(|| Self::default_buffer(checkpoint_bytes));
         let direct = match direct.unwrap_or("true").to_ascii_lowercase().as_str() {
             "1" | "true" => true,
             "0" | "false" => false,
@@ -49,20 +52,44 @@ impl Options {
             threads,
             buffer_bytes,
             direct,
+            buffer_override: buffer.is_some(),
         })
     }
 
-    fn from_env() -> Result<Self, String> {
-        let read = |key: &str| match std::env::var(key) {
-            Ok(value) => Ok(Some(value)),
-            Err(std::env::VarError::NotPresent) => Ok(None),
-            Err(error) => Err(format!("Invalid {key}: {error}")),
-        };
-        Self::parse(
-            read(THREADS)?.as_deref(),
-            read(BUFFER)?.as_deref(),
-            read(DIRECT)?.as_deref(),
-        )
+    fn default_buffer(checkpoint_bytes: u64) -> usize {
+        if checkpoint_bytes > 32 << 30 {
+            256 << 20
+        } else {
+            32 << 20
+        }
+    }
+
+    fn for_checkpoint(mut self, checkpoint_bytes: u64) -> Self {
+        if !self.buffer_override {
+            self.buffer_bytes = Self::default_buffer(checkpoint_bytes);
+        }
+        self
+    }
+
+    fn from_env(checkpoint_bytes: u64) -> Result<Self, String> {
+        // Cache explicit overrides, not the first model's adaptive default.
+        static ENV: std::sync::OnceLock<Result<Options, String>> = std::sync::OnceLock::new();
+        ENV.get_or_init(|| {
+            let read = |key: &str| match std::env::var(key) {
+                Ok(value) => Ok(Some(value)),
+                Err(std::env::VarError::NotPresent) => Ok(None),
+                Err(error) => Err(format!("Invalid {key}: {error}")),
+            };
+            Self::parse(
+                0,
+                read(THREADS)?.as_deref(),
+                read(BUFFER)?.as_deref(),
+                read(DIRECT)?.as_deref(),
+            )
+        })
+        .as_ref()
+        .map(|&options| options.for_checkpoint(checkpoint_bytes))
+        .map_err(Clone::clone)
     }
 }
 
@@ -119,10 +146,15 @@ fn read_header(file: &mut File) -> Result<(u64, Metadata), String> {
     Ok((data_start, metadata))
 }
 
-pub(super) fn load(handle: NonNull<c_void>, path: &Path, prefix: &str) -> Result<(), BackendError> {
+pub(super) fn load(
+    handle: NonNull<c_void>,
+    path: &Path,
+    prefix: &str,
+    checkpoint_bytes: u64,
+) -> Result<(), BackendError> {
     let load = || -> Result<(), String> {
         let started = std::time::Instant::now();
-        let options = Options::from_env()?;
+        let options = Options::from_env(checkpoint_bytes)?;
         let mut file = File::open(path).map_err(|e| e.to_string())?;
         let (start, metadata) = read_header(&mut file)?;
         let mut names = Vec::new();
@@ -294,19 +326,83 @@ mod tests {
     }
 
     #[test]
+    fn adaptive_default_uses_total_checkpoint_size_and_respects_overrides() {
+        for (bytes, expected) in [
+            (0, 32 << 20),
+            (32 << 30, 32 << 20),
+            ((32 << 30) + 1, 256 << 20),
+        ] {
+            assert_eq!(
+                Options::parse(bytes, None, None, None)
+                    .unwrap()
+                    .buffer_bytes,
+                expected
+            );
+            assert_eq!(
+                Options::parse(bytes, None, Some("16777216"), None)
+                    .unwrap()
+                    .buffer_bytes,
+                16 << 20
+            );
+        }
+    }
+
+    #[test]
+    fn environment_is_read_once_without_freezing_adaptive_defaults() {
+        const CHILD: &str = "INFINITY_TEST_WEIGHT_READER_ENV_CHILD";
+        let Ok(mode) = std::env::var(CHILD) else {
+            // Isolate env mutation and OnceLock initialization from other tests.
+            for mode in ["adaptive", "override"] {
+                let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+                child.args(["--exact", "weight_reader::tests::environment_is_read_once_without_freezing_adaptive_defaults"])
+                    .env(CHILD, mode).env(THREADS, "4").env(DIRECT, "0").env_remove(BUFFER);
+                if mode == "override" {
+                    child.env(BUFFER, "33554432");
+                }
+                assert!(child.status().unwrap().success());
+            }
+            return;
+        };
+        assert_eq!(Options::from_env(0).unwrap().buffer_bytes, 32 << 20);
+        for key in [THREADS, BUFFER, DIRECT] {
+            std::env::set_var(key, "invalid");
+        }
+        let large = Options::from_env(u64::MAX).unwrap();
+        assert_eq!(
+            large.buffer_bytes,
+            if mode == "adaptive" {
+                256 << 20
+            } else {
+                32 << 20
+            }
+        );
+        assert_eq!(large.threads, 4);
+        assert!(!large.direct);
+        assert_eq!(Options::from_env(0).unwrap().buffer_bytes, 32 << 20);
+    }
+
+    #[test]
     fn options_are_bounded_and_accept_buffered_mode() {
-        let options = Options::parse(None, None, None).unwrap();
+        let options = Options::parse(0, None, None, None).unwrap();
         assert_eq!(options.threads, 16);
-        assert_eq!(options.buffer_bytes, 256 << 20);
+        assert_eq!(options.buffer_bytes, 32 << 20);
+        for bytes in [16 << 20, 64 << 20, 256 << 20] {
+            assert_eq!(
+                Options::parse(0, None, Some(&bytes.to_string()), None)
+                    .unwrap()
+                    .buffer_bytes,
+                bytes
+            );
+        }
         assert!(options.direct);
-        assert!(!Options::parse(None, None, Some("0")).unwrap().direct);
-        assert!(!Options::parse(None, None, Some("false")).unwrap().direct);
+        assert!(!Options::parse(0, None, None, Some("0")).unwrap().direct);
+        assert!(!Options::parse(0, None, None, Some("false")).unwrap().direct);
         for value in ["0", "65", "-1", "nan"] {
-            assert!(Options::parse(Some(value), None, None).is_err());
+            assert!(Options::parse(0, Some(value), None, None).is_err());
         }
         for value in ["0", "65535", "1073741825", "-1"] {
-            assert!(Options::parse(None, Some(value), None).is_err());
+            assert!(Options::parse(0, None, Some(value), None).is_err());
         }
-        assert!(Options::parse(None, None, Some("sometimes")).is_err());
+        assert!(Options::parse(0, None, None, Some("sometimes")).is_err());
     }
 }
