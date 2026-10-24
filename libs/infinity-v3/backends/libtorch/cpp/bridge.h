@@ -64,6 +64,8 @@ const char* tei_error();
 // on the calling thread. Other device failures retain kind 1.
 int32_t tei_last_error_kind();
 int64_t tei_device_count(const char* device);
+// Synchronous CUDA allocation/add/readback check; CPU is a no-op.
+int32_t tei_device_preflight(const char* device);
 void* tei_create(const TeiConfig*, const char* device, int32_t dtype);
 int32_t tei_weight(void*, const char* name, const uint8_t* data,
                    const int64_t* shape, size_t rank, int32_t dtype);

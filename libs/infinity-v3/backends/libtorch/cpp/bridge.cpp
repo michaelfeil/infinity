@@ -523,6 +523,23 @@ int64_t tei_device_count(const char* name) {
   });
   return count;
 }
+int32_t tei_device_preflight(const char* name) {
+  return checked([&] {
+    TORCH_CHECK(name, "Missing preflight device");
+    const auto dev = device(name);
+    if (dev.is_cpu()) return;
+    TORCH_CHECK(dev.is_cuda(), "Unsupported preflight device: ", dev);
+#ifdef TEI_TORCH_CUDA_KERNELS
+    c10::cuda::CUDAGuard guard(dev);
+    const auto one = at::ones({1}, at::TensorOptions().dtype(at::kFloat).device(dev));
+    const auto result = one + one;
+    c10::cuda::getCurrentCUDAStream(dev.index()).synchronize();
+    TORCH_CHECK(result.item<float>() == 2.0f, "CUDA preflight produced an incorrect result");
+#else
+    TORCH_CHECK(false, "CUDA preflight is unavailable in this CPU-only build");
+#endif
+  });
+}
 void* tei_create(const TeiConfig* cfg, const char* name, int32_t dtype) {
   Engine* model = nullptr;
   checked([&] { initialize_precision(); model = new Engine(*cfg, device(name), scalar(dtype)); });
