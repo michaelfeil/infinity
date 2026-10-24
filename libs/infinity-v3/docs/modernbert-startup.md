@@ -44,3 +44,15 @@ An earlier exploratory process took 49 seconds to start, and isolated first CUDA
 - Repeat on a newly provisioned node, separating image availability, process startup, and runtime discovery.
 - Explain discovery/preflight and host-load outliers before claiming a tail-latency target.
 - Broaden small-shard measurements across storage and GPUs before promoting the new default.
+
+## Larger-checkpoint regression smoke
+
+Three alternating starts per binary also loaded Qwen3-8B BF16, revision `b968826d9c46dd6066d109eabc6255188de91218`, on the same GPU, with last-token pooling and the same 16K token budget. Every shard retained the 256 MiB default in both binaries. HTTP health and finite 4096-dimensional embeddings passed; all compared outputs were exactly equal.
+
+| Run | Baseline HTTP seconds | Candidate HTTP seconds |
+|---|---:|---:|
+| 1 | 21.465 | 12.909 |
+| 2 | 3.324 | 3.221 |
+| 3 | 3.138 | 3.007 |
+
+The large first-start storage variation makes this a correctness/regression smoke, not evidence of a storage-independent speedup.
