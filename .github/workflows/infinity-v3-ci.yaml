@@ -68,6 +68,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Check native runtime packaging
         run: python3 -m unittest discover -s scripts -p test_libtorch_packaging.py
+      - name: Check FA4 host instruction portability
+        run: python3 -m unittest discover -s scripts -p test_fa4_portability.py
       - name: Build default CPU server
         run: cargo build --locked
       - name: Build without default features
