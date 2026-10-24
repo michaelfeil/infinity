@@ -8,20 +8,35 @@
 #include <ATen/ATen.h>
 #include <utility>
 #include <vector>
+
 namespace tei::modern_cpu {
 // Conservative eligibility for the independently proved AVX2 / gemm-f16 FMA
 // cache profile with one ATen intra-op thread. Other CPUs or thread counts
 // retain the existing ATen implementation; eligibility is checked during ready().
 bool supported_profile();
 at::Tensor norm(const at::Tensor&, const at::Tensor&, float);
-struct LinearBlock { int64_t start, end; at::Tensor weight; };
-struct LinearWeights { int64_t input_width; std::vector<LinearBlock> blocks; };
+
+struct LinearBlock {
+  int64_t start, end;
+  at::Tensor weight;
+};
+
+struct LinearWeights {
+  int64_t input_width;
+  std::vector<LinearBlock> blocks;
+};
+
 LinearWeights prepare_linear(const at::Tensor& weight);
 at::Tensor linear(const at::Tensor& x, const LinearWeights& weights, const at::Tensor& bias);
 at::Tensor linear(const at::Tensor&, const at::Tensor&, const at::Tensor&);
 at::Tensor gated_gelu(const at::Tensor&);
-at::Tensor attention(const at::Tensor&, const at::Tensor&, const at::Tensor&,
-                     const int32_t*, int64_t, float, int64_t);
+at::Tensor attention(const at::Tensor&,
+                     const at::Tensor&,
+                     const at::Tensor&,
+                     const int32_t*,
+                     int64_t,
+                     float,
+                     int64_t);
 std::pair<at::Tensor, at::Tensor> trig(const at::Tensor&, at::ScalarType);
 at::Tensor mean(const at::Tensor&);
-}  // namespace tei::modern_cpu
+} // namespace tei::modern_cpu

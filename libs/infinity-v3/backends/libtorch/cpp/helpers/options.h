@@ -5,21 +5,31 @@
 
 namespace tei {
 using Weights = std::unordered_map<std::string, at::Tensor>;
+
 struct Options {
   std::unordered_map<std::string, std::string> values;
+
   std::string string(const std::string& key, const std::string& fallback = "") const {
-    auto it = values.find(key); return it == values.end() ? fallback : it->second;
+    auto it = values.find(key);
+    return it == values.end() ? fallback : it->second;
   }
+
   int64_t integer(const std::string& key, int64_t fallback = 0) const {
-    auto it = values.find(key); return it == values.end() ? fallback : std::stoll(it->second);
+    auto it = values.find(key);
+    return it == values.end() ? fallback : std::stoll(it->second);
   }
+
   double real(const std::string& key, double fallback = 0) const {
-    auto it = values.find(key); return it == values.end() ? fallback : std::stod(it->second);
+    auto it = values.find(key);
+    return it == values.end() ? fallback : std::stod(it->second);
   }
+
   bool boolean(const std::string& key, bool fallback = false) const {
-    auto it = values.find(key); return it == values.end() ? fallback : it->second == "true";
+    auto it = values.find(key);
+    return it == values.end() ? fallback : it->second == "true";
   }
 };
+
 inline const at::Tensor& weight(const Weights& weights, const std::string& name) {
   auto it = weights.find(name);
   TORCH_CHECK(it != weights.end(), "Missing model weight: ", name);

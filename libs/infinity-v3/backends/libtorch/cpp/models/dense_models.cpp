@@ -20,18 +20,26 @@ DenseChain::DenseChain(const Options& options, const Weights& weights) {
       TORCH_CHECK(b.device() == w.device() && b.scalar_type() == w.scalar_type(),
                   "Dense weight and bias must share device and dtype");
     }
-    auto activation = options.string(prefix + "activation_function", "torch.nn.modules.linear.Identity");
-    TORCH_CHECK(activation == "torch.nn.modules.linear.Identity" || activation == "torch.nn.modules.activation.Tanh",
-                "Unsupported Sentence Transformers Dense activation: ", activation);
-    if (!layers.empty()) TORCH_CHECK(layers.back().out_features == in, "Dense module chain dimensions disagree");
+    auto activation =
+        options.string(prefix + "activation_function", "torch.nn.modules.linear.Identity");
+    TORCH_CHECK(activation == "torch.nn.modules.linear.Identity" ||
+                    activation == "torch.nn.modules.activation.Tanh",
+                "Unsupported Sentence Transformers Dense activation: ",
+                activation);
+    if (!layers.empty())
+      TORCH_CHECK(layers.back().out_features == in, "Dense module chain dimensions disagree");
     layers.push_back({w, b, in, out, activation == "torch.nn.modules.activation.Tanh"});
   }
 }
+
 int64_t DenseChain::output_width(int64_t input_width) const {
-  if (layers.empty()) return input_width;
-  TORCH_CHECK(layers.front().in_features == input_width, "Dense input width does not match pooled embeddings");
+  if (layers.empty())
+    return input_width;
+  TORCH_CHECK(layers.front().in_features == input_width,
+              "Dense input width does not match pooled embeddings");
   return layers.back().out_features;
 }
+
 at::Tensor DenseChain::forward(const at::Tensor& value) const {
   auto result = value;
   for (const auto& layer : layers) {
@@ -40,7 +48,8 @@ at::Tensor DenseChain::forward(const at::Tensor& value) const {
     // Mean pooling accumulates in FP32, then rounds back to the checkpoint
     // precision before projection, matching Candle's pooled-output contract.
     result = at::linear(result.to(layer.weight.scalar_type()), layer.weight, layer.bias);
-    if (layer.tanh) result = at::tanh(result);
+    if (layer.tanh)
+      result = at::tanh(result);
   }
   return result;
 }

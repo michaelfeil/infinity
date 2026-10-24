@@ -4,6 +4,7 @@
 #include <memory>
 #include "models/model.h"
 #include "helpers/options.h"
+
 namespace tei {
 // Audio convolutions preserve actual frame dimensions; linear bias rounds after GEMM.
 at::Tensor gemma_audio_conv2d(const at::Tensor&, const at::Tensor&, int64_t);

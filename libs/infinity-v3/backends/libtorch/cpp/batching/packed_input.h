@@ -10,102 +10,156 @@ namespace tei {
 // Native images are contiguous F32 matrices. Admission and the upload cache
 // must identify their storage/layout without reading any pixel values.
 struct ImageUploadLayout {
- const void* data;at::ScalarType dtype;
- int64_t rows,columns,row_stride,column_stride;
- bool operator==(const ImageUploadLayout&) const=default;
+  const void* data;
+  at::ScalarType dtype;
+  int64_t rows, columns, row_stride, column_stride;
+  bool operator==(const ImageUploadLayout&) const = default;
 };
+
 inline ImageUploadLayout image_upload_layout(const at::Tensor& host) {
- TORCH_CHECK(host.dim()==2,"Native image upload requires a matrix");
- return {host.const_data_ptr(),host.scalar_type(),host.size(0),host.size(1),host.stride(0),host.stride(1)};
+  TORCH_CHECK(host.dim() == 2, "Native image upload requires a matrix");
+  return {host.const_data_ptr(),
+          host.scalar_type(),
+          host.size(0),
+          host.size(1),
+          host.stride(0),
+          host.stride(1)};
 }
+
 // Gemma normalizes F32 pixels first; other towers receive the model dtype directly.
-inline at::Tensor upload_image_pixels(const at::Tensor& pixels, const c10::Device& device,
- at::ScalarType dtype, std::string_view family) {
- if(family=="gemma4"||family=="gemma4_text"||family=="embedding_gemma2")return pixels;
- return pixels.to(device).to(dtype);
+inline at::Tensor upload_image_pixels(const at::Tensor& pixels,
+                                      const c10::Device& device,
+                                      at::ScalarType dtype,
+                                      std::string_view family) {
+  if (family == "gemma4" || family == "gemma4_text" || family == "embedding_gemma2")
+    return pixels;
+  return pixels.to(device).to(dtype);
 }
 
 // The caller's pixels are immutable for one native request. Keep this cache local
 // to packed_input: no borrowed host view or cache entry survives that call.
 class RequestImageUploads {
- struct Entry {at::Tensor host,uploaded;};
- std::unordered_map<const void*,std::vector<Entry>> entries;
- public:
- template<class Upload> at::Tensor get(const at::Tensor& host,Upload&& upload) {
-  auto& matches=entries[host.const_data_ptr()];
-  for(const auto& entry:matches)
-   if(host.dim()==2&&entry.host.dim()==2?
-      image_upload_layout(entry.host)==image_upload_layout(host):
-      entry.host.scalar_type()==host.scalar_type()&&entry.host.sizes()==host.sizes()&&entry.host.strides()==host.strides())return entry.uploaded;
-  auto result=upload();matches.push_back({host,result});return result;
- }
+  struct Entry {
+    at::Tensor host, uploaded;
+  };
+
+  std::unordered_map<const void*, std::vector<Entry>> entries;
+
+public:
+  template <class Upload> at::Tensor get(const at::Tensor& host, Upload&& upload) {
+    auto& matches = entries[host.const_data_ptr()];
+    for (const auto& entry : matches)
+      if (host.dim() == 2 && entry.host.dim() == 2
+              ? image_upload_layout(entry.host) == image_upload_layout(host)
+              : entry.host.scalar_type() == host.scalar_type() &&
+                    entry.host.sizes() == host.sizes() && entry.host.strides() == host.strides())
+        return entry.uploaded;
+    auto result = upload();
+    matches.push_back({host, result});
+    return result;
+  }
 };
 
 struct PrefixContext;
+
 struct ImageInput {
   at::Tensor pixels;
-  std::array<int64_t,3> grid_thw;
-  int64_t merge_size=1, token_start=0, token_count=0, sequence_start=0;
-  std::array<uint8_t,32> feature_key{};
-  bool has_feature_key=false;
+  std::array<int64_t, 3> grid_thw;
+  int64_t merge_size = 1, token_start = 0, token_count = 0, sequence_start = 0;
+  std::array<uint8_t, 32> feature_key{};
+  bool has_feature_key = false;
   at::Tensor prepared_features{};
 };
+
 // Vision depends on pixels and layout, not the question's packed token offset.
 // Tensor identity comes from the request-local upload cache; no content hash,
 // caller feature key, or cross-request reuse can alias distinct media.
 class RequestImageFeatures {
- struct Entry {ImageInput image;at::Tensor features;size_t remaining;};
- std::unordered_map<const at::TensorImpl*,std::vector<Entry>> entries;
- public:
- explicit RequestImageFeatures(const std::vector<ImageInput>& images,bool enabled=true) {
-  if(!enabled)return;
-  for(const auto& image:images) {
-   auto& matches=entries[image.pixels.unsafeGetTensorImpl()];
-   auto match=std::find_if(matches.begin(),matches.end(),[&](const Entry& entry){return entry.image.grid_thw==image.grid_thw&&entry.image.merge_size==image.merge_size;});
-   if(match==matches.end())matches.push_back({image,{},1});else ++match->remaining;
+  struct Entry {
+    ImageInput image;
+    at::Tensor features;
+    size_t remaining;
+  };
+
+  std::unordered_map<const at::TensorImpl*, std::vector<Entry>> entries;
+
+public:
+  explicit RequestImageFeatures(const std::vector<ImageInput>& images, bool enabled = true) {
+    if (!enabled)
+      return;
+    for (const auto& image : images) {
+      auto& matches = entries[image.pixels.unsafeGetTensorImpl()];
+      auto match = std::find_if(matches.begin(), matches.end(), [&](const Entry& entry) {
+        return entry.image.grid_thw == image.grid_thw && entry.image.merge_size == image.merge_size;
+      });
+      if (match == matches.end())
+        matches.push_back({image, {}, 1});
+      else
+        ++match->remaining;
+    }
   }
- }
- template<class Compute> std::vector<at::Tensor> get_batch(const std::vector<ImageInput>& images,Compute compute) {
-  std::vector<ImageInput> missing;
-  std::vector<at::Tensor> values(images.size());std::vector<size_t> slots(images.size());
-  for(size_t i=0;i<images.size();++i) {
-   const auto& image=images[i];
-   auto found=entries.find(image.pixels.unsafeGetTensorImpl());
-   if(found!=entries.end())for(const auto& entry:found->second)
-    if(entry.remaining&&entry.image.grid_thw==image.grid_thw&&entry.image.merge_size==image.merge_size) {values[i]=entry.features;break;}
-   if(values[i].defined())continue;
-   auto match=std::find_if(missing.begin(),missing.end(),[&](const ImageInput& other){
-    return image.pixels.is_same(other.pixels)&&image.grid_thw==other.grid_thw&&image.merge_size==other.merge_size;
-   });
-   slots[i]=match-missing.begin();if(match==missing.end())missing.push_back(image);
+
+  template <class Compute>
+  std::vector<at::Tensor> get_batch(const std::vector<ImageInput>& images, Compute compute) {
+    std::vector<ImageInput> missing;
+    std::vector<at::Tensor> values(images.size());
+    std::vector<size_t> slots(images.size());
+    for (size_t i = 0; i < images.size(); ++i) {
+      const auto& image = images[i];
+      auto found = entries.find(image.pixels.unsafeGetTensorImpl());
+      if (found != entries.end())
+        for (const auto& entry : found->second)
+          if (entry.remaining && entry.image.grid_thw == image.grid_thw &&
+              entry.image.merge_size == image.merge_size) {
+            values[i] = entry.features;
+            break;
+          }
+      if (values[i].defined())
+        continue;
+      auto match = std::find_if(missing.begin(), missing.end(), [&](const ImageInput& other) {
+        return image.pixels.is_same(other.pixels) && image.grid_thw == other.grid_thw &&
+               image.merge_size == other.merge_size;
+      });
+      slots[i] = match - missing.begin();
+      if (match == missing.end())
+        missing.push_back(image);
+    }
+    auto computed = missing.empty() ? std::vector<at::Tensor>{} : compute(missing);
+    TORCH_CHECK(computed.size() == missing.size(), "Image feature batch size mismatch");
+    for (size_t i = 0; i < images.size(); ++i)
+      values[i] =
+          get(images[i], [&] { return values[i].defined() ? values[i] : computed[slots[i]]; });
+    return values;
   }
-  auto computed=missing.empty()?std::vector<at::Tensor>{}:compute(missing);
-  TORCH_CHECK(computed.size()==missing.size(),"Image feature batch size mismatch");
-  for(size_t i=0;i<images.size();++i)
-   values[i]=get(images[i],[&]{return values[i].defined()?values[i]:computed[slots[i]];});
-  return values;
- }
- template<class Compute> at::Tensor get(const ImageInput& image,Compute&& compute) {
-  auto found=entries.find(image.pixels.unsafeGetTensorImpl());
-  if(found!=entries.end())for(auto& entry:found->second) {
-   if(entry.image.grid_thw!=image.grid_thw||entry.image.merge_size!=image.merge_size||!entry.remaining)continue;
-   auto result=entry.features.defined()?entry.features:compute();
-   if(--entry.remaining) {
-    // A reused image must not retain the other images' projected features.
-    if(!result.is_contiguous()||result.storage_offset()!=0||result.storage().nbytes()!=result.numel()*result.element_size())result=result.clone();
-    entry.features=result;
-   } else entry.features=at::Tensor();
-   return result;
+
+  template <class Compute> at::Tensor get(const ImageInput& image, Compute&& compute) {
+    auto found = entries.find(image.pixels.unsafeGetTensorImpl());
+    if (found != entries.end())
+      for (auto& entry : found->second) {
+        if (entry.image.grid_thw != image.grid_thw || entry.image.merge_size != image.merge_size ||
+            !entry.remaining)
+          continue;
+        auto result = entry.features.defined() ? entry.features : compute();
+        if (--entry.remaining) {
+          // A reused image must not retain the other images' projected features.
+          if (!result.is_contiguous() || result.storage_offset() != 0 ||
+              result.storage().nbytes() != result.numel() * result.element_size())
+            result = result.clone();
+          entry.features = result;
+        } else
+          entry.features = at::Tensor();
+        return result;
+      }
+    return compute();
   }
-  return compute();
- }
 };
 
 struct AudioInput {
   at::Tensor features, validity;
-  int64_t token_start=0, token_count=0;
+  int64_t token_start = 0, token_count = 0;
   at::Tensor selected_frames{};
 };
+
 // Packed token rows, without padding. For sequence lengths [3, 2], cumulative
 // is [0, 3, 5]. These offsets locate sequences in the packed buffer; they are
 // separate from model position IDs. offsets is the host view of those boundaries.
@@ -125,12 +179,13 @@ struct PackedInput {
   // Packed suffix rows select immutable prefix KV/recurrent/conv snapshots.
   at::Tensor block_cache_sources{};
   // Execution-only state; original logical request metadata lives in the context.
-  PrefixContext* prefix=nullptr;
+  PrefixContext* prefix = nullptr;
   // Borrowed full-input host views, valid for this native submission only.
   // Prefix identity must not copy token metadata back from the device.
-  at::Tensor host_ids{}, host_types{}, host_positions{}, host_multimodal_positions{}, host_scatter_unfold{};
+  at::Tensor host_ids{}, host_types{}, host_positions{}, host_multimodal_positions{},
+      host_scatter_unfold{};
   // Read-only full-forward observation during graph capture. This does not
   // select suffix execution or change the model's projection/attention recipe.
-  PrefixContext* capture_prefix=nullptr;
+  PrefixContext* capture_prefix = nullptr;
 };
 }
