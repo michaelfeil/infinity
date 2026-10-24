@@ -100,7 +100,9 @@ pub(crate) fn encode_vector(
 ) -> Result<Embedding, TextEmbeddingsError> {
     match format {
         EncodingFormat::Float => Ok(Embedding::Float(values)),
-        EncodingFormat::Tensor => Ok(Embedding::Tensor(Tensor::vector(&values)?)),
+        EncodingFormat::Tensor => Ok(Embedding::All(AllEmbedding::Tensor(Tensor::vector(
+            &values,
+        )?))),
         EncodingFormat::Base64 => {
             // Preserve the legacy base64 representation (native-endian float32).
             let bytes = unsafe {
