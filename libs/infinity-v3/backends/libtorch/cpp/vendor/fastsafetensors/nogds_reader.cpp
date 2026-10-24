@@ -84,14 +84,27 @@ struct nogds_file_reader::state {
                 read_length = ((length + source_skip + ALIGN - 1) / ALIGN) * ALIGN;
             }
 #endif
-            int64_t got;
-            do {
+            int read_errno = 0;
+            auto read_range = [&](int64_t start, int64_t size, int64_t required) -> int64_t {
+                int64_t got = 0;
+                // Successful short reads are not EOF. Keep filling the buffer,
+                // preserving progress across EINTR, until all tensor bytes are
+                // present. Direct reads need not fill alignment padding at EOF.
+                while (got < required) {
+                    ssize_t count;
+                    do {
 #ifdef _MSC_VER
-                std::lock_guard<std::mutex> file_lock(file_mutex);
+                        std::lock_guard<std::mutex> file_lock(file_mutex);
 #endif
-                got = pread(req.fd, bounce, read_length, read_offset);
-            } while (got < 0 && errno == EINTR);
-            int read_errno = got < 0 ? errno : 0;
+                        count = pread(req.fd, bounce + got, size - got, start + got);
+                    } while (count < 0 && errno == EINTR);
+                    if (count < 0) { read_errno = errno; return -1; }
+                    if (count == 0) break;
+                    got += count;
+                }
+                return got;
+            };
+            int64_t got = read_range(read_offset, read_length, length + source_skip);
 #ifndef _MSC_VER
             if (got < 0 && (read_errno == EINVAL || read_errno == EOPNOTSUPP || read_errno == EPERM) && direct
                     && fcntl(req.fd, F_SETFL, flags & ~O_DIRECT) == 0) {
@@ -104,10 +117,8 @@ struct nogds_file_reader::state {
                     std::fprintf(stderr, "[WARN] filesystem rejected O_DIRECT reads: falling back to buffered reads\n");
                 direct = false;
                 source_skip = 0;
-                do {
-                    got = pread(req.fd, bounce, length, offset);
-                } while (got < 0 && errno == EINTR);
-                read_errno = got < 0 ? errno : 0;
+                read_errno = 0;
+                got = read_range(offset, length, length);
             }
 #endif
             // The aligned final read may extend past EOF; all requested tensor

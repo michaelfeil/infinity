@@ -20,6 +20,7 @@
     "Inject CPU/CUDA runtime operations from LibTorch; remove Python, dynamic loading, NUMA and global memory counters.",
     "Retain the two-buffer per-worker read/upload pipeline and drain semantics.",
     "Also fall back to buffered reads on EPERM/EOPNOTSUPP and remove ignored const return qualifiers.",
-    "The local wrapper validates Rust-provided ranges, reads bounded chunks, owns each tensor allocation, converts large tensors in bounded pieces, and drains CUDA copies before returning."
+    "The local wrapper validates Rust-provided ranges, reads bounded chunks, owns each tensor allocation, converts large tensors in bounded pieces, and drains CUDA copies before returning.",
+    "Retry successful short pread results and EINTR until the tensor range is complete, preserving true EOF/error failures and the direct-I/O buffered fallback."
   ]
 }

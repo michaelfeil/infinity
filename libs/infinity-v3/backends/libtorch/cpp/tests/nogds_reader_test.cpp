@@ -1,5 +1,7 @@
 #include "vendor/fastsafetensors/nogds_reader.h"
 #include <algorithm>
+#include <atomic>
+#include <cerrno>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
@@ -7,6 +9,27 @@
 #include <stdexcept>
 #include <unistd.h>
 #include <vector>
+
+#ifdef TEI_TEST_PREAD_WRAPPER
+namespace {
+std::atomic<int> read_mode{0}; // 1 buffered shorts, 2 partial+EIO, 3 direct shorts, 4 fallback
+std::atomic<size_t> read_calls{0}, short_reads{0};
+}
+extern "C" ssize_t __real_pread(int fd, void* buffer, size_t count, off_t offset);
+extern "C" ssize_t __wrap_pread(int fd, void* buffer, size_t count, off_t offset) {
+    int mode = read_mode.load();
+    if (!mode) return __real_pread(fd, buffer, count, offset);
+    if (++read_calls % 7 == 0) { errno = EINTR; return -1; }
+    if (mode == 2 && offset != 0) { errno = EIO; return -1; }
+#ifdef O_DIRECT
+    if (mode == 4 && (fcntl(fd, F_GETFL) & O_DIRECT)) { errno = EINVAL; return -1; }
+#endif
+    size_t limit = mode == 3 ? 4096 : mode == 2 ? 101 : 997;
+    ssize_t got = __real_pread(fd, buffer, std::min(count, limit), offset);
+    if (got > 0 && static_cast<size_t>(got) < count) ++short_reads;
+    return got;
+}
+#endif
 
 namespace {
 void require(bool ok) { if (!ok) throw std::runtime_error("reader invariant failed"); }
@@ -67,6 +90,37 @@ int main() {
             rejected = false;
             try { reader.submit_read(source.fd, a, 0, 2, bytes.size() - 1); } catch (const std::exception&) { rejected = true; }
             require(rejected);
+#ifdef TEI_TEST_PREAD_WRAPPER
+            // Force partial success and EINTR in real file reads, preserving
+            // exact bytes through the deferred-copy path across many blocks.
+            read_mode = 1;
+            std::fill(first.begin(), first.begin() + bytes.size(), 0xcc);
+            int partial = reader.submit_read(source.fd, a, 0, bytes.size(), 0);
+            require(reader.wait_read(partial) == a.get_base_address());
+            require(std::equal(bytes.begin(), bytes.end(), first.begin()));
+            require(short_reads > 1000);
+#ifdef O_DIRECT
+            int flags = fcntl(source.fd, F_GETFL);
+            if (fcntl(source.fd, F_SETFL, flags | O_DIRECT) == 0) {
+                read_mode = 3; // Aligned short direct reads, including the EOF tail.
+                int direct = reader.submit_read(source.fd, a, 0, bytes.size(), 0);
+                require(reader.wait_read(direct) == a.get_base_address());
+                require(std::equal(bytes.begin(), bytes.end(), first.begin()));
+                read_mode = 4; // Unsupported direct I/O followed by buffered shorts.
+                require(fcntl(source.fd, F_SETFL, flags | O_DIRECT) == 0);
+                int fallback = reader.submit_read(source.fd, a, 0, bytes.size(), 0);
+                require(reader.wait_read(fallback) == a.get_base_address());
+                require(std::equal(bytes.begin(), bytes.end(), first.begin()));
+                require(fcntl(source.fd, F_SETFL, flags) == 0);
+            }
+#endif
+            read_mode = 2; // An actual error after partial success must still fail.
+            std::fill(first.begin(), first.begin() + 4096, 0xcc);
+            int error = reader.submit_read(source.fd, a, 0, 4096, 0);
+            require(reader.wait_read(error) == 0);
+            require(std::all_of(first.begin(), first.begin() + 4096, [](auto v) { return v == 0xcc; }));
+            read_mode = 1;
+#endif
             // EOF must fail after draining all other workers, never publish
             // partially initialized output as a successfully loaded checkpoint.
             require(ftruncate(source.fd, bytes.size() - 1) == 0);
@@ -76,7 +130,7 @@ int main() {
         require(std::equal(bytes.begin(), bytes.end(), second.begin()));
         require(std::all_of(first.end()-64, first.end(), [](auto v) { return v == 0xa5; }));
         require(std::all_of(second.end()-64, second.end(), [](auto v) { return v == 0xa5; }));
-        std::cout << "non-GDS worker lifetime, bounds and truncation checks passed\n";
+        std::cout << "non-GDS worker lifetime, bounds, partial reads and truncation checks passed\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << '\n';
         return 1;
