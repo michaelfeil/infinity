@@ -310,6 +310,9 @@ if(INFINITY_BUILD_NATIVE_TESTS)
       target_link_libraries(infinity_fa4_test PRIVATE tei_torch "${TORCH_LIBRARIES}" CUDA::cudart)
       add_test(NAME infinity_fa4_cuda COMMAND infinity_fa4_test)
       add_test(NAME infinity_fa4_disabled COMMAND infinity_fa4_test --disabled)
+      add_test(NAME infinity_fa4_extended_gqa COMMAND infinity_fa4_test --extended-gqa)
+      set_tests_properties(infinity_fa4_extended_gqa PROPERTIES
+        ENVIRONMENT "${ENV_VAR_BASE}_TORCH_FA4_EXTENDED_GQA=true")
       set_tests_properties(infinity_fa4_disabled PROPERTIES
         ENVIRONMENT "${ENV_VAR_BASE}_TORCH_FA4=0")
     endif()
