@@ -21,3 +21,19 @@ libraries, manifests and license notices; serving needs no Python or JIT.
 See [backend documentation](../../../../../docs/libtorch-backend.md#infinityfa4)
 for supported shapes and `INFINITY_TORCH_FA4=0`. Native regression tests are
 registered with `INFINITY_BUILD_NATIVE_TESTS=ON` and `INFINITY_RUN_CUDA_TESTS=ON`.
+
+Host wrappers are exported for baseline x86-64 (or generic AArch64), independently
+of the GPU SM target. Linking rejects exports without matching host provenance;
+x86-64 builds also reject AVX/VEX/EVEX instructions in the wrapper objects and
+library. Re-export old bundles instead of reusing build-host-specialized objects.
+The LibTorch runtime falls back when a bundle lacks the portable-host marker.
+
+CPU portability regression (no GPU required; CUDA attribute queries are stubbed):
+
+```sh
+cc -march=x86-64 -O2 -rdynamic ../../tests/fa4_host_portability.c -ldl -o /tmp/fa4-host-test
+qemu-x86_64 -cpu Nehalem /tmp/fa4-host-test /path/to/sm_90/libinfinityfa4.so
+```
+
+The alpha.16 host-specialized bundle SIGILLs in this test; portable exports must
+initialize all ten kernels successfully. This does not replace GPU parity tests.

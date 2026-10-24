@@ -110,6 +110,14 @@ Bundle* bundle(const at::Tensor& q) {
       std::filesystem::exists(path), "Missing InfinityFA4 bundle for SM", sm, ": ", path.string());
   auto handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
   TORCH_CHECK(handle, "Cannot load InfinityFA4: ", dlerror());
+  auto portable = reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_portable_host_v1"));
+  if (!portable || portable() != 1) {
+    TORCH_WARN("Ignoring FA4 bundle without portable host code; using attention fallback: ",
+               path.string());
+    dlclose(handle);
+    bundles.emplace(sm, nullptr);
+    return nullptr;
+  }
   auto capability =
       reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_compute_capability_v1"));
   auto forward = reinterpret_cast<Forward>(dlsym(handle, "infinity_fa4_forward_v1"));
