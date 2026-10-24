@@ -672,7 +672,15 @@ impl LibtorchBackend {
         }
         .to_owned();
         options["model_type"] = normalized_family.clone().into();
-        if matches!(family.as_str(), "colqwen3" | "qwen3_vl_nemotron_embed") {
+        if matches!(family.as_str(), "colqwen3" | "qwen3_vl_nemotron_embed")
+            || (!enable_fp8_dynamic
+                && family == "ministral3"
+                && options["is_causal"] == false
+                && options["pooling"] == "avg")
+        {
+            // Nemotron 3's frozen text encoder must use the same rounding as
+            // its Mistral3 wrapper in Nemotron 3.5, including BF16 RMSNorm.
+            // Dynamic FP8 keeps its existing native arithmetic contract.
             options["_transformers_math"] = true.into();
         }
         if family == "qwen3_vl_nemotron_embed" {
@@ -2548,11 +2556,13 @@ mod tests {
         let path = std::env::var("INFINITY_TEST_CHECKPOINT_PATH")
             .expect("Set INFINITY_TEST_CHECKPOINT_PATH to a supported local embedding checkpoint");
         let started = std::time::Instant::now();
-        let backend = LibtorchBackend::new(
+        let backend = LibtorchBackend::new_with_dense_paths_and_fp8(
             Path::new(&path),
             "bfloat16",
             ModelType::Embedding(Pool::Mean),
             "cuda:0",
+            None,
+            std::env::var("INFINITY_TEST_FP8_DYNAMIC").as_deref() == Ok("1"),
         )
         .unwrap();
         let loaded = started.elapsed();

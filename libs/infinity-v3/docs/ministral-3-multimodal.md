@@ -20,7 +20,9 @@ infinity_v3 \
 Last-token pooling is the default for this family; mean pooling can be selected
 explicitly. Attention follows the checkpoint's text configuration. Text and
 image messages use the checkpoint's native chat template, including system and
-turn markers. Prompt overrides are unsupported.
+turn markers. Instruction models do not support prompt overrides. Retrieval
+checkpoints such as [Nemotron 3.5 Embed](nemotron-embeddings.md) use their saved
+mean pooling and accept named retrieval prefixes.
 
 Send a conversation to `/v1/embeddings`:
 
