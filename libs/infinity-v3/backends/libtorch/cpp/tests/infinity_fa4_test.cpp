@@ -89,6 +89,8 @@ void standard(at::ScalarType dtype, int mode, bool cross) {
   const int64_t d = mode < 2 ? 64 : 128,
                 h = mode < 2    ? 6
                     : mode == 2 ? 12
+                    : mode == 4 ? 18
+                    : mode == 5 ? 24
                                 : 6,
                 hk = mode < 2 ? h : 3;
   std::vector<int64_t> qe = {0, 7, 136, 649},
@@ -316,6 +318,32 @@ int main(int argc, char** argv) {
     TORCH_CHECK(!tei::infinity_fa4(q, q, q, cu, cu, 7, .125).defined() &&
                     !tei::infinity_fa4_deberta_supported(q),
                 "Unavailable InfinityFA4 intercepted attention");
+    return 0;
+  }
+  if (mode == "--extended-gqa") {
+    const auto* props = at::cuda::getCurrentDeviceProperties();
+    bool exported = false;
+    for (int i = 2; i < argc; ++i)
+      exported |= std::stoi(argv[i]) == 10 * props->major + props->minor;
+    if (exported) {
+      auto stream = c10::cuda::getStreamFromPool();
+      c10::cuda::CUDAStreamGuard guard(stream);
+      for (auto dtype : {at::kHalf, at::kBFloat16})
+        for (int family : {4, 5})
+          for (bool cross : {false, true})
+            standard(dtype, family, cross);
+      return 0;
+    }
+  }
+  if (mode == "--extended-gqa" || mode == "--extended-gqa-unavailable") {
+    // Older portable bundles retain ordinary attention for the added modes.
+    for (int ratio : {6, 8}) {
+      auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
+      auto q = at::zeros({7, 2 * ratio, 128}, opts), k = at::zeros({7, 2, 128}, opts);
+      auto cu = offsets({0, 7}, opts);
+      TORCH_CHECK(!tei::infinity_fa4(q, k, k, cu, cu, 7, .125).defined(),
+                  "Unavailable extended GQA intercepted ordinary attention");
+    }
     return 0;
   }
   concurrent_first_use();
