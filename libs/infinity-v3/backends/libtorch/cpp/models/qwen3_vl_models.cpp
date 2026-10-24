@@ -83,6 +83,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
       stacked.push_back(at::cat(rows, 0));
     return {at::cat(features, 0), std::move(stacked)};
   }
+  const bool multi_vector = cfg.boolean("_multi_vector", false);
   std::vector<at::Tensor> patches, cosines, sines;
   std::vector<int32_t> offsets{0};
   int64_t max_frame = 0;
@@ -103,7 +104,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
       auto first = at::linear(patch.select(2, 0).contiguous().view({-1, 768}), temporal_first);
       auto second = at::linear(patch.select(2, 1).contiguous().view({-1, 768}), temporal_second);
       states = (first + second) + w("patch_embed.proj.bias");
-    } else if (cfg.boolean("_multi_vector", false)) {
+    } else if (multi_vector) {
       const auto& kernel = w("patch_embed.proj.weight");
       TORCH_CHECK(kernel.dim() == 5, "Invalid Qwen3-VL patch kernel");
       states = at::conv3d(
@@ -144,7 +145,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
                               interpolate(r1, c0, dr * (1 - dc)),
                               interpolate(r1, c1, dr * dc)},
                              0);
-    auto positional = cfg.boolean("_multi_vector", false)
+    auto positional = multi_vector
                           ? ((corners.select(0, 0) + corners.select(0, 1)) + corners.select(0, 2)) +
                                 corners.select(0, 3)
                       : exact_vision ? (corners.select(0, 0) + corners.select(0, 2)) +
@@ -176,7 +177,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
   };
   std::vector<at::Tensor> deep;
   std::map<int64_t, std::vector<size_t>> frame_groups;
-  if (cfg.boolean("_multi_vector", false))
+  if (multi_vector)
     for (size_t i = 0; i + 1 < offsets.size(); ++i)
       // Only equal-length frames share a dense SDPA batch in the retrieval path. Grouping preserves
       // the reference provider without padding shorter frames or merging their attention contexts.
@@ -191,7 +192,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     at::Tensor attention;
     // Round rotary Q/K back to BF16 before attention, matching the
     // model dtype, and keep frames independent through cu_seqlens.
-    if (cfg.boolean("_multi_vector", false)) {
+    if (multi_vector) {
       // Match SDPA's arithmetic while batching equally sized frames without padding.
       std::vector<at::Tensor> outputs(offsets.size() - 1);
       for (const auto& [length, frames] : frame_groups) {

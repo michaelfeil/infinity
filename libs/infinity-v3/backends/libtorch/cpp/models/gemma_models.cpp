@@ -1402,7 +1402,9 @@ public:
     }
     const std::string vision_root =
         weights.count("model.vision_tower.patch_embedder.input_proj.weight") ? "model." : "";
-    for (int64_t i = 0; i < cfg.integer("vision_config.num_hidden_layers", 0); ++i) {
+    const auto vision_layers =
+        supports_images() ? cfg.integer("vision_config.num_hidden_layers", 0) : 0;
+    for (int64_t i = 0; i < vision_layers; ++i) {
       const auto p = vision_root + "vision_tower.encoder.layers." + std::to_string(i) + ".mlp";
       auto activation = MlpActivationRecipe::numerical([this](const at::Tensor& gate) {
         const auto kind = cfg.string("vision_config.hidden_activation", "gelu_pytorch_tanh");
