@@ -1224,8 +1224,18 @@ impl LibtorchBackend {
             };
             files.push((format!("{dense_path}/{filename}"), format!("_dense.{i}.")));
         }
+        // Select once from the complete checkpoint, independent of shard layout.
+        let checkpoint_bytes = files.iter().try_fold(0u64, |total, (file, _)| {
+            fs::metadata(path.join(file))
+                .map(|info| total.saturating_add(info.len()))
+                .map_err(|error| start(format!("Could not inspect checkpoint {file}: {error}")))
+        })?;
         let weights_started = std::time::Instant::now();
-        tracing::info!(files = files.len(), "Starting checkpoint load");
+        tracing::info!(
+            files = files.len(),
+            bytes = checkpoint_bytes,
+            "Starting checkpoint load"
+        );
         for (file, prefix) in files {
             if file.ends_with(".bin") {
                 // Parse checkpoint data in Rust; no Python or inference engine is
@@ -1253,7 +1263,7 @@ impl LibtorchBackend {
                 continue;
             }
             #[cfg(unix)]
-            weight_reader::load(handle, &path.join(&file), &prefix)?;
+            weight_reader::load(handle, &path.join(&file), &prefix, checkpoint_bytes)?;
             #[cfg(not(unix))]
             {
                 let data = fs::read(path.join(&file)).map_err(start)?;

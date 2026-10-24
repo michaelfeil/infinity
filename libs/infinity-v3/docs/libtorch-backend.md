@@ -119,7 +119,7 @@ and the Candle backend are unchanged.
 | Environment variable | Default | Behavior |
 | --- | --- | --- |
 | `INFINITY_TORCH_WEIGHT_READER_THREADS` | `16` | Maximum workers per file, from `1` to `64`; small files use fewer workers. |
-| `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES` | `33554432` | Budget for the host buffer pool and, separately, each transient tensor stage, from `65536` to `1073741824` bytes. Host buffers add alignment padding. Tiny files are capped by their data size. An explicit setting overrides the default. |
+| `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES` | `33554432` up to 32 GiB total checkpoint size; `268435456` above | Budget for the host buffer pool and, separately, each transient tensor stage, from `65536` to `1073741824` bytes. Host buffers add alignment padding. Tiny files are capped by their data size. An explicit setting overrides the default. |
 | `INFINITY_TORCH_WEIGHT_READER_DIRECT_IO` | `true` | Set to `false` or `0` to use the filesystem page cache, for example for repeated loads or a managed model-cache mount. |
 
 Header validation remains in Rust, including offset, shape and complete-file
@@ -722,4 +722,4 @@ Startup overlaps configuration validation (including CUDA discovery) with model 
 
 See [ModernBERT startup measurements](modernbert-startup.md) for the draft baseline, candidate results, and remaining cold-start limitations.
 
-The draft uniform 32 MiB default regresses Qwen3-30B-A3B startup versus 256 MiB. For large MoE checkpoints, use `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES=268435456`; see the measurement report before treating the smaller default as universal.
+The default is selected once using the total on-disk size of all checkpoint shards and selected sidecars, independent of shard layout. Explicit buffer settings take precedence. The 32 GiB cutoff is a simple heuristic based on the measured small/dense and large-MoE workloads.

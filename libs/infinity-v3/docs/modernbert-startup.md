@@ -1,112 +1,63 @@
-# ModernBERT startup draft measurements
+# LibTorch startup profiling and staging defaults
 
-**Known large-MoE regression:** Qwen3-30B-A3B loads materially faster with 256 MiB than 32 MiB (follow-up below). The unconditional 32 MiB default remains a draft and is not established as a universal choice.
+## Decision
 
-The draft currently uses one **32 MiB** default staging budget for every shard, with the existing explicit override. Earlier measurements below used the provisional 16/256 MiB size policy; the final comparison is in the uniform-pool section.
+Use two fixed staging budgets, selected once from the total on-disk size of all checkpoint weight files (including shards and selected sidecars):
 
-Goal: less than one second from process launch to successful HTTP health, with weights already local. Full configured warmup remains required before readiness; no warmup limits or execution were changed.
+- Up to and including **32 GiB**: **32 MiB**.
+- Above **32 GiB**: **256 MiB**.
+- `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES` overrides either choice.
 
-## Method
+This is one size comparison per model, independent of shard layout, model name, or architecture. It uses filesystem metadata without reading payloads. The cutoff is a practical heuristic between the measured 16.38 GB and 61.07 GB checkpoints, not an experimentally established optimum. Tiny files still cap their allocations in the native reader. The setting bounds the host buffer pool and, separately, transient GPU staging; this experiment does not isolate pinning cost from batching/upload effects.
 
-Baseline: main `286871abd0f454ef4ce3f45f4304b85eb7973432`. Candidate: the startup overlap and small-shard staging changes in this PR.
+CUDA discovery/configuration validation overlaps frontend initialization on a blocking worker. All models must pass validation before checkpoint loading starts, and validation is drained on frontend errors. CUDA preflight, health inference, token limits, full configured warmup, and readiness ordering are unchanged.
 
-Ten alternating fresh-process runs per binary on one H100 80 GB, CUDA 13.0, LibTorch 2.14.1, release Rust/native builds. Both used the same native CUDA bridge containing the preflight; subsequent main changes were formatting/documentation. Timing-only process probes were present in both Rust executables.
+## Setup
 
-Checkpoint: `answerdotai/ModernBERT-base`, revision `8949b909ec900327062f0ebf497f51aef5e6f0c8`, original FP32 safetensors (598,620,928 tensor bytes), BF16 execution, mean pooling. No checkpoint conversion or download is included.
+Main baseline: `286871abd0f454ef4ce3f45f4304b85eb7973432`. Release Rust/native, LibTorch 2.14.1, CUDA 13.0, H100 80 GB physical GPU 1. Native bridge includes CUDA preflight; no C++ changes are required by this PR. Weights already local; downloads excluded. BF16 execution, no dynamic FP8 or CUDA graphs, `--max-batch-tokens 16384 --tokenization-workers 8 --json-output`. `OMP_NUM_THREADS=1`, `RAYON_NUM_THREADS=8`, `TOKENIZERS_PARALLELISM=false`, `CUDA_MODULE_LOADING=LAZY`. Direct I/O requested in every run.
 
-Identical settings: `--dtype bfloat16 --torch-device cuda --device-id 0 --pooling mean --max-batch-tokens 16384 --tokenization-workers 8 --json-output`. CUDA graphs and dynamic FP8 disabled. `OMP_NUM_THREADS=1`, `RAYON_NUM_THREADS=8`, `TOKENIZERS_PARALLELISM=false`, `CUDA_MODULE_LOADING=LAZY`. Reader overrides unset: baseline uses 256 MiB; candidate uses 16 MiB. Default direct I/O requested in both. Each process reaches Ready, passes HTTP health, produces embeddings, then shuts down before the next starts.
+Each fresh process loads, completes the full configured warmup, reaches Ready, passes HTTP health, produces embeddings, and shuts down before the next starts. Explicit 16/32/256 MiB overrides compare the same reader path used by the defaults. The node had been exercised, underlying storage caches were uncontrolled, and other services shared the host. These are not controlled new-node cold-start results.
 
-The node/storage had already been exercised. These are fresh-process results, not controlled first starts on newly provisioned nodes. Other services shared the host. Two failure-path checks ran near the beginning of the series and performed device discovery without loading weights; this is another source of noise.
+Pinned checkpoints:
 
-## HTTP readiness results
+| Model | Revision | Checkpoint |
+|---|---|---|
+| answerdotai/ModernBERT-base | `8949b909ec900327062f0ebf497f51aef5e6f0c8` | Original FP32 safetensors, 598,620,928 tensor bytes |
+| Qwen/Qwen3-8B | `b968826d9c46dd6066d109eabc6255188de91218` | Original BF16 safetensors, 16,381,516,776 file bytes, 5 shards |
+| Qwen/Qwen3-30B-A3B | `ad44e777bcd18fa416d9da3bd8f70d33ebb85d39` | Original BF16 safetensors, 61,066,575,648 file bytes, 16 shards |
 
-| Run | Baseline seconds | Candidate seconds |
-|---|---:|---:|
-| 1 | 1.213 | 0.937 |
-| 2 | 1.108 | 1.027 |
-| 3 | 1.064 | 1.078 |
-| 4 | 1.101 | 0.958 |
-| 5 | 1.072 | 0.962 |
-| 6 | 1.080 | 0.934 |
-| 7 | 1.062 | 0.960 |
-| 8 | 1.072 | 1.106 |
-| 9 | 1.074 | 3.001 |
-| 10 | 2.111 | 0.973 |
+## Final profiling comparison
 
-Baseline median: **1.077 s**, range 1.062–2.111 s; 0/10 below one second.
-Candidate median: **0.967 s**, range 0.934–3.001 s; 6/10 below one second.
-Median reduction: about **10.2%**. The target is met at the median on this node; a consistent sub-second bound and new-node performance are not established. Tail latency remains unresolved.
-
-Median reader time fell from **148 ms to 74 ms**. Candidate configuration validation took **274 ms** and frontend setup **54 ms**; those phases run concurrently and must not be added. CUDA preflight remained about **151 ms** in both variants. These per-phase medians are not one representative run.
-
-All compared embeddings were exactly equal (maximum absolute difference 0). Both an invalid second model device and a missing tokenizer returned startup errors without starting checkpoint loading; validation was drained in both cases.
-
-An earlier exploratory process took 49 seconds to start, and isolated first CUDA device discovery took 22 seconds while cached calls took microseconds. Those observations used a different probe series and are not included in the table. They remain evidence that runtime/driver initialization can dominate first-start latency.
-
-## Remaining work
-
-- Repeat on a newly provisioned node, separating image availability, process startup, and runtime discovery.
-- Explain discovery/preflight and host-load outliers before claiming a tail-latency target.
-- Broaden small-shard measurements across storage and GPUs before promoting the new default.
-
-## Larger-checkpoint regression smoke
-
-Three alternating starts per binary also loaded Qwen3-8B BF16, revision `b968826d9c46dd6066d109eabc6255188de91218`, on the same GPU, with last-token pooling and the same 16K token budget. Every shard retained the 256 MiB default in both binaries. HTTP health and finite 4096-dimensional embeddings passed; all compared outputs were exactly equal.
-
-| Run | Baseline HTTP seconds | Candidate HTTP seconds |
-|---|---:|---:|
-| 1 | 21.465 | 12.909 |
-| 2 | 3.324 | 3.221 |
-| 3 | 3.138 | 3.007 |
-
-The large first-start storage variation makes this a correctness/regression smoke, not evidence of a storage-independent speedup.
-
-## Qwen3-8B: explicit 16 MiB versus 256 MiB pools
-
-The same candidate binary was tested with explicit reader budgets on an idle H100 (physical GPU 1). Six fresh processes per budget, alternating order each round, BF16 checkpoint/execution, 16K token budget and full warmup unchanged. The checkpoint is 16.38 GB across five shards. All embeddings were finite and exactly equal across both budgets.
-
-| Pinned budget | Median checkpoint loading | Median HTTP readiness |
-|---|---:|---:|
-| 256 MiB | 1.414 s | 2.782 s |
-| 16 MiB | 1.235 s | 2.596 s |
-
-The smaller pool was about 13% faster in checkpoint loading and 7% faster overall on this node. The first 256 MiB start took 17.089 s (15.599 s loading weights), with uncontrolled underlying storage caches. Retaining all runs gives the medians above. Excluding the entire initial pair gives 1.384 vs 1.229 s loading and 2.772 vs 2.583 s HTTP readiness, so the repeat-start direction is unchanged. This does not establish which budget is faster on a genuinely cold new node.
-
-A 16 MiB pool is therefore not inherently a large-model throughput regression. This comparison covers one 8B model, one storage setup, and H100; larger checkpoints, dtype conversion, slower PCIe GPUs, and different storage still need coverage before changing the large-shard default.
-
-## Uniform 32 MiB default
-
-A follow-up sweep used explicit 16, 32, and 256 MiB budgets on the same candidate executable, five fresh processes per setting per model. Settings and full 16K warmup were unchanged. Budgets were interleaved and their order reversed each round; 32 MiB remained in the middle. This is still an exercised-node comparison, not a new-node cold-start experiment. Explicit-budget measurements exercise the same reader path as the selected default.
+ModernBERT and Qwen3-8B were rerun after the large-MoE sweep, five fresh processes per budget/model, with rotated/reversed budget order. The large-MoE sweep used three complete rounds (`16,32,256`; `16,256,32`; `256,16,32`); the planned five rounds were stopped once the regression was established. An interrupted fourth-round startup is not a measured result.
 
 | Model | Budget | Median checkpoint loading | Median HTTP readiness | HTTP range |
 |---|---:|---:|---:|---:|
-| ModernBERT-base | 16 MiB | 0.070 s | 0.949 s | 0.922–1.880 s |
-| ModernBERT-base | **32 MiB** | **0.069 s** | **0.945 s** | 0.930–1.264 s |
-| ModernBERT-base | 256 MiB | 0.150 s | 1.025 s | 1.006–1.105 s |
-| Qwen3-8B | 16 MiB | 1.146 s | 2.519 s | 2.501–4.323 s |
-| Qwen3-8B | **32 MiB** | **1.090 s** | **2.486 s** | 2.406–2.613 s |
-| Qwen3-8B | 256 MiB | 1.294 s | 2.665 s | 2.642–3.877 s |
+| ModernBERT-base | 16 MiB | 0.068 s | 0.952 s | 0.925–1.757 s |
+| ModernBERT-base | **32 MiB** | **0.065 s** | **0.921 s** | 0.910–0.954 s |
+| ModernBERT-base | 256 MiB | 0.158 s | 1.063 s | 1.005–1.115 s |
+| Qwen3-8B | 16 MiB | 1.193 s | 2.543 s | 2.488–21.497 s |
+| Qwen3-8B | **32 MiB** | **1.147 s** | **2.505 s** | 2.481–3.687 s |
+| Qwen3-8B | 256 MiB | 1.374 s | 2.741 s | 2.705–2.767 s |
+| Qwen3-30B-A3B | 16 MiB | 74.080 s | 75.889 s | 75.849–112.772 s |
+| Qwen3-30B-A3B | 32 MiB | 66.232 s | 68.117 s | 60.420–80.284 s |
+| Qwen3-30B-A3B | **256 MiB** | **50.179 s** | **51.963 s** | 47.081–52.875 s |
 
-All embeddings were finite and exactly equal within each model across all 15 runs. Four of five 32 MiB ModernBERT runs completed below one second; tail latency remains unresolved.
+All compared embeddings were finite and exactly equal within each model. All five final 32 MiB ModernBERT runs completed below one second. ModernBERT process shutdown status was recorded and was zero in all 15 final-profile runs.
 
-These results support choosing one 32 MiB default instead of a shard-size cutoff. They do not establish an optimum across storage/GPU types. Explicit 16/64/256 MiB overrides remain available and are covered by the existing options test. Tiny files still cap allocations by their data size in the native reader. The final default passed 20 LibTorch tests (five manual tests ignored); the unchanged router implementation previously passed 78 tests.
+Large-MoE loading samples, retaining every completed run:
 
-## Qwen3-30B-A3B follow-up: large MoE regression
+| Budget | Checkpoint loading seconds | HTTP readiness seconds |
+|---|---|---|
+| 16 MiB | 110.685, 74.080, 74.029 | 112.772, 75.849, 75.889 |
+| 32 MiB | 78.497, 66.232, 58.656 | 80.284, 68.117, 60.420 |
+| 256 MiB | 50.179, 45.242, 51.097 | 51.963, 47.081, 52.875 |
 
-Checkpoint: `Qwen/Qwen3-30B-A3B`, pinned revision `ad44e777bcd18fa416d9da3bd8f70d33ebb85d39`. Original BF16 checkpoint: 61,066,575,648 bytes in 16 shards, 18,867 tensors including 18,432 expert tensors. Download time is excluded.
+The MoE checkpoint has 18,867 tensors, including 18,432 expert tensors. Larger staging groups plausibly reduce scheduling/upload overhead here, but that effect was not separately profiled. A native test briefly shared the GPU during the first MoE start; later rounds still favored 256 MiB. This is why a uniform 32 MiB default was rejected.
 
-Same candidate binary, H100 physical GPU 1, last-token pooling, BF16 execution, no FP8/graphs, full 16K token budget/warmup unchanged. Three complete rounds per budget, with rotated/reversed order: `16,32,256`; `16,256,32`; `256,16,32`. The originally planned five-round sweep was stopped after three complete rounds once the large-model regression was established. A fourth-round startup was interrupted during cleanup and is not a measured result.
+## Baseline and cold-start limitations
 
-| Budget | Checkpoint-loading seconds, all three runs | Median loading | Median HTTP readiness |
-|---|---|---:|---:|
-| 16 MiB | 110.685, 74.080, 74.029 | 74.080 s | 75.889 s |
-| 32 MiB | 78.497, 66.232, 58.656 | 66.232 s | 68.117 s |
-| **256 MiB** | 50.179, 45.242, 51.097 | **50.179 s** | **51.963 s** |
+The earlier ten-run alternating ModernBERT comparison gave 1.077 s median HTTP readiness for main and 0.967 s for startup overlap with a 16 MiB pool. Ranges were 1.062–2.111 s and 0.934–3.001 s respectively. Reader medians were 148 vs 74 ms. Final profiling above supports 32 MiB for small checkpoints while retaining 256 MiB for large checkpoints.
 
-HTTP readiness ranges: 75.849–112.772 s (16 MiB), 60.420–80.284 s (32 MiB), 47.081–52.875 s (256 MiB). The first 16 MiB start was especially slow, with underlying storage state uncontrolled. Repeat rounds still favored 256 MiB; these measurements are not a controlled new-node comparison. Another native test briefly shared the GPU during the first start, and the host was shared throughout.
+First-use effects remain material: the first MoE start took 112.772 s, the first 8B start after the MoE sweep took 21.497 s, and an isolated first CUDA device-count probe previously took 22 s. Native-library loading, CUDA discovery/preflight, GEMM first-use state, and underlying storage caches are distinct costs. These observations do not establish a universal new-node latency bound or identify one cache as their cause.
 
-32 MiB was about 32% slower loading and 31% slower to readiness at the median than 256 MiB. All nine measured starts passed HTTP health and finite 2048-dimensional embeddings, with maximum absolute embedding difference 0 across settings.
-
-This setting bounds both host pinned buffers and GPU staging groups, so the experiment does not isolate pinning cost. The much larger number of expert tensors makes a batching effect plausible, but this was not separately profiled. A useful next experiment would hold the GPU staging budget fixed while varying the host pinned pool.
-
-For this large MoE, use `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES=268435456`. Keep 32 MiB as the small/dense-model candidate; this result blocks treating the current unconditional default as generally validated.
+The adaptive policy preserves explicit overrides for deployments whose storage, GPU, dtype conversion, or tensor layout favors a different budget.

@@ -22,6 +22,7 @@ struct Options {
 }
 impl Options {
     fn parse(
+        checkpoint_bytes: u64,
         threads: Option<&str>,
         buffer: Option<&str>,
         direct: Option<&str>,
@@ -31,7 +32,7 @@ impl Options {
             .parse::<usize>()
             .map_err(|e| format!("Invalid {THREADS}: {e}"))?;
         let buffer_bytes = buffer
-            .unwrap_or("33554432")
+            .unwrap_or(Self::default_buffer(checkpoint_bytes))
             .parse::<usize>()
             .map_err(|e| format!("Invalid {BUFFER}: {e}"))?;
         let direct = match direct.unwrap_or("true").to_ascii_lowercase().as_str() {
@@ -52,13 +53,22 @@ impl Options {
         })
     }
 
-    fn from_env() -> Result<Self, String> {
+    fn default_buffer(checkpoint_bytes: u64) -> &'static str {
+        if checkpoint_bytes > 32 << 30 {
+            "268435456"
+        } else {
+            "33554432"
+        }
+    }
+
+    fn from_env(checkpoint_bytes: u64) -> Result<Self, String> {
         let read = |key: &str| match std::env::var(key) {
             Ok(value) => Ok(Some(value)),
             Err(std::env::VarError::NotPresent) => Ok(None),
             Err(error) => Err(format!("Invalid {key}: {error}")),
         };
         Self::parse(
+            checkpoint_bytes,
             read(THREADS)?.as_deref(),
             read(BUFFER)?.as_deref(),
             read(DIRECT)?.as_deref(),
@@ -119,10 +129,15 @@ fn read_header(file: &mut File) -> Result<(u64, Metadata), String> {
     Ok((data_start, metadata))
 }
 
-pub(super) fn load(handle: NonNull<c_void>, path: &Path, prefix: &str) -> Result<(), BackendError> {
+pub(super) fn load(
+    handle: NonNull<c_void>,
+    path: &Path,
+    prefix: &str,
+    checkpoint_bytes: u64,
+) -> Result<(), BackendError> {
     let load = || -> Result<(), String> {
         let started = std::time::Instant::now();
-        let options = Options::from_env()?;
+        let options = Options::from_env(checkpoint_bytes)?;
         let mut file = File::open(path).map_err(|e| e.to_string())?;
         let (start, metadata) = read_header(&mut file)?;
         let mut names = Vec::new();
@@ -294,27 +309,49 @@ mod tests {
     }
 
     #[test]
+    fn adaptive_default_uses_total_checkpoint_size_and_respects_overrides() {
+        for (bytes, expected) in [
+            (0, 32 << 20),
+            (32 << 30, 32 << 20),
+            ((32 << 30) + 1, 256 << 20),
+        ] {
+            assert_eq!(
+                Options::parse(bytes, None, None, None)
+                    .unwrap()
+                    .buffer_bytes,
+                expected
+            );
+            assert_eq!(
+                Options::parse(bytes, None, Some("16777216"), None)
+                    .unwrap()
+                    .buffer_bytes,
+                16 << 20
+            );
+        }
+    }
+
+    #[test]
     fn options_are_bounded_and_accept_buffered_mode() {
-        let options = Options::parse(None, None, None).unwrap();
+        let options = Options::parse(0, None, None, None).unwrap();
         assert_eq!(options.threads, 16);
         assert_eq!(options.buffer_bytes, 32 << 20);
         for bytes in [16 << 20, 64 << 20, 256 << 20] {
             assert_eq!(
-                Options::parse(None, Some(&bytes.to_string()), None)
+                Options::parse(0, None, Some(&bytes.to_string()), None)
                     .unwrap()
                     .buffer_bytes,
                 bytes
             );
         }
         assert!(options.direct);
-        assert!(!Options::parse(None, None, Some("0")).unwrap().direct);
-        assert!(!Options::parse(None, None, Some("false")).unwrap().direct);
+        assert!(!Options::parse(0, None, None, Some("0")).unwrap().direct);
+        assert!(!Options::parse(0, None, None, Some("false")).unwrap().direct);
         for value in ["0", "65", "-1", "nan"] {
-            assert!(Options::parse(Some(value), None, None).is_err());
+            assert!(Options::parse(0, Some(value), None, None).is_err());
         }
         for value in ["0", "65535", "1073741825", "-1"] {
-            assert!(Options::parse(None, Some(value), None).is_err());
+            assert!(Options::parse(0, None, Some(value), None).is_err());
         }
-        assert!(Options::parse(None, None, Some("sometimes")).is_err());
+        assert!(Options::parse(0, None, None, Some("sometimes")).is_err());
     }
 }
