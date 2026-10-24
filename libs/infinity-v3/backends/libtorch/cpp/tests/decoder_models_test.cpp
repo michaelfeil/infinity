@@ -20,6 +20,7 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAEvent.h>
 #include <ATen/detail/CUDAHooksInterface.h>
+#include "kernels/cached_decoder_linear.h"
 #include <c10/cuda/CUDAGuard.h>
 #include <chrono>
 #endif
@@ -1602,6 +1603,17 @@ void linear_workspace_test(const c10::Device& device) {
   TORCH_CHECK(at::equal(actual, reference),
               "Original SGEMM recipe fell back under the Lt workspace cutoff: ",
               (actual - reference).abs().max().item<float>());
+  at::cuda::setCUDABlasLtWorkspaceSize(32 << 20);
+  CachedNoBiasLt cached;
+  auto bf16 = options.dtype(at::kBFloat16);
+  auto mlp_weight = at::randn({12288, 2048}, bf16) * .02;
+  for (int64_t rows : {2053, 8192}) {
+    auto x = at::randn({rows, 2048}, bf16) * .1;
+    auto expected = at::linear(x, mlp_weight);
+    for (int repeat = 0; repeat < 2; ++repeat)
+      TORCH_CHECK(at::equal(cached.forward(x, mlp_weight, true), expected),
+                  "BF16 MLP prefill plan changed full or partial row tiles");
+  }
 }
 
 void cumulative_stream_test(const c10::Device& device) {

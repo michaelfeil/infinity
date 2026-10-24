@@ -64,8 +64,9 @@ class Decoder final : public Model {
     // which decoder shapes can execute. Widening this call site also requires widening and checking
     // CachedNoBiasLt's prefill guard.
     if (!b.defined() && !fp8_dynamic && !transformers_math() && dtype == at::kBFloat16 &&
-        hidden == 4096 && (family == "qwen3" || family == "llama") && w.size(1) == 4096 &&
-        (w.size(0) == 24576 || w.size(0) == 28672))
+        ((hidden == 4096 && (family == "qwen3" || family == "llama") && w.size(1) == 4096 &&
+          (w.size(0) == 24576 || w.size(0) == 28672)) ||
+         (hidden == 2048 && family == "qwen3" && w.size(1) == 2048 && w.size(0) == 12288)))
       return no_bias_cache.forward(x, w, true);
     // This second profile uses ordinary heuristic caching, not the alternate prefill tactic. Other
     // decoder shapes retain ATen even when their matrix layout could be represented by the cache.
