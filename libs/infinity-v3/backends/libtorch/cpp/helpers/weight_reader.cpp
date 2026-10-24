@@ -143,7 +143,7 @@ at::ScalarType dtype(int32_t value) {
 
 bool direct_filesystem(int fd) {
 #ifdef __linux__
-  struct statfs info {};
+  struct statfs info{};
 
   if (fstatfs(fd, &info) == 0) {
     // As upstream, preserve page caching on RAM and common network mounts.
@@ -185,7 +185,7 @@ void read_safetensors(
               "Safetensors file is too large");
   TORCH_CHECK(weights || count == 0, "Missing weight descriptors");
 
-  struct stat info {};
+  struct stat info{};
 
   TORCH_CHECK(fstat(fd, &info) == 0 && S_ISREG(info.st_mode) &&
                   static_cast<uint64_t>(info.st_size) == data_start + data_length,

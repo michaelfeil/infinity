@@ -1258,7 +1258,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
     if (final_state)
       *final_state =
           at::empty({input.batch, value_heads, 128, 128}, qkv.options().dtype(at::kFloat));
-      // Wider column tiles amortize shared loads once enough heads fill the GPU.
+    // Wider column tiles amortize shared loads once enough heads fill the GPU.
 #define CACHED(L)                                                                                  \
   qwen35_gdn_cached<L><<<dim3(input.batch, value_heads, L / 4), 512, 0, stream>>>(                 \
       bf(convolution),                                                                             \
