@@ -1,0 +1,25 @@
+# Use clang-format 20.1.8. Preserve source tokens and third-party provenance.
+BasedOnStyle: LLVM
+Standard: c++20
+ColumnLimit: 100
+IndentWidth: 2
+ContinuationIndentWidth: 4
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+BinPackArguments: false
+BinPackParameters: false
+BreakStringLiterals: false
+FixNamespaceComments: false
+IncludeBlocks: Preserve
+InsertBraces: false
+PointerAlignment: Left
+QualifierAlignment: Leave
+ReflowComments: false
+RemoveBracesLLVM: false
+RemoveParentheses: Leave
+RemoveSemicolon: false
+SeparateDefinitionBlocks: Always
+SortIncludes: Never
+SortUsingDeclarations: Never
