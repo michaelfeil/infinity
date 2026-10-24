@@ -3242,8 +3242,8 @@ mod multi_model_test {
         );
         crate::model_registry::validate_configs(&[a.clone(), b.clone()])?;
         assert!(crate::model_registry::validate_configs(&[a.clone(), a.clone()]).is_err());
-        let embedding = Arc::new(initialize_model(a, None, None).await?);
-        let reranker = Arc::new(initialize_model(b, None, None).await?);
+        let embedding = Arc::new(initialize_model(a, None, None, &mut None).await?);
+        let reranker = Arc::new(initialize_model(b, None, None, &mut None).await?);
         let registry = ModelRegistry::new(vec![embedding.clone(), reranker.clone()])?;
         let recorder = PrometheusBuilder::new().build_recorder();
         let handle = recorder.handle();

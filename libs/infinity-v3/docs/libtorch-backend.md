@@ -723,3 +723,5 @@ Startup overlaps configuration validation (including CUDA discovery) with model 
 See [ModernBERT startup measurements](modernbert-startup.md) for the draft baseline, candidate results, and remaining cold-start limitations.
 
 The default is selected once using the total on-disk size of all checkpoint shards and selected sidecars, independent of shard layout. Explicit buffer settings take precedence. The 32 GiB cutoff is a simple heuristic based on the measured small/dense and large-MoE workloads.
+
+Reader environment settings are read and validated once per process on first safetensors use. Explicit settings stay fixed for all models and shards; when the buffer override is absent, each model resolves its adaptive default independently. Restart the process to change these settings.
