@@ -869,15 +869,11 @@ impl LibtorchBackend {
                 "max_position_embeddings" => "n_positions",
                 _ => key,
             };
-            text.get(key)
+            // Match the native Nomic encoder when modern and legacy keys coexist.
+            text.get(nomic_alias)
+                .filter(|_| family == "nomic_bert")
+                .or_else(|| text.get(key))
                 .or_else(|| text.get(alias))
-                .or_else(|| {
-                    if family == "nomic_bert" {
-                        text.get(nomic_alias)
-                    } else {
-                        None
-                    }
-                })
                 .and_then(serde_json::Value::as_i64)
                 .unwrap_or(fallback)
         };
@@ -893,11 +889,15 @@ impl LibtorchBackend {
                 "max_position_embeddings",
                 i64::MAX,
             ),
-            // UltraBERT ignores segment IDs, but reranking tokenizers still emit 0/1.
+            // These backbones ignore segment IDs, but pair tokenizers still emit 0/1.
             type_vocab_size: integer(
                 "type_vocab_size",
                 "type_vocab_size",
-                if family == "ultrabert" { 2 } else { 1 },
+                if matches!(family.as_str(), "ultrabert" | "llama_bidirec") {
+                    2
+                } else {
+                    1
+                },
             ),
             layer_norm_eps: text
                 .get("layer_norm_eps")

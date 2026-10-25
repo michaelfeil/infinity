@@ -99,6 +99,8 @@ class Decoder final : public Model {
   double epsilon;
   bool causal, renormalize;
   bool token_classifier = false;
+  bool bidirectional_classifier = false;
+  double classifier_temperature = 1.;
   std::vector<std::pair<at::Tensor, at::Tensor>> rotary_caches;
   std::vector<int64_t> rotary_indices, attention_windows;
   bool cudnn_varlen = false;
@@ -958,7 +960,17 @@ public:
       TORCH_CHECK(projection.dim() == 2 && projection.size(1) == hidden,
                   "Invalid decoder output projection");
     auto architecture = options.string("architectures.0", "");
-    auto supported = architecture == "LlamaForSequenceClassification" ||
+    bidirectional_classifier = architecture == "LlamaBidirectionalForSequenceClassification";
+    if (bidirectional_classifier) {
+      TORCH_CHECK(family == "llama" && !causal,
+                  "Bidirectional classifier requires a bidirectional Llama backbone");
+      TORCH_CHECK(options.string("pooling", "avg") == "avg",
+                  "Bidirectional classifier requires average pooling");
+      classifier_temperature = options.real("temperature", 1.);
+      TORCH_CHECK(std::isfinite(classifier_temperature) && classifier_temperature > 0,
+                  "Classifier temperature must be finite and positive");
+    }
+    auto supported = architecture == "LlamaForSequenceClassification" || bidirectional_classifier ||
                      architecture == "Qwen2ForSequenceClassification" ||
                      architecture == "Qwen3ForSequenceClassification" ||
                      architecture == "Qwen3MoeForSequenceClassification";
@@ -1080,11 +1092,22 @@ public:
   }
 
   /// Read sequence logits from complete logical hidden rows without rerunning the backbone.
-  /// UltraBERT selects the first token; other decoders select the
-  /// last non-PAD token or the packed end.
+  /// Bidirectional classifiers average valid tokens; UltraBERT selects the
+  /// first token, and causal classifiers select the last non-PAD token.
   at::Tensor classify_hidden(const PackedInput& input,
                              const at::Tensor& hidden_states) const override {
     const auto& logical = prefix_logical_input(input);
+    if (bidirectional_classifier) {
+      std::vector<at::Tensor> pooled;
+      pooled.reserve(logical.batch);
+      for (int64_t row = 0; row < logical.batch; ++row) {
+        const auto start = logical.offsets[row], count = logical.offsets[row + 1] - start;
+        TORCH_CHECK(count > 0, "Sequence classification requires nonempty inputs");
+        auto tokens = hidden_states.narrow(0, start, count);
+        pooled.push_back(tokens.sum(0) / double(count));
+      }
+      return at::linear(at::stack(pooled), score, score_bias) / classifier_temperature;
+    }
     if (family == "ultrabert") {
       auto starts = input.cumulative.narrow(0, 0, input.batch).to(at::kLong);
       return at::linear(hidden_states.index_select(0, starts), score, score_bias);

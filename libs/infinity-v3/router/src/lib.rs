@@ -1070,8 +1070,10 @@ pub struct ModelConfig {
     pub model_type: String,
     pub dtype: Option<String>,
     pub torch_dtype: Option<String>,
-    #[serde(default, alias = "n_positions")]
+    #[serde(default)]
     pub max_position_embeddings: usize,
+    #[serde(default)]
+    pub n_positions: Option<usize>,
     pub text_config: Option<TextPositionConfig>,
     pub vocab_size: Option<usize>,
     #[serde(default)]
@@ -1089,6 +1091,7 @@ impl ModelConfig {
             matches!(
                 arch.as_str(),
                 "LlamaForSequenceClassification"
+                    | "LlamaBidirectionalForSequenceClassification"
                     | "LlamaForTokenClassification"
                     | "UltrabertForSequenceClassification"
                     | "UltrabertForTokenClassification"
@@ -1125,6 +1128,11 @@ impl ModelConfig {
     }
 
     fn resolve_text_config(&mut self) -> anyhow::Result<()> {
+        // Nomic publishes both the original training length and its extended
+        // rotary context. Keep the native encoder's n_positions limit.
+        if self.model_type == "nomic_bert" || self.max_position_embeddings == 0 {
+            self.max_position_embeddings = self.n_positions.unwrap_or(self.max_position_embeddings);
+        }
         // UltraBERT omits this field; its published tokenizer supports 32K.
         if self.model_type == "ultrabert" && self.max_position_embeddings == 0 {
             self.max_position_embeddings = 32768;
@@ -1472,6 +1480,27 @@ impl From<ResponseMetadata> for HeaderMap {
 #[cfg(test)]
 mod libtorch_auto_dtype_tests {
     use super::*;
+
+    #[test]
+    fn nomic_accepts_current_and_legacy_context_fields() {
+        for (positions, expected) in [
+            (serde_json::json!({"n_positions": 8192}), 8192),
+            (serde_json::json!({"max_position_embeddings": 2048}), 2048),
+            (
+                serde_json::json!({"max_position_embeddings": 2048, "n_positions": 8192}),
+                8192,
+            ),
+        ] {
+            let mut value = serde_json::json!({"model_type": "nomic_bert"});
+            value
+                .as_object_mut()
+                .unwrap()
+                .extend(positions.as_object().unwrap().clone());
+            let mut config: ModelConfig = serde_json::from_value(value).unwrap();
+            config.resolve_text_config().unwrap();
+            assert_eq!(config.max_position_embeddings, expected);
+        }
+    }
 
     #[test]
     fn bf16_checkpoint_auto_dtype_survives_root_and_nested_configs() {
