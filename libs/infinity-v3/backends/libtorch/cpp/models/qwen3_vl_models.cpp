@@ -191,7 +191,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
 
     // Preserve the vision fallback's operand precision and frame grouping.
     auto aq = q, ak = k, av = v;
-    if (device.is_cuda()) {
+    if (device.is_cuda() && (multi_vector || dtype == at::kBFloat16)) {
       aq = q.to(dtype).contiguous();
       ak = k.to(dtype).contiguous();
       av = v.to(dtype).contiguous();
@@ -259,7 +259,8 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
                                                               -1,
                                                               -1,
                                                               false,
-                                                              fallback)
+                                                              fallback,
+                                                              dtype)
                                       : fallback();
 
     auto projected = linear(attention.reshape({states.size(0), hidden}).to(dtype), p + "attn.proj");

@@ -146,6 +146,20 @@ void standard(at::ScalarType dtype, int mode, bool cross, int64_t span = 0) {
     return;
   }
   close(output, expected(), "packed attention");
+  if (mode == 0 && !cross)
+    close(infinity::infinity_fa4(q.to(at::kFloat),
+                                 k.to(at::kFloat),
+                                 v.to(at::kFloat),
+                                 cq,
+                                 ck,
+                                 513,
+                                 .7 / std::sqrt(double(d)),
+                                 false,
+                                 -1,
+                                 -1,
+                                 dtype),
+          output,
+          "deferred operand conversion");
   auto stream = c10::cuda::getCurrentCUDAStream();
   stream.synchronize();
   at::cuda::CUDAGraph graph;

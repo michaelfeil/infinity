@@ -151,8 +151,9 @@ inline at::Tensor packed_cuda_attention(const at::Tensor& q,
                                         int64_t left = -1,
                                         int64_t right = -1,
                                         bool prefer_native = false,
-                                        Fallback fallback = nullptr) {
-  auto output = infinity_fa4(q, k, v, cu_q, cu_k, max_q, scale, causal, left, right);
+                                        Fallback fallback = nullptr,
+                                        std::optional<at::ScalarType> fa4_dtype = std::nullopt) {
+  auto output = infinity_fa4(q, k, v, cu_q, cu_k, max_q, scale, causal, left, right, fa4_dtype);
   if (output.defined())
     return output;
 #ifdef TEI_TORCH_CUDA_KERNELS
