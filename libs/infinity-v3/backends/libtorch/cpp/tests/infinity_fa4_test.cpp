@@ -137,10 +137,6 @@ void standard(at::ScalarType dtype, int mode, bool cross, int64_t span = 0) {
     return reference(q, k, v, qe, ke, .7 / std::sqrt(double(d)), profile.causal, window);
   };
   auto output = forward();
-  if (!(infinity::infinity_fa4_modes(q) & (1 << mode))) {
-    TORCH_CHECK(!output.defined(), "Unavailable FA4 profile intercepted attention");
-    return;
-  }
   if (d == 256 && cross && at::cuda::getCurrentDeviceProperties()->major == 10) {
     TORCH_CHECK(!output.defined(), "Blackwell d256 accepted independent K/V boundaries");
     return;

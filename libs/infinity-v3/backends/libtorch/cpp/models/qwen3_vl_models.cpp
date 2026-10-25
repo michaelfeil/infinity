@@ -196,7 +196,7 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     // Round rotary Q/K back to BF16 before attention, matching the
     // model dtype, and keep frames independent through cu_seqlens.
     auto aq = q, ak = k, av = v;
-    if (device.is_cuda() && infinity_fa4_modes(qkv)) {
+    if (device.is_cuda()) {
       aq = q.to(dtype).contiguous();
       ak = k.to(dtype).contiguous();
       av = v.to(dtype).contiguous();

@@ -6,8 +6,6 @@
 #include <ATen/ATen.h>
 
 namespace infinity {
-/// Advertised attention-profile bits for this tensor's device and storage type.
-int infinity_fa4_modes(const at::Tensor& reference);
 // Undefined means this layout/mask has no exported kernel. A failed supported
 // launch raises an error; it must never silently retry another implementation.
 /// Consume [tokens, heads, head_dim] Q/K/V and device int32 cumulative Q/K boundaries. Unsupported

@@ -64,7 +64,7 @@ struct Bundle {
   Forward forward;
   Deberta deberta;
   const char* (*error)();
-  int modes; // Optional capability mask; older portable bundles retain the first four modes.
+  int modes; // Attention profiles supplied by the current native bundle.
   // Keep loaded code alive for CUDA graphs and concurrent in-flight requests.
 };
 
@@ -112,13 +112,9 @@ Bundle* bundle(const at::Tensor& q) {
   auto handle = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
   TORCH_CHECK(handle, "Cannot load InfinityFA4: ", dlerror());
   auto portable = reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_portable_host_v1"));
-  if (!portable || portable() != 1) {
-    TORCH_WARN("Ignoring FA4 bundle without portable host code; using attention fallback: ",
-               path.string());
-    dlclose(handle);
-    bundles.emplace(sm, nullptr);
-    return nullptr;
-  }
+  TORCH_CHECK(portable && portable() == 1,
+              "Re-export InfinityFA4 with portable host code: ",
+              path.string());
   auto capability =
       reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_compute_capability_v1"));
   auto forward = reinterpret_cast<Forward>(dlsym(handle, "infinity_fa4_forward_v1"));
@@ -128,8 +124,8 @@ Bundle* bundle(const at::Tensor& q) {
               "Incompatible InfinityFA4 bundle: ",
               path.string());
   auto modes = reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_modes_v1"));
-  auto result =
-      std::make_unique<Bundle>(Bundle{handle, forward, deberta, error, modes ? modes() : 0xf});
+  TORCH_CHECK(modes, "Re-export InfinityFA4 with the current attention profiles: ", path.string());
+  auto result = std::make_unique<Bundle>(Bundle{handle, forward, deberta, error, modes()});
   auto* ptr = result.get();
   bundles.emplace(sm, std::move(result));
   return ptr;
@@ -146,11 +142,6 @@ void check_offsets(const at::Tensor& q, const at::Tensor& cu) {
                   cu.numel() > 1 && cu.is_contiguous(),
               "InfinityFA4 requires CUDA int32 cumulative lengths");
 }
-}
-
-int infinity_fa4_modes(const at::Tensor& reference) {
-  auto* native = bundle(reference);
-  return native ? native->modes : 0;
 }
 
 /// Map eligible geometry/masks to exported kernel modes; undefined means no compatible export.
@@ -195,8 +186,10 @@ at::Tensor infinity_fa4(const at::Tensor& q,
   if (mode < 0)
     return {};
   auto* native = bundle(q);
-  if (!native || !(native->modes & (1 << mode)))
+  if (!native)
     return {};
+  TORCH_CHECK(native->modes & (1 << mode),
+              "InfinityFA4 bundle lacks a required attention profile; re-export the bundle");
   // Blackwell's dedicated d256 kernel derives K/V offsets from Q boundaries.
   if (d == 256 && at::cuda::getDeviceProperties(q.get_device())->major == 10 &&
       (q.size(0) != k.size(0) || cu_q.const_data_ptr() != cu_k.const_data_ptr()))
@@ -297,10 +290,6 @@ at::Tensor infinity_fa4_deberta(const at::Tensor& q,
 }
 #else
 namespace infinity {
-int infinity_fa4_modes(const at::Tensor&) {
-  return 0;
-}
-
 at::Tensor infinity_fa4(const at::Tensor&,
                         const at::Tensor&,
                         const at::Tensor&,
