@@ -24,6 +24,14 @@ int main() {
     auto options = at::TensorOptions().device(at::kCUDA, 0).dtype(dtype);
     if (at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt) {
       infinity::OrdinaryLinearExecutor ordinary;
+      for (const auto [input, output] : {std::pair{1024, 3072}, std::pair{1536, 1024}}) {
+        auto values = at::randn({32, input}, options) * .3;
+        auto matrix = at::randn({output, input}, options) * .05;
+        auto projected = ordinary.forward(values, matrix);
+        TORCH_CHECK(projected.defined(), "Ordinary GEMM declined a supported projection");
+        TORCH_CHECK(at::allclose(projected, at::linear(values, matrix), .01, .01),
+                    "Ordinary GEMM projection disagrees with ATen");
+      }
       auto x = at::randn({32, 768}, options) * .3;
       auto w = at::randn({2304, 768}, options) * .05;
       auto expected = at::linear(x, w);
