@@ -66,9 +66,10 @@ Use on your own hardware and on unlisted providers is permitted, subject to
 the other conditions of this license, provided it does not use hosting or
 compute services or capacity from a listed provider through an intermediary.
 
-Appendix A is exhaustive and fixed for this license version. A listed name
-covers the same provider or service after a rename, but does not automatically
-cover an acquirer's unrelated businesses. Where an entry names a particular
+Appendix A is exhaustive and fixed for the copy of this license supplied with
+the Software. Later revisions do not amend the terms of earlier copies. A listed
+name covers the same provider or service after a rename, but does not
+automatically cover an acquirer's unrelated businesses. Where an entry names a particular
 service, that service is restricted, rather than the operator's other services.
 
 4. REDISTRIBUTION
@@ -95,8 +96,8 @@ infringes. No trademark rights are granted.
 Permissions under this license terminate on breach and are automatically
 reinstated if the breach is cured within 30 days after you learn of it.
 Otherwise reinstatement requires the affected licensors' permission.
-Compliant recipients retain their rights. Later versions of this license
-do not change existing grants.
+Compliant recipients retain their rights. Later revisions or versions of this
+license do not change existing grants.
 
 6. WARRANTY AND LIABILITY
 
@@ -110,14 +111,13 @@ SOFTWARE, TO THE EXTENT PERMITTED BY APPLICABLE LAW.
 
 APPENDIX A -- PROVIDERS RESTRICTED FOR ALL PURPOSES
 
-The following 25 entries are the exhaustive list for this license
-version. The names below control, not a live directory or a future list.
+The following 38 entries are the exhaustive list for this copy of the license.
+The names below control, not a live directory or a future list.
 Identifiers disambiguate providers; they do not restrict unrelated software
 projects, purchased hardware, or independently licensed models.
 
-Nebius covers the provider's hosting and compute services, including Token
-Factory. Voyage AI identifies the Voyage AI service, not unrelated MongoDB
-products.
+Nebius includes Token Factory. MongoDB includes its controlled subsidiaries,
+including Voyage AI.
 
 - Fireworks (fireworks)
 - FriendliAI (friendli)
@@ -138,12 +138,25 @@ products.
 - Together (together)
 - TypeSafe (typesafe)
 - Venice (venice)
-- Voyage AI (voyageai)
+- MongoDB (mongodb)
 - Wafer (wafer)
 - Parasail (parasail)
 - SiliconFlow (siliconflow)
 - Runware (runware)
 - DeepInfra (deepinfra)
+- Perplexity (perplexity)
+- Groq (groq)
+- CoreWeave (coreweave)
+- Chutes (chutes)
+- inference.net (inference-net)
+- GMICloud (gmicloud)
+- Cohere (cohere)
+- Mistral (mistral)
+- DeepSeek (deepseek)
+- OpenAI (openai)
+- Anthropic (anthropic)
+- xAI (xai)
+- Relace (relace)
 
 =======================================================================
 RETAINED APACHE LICENSE -- INHERITED AND APPLICABLE CONTRIBUTIONS
