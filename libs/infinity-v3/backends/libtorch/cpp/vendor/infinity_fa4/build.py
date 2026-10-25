@@ -122,7 +122,7 @@ if not a.link_only:
                 kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
                                     causal=False, window=[None, None], dtype=dtype_name))
     manifest = {
-        "abi_version": 5,
+        "abi_version": 6,
         "host_target": host_target(),
         "softmax_backport": softmax_backport,
         "architecture": a.arch,
@@ -139,8 +139,8 @@ if not a.link_only:
     (a.output / "manifest.json").write_text(json.dumps(manifest, indent=2))
 else:
     manifest = json.loads((a.output / "manifest.json").read_text())
-    if manifest.get("abi_version") != 5:
-        raise RuntimeError("Re-export the native bundle for ABI version 5")
+    if manifest.get("abi_version") != 6:
+        raise RuntimeError("Re-export the native bundle for ABI version 6")
     if manifest.get("host_target") != host_target():
         raise RuntimeError("Re-export FA4 with the portable host target before linking")
     objects = [str(a.output / (k["symbol"] + ".o")) for k in manifest["kernels"]]
