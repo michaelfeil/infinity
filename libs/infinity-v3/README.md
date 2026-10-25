@@ -68,36 +68,53 @@ checkpoint does not automatically become a reranker.
 </details>
 
 <details>
-  <summary>Multi-modal Embeddings</summary>
+  <summary>Multi-modal Embeddings — Qwen3-VL, EmbeddingGemma2 and Nemotron</summary>
 
 Multi-modal models encode text and media for retrieval. Send images as
 `image_url` content parts in user messages on `/v1/embeddings`.
 
-Example model:
+Models and native LibTorch paths:
 
-- [Qwen/Qwen3-VL-Embedding-2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B), native text/image embeddings with last-token pooling
+- **Qwen3-VL Embedding**: [2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B) and [8B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-8B), text/image embeddings with last-token pooling.
+- **EmbeddingGemma2** (`embedding_gemma2`): text embeddings with the checkpoint's trained projection, plus image and audio inputs when the corresponding towers are present.
+- **Mistral3 / Ministral 3**: Pixtral vision tower and native text/image preprocessing. See the [multimodal input recipe](docs/ministral-3-multimodal.md).
+- **Qwen3.5 dense and MoE**: native text/image backbones with full attention, DeltaNet and vision processing.
+- **Gemma4**: native text/image backbone. Gemma3 support is text-only.
 
-The LibTorch backend also implements Mistral3/Pixtral, Qwen3.5 dense/MoE,
-EmbeddingGemma2 and Gemma4 vision paths. These are backbone implementations;
-use a checkpoint with the output head and training appropriate for your task.
-EmbeddingGemma2 supports image/audio towers when present. Gemma3 is text-only.
-See [model coverage](docs/libtorch-model-coverage.md) and
-[Ministral 3 multimodal inputs](docs/ministral-3-multimodal.md).
+Backbone support requires a checkpoint with an appropriate trained output head;
+it does not make every instruction model a retrieval embedding model.
+
+**Nemotron 3 and 3.5 dense embeddings:** the Ministral3/Mistral3 backbones are
+implemented. Complete query/document prefix handling and embedding parity for
+[Nemotron 3 1B](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16),
+[Nemotron 3 8B](https://huggingface.co/nvidia/Nemotron-3-Embed-8B-BF16),
+[Nemotron 3.5 1B](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) and
+[Nemotron 3.5 8B](https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16)
+are tracked in [PR #800](https://github.com/michaelfeil/infinity/pull/800).
+Nemotron 3 is text-only; 3.5 adds document images. This integration is pending,
+not yet part of the supported release list.
+
+For token-vector retrieval, see **ColBERT, ColQwen3 and Nemotron ColEmbed** below.
+Full architecture details are in [native model coverage](docs/libtorch-model-coverage.md).
 
 </details>
 
 <details>
-  <summary>ColBERT-style and Multi-modal Late-interaction Embeddings</summary>
+  <summary>Late-interaction Embeddings — ColBERT, ColQwen3 and Nemotron ColEmbed</summary>
 
 Late-interaction models return a matrix of token vectors instead of one pooled
 vector. Use MaxSim scoring in a compatible retrieval system.
 
 Supported models:
 
-- [colbert-ir/colbertv2.0](https://huggingface.co/colbert-ir/colbertv2.0)
-- [answerdotai/answerai-colbert-small-v1](https://huggingface.co/answerdotai/answerai-colbert-small-v1)
-- ColQwen3 (TomoroAI 4B), text/image token vectors with a learned projection
-- NVIDIA Nemotron ColEmbed V2 4B and 8B, text/image token vectors; the 3B Eagle architecture is not supported by this path
+- **ColBERTv2**: [colbert-ir/colbertv2.0](https://huggingface.co/colbert-ir/colbertv2.0)
+- **Answer.AI ColBERT Small**: [answerdotai/answerai-colbert-small-v1](https://huggingface.co/answerdotai/answerai-colbert-small-v1)
+- **ColQwen3 (TomoroAI 4B)**, text/image token vectors with a learned projection
+- **NVIDIA Nemotron ColEmbed V2 4B and 8B**, text/image token vectors; the 3B Eagle architecture is not supported by this path
+
+ColBERT returns text token vectors; ColQwen3 and Nemotron ColEmbed also encode
+images. ColQwen2/2.5 adapters and the Python server's other ColBERT variants are
+not implied by these native implementations.
 
 Use the LibTorch backend and the checkpoint's query/document formatting.
 Responses preserve the token matrix through float, base64 or packed tensor
