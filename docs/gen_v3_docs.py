@@ -16,7 +16,7 @@ files += [p for folder in ("docs", "LICENSES", "assets")
 published = set(files)
 
 for source in files:
-    destination = source.relative_to(SOURCE)
+    destination = Path("v3") / source.relative_to(SOURCE)
     if source.suffix != ".md":
         with mkdocs_gen_files.open(destination, "wb") as output:
             output.write(source.read_bytes())
@@ -37,11 +37,11 @@ for source in files:
         ) + ")"
 
     content = re.sub(r"\]\(([^\s)]+)\)", source_link, source.read_text())
-    if destination == Path("README.md"):
+    if destination == Path("v3/README.md"):
         content = content.replace("# Infinity V3 ♾️", "# Infinity V3 ♾️\n\n"
-            "> Preview documentation for v3, built from main. "
+            "> Preview documentation for the native v3 server. "
             "[Quickstart](quickstart.md) · "
-            "[Python / v2 documentation](https://michaelfeil.eu/infinity/latest/)", 1)
+            "[Python / v2 documentation](../cli_v2.md)", 1)
     with mkdocs_gen_files.open(destination, "w") as output:
         output.write(content)
     mkdocs_gen_files.set_edit_path(destination, f"../../{source.relative_to(REPO)}")

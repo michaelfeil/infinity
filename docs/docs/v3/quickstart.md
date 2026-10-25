@@ -39,5 +39,5 @@ Use the v3 container and CLI instead of `infinity_emb v2`. Check the
 [API reference](api.md) for your checkpoint and request format. Python engine
 APIs and the v2 backend choices do not carry over to the native server.
 
-The [Python / v2 docs](https://michaelfeil.eu/infinity/latest/) remain available
+The [Python / v2 docs](../cli_v2.md) remain available
 during migration. See [v3 licensing](LICENSING.md) for the native project's terms.

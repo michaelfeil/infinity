@@ -1,21 +1,21 @@
-# Documentation sites
+# Documentation
 
-The existing Python / v2 site uses `mkdocs.yml`. The v3 preview uses
-`mkdocs-v3.yml` and publishes at <https://michaelfeil.eu/infinity/v3/>.
+One MkDocs site contains both server generations: **Infinity v3** and
+**Python / v2** in the sidebar. Existing Python page paths stay unchanged;
+v3 pages live under `v3/` within each documentation version, for example
+<https://michaelfeil.eu/infinity/main/v3/>.
 
 ```bash
-pip install -r docs/requirements-v3.txt
-mkdocs serve --config-file docs/mkdocs-v3.yml
-mkdocs build --strict --config-file docs/mkdocs-v3.yml
+pip install -r docs/requirements.txt
+mkdocs serve --config-file docs/mkdocs.yml
+mkdocs build --strict --config-file docs/mkdocs.yml
 ```
 
 Edit v3's overview and reference pages in `libs/infinity-v3/`; `gen_v3_docs.py`
-includes those files at build time and points source-code links back to GitHub.
-Quickstart and API landing pages live in `docs/v3/`. No inference dependencies
-or GPU are needed to build the site.
+includes them at build time. Quickstart and API landing pages live in
+`docs/docs/v3/`. The build needs no inference dependencies or GPU.
 
-The v3 workflow validates pull requests and publishes `main` with `mike deploy v3`.
-Both publishers share a concurrency group to serialize writes to `gh-pages`.
-Publishing v3 does not change `latest`, the root redirect, or historical versions.
-A later migration can move the default and `latest` alias to v3 while retaining
-versioned Python docs and updating links to their archived version.
+Pull requests build a downloadable preview. Main publishes the whole site as
+`main`; Python releases retain the existing numbered versions and `latest`
+alias behavior. V3 is a section, not a separate version in the version selector.
+Changing the default and retiring v2 navigation are later migration steps.
