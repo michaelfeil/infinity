@@ -26,7 +26,7 @@ LibTorch paths and their limitations; it is not a claim that every checkpoint
 in each family has been validated.
 
 <details>
-  <summary>Text Embeddings</summary>
+  <summary>Text Embeddings — BGE, GTE, ModernBERT, Qwen3 and more</summary>
 
 Text embeddings represent sentences and documents as vectors for semantic
 search, clustering and recommendations. Use `/v1/embeddings` or `/embed`.
@@ -36,7 +36,8 @@ Example models:
 - [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
 - [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5)
 - [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3), dense embeddings
-- [Alibaba-NLP/gte-large-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5)
+- **GTE embeddings**: [Alibaba-NLP/gte-large-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5), using the native GTE/New encoder path.
+- **ModernBERT embeddings**: [nomic-ai/modernbert-embed-base](https://huggingface.co/nomic-ai/modernbert-embed-base), using native local/global rotary attention.
 - [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)
 - [perplexity-ai/pplx-embed-v1-0.6b](https://huggingface.co/perplexity-ai/pplx-embed-v1-0.6b) and [pplx-embed-v1-4b](https://huggingface.co/perplexity-ai/pplx-embed-v1-4b), floating-point output only; contextual variants are unsupported
 - [dmis-lab/UltraBERT-Embed-150M](https://huggingface.co/dmis-lab/UltraBERT-Embed-150M), see the [Candle launch recipe](docs/cli.md#ultrabert-embeddings)
@@ -138,7 +139,7 @@ and label configuration. See [native model coverage](docs/libtorch-model-coverag
 </details>
 
 <details>
-  <summary>Typed Decisions — Laya, Elephant, Mammoth and Perplexity Decider</summary>
+  <summary>Typed Decisions — OneJev, Laya, Rune, Clef, Perplexity Decider and D3</summary>
 
 Typed decision models answer structured questions through `/v1/systemone`.
 These checkpoints require their trained decision heads and protocol metadata.
@@ -146,10 +147,11 @@ These checkpoints require their trained decision heads and protocol metadata.
 Supported model families and protocols (LibTorch):
 
 - **Laya**: ModernBERT-based decision checkpoints with `rl_agent_config.json` and trained decision heads. Accepts text or structured state; native conversations are unsupported.
-- **Elephant and Mammoth**: Qwen3.5-based decision checkpoints using `--decision-protocol onejev`. Supports block-attention question batches and image inputs when the checkpoint includes its vision tower.
-- **Perplexity Decider**: [perplexity-ai/pplx-decider-flash-v1.2](https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2), shared text/images, joint question readouts and calibrated answers. The short model alias selects the protocol automatically.
-- **Rune**: Gemma4-based decision checkpoints.
-- **Clef / Pplx / D3**: dense Qwen3.5 decision checkpoints with their respective protocol metadata and readout heads.
+- **OneJev**, including **Elephant and Mammoth**: Qwen3.5 dense/MoE decision checkpoints using `--decision-protocol onejev`. Supports block-attention question batches and image inputs when the checkpoint includes its vision tower.
+- **Perplexity Decider / Pplx**: [v1.1-27b](https://huggingface.co/perplexity-ai/pplx-decider-v1.1-27b) and [flash-v1.2](https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2). Flash v1.2 supports shared text/images, joint question readouts and calibrated answers. The short model aliases select the protocol automatically.
+- **Rune**: Gemma4-based decision checkpoints using `--decision-protocol rune`.
+- **Clef**: dense Qwen3.5 checkpoints with `joint_head_config.json`, using `--decision-protocol clef`.
+- **D3**: [vllm-sr/d3](https://huggingface.co/vllm-sr/d3), a dense Qwen3.5 decision model with its code-readout head. The `d3` alias selects `--decision-protocol d3` automatically.
 
 For example:
 
