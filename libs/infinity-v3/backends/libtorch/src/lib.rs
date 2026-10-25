@@ -774,19 +774,10 @@ impl LibtorchBackend {
             }
             options[key] = value.into();
         }
-        // These are server settings, not checkpoint configuration. Omitting
-        // them lets native geometry choose defaults; environment values win.
-        for key in [
-            "_cuda_graphs",
-            "_cuda_graph_entries",
-            "_cuda_graph_reuse",
-            "_cuda_graph_max_captures",
-        ] {
-            options.as_object_mut().unwrap().remove(key);
-        }
-        if let Ok(value) = std::env::var(infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPHS")) {
-            options["_cuda_graphs"] = (value == "1" || value.eq_ignore_ascii_case("true")).into();
-        }
+        options["_cuda_graphs"] =
+            std::env::var(infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPHS"))
+                .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
+                .into();
         options["_media_cuda_graphs"] =
             std::env::var(infinity_v3_config::infinity_env!("TORCH_MEDIA_CUDA_GRAPHS"))
                 .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
@@ -804,59 +795,55 @@ impl LibtorchBackend {
             (
                 infinity_v3_config::infinity_env!("TORCH_RETAINED_WORKSPACE_MAX_BYTES"),
                 "_retained_workspace_max_bytes",
-                Some(512i64 << 20),
+                512i64 << 20,
                 1,
             ),
             (
                 infinity_v3_config::infinity_env!("TORCH_INPUT_UPLOAD_MAX_BYTES"),
                 "_input_upload_max_bytes",
-                Some(512 << 20),
+                512 << 20,
                 1,
             ),
             (
                 infinity_v3_config::infinity_env!("TORCH_OUTPUT_STAGING_MAX_BYTES"),
                 "_output_staging_max_bytes",
-                Some(512 << 20),
+                512 << 20,
                 1,
             ),
             (
                 infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPH_ENTRIES"),
                 "_cuda_graph_entries",
-                None,
+                4,
                 0,
             ),
             (
                 infinity_v3_config::infinity_env!("TORCH_ATTENTION_BIAS_MAX_BYTES"),
                 "_attention_bias_max_bytes",
-                Some(512 << 20),
+                512 << 20,
                 1,
             ),
             (
                 infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPH_REUSE"),
                 "_cuda_graph_reuse",
-                None,
+                3,
                 1,
             ),
             (
                 infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPH_MAX_BYTES"),
                 "_cuda_graph_max_bytes",
-                Some(512 << 20),
+                512 << 20,
                 1,
             ),
             (
                 infinity_v3_config::infinity_env!("TORCH_CUDA_GRAPH_MAX_CAPTURES"),
                 "_cuda_graph_max_captures",
-                None,
+                8,
                 0,
             ),
         ] {
             let value = std::env::var(env)
-                .ok()
                 .map(|value| value.parse::<i64>().map_err(start))
-                .transpose()?
-                .or(default);
-            // Omitted graph limits use the native geometry's defaults.
-            let Some(value) = value else { continue };
+                .unwrap_or(Ok(default))?;
             if value < minimum {
                 return Err(start(format!("{env} must be at least {minimum}")));
             }

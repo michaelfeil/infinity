@@ -194,69 +194,6 @@ static void cls_embedding_geometries(const c10::Device& device) {
                 width,
                 " / ",
                 cosine.min().item<float>());
-
-    // Exercise Engine defaults through the public ABI, including explicit
-    // opt-outs. Five distinct packed shapes must fit the small-model cache.
-    for (const auto* override : {"",
-                                 "_cuda_graphs",
-                                 "_cuda_graph_entries",
-                                 "_cuda_graph_max_captures",
-                                 "_cuda_graph_reuse"}) {
-      auto engine = std::unique_ptr<void, decltype(&tei_destroy)>(
-          tei_create(&cfg, device.str().c_str(), 1), tei_destroy);
-      TORCH_CHECK(engine, tei_error());
-      check(tei_option(engine.get(), "model_type", "bert"));
-      check(tei_option(engine.get(), "_embedding_pool", "cls"));
-      if (*override)
-        check(tei_option(
-            engine.get(), override, std::string(override) == "_cuda_graph_reuse" ? "4" : "0"));
-      for (const auto& [name, tensor] : model.weights) {
-        auto cpu = tensor.cpu();
-        check(tei_weight(engine.get(),
-                         name.c_str(),
-                         reinterpret_cast<const uint8_t*>(cpu.const_data_ptr()),
-                         cpu.sizes().data(),
-                         cpu.dim(),
-                         1));
-      }
-      check(tei_ready(engine.get()));
-      std::vector<int64_t> host_ids(40, 1), host_types(40, 0), host_positions(40);
-      std::vector<int32_t> ends{0, 8, 16, 24, 32, 40};
-      std::vector<int64_t> pooled{0, 1, 2, 3, 4};
-      for (int i = 0; i < 40; ++i)
-        host_positions[i] = i % 8;
-      for (int round = 0; round < 3; ++round) {
-        for (int batch = 1; batch <= 5; ++batch) {
-          std::vector<float> output(batch * width);
-          check(tei_forward(engine.get(),
-                            host_ids.data(),
-                            host_types.data(),
-                            host_positions.data(),
-                            ends.data(),
-                            batch,
-                            8,
-                            0,
-                            pooled.data(),
-                            batch,
-                            nullptr,
-                            0,
-                            output.data(),
-                            output.size(),
-                            nullptr,
-                            nullptr,
-                            0,
-                            nullptr,
-                            0));
-          for (const auto value : output)
-            TORCH_CHECK(std::isfinite(value), "Automatic graph produced a non-finite CLS output");
-        }
-      }
-      TORCH_CHECK(tei_graph_count(engine.get()) == (width == 384 && cached && !*override ? 5 : 0),
-                  "CLS graph defaults or explicit override changed: ",
-                  width,
-                  " / ",
-                  override);
-    }
   }
 }
 

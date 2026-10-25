@@ -61,16 +61,11 @@ FA4 has runtime validation on H100 and compile/link coverage on the other
 listed targets. See the [backend documentation](docs/libtorch-backend.md#infinityfa4)
 for supported attention shapes and the `INFINITY_TORCH_FA4=0` fallback switch.
 
-With the default GEMM policy, FP16 BERT CLS embeddings on supported CUDA GPUs
-(SM80 and newer) with 384 hidden
-features and 12 attention heads automatically use CUDA graphs: up to 16 exact
-packed shapes, 32 capture attempts, and 512 MiB of retained graph memory.
-A shape must recur three times among the 16 recent missed shapes before capture;
-one-off lengths stay eager. Set `INFINITY_TORCH_CUDA_GRAPHS=0` to disable them.
-Other profiles remain opt-in with `INFINITY_TORCH_CUDA_GRAPHS=1`.
-`INFINITY_TORCH_CUDA_GRAPH_ENTRIES`, `INFINITY_TORCH_CUDA_GRAPH_REUSE`,
-`INFINITY_TORCH_CUDA_GRAPH_MAX_CAPTURES` and `INFINITY_TORCH_CUDA_GRAPH_MAX_BYTES`
-override the corresponding limits.
+FP16 standard BERT CLS embeddings with 384 hidden features / 12 attention heads
+or 1024 hidden features / 16 attention heads use the existing native attention,
+LayerNorm and cached cuBLASLt projection paths on supported CUDA GPUs (SM80 and
+newer), subject to the existing GEMM policy and fallback guards. CUDA graphs
+remain opt-in with `INFINITY_TORCH_CUDA_GRAPHS=1`.
 
 </details>
 

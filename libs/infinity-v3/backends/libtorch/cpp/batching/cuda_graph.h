@@ -25,14 +25,11 @@ public:
              admitted_bytes = 0, prefix_hits = 0, prefix_captures = 0;
   };
 
-  // A reuse window of one requires consecutive uses; larger windows recognize
-  // interleaved repeats among a bounded set of recently missed exact shapes.
   explicit CudaGraphCache(size_t entries = 4,
                           int64_t max_tokens = 4096,
                           size_t reuse = 3,
                           uint64_t max_bytes = 512ULL << 20,
-                          size_t max_captures = 8,
-                          size_t reuse_window = 1);
+                          size_t max_captures = 8);
   ~CudaGraphCache();
   CudaGraphCache(const CudaGraphCache&) = delete;
   CudaGraphCache& operator=(const CudaGraphCache&) = delete;
