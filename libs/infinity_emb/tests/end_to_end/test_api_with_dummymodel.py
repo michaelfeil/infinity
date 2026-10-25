@@ -19,6 +19,8 @@ from infinity_emb.primitives import InferenceEngine
 PREFIX = ""
 MODEL_NAME = "dummy-number-1"
 MODEL_NAME_2 = "dummy-number-2"
+MODEL_NAME_3 = "dummy-number-3"
+DEFAULT_DIMENSIONS = 5
 BATCH_SIZE = 16
 
 PATH_OPENAPI = pathlib.Path(__file__).parent.parent.parent.parent.parent.joinpath(
@@ -36,6 +38,12 @@ app = create_server(
         EngineArgs(
             model_name_or_path=MODEL_NAME_2,
             batch_size=BATCH_SIZE,
+            engine=InferenceEngine.debugengine,
+        ),
+        EngineArgs(
+            model_name_or_path=MODEL_NAME_3,
+            batch_size=BATCH_SIZE,
+            dimensions=DEFAULT_DIMENSIONS,
             engine=InferenceEngine.debugengine,
         ),
     ],
@@ -193,3 +201,24 @@ async def test_matryoshka_embedding(client):
         for embedding, sentence in zip(rdata["data"], inp):
             assert len(sentence) == embedding["embedding"][0]
             assert len(embedding["embedding"]) == matryoshka_dim
+
+
+@pytest.mark.anyio
+async def test_matryoshka_embedding_default_dimensions(client):
+    possible_inputs = [
+        ["This is a test sentence."],
+        ["This is a test sentence.", "This is another test sentence."],
+    ]
+    for inp in possible_inputs:
+        response = await client.post(
+            f"{PREFIX}/embeddings",
+            json=dict(input=inp, model=MODEL_NAME_3),
+        )
+        assert response.status_code == 200, f"{response.status_code}, {response.text}"
+        rdata = response.json()
+        assert "data" in rdata and isinstance(rdata["data"], list)
+        assert all("embedding" in d for d in rdata["data"])
+        assert len(rdata["data"]) == len(inp)
+        for embedding, sentence in zip(rdata["data"], inp):
+            assert len(sentence) == embedding["embedding"][0]
+            assert len(embedding["embedding"]) == DEFAULT_DIMENSIONS
