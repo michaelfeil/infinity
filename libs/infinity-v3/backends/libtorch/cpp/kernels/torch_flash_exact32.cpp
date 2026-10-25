@@ -17,7 +17,7 @@ void launch(Flash_fwd_params&, cudaStream_t);
 }
 
 namespace infinity {
-/// Launch the twelve-head width-32 noncausal SM90 specialization over actual FP16/BF16 token rows.
+/// Launch the twelve-head width-32 noncausal SM80+ specialization over actual FP16/BF16 token rows.
 at::Tensor torch_flash_exact32(const at::Tensor& q,
                                const at::Tensor& k,
                                const at::Tensor& v,
@@ -40,8 +40,8 @@ at::Tensor torch_flash_exact32(const at::Tensor& q,
                   std::isfinite(static_cast<float>(scale)),
               "Invalid exact head32 packed dimensions");
   c10::cuda::CUDAGuard guard(q.device());
-  TORCH_CHECK(at::cuda::getCurrentDeviceProperties()->major == 9,
-              "Exact head32 attention is qualified only for SM90");
+  TORCH_CHECK(at::cuda::getCurrentDeviceProperties()->major >= 8,
+              "Exact head32 attention requires compute capability >=8.0");
   auto out = at::empty(q.sizes(), q.options());
   auto lse = at::empty({q.size(1), q.size(0)}, q.options().dtype(at::kFloat));
   tei_torch_flash_exact32::Flash_fwd_params p{};

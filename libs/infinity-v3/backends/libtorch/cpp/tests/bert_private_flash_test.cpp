@@ -120,9 +120,87 @@ static void classifier_workspace_recovery(const TeiConfig& cfg,
               "BERT classifier workspace regression did not exercise a supported workspace plan");
 }
 
+static void cls_embedding_geometries(const c10::Device& device) {
+  if (at::cuda::getDeviceProperties(device.index())->major < 8)
+    return;
+  for (const int64_t width : {384, 1024}) {
+    TeiConfig cfg{width, width == 384 ? 12 : 16, 1, 4 * width, 64, 256, 2, 1e-5, 0};
+    Bert model(cfg, device, at::kHalf);
+    model.options.values = {{"model_type", "bert"}, {"_embedding_pool", "cls"}};
+    auto add = [&](const std::string& name, at::IntArrayRef shape, bool unit = false) {
+      model.weights[name] = (unit ? at::ones(shape) : at::randn(shape) * .03).to(device, at::kHalf);
+    };
+    auto norm = [&](const std::string& name) {
+      add(name + ".weight", {width}, true);
+      add(name + ".bias", {width});
+    };
+    auto linear = [&](const std::string& name, int64_t output, int64_t input) {
+      add(name + ".weight", {output, input});
+      add(name + ".bias", {output});
+    };
+    add("embeddings.word_embeddings.weight", {64, width});
+    add("embeddings.position_embeddings.weight", {256, width});
+    add("embeddings.token_type_embeddings.weight", {2, width});
+    norm("embeddings.LayerNorm");
+    const std::string p = "encoder.layer.0.";
+    for (const auto* projection : {"query", "key", "value"})
+      linear(p + "attention.self." + projection, width, width);
+    linear(p + "attention.output.dense", width, width);
+    norm(p + "attention.output.LayerNorm");
+    linear(p + "intermediate.dense", 4 * width, width);
+    linear(p + "output.dense", width, 4 * width);
+    norm(p + "output.LayerNorm");
+    model.ready();
+    TORCH_CHECK(model.native_bert_embedding && model.exact_biased_norm,
+                "Standard CLS embedding did not select native geometry");
+    std::vector<int32_t> offsets{0, 7, 136, 139};
+    auto ids = at::arange(139, at::TensorOptions().device(device).dtype(at::kLong)).remainder(64);
+    auto types = at::zeros_like(ids), positions = at::arange(139, ids.options());
+    auto cu = at::tensor(offsets, at::TensorOptions().device(device).dtype(at::kInt));
+    infinity::PackedInput input{ids, types, positions, cu, offsets.data(), 3, 129};
+    auto actual = model.forward(input).cpu().to(at::kFloat);
+    const bool cached = model.cached_classifier_gemm;
+    model.cached_classifier_gemm = false;
+    // Different architectures may select different valid cuBLASLt GEMMs.
+    auto uncached = model.forward(input).cpu().to(at::kFloat);
+    auto gemm_cosine = (actual * uncached).sum(1) / (actual.norm(2, 1) * uncached.norm(2, 1));
+    TORCH_CHECK(gemm_cosine.min().item<float>() > .99999,
+                "Cached embedding GEMMs disagree with ATen");
+    model.cached_classifier_gemm = cached;
+    auto first_sequence = actual.narrow(0, 0, 7);
+    ids.narrow(0, 7, 129).add_(1).remainder_(64);
+    auto changed = model.forward(input).cpu().to(at::kFloat);
+    TORCH_CHECK(at::equal(first_sequence, changed.narrow(0, 0, 7)) &&
+                    at::equal(actual.narrow(0, 136, 3), changed.narrow(0, 136, 3)),
+                "CLS embedding attention crossed packed sequence boundaries");
+    {
+      infinity::CudaGraphCache graphs(1, 4096, 1);
+      for (int repeat = 0; repeat < 2; ++repeat)
+        TORCH_CHECK(at::equal(changed, graphs.forward(model, input).cpu().to(at::kFloat)),
+                    "Captured CLS embedding changed full outputs");
+      TORCH_CHECK(graphs.size() == 1, "CLS embedding fixture did not capture");
+      ids.add_(1).remainder_(64);
+      changed = model.forward(input).cpu().to(at::kFloat);
+      TORCH_CHECK(at::equal(changed, graphs.forward(model, input).cpu().to(at::kFloat)),
+                  "CLS embedding graph replay ignored changed input IDs");
+    }
+    model.native_bert_embedding = false;
+    model.exact_biased_norm =
+        width == 384 && at::cuda::getDeviceProperties(device.index())->major == 9;
+    auto reference = model.forward(input).cpu().to(at::kFloat);
+    auto cosine = (changed * reference).sum(1) / (changed.norm(2, 1) * reference.norm(2, 1));
+    TORCH_CHECK(cosine.min().item<float>() > .999,
+                "Native CLS embedding disagrees with the previous attention/norm path: ",
+                width,
+                " / ",
+                cosine.min().item<float>());
+  }
+}
+
 int main(int argc, char** argv) {
   at::manual_seed(321);
   const char* device = argc > 1 ? argv[1] : "cuda:0";
+  cls_embedding_geometries(c10::Device(device));
   TeiConfig cfg{768, 12, 1, 64, 64, 256, 2, 1e-5, 0};
   std::map<std::string, at::Tensor> weights;
   auto add =

@@ -18,6 +18,7 @@
 #include "kernels/torch_flash_fma.h"
 #include "kernels/torch_flash_exact32.h"
 #include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/tunable/Tunable.h>
 #include <ATen/detail/CUDAHooksInterface.h>
 #include <cublasLt.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -45,6 +46,7 @@ struct Bert : infinity::Model {
   bool roberta = false;
   bool cudnn_varlen = false;
   bool private_flash_embedding = false;
+  bool native_bert_embedding = false;
   bool private_flash_roberta_embedding = false;
   bool private_flash_exact_classifier = false;
   bool exact_biased_norm = false;
@@ -312,6 +314,17 @@ struct Bert : infinity::Model {
       }
     }
 #ifdef TEI_TORCH_CUDA_KERNELS
+    // Standard small/large BERT CLS embeddings use the same packed and biased
+    // normalization contracts as the existing base-width implementation.
+    native_bert_embedding =
+        device.is_cuda() && dtype == at::kHalf && !roberta &&
+        ((config.hidden == 384 && config.heads == 12) ||
+         (config.hidden == 1024 && config.heads == 16)) &&
+        config.intermediate == 4 * config.hidden && classification_width() == 0 &&
+        options.string("_embedding_pool") == "cls" && !options.boolean("_multi_vector", false) &&
+        !options.boolean("_fp8_dynamic", false) &&
+        (config.activation == 0 || config.activation == 1) &&
+        at::cuda::getDeviceProperties(device.index())->major >= 8;
     // Qualified H100 FP16 BERT embedding geometry. Dynamic FP8 also needs
     // the original Flash rounding before quantization, including trained heads.
     // BERT classifier backbones share this geometry; keep SPLADE and RoBERTa selectors unchanged.
@@ -331,14 +344,25 @@ struct Bert : infinity::Model {
         at::cuda::getDeviceProperties(device.index())->major == 9 && classification_width() > 0 &&
         !options.boolean("_fp8_dynamic", false) &&
         at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt;
+    // Reuse the bounded biased-GEMM plans for standard CLS embeddings too.
+    // ATen's default addmm path already selects cuBLASLt for these layouts.
+    cached_classifier_gemm |=
+        native_bert_embedding && !at::globalContext().deterministicAlgorithms() &&
+        !at::globalContext().allowFP16AccumulationCuBLAS() &&
+        at::globalContext().allowFP16ReductionCuBLAS() ==
+            at::CuBLASReductionOption::AllowReducedPrecisionWithSplitK &&
+        !at::cuda::tunable::getTuningContext()->IsTunableOpEnabled() &&
+        (at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublas ||
+         at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt);
 #endif
 #ifdef TEI_TORCH_CUDA_KERNELS
     // BERT and its aliases share Candle's biased LayerNorm primitive: residual
     // statistics use the unrounded FP32 sum. Kernel eligibility is independent
-    // of model alias, pooling and head architecture; CPU/other CUDA scopes stay unchanged.
-    exact_biased_norm = device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16) &&
-                        (config.hidden == 768 || config.hidden == 384) &&
-                        at::cuda::getDeviceProperties(device.index())->major == 9;
+    // of model alias, pooling and head architecture; other profiles retain their selectors.
+    exact_biased_norm =
+        device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16) &&
+        (native_bert_embedding || ((config.hidden == 768 || config.hidden == 384) &&
+                                   at::cuda::getDeviceProperties(device.index())->major == 9));
     // These trained profiles use Candle's packed attention arithmetic, including
     // long ragged inputs. Dynamic FP8 retains its existing selector.
     private_flash_exact_classifier =
@@ -680,7 +704,7 @@ struct Bert : infinity::Model {
                                             1.0 / std::sqrt(static_cast<double>(head)));
         if (attended.defined()) {
           // InfinityFA4 consumed the original packed views on this stream.
-        } else if (private_flash_exact_classifier && head == 32) {
+        } else if ((private_flash_exact_classifier || native_bert_embedding) && head == 32) {
           attended = infinity::torch_flash_exact32(
               q, k, v, cumulative, max_sequence, 1.0 / std::sqrt(static_cast<double>(head)));
         } else if ((private_flash_exact_classifier ||
