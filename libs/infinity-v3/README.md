@@ -2,7 +2,7 @@
 
 Infinity V3 is a high-throughput, low-latency REST API for serving embeddings,
 reranking, classification and typed decision models. The server is written in
-Rust, with Candle and native LibTorch inference backends.
+Rust and uses **LibTorch, the C++ interface of PyTorch**, for model inference.
 
 ## Getting started
 
@@ -20,7 +20,8 @@ its OpenAPI schema. See [running the server](docs/cli.md) and
 ### Supported Tasks and Models by Infinity V3
 
 Click on the sections below to find tasks and **example models**. Support depends
-on the checkpoint architecture, output head and backend included in your build.
+on the checkpoint architecture and trained output head. The models below use
+the LibTorch backend.
 The [native model coverage](docs/libtorch-model-coverage.md) lists implemented
 LibTorch paths and their limitations; it is not a claim that every checkpoint
 in each family has been validated.
@@ -40,7 +41,7 @@ Example models:
 - **ModernBERT embeddings**: [nomic-ai/modernbert-embed-base](https://huggingface.co/nomic-ai/modernbert-embed-base), using native local/global rotary attention.
 - [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)
 - [perplexity-ai/pplx-embed-v1-0.6b](https://huggingface.co/perplexity-ai/pplx-embed-v1-0.6b) and [pplx-embed-v1-4b](https://huggingface.co/perplexity-ai/pplx-embed-v1-4b), floating-point output only; contextual variants are unsupported
-- [dmis-lab/UltraBERT-Embed-150M](https://huggingface.co/dmis-lab/UltraBERT-Embed-150M), see the [Candle launch recipe](docs/cli.md#ultrabert-embeddings)
+- [dmis-lab/UltraBERT-Embed-150M](https://huggingface.co/dmis-lab/UltraBERT-Embed-150M), native bidirectional encoder with per-layer rotary positions and sliding windows
 
 Native LibTorch families also include RoBERTa, XLM-RoBERTa, CamemBERT,
 DistilBERT, ModernBERT, Nomic BERT, Jina BERT/JinaCode, MPNet, Llama,
@@ -117,7 +118,7 @@ ColBERT returns text token vectors; ColQwen3 and Nemotron ColEmbed also encode
 images. ColQwen2/2.5 adapters and the Python server's other ColBERT variants are
 not implied by these native implementations.
 
-Use the LibTorch backend and the checkpoint's query/document formatting.
+Use the checkpoint's query/document formatting.
 Responses preserve the token matrix through float, base64 or packed tensor
 encoding. Sentence pooling, dimension overrides and single-vector `/similarity`
 scoring are unsupported for these models. See [embedding tensor formats](docs/embedding-tensors.md)
