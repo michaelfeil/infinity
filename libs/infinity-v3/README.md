@@ -17,6 +17,110 @@ on the running server for the interactive API, or `/api-doc/openapi.json` for
 its OpenAPI schema. See [running the server](docs/cli.md) and
 [building Infinity V3](CONTRIBUTING.md#working-in-the-infinity-monorepo).
 
+### CLI overview
+
+Serve an embedding model on one NVIDIA GPU:
+
+```bash
+infinity_v3 \
+  --model-id Qwen/Qwen3-Embedding-0.6B \
+  --served-model-name embeddings \
+  --torch-device cuda --device-id 0 --dtype bfloat16 \
+  --max-sequence-length 8192 --max-batch-tokens 32768 \
+  --hostname 0.0.0.0 --port 8000
+```
+
+Clients use `"model": "embeddings"` in requests. For CPU inference, use
+`--torch-device cpu --dtype float32`. Omit `--device-id` to use all visible CUDA
+GPUs as replicas; each GPU loads a complete model, rather than a shard.
+
+<details>
+  <summary>Model, precision and device options</summary>
+
+| Option | Purpose |
+| --- | --- |
+| `--model-id` | Hugging Face model ID or local checkpoint directory. Repeat to serve multiple models. |
+| `--revision` | Pin a Hugging Face commit, tag or branch. |
+| `--served-model-name` | Public model name accepted by the API; defaults to the checkpoint ID. |
+| `--torch-device` | `auto`, `cpu` or `cuda`. |
+| `--dtype` | `auto`, `float32`, `float16` or `bfloat16`; CUDA attention requires FP16/BF16. |
+| `--device-id` | Run on one visible accelerator ordinal, such as `0`. |
+| `--backend-device-ids` | Select CUDA replicas, such as `0,1`, or `auto`. |
+| `--enable-fp8-dynamic` | Enable experimental dynamic FP8 for supported models and GPUs. Off by default; validate task accuracy before enabling. |
+
+</details>
+
+<details>
+  <summary>Batching, input limits and model behavior</summary>
+
+| Option | Purpose |
+| --- | --- |
+| `--max-batch-tokens` | Total token budget per batch; defaults to `16384`. Larger batches need more memory. |
+| `--max-sequence-length` | Token limit for one sequence, including prompts and image tokens; bounded by the model and batch limits. |
+| `--max-batch-requests` | Optional maximum number of individual requests in a batch. |
+| `--max-concurrent-requests` | Admission limit per model; defaults to `512`. |
+| `--max-client-batch-size` | Maximum number of inputs in one client batch. |
+| `--auto-truncate=false` | Reject oversized inputs instead of truncating. Truncation is enabled by default; decision and multimodal requests have additional restrictions. |
+| `--pooling` | Override the checkpoint's embedding pooling configuration when the model supports it. Normally leave unset. |
+| `--default-prompt-name` | Select a saved query/document prompt by name. |
+| `--default-prompt` | Use a literal prefix instead; cannot be combined with `--default-prompt-name`. |
+| `--decision-protocol` | Select `onejev`, `rune`, `clef`, `pplx` or `d3` for a compatible decision checkpoint. |
+
+For example, an `8192` sequence limit with a `32768` batch budget allows several
+sequences in a batch while keeping each individual input at or below 8192 tokens.
+See [sequence limits](docs/cli.md#sequence-length-and-batch-capacity) for details.
+
+</details>
+
+<details>
+  <summary>HTTP, media and observability options</summary>
+
+| Option | Purpose |
+| --- | --- |
+| `--hostname`, `--port` | HTTP bind address and port; defaults to `0.0.0.0:3000`. |
+| `--api-key` | Require `Authorization: Bearer …` on API requests. Can also be supplied through `INFINITY_API_KEY`. |
+| `--image-allowed-hosts` | Comma-separated host allowlist replacing the defaults; `--image-allowed-hosts=` permits inline media only. |
+| `--image-memory-budget-mib` | Memory budget for encoded images, preprocessing and prepared patches. |
+| `--json-output` | Write structured JSON logs. |
+| `--prometheus-port` | Prometheus metrics port; defaults to `9000`. |
+| `--huggingface-hub-cache` | Model download cache directory. |
+
+</details>
+
+<details>
+  <summary>Multiple models and environment variables</summary>
+
+Repeat `--model-id` and align per-model settings in the same order:
+
+```bash
+infinity_v3 \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --model-id BAAI/bge-reranker-base \
+  --served-model-name embeddings --served-model-name reranker \
+  --torch-device cuda --dtype bfloat16 \
+  --device-id 0 --device-id 1 --port 8000
+```
+
+A single per-model setting applies to every model. Multiple values must match
+the number of models; semicolon-separated values are also accepted. HTTP bind
+settings are shared by the server.
+
+Official builds expose `INFINITY_*` environment variables for CLI options:
+
+```bash
+INFINITY_MODEL_ID=sentence-transformers/all-MiniLM-L6-v2 \
+INFINITY_TORCH_DEVICE=cpu \
+INFINITY_DTYPE=float32 \
+INFINITY_PORT=8000 \
+infinity_v3
+```
+
+Use quotes for lists, such as `INFINITY_DEVICE_ID="0;1"`. CLI arguments take
+precedence over environment values. Run `infinity_v3 --help` for the complete
+option list and the environment names used by your build.
+
+</details>
+
 ### Supported Tasks and Models by Infinity V3
 
 Click on the sections below to find tasks and **example models**. Support depends
