@@ -39,6 +39,14 @@ Qwen3-Embedding-0.6B**. Speedups depend on the workload and configuration.
 Startup timings above use local weights; see the
 [startup measurements](docs/modernbert-startup.md).
 
+Batch prefetch uses a per-replica token forecast. Each replica starts at 100 tokens/s
+and learns its best measured throughput from successful batches below 500 packed
+tokens. A replica with under 2 ms of predicted outstanding token work permits early
+preparation;
+longer work leaves the shared prepared batch available to idle replicas. Health
+checks and larger batches do not change the calibration. Deferred GPU work remains
+counted until completion, even after its model lease is released.
+
 <details>
   <summary>CUDA support and attention kernels</summary>
 
