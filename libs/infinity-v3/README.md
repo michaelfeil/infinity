@@ -23,6 +23,20 @@ Rust and uses **LibTorch, the C++ interface of PyTorch**, for model inference.
   <a href="https://www.linkedin.com/posts/markhng525_join-me-and-ekin-karabulut-at-the-ai-infra-activity-7163233344875393024-LafB?utm_source=share&utm_medium=member_desktop"><img src="https://avatars.githubusercontent.com/u/86131705" alt="Logo Gradient.ai" width="50"/></a>
 </p>
 
+## Performance highlights
+
+* **High throughput**: token-based dynamic batching and dedicated tokenization workers.
+* **Low latency**: BERT-small runs in ~850 µs end-to-end through the Rust/C++ serving path, including ~250 µs HTTP/MessagePack, ~100 µs batching and ~500 µs inference with CUDA graphs.
+* **Fast startup**: ModernBERT-base **0.92 s**, Qwen3-8B **2.51 s** on one H100 80 GB.
+* **Optimized inference**: native LibTorch kernels, FlashAttention-4 and optional dynamic FP8 for supported models.
+
+Infinity aims to outperform vLLM and SGLang across embedding, reranking and
+decision models. Reported October 2026 benchmark highlights versus vLLM:
+**~2× throughput on Mammoth**, **~5× on ModernBERT** and **~1.1× on
+Qwen3-Embedding-0.6B**. Speedups depend on the workload and configuration.
+Startup timings above use local weights; see the
+[startup measurements](docs/modernbert-startup.md).
+
 <details>
   <summary>CUDA support and attention kernels</summary>
 
