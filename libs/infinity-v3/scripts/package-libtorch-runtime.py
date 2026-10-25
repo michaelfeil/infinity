@@ -57,6 +57,12 @@ def runtime_libraries(roots, site_packages):
 
     pending = list(roots)
     provided = {path.name for path in roots}
+    # FA4 keeps its runtimes in per-SM directories. GDN also needs its linked
+    # dependencies beside the native bridge for its own $ORIGIN lookup.
+    for root in roots:
+        module = root.parent / "libinfinitygdn.so"
+        if module.is_file():
+            pending.extend(select(name) for name in needed(module) if name in candidates)
     for pattern in LAZY_LIBRARIES:
         matches = fnmatch.filter(candidates, pattern)
         if not matches:
