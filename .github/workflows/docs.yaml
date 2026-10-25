@@ -14,6 +14,9 @@ permissions:
   contents: write
 jobs:
   deploy:
+    concurrency:
+      group: infinity-gh-pages
+      cancel-in-progress: false
     if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
     runs-on: ubuntu-latest
     steps:

@@ -165,3 +165,6 @@ libs/infinity_emb/data/*
 
 # macOS
 .DS_Store
+
+# Local v3 documentation build
+/site-v3/
