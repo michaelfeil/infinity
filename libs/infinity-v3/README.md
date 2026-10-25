@@ -4,6 +4,25 @@ Infinity V3 is a high-throughput, low-latency REST API for serving embeddings,
 reranking, classification and typed decision models. The server is written in
 Rust and uses **LibTorch, the C++ interface of PyTorch**, for model inference.
 
+<p align="center">
+  <a href="https://github.com/basetenlabs/truss-examples/tree/7025918c813d08d718b8939f44f10651a0ff2c8c/custom-server/infinity-embedding-server"><img src="https://avatars.githubusercontent.com/u/54861414" alt="Logo Baseten.co" width="50"/></a>
+  <a href="https://github.com/runpod-workers/worker-infinity-embedding"><img src="https://github.com/user-attachments/assets/24f1906d-31b8-4e16-a479-1382cbdea046" alt="Logo Runpod" width="50"/></a>
+  <a href="https://www.truefoundry.com/cognita"><img src="https://github.com/user-attachments/assets/1b515b0f-2332-4b12-be82-933056bddee4" alt="Logo TrueFoundry" width="50"/></a>
+  <a href="https://vast.ai/article/serving-infinity"><img src="https://github.com/user-attachments/assets/8286d620-f403-48f5-bd7f-f471b228ae7b" alt="Logo Vast" width="46"/></a>
+  <a href="https://www.dataguard.de"><img src="https://github.com/user-attachments/assets/3fde1ac6-c299-455d-9fc2-ba4012799f9c" alt="Logo DataGuard" width="50"/></a>
+  <a href="https://community.sap.com/t5/artificial-intelligence-and-machine-learning-blogs/bring-open-source-llms-into-sap-ai-core/ba-p/13655167"><img src="https://github.com/user-attachments/assets/743e932b-ed5b-4a71-84cb-f28235707a84" alt="Logo SAP" width="47"/></a>
+  <a href="https://x.com/StuartReid1929/status/1763434100382163333"><img src="https://github.com/user-attachments/assets/477a4c54-1113-434b-83bc-1985f10981d3" alt="Logo Nosible" width="44"/></a>
+  <a href="https://github.com/freshworksinc/freddy-infinity"><img src="https://github.com/user-attachments/assets/a68da78b-d958-464e-aaf6-f39132be68a0" alt="Logo FreshWorks" width="50"/></a>
+  <a href="https://github.com/dstackai/dstack/tree/master/examples/deployment/infinity"><img src="https://github.com/user-attachments/assets/9cde2d6b-dc16-4f0a-81ba-535a84321467" alt="Logo Dstack" width="50"/></a>
+  <a href="https://embeddedllm.com/blog/"><img src="https://avatars.githubusercontent.com/u/148834374" alt="Logo JamAI" width="50"/></a>
+  <a href="https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct#infinity_emb"><img src="https://avatars.githubusercontent.com/u/1961952" alt="Logo Alibaba Group" width="50"/></a>
+  <a href="https://github.com/bentoml/BentoInfinity/"><img src="https://avatars.githubusercontent.com/u/49176046" alt="Logo BentoML" width="50"/></a>
+  <a href="https://x.com/bo_wangbo/status/1766371909086724481"><img src="https://avatars.githubusercontent.com/u/60539444" alt="Logo JinaAi" width="50"/></a>
+  <a href="https://github.com/dwarvesf/llm-hosting"><img src="https://avatars.githubusercontent.com/u/10388449" alt="Logo Dwarves Foundation" width="50"/></a>
+  <a href="https://github.com/huggingface/chat-ui/blob/daf695ea4a6e2d081587d7dbcae3cacd466bf8b2/docs/source/configuration/embeddings.md#openai"><img src="https://avatars.githubusercontent.com/u/25720743" alt="Logo HF" width="50"/></a>
+  <a href="https://www.linkedin.com/posts/markhng525_join-me-and-ekin-karabulut-at-the-ai-infra-activity-7163233344875393024-LafB?utm_source=share&utm_medium=member_desktop"><img src="https://avatars.githubusercontent.com/u/86131705" alt="Logo Gradient.ai" width="50"/></a>
+</p>
+
 <details>
   <summary>CUDA support and attention kernels</summary>
 
