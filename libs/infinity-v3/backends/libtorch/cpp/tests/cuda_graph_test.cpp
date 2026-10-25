@@ -677,7 +677,7 @@ void admission_test() {
   Dense model;
   auto options = at::TensorOptions().device(at::kCUDA).dtype(at::kLong);
   CudaGraphCache cache(2, 32, 3, 512ULL << 20, 4);
-  auto request = [&](int n) {
+  auto request_into = [&](CudaGraphCache& target, int n) {
     std::vector<int32_t> offsets{0, n};
     auto ids = at::arange(n, options);
     PackedInput input{ids,
@@ -687,9 +687,10 @@ void admission_test() {
                       offsets.data(),
                       1,
                       n};
-    TORCH_CHECK(at::equal(cache.forward(model, input).clone(), model.forward(input)),
+    TORCH_CHECK(at::equal(target.forward(model, input).clone(), model.forward(input)),
                 "Admission changed output");
   };
+  auto request = [&](int n) { request_into(cache, n); };
   // Shape churn never pays capture cost; a stable shape can still enter later.
   for (int repeat = 0; repeat < 5; ++repeat)
     for (int n = 1; n <= 8; ++n)
@@ -707,6 +708,24 @@ void admission_test() {
   TORCH_CHECK(cache.stats().attempts == 4, "Capture budget did not stop churn");
   request(4);
   TORCH_CHECK(cache.stats().hits > warmed.hits, "Budget exhaustion disabled resident replay");
+  CudaGraphCache interleaved(16, 64, 3, 512ULL << 20, 32, 16);
+  for (int n = 1; n <= 32; ++n)
+    request_into(interleaved, n);
+  request_into(interleaved, 1);
+  request_into(interleaved, 1);
+  TORCH_CHECK(interleaved.stats().attempts == 0,
+              "Cold shapes captured or admission history exceeded its window");
+  for (int round = 0; round < 3; ++round) {
+    for (int n = 33; n <= 40; ++n)
+      request_into(interleaved, n);
+    if (round < 2)
+      TORCH_CHECK(interleaved.stats().attempts == 0, "Interleaved shape captured before reuse");
+  }
+  TORCH_CHECK(interleaved.size() == 8 && interleaved.stats().captures == 8,
+              "Repeated interleaved shapes did not capture");
+  for (int n = 33; n <= 40; ++n)
+    request_into(interleaved, n);
+  TORCH_CHECK(interleaved.stats().hits == 8, "Interleaved shape replay missed");
   CudaGraphCache tiny_budget(2, 32, 1, 1, 4);
   std::vector<int32_t> offsets{0, 3};
   auto ids = at::arange(3, options);

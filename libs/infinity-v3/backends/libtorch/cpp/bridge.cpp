@@ -330,7 +330,13 @@ struct Engine {
         native_moe_graphs = infinity::native_hopper_moe_available(device);
     }
 #endif
-    if (device.is_cuda() && !multi_vector && options.boolean("_cuda_graphs", false) &&
+    bool native_cls_graphs = false;
+#ifdef TEI_TORCH_CUDA_KERNELS
+    const auto* bert = dynamic_cast<const Bert*>(model.get());
+    native_cls_graphs =
+        bert && bert->native_bert_embedding && bert->cached_classifier_gemm && config.hidden == 384;
+#endif
+    if (device.is_cuda() && !multi_vector && options.boolean("_cuda_graphs", native_cls_graphs) &&
         (native_moe_graphs ||
          (options.integer("num_experts", options.integer("text_config.num_experts", 0)) == 0 &&
           options.integer("moe_every_n_layers",
@@ -346,18 +352,20 @@ struct Engine {
            family == "embedding_gemma2" ||
            (media_graphs && (family == "qwen3_vl" || family == "qwen3_vl_text" ||
                              family == "qwen3_5" || family == "qwen3_5_text")))))) {
-      auto entries = options.integer("_cuda_graph_entries", 4),
+      // Variable serving batches need more than four exact shapes. Bound both
+      // retained pools and lifetime capture attempts, including failed captures.
+      auto entries = options.integer("_cuda_graph_entries", native_cls_graphs ? 16 : 4),
            reuse = options.integer("_cuda_graph_reuse", 3);
       auto bytes = options.integer("_cuda_graph_max_bytes", 512LL << 20),
-           captures = options.integer("_cuda_graph_max_captures", 8);
+           captures = options.integer("_cuda_graph_max_captures", native_cls_graphs ? 32 : 8);
       TORCH_CHECK(entries >= 0 && reuse > 0 && bytes > 0 && captures >= 0,
                   "Invalid CUDA graph admission budgets");
       auto max_tokens = options.integer("_cuda_graph_max_tokens", 4096);
       // Larger Nomic batches use host-count reference routing and remain eager.
       if (nomic_moe_graphs)
         max_tokens = std::min<int64_t>(max_tokens, 8192);
-      graphs =
-          std::make_unique<infinity::CudaGraphCache>(entries, max_tokens, reuse, bytes, captures);
+      graphs = std::make_unique<infinity::CudaGraphCache>(
+          entries, max_tokens, reuse, bytes, captures, native_cls_graphs ? 16 : 1);
       graphs->retain_prefix_states(bool(prefix));
     }
   }

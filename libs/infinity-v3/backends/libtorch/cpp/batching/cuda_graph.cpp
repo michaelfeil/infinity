@@ -29,7 +29,7 @@ namespace infinity {
 struct CudaGraphCache::Impl {
   size_t limit;
   int64_t max_tokens;
-  size_t reuse, max_captures, consecutive = 0;
+  size_t reuse, max_captures, reuse_window, consecutive = 0;
   uint64_t max_bytes;
   std::string last_shape;
   bool budget_exhausted = false, retain_prefix = false;
@@ -96,6 +96,7 @@ struct CudaGraphCache::Impl {
   };
 
   std::unordered_map<std::string, std::unique_ptr<Entry>> entries;
+  std::list<std::pair<std::string, size_t>> observations;
   std::list<std::string> lru;
   std::unordered_set<std::string> failed;
   // Reuse retired lanes, but never share a lane between live graphs: graph
@@ -146,9 +147,11 @@ struct CudaGraphCache::Impl {
     }
   }
 #endif
-  Impl(size_t count, int64_t tokens, size_t uses, uint64_t bytes, size_t captures)
-      : limit(count), max_tokens(tokens), reuse(uses), max_captures(captures), max_bytes(bytes) {
-    TORCH_CHECK(uses > 0 && bytes > 0, "CUDA graph reuse and byte budgets must be positive");
+  Impl(size_t count, int64_t tokens, size_t uses, uint64_t bytes, size_t captures, size_t window)
+      : limit(count), max_tokens(tokens), reuse(uses), max_captures(captures), reuse_window(window),
+        max_bytes(bytes) {
+    TORCH_CHECK(uses > 0 && bytes > 0 && window > 0,
+                "CUDA graph reuse, window and byte budgets must be positive");
   }
 };
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -268,8 +271,8 @@ static void graph_input_copies(const PackedInput& target,
 }
 #endif
 CudaGraphCache::CudaGraphCache(
-    size_t count, int64_t tokens, size_t uses, uint64_t bytes, size_t captures)
-    : impl(std::make_unique<Impl>(count, tokens, uses, bytes, captures)) {}
+    size_t count, int64_t tokens, size_t uses, uint64_t bytes, size_t captures, size_t window)
+    : impl(std::make_unique<Impl>(count, tokens, uses, bytes, captures, window)) {}
 
 CudaGraphCache::~CudaGraphCache() = default;
 
@@ -411,12 +414,14 @@ at::Tensor CudaGraphCache::forward(const Model& model,
       }
   }
   auto id = std::move(key.bytes);
-  if (id == impl->last_shape) {
-    if (impl->consecutive < impl->reuse)
-      ++impl->consecutive;
-  } else {
-    impl->last_shape = id;
-    impl->consecutive = 1;
+  if (impl->reuse_window == 1) {
+    if (id == impl->last_shape) {
+      if (impl->consecutive < impl->reuse)
+        ++impl->consecutive;
+    } else {
+      impl->last_shape = id;
+      impl->consecutive = 1;
+    }
   }
   auto found = impl->entries.find(id);
   if (found != impl->entries.end()) {
@@ -492,10 +497,29 @@ at::Tensor CudaGraphCache::forward(const Model& model,
   // the ordinary eager capture path rather than adding graph capture latency.
   if (publish)
     return fallback();
-  // Bound private-pool creation, including failed captures. Alternating cold
-  // shapes never pass consecutive-use admission.
+  // Bound private-pool creation, including failed captures.
   if (impl->budget_exhausted || impl->counters.attempts >= impl->max_captures ||
-      impl->consecutive < impl->reuse || impl->failed.count(id))
+      impl->failed.count(id))
+    return run(input);
+  auto observations = impl->consecutive;
+  if (impl->reuse_window > 1) {
+    // Variable serving batches can recur without appearing consecutively.
+    // Retain only recent missed shapes; one-off lengths cannot spend captures.
+    auto& recent = impl->observations;
+    auto seen = std::find_if(
+        recent.begin(), recent.end(), [&](const auto& item) { return item.first == id; });
+    if (seen == recent.end()) {
+      recent.emplace_front(id, 1);
+      if (recent.size() > impl->reuse_window)
+        recent.pop_back();
+    } else {
+      if (seen->second < impl->reuse)
+        ++seen->second;
+      recent.splice(recent.begin(), recent, seen);
+    }
+    observations = recent.front().second;
+  }
+  if (observations < impl->reuse)
     return run(input);
   // Reject known oversized static inputs before cloning or creating a private
   // pool. The post-capture check still accounts for activation/workspace pools.
