@@ -661,6 +661,47 @@ void check_close(const at::Tensor& a, const at::Tensor& b) {
   TORCH_CHECK(error < 2e-5, "Decoder parity error ", error);
 }
 
+void bidirectional_classifier_test(c10::Device device, at::ScalarType dtype) {
+  auto cfg = config("llama");
+  cfg.values["architectures.0"] = "LlamaBidirectionalForSequenceClassification";
+  cfg.values["use_bidirectional_attention"] = "true";
+  cfg.values["num_labels"] = "1";
+  cfg.values["pooling"] = "avg";
+  cfg.values["temperature"] = "0.7";
+  if (device.is_cuda()) {
+    cfg.values["num_attention_heads"] = "2";
+    cfg.values["num_key_value_heads"] = "1";
+    cfg.values["head_dim"] = "8";
+  }
+  auto tensors = weights(cfg);
+  tensors["score.weight"] = at::arange(16, at::kFloat).view({1, 16}) * .013;
+  for (auto& [name, value] : tensors)
+    value = value.to(device, dtype);
+  auto score = tensors.at("score.weight");
+  auto model = create_decoder(cfg, tensors, device, dtype);
+  model->ready();
+  TORCH_CHECK(model->classification_width() == 1 && !model->supports_prefix_cache(1),
+              "Bidirectional classifier head or cache eligibility changed");
+  std::vector<int32_t> offsets{0, 3, 7};
+  auto opts = at::TensorOptions().dtype(at::kLong).device(device);
+  PackedInput input{at::tensor({3, 4, 5, 3, 6, 7, 8}, opts),
+                    at::zeros({7}, opts),
+                    at::tensor({0, 1, 2, 0, 1, 2, 3}, opts),
+                    at::tensor(offsets, opts.dtype(at::kInt)),
+                    offsets.data(),
+                    2,
+                    4};
+  auto hidden = model->forward(input);
+  std::vector<at::Tensor> pooled;
+  for (int row = 0; row < 2; ++row) {
+    auto tokens = hidden.narrow(0, offsets[row], offsets[row + 1] - offsets[row]);
+    pooled.push_back(tokens.sum(0) / double(tokens.size(0)));
+  }
+  auto expected = at::linear(at::stack(pooled), score) / .7;
+  TORCH_CHECK(at::allclose(model->predict(input, false), expected, .001, .001),
+              "Bidirectional classifier pooling or temperature changed");
+}
+
 void decoder_token_classifier_test(c10::Device device, at::ScalarType dtype) {
   for (auto family : {"llama", "qwen2", "qwen3"})
     for (bool bias : {false, true})
@@ -2816,9 +2857,12 @@ int main(int argc, char** argv) {
       }
     }
   }
+  bidirectional_classifier_test(c10::Device("cpu"), at::kFloat);
   decoder_token_classifier_test(c10::Device("cpu"), at::kFloat);
-  if (argc > 1)
+  if (argc > 1) {
+    bidirectional_classifier_test(c10::Device(argv[1]), at::kBFloat16);
     decoder_token_classifier_test(c10::Device(argv[1]), at::kBFloat16);
+  }
   output_capacity_bridge_test();
   input_descriptor_test();
   {
