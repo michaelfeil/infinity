@@ -20,6 +20,7 @@ nav:
       - Quickstart: v3/quickstart.md
       - CLI and requests: v3/docs/cli.md
       - Supported models: v3/docs/libtorch-model-coverage.md
+      - Performance: v3/docs/performance.md
       - API: v3/api.md
       - Embedding formats and clients: v3/docs/embedding-tensors.md
       - Licensing: v3/LICENSING.md
