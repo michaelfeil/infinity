@@ -10,9 +10,9 @@ Rust and uses **LibTorch, the C++ interface of PyTorch**, for model inference.
   SM80, SM86, SM89, SM90, SM100 and SM120.
 * **FlashAttention-4**: enabled by default for supported FP16/BF16 attention
   shapes, with existing attention kernels handling unsupported shapes.
-* **Flash attention for DeBERTa-v2/v3**: Infinity's custom FA4 score hook implements
-  disentangled relative attention without quadratic relative-position bucket
-  and attention-bias storage.
+* **Flash attention for DeBERTa-v2/v3**: Infinity uses a novel CuTeDSL-based
+  algorithm in FlashAttention-4, fusing relative-position lookup into attention
+  without quadratic relative-position bucket and attention-bias storage.
 
 <details>
   <summary>Supported CUDA architectures and GPU examples</summary>
