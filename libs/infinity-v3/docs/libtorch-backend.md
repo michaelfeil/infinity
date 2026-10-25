@@ -1,203 +1,35 @@
-# Experimental native LibTorch backend
+# Native LibTorch backend
 
-Candle is deprecated. Use a build/image containing LibTorch for models supported
-here. Builds containing LibTorch select it automatically, including builds
-containing both backends; no `--backend` flag is needed.
+Infinity v3 runs inference through LibTorch, the C++ interface of PyTorch,
+with a Rust HTTP server, tokenizer workers and batch scheduler. Serving requires
+no Python runtime or TorchScript export. Images containing LibTorch select it
+automatically; no `--backend` flag is needed.
 
-An [experimental persistent prefix cache](libtorch-prefix-cache.md) is available
-for supported causal operations. It remains disabled unless
-`INFINITY_TORCH_PREFIX_CACHE_SIZE` is explicitly set above zero. Its historical
-benchmarks do not qualify the current port for production.
-
-LibTorch 2.14.1 runs alongside Candle as an optional inference runtime. Rust owns
-model configuration, checkpoint loading, batch validation and infinity_v3 integration;
-a small C ABI bridge runs the model with the PyTorch C++ tensor API. Python is
-not required at inference time. A standalone LibTorch build without InfinityFA4
-also needs no build-time Python. There is no TorchScript export step.
-
-## Packed inference
-
-Token embeddings, projections, attention outputs and MLP activations use
-`[total_tokens, hidden_size]`, with Q/K/V shaped
-`[total_tokens, heads, head_dim]`. Sequence boundaries come directly from infinity_v3's
-cumulative lengths. No token padding is allocated. Relative position bias paths use attention bias at each sequence's actual length.
-
-On CUDA, eligible shapes use InfinityFA4 when its bundles are installed (see
-below). The existing attention paths call `aten::_flash_attention_forward` with device-resident
-INT32 cumulative lengths and maximum sequence length. This is the Flash
-Attention operator behind
-[PyTorch's `varlen_attn`](https://docs.pytorch.org/docs/stable/nn.attention.varlen.html).
-The C++ call uses zero dropout and full bidirectional attention for BERT. Kernel
-errors propagate to Rust; there is no padded fallback.
-
-ModernBERT, Gemma3, Nomic MoE and validated Gemma2 paths additionally use
-privately compiled forward kernels from
-the Flash source pinned by Torch 2.14.1. The upstream headers remain unchanged;
-compiling without Torch's `UNFUSE_FMA` definition preserves fused softmax
-arithmetic needed for Candle parity. This path uses actual packed token counts,
-strides and cumulative offsets, with no Python or Candle attention runtime.
-The same arithmetic is selected for the validated Qwen3 MoE BF16 configuration,
-alongside its exact residual normalization. The vendor directory records the
-Torch and Flash revisions and source hashes; installation retains the complete
-BSD license, authors and provenance under `share/licenses/tei_torch`.
-
-CPU has an unpadded reference implementation: all projections/MLPs stay packed,
-and attention uses SDPA on each sequence at its actual length. This is useful for
-correctness testing; it is not a fused CPU varlen kernel. MPS and XPU are rejected
-in this prototype because this Torch varlen operator is exposed through CUDA.
-
-Native routed MoE CUDA kernels reuse Candle’s retained MIT sources and the same
-pinned CUTLASS revision `e406c186f510a15091cce01f782020ceb7ba8eb5`.
-Set `CUTLASS_ROOT` for an offline checkout; otherwise CMake reuses the Candle
-cache or downloads that pinned revision. Installation includes the retained
-CUTLASS BSD and Candle kernel MIT notices under `share/licenses/tei_torch`. Kernel-level exact routing
-tests do not establish trained checkpoint accuracy.
-
-### InfinityFA4
-
-The NVIDIA image includes native FP16/BF16 FlashAttention-4 bundles for SM80,
-SM86, SM89, SM90, SM100 and SM120. Supported shapes are global/windowed d64
-MHA, causal d128 GQA4, global d128 GQA2/GQA6/GQA8, and d64 DeBERTa relative attention.
-DeBERTa avoids quadratic relative-position bucket and attention-bias storage.
-FP8 projections retain their existing attention dtype.
-
-FA4 is enabled when built. Set `INFINITY_TORCH_FA4=0` before startup to use
-previous attention paths. Unsupported shapes retain their existing kernels;
-explicit BERT/decoder cuDNN selection takes precedence. Launch errors propagate.
-
-Source builds opt in through `INFINITY_FA4_ROOT`; see the vendor
-[build instructions](../backends/libtorch/cpp/vendor/infinity_fa4/README.md).
-Export requires Python and no GPU; serving requires neither Python nor JIT
-compilation. H100 has runtime coverage; other targets have compile/link coverage.
-Performance and numerical differences depend on the checkpoint and precision.
-
-## Model support
-
-Dense feed-forward blocks use persistent `DenseMlp` objects from
-`helpers/dense_mlp.h`. Each `MlpProjection` owns its matrix, bias, cast policy and
-input/output clipping bounds. A prepared activation recipe records plain,
-packed-gated or separate gate/up arithmetic. Text, vision, merger/projector,
-audio and decision-head blocks bind these objects during loading; pooled Dense
-chains use the same projection contract.
-
-`prepare(MlpPrecision::Fp8)` quantizes the owned matrices once. Calls use the same
-`forward(input, context)` interface in model precision and FP8. Bias and
-projection transforms apply in either mode. `MlpContext` selects ordinary GEMM
-plans or qualified fused epilogues, using the supplied projection metadata;
-it does not own model mathematics. Residuals and normalization remain outside
-the MLP. Prequantized input can carry row scales explicitly.
-
-Dense MLP projections own an immutable `MlpLinearMethod`. The ordinary method
-owns checkpoint matrices and uses request-local GEMM plans; the FP8 method owns
-quantized matrices and scales. A loader selects methods through
-`DenseMlp::prepare`, either by precision or by a projection-aware factory.
-Preparation replaces all projection methods together only after success.
-Clipping, casts, separate bias rounding, and activation recipes stay in the MLP
-layers, outside the execution method. Methods advertise GEMM epilogue and
-prequantized FP8 input capabilities; the forward interface stays the same.
-
-The executor has no model-name eligibility checks. Server FP8 eligibility and
-defaults remain explicit: sharing execution does not qualify additional
-checkpoints for FP8 accuracy.
-
-Native implementations cover the encoder, decoder and multimodal families in
-[model coverage](libtorch-model-coverage.md). Classifier, SPLADE and typed decision
-heads are architecture-specific; arbitrary custom checkpoint modules are rejected.
-Single and sharded safetensors are supported, with a pure Rust PyTorch checkpoint
-fallback. Loading and inference require no Python runtime.
-
-CUDA packed attention requires FP16 or BF16. Automatic dtype selection respects
-checkpoint configuration and Gemma's BF16 requirements; CPU uses FP32. Explicit
-dtype selection remains available. Relative-bias and ALiBi attention use actual
-sequence lengths without padded activations.
-
-Supported causal text models can reuse radix prefixes. Bidirectional, media and
-typed decision requests reject folded inputs; the backend reports this capability
-to the router. Optional FP8 projections preserve attention, normalization and head
-dtypes and reject unsupported geometries rather than padding them. See the
-FP8 configuration below.
-
-Gemma image features use a bounded per-model cache (32 entries, 64 MiB). CUDA
-events protect cached values across streams, and graph replay uses independent
-storage. Cache hits, misses and eviction have different serving costs.
-
-After configuration validation and before loading checkpoint weights, LibTorch
-checks the selected CUDA device by allocating a small FP32 tensor, computing
-`1 + 1`, synchronizing its stream and verifying the result on the CPU. INFO events identify the check's
-start and success in the replica context; CUDA exceptions fail initialization
-through the normal startup-error path. CPU devices skip GPU arithmetic. This
-preflight does not catch a process-fatal SIGSEGV or validate every model kernel.
-
-## Disk reader
-
-On Unix, LibTorch loads safetensors with the bundled fastsafetensors non-GDS
-reader by default. It reads validated tensor ranges concurrently, using two
-aligned host buffers per worker and overlapping CUDA uploads. Model weights own
-their allocations; bounded staging avoids retaining an entire shard through a
-small tensor or an FP8-converted layer. Large dtype conversions also use bounded
-pieces. The same path loads single files, shards, dense modules and decision heads.
-
-The reader uses ordinary `pread` workers. It requires no Python, GDS, io_uring,
-libaio, NUMA configuration or additional container capabilities. Direct I/O is
-requested for suitable local filesystems; RAM/network/FUSE filesystems and
-filesystems that reject direct reads use buffered reads. PyTorch `.bin` loading
-and the Candle backend are unchanged.
-
-| Environment variable | Default | Behavior |
-| --- | --- | --- |
-| `INFINITY_TORCH_WEIGHT_READER_THREADS` | `16` | Maximum workers per file, from `1` to `64`; small files use fewer workers. |
-| `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES` | `33554432` up to 32 GiB total checkpoint size; `268435456` above | Budget for the host buffer pool and, separately, each transient tensor stage, from `65536` to `1073741824` bytes. Host buffers add alignment padding. Tiny files are capped by their data size. An explicit setting overrides the default. |
-| `INFINITY_TORCH_WEIGHT_READER_DIRECT_IO` | `true` | Set to `false` or `0` to use the filesystem page cache, for example for repeated loads or a managed model-cache mount. |
-
-Header validation remains in Rust, including offset, shape and complete-file
-length checks. Read errors and truncated files fail initialization. Native code
-drains reads and CUDA copies before returning or releasing their buffers.
-
-At INFO level, each replica logs `Starting checkpoint load` before reading its
-weight files and `Finished checkpoint load` with elapsed seconds after all weights
-are loaded. Existing safetensors completion events retain per-file timing and
-size details. The `model_load` span identifies the model path, device and process
-ID; the router's `backend_startup` parent adds the replica index. Context survives
-the blocking loader thread, so concurrent loads remain distinguishable in text
-and JSON logs. Initialization failures report the error and elapsed startup time
-with the replica context. JSON `--disable-spans` omits these span fields.
+- **Deploy**: use the NVIDIA image below, or follow the [quickstart](../README.md#getting-started).
+- **Models**: see [supported architectures and tasks](libtorch-model-coverage.md).
+- **Clients**: see [embedding formats and client usage](embedding-tensors.md).
+- **Configuration**: see [CLI and request options](cli.md).
 
 ## Build and run
 
 ### NVIDIA Docker image
 
-The LibTorch NVIDIA image targets SM80, SM86, SM89, SM90, SM100, and SM120 in
-one image and selects device kernels at runtime. It defaults to the LibTorch
-backend. SM75 is unsupported. The image uses CUDA 13.0 and requires a compatible
-NVIDIA driver and NVIDIA Container Toolkit on the host.
-
-Build from the Infinity repository root; a GPU is not required for compilation:
+Use the prebuilt image with an SM80+ GPU, a compatible NVIDIA driver and
+NVIDIA Container Toolkit:
 
 ```bash
-docker build -f libs/infinity-v3/Dockerfile-libtorch \
-  -t infinity-v3:nvidia-local libs/infinity-v3
-docker run --rm infinity-v3:nvidia-local --help
-docker run --rm --gpus all -p 7997:80 \
-  -v "$PWD/model:/models/model:ro" \
-  infinity-v3:nvidia-local --model-id /models/model \
-  --torch-device cuda --dtype bfloat16
+docker run --rm --gpus all -p 8000:8000 -v infinity-cache:/data \
+  ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0-alpha.16 \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --torch-device cuda --dtype float16 --port 8000
 ```
 
-The build pins Torch 2.14.1 and CUDA 13.0.2. Python installs the C++ SDK in the
-builder; the runtime contains native shared libraries and their notices.
-Packaging follows ELF dependencies and retains runtime-loaded cuDNN/NVRTC
-modules; identical FA4 runtime libraries are shared between GPU bundles.
-Cargo dependency notices are included under `/usr/share/licenses/infinity_v3/cargo/`.
-Use `--build-arg BUILD_JOBS=16` on a host with sufficient RAM to speed up compilation.
-The default is four jobs. Supported SM targets and resolved SDK dependencies
-are recorded under `/usr/share/infinity_v3/` inside the image.
+Choose a version from the [container registry](https://github.com/michaelfeil/infinity/pkgs/container/infinity_v3).
+Use `--device-id 0` for one GPU; otherwise each visible GPU runs a complete replica.
+For CPU builds, use `--torch-device cpu --dtype float32`.
 
-GitHub Actions publishes NVIDIA images as
-`ghcr.io/michaelfeil/infinity_v3:nvidia-<version>` when a `v3.*` tag is pushed.
-Prerelease versions retain the full suffix, for example
-`nvidia-3.0.0-alpha.2`, without replacing the rolling `latest` tags. Main and tag
-builds publish the NVIDIA and CPU variants; manual workflow runs can select `nvidia`
-alone or `all` variants.
+<details>
+  <summary>Optional dynamic FP8</summary>
 
 ### Optional dynamic FP8
 
@@ -246,7 +78,49 @@ These optimizations use the native build and require no startup quantization.
 The BF16 kernels compile for SM80, SM89, SM90, SM100 and SM120; runtime
 validation currently covers H100.
 
+</details>
+
+<details>
+  <summary>Build from source</summary>
+
 ### Native build
+
+#### Container build
+
+The LibTorch NVIDIA image targets SM80, SM86, SM89, SM90, SM100, and SM120 in
+one image and selects device kernels at runtime. It defaults to the LibTorch
+backend. SM75 is unsupported. The image uses CUDA 13.0 and requires a compatible
+NVIDIA driver and NVIDIA Container Toolkit on the host.
+
+Build from the Infinity repository root; a GPU is not required for compilation:
+
+```bash
+docker build -f libs/infinity-v3/Dockerfile-libtorch \
+  -t infinity-v3:nvidia-local libs/infinity-v3
+docker run --rm infinity-v3:nvidia-local --help
+docker run --rm --gpus all -p 7997:80 \
+  -v "$PWD/model:/models/model:ro" \
+  infinity-v3:nvidia-local --model-id /models/model \
+  --torch-device cuda --dtype bfloat16
+```
+
+The build pins Torch 2.14.1 and CUDA 13.0.2. Python installs the C++ SDK in the
+builder; the runtime contains native shared libraries and their notices.
+Packaging follows ELF dependencies and retains runtime-loaded cuDNN/NVRTC
+modules; identical FA4 runtime libraries are shared between GPU bundles.
+Cargo dependency notices are included under `/usr/share/licenses/infinity_v3/cargo/`.
+Use `--build-arg BUILD_JOBS=16` on a host with sufficient RAM to speed up compilation.
+The default is four jobs. Supported SM targets and resolved SDK dependencies
+are recorded under `/usr/share/infinity_v3/` inside the image.
+
+GitHub Actions publishes NVIDIA images as
+`ghcr.io/michaelfeil/infinity_v3:nvidia-<version>` when a `v3.*` tag is pushed.
+Prerelease versions retain the full suffix, for example
+`nvidia-3.0.0-alpha.2`, without replacing the rolling `latest` tags. Main and tag
+builds publish the NVIDIA and CPU variants; manual workflow runs can select `nvidia`
+alone or `all` variants.
+
+#### LibTorch source build
 
 Install the [LibTorch C++ distribution](https://docs.pytorch.org/cppdocs/installing.html)
 for **2.14.1**, choosing CPU or a CUDA build compatible with your GPU driver.
@@ -316,6 +190,176 @@ cuBLASLt and layer-norm notices incorporated into the bridge.
 Provide LibTorch's shared libraries via `LD_LIBRARY_PATH` and retain their
 licenses/notices as well. The executable and bridge also search their own directory
 on Linux. No `libtorch_python` library is linked by the bridge.
+
+</details>
+
+
+## Advanced reference
+
+<details>
+  <summary>Packed inference and FlashAttention-4</summary>
+
+## Packed inference
+
+Token embeddings, projections, attention outputs and MLP activations use
+`[total_tokens, hidden_size]`, with Q/K/V shaped
+`[total_tokens, heads, head_dim]`. Sequence boundaries come directly from infinity_v3's
+cumulative lengths. No token padding is allocated. Relative position bias paths use attention bias at each sequence's actual length.
+
+On CUDA, eligible shapes use InfinityFA4 when its bundles are installed (see
+below). The existing attention paths call `aten::_flash_attention_forward` with device-resident
+INT32 cumulative lengths and maximum sequence length. This is the Flash
+Attention operator behind
+[PyTorch's `varlen_attn`](https://docs.pytorch.org/docs/stable/nn.attention.varlen.html).
+The C++ call uses zero dropout and full bidirectional attention for BERT. Kernel
+errors propagate to Rust; there is no padded fallback.
+
+ModernBERT, Gemma3, Nomic MoE and validated Gemma2 paths additionally use
+privately compiled forward kernels from
+the Flash source pinned by Torch 2.14.1. The upstream headers remain unchanged;
+compiling without Torch's `UNFUSE_FMA` definition preserves fused softmax
+arithmetic needed for Candle parity. This path uses actual packed token counts,
+strides and cumulative offsets, with no Python or Candle attention runtime.
+The same arithmetic is selected for the validated Qwen3 MoE BF16 configuration,
+alongside its exact residual normalization. The vendor directory records the
+Torch and Flash revisions and source hashes; installation retains the complete
+BSD license, authors and provenance under `share/licenses/tei_torch`.
+
+CPU has an unpadded reference implementation: all projections/MLPs stay packed,
+and attention uses SDPA on each sequence at its actual length. This is useful for
+correctness testing; it is not a fused CPU varlen kernel. MPS and XPU are rejected
+in this prototype because this Torch varlen operator is exposed through CUDA.
+
+Native routed MoE CUDA kernels reuse Candle’s retained MIT sources and the same
+pinned CUTLASS revision `e406c186f510a15091cce01f782020ceb7ba8eb5`.
+Set `CUTLASS_ROOT` for an offline checkout; otherwise CMake reuses the Candle
+cache or downloads that pinned revision. Installation includes the retained
+CUTLASS BSD and Candle kernel MIT notices under `share/licenses/tei_torch`. Kernel-level exact routing
+tests do not establish trained checkpoint accuracy.
+
+### InfinityFA4
+
+The NVIDIA image includes native FP16/BF16 FlashAttention-4 bundles for SM80,
+SM86, SM89, SM90, SM100 and SM120. Supported shapes are global/windowed d64
+MHA, causal d128 GQA4, global d128 GQA2/GQA6/GQA8, and d64 DeBERTa relative attention.
+DeBERTa avoids quadratic relative-position bucket and attention-bias storage.
+FP8 projections retain their existing attention dtype.
+
+FA4 is enabled when built. Set `INFINITY_TORCH_FA4=0` before startup to use
+previous attention paths. Unsupported shapes retain their existing kernels;
+explicit BERT/decoder cuDNN selection takes precedence. Launch errors propagate.
+
+Source builds opt in through `INFINITY_FA4_ROOT`; see the vendor
+[build instructions](../backends/libtorch/cpp/vendor/infinity_fa4/README.md).
+Export requires Python and no GPU; serving requires neither Python nor JIT
+compilation. H100 has runtime coverage; other targets have compile/link coverage.
+Performance and numerical differences depend on the checkpoint and precision.
+
+</details>
+
+<details>
+  <summary>Model execution and CUDA initialization</summary>
+
+## Model support
+
+Dense feed-forward blocks use persistent `DenseMlp` objects from
+`helpers/dense_mlp.h`. Each `MlpProjection` owns its matrix, bias, cast policy and
+input/output clipping bounds. A prepared activation recipe records plain,
+packed-gated or separate gate/up arithmetic. Text, vision, merger/projector,
+audio and decision-head blocks bind these objects during loading; pooled Dense
+chains use the same projection contract.
+
+`prepare(MlpPrecision::Fp8)` quantizes the owned matrices once. Calls use the same
+`forward(input, context)` interface in model precision and FP8. Bias and
+projection transforms apply in either mode. `MlpContext` selects ordinary GEMM
+plans or qualified fused epilogues, using the supplied projection metadata;
+it does not own model mathematics. Residuals and normalization remain outside
+the MLP. Prequantized input can carry row scales explicitly.
+
+Dense MLP projections own an immutable `MlpLinearMethod`. The ordinary method
+owns checkpoint matrices and uses request-local GEMM plans; the FP8 method owns
+quantized matrices and scales. A loader selects methods through
+`DenseMlp::prepare`, either by precision or by a projection-aware factory.
+Preparation replaces all projection methods together only after success.
+Clipping, casts, separate bias rounding, and activation recipes stay in the MLP
+layers, outside the execution method. Methods advertise GEMM epilogue and
+prequantized FP8 input capabilities; the forward interface stays the same.
+
+The executor has no model-name eligibility checks. Server FP8 eligibility and
+defaults remain explicit: sharing execution does not qualify additional
+checkpoints for FP8 accuracy.
+
+Native implementations cover the encoder, decoder and multimodal families in
+[model coverage](libtorch-model-coverage.md). Classifier, SPLADE and typed decision
+heads are architecture-specific; arbitrary custom checkpoint modules are rejected.
+Single and sharded safetensors are supported, with a pure Rust PyTorch checkpoint
+fallback. Loading and inference require no Python runtime.
+
+CUDA packed attention requires FP16 or BF16. Automatic dtype selection respects
+checkpoint configuration and Gemma's BF16 requirements; CPU uses FP32. Explicit
+dtype selection remains available. Relative-bias and ALiBi attention use actual
+sequence lengths without padded activations.
+
+Supported causal text models can reuse radix prefixes. Bidirectional, media and
+typed decision requests reject folded inputs; the backend reports this capability
+to the router. Optional FP8 projections preserve attention, normalization and head
+dtypes and reject unsupported geometries rather than padding them. See the
+FP8 configuration below.
+
+Gemma image features use a bounded per-model cache (32 entries, 64 MiB). CUDA
+events protect cached values across streams, and graph replay uses independent
+storage. Cache hits, misses and eviction have different serving costs.
+
+After configuration validation and before loading checkpoint weights, LibTorch
+checks the selected CUDA device by allocating a small FP32 tensor, computing
+`1 + 1`, synchronizing its stream and verifying the result on the CPU. INFO events identify the check's
+start and success in the replica context; CUDA exceptions fail initialization
+through the normal startup-error path. CPU devices skip GPU arithmetic. This
+preflight does not catch a process-fatal SIGSEGV or validate every model kernel.
+
+</details>
+
+<details>
+  <summary>Checkpoint loading and tuning</summary>
+
+## Disk reader
+
+On Unix, LibTorch loads safetensors with the bundled fastsafetensors non-GDS
+reader by default. It reads validated tensor ranges concurrently, using two
+aligned host buffers per worker and overlapping CUDA uploads. Model weights own
+their allocations; bounded staging avoids retaining an entire shard through a
+small tensor or an FP8-converted layer. Large dtype conversions also use bounded
+pieces. The same path loads single files, shards, dense modules and decision heads.
+
+The reader uses ordinary `pread` workers. It requires no Python, GDS, io_uring,
+libaio, NUMA configuration or additional container capabilities. Direct I/O is
+requested for suitable local filesystems; RAM/network/FUSE filesystems and
+filesystems that reject direct reads use buffered reads. PyTorch `.bin` loading
+and the Candle backend are unchanged.
+
+| Environment variable | Default | Behavior |
+| --- | --- | --- |
+| `INFINITY_TORCH_WEIGHT_READER_THREADS` | `16` | Maximum workers per file, from `1` to `64`; small files use fewer workers. |
+| `INFINITY_TORCH_WEIGHT_READER_BUFFER_BYTES` | `33554432` up to 32 GiB total checkpoint size; `268435456` above | Budget for the host buffer pool and, separately, each transient tensor stage, from `65536` to `1073741824` bytes. Host buffers add alignment padding. Tiny files are capped by their data size. An explicit setting overrides the default. |
+| `INFINITY_TORCH_WEIGHT_READER_DIRECT_IO` | `true` | Set to `false` or `0` to use the filesystem page cache, for example for repeated loads or a managed model-cache mount. |
+
+Header validation remains in Rust, including offset, shape and complete-file
+length checks. Read errors and truncated files fail initialization. Native code
+drains reads and CUDA copies before returning or releasing their buffers.
+
+At INFO level, each replica logs `Starting checkpoint load` before reading its
+weight files and `Finished checkpoint load` with elapsed seconds after all weights
+are loaded. Existing safetensors completion events retain per-file timing and
+size details. The `model_load` span identifies the model path, device and process
+ID; the router's `backend_startup` parent adds the replica index. Context survives
+the blocking loader thread, so concurrent loads remain distinguishable in text
+and JSON logs. Initialization failures report the error and elapsed startup time
+with the replica context. JSON `--disable-spans` omits these span fields.
+
+</details>
+
+<details>
+  <summary>Developer tests and performance measurements</summary>
 
 ## Validation and performance
 
@@ -469,6 +513,11 @@ performance remain under evaluation.
 Detailed benchmark measurements and qualification reports are deferred to a
 follow-up PR. Local reports under `docs/benchmarks/` are ignored by Git.
 
+</details>
+
+<details>
+  <summary>Historical Candle comparisons</summary>
+
 ## Comparing against Candle
 
 The `compare_bert` example loads the same checkpoint into both runtimes on CUDA
@@ -601,6 +650,11 @@ Builds can change the application environment-variable base using
 See [Ministral 3 multimodal embeddings](ministral-3-multimodal.md) for the public
 Mistral3/Pixtral checkpoint and independent reference validation.
 
+</details>
+
+<details>
+  <summary>UltraBERT implementation and parity tests</summary>
+
 ### UltraBERT
 
 UltraBERT uses packed bidirectional GQA with a separate RoPE base and symmetric
@@ -631,6 +685,11 @@ Combine their JSON arrays into one file and set
 Set `INFINITY_TORCH_CUDA_GRAPHS=1` when running `ultrabert_cuda_graphs_capture`.
 Native CPU tests additionally cover local-window boundaries, per-layer rotary
 bases, independent attention width, ragged isolation and malformed configurations.
+
+</details>
+
+<details>
+  <summary>OneJev block attention, configuration and validation</summary>
 
 ### OneJev block attention
 
@@ -752,3 +811,5 @@ See [ModernBERT startup measurements](modernbert-startup.md) for the draft basel
 The default is selected once using the total on-disk size of all checkpoint shards and selected sidecars, independent of shard layout. Explicit buffer settings take precedence. The 32 GiB cutoff is a simple heuristic based on the measured small/dense and large-MoE workloads.
 
 Reader environment settings are read and validated once per process on first safetensors use. Explicit settings stay fixed for all models and shards; when the buffer override is absent, each model resolves its adaptive default independently. Restart the process to change these settings.
+
+</details>

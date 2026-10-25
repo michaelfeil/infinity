@@ -37,6 +37,7 @@ for source in files:
         ) + ")"
 
     content = re.sub(r"\]\(([^\s)]+)\)", source_link, source.read_text())
+    content = content.replace("<details>", '<details markdown="1">')
     if destination == Path("v3/README.md"):
         content = content.replace("# Infinity V3 ♾️", "# Infinity V3 ♾️\n\n"
             "> Preview documentation for the native v3 server. "

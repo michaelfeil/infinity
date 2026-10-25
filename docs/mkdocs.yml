@@ -21,7 +21,7 @@ nav:
       - CLI and requests: v3/docs/cli.md
       - Supported models: v3/docs/libtorch-model-coverage.md
       - API: v3/api.md
-      - Embedding formats: v3/docs/embedding-tensors.md
+      - Embedding formats and clients: v3/docs/embedding-tensors.md
       - Licensing: v3/LICENSING.md
       - Internals:
           - LibTorch backend: v3/docs/libtorch-backend.md
