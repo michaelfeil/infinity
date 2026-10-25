@@ -14,3 +14,8 @@ Keep production Rust panic-free: avoid `panic!`, `unwrap()`, `expect()`, and pan
 Return typed errors and contain request failures; a failed request must not bring down the server.
 Prefer straight-line request methods with minimal branching; resolve policy outside the hot path.
 Preserve necessary validation and error handling when simplifying control flow.
+
+## Tests
+Add tests only when they prevent meaningful, realistic failures; execute every test you add.
+Test observable behavior so tests survive refactors; avoid mirroring implementation details.
+Skip trivial assertions, boilerplate coverage, and low-value tests for simple changes.
