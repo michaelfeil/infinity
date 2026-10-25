@@ -68,7 +68,11 @@ jobs:
           fi
           # Retry concurrent gh-pages pushes instead of dropping pending releases.
           for attempt in 1 2 3; do
-            git fetch origin gh-pages
+            git fetch origin main gh-pages
+            if [ "$EVENT_NAME" != release ] && [ "$GITHUB_SHA" != "$(git rev-parse origin/main)" ]; then
+              echo "Skipping superseded main documentation build."
+              exit 0
+            fi
             git branch --force gh-pages origin/gh-pages
             if mike deploy --config-file docs/mkdocs.yml --push "${args[@]}"; then
               exit 0
