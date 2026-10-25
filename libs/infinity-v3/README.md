@@ -25,34 +25,22 @@ Rust and uses **LibTorch, the C++ interface of PyTorch**, for model inference.
 
 ## Performance highlights
 
-Benchmarks on a single **NVIDIA H100 80 GB**:
-
-* **High throughput**: 2× vLLM requests/s on the measured Mammoth workload at concurrency 32, with dynamic FP8 linears.
-* **Fast startup**: ModernBERT-base **0.92 s**, Qwen3-8B **2.51 s**.
-* **Efficient serving**: token-based dynamic batching, dedicated tokenization workers and native LibTorch inference.
+* **High throughput**: token-based dynamic batching and dedicated tokenization workers.
+* **Fast startup**: ModernBERT-base **0.92 s**, Qwen3-8B **2.51 s** on one H100 80 GB.
+* **Optimized inference**: native LibTorch kernels, FlashAttention-4 and optional dynamic FP8 for supported models.
 
 <details>
   <summary>Benchmark conditions and scope</summary>
 
-The Mammoth comparison ran both servers sequentially on the same GPU with
-8 logical CPUs, 64 GiB RAM, a 16K context limit and a 32K batch-token budget.
-Both used BF16 with dynamic per-token/per-output-channel FP8 linears and an
-FP32 option head. CUDA graphs were disabled; vLLM's `torch.compile` was enabled.
-Each concurrency sweep replayed the same 256 synthetic requests (781 questions),
-matching sampled production shapes, without images or cross-request cache reuse.
-These are closed-loop saturation measurements, not latency-SLO capacity estimates.
-
-| Concurrency | Infinity requests/s | vLLM requests/s | Throughput ratio |
-| --- | ---: | ---: | ---: |
-| 1 | 9.66 | 4.41 | 2.19× |
-| 8 | 13.77 | 6.79 | 2.03× |
-| 32 | 14.62 | 7.30 | 2.00× |
-
-Measured October 23, 2026, using Infinity's #767/#768/#771/#772 kernel stack
-and #769 loader, versus [vLLM PR #63114](https://github.com/vllm-project/vllm/pull/63114)
-at `a0b5d79ba9ec0a5a4e410bc9a4cf0ff300c34229`.
-A separate 1,504-decision quality sample scored 93.22% for Infinity and 93.09%
-for vLLM, with 99.73% argmax agreement; this is not a full Decision Index evaluation.
+One throughput example: Mammoth 27B achieved **14.62 vs 7.30 requests/s (2×)**
+against vLLM at concurrency 32 on the same H100 80 GB (8 CPUs, 64 GiB RAM).
+Both used dynamic FP8 linears, BF16 backbone, FP32 head, 16K context and 32K batch
+budgets. CUDA graphs were off; vLLM compilation was on. The 256 synthetic requests
+contained 781 questions shaped after production traffic, without images or
+cross-request cache reuse. This measures saturation throughput, not SLO capacity.
+Measured October 23, 2026, with Infinity's #767/#768/#771/#772 kernels and #769
+loader versus [vLLM #63114](https://github.com/vllm-project/vllm/pull/63114)
+(`a0b5d79ba9ec0a5a4e410bc9a4cf0ff300c34229`).
 
 Startup numbers are medians of five fresh processes per model with local weights,
 BF16, a 32 MiB staging budget and full 16K-token warmup. Downloads are excluded;
