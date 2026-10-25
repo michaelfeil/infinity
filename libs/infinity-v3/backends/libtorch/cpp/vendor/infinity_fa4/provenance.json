@@ -15,6 +15,6 @@
     "DeBERTa score-hook export on SM8x",
     "Offline target SM count for persistent scheduling",
     "Portable baseline CPU targets for AOT host wrappers",
-    "Hopper noncausal head256 GQA4 export for Qwen3.5 decisions"
+    "Noncausal head256 GQA4 exports for Qwen3.5 decisions on every supported SM target"
   ]
 }

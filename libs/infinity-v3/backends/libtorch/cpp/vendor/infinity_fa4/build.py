@@ -71,14 +71,21 @@ if not a.link_only:
                 ("voyage", 16, 8, 128, False, (None, None)),
                 ("gqa6", 12, 2, 128, False, (None, None)),
                 ("gqa8", 32, 4, 128, False, (None, None)),
-            ] + ([("qwen35", 16, 4, 256, False, (None, None))] if capability == 90 else []):
+                ("qwen35", 16, 4, 256, False, (None, None)),
+            ]:
                 q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
                 k = torch.zeros((256, hk, d), device="cuda", dtype=dtype)
                 previous = set(interface._flash_attn_fwd.compile_cache.cache)
-                interface.flash_attn_varlen_func(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
-                                                max_seqlen_q=129, max_seqlen_k=129,
-                                                causal=causal, window_size=window,
-                                                disable_scheduler_metadata=True)
+                if name == "qwen35" and capability in (80, 86, 89, 120):
+                    # 64x64 fits the 99 KiB shared-memory budget of SM86/89/120.
+                    interface._flash_attn_fwd(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                                             max_seqlen_q=129, max_seqlen_k=129,
+                                             tile_mn=(64, 64), disable_scheduler_metadata=True)
+                else:
+                    interface.flash_attn_varlen_func(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                                                    max_seqlen_q=129, max_seqlen_k=129,
+                                                    causal=causal, window_size=window,
+                                                    disable_scheduler_metadata=True)
                 fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
                 if len(fresh) != 1:
                     raise RuntimeError(f"Unexpected compilation count for {name}: {len(fresh)}")

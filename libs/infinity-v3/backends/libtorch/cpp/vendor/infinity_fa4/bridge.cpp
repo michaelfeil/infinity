@@ -70,16 +70,12 @@ void invoke_export(unsigned slot, F&& invoke) {
 }
 }  // namespace
 
-#if FA4_COMPUTE_CAPABILITY == 90
 extern "C" int __tvm_ffi_fa4_qwen35_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
 extern "C" int __tvm_ffi_fa4_qwen35_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
 constexpr int attention_modes = 7;
-#else
-constexpr int attention_modes = 6;
-#endif
 extern "C" int infinity_fa4_modes_v1(){return (1 << attention_modes) - 1;}
 
-// Export families: 0 global d64 MHA, 1 windowed d64 MHA, 2 causal d128 GQA4, 3 global d128 GQA2, 4 GQA6, 5 GQA8, 6 Hopper global d256 GQA4.
+// Export families: 0 global d64 MHA, 1 windowed d64 MHA, 2 causal d128 GQA4, 3 global d128 GQA2, 4 GQA6, 5 GQA8, 6 global d256 GQA4.
 // Pointers remain owned by the caller; no device allocation or synchronization here.
 extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* stream,void* q,void* k,void* v,void* o,void* offsets,void* offsets_k,int64_t total,int64_t total_k,int64_t batch,int64_t h,int64_t hk,double scale,int left,int right,const int64_t* strides,int max_q){
  try{
@@ -91,9 +87,7 @@ extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* strea
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_voyage_fp16,nullptr),
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_gqa6_fp16,nullptr),
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_gqa8_fp16,nullptr)
-#if FA4_COMPUTE_CAPABILITY == 90
-     ,tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_fp16,nullptr)
-#endif
+,tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_fp16,nullptr)
     },
     {tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_bert_bf16,nullptr),
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_modern_local_bf16,nullptr),
@@ -101,9 +95,7 @@ extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* strea
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_voyage_bf16,nullptr),
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_gqa6_bf16,nullptr),
      tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_gqa8_bf16,nullptr)
-#if FA4_COMPUTE_CAPABILITY == 90
-     ,tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_bf16,nullptr)
-#endif
+,tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_bf16,nullptr)
     }
   };
   if(h<=0||hk<=0||(!std::isfinite(scale)||scale<=0)||(mode<2&&h!=hk)||(mode==2&&(h%hk||h/hk!=4))
@@ -122,8 +114,12 @@ extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* strea
   StreamScope scope(device,stream);
   invoke_export(dtype * attention_modes + mode, [&] {
 #if FA4_COMPUTE_CAPABILITY == 100
-  fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,&ckt,nullptr,nullptr,nullptr,lb,rb,nullptr,
-     nullptr,nullptr,aux,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,int64_t(max_q));
+  if (mode == 6)
+    fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,&ckt,nullptr,nullptr,nullptr,lb,rb,nullptr,
+       nullptr,nullptr,aux,int64_t(max_q));
+  else
+    fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,&ckt,nullptr,nullptr,nullptr,lb,rb,nullptr,
+       nullptr,nullptr,aux,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,int64_t(max_q));
 #else
   fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,&ckt,nullptr,nullptr,nullptr,lb,rb,nullptr,nullptr,aux,nullptr,nullptr);
 #endif

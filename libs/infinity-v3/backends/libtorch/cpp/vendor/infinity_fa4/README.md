@@ -28,7 +28,8 @@ x86-64 builds also reject AVX/VEX/EVEX instructions in the wrapper objects and
 library. Re-export old bundles instead of reusing build-host-specialized objects.
 The LibTorch runtime falls back when a bundle lacks the portable-host marker.
 
-SM90 bundles additionally export noncausal head-width-256 GQA4 attention for
-Qwen3.5 decisions. Native dispatch retains FA2 for short or sparse query batches
-(maximum below 512 tokens or mean below 256); older bundles fall back through
-the existing capability mask. Other architecture bundles retain their exports.
+All supported architecture bundles export noncausal head-width-256 GQA4 attention
+for Qwen3.5 decisions across packed lengths. SM8x/SM120 use a 64x64 tile to fit
+their shared-memory limits. SM100 uses its dedicated head256 ABI for self-attention;
+independent K/V boundaries retain the existing provider. Older bundles fall back
+through the existing capability mask.
