@@ -47,6 +47,7 @@ struct Bert : infinity::Model {
   bool cudnn_varlen = false;
   bool private_flash_embedding = false;
   bool native_bert_embedding = false;
+  bool embedding_attention = false;
   bool private_flash_roberta_embedding = false;
   bool private_flash_exact_classifier = false;
   bool exact_biased_norm = false;
@@ -314,6 +315,19 @@ struct Bert : infinity::Model {
       }
     }
 #ifdef TEI_TORCH_CUDA_KERNELS
+    // Packed embedding attention is independent of MLP precision and pooling
+    // arithmetic. Preserve trained heads, FP8 inputs and explicit cuDNN policy.
+    const auto pool = options.string("_embedding_pool");
+    embedding_attention =
+        device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16) && !roberta &&
+        classification_width() == 0 && (pool == "cls" || pool == "mean") &&
+        options.string("_pooling") != "splade" &&
+        !(dtype == at::kHalf && config.hidden == 384 && pool == "cls") &&
+        !options.boolean("_multi_vector", false) && !options.boolean("_fp8_dynamic", false) &&
+        !options.boolean("_cudnn_varlen", false) &&
+        ((config.heads == 12 && (config.hidden == 384 || config.hidden == 768)) ||
+         (config.heads == 16 && config.hidden == 1024)) &&
+        at::cuda::getDeviceProperties(device.index())->major == 9;
     // Standard small/large BERT CLS embeddings use the same packed and biased
     // normalization contracts as the existing base-width implementation.
     native_bert_embedding =
@@ -638,6 +652,13 @@ struct Bert : infinity::Model {
         key_cumulative = at::tensor(key_offsets, at::TensorOptions().dtype(at::kInt)).to(device);
       }
     }
+#ifdef TEI_TORCH_CUDA_KERNELS
+    // Qualified Hopper embeddings: Flash2 wins wider short batches; FA4 keeps
+    // the long/ragged path. Dense B8x256 also passes the token cut.
+    const bool prefer_flash2 =
+        embedding_attention &&
+        (head == 32 || (max_sequence <= 256 && (batch >= 32 || tokens >= 2048)));
+#endif
     for (int64_t i = 0; i < config.layers; ++i) {
       std::string p = "encoder.layer." + std::to_string(i) + ".";
       // Q/K/V are disjoint views of one projection: [tokens, 3, heads, head_dim]. All query rows
@@ -684,17 +705,11 @@ struct Bert : infinity::Model {
           attended = at::cat(sequences, 0).reshape({tokens, config.hidden});
         }
       } else if (device.is_cuda()) {
-        // The same ATen operator used by torch.nn.attention.varlen.varlen_attn's
-        // Flash Attention path. Q/K/V stay [total_tokens, heads, head_dim].
-        // Cumulative INT32 offsets are on-device. No padded batch or mask exists.
-        // cuDNN helps long sequences; FlashAttention is faster on the measured
-        // ragged batches with maximum length 256, despite a similar token total.
+        // Providers consume [total_tokens, heads, head_dim] Q/K/V and device
+        // int32 boundaries. No padded token batch or dense mask is constructed.
+        // Keep the explicit cuDNN long-span option outside the measured profile.
 #ifdef TEI_TORCH_CUDA_KERNELS
-        // Native Torch packed Flash avoids cuDNN setup overhead for moderate
-        // token totals. FP8 needs the fused Torch arithmetic at every total
-        // to preserve quantization inputs; normal FP16 larger totals retain
-        // the measured cuDNN advantage.
-        if (!cudnn_varlen)
+        if (!cudnn_varlen && !prefer_flash2)
           attended = infinity::infinity_fa4(q,
                                             k,
                                             v,
@@ -704,10 +719,12 @@ struct Bert : infinity::Model {
                                             1.0 / std::sqrt(static_cast<double>(head)));
         if (attended.defined()) {
           // InfinityFA4 consumed the original packed views on this stream.
-        } else if ((private_flash_exact_classifier || native_bert_embedding) && head == 32) {
+        } else if ((private_flash_exact_classifier || native_bert_embedding ||
+                    embedding_attention) &&
+                   head == 32) {
           attended = infinity::torch_flash_exact32(
               q, k, v, cumulative, max_sequence, 1.0 / std::sqrt(static_cast<double>(head)));
-        } else if ((private_flash_exact_classifier ||
+        } else if ((prefer_flash2 || private_flash_exact_classifier ||
                     ((private_flash_embedding || private_flash_roberta_embedding) &&
                      (tokens <= 4096 ||
                       (private_flash_embedding && options.boolean("_fp8_dynamic", false))))) &&

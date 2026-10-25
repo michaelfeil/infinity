@@ -123,8 +123,8 @@ static void classifier_workspace_recovery(const TeiConfig& cfg,
 static void cls_embedding_geometries(const c10::Device& device) {
   if (at::cuda::getDeviceProperties(device.index())->major < 8)
     return;
-  for (const int64_t width : {384, 1024}) {
-    TeiConfig cfg{width, width == 384 ? 12 : 16, 1, 4 * width, 64, 256, 2, 1e-5, 0};
+  for (const int64_t width : {384, 768, 1024}) {
+    TeiConfig cfg{width, width == 1024 ? 16 : 12, 1, 4 * width, 64, 512, 2, 1e-5, 0};
     Bert model(cfg, device, at::kHalf);
     model.options.values = {{"model_type", "bert"}, {"_embedding_pool", "cls"}};
     auto add = [&](const std::string& name, at::IntArrayRef shape, bool unit = false) {
@@ -139,7 +139,7 @@ static void cls_embedding_geometries(const c10::Device& device) {
       add(name + ".bias", {output});
     };
     add("embeddings.word_embeddings.weight", {64, width});
-    add("embeddings.position_embeddings.weight", {256, width});
+    add("embeddings.position_embeddings.weight", {cfg.positions, width});
     add("embeddings.token_type_embeddings.weight", {2, width});
     norm("embeddings.LayerNorm");
     const std::string p = "encoder.layer.0.";
@@ -151,7 +151,9 @@ static void cls_embedding_geometries(const c10::Device& device) {
     linear(p + "output.dense", width, 4 * width);
     norm(p + "output.LayerNorm");
     model.ready();
-    TORCH_CHECK(model.native_bert_embedding && model.exact_biased_norm,
+    TORCH_CHECK(model.native_bert_embedding == (width != 768) &&
+                    model.exact_biased_norm ==
+                        (width != 768 || at::cuda::getDeviceProperties(device.index())->major == 9),
                 "Standard CLS embedding did not select native geometry");
     std::vector<int32_t> offsets{0, 7, 136, 139};
     auto ids = at::arange(139, at::TensorOptions().device(device).dtype(at::kLong)).remainder(64);
@@ -185,8 +187,9 @@ static void cls_embedding_geometries(const c10::Device& device) {
                   "CLS embedding graph replay ignored changed input IDs");
     }
     model.native_bert_embedding = false;
+    model.embedding_attention = false;
     model.exact_biased_norm =
-        width == 384 && at::cuda::getDeviceProperties(device.index())->major == 9;
+        width != 1024 && at::cuda::getDeviceProperties(device.index())->major == 9;
     auto reference = model.forward(input).cpu().to(at::kFloat);
     auto cosine = (changed * reference).sum(1) / (changed.norm(2, 1) * reference.norm(2, 1));
     TORCH_CHECK(cosine.min().item<float>() > .999,
@@ -194,6 +197,58 @@ static void cls_embedding_geometries(const c10::Device& device) {
                 width,
                 " / ",
                 cosine.min().item<float>());
+
+    for (const auto dtype : {at::kHalf, at::kBFloat16}) {
+      Bert probe(cfg, device, dtype);
+      probe.options.values = {{"model_type", "bert"}, {"_embedding_pool", "mean"}};
+      for (const auto& [name, tensor] : model.weights)
+        probe.weights[name] = tensor.to(dtype);
+      probe.ready();
+      TORCH_CHECK(probe.embedding_attention, "Embedding attention geometry was not selected");
+      for (const auto& lengths : {std::vector<int>(16, 128),
+                                  std::vector<int>(32, 8),
+                                  std::vector<int>(8, 256),
+                                  std::vector<int>(16, 255),
+                                  std::vector<int>(16, 257),
+                                  std::vector<int>{256, 8, 8, 8, 8, 8, 8, 8}}) {
+        std::vector<int32_t> ends{0};
+        std::vector<int64_t> positions;
+        for (int length : lengths) {
+          ends.push_back(ends.back() + length);
+          for (int i = 0; i < length; ++i)
+            positions.push_back(i);
+        }
+        auto ids = at::arange(ends.back(), input.ids.options()).remainder(64);
+        infinity::PackedInput batch{ids,
+                                    at::zeros_like(ids),
+                                    at::tensor(positions, input.ids.options()),
+                                    at::tensor(ends, input.cumulative.options()),
+                                    ends.data(),
+                                    int64_t(lengths.size()),
+                                    *std::max_element(lengths.begin(), lengths.end())};
+        probe.embedding_attention = true;
+        auto expected = probe.forward(batch).cpu().to(at::kFloat);
+        {
+          infinity::CudaGraphCache graphs(1, 8192, 1);
+          for (int repeat = 0; repeat < 2; ++repeat)
+            TORCH_CHECK(at::equal(expected, graphs.forward(probe, batch).cpu().to(at::kFloat)),
+                        "Selected embedding attention changed during graph replay");
+          TORCH_CHECK(graphs.size() == 1, "Selected attention did not capture");
+          ids.add_(1).remainder_(64);
+          expected = probe.forward(batch).cpu().to(at::kFloat);
+          TORCH_CHECK(at::equal(expected, graphs.forward(probe, batch).cpu().to(at::kFloat)),
+                      "Selected attention replay lost changed input IDs");
+        }
+        probe.embedding_attention = false;
+        auto prior = probe.forward(batch).cpu().to(at::kFloat);
+        auto similarity = (prior * expected).sum(1) / (prior.norm(2, 1) * expected.norm(2, 1));
+        TORCH_CHECK(similarity.min().item<float>() > .999,
+                    "Attention selection changed packed raw outputs: ",
+                    width,
+                    " / ",
+                    dtype);
+      }
+    }
   }
 }
 
