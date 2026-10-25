@@ -18,6 +18,24 @@ if CHECK_TORCH.is_available:
     import torch
 
 
+def _set_pad_token_id_if_missing(model, tokenizer) -> None:
+    """Copy the tokenizer's pad_token_id onto the model config when it is missing.
+
+    Decoder-only sequence-classification heads (e.g. Qwen2/Qwen3ForSequenceClassification)
+    raise `Cannot handle batch sizes > 1 if no padding token is defined.` when
+    `config.pad_token_id` is unset, and several published checkpoints ship without it.
+    """
+    if getattr(model.config, "pad_token_id", None) is not None:
+        return
+    pad_token_id = getattr(tokenizer, "pad_token_id", None)
+    if pad_token_id is None:
+        return
+    logger.info(
+        f"model config has no pad_token_id, adopting the tokenizer's pad_token_id={pad_token_id}"
+    )
+    model.config.pad_token_id = pad_token_id
+
+
 class SentenceClassifier(BaseClassifer):
     def __init__(
         self,
@@ -44,6 +62,8 @@ class SentenceClassifier(BaseClassifer):
             revision=engine_args.revision,
             model_kwargs=model_kwargs,
         )
+
+        _set_pad_token_id_if_missing(self._pipe.model, self._pipe.tokenizer)
 
         if ls.quantization_dtype is not None:
             self._pipe.model = quant_interface(  # TODO: add ls.quantization_dtype and ls.placement
