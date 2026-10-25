@@ -286,7 +286,7 @@ not implied by these native implementations.
 Use the checkpoint's query/document formatting.
 Responses preserve the token matrix through float, base64 or packed tensor
 encoding. Sentence pooling, dimension overrides and single-vector `/similarity`
-scoring are unsupported for these models. See [embedding tensor formats](docs/embedding-tensors.md)
+scoring are unsupported for these models. See [embedding formats and client usage](docs/embedding-tensors.md)
 and [model-specific input requirements](docs/libtorch-model-coverage.md).
 
 </details>

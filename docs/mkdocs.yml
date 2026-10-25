@@ -1,19 +1,58 @@
 site_name: Infinity
-site_url: https://michaelfeil.github.io/infinity/
+site_url: https://michaelfeil.eu/infinity/
 repo_url: https://github.com/michaelfeil/infinity/
+edit_uri: edit/main/docs/docs/
 theme:
   name: material
   features:
+    - navigation.sections
     - content.code.copy
     - content.code.select
+    - content.action.edit
 extra:
   version:
     provider: mike
 
+nav:
+  - Overview: index.md
+  - Infinity v3:
+      - Introduction: v3/README.md
+      - Quickstart: v3/quickstart.md
+      - CLI and requests: v3/docs/cli.md
+      - Supported models: v3/docs/libtorch-model-coverage.md
+      - API: v3/api.md
+      - Embedding formats and clients: v3/docs/embedding-tensors.md
+      - Licensing: v3/LICENSING.md
+      - Internals:
+          - LibTorch backend: v3/docs/libtorch-backend.md
+          - Build configuration: v3/docs/build-configuration.md
+          - Prefix caching: v3/docs/libtorch-prefix-cache.md
+          - Startup performance: v3/docs/modernbert-startup.md
+          - Development: v3/CONTRIBUTING.md
+  - Python / v2:
+      - Deployment: deploy.md
+      - CLI: cli_v2.md
+      - Python engine: python_engine.md
+      - Embeddings: embed.md
+      - Client: client_infinity.md
+      - API: swagger_ui.md
+      - Integrations: integrations.md
+      - Benchmarks: benchmarking.md
+      - Telemetry: telemetry.md
+      - Contributing: contribution.md
+
 plugins:
-   - swagger-ui-tag:
-        background: White
+  - search
+  - gen-files:
+      scripts: [gen_v3_docs.py]
+  - swagger-ui-tag:
+      background: White
+
 markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - pymdownx.details
   - pymdownx.highlight:
       anchor_linenums: true
       line_spans: __span
