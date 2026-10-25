@@ -138,15 +138,29 @@ and label configuration. See [native model coverage](docs/libtorch-model-coverag
 </details>
 
 <details>
-  <summary>Typed Decisions</summary>
+  <summary>Typed Decisions — Laya, Elephant, Mammoth and Perplexity Decider</summary>
 
 Typed decision models answer structured questions through `/v1/systemone`.
 These checkpoints require their trained decision heads and protocol metadata.
 
-LibTorch supports OneJev, Rune, Laya, Clef, Pplx and option-token contracts.
-`pplx-decider-flash-v1.2` supports shared text/images and calibrated answers.
-See [decision model configuration](docs/libtorch-backend.md) for architecture,
-precision and sidecar requirements.
+Supported model families and protocols (LibTorch):
+
+- **Laya**: ModernBERT-based decision checkpoints with `rl_agent_config.json` and trained decision heads. Accepts text or structured state; native conversations are unsupported.
+- **Elephant and Mammoth**: Qwen3.5-based decision checkpoints using `--decision-protocol onejev`. Supports block-attention question batches and image inputs when the checkpoint includes its vision tower.
+- **Perplexity Decider**: [perplexity-ai/pplx-decider-flash-v1.2](https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2), shared text/images, joint question readouts and calibrated answers. The short model alias selects the protocol automatically.
+- **Rune**: Gemma4-based decision checkpoints.
+- **Clef / Pplx / D3**: dense Qwen3.5 decision checkpoints with their respective protocol metadata and readout heads.
+
+For example:
+
+```bash
+infinity_v3 --model-id pplx-decider-flash-v1.2 --backend libtorch --dtype bfloat16
+```
+
+Use the request schema for the checkpoint's protocol: OneJev, Laya and Perplexity
+joint v1.2 do not share an interchangeable payload format. See the running
+server's `/docs`, [decision inputs](docs/cli.md#structured-decision-inputs) and
+[OneJev configuration](docs/libtorch-backend.md#onejev-block-attention).
 
 </details>
 
