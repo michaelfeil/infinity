@@ -960,65 +960,18 @@ class Gemma final : public Model {
       return output;
     }
     if (device.is_cuda()) {
-#ifdef TEI_TORCH_CUDA_KERNELS
-      if (layer.dim > 256 && torch_flash_fma_supported(q, k, v, causal, left, right))
-        return torch_flash_fma(
-            q, k, v, input.cumulative, input.max_sequence, scale, causal, left, right);
-#endif
-      if (layer.dim > 256) {
-        TORCH_CHECK(!layer.sliding,
-                    "Torch512-head packed sliding attention requires a specialized kernel");
-        // cuDNN's long-sequence varlen path accepts head512, but mixed-length
-        // parity is not established. CUTLASS handles all actual lengths here.
-        auto repeat = heads / layer.kv;
-        auto keys = repeat == 1 ? k : at::repeat_interleave(k, repeat, 1);
-        auto values = repeat == 1 ? v : at::repeat_interleave(v, repeat, 1);
-        return std::get<0>(at::_efficient_attention_forward(q.unsqueeze(0),
-                                                            keys.unsqueeze(0),
-                                                            values.unsqueeze(0),
-                                                            std::nullopt,
-                                                            input.cumulative,
-                                                            input.cumulative,
-                                                            input.max_sequence,
-                                                            input.max_sequence,
-                                                            0.,
-                                                            causal ? 1 : 0,
-                                                            false,
-                                                            scale))
-            .squeeze(0);
-      }
-      auto output = infinity_fa4(q,
-                                 k,
-                                 v,
-                                 input.cumulative,
-                                 input.cumulative,
-                                 input.max_sequence,
-                                 scale,
-                                 causal,
-                                 left,
-                                 right);
-      if (output.defined()) {
-        // Keep image-query corrections below independent of the attention provider.
-      } else
-#ifdef TEI_TORCH_CUDA_KERNELS
-          if (torch_flash_fma_supported(q, k, v, causal, left, right))
-        output = torch_flash_fma(
-            q, k, v, input.cumulative, input.max_sequence, scale, causal, left, right);
-      else
-#endif
-        output = std::get<0>(at::_flash_attention_forward(q,
-                                                          k,
-                                                          v,
-                                                          input.cumulative,
-                                                          input.cumulative,
-                                                          input.max_sequence,
-                                                          input.max_sequence,
-                                                          0.,
-                                                          causal,
-                                                          false,
-                                                          scale,
-                                                          left,
-                                                          right));
+      auto output = packed_cuda_attention(q,
+                                          k,
+                                          v,
+                                          input.cumulative,
+                                          input.cumulative,
+                                          input.max_sequence,
+                                          input.max_sequence,
+                                          scale,
+                                          causal,
+                                          left,
+                                          right,
+                                          true);
       if (causal && layer.sliding) {
         for (const auto& image : input.images) {
           // Recompute only this image's query rows against its allowed context. The replacement

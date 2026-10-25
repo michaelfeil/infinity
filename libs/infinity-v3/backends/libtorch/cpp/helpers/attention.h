@@ -8,6 +8,11 @@
 #include "helpers/checked_size.h"
 #include "helpers/admission_error.h"
 #include "kernels/infinity_fa4.h"
+#ifdef TEI_TORCH_CUDA_KERNELS
+#include "kernels/torch_flash_fma.h"
+#endif
+#include <cstddef>
+#include <type_traits>
 #include <ATen/ops/_flash_attention_forward.h>
 #include <ATen/ops/_efficient_attention_forward.h>
 
@@ -94,6 +99,75 @@ inline at::Tensor packed_alibi_bias(const at::Tensor& q,
   return storage.as_strided({1, heads, total, total}, {0, tile, stride, 1});
 }
 
+/// Apply the ATen provider to independent packed Q/K boundaries. Efficient
+/// attention handles FP32/wide heads; its GQA inputs need explicit KV expansion.
+inline at::Tensor packed_aten_attention(const at::Tensor& q,
+                                        const at::Tensor& k,
+                                        const at::Tensor& v,
+                                        const at::Tensor& cu_q,
+                                        const at::Tensor& cu_k,
+                                        int64_t max_q,
+                                        int64_t max_k,
+                                        double scale,
+                                        bool causal,
+                                        int64_t left = -1,
+                                        int64_t right = -1) {
+  if (q.scalar_type() == at::kFloat || q.size(2) > 256) {
+    TORCH_CHECK(left < 0 && right < 0, "Packed efficient attention requires an unwindowed mask");
+    auto repeat = q.size(1) / k.size(1);
+    auto keys = repeat == 1 ? k : at::repeat_interleave(k, repeat, 1);
+    auto values = repeat == 1 ? v : at::repeat_interleave(v, repeat, 1);
+    return std::get<0>(at::_efficient_attention_forward(q.unsqueeze(0),
+                                                        keys.unsqueeze(0),
+                                                        values.unsqueeze(0),
+                                                        std::nullopt,
+                                                        cu_q,
+                                                        cu_k,
+                                                        max_q,
+                                                        max_k,
+                                                        0.,
+                                                        causal ? 1 : 0,
+                                                        false,
+                                                        scale))
+        .squeeze(0);
+  }
+  return std::get<0>(at::_flash_attention_forward(
+      q, k, v, cu_q, cu_k, max_q, max_k, 0., causal, false, scale, left, right));
+}
+
+/// Select FA4 once, then the caller's native-Flash preference and ATen fallback.
+/// A custom fallback preserves model-specific grouping or operand precision;
+/// provider execution errors propagate without retrying another implementation.
+template <typename Fallback = std::nullptr_t>
+inline at::Tensor packed_cuda_attention(const at::Tensor& q,
+                                        const at::Tensor& k,
+                                        const at::Tensor& v,
+                                        const at::Tensor& cu_q,
+                                        const at::Tensor& cu_k,
+                                        int64_t max_q,
+                                        int64_t max_k,
+                                        double scale,
+                                        bool causal = false,
+                                        int64_t left = -1,
+                                        int64_t right = -1,
+                                        bool prefer_native = false,
+                                        Fallback fallback = nullptr) {
+  auto output = infinity_fa4(q, k, v, cu_q, cu_k, max_q, scale, causal, left, right);
+  if (output.defined())
+    return output;
+#ifdef TEI_TORCH_CUDA_KERNELS
+  if (prefer_native && torch_flash_fma_supported(q, k, v, causal, left, right)) {
+    if (cu_q.const_data_ptr() == cu_k.const_data_ptr() && max_q == max_k)
+      return torch_flash_fma(q, k, v, cu_q, max_q, scale, causal, left, right);
+    return torch_flash_fma_varlen(q, k, v, cu_q, cu_k, max_q, max_k, scale, causal, left, right);
+  }
+#endif
+  if constexpr (!std::is_same_v<Fallback, std::nullptr_t>)
+    return fallback();
+  else
+    return packed_aten_attention(q, k, v, cu_q, cu_k, max_q, max_k, scale, causal, left, right);
+}
+
 // Q/K/V are packed [total_tokens, heads, head_dim]; cumulative offsets delimit sequences.
 /// Return packed [tokens, query_heads, head_dim] attention results without crossing sequence
 /// bounds. CUDA dispatches eligible native/ATen operators; CPU evaluates each sequence
@@ -108,22 +182,22 @@ inline at::Tensor packed_attention(const at::Tensor& q,
                                    int64_t window_left = -1,
                                    int64_t window_right = -1,
                                    const std::optional<at::Tensor>& alibi = std::nullopt,
-                                   const std::optional<at::Tensor>& prepared_bias = std::nullopt) {
+                                   const std::optional<at::Tensor>& prepared_bias = std::nullopt,
+                                   bool prefer_native = false) {
   if (q.is_cuda()) {
-    if (!alibi && !prepared_bias) {
-      auto fa4 = infinity_fa4(q,
-                              k,
-                              v,
-                              input.cumulative,
-                              input.cumulative,
-                              input.max_sequence,
-                              scale,
-                              causal,
-                              window_left,
-                              window_right);
-      if (fa4.defined())
-        return fa4;
-    }
+    if (!alibi && !prepared_bias)
+      return packed_cuda_attention(q,
+                                   k,
+                                   v,
+                                   input.cumulative,
+                                   input.cumulative,
+                                   input.max_sequence,
+                                   input.max_sequence,
+                                   scale,
+                                   causal,
+                                   window_left,
+                                   window_right,
+                                   prefer_native);
     if (alibi) {
       // The prebuilt Torch Flash operator disables ALiBi. Its efficient
       // operator accepts actual packed Q/K/V and cumulative sequence offsets.
@@ -144,21 +218,17 @@ inline at::Tensor packed_attention(const at::Tensor& q,
                                                           scale))
           .squeeze(0);
     }
-    return std::get<0>(at::_flash_attention_forward(q,
-                                                    k,
-                                                    v,
-                                                    input.cumulative,
-                                                    input.cumulative,
-                                                    input.max_sequence,
-                                                    input.max_sequence,
-                                                    0.0,
-                                                    causal,
-                                                    false,
-                                                    scale,
-                                                    window_left,
-                                                    window_right,
-                                                    std::nullopt,
-                                                    alibi));
+    return packed_aten_attention(q,
+                                 k,
+                                 v,
+                                 input.cumulative,
+                                 input.cumulative,
+                                 input.max_sequence,
+                                 input.max_sequence,
+                                 scale,
+                                 causal,
+                                 window_left,
+                                 window_right);
   }
   std::vector<at::Tensor> sequences;
   for (int64_t row = 0; row < input.batch; ++row) {

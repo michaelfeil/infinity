@@ -515,20 +515,14 @@ class Qwen35 final : public Model {
         if (!prefill && !cached.defined())
           cached = at::tensor(kv_offsets, input.cumulative.options());
         auto cuk = prefill ? input.cumulative : cached;
-        attention = infinity_fa4(
-            q, k, v, input.cumulative, cuk, input.max_sequence, 1. / std::sqrt(double(dim)));
-        if (!attention.defined())
-          attention = std::get<0>(at::_flash_attention_forward(q,
-                                                               k,
-                                                               v,
-                                                               input.cumulative,
-                                                               cuk,
-                                                               input.max_sequence,
-                                                               max_kv,
-                                                               0.,
-                                                               false,
-                                                               false,
-                                                               1. / std::sqrt(double(dim))));
+        attention = packed_cuda_attention(q,
+                                          k,
+                                          v,
+                                          input.cumulative,
+                                          cuk,
+                                          input.max_sequence,
+                                          max_kv,
+                                          1. / std::sqrt(double(dim)));
       } else {
         std::vector<at::Tensor> rows;
         const auto* offsets = prefill ? input.offsets : kv_offsets.data();
@@ -554,25 +548,18 @@ class Qwen35 final : public Model {
     } else if (input.prefix)
       attention = prefix_attention(
           q, k, v, input, cache_layer, 1. / std::sqrt(static_cast<double>(dim)), -1, -1, reference);
-    else {
-      attention = infinity_fa4(q,
-                               k,
-                               v,
-                               input.cumulative,
-                               input.cumulative,
-                               input.max_sequence,
-                               1. / std::sqrt(double(dim)),
-                               causal);
-      if (!attention.defined()) {
-#ifdef TEI_TORCH_CUDA_KERNELS
-        if (reference && torch_flash_fma_supported(q, k, v))
-          attention = torch_flash_fma(
-              q, k, v, input.cumulative, input.max_sequence, 1. / std::sqrt(double(dim)), causal);
-        else
-#endif
-          attention = packed_attention(q, k, v, input, 1. / std::sqrt(double(dim)), causal);
-      }
-    }
+    else
+      attention = packed_attention(q,
+                                   k,
+                                   v,
+                                   input,
+                                   1. / std::sqrt(double(dim)),
+                                   causal,
+                                   -1,
+                                   -1,
+                                   std::nullopt,
+                                   std::nullopt,
+                                   reference);
     auto a = radix_fold(attention, input).view({tokens, heads, dim});
     auto logits = qg.narrow(-1, dim, dim);
     auto gate =
