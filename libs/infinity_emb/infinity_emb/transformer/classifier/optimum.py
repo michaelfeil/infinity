@@ -70,7 +70,7 @@ class OptimumClassifier(BaseClassifer):
         return sentences
 
     def encode_core(self, sentences: list[str]) -> dict:
-        outputs = self._pipe(sentences)
+        outputs = self._pipe(sentences, function_to_apply="none")
         return outputs
 
     def encode_post(self, classes) -> dict[str, float]:
