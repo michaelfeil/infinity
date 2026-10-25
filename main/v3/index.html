@@ -562,7 +562,7 @@
   <span class="md-ellipsis">
     
   
-    Embedding formats
+    Embedding formats and clients
   
 
     
@@ -1299,29 +1299,50 @@ Qwen3-Embedding-0.6B</strong>. Speedups depend on the workload and configuration
 Startup timings above use local weights; see the
 <a href="docs/modernbert-startup/">startup measurements</a>.</p>
 <details>
-  <summary>CUDA support and attention kernels</summary>
-
-The NVIDIA image supports Ampere through Blackwell (SM80–SM120), with builds
+<summary>CUDA support and attention kernels</summary>
+<p>The NVIDIA image supports Ampere through Blackwell (SM80–SM120), with builds
 for the architectures below. FlashAttention-4 is enabled for supported FP16/BF16
 shapes; other shapes use existing attention kernels. DeBERTa-v2/v3 uses a novel
 CuTeDSL-based algorithm in FA4 to fuse relative-position lookup without
-quadratic bucket or attention-bias storage.
-
-| Compute capability | Example GPUs |
-| --- | --- |
-| SM80 | A100, A30 |
-| SM86 | A10 / A10G, GeForce RTX 3090, RTX A6000 |
-| SM89 | L4, L40S, RTX 6000 Ada, GeForce RTX 4090 |
-| SM90 | H100, H200 |
-| SM100 | B200 |
-| SM120 | RTX PRO 6000 Blackwell, GeForce RTX 5090 |
-
-FA4 has runtime validation on H100 and compile/link coverage on the other
-listed targets. See the [backend documentation](docs/libtorch-backend.md#infinityfa4)
-for supported attention shapes and the `INFINITY_TORCH_FA4=0` fallback switch.
-
+quadratic bucket or attention-bias storage.</p>
+<table>
+<thead>
+<tr>
+<th>Compute capability</th>
+<th>Example GPUs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SM80</td>
+<td>A100, A30</td>
+</tr>
+<tr>
+<td>SM86</td>
+<td>A10 / A10G, GeForce RTX 3090, RTX A6000</td>
+</tr>
+<tr>
+<td>SM89</td>
+<td>L4, L40S, RTX 6000 Ada, GeForce RTX 4090</td>
+</tr>
+<tr>
+<td>SM90</td>
+<td>H100, H200</td>
+</tr>
+<tr>
+<td>SM100</td>
+<td>B200</td>
+</tr>
+<tr>
+<td>SM120</td>
+<td>RTX PRO 6000 Blackwell, GeForce RTX 5090</td>
+</tr>
+</tbody>
+</table>
+<p>FA4 has runtime validation on H100 and compile/link coverage on the other
+listed targets. See the <a href="docs/libtorch-backend/#infinityfa4">backend documentation</a>
+for supported attention shapes and the <code>INFINITY_TORCH_FA4=0</code> fallback switch.</p>
 </details>
-
 <h2 id="getting-started">Getting started</h2>
 <p>Launch a compatible Hugging Face model or a local checkpoint:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>sentence-transformers/all-MiniLM-L6-v2
@@ -1343,63 +1364,150 @@ its OpenAPI schema. See <a href="docs/cli/">running the server</a> and
 <code>--torch-device cpu --dtype float32</code>. Omit <code>--device-id</code> to use all visible CUDA
 GPUs as replicas; each GPU loads a complete model, rather than a shard.</p>
 <details>
-  <summary>Model, precision and device options</summary>
-
-| Option | Purpose |
-| --- | --- |
-| `--model-id` | Hugging Face model ID or local checkpoint directory. Repeat to serve multiple models. |
-| `--revision` | Pin a Hugging Face commit, tag or branch. |
-| `--served-model-name` | Public model name accepted by the API; defaults to the checkpoint ID. |
-| `--torch-device` | `auto`, `cpu` or `cuda`. |
-| `--dtype` | `auto`, `float32`, `float16` or `bfloat16`; CUDA attention requires FP16/BF16. |
-| `--device-id` | Run on one visible accelerator ordinal, such as `0`. |
-| `--backend-device-ids` | Select CUDA replicas, such as `0,1`, or `auto`. |
-| `--enable-fp8-dynamic` | Enable experimental dynamic FP8 for supported models and GPUs. Off by default; validate task accuracy before enabling. |
-
+<summary>Model, precision and device options</summary>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--model-id</code></td>
+<td>Hugging Face model ID or local checkpoint directory. Repeat to serve multiple models.</td>
+</tr>
+<tr>
+<td><code>--revision</code></td>
+<td>Pin a Hugging Face commit, tag or branch.</td>
+</tr>
+<tr>
+<td><code>--served-model-name</code></td>
+<td>Public model name accepted by the API; defaults to the checkpoint ID.</td>
+</tr>
+<tr>
+<td><code>--torch-device</code></td>
+<td><code>auto</code>, <code>cpu</code> or <code>cuda</code>.</td>
+</tr>
+<tr>
+<td><code>--dtype</code></td>
+<td><code>auto</code>, <code>float32</code>, <code>float16</code> or <code>bfloat16</code>; CUDA attention requires FP16/BF16.</td>
+</tr>
+<tr>
+<td><code>--device-id</code></td>
+<td>Run on one visible accelerator ordinal, such as <code>0</code>.</td>
+</tr>
+<tr>
+<td><code>--backend-device-ids</code></td>
+<td>Select CUDA replicas, such as <code>0,1</code>, or <code>auto</code>.</td>
+</tr>
+<tr>
+<td><code>--enable-fp8-dynamic</code></td>
+<td>Enable experimental dynamic FP8 for supported models and GPUs. Off by default; validate task accuracy before enabling.</td>
+</tr>
+</tbody>
+</table>
 </details>
-
 <details>
-  <summary>Batching, input limits and model behavior</summary>
-
-| Option | Purpose |
-| --- | --- |
-| `--max-batch-tokens` | Total token budget per batch; defaults to `16384`. Larger batches need more memory. |
-| `--max-sequence-length` | Token limit for one sequence, including prompts and image tokens; bounded by the model and batch limits. |
-| `--max-batch-requests` | Optional maximum number of individual requests in a batch. |
-| `--max-concurrent-requests` | Admission limit per model; defaults to `512`. |
-| `--max-client-batch-size` | Maximum number of inputs in one client batch. |
-| `--auto-truncate=false` | Reject oversized inputs instead of truncating. Truncation is enabled by default; decision and multimodal requests have additional restrictions. |
-| `--pooling` | Override the checkpoint's embedding pooling configuration when the model supports it. Normally leave unset. |
-| `--default-prompt-name` | Select a saved query/document prompt by name. |
-| `--default-prompt` | Use a literal prefix instead; cannot be combined with `--default-prompt-name`. |
-| `--decision-protocol` | Select `onejev`, `rune`, `clef`, `pplx` or `d3` for a compatible decision checkpoint. |
-
-For example, an `8192` sequence limit with a `32768` batch budget allows several
+<summary>Batching, input limits and model behavior</summary>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--max-batch-tokens</code></td>
+<td>Total token budget per batch; defaults to <code>16384</code>. Larger batches need more memory.</td>
+</tr>
+<tr>
+<td><code>--max-sequence-length</code></td>
+<td>Token limit for one sequence, including prompts and image tokens; bounded by the model and batch limits.</td>
+</tr>
+<tr>
+<td><code>--max-batch-requests</code></td>
+<td>Optional maximum number of individual requests in a batch.</td>
+</tr>
+<tr>
+<td><code>--max-concurrent-requests</code></td>
+<td>Admission limit per model; defaults to <code>512</code>.</td>
+</tr>
+<tr>
+<td><code>--max-client-batch-size</code></td>
+<td>Maximum number of inputs in one client batch.</td>
+</tr>
+<tr>
+<td><code>--auto-truncate=false</code></td>
+<td>Reject oversized inputs instead of truncating. Truncation is enabled by default; decision and multimodal requests have additional restrictions.</td>
+</tr>
+<tr>
+<td><code>--pooling</code></td>
+<td>Override the checkpoint's embedding pooling configuration when the model supports it. Normally leave unset.</td>
+</tr>
+<tr>
+<td><code>--default-prompt-name</code></td>
+<td>Select a saved query/document prompt by name.</td>
+</tr>
+<tr>
+<td><code>--default-prompt</code></td>
+<td>Use a literal prefix instead; cannot be combined with <code>--default-prompt-name</code>.</td>
+</tr>
+<tr>
+<td><code>--decision-protocol</code></td>
+<td>Select <code>onejev</code>, <code>rune</code>, <code>clef</code>, <code>pplx</code> or <code>d3</code> for a compatible decision checkpoint.</td>
+</tr>
+</tbody>
+</table>
+<p>For example, an <code>8192</code> sequence limit with a <code>32768</code> batch budget allows several
 sequences in a batch while keeping each individual input at or below 8192 tokens.
-See [sequence limits](docs/cli.md#sequence-length-and-batch-capacity) for details.
-
+See <a href="docs/cli/#sequence-length-and-batch-capacity">sequence limits</a> for details.</p>
 </details>
-
 <details>
-  <summary>HTTP, media and observability options</summary>
-
-| Option | Purpose |
-| --- | --- |
-| `--hostname`, `--port` | HTTP bind address and port; defaults to `0.0.0.0:3000`. |
-| `--api-key` | Require `Authorization: Bearer …` on API requests. Can also be supplied through `INFINITY_API_KEY`. |
-| `--image-allowed-hosts` | Comma-separated host allowlist replacing the defaults; `--image-allowed-hosts=` permits inline media only. |
-| `--image-memory-budget-mib` | Memory budget for encoded images, preprocessing and prepared patches. |
-| `--json-output` | Write structured JSON logs. |
-| `--prometheus-port` | Prometheus metrics port; defaults to `9000`. |
-| `--huggingface-hub-cache` | Model download cache directory. |
-
+<summary>HTTP, media and observability options</summary>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--hostname</code>, <code>--port</code></td>
+<td>HTTP bind address and port; defaults to <code>0.0.0.0:3000</code>.</td>
+</tr>
+<tr>
+<td><code>--api-key</code></td>
+<td>Require <code>Authorization: Bearer …</code> on API requests. Can also be supplied through <code>INFINITY_API_KEY</code>.</td>
+</tr>
+<tr>
+<td><code>--image-allowed-hosts</code></td>
+<td>Comma-separated host allowlist replacing the defaults; <code>--image-allowed-hosts=</code> permits inline media only.</td>
+</tr>
+<tr>
+<td><code>--image-memory-budget-mib</code></td>
+<td>Memory budget for encoded images, preprocessing and prepared patches.</td>
+</tr>
+<tr>
+<td><code>--json-output</code></td>
+<td>Write structured JSON logs.</td>
+</tr>
+<tr>
+<td><code>--prometheus-port</code></td>
+<td>Prometheus metrics port; defaults to <code>9000</code>.</td>
+</tr>
+<tr>
+<td><code>--huggingface-hub-cache</code></td>
+<td>Model download cache directory.</td>
+</tr>
+</tbody>
+</table>
 </details>
-
 <details>
-  <summary>Multiple models and environment variables</summary>
-
-Repeat `--model-id` and align per-model settings in the same order:
-
+<summary>Multiple models and environment variables</summary>
+<p>Repeat <code>--model-id</code> and align per-model settings in the same order:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>infinity_v3<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--model-id<span class="w"> </span>sentence-transformers/all-MiniLM-L6-v2<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--model-id<span class="w"> </span>BAAI/bge-reranker-base<span class="w"> </span><span class="se">\</span>
@@ -1407,26 +1515,20 @@ Repeat `--model-id` and align per-model settings in the same order:
 </span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>--device-id<span class="w"> </span><span class="m">0</span><span class="w"> </span>--device-id<span class="w"> </span><span class="m">1</span><span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
 </span></code></pre></div>
-
-A single per-model setting applies to every model. Multiple values must match
+<p>A single per-model setting applies to every model. Multiple values must match
 the number of models; semicolon-separated values are also accepted. HTTP bind
-settings are shared by the server.
-
-Official builds expose `INFINITY_*` environment variables for CLI options:
-
+settings are shared by the server.</p>
+<p>Official builds expose <code>INFINITY_*</code> environment variables for CLI options:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">INFINITY_MODEL_ID</span><span class="o">=</span>sentence-transformers/all-MiniLM-L6-v2<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nv">INFINITY_TORCH_DEVICE</span><span class="o">=</span>cpu<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nv">INFINITY_DTYPE</span><span class="o">=</span>float32<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="nv">INFINITY_PORT</span><span class="o">=</span><span class="m">8000</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>infinity_v3
 </span></code></pre></div>
-
-Use quotes for lists, such as `INFINITY_DEVICE_ID="0;1"`. CLI arguments take
-precedence over environment values. Run `infinity_v3 --help` for the complete
-option list and the environment names used by your build.
-
+<p>Use quotes for lists, such as <code>INFINITY_DEVICE_ID="0;1"</code>. CLI arguments take
+precedence over environment values. Run <code>infinity_v3 --help</code> for the complete
+option list and the environment names used by your build.</p>
 </details>
-
 <h3 id="supported-tasks-and-models-by-infinity-v3">Supported Tasks and Models by Infinity V3</h3>
 <p>Click on the sections below to find tasks and <strong>example models</strong>. Support depends
 on the checkpoint architecture and trained output head. The models below use
@@ -1438,145 +1540,116 @@ all experts.</p>
 LibTorch paths and their limitations; it is not a claim that every checkpoint
 in each family has been validated.</p>
 <details>
-  <summary>Text Embeddings — BGE, GTE, ModernBERT, Qwen3 and more</summary>
-
-Text embeddings represent sentences and documents as vectors for semantic
-search, clustering and recommendations. Use `/v1/embeddings` or `/embed`.
-
-Example models:
-
-- [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2)
-- [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5)
-- [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3), dense embeddings
-- **GTE embeddings**: [Alibaba-NLP/gte-large-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5), using the native GTE/New encoder path.
-- **ModernBERT embeddings**: [nomic-ai/modernbert-embed-base](https://huggingface.co/nomic-ai/modernbert-embed-base), using native local/global rotary attention.
-- [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)
-- [perplexity-ai/pplx-embed-v1-0.6b](https://huggingface.co/perplexity-ai/pplx-embed-v1-0.6b) and [pplx-embed-v1-4b](https://huggingface.co/perplexity-ai/pplx-embed-v1-4b), floating-point output only; contextual variants are unsupported
-- [dmis-lab/UltraBERT-Embed-150M](https://huggingface.co/dmis-lab/UltraBERT-Embed-150M), native bidirectional encoder with per-layer rotary positions and sliding windows
-
-Native LibTorch families also include RoBERTa, XLM-RoBERTa, CamemBERT,
+<summary>Text Embeddings — BGE, GTE, ModernBERT, Qwen3 and more</summary>
+<p>Text embeddings represent sentences and documents as vectors for semantic
+search, clustering and recommendations. Use <code>/v1/embeddings</code> or <code>/embed</code>.</p>
+<p>Example models:</p>
+<ul>
+<li><a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">sentence-transformers/all-MiniLM-L6-v2</a></li>
+<li><a href="https://huggingface.co/BAAI/bge-small-en-v1.5">BAAI/bge-small-en-v1.5</a></li>
+<li><a href="https://huggingface.co/BAAI/bge-m3">BAAI/bge-m3</a>, dense embeddings</li>
+<li><strong>GTE embeddings</strong>: <a href="https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5">Alibaba-NLP/gte-large-en-v1.5</a>, using the native GTE/New encoder path.</li>
+<li><strong>ModernBERT embeddings</strong>: <a href="https://huggingface.co/nomic-ai/modernbert-embed-base">nomic-ai/modernbert-embed-base</a>, using native local/global rotary attention.</li>
+<li><a href="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B">Qwen/Qwen3-Embedding-0.6B</a></li>
+<li><a href="https://huggingface.co/perplexity-ai/pplx-embed-v1-0.6b">perplexity-ai/pplx-embed-v1-0.6b</a> and <a href="https://huggingface.co/perplexity-ai/pplx-embed-v1-4b">pplx-embed-v1-4b</a>, floating-point output only; contextual variants are unsupported</li>
+<li><a href="https://huggingface.co/dmis-lab/UltraBERT-Embed-150M">dmis-lab/UltraBERT-Embed-150M</a>, native bidirectional encoder with per-layer rotary positions and sliding windows</li>
+</ul>
+<p>Native LibTorch families also include RoBERTa, XLM-RoBERTa, CamemBERT,
 DistilBERT, ModernBERT, Nomic BERT, Jina BERT/JinaCode, MPNet, Llama,
 Mistral/Ministral3, Qwen2, Qwen3/MoE and Gemma3 text.
-Use the checkpoint's query/document instructions and pooling configuration.
-
+Use the checkpoint's query/document instructions and pooling configuration.</p>
 </details>
-
 <details>
-  <summary>Reranking</summary>
-
-Given a query and a list of documents, reranking scores the documents for
-relevance. Use `/rerank` with a supported sequence-classification checkpoint
-and its trained scoring head.
-
-Example models:
-
-- [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)
-- [BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)
-- [nvidia/Nemotron-3.5-Rerank-8B-BF16](https://huggingface.co/nvidia/Nemotron-3.5-Rerank-8B-BF16), text and document images through the [native Mistral3 reranking recipe](docs/ministral-3-multimodal.md)
-
-LibTorch supports architecture-specific encoder and decoder classification
+<summary>Reranking</summary>
+<p>Given a query and a list of documents, reranking scores the documents for
+relevance. Use <code>/rerank</code> with a supported sequence-classification checkpoint
+and its trained scoring head.</p>
+<p>Example models:</p>
+<ul>
+<li><a href="https://huggingface.co/BAAI/bge-reranker-base">BAAI/bge-reranker-base</a></li>
+<li><a href="https://huggingface.co/BAAI/bge-reranker-v2-m3">BAAI/bge-reranker-v2-m3</a></li>
+<li><a href="https://huggingface.co/nvidia/Nemotron-3.5-Rerank-8B-BF16">nvidia/Nemotron-3.5-Rerank-8B-BF16</a>, text and document images through the <a href="docs/ministral-3-multimodal/">native Mistral3 reranking recipe</a></li>
+</ul>
+<p>LibTorch supports architecture-specific encoder and decoder classification
 heads, including experimental DeBERTa-v2/v3. A generative language-model
-checkpoint does not automatically become a reranker.
-
+checkpoint does not automatically become a reranker.</p>
 </details>
-
 <details>
-  <summary>Multi-modal Embeddings — Qwen3-VL, EmbeddingGemma2 and Nemotron</summary>
-
-Multi-modal models encode text and media for retrieval. Send images as
-`image_url` content parts in user messages on `/v1/embeddings`.
-
-Models and native LibTorch paths:
-
-- **Qwen3-VL Embedding**: [2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B) and [8B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-8B), text/image embeddings with last-token pooling.
-- **EmbeddingGemma2** (`embedding_gemma2`): text embeddings with the checkpoint's trained projection, plus image and audio inputs when the corresponding towers are present.
-- **Mistral3 / Ministral 3**: Pixtral vision tower and native text/image preprocessing. See the [multimodal input recipe](docs/ministral-3-multimodal.md).
-- **Qwen3.5 dense and MoE**: native text/image backbones with full attention, DeltaNet and vision processing.
-- **Gemma4 dense and MoE**: native text/image backbones with routed experts for MoE checkpoints. Gemma3 support is text-only.
-
-Backbone support requires a checkpoint with an appropriate trained output head;
-it does not make every instruction model a retrieval embedding model.
-
-**Nemotron 3 and 3.5 dense embeddings:** the Ministral3/Mistral3 backbones are
+<summary>Multi-modal Embeddings — Qwen3-VL, EmbeddingGemma2 and Nemotron</summary>
+<p>Multi-modal models encode text and media for retrieval. Send images as
+<code>image_url</code> content parts in user messages on <code>/v1/embeddings</code>.</p>
+<p>Models and native LibTorch paths:</p>
+<ul>
+<li><strong>Qwen3-VL Embedding</strong>: <a href="https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B">2B</a> and <a href="https://huggingface.co/Qwen/Qwen3-VL-Embedding-8B">8B</a>, text/image embeddings with last-token pooling.</li>
+<li><strong>EmbeddingGemma2</strong> (<code>embedding_gemma2</code>): text embeddings with the checkpoint's trained projection, plus image and audio inputs when the corresponding towers are present.</li>
+<li><strong>Mistral3 / Ministral 3</strong>: Pixtral vision tower and native text/image preprocessing. See the <a href="docs/ministral-3-multimodal/">multimodal input recipe</a>.</li>
+<li><strong>Qwen3.5 dense and MoE</strong>: native text/image backbones with full attention, DeltaNet and vision processing.</li>
+<li><strong>Gemma4 dense and MoE</strong>: native text/image backbones with routed experts for MoE checkpoints. Gemma3 support is text-only.</li>
+</ul>
+<p>Backbone support requires a checkpoint with an appropriate trained output head;
+it does not make every instruction model a retrieval embedding model.</p>
+<p><strong>Nemotron 3 and 3.5 dense embeddings:</strong> the Ministral3/Mistral3 backbones are
 implemented. Complete query/document prefix handling and embedding parity for
-[Nemotron 3 1B](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16),
-[Nemotron 3 8B](https://huggingface.co/nvidia/Nemotron-3-Embed-8B-BF16),
-[Nemotron 3.5 1B](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) and
-[Nemotron 3.5 8B](https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16)
-are tracked in [PR #800](https://github.com/michaelfeil/infinity/pull/800).
+<a href="https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16">Nemotron 3 1B</a>,
+<a href="https://huggingface.co/nvidia/Nemotron-3-Embed-8B-BF16">Nemotron 3 8B</a>,
+<a href="https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16">Nemotron 3.5 1B</a> and
+<a href="https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16">Nemotron 3.5 8B</a>
+are tracked in <a href="https://github.com/michaelfeil/infinity/pull/800">PR #800</a>.
 Nemotron 3 is text-only; 3.5 adds document images. This integration is pending,
-not yet part of the supported release list.
-
-For token-vector retrieval, see **ColBERT, ColQwen3 and Nemotron ColEmbed** below.
-Full architecture details are in [native model coverage](docs/libtorch-model-coverage.md).
-
+not yet part of the supported release list.</p>
+<p>For token-vector retrieval, see <strong>ColBERT, ColQwen3 and Nemotron ColEmbed</strong> below.
+Full architecture details are in <a href="docs/libtorch-model-coverage/">native model coverage</a>.</p>
 </details>
-
 <details>
-  <summary>Late-interaction Embeddings — ColBERT, ColQwen3 and Nemotron ColEmbed</summary>
-
-Late-interaction models return a matrix of token vectors instead of one pooled
-vector. Use MaxSim scoring in a compatible retrieval system.
-
-Supported models:
-
-- **ColBERTv2**: [colbert-ir/colbertv2.0](https://huggingface.co/colbert-ir/colbertv2.0)
-- **Answer.AI ColBERT Small**: [answerdotai/answerai-colbert-small-v1](https://huggingface.co/answerdotai/answerai-colbert-small-v1)
-- **ColQwen3 (TomoroAI 4B)**, text/image token vectors with a learned projection
-- **NVIDIA Nemotron ColEmbed V2 4B and 8B**, text/image token vectors; the 3B Eagle architecture is not supported by this path
-
-ColBERT returns text token vectors; ColQwen3 and Nemotron ColEmbed also encode
+<summary>Late-interaction Embeddings — ColBERT, ColQwen3 and Nemotron ColEmbed</summary>
+<p>Late-interaction models return a matrix of token vectors instead of one pooled
+vector. Use MaxSim scoring in a compatible retrieval system.</p>
+<p>Supported models:</p>
+<ul>
+<li><strong>ColBERTv2</strong>: <a href="https://huggingface.co/colbert-ir/colbertv2.0">colbert-ir/colbertv2.0</a></li>
+<li><strong>Answer.AI ColBERT Small</strong>: <a href="https://huggingface.co/answerdotai/answerai-colbert-small-v1">answerdotai/answerai-colbert-small-v1</a></li>
+<li><strong>ColQwen3 (TomoroAI 4B)</strong>, text/image token vectors with a learned projection</li>
+<li><strong>NVIDIA Nemotron ColEmbed V2 4B and 8B</strong>, text/image token vectors; the 3B Eagle architecture is not supported by this path</li>
+</ul>
+<p>ColBERT returns text token vectors; ColQwen3 and Nemotron ColEmbed also encode
 images. ColQwen2/2.5 adapters and the Python server's other ColBERT variants are
-not implied by these native implementations.
-
-Use the checkpoint's query/document formatting.
+not implied by these native implementations.</p>
+<p>Use the checkpoint's query/document formatting.
 Responses preserve the token matrix through float, base64 or packed tensor
-encoding. Sentence pooling, dimension overrides and single-vector `/similarity`
-scoring are unsupported for these models. See [embedding tensor formats](docs/embedding-tensors.md)
-and [model-specific input requirements](docs/libtorch-model-coverage.md).
-
+encoding. Sentence pooling, dimension overrides and single-vector <code>/similarity</code>
+scoring are unsupported for these models. See <a href="docs/embedding-tensors/">embedding formats and client usage</a>
+and <a href="docs/libtorch-model-coverage/">model-specific input requirements</a>.</p>
 </details>
-
 <details>
-  <summary>Sparse Embeddings and Text Classification</summary>
-
-SPLADE checkpoints produce sparse vocabulary vectors through `/embed_sparse`.
+<summary>Sparse Embeddings and Text Classification</summary>
+<p>SPLADE checkpoints produce sparse vocabulary vectors through <code>/embed_sparse</code>.
 LibTorch implements SPLADE heads for BERT and DistilBERT; head support is
-architecture-specific.
-
-Text classification returns trained label scores through `/v1/classify`.
+architecture-specific.</p>
+<p>Text classification returns trained label scores through <code>/v1/classify</code>.
 Supported encoder and decoder families need a compatible classification head
-and label configuration. See [native model coverage](docs/libtorch-model-coverage.md).
-
+and label configuration. See <a href="docs/libtorch-model-coverage/">native model coverage</a>.</p>
 </details>
-
 <details>
-  <summary>Typed Decisions — OneJev, Laya, Rune, Clef, Perplexity Decider and D3</summary>
-
-Typed decision models answer structured questions through `/v1/systemone`.
-These checkpoints require their trained decision heads and protocol metadata.
-
-Supported model families and protocols (LibTorch):
-
-- **Laya**: ModernBERT-based decision checkpoints with `rl_agent_config.json` and trained decision heads. Accepts text or structured state; native conversations are unsupported.
-- **OneJev**, including **Elephant and Mammoth**: Qwen3.5 dense/MoE decision checkpoints using `--decision-protocol onejev`. Supports block-attention question batches and image inputs when the checkpoint includes its vision tower.
-- **Perplexity Decider / Pplx**: [v1.1-27b](https://huggingface.co/perplexity-ai/pplx-decider-v1.1-27b) and [flash-v1.2](https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2). Flash v1.2 supports shared text/images, joint question readouts and calibrated answers. The short model aliases select the protocol automatically.
-- **Rune**: Gemma4-based decision checkpoints using `--decision-protocol rune`.
-- **Clef**: dense Qwen3.5 checkpoints with `joint_head_config.json`, using `--decision-protocol clef`.
-- **D3**: [vllm-sr/d3](https://huggingface.co/vllm-sr/d3), a dense Qwen3.5 decision model with its code-readout head. The `d3` alias selects `--decision-protocol d3` automatically.
-
-For example:
-
+<summary>Typed Decisions — OneJev, Laya, Rune, Clef, Perplexity Decider and D3</summary>
+<p>Typed decision models answer structured questions through <code>/v1/systemone</code>.
+These checkpoints require their trained decision heads and protocol metadata.</p>
+<p>Supported model families and protocols (LibTorch):</p>
+<ul>
+<li><strong>Laya</strong>: ModernBERT-based decision checkpoints with <code>rl_agent_config.json</code> and trained decision heads. Accepts text or structured state; native conversations are unsupported.</li>
+<li><strong>OneJev</strong>, including <strong>Elephant and Mammoth</strong>: Qwen3.5 dense/MoE decision checkpoints using <code>--decision-protocol onejev</code>. Supports block-attention question batches and image inputs when the checkpoint includes its vision tower.</li>
+<li><strong>Perplexity Decider / Pplx</strong>: <a href="https://huggingface.co/perplexity-ai/pplx-decider-v1.1-27b">v1.1-27b</a> and <a href="https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2">flash-v1.2</a>. Flash v1.2 supports shared text/images, joint question readouts and calibrated answers. The short model aliases select the protocol automatically.</li>
+<li><strong>Rune</strong>: Gemma4-based decision checkpoints using <code>--decision-protocol rune</code>.</li>
+<li><strong>Clef</strong>: dense Qwen3.5 checkpoints with <code>joint_head_config.json</code>, using <code>--decision-protocol clef</code>.</li>
+<li><strong>D3</strong>: <a href="https://huggingface.co/vllm-sr/d3">vllm-sr/d3</a>, a dense Qwen3.5 decision model with its code-readout head. The <code>d3</code> alias selects <code>--decision-protocol d3</code> automatically.</li>
+</ul>
+<p>For example:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>pplx-decider-flash-v1.2<span class="w"> </span>--backend<span class="w"> </span>libtorch<span class="w"> </span>--dtype<span class="w"> </span>bfloat16
 </span></code></pre></div>
-
-Use the request schema for the checkpoint's protocol: OneJev, Laya and Perplexity
+<p>Use the request schema for the checkpoint's protocol: OneJev, Laya and Perplexity
 joint v1.2 do not share an interchangeable payload format. See the running
-server's `/docs`, [decision inputs](docs/cli.md#structured-decision-inputs) and
-[OneJev configuration](docs/libtorch-backend.md#onejev-block-attention).
-
+server's <code>/docs</code>, <a href="docs/cli/#structured-decision-inputs">decision inputs</a> and
+<a href="docs/libtorch-backend/#onejev-block-attention">OneJev configuration</a>.</p>
 </details>
-
 <h2 id="documentation">Documentation</h2>
 <ul>
 <li><a href="docs/cli/">CLI and deployment options</a></li>

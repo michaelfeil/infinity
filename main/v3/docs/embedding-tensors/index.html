@@ -25,7 +25,7 @@
     
     
       
-        <title>Embedding formats - Infinity</title>
+        <title>Embedding formats and clients - Infinity</title>
       
     
     
@@ -66,7 +66,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#packed-embedding-tensors" class="md-skip">
+        <a href="#embedding-formats-and-client-usage" class="md-skip">
           Skip to content
         </a>
       
@@ -106,7 +106,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              Embedding formats
+              Embedding formats and clients
             
           </span>
         </div>
@@ -456,6 +456,24 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding formats and clients
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -463,7 +481,7 @@
   <span class="md-ellipsis">
     
   
-    Embedding formats
+    Embedding formats and clients
   
 
     
@@ -472,6 +490,69 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#choose-a-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose a format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python-baseten-performance-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python: Baseten Performance Client
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#zero-copy-numpy-views" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zero-copy NumPy views
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#token-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -1069,6 +1150,58 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#choose-a-format" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose a format
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#python-baseten-performance-client" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python: Baseten Performance Client
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#zero-copy-numpy-views" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zero-copy NumPy views
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#token-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1092,37 +1225,122 @@
   
 
 
-<h1 id="packed-embedding-tensors">Packed embedding tensors</h1>
-<p>Set <code>"encoding_format": "tensor"</code> on <code>/embeddings</code>, <code>/v1/embeddings</code>, <code>/embed</code>,
-or <code>/embed_all</code>. Requests remain JSON; existing float arrays and base64 outputs
-are unchanged. This option applies to V3, not the Python server.</p>
-<p>Each tensor contains <code>shape</code>, <code>dtype: "float32"</code>, <code>data_encoding</code>, and <code>data</code>.
-Data is contiguous, row-major, little-endian IEEE 754 float32: exactly
-<code>4 * product(shape)</code> bytes, with no padding or header. Int8 is deferred.</p>
-<ul>
-<li>JSON responses use <code>data_encoding: "base64"</code> and a base64 string.</li>
-<li><code>Accept: application/msgpack</code> (or <code>application/x-msgpack</code>) uses
-  <code>data_encoding: "binary"</code> and MessagePack <strong>bin</strong> data.</li>
-<li>Pooled vectors have shape <code>[dimensions]</code>. <code>/embed_all</code> matrices have shape
-  <code>[tokens, dimensions]</code>, with one independent buffer per input and no batch
-  padding. Returned token order is preserved; empty matrices have shape <code>[0, 0]</code>.</li>
-</ul>
-<p>OpenAI-style responses place tensors in <code>data[i].embedding</code>; <code>/embed</code> and
-<code>/embed_all</code> return a list of tensors. Normalization, truncation, and pooling
-retain their existing behavior.</p>
-<div class="language-python highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">base64</span><span class="o">,</span><span class="w"> </span><span class="nn">msgpack</span><span class="o">,</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span><span class="o">,</span><span class="w"> </span><span class="nn">requests</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="n">r</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span><span class="s2">"http://localhost:7997/v1/embeddings"</span><span class="p">,</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>    <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">"Accept"</span><span class="p">:</span> <span class="s2">"application/msgpack"</span><span class="p">},</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>    <span class="n">json</span><span class="o">=</span><span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"hello"</span><span class="p">],</span> <span class="s2">"encoding_format"</span><span class="p">:</span> <span class="s2">"tensor"</span><span class="p">})</span>
-</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="n">r</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
-</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="n">t</span> <span class="o">=</span> <span class="n">msgpack</span><span class="o">.</span><span class="n">unpackb</span><span class="p">(</span><span class="n">r</span><span class="o">.</span><span class="n">content</span><span class="p">,</span> <span class="n">raw</span><span class="o">=</span><span class="kc">False</span><span class="p">)[</span><span class="s2">"data"</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">"embedding"</span><span class="p">]</span>
-</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="n">buffer</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64decode</span><span class="p">(</span><span class="n">t</span><span class="p">[</span><span class="s2">"data"</span><span class="p">])</span> <span class="k">if</span> <span class="n">t</span><span class="p">[</span><span class="s2">"data_encoding"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"base64"</span> <span class="k">else</span> <span class="n">t</span><span class="p">[</span><span class="s2">"data"</span><span class="p">]</span>
-</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="n">embedding</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">"&lt;f4"</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">t</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">])</span>
+<h1 id="embedding-formats-and-client-usage">Embedding formats and client usage</h1>
+<p>Choose the response format that fits your application: JSON arrays for easy
+integration, or packed tensors for NumPy views without a per-element conversion.
+Requests remain JSON in every case.</p>
+<h2 id="choose-a-format">Choose a format</h2>
+<table>
+<thead>
+<tr>
+<th><code>encoding_format</code></th>
+<th>Best for</th>
+<th>Response</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>float</code> (default)</td>
+<td>Standard OpenAI-compatible clients</td>
+<td>JSON arrays of numbers</td>
+</tr>
+<tr>
+<td><code>base64</code></td>
+<td>Clients that decode packed vectors</td>
+<td>Base64-encoded vectors</td>
+</tr>
+<tr>
+<td><code>tensor</code></td>
+<td>NumPy and variable-length token embeddings</td>
+<td>A buffer with explicit shape and dtype</td>
+</tr>
+</tbody>
+</table>
+<p>The <code>tensor</code> format is available in Infinity v3 on <code>/embeddings</code>,
+<code>/v1/embeddings</code>, <code>/embed</code> and <code>/embed_all</code>. It does not change pooling,
+normalization or truncation. Include <code>model</code> when serving multiple models.</p>
+<h2 id="python-baseten-performance-client">Python: Baseten Performance Client</h2>
+<p>For batched embedding workloads, use
+<a href="https://github.com/basetenlabs/truss/tree/main/baseten-performance-client">baseten-performance-client</a>.
+Its Rust implementation handles concurrent requests and exposes results as NumPy
+arrays. It works with a local Infinity server as well as hosted endpoints.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>pip<span class="w"> </span>install<span class="w"> </span>baseten-performance-client<span class="w"> </span>numpy
 </span></code></pre></div>
-<p>For JSON, use <code>r.json()</code> instead of <code>msgpack.unpackb</code>. For <code>/embed_all</code>, send
-<code>{"inputs": ["hello"], "encoding_format": "tensor"}</code> and decode each top-level
-tensor. Include the served <code>model</code> name when multiple models are deployed.</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">baseten_performance_client</span><span class="w"> </span><span class="kn">import</span> <span class="n">PerformanceClient</span><span class="p">,</span> <span class="n">RequestProcessingPreference</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">client</span> <span class="o">=</span> <span class="n">PerformanceClient</span><span class="p">(</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>    <span class="n">base_url</span><span class="o">=</span><span class="s2">"http://localhost:8000"</span><span class="p">,</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>    <span class="n">api_key</span><span class="o">=</span><span class="s2">"unused"</span><span class="p">,</span>  <span class="c1"># For a local server without authentication; otherwise use its API key.</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="p">)</span>
+</span><span id="__span-1-7"><a id="__codelineno-1-7" name="__codelineno-1-7" href="#__codelineno-1-7"></a><span class="n">response</span> <span class="o">=</span> <span class="n">client</span><span class="o">.</span><span class="n">embed</span><span class="p">(</span>
+</span><span id="__span-1-8"><a id="__codelineno-1-8" name="__codelineno-1-8" href="#__codelineno-1-8"></a>    <span class="nb">input</span><span class="o">=</span><span class="p">[</span><span class="s2">"A mountain lake."</span><span class="p">,</span> <span class="s2">"An alpine lake."</span><span class="p">],</span>
+</span><span id="__span-1-9"><a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a>    <span class="n">model</span><span class="o">=</span><span class="s2">"sentence-transformers/all-MiniLM-L6-v2"</span><span class="p">,</span>
+</span><span id="__span-1-10"><a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>    <span class="n">encoding_format</span><span class="o">=</span><span class="s2">"float"</span><span class="p">,</span>
+</span><span id="__span-1-11"><a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a>    <span class="n">preference</span><span class="o">=</span><span class="n">RequestProcessingPreference</span><span class="p">(</span><span class="n">batch_size</span><span class="o">=</span><span class="mi">32</span><span class="p">,</span> <span class="n">max_concurrent_requests</span><span class="o">=</span><span class="mi">8</span><span class="p">),</span>
+</span><span id="__span-1-12"><a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="p">)</span>
+</span><span id="__span-1-13"><a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">embeddings</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">numpy</span><span class="p">()</span>  <span class="c1"># shape: [inputs, dimensions]</span>
+</span></code></pre></div>
+<p>Version 0.1.16 assembles the vectors into a contiguous array in Rust; <code>.numpy()</code>
+is not a zero-copy view of the response bytes. For that, use v3's tensor format
+and <code>np.frombuffer</code> as below. The client's typed embedding response does not yet
+support this tensor envelope.</p>
+<h2 id="zero-copy-numpy-views">Zero-copy NumPy views</h2>
+<p>Request tensors with MessagePack to receive binary buffers directly, without
+base64 decoding. <code>np.frombuffer</code> views a buffer as float32 values; <code>reshape</code>
+restores its dimensions without copying the values.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>pip<span class="w"> </span>install<span class="w"> </span>requests<span class="w"> </span>msgpack<span class="w"> </span>numpy
+</span></code></pre></div>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">msgpack</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="kn">import</span><span class="w"> </span><span class="nn">requests</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>    <span class="s2">"http://localhost:8000/v1/embeddings"</span><span class="p">,</span>
+</span><span id="__span-3-7"><a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>    <span class="n">headers</span><span class="o">=</span><span class="p">{</span><span class="s2">"Accept"</span><span class="p">:</span> <span class="s2">"application/msgpack"</span><span class="p">},</span>
+</span><span id="__span-3-8"><a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>    <span class="n">json</span><span class="o">=</span><span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"A mountain lake."</span><span class="p">],</span> <span class="s2">"encoding_format"</span><span class="p">:</span> <span class="s2">"tensor"</span><span class="p">},</span>
+</span><span id="__span-3-9"><a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a><span class="p">)</span>
+</span><span id="__span-3-10"><a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a><span class="n">response</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
+</span><span id="__span-3-11"><a id="__codelineno-3-11" name="__codelineno-3-11" href="#__codelineno-3-11"></a><span class="n">tensor</span> <span class="o">=</span> <span class="n">msgpack</span><span class="o">.</span><span class="n">unpackb</span><span class="p">(</span><span class="n">response</span><span class="o">.</span><span class="n">content</span><span class="p">,</span> <span class="n">raw</span><span class="o">=</span><span class="kc">False</span><span class="p">)[</span><span class="s2">"data"</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">"embedding"</span><span class="p">]</span>
+</span><span id="__span-3-12"><a id="__codelineno-3-12" name="__codelineno-3-12" href="#__codelineno-3-12"></a><span class="n">embedding</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="n">tensor</span><span class="p">[</span><span class="s2">"data"</span><span class="p">],</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">"&lt;f4"</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">tensor</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">])</span>
+</span><span id="__span-3-13"><a id="__codelineno-3-13" name="__codelineno-3-13" href="#__codelineno-3-13"></a>
+</span><span id="__span-3-14"><a id="__codelineno-3-14" name="__codelineno-3-14" href="#__codelineno-3-14"></a><span class="nb">print</span><span class="p">(</span><span class="n">embedding</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>          <span class="c1"># (dimensions,)</span>
+</span><span id="__span-3-15"><a id="__codelineno-3-15" name="__codelineno-3-15" href="#__codelineno-3-15"></a><span class="nb">print</span><span class="p">(</span><span class="n">embedding</span><span class="o">.</span><span class="n">flags</span><span class="o">.</span><span class="n">owndata</span><span class="p">)</span>  <span class="c1"># False: NumPy shares the decoded binary buffer</span>
+</span></code></pre></div>
+<p>Zero-copy here means <strong>from the decoded buffer to NumPy</strong>. HTTP reception and
+MessagePack decoding still allocate memory. The view is read-only when backed
+by immutable bytes; use <code>embedding.copy()</code> when you need to modify it.</p>
+<p>For JSON responses, omit the <code>Accept</code> header and decode the base64 buffer first:</p>
+<div class="language-python highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">import</span><span class="w"> </span><span class="nn">base64</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">response</span> <span class="o">=</span> <span class="n">requests</span><span class="o">.</span><span class="n">post</span><span class="p">(</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>    <span class="s2">"http://localhost:8000/v1/embeddings"</span><span class="p">,</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>    <span class="n">json</span><span class="o">=</span><span class="p">{</span><span class="s2">"input"</span><span class="p">:</span> <span class="p">[</span><span class="s2">"A mountain lake."</span><span class="p">],</span> <span class="s2">"encoding_format"</span><span class="p">:</span> <span class="s2">"tensor"</span><span class="p">},</span>
+</span><span id="__span-4-6"><a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a><span class="p">)</span>
+</span><span id="__span-4-7"><a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a><span class="n">response</span><span class="o">.</span><span class="n">raise_for_status</span><span class="p">()</span>
+</span><span id="__span-4-8"><a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a><span class="n">tensor</span> <span class="o">=</span> <span class="n">response</span><span class="o">.</span><span class="n">json</span><span class="p">()[</span><span class="s2">"data"</span><span class="p">][</span><span class="mi">0</span><span class="p">][</span><span class="s2">"embedding"</span><span class="p">]</span>
+</span><span id="__span-4-9"><a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a><span class="n">buffer</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64decode</span><span class="p">(</span><span class="n">tensor</span><span class="p">[</span><span class="s2">"data"</span><span class="p">])</span>
+</span><span id="__span-4-10"><a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a><span class="n">embedding</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="n">buffer</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="s2">"&lt;f4"</span><span class="p">)</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">tensor</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">])</span>
+</span></code></pre></div>
+<p>Base64 decoding allocates a buffer; the resulting NumPy view shares that buffer.</p>
+<h2 id="token-embeddings">Token embeddings</h2>
+<p>Use <code>/embed_all</code> with <code>{"inputs": ["hello"], "encoding_format": "tensor"}</code>
+for supported token-embedding models. The response is a top-level list of tensors,
+each shaped <code>[tokens, dimensions]</code>. Decode each input independently using the
+same <code>np.frombuffer(...).reshape(...)</code> pattern. Token counts can differ, so no
+batch padding is added. Stacking separate buffers into one array requires a copy.</p>
+<details>
+<summary>Tensor wire format</summary>
+<p>Each tensor has <code>shape</code>, <code>dtype: "float32"</code>, <code>data_encoding</code> and <code>data</code>.
+Buffers are contiguous, row-major, little-endian IEEE 754 float32, with exactly
+<code>4 * product(shape)</code> bytes and no header or padding. Int8 tensors are not supported.</p>
+<p>JSON uses <code>data_encoding: "base64"</code> and a string; MessagePack uses
+<code>data_encoding: "binary"</code> and bin data. Both <code>application/msgpack</code> and
+<code>application/x-msgpack</code> are accepted.</p>
+<p>Pooled vectors have shape <code>[dimensions]</code>; token matrices have shape
+<code>[tokens, dimensions]</code>, preserving returned token order. Empty matrices use <code>[0, 0]</code>.
+OpenAI-style endpoints place tensors in <code>data[i].embedding</code>; <code>/embed</code> and
+<code>/embed_all</code> return a list of tensors. This tensor option is v3-specific.</p>
+</details>
 
 
 
