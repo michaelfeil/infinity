@@ -1372,6 +1372,11 @@ quadratic bucket or attention-bias storage.</p>
 <p>FA4 has runtime validation on H100 and compile/link coverage on the other
 listed targets. See the <a href="docs/libtorch-backend/#infinityfa4">backend documentation</a>
 for supported attention shapes and the <code>INFINITY_TORCH_FA4=0</code> fallback switch.</p>
+<p>FP16 standard BERT CLS embeddings with 384 hidden features / 12 attention heads
+or 1024 hidden features / 16 attention heads use the existing native attention,
+LayerNorm and cached cuBLASLt projection paths on supported CUDA GPUs (SM80 and
+newer), subject to the existing GEMM policy and fallback guards. CUDA graphs
+remain opt-in with <code>INFINITY_TORCH_CUDA_GRAPHS=1</code>.</p>
 </details>
 <h2 id="getting-started">Getting started</h2>
 <p>Launch a compatible Hugging Face model or a local checkpoint:</p>
