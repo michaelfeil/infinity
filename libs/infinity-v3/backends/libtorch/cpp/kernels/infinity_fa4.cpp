@@ -183,10 +183,17 @@ at::Tensor infinity_fa4(const at::Tensor& q,
     else if (h == 8 * hk)
       mode = 5;
   }
+  // Use the exported d256 GQA4 provider across packed lengths.
+  if (d == 256 && h == 4 * hk && !causal && left < 0 && right < 0)
+    mode = 6;
   if (mode < 0)
     return {};
   auto* native = bundle(q);
   if (!native || !(native->modes & (1 << mode)))
+    return {};
+  // Blackwell's dedicated d256 kernel derives K/V offsets from Q boundaries.
+  if (mode == 6 && at::cuda::getDeviceProperties(q.get_device())->major == 10 &&
+      (q.size(0) != k.size(0) || cu_q.const_data_ptr() != cu_k.const_data_ptr()))
     return {};
   c10::cuda::CUDAGuard guard(q.device());
   check_offsets(q, cu_q);

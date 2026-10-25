@@ -27,3 +27,9 @@ of the GPU SM target. Linking rejects exports without matching host provenance;
 x86-64 builds also reject AVX/VEX/EVEX instructions in the wrapper objects and
 library. Re-export old bundles instead of reusing build-host-specialized objects.
 The LibTorch runtime falls back when a bundle lacks the portable-host marker.
+
+All supported architecture bundles export noncausal head-width-256 GQA4 attention
+for Qwen3.5 decisions across packed lengths. SM8x/SM120 use a 64x64 tile to fit
+their shared-memory limits. SM100 uses its dedicated head256 ABI for self-attention;
+independent K/V boundaries retain the existing provider. Older bundles fall back
+through the existing capability mask.

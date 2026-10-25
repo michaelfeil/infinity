@@ -4,6 +4,8 @@
 #include "batching/prefix_cache.h"
 #include <ATen/ATen.h>
 #include <ATen/Parallel.h>
+#include <ATen/cuda/CUDAGraph.h>
+#include <c10/cuda/CUDAStream.h>
 #include <cuda_runtime.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <cmath>
@@ -59,6 +61,39 @@ void production_prefill(int64_t heads) {
     states.push_back(entry->layers.at(0).recurrent);
   check(actual, expected, .01);
   check(state, at::stack(states), .006);
+  auto forward = [&] {
+    return infinity::qwen35_delta_cuda(qkv,
+                                       z,
+                                       ab,
+                                       conv,
+                                       alog,
+                                       dt,
+                                       norm,
+                                       input,
+                                       kh,
+                                       heads,
+                                       1e-6,
+                                       {},
+                                       nullptr,
+                                       {},
+                                       {},
+                                       false,
+                                       -1,
+                                       true);
+  };
+  // Ordinary decision requests use the same provider without retaining state.
+  check(forward(), expected, .01);
+  auto stream = c10::cuda::getStreamFromPool();
+  c10::cuda::CUDAStreamGuard guard(stream);
+  forward();
+  stream.synchronize();
+  at::cuda::CUDAGraph graph;
+  graph.capture_begin();
+  auto replayed = forward();
+  graph.capture_end();
+  qkv.mul_(.8);
+  graph.replay();
+  TORCH_CHECK(at::equal(replayed, forward()), "Transient GDN graph replay lost changed inputs");
 }
 
 int main() {

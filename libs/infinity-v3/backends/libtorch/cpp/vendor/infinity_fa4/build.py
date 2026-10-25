@@ -71,14 +71,21 @@ if not a.link_only:
                 ("voyage", 16, 8, 128, False, (None, None)),
                 ("gqa6", 12, 2, 128, False, (None, None)),
                 ("gqa8", 32, 4, 128, False, (None, None)),
+                ("qwen35", 16, 4, 256, False, (None, None)),
             ]:
                 q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
                 k = torch.zeros((256, hk, d), device="cuda", dtype=dtype)
                 previous = set(interface._flash_attn_fwd.compile_cache.cache)
-                interface.flash_attn_varlen_func(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
-                                                max_seqlen_q=129, max_seqlen_k=129,
-                                                causal=causal, window_size=window,
-                                                disable_scheduler_metadata=True)
+                if name == "qwen35" and capability in (80, 86, 89, 120):
+                    # 64x64 fits the 99 KiB shared-memory budget of SM86/89/120.
+                    interface._flash_attn_fwd(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                                             max_seqlen_q=129, max_seqlen_k=129,
+                                             tile_mn=(64, 64), disable_scheduler_metadata=True)
+                else:
+                    interface.flash_attn_varlen_func(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                                                    max_seqlen_q=129, max_seqlen_k=129,
+                                                    causal=causal, window_size=window,
+                                                    disable_scheduler_metadata=True)
                 fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
                 if len(fresh) != 1:
                     raise RuntimeError(f"Unexpected compilation count for {name}: {len(fresh)}")
@@ -115,7 +122,7 @@ if not a.link_only:
                 kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
                                     causal=False, window=[None, None], dtype=dtype_name))
     manifest = {
-        "abi_version": 5,
+        "abi_version": 6,
         "host_target": host_target(),
         "softmax_backport": softmax_backport,
         "architecture": a.arch,
@@ -132,8 +139,8 @@ if not a.link_only:
     (a.output / "manifest.json").write_text(json.dumps(manifest, indent=2))
 else:
     manifest = json.loads((a.output / "manifest.json").read_text())
-    if manifest.get("abi_version") != 5:
-        raise RuntimeError("Re-export the native bundle for ABI version 5")
+    if manifest.get("abi_version") != 6:
+        raise RuntimeError("Re-export the native bundle for ABI version 6")
     if manifest.get("host_target") != host_target():
         raise RuntimeError("Re-export FA4 with the portable host target before linking")
     objects = [str(a.output / (k["symbol"] + ".o")) for k in manifest["kernels"]]

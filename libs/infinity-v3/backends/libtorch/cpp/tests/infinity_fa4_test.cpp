@@ -85,32 +85,57 @@ void concurrent_first_use() {
     future.get();
 }
 
-void standard(at::ScalarType dtype, int mode, bool cross) {
-  const int64_t d = mode < 2 ? 64 : 128,
+void standard(at::ScalarType dtype, int mode, bool cross, int64_t span = 0) {
+  const int64_t d = mode == 6 ? 256 : (mode < 2 ? 64 : 128),
                 h = mode < 2    ? 6
                     : mode == 2 ? 12
                     : mode == 4 ? 18
                     : mode == 5 ? 24
+                    : mode == 6 ? 12
                                 : 6,
                 hk = mode < 2 ? h : 3;
   std::vector<int64_t> qe = {0, 7, 136, 649},
                        ke = cross ? std::vector<int64_t>{0, 11, 140, 700} : qe;
+  if (mode == 6) {
+    qe = {0, 1, 258, 1283};
+    ke = cross ? std::vector<int64_t>{0, 13, 270, 1301} : qe;
+  }
+  if (mode == 6 && span != 0) {
+    qe = span > 0 ? std::vector<int64_t>{0, span, 2 * span, 3 * span}
+                  : std::vector<int64_t>{0, 7, 136, 649};
+    ke = qe;
+    if (cross)
+      for (size_t i = 1; i < ke.size(); ++i)
+        ke[i] += 4 * i;
+  }
   auto opts = at::TensorOptions().device(at::kCUDA).dtype(dtype);
   // Interleaved projections and a nonzero aligned storage offset exercise
   // real model views rather than only contiguous export-example tensors.
   auto qstore = at::randn({qe.back() + 1, 3 * h, d}, opts) * .2;
   auto q = qstore.narrow(0, 1, qe.back()).narrow(1, 0, h);
   auto k = at::randn({ke.back(), hk, d}, opts) * .2, v = at::randn_like(k);
-  auto cq = offsets(qe, opts), ck = offsets(ke, opts);
+  auto cq = offsets(qe, opts), ck = cross ? offsets(ke, opts) : cq;
   auto window = mode == 1 ? 37 : -1;
   auto forward = [&] {
-    return infinity::infinity_fa4(
-        q, k, v, cq, ck, 513, .7 / std::sqrt(double(d)), mode == 2, window, window);
+    return infinity::infinity_fa4(q,
+                                  k,
+                                  v,
+                                  cq,
+                                  ck,
+                                  mode == 6 && span >= 0 ? (span ? span + 2 : 1025) : 513,
+                                  .7 / std::sqrt(double(d)),
+                                  mode == 2,
+                                  window,
+                                  window);
   };
   auto expected = [&] {
     return reference(q, k, v, qe, ke, .7 / std::sqrt(double(d)), mode == 2, window);
   };
   auto output = forward();
+  if (mode == 6 && cross && at::cuda::getCurrentDeviceProperties()->major == 10) {
+    TORCH_CHECK(!output.defined(), "Blackwell d256 accepted independent K/V boundaries");
+    return;
+  }
   close(output, expected(), "packed attention");
   auto stream = c10::cuda::getCurrentCUDAStream();
   stream.synchronize();
@@ -123,8 +148,14 @@ void standard(at::ScalarType dtype, int mode, bool cross) {
   graph.replay();
   close(captured, expected(), "graph replay with changed tensors");
   // Same storage/shape, different per-sequence boundaries on graph replay.
-  qe = {0, 9, 140, 649};
-  ke = cross ? std::vector<int64_t>{0, 13, 144, 700} : qe;
+  qe[1] += 1;
+  qe[2] += 2;
+  if (cross) {
+    ke[1] += 2;
+    ke[2] += 4;
+  } else {
+    ke = qe;
+  }
   cq.copy_(offsets(qe, opts));
   ck.copy_(offsets(ke, opts));
   graph.replay();
@@ -319,6 +350,27 @@ int main(int argc, char** argv) {
     TORCH_CHECK(!infinity::infinity_fa4(q, q, q, cu, cu, 7, .125).defined() &&
                     !infinity::infinity_fa4_deberta_supported(q),
                 "Unavailable InfinityFA4 intercepted attention");
+    return 0;
+  }
+  if (mode == "--qwen35") {
+    const auto* props = at::cuda::getCurrentDeviceProperties();
+    bool exported = false;
+    for (int i = 2; i < argc; ++i)
+      exported |= std::stoi(argv[i]) == 10 * props->major + props->minor;
+    if (!exported) {
+      auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
+      auto q = at::zeros({513, 16, 256}, opts), k = at::zeros({513, 4, 256}, opts);
+      auto cu = offsets({0, 513}, opts);
+      TORCH_CHECK(!infinity::infinity_fa4(q, k, k, cu, cu, 513, .0625).defined(),
+                  "Unavailable Qwen3.5 export intercepted attention");
+      return 0;
+    }
+    auto stream = c10::cuda::getStreamFromPool();
+    c10::cuda::CUDAStreamGuard guard(stream);
+    for (auto dtype : {at::kHalf, at::kBFloat16})
+      for (bool cross : {false, true})
+        for (int64_t span : {0, 128, 256, -1})
+          standard(dtype, 6, cross, span);
     return 0;
   }
   if (mode == "--extended-gqa") {

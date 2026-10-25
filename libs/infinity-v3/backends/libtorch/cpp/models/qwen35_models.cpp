@@ -67,6 +67,7 @@ class Qwen35 final : public Model {
   std::string prefix;
   int64_t hidden, heads, kv_heads, dim, layer_count, rotary;
   double epsilon;
+  bool hopper_delta_prefill = false;
   at::Tensor cos_cache, sin_cache;
 
   /// Dense, routed, and shared-expert projections for one Qwen3.5 feed-forward block.
@@ -735,7 +736,8 @@ class Qwen35 final : public Model {
                               cache && !prefill ? cache->history : at::Tensor(),
                               cache && !prefill ? cache->metadata.history_cumulative : at::Tensor(),
                               chunks,
-                              cache_layer);
+                              cache_layer,
+                              hopper_delta_prefill && !cache);
       }
 #else
       TORCH_CHECK(false, "Qwen3.5 requires the native DeltaNet CUDA kernel build");
@@ -986,6 +988,17 @@ public:
   }
 
   void ready() override {
+#ifdef TEI_TORCH_GDN_HOPPER
+    // Pplx Flash uses fresh, noncausal full-attention requests and the dense 4B GDN geometry.
+    // Qualify its BF16 prefill provider without changing cached, block or MoE execution.
+    hopper_delta_prefill = device.is_cuda() && dtype == at::kBFloat16 && hidden == 2560 &&
+                           !cfg.boolean("_fp8_dynamic", false) && integer("num_experts", 0) == 0 &&
+                           integer("linear_num_key_heads") == 16 &&
+                           integer("linear_num_value_heads") == 32 &&
+                           cfg.string("_decision.kind") == "pplx" &&
+                           cfg.string("_decision_attention_mode") == "noncausal_full_attention" &&
+                           at::cuda::getDeviceProperties(device.index())->major == 9;
+#endif
     const auto fp8 = cfg.boolean("_fp8_dynamic", false);
     const auto scope = cfg.string("_fp8_scope", fp8 ? "all" : "mlp");
     TORCH_CHECK(scope == "mlp" || scope == "all", "FP8 scope must be mlp or all");
