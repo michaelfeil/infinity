@@ -195,14 +195,13 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     at::Tensor attention;
     // Round rotary Q/K back to BF16 before attention, matching the
     // model dtype, and keep frames independent through cu_seqlens.
-    if (device.is_cuda())
-      attention = infinity_fa4(q.to(dtype).contiguous(),
-                               k.to(dtype).contiguous(),
-                               v.to(dtype).contiguous(),
-                               cu,
-                               cu,
-                               max_sequence,
-                               1. / std::sqrt(double(dim)));
+    auto aq = q, ak = k, av = v;
+    if (device.is_cuda() && infinity_fa4_modes(qkv)) {
+      aq = q.to(dtype).contiguous();
+      ak = k.to(dtype).contiguous();
+      av = v.to(dtype).contiguous();
+      attention = infinity_fa4(aq, ak, av, cu, cu, max_sequence, 1. / std::sqrt(double(dim)));
+    }
     if (attention.defined()) {
       // Packed boundaries keep every image/frame independent.
     } else if (multi_vector) {
@@ -217,10 +216,14 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
             rows.push_back(x.narrow(0, offsets[frame], length));
           return at::stack(rows, 0).transpose(1, 2).to(dtype);
         };
-        auto result =
-            at::scaled_dot_product_attention(
-                group(q), group(k), group(v), std::nullopt, 0., false, 1. / std::sqrt(double(dim)))
-                .transpose(1, 2);
+        auto result = at::scaled_dot_product_attention(group(aq),
+                                                       group(ak),
+                                                       group(av),
+                                                       std::nullopt,
+                                                       0.,
+                                                       false,
+                                                       1. / std::sqrt(double(dim)))
+                          .transpose(1, 2);
         for (size_t i = 0; i < frames.size(); ++i)
           // Restore each frame to its original slot before concatenation, so merged image spans and
           // deepstack features retain the caller's ordering.
@@ -228,9 +231,9 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
       }
       attention = at::cat(outputs, 0);
     } else if (device.is_cuda() && dtype == at::kBFloat16) {
-      attention = std::get<0>(at::_flash_attention_forward(q.to(dtype).contiguous(),
-                                                           k.to(dtype).contiguous(),
-                                                           v.to(dtype).contiguous(),
+      attention = std::get<0>(at::_flash_attention_forward(aq.to(dtype).contiguous(),
+                                                           ak.to(dtype).contiguous(),
+                                                           av.to(dtype).contiguous(),
                                                            cu,
                                                            cu,
                                                            max_frame,
