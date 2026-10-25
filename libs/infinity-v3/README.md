@@ -125,7 +125,11 @@ option list and the environment names used by your build.
 
 Click on the sections below to find tasks and **example models**. Support depends
 on the checkpoint architecture and trained output head. The models below use
-the LibTorch backend.
+the LibTorch backend. **Dense and Mixture-of-Experts (MoE) architectures are
+supported, including Qwen3, Qwen3.5 and Gemma4 MoE models.** Use checkpoints
+with a supported task head; each GPU replica must fit the full model, including
+all experts.
+
 The [native model coverage](docs/libtorch-model-coverage.md) lists implemented
 LibTorch paths and their limitations; it is not a claim that every checkpoint
 in each family has been validated.
@@ -185,7 +189,7 @@ Models and native LibTorch paths:
 - **EmbeddingGemma2** (`embedding_gemma2`): text embeddings with the checkpoint's trained projection, plus image and audio inputs when the corresponding towers are present.
 - **Mistral3 / Ministral 3**: Pixtral vision tower and native text/image preprocessing. See the [multimodal input recipe](docs/ministral-3-multimodal.md).
 - **Qwen3.5 dense and MoE**: native text/image backbones with full attention, DeltaNet and vision processing.
-- **Gemma4**: native text/image backbone. Gemma3 support is text-only.
+- **Gemma4 dense and MoE**: native text/image backbones with routed experts for MoE checkpoints. Gemma3 support is text-only.
 
 Backbone support requires a checkpoint with an appropriate trained output head;
 it does not make every instruction model a retrieval embedding model.
