@@ -62,7 +62,11 @@ def runtime_libraries(roots, site_packages):
     for root in roots:
         module = root.parent / "libinfinitygdn.so"
         if module.is_file():
-            pending.extend(select(name) for name in needed(module) if name in candidates)
+            for name in needed(module):
+                dependency = module.parent / name
+                if dependency.is_file():
+                    selected[name] = dependency
+                    pending.append(dependency)
     for pattern in LAZY_LIBRARIES:
         matches = fnmatch.filter(candidates, pattern)
         if not matches:

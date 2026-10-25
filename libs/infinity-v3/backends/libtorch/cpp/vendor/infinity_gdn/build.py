@@ -65,3 +65,6 @@ for name in ("flashinfer-python", "apache-tvm-ffi", "nvidia-cutlass-dsl", "nvidi
                 dest = a.output / "licenses" / name / file
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(source, dest)
+notice = a.output / "licenses/flashinfer-python/LICENSE-SM100-BSD3"
+notice.parent.mkdir(parents=True, exist_ok=True)
+shutil.copy2(vendor / notice.name, notice)
