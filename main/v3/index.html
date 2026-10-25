@@ -527,6 +527,34 @@
   
   
     <li class="md-nav__item">
+      <a href="docs/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="api/" class="md-nav__link">
         
   
@@ -621,10 +649,10 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_8" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_9" >
         
           
-          <label class="md-nav__link" for="__nav_2_8" id="__nav_2_8_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_2_9" id="__nav_2_9_label" tabindex="0">
             
   
   
@@ -642,8 +670,8 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_8_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_2_8">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_9">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1288,6 +1316,8 @@ Rust and uses <strong>LibTorch, the C++ interface of PyTorch</strong>, for model
 <h2 id="performance-highlights">Performance highlights</h2>
 <ul>
 <li><strong>High throughput</strong>: token-based dynamic batching and dedicated tokenization workers.</li>
+<li><strong>Memory-efficient batches</strong>: ragged attention avoids padding variable-length inputs, reducing memory waste and OOM risk.</li>
+<li><strong>Less repeated computation</strong>: from the authors of <a href="https://arxiv.org/abs/2601.15013">RadixMLP</a>, shared-prefix deduplication within a batch for supported decision models and rerankers.</li>
 <li><strong>Low latency</strong>: BERT-small runs in ~850 µs end-to-end through the Rust/C++ serving path, including ~250 µs HTTP/MessagePack, ~100 µs batching and ~500 µs inference with CUDA graphs.</li>
 <li><strong>Fast startup</strong>: ModernBERT-base <strong>0.92 s</strong>, Qwen3-8B <strong>2.51 s</strong> on one H100 80 GB.</li>
 <li><strong>Optimized inference</strong>: native LibTorch kernels, FlashAttention-4 and optional dynamic FP8 for supported models.</li>
@@ -1652,6 +1682,7 @@ server's <code>/docs</code>, <a href="docs/cli/#structured-decision-inputs">deci
 </details>
 <h2 id="documentation">Documentation</h2>
 <ul>
+<li><a href="docs/performance/">Performance and Radix MLP</a></li>
 <li><a href="docs/cli/">CLI and deployment options</a></li>
 <li><a href="docs/libtorch-backend/">Native LibTorch backend</a></li>
 <li><a href="docs/libtorch-model-coverage/">Model coverage and limitations</a></li>
