@@ -23,39 +23,18 @@ Rust and uses **LibTorch, the C++ interface of PyTorch**, for model inference.
   <a href="https://www.linkedin.com/posts/markhng525_join-me-and-ekin-karabulut-at-the-ai-infra-activity-7163233344875393024-LafB?utm_source=share&utm_medium=member_desktop"><img src="https://avatars.githubusercontent.com/u/86131705" alt="Logo Gradient.ai" width="50"/></a>
 </p>
 
-<details>
-  <summary>CUDA support and attention kernels</summary>
-
-The NVIDIA image supports Ampere through Blackwell (SM80–SM120), with builds
-for the architectures below. FlashAttention-4 is enabled for supported FP16/BF16
-shapes; other shapes use existing attention kernels. DeBERTa-v2/v3 uses a novel
-CuTeDSL-based algorithm in FA4 to fuse relative-position lookup without
-quadratic bucket or attention-bias storage.
-
-| Compute capability | Example GPUs |
-| --- | --- |
-| SM80 | A100, A30 |
-| SM86 | A10 / A10G, GeForce RTX 3090, RTX A6000 |
-| SM89 | L4, L40S, RTX 6000 Ada, GeForce RTX 4090 |
-| SM90 | H100, H200 |
-| SM100 | B200 |
-| SM120 | RTX PRO 6000 Blackwell, GeForce RTX 5090 |
-
-FA4 has runtime validation on H100 and compile/link coverage on the other
-listed targets. See the [backend documentation](docs/libtorch-backend.md#infinityfa4)
-for supported attention shapes and the `INFINITY_TORCH_FA4=0` fallback switch.
-
-</details>
-
 ## Performance highlights
 
-Selected measurements on a single **H100 80 GB**:
+Benchmarks on a single **NVIDIA H100 80 GB**:
 
-| Workload | Highlight |
-| --- | --- |
-| Mammoth 27B, typed decisions | **2.00× vLLM throughput**: 14.62 vs 7.30 requests/s at concurrency 32, with dynamic FP8 linears. |
-| ModernBERT-base startup | **0.92 s** median process-to-HTTP readiness, including loading and warmup. |
-| Qwen3-8B startup | **2.51 s** median process-to-HTTP readiness, including loading and warmup. |
+<p align="center">
+  <img src="assets/mammoth-throughput.png" width="420" alt="Mammoth throughput at concurrency 1, 8 and 32: Infinity 9.66, 13.77 and 14.62 requests/s; vLLM 4.41, 6.79 and 7.30 requests/s." />
+  <img src="assets/startup-readiness.png" width="420" alt="Median HTTP readiness with local weights: ModernBERT-base 0.92 seconds and Qwen3-8B 2.51 seconds." />
+</p>
+
+* **High throughput**: 2× vLLM requests/s on the measured Mammoth workload at concurrency 32, with dynamic FP8 linears.
+* **Fast startup**: local weights to a ready HTTP server in 0.92 s for ModernBERT-base and 2.51 s for Qwen3-8B (medians including full warmup).
+* **Efficient serving**: token-based dynamic batching, dedicated tokenization workers and native LibTorch inference.
 
 <details>
   <summary>Benchmark conditions and scope</summary>
@@ -84,6 +63,30 @@ Startup numbers are medians of five fresh processes per model with local weights
 BF16, a 32 MiB staging budget and full 16K-token warmup. Downloads are excluded;
 storage caches were uncontrolled, so these are not new-node cold-start guarantees.
 See [startup methodology and results](docs/modernbert-startup.md).
+
+</details>
+
+<details>
+  <summary>CUDA support and attention kernels</summary>
+
+The NVIDIA image supports Ampere through Blackwell (SM80–SM120), with builds
+for the architectures below. FlashAttention-4 is enabled for supported FP16/BF16
+shapes; other shapes use existing attention kernels. DeBERTa-v2/v3 uses a novel
+CuTeDSL-based algorithm in FA4 to fuse relative-position lookup without
+quadratic bucket or attention-bias storage.
+
+| Compute capability | Example GPUs |
+| --- | --- |
+| SM80 | A100, A30 |
+| SM86 | A10 / A10G, GeForce RTX 3090, RTX A6000 |
+| SM89 | L4, L40S, RTX 6000 Ada, GeForce RTX 4090 |
+| SM90 | H100, H200 |
+| SM100 | B200 |
+| SM120 | RTX PRO 6000 Blackwell, GeForce RTX 5090 |
+
+FA4 has runtime validation on H100 and compile/link coverage on the other
+listed targets. See the [backend documentation](docs/libtorch-backend.md#infinityfa4)
+for supported attention shapes and the `INFINITY_TORCH_FA4=0` fallback switch.
 
 </details>
 
