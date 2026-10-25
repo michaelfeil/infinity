@@ -4,18 +4,14 @@ Infinity V3 is a high-throughput, low-latency REST API for serving embeddings,
 reranking, classification and typed decision models. The server is written in
 Rust and uses **LibTorch, the C++ interface of PyTorch**, for model inference.
 
-## CUDA acceleration
-
-* **Ampere through Blackwell (SM80–SM120)**: the NVIDIA image includes builds for
-  SM80, SM86, SM89, SM90, SM100 and SM120.
-* **FlashAttention-4**: enabled by default for supported FP16/BF16 attention
-  shapes, with existing attention kernels handling unsupported shapes.
-* **Flash attention for DeBERTa-v2/v3**: Infinity uses a novel CuTeDSL-based
-  algorithm in FlashAttention-4, fusing relative-position lookup into attention
-  without quadratic relative-position bucket and attention-bias storage.
-
 <details>
-  <summary>Supported CUDA architectures and GPU examples</summary>
+  <summary>CUDA support and attention kernels</summary>
+
+The NVIDIA image supports Ampere through Blackwell (SM80–SM120), with builds
+for the architectures below. FlashAttention-4 is enabled for supported FP16/BF16
+shapes; other shapes use existing attention kernels. DeBERTa-v2/v3 uses a novel
+CuTeDSL-based algorithm in FA4 to fuse relative-position lookup without
+quadratic bucket or attention-bias storage.
 
 | Compute capability | Example GPUs |
 | --- | --- |
