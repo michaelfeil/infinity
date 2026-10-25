@@ -1,4 +1,5 @@
 #include "kernels/qwen35_chunk.h"
+#include "kernels/flashinfer_gdn.h"
 #include "kernels/qwen35_kernels.h"
 #include "kernels/qwen35_reference.h"
 #include "batching/prefix_cache.h"
@@ -20,10 +21,10 @@ void check(const at::Tensor& actual, const at::Tensor& expected, double toleranc
               "Prefill disagrees with recurrent reference");
 }
 
-// Exercise the production dispatcher above its 256-token threshold, with ragged
-// tails. The separate-rounding recurrence supplies independent outputs and state.
-void production_prefill(int64_t heads) {
-  constexpr int64_t tokens = 519, kh = 16;
+// Exercise fresh packed dispatch with ragged tails, including short requests.
+// The separate-rounding recurrence supplies independent outputs and state.
+void production_prefill(int64_t heads, int32_t tokens = 519) {
+  constexpr int64_t kh = 16;
   auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
   auto qkv = at::randn({tokens, (2 * kh + heads) * 128}, opts) * .2;
   auto z = at::randn({tokens, heads * 128}, opts) * .2,
@@ -105,9 +106,15 @@ int main() {
   // Reuse the same process across devices to catch process-wide CUDA initialization caches.
   for (int index = 0; index < devices; ++index) {
     cudaDeviceProp device{};
-    if (cudaGetDeviceProperties(&device, index) != cudaSuccess || device.major != 9)
+    if (cudaGetDeviceProperties(&device, index) != cudaSuccess)
       continue;
     c10::cuda::CUDAGuard guard(index);
+    bool supported = infinity::flashinfer_gdn_available(c10::Device(at::kCUDA, index));
+#ifdef TEI_TORCH_GDN_HOPPER
+    supported = supported || device.major == 9;
+#endif
+    if (!supported)
+      continue;
     ++tested;
     for (int64_t heads : {32, 48})
       for (int mode : {0, 1, 2}) {
@@ -147,14 +154,23 @@ int main() {
         auto gates = at::cat({decay, beta}, -1).to(at::kCUDA);
         auto output = at::empty({tokens, heads, 128}, values.options());
         at::Tensor state;
-        infinity::qwen35_prefill_cuda(values, qk, gates, input, output, kh, heads, &state);
+        if (!infinity::flashinfer_gdn_prefill(
+                values, qk, gates, input, output, kh, heads, &state)) {
+#ifdef TEI_TORCH_GDN_HOPPER
+          infinity::qwen35_prefill_cuda(values, qk, gates, input, output, kh, heads, &state);
+#else
+          TORCH_CHECK(false, "Registered FlashInfer GDN bundle was unavailable");
+#endif
+        }
         check(output, at::stack(outputs), .007);
         check(state, at::stack(states), .006);
       }
-    for (int64_t heads : {32, 48})
+    for (int64_t heads : {32, 48}) {
       production_prefill(heads);
+      production_prefill(heads, 17);
+    }
   }
   if (!tested)
     return 77;
-  std::cout << "Ragged Hopper prefill outputs and final states match FP64 recurrence tolerance\n";
+  std::cout << "Ragged prefill outputs and final states match FP64 recurrence tolerance\n";
 }

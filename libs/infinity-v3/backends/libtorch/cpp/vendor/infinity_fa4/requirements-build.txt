@@ -3,3 +3,4 @@ apache-tvm-ffi==0.1.14.post1
 einops==0.8.1
 torch-c-dlpack-ext==0.1.5
 # Install requirements-sources.txt with --no-deps after this file.
+flashinfer-python==0.7.2

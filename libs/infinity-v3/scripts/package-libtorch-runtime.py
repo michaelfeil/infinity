@@ -38,7 +38,8 @@ def needed(path):
 
 def runtime_libraries(roots, site_packages):
     candidates = {}
-    for path in sorted([*(site_packages / "torch/lib").glob("*.so*"),
+    for path in sorted([*[lib for root in roots for lib in root.parent.glob("*.so*")],
+                        *(site_packages / "torch/lib").glob("*.so*"),
                         *(site_packages / "nvidia").rglob("*.so*")]):
         if "stubs" not in path.parts and path.name not in {
             "libcuda.so", "libcuda.so.1", "libtorch_python.so",

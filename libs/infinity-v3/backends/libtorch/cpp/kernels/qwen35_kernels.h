@@ -57,5 +57,5 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              const at::Tensor& history_cumulative = {},
                              bool chunk_prefill = true,
                              int64_t cache_layer = -1,
-                             bool hopper_prefill = false);
+                             bool allow_prefill = false);
 }

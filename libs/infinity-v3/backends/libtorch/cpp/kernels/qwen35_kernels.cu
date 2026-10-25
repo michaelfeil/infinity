@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: MIT
 // The included Candle kernels retain their MIT notices. This wrapper dispatches
 // those native packed kernels on LibTorch's current stream, without Python.
+#include "kernels/flashinfer_gdn.h"
 #include "kernels/qwen35_kernels.h"
 #include "kernels/gemma2_norm.h"
 #include "kernels/qwen35_recurrent.h"
@@ -1149,7 +1150,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              const at::Tensor& history_cumulative,
                              bool chunk_prefill,
                              int64_t cache_layer,
-                             bool hopper_prefill) {
+                             bool allow_prefill) {
   c10::cuda::CUDAGuard guard(qkv.device());
   TORCH_CHECK(qkv.scalar_type() == at::kBFloat16 && z.scalar_type() == at::kBFloat16 &&
                   ab.scalar_type() == at::kBFloat16 && conv.scalar_type() == at::kBFloat16 &&
@@ -1232,9 +1233,14 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
   }
   // Prefill benefits from chunk-parallel work; short question suffixes keep the
   // register-resident recurrent path. Both consume/produce the same FP32 state.
+  if ((final_state || allow_prefill) && !initial.defined() && !input.prefix &&
+      flashinfer_gdn_prefill(
+          convolution, qk, decay, input, recurrence, key_heads, value_heads, final_state)) {
+    // The AOT bundle selects the upstream provider for the actual device family.
+  } else
 #ifdef TEI_TORCH_GDN_HOPPER
-  if ((final_state || hopper_prefill) && !initial.defined() && !input.prefix && tokens >= 256 &&
-      at::cuda::getDeviceProperties(qkv.get_device())->major == 9) {
+      if ((final_state || allow_prefill) && !initial.defined() && !input.prefix &&
+          at::cuda::getDeviceProperties(qkv.get_device())->major == 9) {
     qwen35_prefill_cuda(
         convolution, qk, decay, input, recurrence, key_heads, value_heads, final_state);
   } else
