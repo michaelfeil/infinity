@@ -168,8 +168,7 @@ class Gemma final : public Model {
         !has(name + ".bias")) {
       c10::cuda::CUDAGuard guard(x.device());
       auto property = at::cuda::getDeviceProperties(device.index());
-      if (property->major == 9 && property->minor == 0 &&
-          reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 256 == 0 &&
+      if (property->major >= 8 && reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 256 == 0 &&
           reinterpret_cast<uintptr_t>(matrix.const_data_ptr()) % 256 == 0) {
         const auto m = x.size(0), full_m = prefix_logical_input(packed).ids.numel(), k = x.size(1),
                    n = matrix.size(0);

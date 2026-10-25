@@ -43,7 +43,7 @@ bool torch_flash_fma_supported(const at::Tensor& q,
         k.size(2) == q.size(2) && v.size(2) == q.size(2) && q.stride(2) == 1 && k.stride(2) == 1 &&
         v.stride(2) == 1))
     return false;
-  // Head widths correspond to separately compiled launch units. The width-72 BF16/noncausal/SM90
+  // Head widths correspond to separately compiled launch units. The width-72 BF16/noncausal
   // profile has its own launch; advertising another dtype or mask also requires checking that
   // unit's template dispatch.
   if (q.size(2) == 72) {
@@ -52,8 +52,7 @@ bool torch_flash_fma_supported(const at::Tensor& q,
         k.scalar_type() != q.scalar_type() || v.scalar_type() != q.scalar_type())
       return false;
     const auto* properties = at::cuda::getDeviceProperties(q.device().index());
-    return properties->major == 9 && properties->minor == 0 &&
-           properties->sharedMemPerBlockOptin >= 48 * 1024;
+    return properties->major >= 8 && properties->sharedMemPerBlockOptin >= 48 * 1024;
   }
   if (q.size(2) == 64 || q.size(2) == 128 || q.size(2) == 256)
     return at::cuda::getDeviceProperties(q.device().index())->major >= 8;
@@ -62,11 +61,10 @@ bool torch_flash_fma_supported(const at::Tensor& q,
   if (q.size(2) != 512 || q.scalar_type() != at::kBFloat16 || window_left != -1 ||
       window_right != -1)
     return false;
-  // The proven wide-head launch uses128KiB dynamic shared memory on SM90.
-  // Other architectures/dtypes/masks retain their native efficient fallback.
+  // The wide-head launch requires 128 KiB of dynamic shared memory.
+  // Devices with insufficient shared memory retain their efficient fallback.
   const auto* properties = at::cuda::getDeviceProperties(q.device().index());
-  return properties->major == 9 && properties->minor == 0 &&
-         properties->sharedMemPerBlockOptin >= 128 * 1024;
+  return properties->major >= 8 && properties->sharedMemPerBlockOptin >= 128 * 1024;
 }
 
 /// Translate packed Q/K/V metadata to the private Flash launch contract and allocate independent

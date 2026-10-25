@@ -210,19 +210,10 @@ OrdinaryLinearExecutor::Session OrdinaryLinearExecutor::prepare(const at::Tensor
       at::globalContext().deterministicAlgorithms() ||
       at::globalContext().blasPreferredBackend() != at::BlasBackend::Cublaslt)
     return session;
-  const auto* properties = at::cuda::getDeviceProperties(x.get_device());
-  // SM90 scopes the validated ordinary-GEMM recipe. This restriction is separate from
-  // CUDA/Half/BF16 layout eligibility and does not limit the ordinary ATen fallback to SM90.
-  if (properties->major != 9 || properties->minor != 0)
-    return session;
   // Reuse Torch's dynamically loaded driver API; no direct libcuda dependency.
   const auto get_context = c10::cuda::DriverAPI::get()->cuCtxGetCurrent_;
   CUcontext context{};
   if (!get_context || get_context(&context) != CUDA_SUCCESS || !context)
-    return session;
-  static const auto version = cublasLtGetVersion();
-  // The original learned-operand packet proves this library's first tactic.
-  if (version != 130200)
     return session;
   const auto workspace_bytes = at::cuda::getCUDABlasLtWorkspaceSize();
   if (workspace_bytes > Impl::max_workspace)
@@ -262,10 +253,6 @@ at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x,
       x.size(1) != weight.size(1) || !x.is_contiguous() || !weight.is_contiguous())
     return {};
   const auto m = x.size(0), n = weight.size(0), k = x.size(1);
-  // These (K,N) pairs cover the validated ModernBERT projections; M remains the actual request row
-  // count. This is a recipe allowlist rather than a general cuBLAS matrix-size requirement.
-  if (!((k == 768 && (n == 2304 || n == 768)) || (k == 1152 && n == 768)))
-    return {};
   const auto output_dtype = x.scalar_type();
   const auto* state = session.state_.get();
   if (!state || state->owner.get() != impl_.get() || state->device != x.get_device() ||
@@ -372,12 +359,6 @@ at::Tensor OrdinaryLinearExecutor::forward(const at::Tensor& x,
                                            &returned)) ||
         returned != 1 || heuristic.state != CUBLAS_STATUS_SUCCESS ||
         heuristic.workspaceSize > workspace_bytes)
-      return {};
-    int id = 0;
-    size_t written = 0;
-    if (!ok(cublasLtMatmulAlgoConfigGetAttribute(
-            &heuristic.algo, CUBLASLT_ALGO_CONFIG_ID, &id, sizeof(id), &written)) ||
-        written != sizeof(id) || id != 66)
       return {};
     plan->algorithm = heuristic.algo; // Original first tactic, not a custom search.
     plan->rejected = false;

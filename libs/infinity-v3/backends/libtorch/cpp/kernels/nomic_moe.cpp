@@ -51,10 +51,9 @@ at::Tensor nomic_moe_split_policy(const c10::Device& device,
     return {};
   c10::cuda::CUDAGuard guard(device);
   auto* properties = at::cuda::getCurrentDeviceProperties();
-  // The stored split policy reproduces this device/library/provider's reference heuristic. A new
-  // library version needs per-route-count policy qualification, even when it
-  // supports the same BF16 matrices.
-  if (properties->major != 9 || properties->minor != 0 || cublasLtGetVersion() != 130200 ||
+  // Query the current device/library heuristic for the SM80 grouped kernel.
+  // Unsupported split policies retain the ordinary expert path.
+  if (properties->major < 8 ||
       at::globalContext().blasPreferredBackend() != at::BlasBackend::Cublaslt ||
       at::globalContext().allowBF16ReductionCuBLAS() !=
           at::CuBLASReductionOption::AllowReducedPrecisionWithSplitK)

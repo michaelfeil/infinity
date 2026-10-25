@@ -769,9 +769,8 @@ public:
     if (device.is_cuda()) {
       const auto* properties = at::cuda::getDeviceProperties(device.index());
       auto major = properties->major;
-      // Other architectures retain installed Torch arithmetic until qualified.
-      qwen_half_exact = !fp8_dynamic && dtype == at::kHalf && major == 9 &&
-                        properties->minor == 0 &&
+      // These native half-precision operators support SM80 and newer.
+      qwen_half_exact = !fp8_dynamic && dtype == at::kHalf && major >= 8 &&
                         ((family == "qwen3" && hidden == 1024 && head_dim == 128) ||
                          (family == "qwen2" && hidden == 896 && head_dim == 64) ||
                          (family == "qwen3_moe" && hidden == 2048 && head_dim == 128 &&
