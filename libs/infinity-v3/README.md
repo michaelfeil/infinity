@@ -26,6 +26,8 @@ Rust and uses **LibTorch, the C++ interface of PyTorch**, for model inference.
 ## Performance highlights
 
 * **High throughput**: token-based dynamic batching and dedicated tokenization workers.
+* **Memory-efficient batches**: ragged attention avoids padding variable-length inputs, reducing memory waste and OOM risk.
+* **Less repeated computation**: from the authors of [RadixMLP](https://arxiv.org/abs/2601.15013), shared-prefix deduplication within a batch for supported decision models and rerankers.
 * **Low latency**: BERT-small runs in ~850 µs end-to-end through the Rust/C++ serving path, including ~250 µs HTTP/MessagePack, ~100 µs batching and ~500 µs inference with CUDA graphs.
 * **Fast startup**: ModernBERT-base **0.92 s**, Qwen3-8B **2.51 s** on one H100 80 GB.
 * **Optimized inference**: native LibTorch kernels, FlashAttention-4 and optional dynamic FP8 for supported models.
@@ -334,6 +336,7 @@ server's `/docs`, [decision inputs](docs/cli.md#structured-decision-inputs) and
 
 ## Documentation
 
+- [Performance and Radix MLP](docs/performance.md)
 - [CLI and deployment options](docs/cli.md)
 - [Native LibTorch backend](docs/libtorch-backend.md)
 - [Model coverage and limitations](docs/libtorch-model-coverage.md)
