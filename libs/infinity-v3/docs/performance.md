@@ -6,8 +6,8 @@ for measured latency, throughput and startup times.
 
 ## Radix MLP
 
-**Radix MLP**, authored by [Michael Feil](https://github.com/michaelfeil), is an
-intra-batch deduplication technique for supported decision models and rerankers.
+[RadixMLP — Intra-batch Deduplication for Causal Transformers](https://arxiv.org/abs/2601.15013)
+describes the technique used for supported decision models and rerankers.
 It shares MLP computation for common token prefixes instead of repeating that
 work for every sequence in the batch.
 
