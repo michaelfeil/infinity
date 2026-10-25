@@ -154,8 +154,7 @@ class Qwen35 final : public Model {
         matrix.size(1) == 4096) {
       c10::cuda::CUDAGuard guard(x.device());
       auto property = at::cuda::getDeviceProperties(device.index());
-      if (property->major == 9 && property->minor == 0 &&
-          reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 256 == 0 &&
+      if (property->major >= 8 && reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 256 == 0 &&
           reinterpret_cast<uintptr_t>(matrix.const_data_ptr()) % 256 == 0) {
         const auto m = x.size(0), full_m = prefix_logical_input(packed).ids.numel(), k = x.size(1),
                    n = matrix.size(0);
@@ -712,10 +711,10 @@ class Qwen35 final : public Model {
                                              epsilon,
                                              cache_layer);
       else {
-        // Qualified on H100: wide chunk scans amortize their setup for multiple
+        // Wide chunk scans amortize their setup for multiple
         // long prefills. Keep short/single sequences on the faster recurrence.
         const auto* properties = at::cuda::getDeviceProperties(device.index());
-        const bool chunks = properties->major == 9 &&
+        const bool chunks = properties->major >= 8 &&
                             properties->sharedMemPerBlockOptin >= 163840 && input.batch >= 4 &&
                             qkv.size(0) / input.batch >= 1024 &&
                             integer("linear_num_value_heads") >= 32;

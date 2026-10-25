@@ -287,8 +287,7 @@ static void media_spans(const c10::Device& device) {
   auto options = at::TensorOptions().device(device).dtype(at::kBFloat16);
   auto probe = at::zeros({3, 4, 72}, options);
   const auto* properties = at::cuda::getDeviceProperties(device.index());
-  bool supported = properties->major == 9 && properties->minor == 0 &&
-                   properties->sharedMemPerBlockOptin >= 48 * 1024;
+  bool supported = properties->major >= 8 && properties->sharedMemPerBlockOptin >= 48 * 1024;
   TORCH_CHECK(infinity::torch_flash_fma_supported(probe, probe, probe) == supported,
               "Head72 architecture guard");
   TORCH_CHECK(!infinity::torch_flash_fma_supported(probe, probe, probe, true, -1, -1),
@@ -525,8 +524,7 @@ int main(int argc, char** argv) {
   auto wide_options = at::TensorOptions().device(device).dtype(at::kBFloat16);
   auto probe = at::zeros({3, 1, 512}, wide_options);
   const auto* properties = at::cuda::getDeviceProperties(device.index());
-  const bool hopper = properties->major == 9 && properties->minor == 0 &&
-                      properties->sharedMemPerBlockOptin >= 128 * 1024;
+  const bool hopper = properties->major >= 8 && properties->sharedMemPerBlockOptin >= 128 * 1024;
   TORCH_CHECK(infinity::torch_flash_fma_supported(probe, probe, probe, false, -1, -1) == hopper,
               "Wide-head architecture guard mismatch");
   TORCH_CHECK(infinity::torch_flash_fma_supported(probe, probe, probe, true, -1, -1) == hopper,

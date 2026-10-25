@@ -325,13 +325,13 @@ struct Bert : infinity::Model {
         !options.boolean("_fp8_dynamic", false) &&
         (config.activation == 0 || config.activation == 1) &&
         at::cuda::getDeviceProperties(device.index())->major >= 8;
-    // Qualified H100 FP16 BERT embedding geometry. Dynamic FP8 also needs
+    // Supported FP16 BERT embedding geometry. Dynamic FP8 also needs
     // the original Flash rounding before quantization, including trained heads.
     // BERT classifier backbones share this geometry; keep SPLADE and RoBERTa selectors unchanged.
     private_flash_embedding =
         device.is_cuda() && dtype == at::kHalf && !roberta && config.hidden == 768 &&
         config.heads == 12 && (config.activation == 0 || config.activation == 1) &&
-        at::cuda::getDeviceProperties(device.index())->major == 9 &&
+        at::cuda::getDeviceProperties(device.index())->major >= 8 &&
         (options.string("_pooling") != "splade" || options.boolean("_fp8_dynamic", false));
     // RoBERTa classifier projections use the same biased/GELU GEMM contract;
     // retain its existing attention selector while reusing projection plans.
@@ -341,7 +341,7 @@ struct Bert : infinity::Model {
         device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16) &&
         (config.hidden == 768 || config.hidden == 384) && config.heads == 12 &&
         (config.activation == 0 || config.activation == 1) &&
-        at::cuda::getDeviceProperties(device.index())->major == 9 && classification_width() > 0 &&
+        at::cuda::getDeviceProperties(device.index())->major >= 8 && classification_width() > 0 &&
         !options.boolean("_fp8_dynamic", false) &&
         at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt;
     // Reuse the bounded biased-GEMM plans for standard CLS embeddings too.
@@ -362,7 +362,7 @@ struct Bert : infinity::Model {
     exact_biased_norm =
         device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16) &&
         (native_bert_embedding || ((config.hidden == 768 || config.hidden == 384) &&
-                                   at::cuda::getDeviceProperties(device.index())->major == 9));
+                                   at::cuda::getDeviceProperties(device.index())->major >= 8));
     // These trained profiles use Candle's packed attention arithmetic, including
     // long ragged inputs. Dynamic FP8 retains its existing selector.
     private_flash_exact_classifier =
@@ -371,15 +371,15 @@ struct Bert : infinity::Model {
         ((roberta && config.hidden == 384) ||
          (!roberta && dtype == at::kBFloat16 && config.hidden == 768)) &&
         (config.activation == 0 || config.activation == 1) &&
-        at::cuda::getDeviceProperties(device.index())->major == 9 &&
+        at::cuda::getDeviceProperties(device.index())->major >= 8 &&
         !options.boolean("_fp8_dynamic", false);
-    // Initial measured RoBERTa eager scope: H100 FP16 hidden768/head64 mean
+    // RoBERTa eager scope: SM80+ FP16 hidden768/head64 mean
     // embeddings. Keep dynamic FP8, trained heads and other pools unchanged.
     private_flash_roberta_embedding =
         device.is_cuda() && dtype == at::kHalf && options.string("model_type") == "roberta" &&
         config.hidden == 768 && config.heads == 12 &&
         (config.activation == 0 || config.activation == 1) &&
-        at::cuda::getDeviceProperties(device.index())->major == 9 && classification_width() == 0 &&
+        at::cuda::getDeviceProperties(device.index())->major >= 8 && classification_width() == 0 &&
         options.string("_embedding_pool") == "mean" && !options.boolean("_fp8_dynamic", false);
 #endif
     check("embeddings.word_embeddings.weight", {config.vocab, config.hidden});

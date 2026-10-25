@@ -374,8 +374,7 @@ struct Encoder final : Model {
     // The outer ModernBERT geometry gate and the executor's inner (K,N) allowlist jointly bound
     // this optimization. Broadening only model construction leaves other projections on ATen.
     if (family == Family::Modern && device.is_cuda() &&
-        (dtype == at::kHalf || dtype == at::kBFloat16) && hidden == 768 && heads == 12 &&
-        o.integer("intermediate_size", 1152) == 1152 && !o.boolean("_fp8_dynamic", false))
+        (dtype == at::kHalf || dtype == at::kBFloat16) && !o.boolean("_fp8_dynamic", false))
       ordinary_executor = std::make_shared<OrdinaryLinearExecutor>();
     TORCH_CHECK(hidden > 0 && heads > 0 && hidden % heads == 0 && layers > 0,
                 "Invalid encoder dimensions");
@@ -395,7 +394,7 @@ struct Encoder final : Model {
 #ifdef TEI_TORCH_CUDA_KERNELS
     exact_distil_flash = family == Family::Distil && device.is_cuda() && dtype == at::kHalf &&
                          hidden == 768 && heads == 12 && activation == "gelu" &&
-                         at::cuda::getDeviceProperties(device.index())->major == 9;
+                         at::cuda::getDeviceProperties(device.index())->major >= 8;
 #endif
     if (family == Family::Distil)
       prefix = weights.count("distilbert.embeddings.word_embeddings.weight") ? "distilbert." : "";
