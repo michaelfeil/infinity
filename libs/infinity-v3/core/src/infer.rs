@@ -840,6 +840,8 @@ async fn batching_task(
         } else {
             drop(permit);
             tokio::select! { _ = arrival => {}, _ = changed.changed() => {} }
+            // Let already-ready tokenization futures enqueue together before selecting a batch.
+            tokio::task::yield_now().await;
         }
     }
     queue.close();
