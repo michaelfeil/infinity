@@ -38,7 +38,9 @@ bool flashinfer_gdn_prefill(const at::Tensor& values,
   auto q = pairs.narrow(2, 0, 128).to(values.scalar_type()).contiguous();
   auto k = pairs.narrow(2, 128, 128).to(values.scalar_type()).contiguous();
   auto v = values.narrow(1, 2 * kh * 128, vh * 128).contiguous();
-  auto alpha = gates.narrow(1, 0, vh).contiguous(), beta = gates.narrow(1, vh, vh).contiguous();
+  // A one-token view can be contiguous while starting at an unaligned head offset.
+  auto alpha = gates.narrow(1, 0, vh).contiguous(),
+       beta = gates.narrow(1, vh, vh).clone(at::MemoryFormat::Contiguous);
   auto state = at::empty({input.batch, vh, 128, 128}, values.options().dtype(at::kFloat));
   // FlashInfer owns one TMA slot per SM (four descriptors on SM10x).
   auto workspace = at::empty({props->multiProcessorCount * (props->major == 10 ? 512 : 128)},

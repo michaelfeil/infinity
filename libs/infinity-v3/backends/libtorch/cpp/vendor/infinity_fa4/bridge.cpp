@@ -10,20 +10,19 @@
 #include <exception>
 #include <mutex>
 extern "C" {
-int __tvm_ffi_fa4_bert_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-int __tvm_ffi_fa4_modern_local_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-int __tvm_ffi_fa4_qwen_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-int __tvm_ffi_fa4_voyage_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-int __tvm_ffi_fa4_gqa6_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-int __tvm_ffi_fa4_gqa8_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-int __tvm_ffi_fa4_bert_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-int __tvm_ffi_fa4_modern_local_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-int __tvm_ffi_fa4_qwen_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-int __tvm_ffi_fa4_voyage_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-int __tvm_ffi_fa4_gqa6_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-int __tvm_ffi_fa4_gqa8_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-
+#define FA4_PROFILE(name, h, hk, d, causal, local) \
+int __tvm_ffi_fa4_##name##_fp16(void*, const TVMFFIAny*, int32_t, TVMFFIAny*); \
+int __tvm_ffi_fa4_##name##_bf16(void*, const TVMFFIAny*, int32_t, TVMFFIAny*);
+#include "profiles.inc"
+#undef FA4_PROFILE
 }
+struct Profile { int width, group; bool causal, local; };
+constexpr Profile profiles[] = {
+#define FA4_PROFILE(name, h, hk, d, causal, local) {d, h / hk, bool(causal), bool(local)},
+#include "profiles.inc"
+#undef FA4_PROFILE
+};
+constexpr int attention_modes = sizeof(profiles) / sizeof(profiles[0]);
 #ifndef FA4_COMPUTE_CAPABILITY
 #define FA4_COMPUTE_CAPABILITY 90
 #endif
@@ -43,7 +42,7 @@ struct StreamScope {
 // only the first successful call to each export; warm calls stay concurrent.
 namespace {
 std::mutex export_init_mutex;
-std::atomic<bool> export_initialized[16]{};
+std::atomic<bool> export_initialized[2 * attention_modes + 2]{};
 std::exception_ptr export_init_failure;
 
 template <typename F>
@@ -70,9 +69,6 @@ void invoke_export(unsigned slot, F&& invoke) {
 }
 }  // namespace
 
-extern "C" int __tvm_ffi_fa4_qwen35_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-extern "C" int __tvm_ffi_fa4_qwen35_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
-constexpr int attention_modes = 7;
 extern "C" int infinity_fa4_modes_v1(){return (1 << attention_modes) - 1;}
 
 // Export families: 0 global d64 MHA, 1 windowed d64 MHA, 2 causal d128 GQA4, 3 global d128 GQA2, 4 GQA6, 5 GQA8, 6 global d256 GQA4.
@@ -81,40 +77,33 @@ extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* strea
  try{
   if(dtype<0||dtype>1||mode<0||mode>=attention_modes||total<=0||total_k<=0||batch<=0||max_q<=0)throw std::runtime_error("unsupported attention geometry");
   static tvm::ffi::Function functions[2][attention_modes] = {
-    {tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_bert_fp16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_modern_local_fp16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen_fp16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_voyage_fp16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_gqa6_fp16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_gqa8_fp16,nullptr)
-,tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_fp16,nullptr)
-    },
-    {tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_bert_bf16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_modern_local_bf16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen_bf16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_voyage_bf16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_gqa6_bf16,nullptr),
-     tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_gqa8_bf16,nullptr)
-,tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_qwen35_bf16,nullptr)
+    {
+#define FA4_PROFILE(name, h, hk, d, causal, local) tvm::ffi::Function::FromExternC(nullptr, __tvm_ffi_fa4_##name##_fp16, nullptr),
+#include "profiles.inc"
+#undef FA4_PROFILE
+    }, {
+#define FA4_PROFILE(name, h, hk, d, causal, local) tvm::ffi::Function::FromExternC(nullptr, __tvm_ffi_fa4_##name##_bf16, nullptr),
+#include "profiles.inc"
+#undef FA4_PROFILE
     }
   };
-  if(h<=0||hk<=0||(!std::isfinite(scale)||scale<=0)||(mode<2&&h!=hk)||(mode==2&&(h%hk||h/hk!=4))
-     ||(mode==3&&(h%hk||h/hk!=2))
-     ||(mode==4&&(h%hk||h/hk!=6))||(mode==5&&(h%hk||h/hk!=8))||(mode==6&&(h%hk||h/hk!=4))
-     ||(mode==1&&(left<0||right<0)))throw std::runtime_error("unsupported attention parameters");
+  const auto& profile = profiles[mode];
+  if(h<=0||hk<=0||h!=profile.group*hk||!std::isfinite(scale)||scale<=0||
+     (profile.local&&(left<0||(!profile.causal&&right<0))))
+    throw std::runtime_error("unsupported attention parameters");
   auto& fn=functions[dtype][mode];
   DLDataType data_type{static_cast<uint8_t>(dtype==0?kDLFloat:kDLBfloat),16,1};
-  int64_t d=mode==6?256:(mode>=2?128:64);
+  int64_t d=profile.width;
   int64_t qs[]={total,h,d},ks[]={total_k,hk,d},cs[]={batch+1},st[12],cst[]={1};
   for(int j=0;j<12;j++)st[j]=strides[j];
   auto tensor=[&](void* p,int n,int64_t* sh,int64_t* stride,DLDataType dt){return DLTensor{p,{kDLCUDA,device},n,dt,sh,stride,0};};
   DLTensor qt=tensor(q,3,qs,st,data_type),kt=tensor(k,3,ks,st+3,data_type),vt=tensor(v,3,ks,st+6,data_type),ot=tensor(o,3,qs,st+9,data_type),ct=tensor(offsets,1,cs,cst,{kDLInt,32,1}),ckt=tensor(offsets_k,1,cs,cst,{kDLInt,32,1});
-  tvm::ffi::Array<tvm::ffi::Any> aux{nullptr,nullptr};tvm::ffi::Any lb=mode==1?tvm::ffi::Any(int64_t(left)):tvm::ffi::Any(nullptr);
-  tvm::ffi::Any rb=mode==1?tvm::ffi::Any(int64_t(right)):tvm::ffi::Any(nullptr);
+  tvm::ffi::Array<tvm::ffi::Any> aux{nullptr,nullptr};tvm::ffi::Any lb=profile.local?tvm::ffi::Any(int64_t(left)):tvm::ffi::Any(nullptr);
+  tvm::ffi::Any rb=profile.local?tvm::ffi::Any(int64_t(right)):tvm::ffi::Any(nullptr);
   StreamScope scope(device,stream);
   invoke_export(dtype * attention_modes + mode, [&] {
 #if FA4_COMPUTE_CAPABILITY == 100
-  if (mode == 6)
+  if (profile.width == 256)
     fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,&ckt,nullptr,nullptr,nullptr,lb,rb,nullptr,
        nullptr,nullptr,aux,int64_t(max_q));
   else

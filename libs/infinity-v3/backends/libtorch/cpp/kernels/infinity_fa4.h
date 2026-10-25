@@ -4,12 +4,16 @@
 
 #pragma once
 #include <ATen/ATen.h>
+#include <optional>
 
 namespace infinity {
+/// Advertised attention-profile bits for this tensor's device and storage type.
+int infinity_fa4_modes(const at::Tensor& reference);
 // Undefined means this layout/mask has no exported kernel. A failed supported
 // launch raises an error; it must never silently retry another implementation.
 /// Consume [tokens, heads, head_dim] Q/K/V and device int32 cumulative Q/K boundaries. Unsupported
 /// exports return undefined; errors after selecting a supported launch propagate.
+/// An optional operand dtype defers conversion until a compatible export is selected.
 at::Tensor infinity_fa4(const at::Tensor& q,
                         const at::Tensor& k,
                         const at::Tensor& v,
@@ -19,7 +23,8 @@ at::Tensor infinity_fa4(const at::Tensor& q,
                         double scale,
                         bool causal = false,
                         int64_t left = -1,
-                        int64_t right = -1);
+                        int64_t right = -1,
+                        std::optional<at::ScalarType> operand_dtype = std::nullopt);
 bool infinity_fa4_deberta_supported(const at::Tensor& reference, int64_t head_dim = 64);
 /// Evaluate packed disentangled attention using scaled keys,
 /// relative projections, and signed buckets.

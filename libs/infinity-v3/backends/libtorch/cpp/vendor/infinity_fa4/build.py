@@ -64,23 +64,24 @@ if not a.link_only:
     with FakeTensorMode() if a.compile_only else contextlib.nullcontext():
         cu = torch.tensor([0, 127, 256], device="cuda", dtype=torch.int32)
         for dtype_name, dtype in [("fp16", torch.float16), ("bf16", torch.bfloat16)]:
-            for name, h, hk, d, causal, window in [
-                ("bert", 16, 16, 64, False, (None, None)),
-                ("modern_local", 12, 12, 64, False, (64, 64)),
-                ("qwen", 32, 8, 128, True, (None, None)),
-                ("voyage", 16, 8, 128, False, (None, None)),
-                ("gqa6", 12, 2, 128, False, (None, None)),
-                ("gqa8", 32, 4, 128, False, (None, None)),
-                ("qwen35", 16, 4, 256, False, (None, None)),
-            ]:
+            profiles = []
+            for line in pathlib.Path(__file__).with_name("profiles.inc").read_text().splitlines():
+                if line.startswith("FA4_PROFILE("):
+                    name, *fields = line.removeprefix("FA4_PROFILE(").removesuffix(")").split(",")
+                    h, hk, d, causal, local = map(int, fields)
+                    window = (64, 0) if causal and local else (64, 64) if local else (None, None)
+                    profiles.append((name.strip(), h, hk, d, bool(causal), window))
+            for name, h, hk, d, causal, window in profiles:
                 q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
                 k = torch.zeros((256, hk, d), device="cuda", dtype=dtype)
                 previous = set(interface._flash_attn_fwd.compile_cache.cache)
-                if name == "qwen35" and capability in (80, 86, 89, 120):
+                if d == 256 and capability in (80, 86, 89, 120):
                     # 64x64 fits the 99 KiB shared-memory budget of SM86/89/120.
                     interface._flash_attn_fwd(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
                                              max_seqlen_q=129, max_seqlen_k=129,
-                                             tile_mn=(64, 64), disable_scheduler_metadata=True)
+                                             tile_mn=(64, 64), causal=causal,
+                                             window_size_left=window[0], window_size_right=window[1],
+                                             disable_scheduler_metadata=True)
                 else:
                     interface.flash_attn_varlen_func(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
                                                     max_seqlen_q=129, max_seqlen_k=129,
@@ -122,7 +123,7 @@ if not a.link_only:
                 kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
                                     causal=False, window=[None, None], dtype=dtype_name))
     manifest = {
-        "abi_version": 6,
+        "abi_version": 7,
         "host_target": host_target(),
         "softmax_backport": softmax_backport,
         "architecture": a.arch,
@@ -139,8 +140,8 @@ if not a.link_only:
     (a.output / "manifest.json").write_text(json.dumps(manifest, indent=2))
 else:
     manifest = json.loads((a.output / "manifest.json").read_text())
-    if manifest.get("abi_version") != 6:
-        raise RuntimeError("Re-export the native bundle for ABI version 6")
+    if manifest.get("abi_version") != 7:
+        raise RuntimeError("Re-export the native bundle for ABI version 7")
     if manifest.get("host_target") != host_target():
         raise RuntimeError("Re-export FA4 with the portable host target before linking")
     objects = [str(a.output / (k["symbol"] + ".o")) for k in manifest["kernels"]]

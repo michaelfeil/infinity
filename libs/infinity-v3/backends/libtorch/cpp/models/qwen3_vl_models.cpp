@@ -189,58 +189,51 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     auto q = rotate(qkv.select(1, 0)), k = rotate(qkv.select(1, 1)),
          v = qkv.select(1, 2).to(at::kFloat);
 
-    at::Tensor attention;
-    // Round rotary Q/K back to BF16 before attention, matching the
-    // model dtype, and keep frames independent through cu_seqlens.
-    if (multi_vector) {
-      // Match SDPA's arithmetic while batching equally sized frames without padding.
-      std::vector<at::Tensor> outputs(offsets.size() - 1);
-      for (const auto& [length, frames] : frame_groups) {
-        auto group = [&](const at::Tensor& x) {
-          if (frames.size() == 1)
-            return x.narrow(0, offsets[frames[0]], length).transpose(0, 1).unsqueeze(0).to(dtype);
-          std::vector<at::Tensor> rows;
-          for (auto frame : frames)
-            rows.push_back(x.narrow(0, offsets[frame], length));
-          return at::stack(rows, 0).transpose(1, 2).to(dtype);
-        };
-        auto result =
-            at::scaled_dot_product_attention(
-                group(q), group(k), group(v), std::nullopt, 0., false, 1. / std::sqrt(double(dim)))
-                .transpose(1, 2);
-        for (size_t i = 0; i < frames.size(); ++i)
-          // Restore each frame to its original slot before concatenation, so merged image spans and
-          // deepstack features retain the caller's ordering.
-          outputs[frames[i]] = result.select(0, i);
+    // Preserve the vision fallback's operand precision and frame grouping.
+    auto aq = q, ak = k, av = v;
+    if (device.is_cuda() && (multi_vector || dtype == at::kBFloat16)) {
+      aq = q.to(dtype).contiguous();
+      ak = k.to(dtype).contiguous();
+      av = v.to(dtype).contiguous();
+    }
+    auto fallback = [&]() -> at::Tensor {
+      if (multi_vector) {
+        // Match SDPA's arithmetic while batching equally sized frames without padding.
+        std::vector<at::Tensor> outputs(offsets.size() - 1);
+        for (const auto& [length, frames] : frame_groups) {
+          auto group = [&](const at::Tensor& x) {
+            if (frames.size() == 1)
+              return x.narrow(0, offsets[frames[0]], length).transpose(0, 1).unsqueeze(0).to(dtype);
+            std::vector<at::Tensor> rows;
+            for (auto frame : frames)
+              rows.push_back(x.narrow(0, offsets[frame], length));
+            return at::stack(rows, 0).transpose(1, 2).to(dtype);
+          };
+          auto result = at::scaled_dot_product_attention(group(aq),
+                                                         group(ak),
+                                                         group(av),
+                                                         std::nullopt,
+                                                         0.,
+                                                         false,
+                                                         1. / std::sqrt(double(dim)))
+                            .transpose(1, 2);
+          for (size_t i = 0; i < frames.size(); ++i)
+            // Restore each frame to its original slot before concatenation, so merged image spans and
+            // deepstack features retain the caller's ordering.
+            outputs[frames[i]] = result.select(0, i);
+        }
+        return at::cat(outputs, 0);
       }
-      attention = at::cat(outputs, 0);
-    } else if (device.is_cuda() && dtype == at::kBFloat16) {
-      attention = std::get<0>(at::_flash_attention_forward(q.to(dtype).contiguous(),
-                                                           k.to(dtype).contiguous(),
-                                                           v.to(dtype).contiguous(),
-                                                           cu,
-                                                           cu,
-                                                           max_frame,
-                                                           max_frame,
-                                                           0.,
-                                                           false,
-                                                           false,
-                                                           1. / std::sqrt(double(dim))));
-    } else if (device.is_cuda()) {
-      attention = std::get<0>(at::_efficient_attention_forward(q.unsqueeze(0),
-                                                               k.unsqueeze(0),
-                                                               v.unsqueeze(0),
-                                                               std::nullopt,
-                                                               cu,
-                                                               cu,
-                                                               max_frame,
-                                                               max_frame,
-                                                               0.,
-                                                               0,
-                                                               false,
-                                                               1. / std::sqrt(double(dim))))
-                      .squeeze(0);
-    } else {
+      if (device.is_cuda())
+        return packed_aten_attention(dtype == at::kBFloat16 ? aq : q,
+                                     dtype == at::kBFloat16 ? ak : k,
+                                     dtype == at::kBFloat16 ? av : v,
+                                     cu,
+                                     cu,
+                                     max_frame,
+                                     max_frame,
+                                     1. / std::sqrt(double(dim)),
+                                     false);
       std::vector<at::Tensor> outputs;
       for (size_t t = 0; t + 1 < offsets.size(); ++t) {
         auto slice = [&](const at::Tensor& x) {
@@ -252,8 +245,23 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
                 .squeeze(0)
                 .transpose(0, 1));
       }
-      attention = at::cat(outputs, 0);
-    }
+      return at::cat(outputs, 0);
+    };
+    auto attention = device.is_cuda() ? packed_cuda_attention(aq,
+                                                              ak,
+                                                              av,
+                                                              cu,
+                                                              cu,
+                                                              max_frame,
+                                                              max_frame,
+                                                              1. / std::sqrt(double(dim)),
+                                                              false,
+                                                              -1,
+                                                              -1,
+                                                              false,
+                                                              fallback,
+                                                              dtype)
+                                      : fallback();
 
     auto projected = linear(attention.reshape({states.size(0), hidden}).to(dtype), p + "attn.proj");
     states = states + projected;

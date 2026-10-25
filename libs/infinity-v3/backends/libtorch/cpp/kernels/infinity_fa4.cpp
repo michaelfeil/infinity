@@ -83,9 +83,9 @@ bool enabled() {
 
 void library_anchor() {}
 
-Bundle* bundle(const at::Tensor& q) {
-  if (!enabled() || !q.is_cuda() ||
-      (q.scalar_type() != at::kHalf && q.scalar_type() != at::kBFloat16))
+Bundle* bundle(const at::Tensor& q, std::optional<at::ScalarType> dtype = std::nullopt) {
+  auto storage_type = dtype.value_or(q.scalar_type());
+  if (!enabled() || !q.is_cuda() || (storage_type != at::kHalf && storage_type != at::kBFloat16))
     return nullptr;
   auto p = at::cuda::getDeviceProperties(q.get_device());
   int sm = p->major * 10 + p->minor;
@@ -148,54 +148,73 @@ void check_offsets(const at::Tensor& q, const at::Tensor& cu) {
 }
 }
 
+int infinity_fa4_modes(const at::Tensor& reference) {
+  auto* native = bundle(reference);
+  return native ? native->modes : 0;
+}
+
 /// Map eligible geometry/masks to exported kernel modes; undefined means no compatible export.
 /// After an export is chosen, validate metadata and surface its launch
 /// errors without retrying another provider.
-at::Tensor infinity_fa4(const at::Tensor& q,
-                        const at::Tensor& k,
-                        const at::Tensor& v,
+at::Tensor infinity_fa4(const at::Tensor& query,
+                        const at::Tensor& key,
+                        const at::Tensor& value,
                         const at::Tensor& cu_q,
                         const at::Tensor& cu_k,
                         int64_t max_q,
                         double scale,
                         bool causal,
                         int64_t left,
-                        int64_t right) {
-  if (!layout(q) || !layout(k) || !layout(v) || k.sizes() != v.sizes() || q.size(2) != k.size(2) ||
-      q.device() != k.device() || q.device() != v.device() || q.scalar_type() != k.scalar_type() ||
-      q.scalar_type() != v.scalar_type() || !std::isfinite(scale) || scale <= 0)
+                        int64_t right,
+                        std::optional<at::ScalarType> operand_dtype) {
+  auto q = query, k = key, v = value;
+  if (q.dim() != 3 || k.dim() != 3 || v.dim() != 3 || q.size(0) <= 0 || k.size(0) <= 0 ||
+      q.size(1) <= 0 || k.size(1) <= 0 ||
+      (!operand_dtype && (!layout(q) || !layout(k) || !layout(v))) || k.sizes() != v.sizes() ||
+      q.size(2) != k.size(2) || q.device() != k.device() || q.device() != v.device() ||
+      q.scalar_type() != k.scalar_type() || q.scalar_type() != v.scalar_type() ||
+      !std::isfinite(scale) || scale <= 0)
     return {};
+
+  struct Profile {
+    int width, group;
+    bool causal, local;
+  };
+
+  static constexpr Profile profiles[] = {
+#define FA4_PROFILE(name, h, hk, d, causal, local) {d, h / hk, bool(causal), bool(local)},
+#include "vendor/infinity_fa4/profiles.inc"
+#undef FA4_PROFILE
+  };
   int mode = -1;
   auto d = q.size(2), h = q.size(1), hk = k.size(1);
-  if (d == 64 && h == hk && !causal) {
-    if (left < 0 && right < 0)
-      mode = 0;
-    else if (left >= 0 && right >= 0)
-      mode = 1;
+  for (size_t index = 0; index < std::size(profiles); ++index) {
+    const auto& profile = profiles[index];
+    const bool window = profile.local ? left >= 0 && (causal ? right <= 0 : right >= 0)
+                                      : left < 0 && (causal ? right <= 0 : right < 0);
+    if (d == profile.width && h == profile.group * hk && causal == profile.causal && window) {
+      mode = index;
+      break;
+    }
   }
-  if (d == 128 && h == 4 * hk && causal && left < 0 && (right < 0 || right == 0))
-    mode = 2;
-  if (d == 128 && h == 2 * hk && !causal && left < 0 && right < 0)
-    mode = 3;
-  if (d == 128 && !causal && left < 0 && right < 0) {
-    if (h == 6 * hk)
-      mode = 4;
-    else if (h == 8 * hk)
-      mode = 5;
-  }
-  // Use the exported d256 GQA4 provider across packed lengths.
-  if (d == 256 && h == 4 * hk && !causal && left < 0 && right < 0)
-    mode = 6;
   if (mode < 0)
     return {};
-  auto* native = bundle(q);
+  auto* native = bundle(q, operand_dtype);
   if (!native || !(native->modes & (1 << mode)))
     return {};
   // Blackwell's dedicated d256 kernel derives K/V offsets from Q boundaries.
-  if (mode == 6 && at::cuda::getDeviceProperties(q.get_device())->major == 10 &&
+  if (d == 256 && at::cuda::getDeviceProperties(q.get_device())->major == 10 &&
       (q.size(0) != k.size(0) || cu_q.const_data_ptr() != cu_k.const_data_ptr()))
     return {};
   c10::cuda::CUDAGuard guard(q.device());
+  // Conversion is FA4-only work: disabled or unsupported exports return before allocating.
+  if (operand_dtype) {
+    q = q.to(*operand_dtype).contiguous();
+    k = k.to(*operand_dtype).contiguous();
+    v = v.to(*operand_dtype).contiguous();
+  }
+  if (!layout(q) || !layout(k) || !layout(v))
+    return {};
   check_offsets(q, cu_q);
   check_offsets(q, cu_k);
   TORCH_CHECK(cu_q.numel() == cu_k.numel() && max_q > 0 && max_q <= INT32_MAX &&
@@ -291,6 +310,10 @@ at::Tensor infinity_fa4_deberta(const at::Tensor& q,
 }
 #else
 namespace infinity {
+int infinity_fa4_modes(const at::Tensor&) {
+  return 0;
+}
+
 at::Tensor infinity_fa4(const at::Tensor&,
                         const at::Tensor&,
                         const at::Tensor&,
@@ -300,7 +323,8 @@ at::Tensor infinity_fa4(const at::Tensor&,
                         double,
                         bool,
                         int64_t,
-                        int64_t) {
+                        int64_t,
+                        std::optional<at::ScalarType>) {
   return {};
 }
 
