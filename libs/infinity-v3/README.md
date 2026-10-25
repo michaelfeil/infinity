@@ -28,7 +28,7 @@ Rust and uses **LibTorch, the C++ interface of PyTorch**, for model inference.
 Benchmarks on a single **NVIDIA H100 80 GB**:
 
 * **High throughput**: 2× vLLM requests/s on the measured Mammoth workload at concurrency 32, with dynamic FP8 linears.
-* **Fast startup**: local weights to a ready HTTP server in 0.92 s for ModernBERT-base and 2.51 s for Qwen3-8B (medians including full warmup).
+* **Fast startup**: ModernBERT-base **0.92 s**, Qwen3-8B **2.51 s**.
 * **Efficient serving**: token-based dynamic batching, dedicated tokenization workers and native LibTorch inference.
 
 <details>
