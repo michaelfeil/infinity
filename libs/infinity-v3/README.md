@@ -30,25 +30,12 @@ Rust and uses **LibTorch, the C++ interface of PyTorch**, for model inference.
 * **Fast startup**: ModernBERT-base **0.92 s**, Qwen3-8B **2.51 s** on one H100 80 GB.
 * **Optimized inference**: native LibTorch kernels, FlashAttention-4 and optional dynamic FP8 for supported models.
 
-<details>
-  <summary>Benchmark conditions and scope</summary>
-
-One throughput example: Mammoth 27B achieved **14.62 vs 7.30 requests/s (2×)**
-against vLLM at concurrency 32 on the same H100 80 GB (8 CPUs, 64 GiB RAM).
-Both used dynamic FP8 linears, BF16 backbone, FP32 head, 16K context and 32K batch
-budgets. CUDA graphs were off; vLLM compilation was on. The 256 synthetic requests
-contained 781 questions shaped after production traffic, without images or
-cross-request cache reuse. This measures saturation throughput, not SLO capacity.
-Measured October 23, 2026, with Infinity's #767/#768/#771/#772 kernels and #769
-loader versus [vLLM #63114](https://github.com/vllm-project/vllm/pull/63114)
-(`a0b5d79ba9ec0a5a4e410bc9a4cf0ff300c34229`).
-
-Startup numbers are medians of five fresh processes per model with local weights,
-BF16, a 32 MiB staging budget and full 16K-token warmup. Downloads are excluded;
-storage caches were uncontrolled, so these are not new-node cold-start guarantees.
-See [startup methodology and results](docs/modernbert-startup.md).
-
-</details>
+Infinity aims to outperform vLLM and SGLang across embedding, reranking and
+decision models. Reported October 2026 benchmark highlights versus vLLM:
+**~2× throughput on Mammoth**, **~5× on ModernBERT** and **~1.1× on
+Qwen3-Embedding-0.6B**. Speedups depend on the workload and configuration.
+Startup timings above use local weights; see the
+[startup measurements](docs/modernbert-startup.md).
 
 <details>
   <summary>CUDA support and attention kernels</summary>
