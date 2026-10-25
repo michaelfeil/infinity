@@ -47,6 +47,46 @@ for supported attention shapes and the `INFINITY_TORCH_FA4=0` fallback switch.
 
 </details>
 
+## Performance highlights
+
+Selected measurements on a single **H100 80 GB**:
+
+| Workload | Highlight |
+| --- | --- |
+| Mammoth 27B, typed decisions | **2.00× vLLM throughput**: 14.62 vs 7.30 requests/s at concurrency 32, with dynamic FP8 linears. |
+| ModernBERT-base startup | **0.92 s** median process-to-HTTP readiness, including loading and warmup. |
+| Qwen3-8B startup | **2.51 s** median process-to-HTTP readiness, including loading and warmup. |
+
+<details>
+  <summary>Benchmark conditions and scope</summary>
+
+The Mammoth comparison ran both servers sequentially on the same GPU with
+8 logical CPUs, 64 GiB RAM, a 16K context limit and a 32K batch-token budget.
+Both used BF16 with dynamic per-token/per-output-channel FP8 linears and an
+FP32 option head. CUDA graphs were disabled; vLLM's `torch.compile` was enabled.
+Each concurrency sweep replayed the same 256 synthetic requests (781 questions),
+matching sampled production shapes, without images or cross-request cache reuse.
+These are closed-loop saturation measurements, not latency-SLO capacity estimates.
+
+| Concurrency | Infinity requests/s | vLLM requests/s | Throughput ratio |
+| --- | ---: | ---: | ---: |
+| 1 | 9.66 | 4.41 | 2.19× |
+| 8 | 13.77 | 6.79 | 2.03× |
+| 32 | 14.62 | 7.30 | 2.00× |
+
+Measured October 23, 2026, using Infinity's #767/#768/#771/#772 kernel stack
+and #769 loader, versus [vLLM PR #63114](https://github.com/vllm-project/vllm/pull/63114)
+at `a0b5d79ba9ec0a5a4e410bc9a4cf0ff300c34229`.
+A separate 1,504-decision quality sample scored 93.22% for Infinity and 93.09%
+for vLLM, with 99.73% argmax agreement; this is not a full Decision Index evaluation.
+
+Startup numbers are medians of five fresh processes per model with local weights,
+BF16, a 32 MiB staging budget and full 16K-token warmup. Downloads are excluded;
+storage caches were uncontrolled, so these are not new-node cold-start guarantees.
+See [startup methodology and results](docs/modernbert-startup.md).
+
+</details>
+
 ## Getting started
 
 Launch a compatible Hugging Face model or a local checkpoint:
