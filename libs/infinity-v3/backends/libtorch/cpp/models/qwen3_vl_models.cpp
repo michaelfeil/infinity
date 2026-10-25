@@ -170,6 +170,9 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
   patches.clear();
   cosines.clear();
   sines.clear();
+  int64_t max_sequence = 0;
+  for (size_t index = 1; index < offsets.size(); ++index)
+    max_sequence = std::max<int64_t>(max_sequence, offsets[index] - offsets[index - 1]);
   auto cu = at::tensor(offsets, at::TensorOptions().dtype(at::kInt)).to(device);
   auto rotate = [&](const at::Tensor& value) {
     auto x = value.to(at::kFloat), a = x.narrow(-1, 0, dim / 2), b = x.narrow(-1, dim / 2, dim / 2);
@@ -192,7 +195,17 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     at::Tensor attention;
     // Round rotary Q/K back to BF16 before attention, matching the
     // model dtype, and keep frames independent through cu_seqlens.
-    if (multi_vector) {
+    if (device.is_cuda())
+      attention = infinity_fa4(q.to(dtype).contiguous(),
+                               k.to(dtype).contiguous(),
+                               v.to(dtype).contiguous(),
+                               cu,
+                               cu,
+                               max_sequence,
+                               1. / std::sqrt(double(dim)));
+    if (attention.defined()) {
+      // Packed boundaries keep every image/frame independent.
+    } else if (multi_vector) {
       // Match SDPA's arithmetic while batching equally sized frames without padding.
       std::vector<at::Tensor> outputs(offsets.size() - 1);
       for (const auto& [length, frames] : frame_groups) {

@@ -85,22 +85,27 @@ void concurrent_first_use() {
     future.get();
 }
 
+struct Profile {
+  int64_t heads, kv_heads, width;
+  bool causal, local;
+};
+
+constexpr Profile profiles[] = {
+#define FA4_PROFILE(name, h, hk, d, causal, local) {h, hk, d, bool(causal), bool(local)},
+#include "vendor/infinity_fa4/profiles.inc"
+#undef FA4_PROFILE
+};
+
 void standard(at::ScalarType dtype, int mode, bool cross, int64_t span = 0) {
-  const int64_t d = mode == 6 ? 256 : (mode < 2 ? 64 : 128),
-                h = mode < 2    ? 6
-                    : mode == 2 ? 12
-                    : mode == 4 ? 18
-                    : mode == 5 ? 24
-                    : mode == 6 ? 12
-                                : 6,
-                hk = mode < 2 ? h : 3;
+  const auto& profile = profiles[mode];
+  const int64_t d = profile.width, h = profile.heads, hk = profile.kv_heads;
   std::vector<int64_t> qe = {0, 7, 136, 649},
                        ke = cross ? std::vector<int64_t>{0, 11, 140, 700} : qe;
-  if (mode == 6) {
+  if (d == 256) {
     qe = {0, 1, 258, 1283};
     ke = cross ? std::vector<int64_t>{0, 13, 270, 1301} : qe;
   }
-  if (mode == 6 && span != 0) {
+  if (d == 256 && span != 0) {
     qe = span > 0 ? std::vector<int64_t>{0, span, 2 * span, 3 * span}
                   : std::vector<int64_t>{0, 7, 136, 649};
     ke = qe;
@@ -115,24 +120,24 @@ void standard(at::ScalarType dtype, int mode, bool cross, int64_t span = 0) {
   auto q = qstore.narrow(0, 1, qe.back()).narrow(1, 0, h);
   auto k = at::randn({ke.back(), hk, d}, opts) * .2, v = at::randn_like(k);
   auto cq = offsets(qe, opts), ck = cross ? offsets(ke, opts) : cq;
-  auto window = mode == 1 ? 37 : -1;
+  auto window = profile.local ? 37 : -1;
   auto forward = [&] {
     return infinity::infinity_fa4(q,
                                   k,
                                   v,
                                   cq,
                                   ck,
-                                  mode == 6 && span >= 0 ? (span ? span + 2 : 1025) : 513,
+                                  d == 256 && span >= 0 ? (span ? span + 2 : 1025) : 513,
                                   .7 / std::sqrt(double(d)),
-                                  mode == 2,
+                                  profile.causal,
                                   window,
-                                  window);
+                                  profile.causal ? 0 : window);
   };
   auto expected = [&] {
-    return reference(q, k, v, qe, ke, .7 / std::sqrt(double(d)), mode == 2, window);
+    return reference(q, k, v, qe, ke, .7 / std::sqrt(double(d)), profile.causal, window);
   };
   auto output = forward();
-  if (mode == 6 && cross && at::cuda::getCurrentDeviceProperties()->major == 10) {
+  if (d == 256 && cross && at::cuda::getCurrentDeviceProperties()->major == 10) {
     TORCH_CHECK(!output.defined(), "Blackwell d256 accepted independent K/V boundaries");
     return;
   }
@@ -404,7 +409,7 @@ int main(int argc, char** argv) {
   auto stream = c10::cuda::getStreamFromPool();
   c10::cuda::CUDAStreamGuard guard(stream);
   for (auto dtype : {at::kHalf, at::kBFloat16}) {
-    for (int mode = 0; mode < 4; ++mode)
+    for (size_t mode = 0; mode < std::size(profiles); ++mode)
       for (bool cross : {false, true})
         standard(dtype, mode, cross);
     deberta(dtype);

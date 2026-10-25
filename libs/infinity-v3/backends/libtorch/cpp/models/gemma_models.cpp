@@ -987,9 +987,21 @@ class Gemma final : public Model {
                                                             scale))
             .squeeze(0);
       }
-      at::Tensor output;
+      auto output = infinity_fa4(q,
+                                 k,
+                                 v,
+                                 input.cumulative,
+                                 input.cumulative,
+                                 input.max_sequence,
+                                 scale,
+                                 causal,
+                                 left,
+                                 right);
+      if (output.defined()) {
+        // Keep image-query corrections below independent of the attention provider.
+      } else
 #ifdef TEI_TORCH_CUDA_KERNELS
-      if (torch_flash_fma_supported(q, k, v, causal, left, right))
+          if (torch_flash_fma_supported(q, k, v, causal, left, right))
         output = torch_flash_fma(
             q, k, v, input.cumulative, input.max_sequence, scale, causal, left, right);
       else
