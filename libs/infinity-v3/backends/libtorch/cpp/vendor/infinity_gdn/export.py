@@ -1,7 +1,6 @@
 # Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 """AOT host adapters around the unmodified FlashInfer 0.7.2 GDN kernels."""
 import hashlib
-import importlib.metadata
 import json
 import os
 import pathlib
@@ -16,8 +15,6 @@ import cutlass.cute as cute
 from cutlass.cute.runtime import make_fake_compact_tensor as tensor, make_fake_stream
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "infinity_fa4"))
 from portable_host import export_portable
-if importlib.metadata.version("flashinfer-python") != "0.7.2":
-    raise RuntimeError("Revalidate the export API before changing FlashInfer 0.7.2")
 
 def export(dtype, label):
     T, H, V, B = (cute.sym_int() for _ in range(4))

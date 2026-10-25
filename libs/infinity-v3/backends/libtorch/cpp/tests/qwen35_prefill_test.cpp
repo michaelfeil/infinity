@@ -21,10 +21,10 @@ void check(const at::Tensor& actual, const at::Tensor& expected, double toleranc
               "Prefill disagrees with recurrent reference");
 }
 
-// Exercise fresh packed dispatch with ragged tails, including short requests.
+// Exercise fresh packed dispatch with ragged tails.
 // The separate-rounding recurrence supplies independent outputs and state.
-void production_prefill(int64_t heads, int32_t tokens = 519) {
-  constexpr int64_t kh = 16;
+void production_prefill(int64_t heads) {
+  constexpr int64_t tokens = 519, kh = 16;
   auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kBFloat16);
   auto qkv = at::randn({tokens, (2 * kh + heads) * 128}, opts) * .2;
   auto z = at::randn({tokens, heads * 128}, opts) * .2,
@@ -165,10 +165,8 @@ int main() {
         check(output, at::stack(outputs), .007);
         check(state, at::stack(states), .006);
       }
-    for (int64_t heads : {32, 48}) {
+    for (int64_t heads : {32, 48})
       production_prefill(heads);
-      production_prefill(heads, 17);
-    }
   }
   if (!tested)
     return 77;

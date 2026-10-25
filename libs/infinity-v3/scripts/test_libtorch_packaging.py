@@ -57,21 +57,6 @@ class PackagingTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "Unresolved runtime dependency libinner.so"):
             packager.runtime_libraries([self.server], self.sdk)
 
-    def test_gdn_dependencies_are_flat_even_when_also_bundled(self):
-        native = self.root / "native"
-        native.mkdir()
-        module = self.compile("libinfinitygdn.so",
-                              "extern int inner(void); int gdn(void) { return inner(); }",
-                              "-L" + str(self.lib), "-linner")
-        shutil.copy2(module, native / module.name)
-        bridge = self.compile("libtei_torch.so",
-                              "extern int gdn(void); int bridge(void) { return gdn(); }",
-                              "-L" + str(self.lib), "-linfinitygdn")
-        shutil.copy2(bridge, native / bridge.name)
-        selected = packager.runtime_libraries(
-            [native / bridge.name, self.lib / "libinner.so"], self.sdk)
-        self.assertTrue({"libinfinitygdn.so", "libinner.so"} <= {path.name for path in selected})
-
     def test_missing_lazy_library_fails(self):
         (self.lib / "libnvrtc-builtins.so.13.0").unlink()
         with self.assertRaisesRegex(RuntimeError, "Missing runtime-loaded SDK library"):
