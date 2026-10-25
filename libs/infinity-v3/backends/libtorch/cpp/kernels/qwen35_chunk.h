@@ -18,7 +18,8 @@ void qwen35_chunk_delta_cuda(const at::Tensor& values,
                              int64_t value_heads,
                              const at::Tensor& initial = {},
                              at::Tensor* final_state = nullptr);
-// Hopper-only BF16 prefill with FP32 final state; defined when built for SM90.
+// Hopper-only BF16 prefill; optional final_state retains the FP32 terminal state.
+// Defined when built for SM90.
 void qwen35_prefill_cuda(const at::Tensor&,
                          const at::Tensor&,
                          const at::Tensor&,

@@ -183,6 +183,10 @@ at::Tensor infinity_fa4(const at::Tensor& q,
     else if (h == 8 * hk)
       mode = 5;
   }
+  // Hopper d256 GQA4 wins on longer spans. Leave small/sparse requests on FA2.
+  if (d == 256 && h == 4 * hk && !causal && left < 0 && right < 0 && max_q >= 512 &&
+      cu_q.numel() > 1 && q.size(0) / (cu_q.numel() - 1) >= 256)
+    mode = 6;
   if (mode < 0)
     return {};
   auto* native = bundle(q);

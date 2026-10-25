@@ -9,7 +9,7 @@
 
 namespace infinity {
 /// Dispatch SM90 prefill into caller-owned output and assign FP32 state through final_state. The
-/// caller supplies a non-null final_state pointer and validates the eligible profile.
+/// caller validates the eligible profile. A null final_state discards the terminal state.
 void qwen35_prefill_cuda(const at::Tensor& values,
                          const at::Tensor& qk,
                          const at::Tensor& gates,
@@ -62,6 +62,7 @@ void qwen35_prefill_cuda(const at::Tensor& values,
       nullptr,
       nullptr,
       0);
-  *final_state = state.transpose(2, 3).contiguous();
+  if (final_state)
+    *final_state = state.transpose(2, 3).contiguous();
 }
 }

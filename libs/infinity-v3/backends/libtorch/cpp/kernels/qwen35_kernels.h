@@ -38,7 +38,8 @@ at::Tensor gemma_gated_cuda(const at::Tensor&, bool);
 at::Tensor gemma_activation_cuda(const at::Tensor&, bool);
 /// Compose packed depthwise convolution, F32 gated-delta state updates, and gated RMS output.
 /// Optional initial/history buffers resume block execution;
-/// cache_layer enables resident checkpoints.
+/// cache_layer enables resident checkpoints. hopper_prefill opts qualified fresh requests into
+/// the existing BF16 Hopper prefill provider without retaining a final state.
 at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              const at::Tensor& z,
                              const at::Tensor& ab,
@@ -55,5 +56,6 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              const at::Tensor& history = {},
                              const at::Tensor& history_cumulative = {},
                              bool chunk_prefill = true,
-                             int64_t cache_layer = -1);
+                             int64_t cache_layer = -1,
+                             bool hopper_prefill = false);
 }

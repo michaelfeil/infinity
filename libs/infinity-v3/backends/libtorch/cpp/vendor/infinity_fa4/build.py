@@ -71,7 +71,7 @@ if not a.link_only:
                 ("voyage", 16, 8, 128, False, (None, None)),
                 ("gqa6", 12, 2, 128, False, (None, None)),
                 ("gqa8", 32, 4, 128, False, (None, None)),
-            ]:
+            ] + ([("qwen35", 16, 4, 256, False, (None, None))] if capability == 90 else []):
                 q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
                 k = torch.zeros((256, hk, d), device="cuda", dtype=dtype)
                 previous = set(interface._flash_attn_fwd.compile_cache.cache)
