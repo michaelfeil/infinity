@@ -53,6 +53,11 @@ modified versions, on hosting or compute services operated by any provider
 named in Appendix A, on capacity rented from that provider, or as part of
 that provider's hosted services.
 
+Listed providers and anyone acting for them must not clone, inspect, adapt, reverse
+engineer, or integrate the covered Software or documentation into other frameworks
+or replacements, on any system, directly or through employees, subcontractors, or
+AI tools, even before deployment.
+
 This restriction applies to everyone, including providers, customers,
 researchers, educational institutions, nonprofit organizations, governments,
 and individuals. It applies to every purpose, including commercial use,
