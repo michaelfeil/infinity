@@ -38,7 +38,8 @@ def needed(path):
 
 def runtime_libraries(roots, site_packages):
     candidates = {}
-    for path in sorted([*(site_packages / "torch/lib").glob("*.so*"),
+    for path in sorted([*[lib for root in roots for lib in root.parent.glob("*.so*")],
+                        *(site_packages / "torch/lib").glob("*.so*"),
                         *(site_packages / "nvidia").rglob("*.so*")]):
         if "stubs" not in path.parts and path.name not in {
             "libcuda.so", "libcuda.so.1", "libtorch_python.so",
@@ -56,6 +57,16 @@ def runtime_libraries(roots, site_packages):
 
     pending = list(roots)
     provided = {path.name for path in roots}
+    # FA4 keeps its runtimes in per-SM directories. GDN also needs its linked
+    # dependencies beside the native bridge for its own $ORIGIN lookup.
+    for root in roots:
+        module = root.parent / "libinfinitygdn.so"
+        if module.is_file():
+            for name in needed(module):
+                dependency = module.parent / name
+                if dependency.is_file():
+                    selected[name] = dependency
+                    pending.append(dependency)
     for pattern in LAZY_LIBRARIES:
         matches = fnmatch.filter(candidates, pattern)
         if not matches:

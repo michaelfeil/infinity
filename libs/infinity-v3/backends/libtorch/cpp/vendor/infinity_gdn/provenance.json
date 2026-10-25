@@ -1,0 +1,17 @@
+{
+  "name": "Infinity FlashInfer GDN bindings",
+  "upstream_repository": "https://github.com/flashinfer-ai/flashinfer",
+  "upstream_revision": "d84335d8c54e0c8f9f7e22faa15c7e34a58abf94",
+  "upstream_release": "0.7.2",
+  "upstream_licenses": {
+    "blackwell_gdn": "BSD-3-Clause",
+    "other_flashinfer": "Apache-2.0"
+  },
+  "native_abi_version": 1,
+  "changes": [
+    "Ahead-of-time export of unmodified upstream fresh-prefill kernels",
+    "Dynamic packed sequence and head counts, with the actual device SM count",
+    "Native tensor descriptors and current-stream bindings",
+    "Baseline CPU targets for exported host wrappers"
+  ]
+}
