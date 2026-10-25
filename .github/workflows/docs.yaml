@@ -44,9 +44,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    concurrency:
-      group: infinity-gh-pages
-      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
@@ -65,7 +62,17 @@ jobs:
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           if [ "$EVENT_NAME" = release ]; then
             version=$(python -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("libs/infinity_emb/pyproject.toml").read_text())["tool"]["poetry"]["version"])')
-            mike deploy --config-file docs/mkdocs.yml --push --update-aliases "$version" latest --alias-type=redirect
+            args=("$version" latest --update-aliases --alias-type=redirect)
           else
-            mike deploy --config-file docs/mkdocs.yml --push main
+            args=(main)
           fi
+          # Retry concurrent gh-pages pushes instead of dropping pending releases.
+          for attempt in 1 2 3; do
+            git fetch origin gh-pages
+            git branch --force gh-pages origin/gh-pages
+            if mike deploy --config-file docs/mkdocs.yml --push "${args[@]}"; then
+              exit 0
+            fi
+            sleep 5
+          done
+          exit 1

@@ -5,6 +5,8 @@ docs track `main`; available features depend on the image version you deploy.
 
 ## Run on an NVIDIA GPU
 
+CUDA inference requires SM80 (Ampere) or newer; SM75/Turing is unsupported.
+
 Choose a published `nvidia-3.0.0-alpha.*` tag from the
 [container registry](https://github.com/michaelfeil/infinity/pkgs/container/infinity_v3).
 For example:
