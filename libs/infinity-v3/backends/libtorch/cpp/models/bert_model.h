@@ -327,7 +327,7 @@ struct Bert : infinity::Model {
         !options.boolean("_cudnn_varlen", false) &&
         ((config.heads == 12 && (config.hidden == 384 || config.hidden == 768)) ||
          (config.heads == 16 && config.hidden == 1024)) &&
-        at::cuda::getDeviceProperties(device.index())->major == 9;
+        at::cuda::getDeviceProperties(device.index())->major >= 8;
     // Standard small/large BERT CLS embeddings use the same packed and biased
     // normalization contracts as the existing base-width implementation.
     native_bert_embedding =
@@ -653,7 +653,7 @@ struct Bert : infinity::Model {
       }
     }
 #ifdef TEI_TORCH_CUDA_KERNELS
-    // Qualified Hopper embeddings: Flash2 wins wider short batches; FA4 keeps
+    // Qualified embeddings: Flash2 wins wider short batches; FA4 keeps
     // the long/ragged path. Dense B8x256 also passes the token cut.
     const bool prefer_flash2 =
         embedding_attention &&

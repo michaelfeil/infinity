@@ -48,9 +48,10 @@ shapes; other shapes use existing attention kernels. DeBERTa-v2/v3 uses a novel
 CuTeDSL-based algorithm in FA4 to fuse relative-position lookup without
 quadratic bucket or attention-bias storage.
 
-Qualified Hopper BERT embeddings select native FlashAttention-2 for head-width
-32 and larger short batches with head-width 64; long head-width-64 spans retain
-FA4. Selection uses the packed geometry without padding tokens or head features.
+Qualified BERT embeddings on supported CUDA GPUs (SM80 and newer) select native
+FlashAttention-2 for head-width 32 and larger short batches with head-width 64;
+long head-width-64 spans retain FA4. Selection uses the packed geometry without
+padding tokens or head features.
 
 | Compute capability | Example GPUs |
 | --- | --- |
