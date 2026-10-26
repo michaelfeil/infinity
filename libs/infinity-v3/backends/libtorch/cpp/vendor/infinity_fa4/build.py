@@ -97,6 +97,40 @@ if not a.link_only:
                 objects.append(str(obj))
                 kernels.append(dict(symbol=symbol, heads=h, kv_heads=hk, d=d,
                                     causal=causal, window=window, dtype=dtype_name))
+        # Export the upstream varlen lookup aid separately: existing callers
+        # retain their original kernels and never need to supply extra tensors.
+        if capability == 90:
+            previous_threshold = interface.BIN_BATCH_SEARCH_THRESH
+            interface.BIN_BATCH_SEARCH_THRESH = 0
+            try:
+                for dtype_name, dtype in [("fp16", torch.float16), ("bf16", torch.bfloat16)]:
+                    for name, h, hk, d, causal, window in profiles:
+                        if d != 128:
+                            continue
+                        q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
+                        k = torch.zeros((256, hk, d), device="cuda", dtype=dtype)
+                        previous = set(interface._flash_attn_fwd.compile_cache.cache)
+                        # Keep the key tiles and softmax arithmetic; only the
+                        # short-query work layout changes for global attention.
+                        tile = (192, 128) if not causal and window == (None, None) else None
+                        interface._flash_attn_fwd(q, k, k, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                            max_seqlen_q=129, max_seqlen_k=129, causal=causal,
+                            window_size_left=window[0], window_size_right=window[1],
+                            tile_mn=tile, intra_wg_overlap=False if tile else None,
+                            disable_scheduler_metadata=True)
+                        fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
+                        if len(fresh) != 1:
+                            raise RuntimeError(f"Unexpected batch metadata compilation count for {name}")
+                        compiled = interface._flash_attn_fwd.compile_cache.cache[fresh.pop()]
+                        symbol = f"fa4_batch_{name}_{dtype_name}"
+                        obj = a.output / f"{symbol}.o"
+                        export_portable(compiled, obj, symbol)
+                        objects.append(str(obj))
+                        kernels.append(dict(symbol=symbol, heads=h, kv_heads=hk, d=d,
+                                            causal=causal, window=window, dtype=dtype_name,
+                                            batch_metadata=True))
+            finally:
+                interface.BIN_BATCH_SEARCH_THRESH = previous_threshold
         if a.deberta:
             # SM90 varlen scheduling derives its grid from runtime tensor sizes and
             # cumulative lengths. The 129 below is an export example, not a bound
@@ -165,6 +199,7 @@ subprocess.run([a.cxx, "-std=c++17", "-O2", "-fPIC", "-shared", str(bridge),
                 f"-L{a.runtime_dir}", "-lcute_dsl_runtime",
                 f"-L{a.ffi_root / 'lib'}", "-ltvm_ffi",
                 "-Wl,-rpath,$ORIGIN", "-Wl,-z,defs",
+                *(["-DINFINITY_FA4_BATCH_HINTS"] if any(k.get("batch_metadata") for k in manifest["kernels"]) else []),
                 *(["-DFA4_DEBERTA"] if any(k["symbol"].startswith("fa4_deberta_") for k in manifest["kernels"]) else []),
                 "-o", str(a.output / "libinfinityfa4.so")], check=True)
 validate_host_object(a.output / "libinfinityfa4.so")

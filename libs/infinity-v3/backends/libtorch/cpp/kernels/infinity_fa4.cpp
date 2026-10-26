@@ -7,6 +7,7 @@
 
 #if defined(TEI_TORCH_CUDA_KERNELS) && defined(INFINITY_FA4_ROOT)
 #include "env_config.h"
+#include "kernels/fast_kernels.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <dlfcn.h>
@@ -40,6 +41,9 @@ using Forward = int (*)(int,
                         int,
                         const int64_t*,
                         int);
+using ForwardBatch = int (*)(int, int, int, void*, void*, void*, void*, void*, void*, void*,
+                              int64_t, int64_t, int64_t, int64_t, int64_t, double,
+                              int, int, const int64_t*, int, void*);
 using Deberta = int (*)(int,
                         int,
                         void*,
@@ -62,6 +66,9 @@ using Deberta = int (*)(int,
 struct Bundle {
   void* handle;
   Forward forward;
+  ForwardBatch forward_batch;
+  int batch_modes;
+  int (*batch_tile)(int);
   Deberta deberta;
   const char* (*error)();
   int modes; // Optional capability mask; older portable bundles retain the first four modes.
@@ -128,8 +135,13 @@ Bundle* bundle(const at::Tensor& q, std::optional<at::ScalarType> dtype = std::n
               "Incompatible InfinityFA4 bundle: ",
               path.string());
   auto modes = reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_modes_v1"));
-  auto result =
-      std::make_unique<Bundle>(Bundle{handle, forward, deberta, error, modes ? modes() : 0xf});
+  auto forward_batch =
+      reinterpret_cast<ForwardBatch>(dlsym(handle, "infinity_fa4_batch_forward_v1"));
+  auto batch_modes = reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_batch_modes_v1"));
+  auto batch_tile = reinterpret_cast<int (*)(int)>(dlsym(handle, "infinity_fa4_batch_tile_v1"));
+  auto result = std::make_unique<Bundle>(Bundle{handle, forward, forward_batch,
+      forward_batch && batch_modes && batch_tile ? batch_modes() : 0, batch_tile,
+      deberta, error, modes ? modes() : 0xf});
   auto* ptr = result.get();
   bundles.emplace(sm, std::move(result));
   return ptr;
@@ -228,26 +240,38 @@ at::Tensor infinity_fa4(const at::Tensor& query,
       strides[at++] = stride;
   auto ptr = [](const at::Tensor& t) { return const_cast<void*>(t.const_data_ptr()); };
   auto stream = at::cuda::getCurrentCUDAStream(q.get_device()).stream();
-  int status = native->forward(mode,
-                               q.scalar_type() == at::kHalf ? 0 : 1,
-                               q.get_device(),
-                               stream,
-                               ptr(q),
-                               ptr(k),
-                               ptr(v),
-                               ptr(output),
-                               ptr(cu_q),
-                               ptr(cu_k),
-                               q.size(0),
-                               k.size(0),
-                               cu_q.numel() - 1,
-                               h,
-                               hk,
-                               scale,
-                               static_cast<int>(std::clamp<int64_t>(left, -1, INT32_MAX)),
-                               static_cast<int>(std::clamp<int64_t>(right, -1, INT32_MAX)),
-                               strides.data(),
-                               static_cast<int>(max_q));
+  // Match the upstream varlen scheduler's batch-lookup threshold. The optional
+  // bundle capability keeps existing and other-architecture exports compatible.
+  auto invoke = [&](auto forward, auto... extra) {
+    return forward(mode,
+                   q.scalar_type() == at::kHalf ? 0 : 1,
+                   q.get_device(),
+                   stream,
+                   ptr(q),
+                   ptr(k),
+                   ptr(v),
+                   ptr(output),
+                   ptr(cu_q),
+                   ptr(cu_k),
+                   q.size(0),
+                   k.size(0),
+                   cu_q.numel() - 1,
+                   h,
+                   hk,
+                   scale,
+                   static_cast<int>(std::clamp<int64_t>(left, -1, INT32_MAX)),
+                   static_cast<int>(std::clamp<int64_t>(right, -1, INT32_MAX)),
+                   strides.data(),
+                   static_cast<int>(max_q), extra...);
+
+  };
+  int status;
+  if (max_q <= 256 && cu_q.numel() - 1 > 256 && (native->batch_modes & (1 << mode))) {
+    auto tiles = attention_tile_prefix(cu_q, native->batch_tile(mode), h / hk);
+    status = invoke(native->forward_batch, tiles.mutable_data_ptr());
+  } else {
+    status = invoke(native->forward);
+  }
   TORCH_CHECK(status == 0, "InfinityFA4 attention failed: ", native->error());
   return output;
 }

@@ -10,6 +10,7 @@
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
 #include <cuda_bf16.h>
+#include <cub/block/block_scan.cuh>
 #include <cuda_fp16.h>
 #include <cstdint>
 #include <cmath>
@@ -259,6 +260,26 @@ __global__ __launch_bounds__(256) void gather_norm_kernel(const int64_t* ids,
           T(((values[j] - mean) * inverse) * (weight ? float(weight[col]) : 1.f) +
             (bias ? float(bias[col]) : 0.f));
   }
+}
+
+template <int Threads>
+__global__ void attention_tile_prefix_kernel(const int32_t* cumulative,
+                                             int32_t* output,
+                                             int64_t batch,
+                                             int tile,
+                                             int group) {
+  using Scan = cub::BlockScan<int32_t, Threads>;
+  __shared__ typename Scan::TempStorage storage;
+  const int row = threadIdx.x;
+  const int32_t count = row < batch
+                            ? (int64_t(cumulative[row + 1] - cumulative[row]) * group + tile - 1) / tile
+                            : 0;
+  int32_t prefix;
+  Scan(storage).InclusiveSum(count, prefix);
+  if (row == 0)
+    output[0] = 0;
+  if (row < batch)
+    output[row + 1] = prefix;
 }
 
 template <class T, int Columns>
@@ -943,6 +964,32 @@ at::Tensor fused_embedding_layer_norm(const at::Tensor& ids,
             epsilon);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
+}
+
+at::Tensor attention_tile_prefix(const at::Tensor& cumulative, int tile, int group) {
+  TORCH_CHECK(cumulative.is_cuda() && cumulative.scalar_type() == at::kInt &&
+                  cumulative.dim() == 1 && cumulative.is_contiguous() && cumulative.numel() > 0 &&
+                  tile > 0 && group > 0,
+              "Attention tile metadata requires CUDA int32 cumulative lengths and positive tile/group sizes");
+  c10::cuda::CUDAGuard guard(cumulative.device());
+  const auto batch = cumulative.numel() - 1;
+  if (batch > 1024) {
+    auto lengths = cumulative.narrow(0, 1, batch) - cumulative.narrow(0, 0, batch);
+    auto counts = at::floor_divide(lengths * group + tile - 1, tile);
+    return at::cat({at::zeros({1}, cumulative.options()), at::cumsum(counts, 0, at::kInt)});
+  }
+  auto output = at::empty_like(cumulative);
+  auto stream = at::cuda::getCurrentCUDAStream();
+  auto input_ptr = cumulative.const_data_ptr<int32_t>();
+  auto output_ptr = output.mutable_data_ptr<int32_t>();
+  if (batch <= 256)
+    attention_tile_prefix_kernel<256><<<1, 256, 0, stream>>>(input_ptr, output_ptr, batch, tile, group);
+  else if (batch <= 512)
+    attention_tile_prefix_kernel<512><<<1, 512, 0, stream>>>(input_ptr, output_ptr, batch, tile, group);
+  else
+    attention_tile_prefix_kernel<1024><<<1, 1024, 0, stream>>>(input_ptr, output_ptr, batch, tile, group);
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return output;
 }
 
 std::pair<at::Tensor, at::Tensor> fused_add_rms_norm(const at::Tensor& x,
