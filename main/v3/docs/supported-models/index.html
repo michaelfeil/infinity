@@ -2376,6 +2376,13 @@ WikiNEuRal provide multilingual entities, CamemBERT covers French, and the
 clinical/de-identification models have domain-specific labels. DeBERTa-v2/v3
 execution remains experimental. Training on clinical text does not imply coverage
 of every medical concept or de-identification policy.</p>
+<p>The native loader requires <code>tokenizer.json</code> at the checkpoint root; <code>vocab.txt</code>
+alone is insufficient. For <code>dslim/bert-base-NER</code>, use <code>--revision refs/pr/27</code>
+until <a href="https://huggingface.co/dslim/bert-base-NER/discussions/27">the upstream tokenizer addition</a>
+is merged. This revision adds the converted tokenizer without changing weights.
+It has been validated with Infinity 3.0.0 GPU NER inference and all aggregation
+modes. For a local copy, include this revision's root <code>tokenizer.json</code> alongside
+the model weights and configuration.</p>
 <table>
 <thead>
 <tr>
@@ -2412,8 +2419,8 @@ of every medical concept or de-identification policy.</p>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/dslim/bert-base-NER">dslim/bert-base-NER</a></td>
-<td>BERT + token-label head</td>
-<td><code>--max-batch-tokens 8192</code></td>
+<td>BERT + token-label head; requires tokenizer revision above</td>
+<td><code>--revision refs/pr/27 --max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/dslim/bert-large-NER">dslim/bert-large-NER</a></td>
