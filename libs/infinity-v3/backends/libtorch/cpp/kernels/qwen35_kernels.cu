@@ -9,6 +9,7 @@
 #include "batching/prefix_cache.h"
 #include "kernels/qwen35_chunk.h"
 #include <ATen/cuda/CUDAContext.h>
+#include <type_traits>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
 #include "../../../candle/src/kernels/qwen35_gdn.cu"
@@ -84,11 +85,12 @@ __global__ void packed_conv_vector(const __nv_bfloat16* x,
 // MIT notices). Preserve BF16 rounding after each product. Read original
 // packed strides and per-token positions directly; no synthetic rows or heads.
 namespace {
-__global__ void staged_rotary(const __nv_bfloat16* x,
-                              const __nv_bfloat16* cos,
-                              const __nv_bfloat16* sin,
+template <typename T>
+__global__ void staged_rotary(const T* x,
+                              const T* cos,
+                              const T* sin,
                               const int64_t* positions,
-                              __nv_bfloat16* out,
+                              T* out,
                               int64_t pairs,
                               int64_t heads,
                               int64_t half,
@@ -102,15 +104,15 @@ __global__ void staged_rotary(const __nv_bfloat16* x,
   const auto source = token * token_stride + head * head_stride + column;
   CUDA_KERNEL_ASSERT(positions[token] >= 0 && positions[token] < table_rows);
   const auto frequency = positions[token] * half + column;
-  const auto a = __bfloat162float(x[source]), b = __bfloat162float(x[source + half]);
-  const auto c = __bfloat162float(cos[frequency]), s = __bfloat162float(sin[frequency]);
-  const auto ac = __bfloat162float(__float2bfloat16_rn(__fmul_rn(a, c)));
-  const auto bs = __bfloat162float(__float2bfloat16_rn(__fmul_rn(b, s)));
-  const auto bc = __bfloat162float(__float2bfloat16_rn(__fmul_rn(b, c)));
-  const auto as = __bfloat162float(__float2bfloat16_rn(__fmul_rn(a, s)));
+  const auto a = float(x[source]), b = float(x[source + half]);
+  const auto c = float(cos[frequency]), s = float(sin[frequency]);
+  const auto ac = float(T(__fmul_rn(a, c)));
+  const auto bs = float(T(__fmul_rn(b, s)));
+  const auto bc = float(T(__fmul_rn(b, c)));
+  const auto as = float(T(__fmul_rn(a, s)));
   const auto destination = (token * heads + head) * half * 2 + column;
-  out[destination] = __float2bfloat16_rn(__fsub_rn(ac, bs));
-  out[destination + half] = __float2bfloat16_rn(__fadd_rn(bc, as));
+  out[destination] = T(__fsub_rn(ac, bs));
+  out[destination + half] = T(__fadd_rn(bc, as));
 }
 }
 
@@ -118,8 +120,9 @@ at::Tensor gemma_rotary_cuda(const at::Tensor& x,
                              const at::Tensor& cos,
                              const at::Tensor& sin,
                              const at::Tensor& positions) {
-  TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kBFloat16 && x.dim() == 3 && x.stride(2) == 1,
-              "Gemma rotary requires true BF16 packed T/H/D rows");
+  TORCH_CHECK(x.is_cuda() && (x.scalar_type() == at::kBFloat16 || x.scalar_type() == at::kHalf) &&
+                  x.dim() == 3 && x.stride(2) == 1,
+              "Gemma rotary requires FP16/BF16 packed T/H/D rows");
   TORCH_CHECK(x.size(2) > 0 && x.numel() / 2 <= int64_t(INT32_MAX) * 256,
               "Gemma rotary launch exceeds kernel range");
   const auto half = x.size(2) / 2;
@@ -135,19 +138,22 @@ at::Tensor gemma_rotary_cuda(const at::Tensor& x,
   c10::cuda::CUDAGuard guard(x.device());
   auto out = at::empty(x.sizes(), x.options());
   const auto pairs = x.numel() / 2;
-  if (pairs)
-    staged_rotary<<<(pairs + 255) / 256, 256, 0, at::cuda::getCurrentCUDAStream()>>>(
-        reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),
-        reinterpret_cast<const __nv_bfloat16*>(cos.const_data_ptr()),
-        reinterpret_cast<const __nv_bfloat16*>(sin.const_data_ptr()),
-        positions.const_data_ptr<int64_t>(),
-        reinterpret_cast<__nv_bfloat16*>(out.mutable_data_ptr()),
-        pairs,
-        x.size(1),
-        half,
-        x.stride(0),
-        x.stride(1),
-        cos.size(0));
+  if (pairs) {
+    AT_DISPATCH_REDUCED_FLOATING_TYPES(x.scalar_type(), "gemma_rotary", [&] {
+      staged_rotary<scalar_t><<<(pairs + 255) / 256, 256, 0, at::cuda::getCurrentCUDAStream()>>>(
+          reinterpret_cast<const scalar_t*>(x.const_data_ptr()),
+          reinterpret_cast<const scalar_t*>(cos.const_data_ptr()),
+          reinterpret_cast<const scalar_t*>(sin.const_data_ptr()),
+          positions.const_data_ptr<int64_t>(),
+          reinterpret_cast<scalar_t*>(out.mutable_data_ptr()),
+          pairs,
+          x.size(1),
+          half,
+          x.stride(0),
+          x.stride(1),
+          cos.size(0));
+    });
+  }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
 }
@@ -478,9 +484,7 @@ at::Tensor gemma2_residual_norm_cuda(const at::Tensor& residual,
 
 // Adapted from the MIT precise_activation in Candle's gated_activation.cu.
 // The original source and its complete notices remain in the repository.
-template <bool Gelu>
-__device__ __forceinline__ __nv_bfloat16 gemma_precise_activation(__nv_bfloat16 x) {
-  using T = __nv_bfloat16;
+template <bool Gelu, typename T> __device__ __forceinline__ T gemma_precise_activation(T x) {
   if constexpr (Gelu) {
     T square = x * x, cube = square * x;
     T alpha = x + T(.044715) * cube;
@@ -488,90 +492,166 @@ __device__ __forceinline__ __nv_bfloat16 gemma_precise_activation(__nv_bfloat16 
     T tanh_value = T(tanhf(float(tanh_input)));
     return T(.5) * x * (T(1.) + tanh_value);
   } else {
-    T exponential = hexp(-x), denominator = T(1.) + exponential;
+    using Native = std::conditional_t<std::is_same_v<T, at::BFloat16>, __nv_bfloat16, __half>;
+    T exponential = T(float(hexp(Native(-float(x))))), denominator = T(1.) + exponential;
     return x / denominator;
   }
 }
 
-template <int V> struct alignas(V * 2) GateValues {
-  __nv_bfloat16 values[V];
-};
-
-template <bool Gelu, int V>
-__global__ void
-gemma_precise_gate(const __nv_bfloat16* x, __nv_bfloat16* out, int64_t count, int64_t width) {
-  auto i = (int64_t(blockIdx.x) * blockDim.x + threadIdx.x) * V;
+template <bool Gelu, typename T>
+__global__ void gemma_precise_gate(const T* x, T* out, int64_t count, int64_t width) {
+  auto i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
   if (i >= count)
     return;
   auto row = i / width, column = i % width;
-  const auto gate = *reinterpret_cast<const GateValues<V>*>(x + row * 2 * width + column);
-  const auto up = *reinterpret_cast<const GateValues<V>*>(x + row * 2 * width + width + column);
-  GateValues<V> result;
-#pragma unroll
-  for (int j = 0; j < V; ++j)
-    result.values[j] = gemma_precise_activation<Gelu>(gate.values[j]) * up.values[j];
-  *reinterpret_cast<GateValues<V>*>(out + i) = result;
+  out[i] = gemma_precise_activation<Gelu, T>(x[row * 2 * width + column]) *
+           x[row * 2 * width + width + column];
 }
 
-template <bool Gelu>
-__global__ void gemma_precise_unary(const __nv_bfloat16* x, __nv_bfloat16* out, int64_t count) {
+template <bool Gelu, typename T>
+__global__ void gemma_precise_unary(const T* x, T* out, int64_t count) {
   auto i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
   if (i < count)
-    out[i] = gemma_precise_activation<Gelu>(x[i]);
+    out[i] = gemma_precise_activation<Gelu, T>(x[i]);
 }
 
 at::Tensor gemma_activation_cuda(const at::Tensor& value, bool gelu) {
   c10::cuda::CUDAGuard guard(value.device());
-  TORCH_CHECK(value.scalar_type() == at::kBFloat16, "Gemma precise activation requires BF16");
+  TORCH_CHECK((value.scalar_type() == at::kBFloat16 || value.scalar_type() == at::kHalf),
+              "Gemma precise activation requires FP16/BF16");
   auto x = value.contiguous(), out = at::empty_like(x);
   if (out.numel() == 0)
     return out;
   auto stream = at::cuda::getCurrentCUDAStream();
-  auto input = reinterpret_cast<const __nv_bfloat16*>(x.data_ptr());
-  auto output = reinterpret_cast<__nv_bfloat16*>(out.data_ptr());
-  if (gelu)
-    gemma_precise_unary<true>
-        <<<(out.numel() + 255) / 256, 256, 0, stream>>>(input, output, out.numel());
-  else
-    gemma_precise_unary<false>
-        <<<(out.numel() + 255) / 256, 256, 0, stream>>>(input, output, out.numel());
+  AT_DISPATCH_REDUCED_FLOATING_TYPES(x.scalar_type(), "gemma_activation", [&] {
+    auto input = reinterpret_cast<const scalar_t*>(x.data_ptr());
+    auto output = reinterpret_cast<scalar_t*>(out.data_ptr());
+    if (gelu)
+      gemma_precise_unary<true, scalar_t>
+          <<<(out.numel() + 255) / 256, 256, 0, stream>>>(input, output, out.numel());
+    else
+      gemma_precise_unary<false, scalar_t>
+          <<<(out.numel() + 255) / 256, 256, 0, stream>>>(input, output, out.numel());
+  });
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
 }
 
+// Native half2 arithmetic keeps the same FP16 rounding stages while processing adjacent columns.
+__global__ void
+gemma_half2_gelu_gate(const __half2* x, __half2* out, int64_t count, int64_t width) {
+  const int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+  if (i >= count)
+    return;
+  const auto row = i / width, column = i % width;
+  const auto gate = x[row * 2 * width + column];
+  const auto one = __float2half2_rn(1.f);
+  const auto cube = __hmul2_rn(__hmul2_rn(gate, gate), gate);
+  const auto alpha = __hadd2_rn(gate, __hmul2_rn(__float2half2_rn(.044715f), cube));
+  const auto angle = __half22float2(__hmul2_rn(__float2half2_rn(M_2_SQRTPI * M_SQRT1_2), alpha));
+  const auto tangent = __floats2half2_rn(tanhf(angle.x), tanhf(angle.y));
+  const auto value = __hmul2_rn(__hmul2_rn(__float2half2_rn(.5f), gate), __hadd2_rn(one, tangent));
+  out[i] = __hmul2_rn(value, x[row * 2 * width + width + column]);
+}
+
 at::Tensor gemma_gated_cuda(const at::Tensor& x, bool gelu) {
   c10::cuda::CUDAGuard guard(x.device());
-  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && x.is_contiguous() && x.dim() == 2 &&
-                  x.size(1) % 2 == 0,
-              "Gemma precise GLU requires contiguous packed BF16 projection");
+  TORCH_CHECK((x.scalar_type() == at::kBFloat16 || x.scalar_type() == at::kHalf) &&
+                  x.is_contiguous() && x.dim() == 2 && x.size(1) % 2 == 0,
+              "Gemma precise GLU requires contiguous packed FP16/BF16 projection");
   auto width = x.size(1) / 2;
   auto out = at::empty({x.size(0), width}, x.options());
   if (out.numel() == 0)
     return out;
   auto stream = at::cuda::getCurrentCUDAStream(x.device().index());
-  auto input = reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr());
-  auto output = reinterpret_cast<__nv_bfloat16*>(out.mutable_data_ptr());
-  auto launch = [&]<int V>() {
-    const auto blocks = (out.numel() + 256 * V - 1) / (256 * V);
+  if (gelu && x.scalar_type() == at::kHalf && width % 2 == 0 &&
+      reinterpret_cast<uintptr_t>(x.const_data_ptr()) % alignof(__half2) == 0) {
+    const auto* input = reinterpret_cast<const __half2*>(x.const_data_ptr());
+    auto* output = reinterpret_cast<__half2*>(out.mutable_data_ptr());
+    const auto count = out.numel() / 2;
+    gemma_half2_gelu_gate<<<(count + 255) / 256, 256, 0, stream>>>(input, output, count, width / 2);
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return out;
+  }
+  AT_DISPATCH_REDUCED_FLOATING_TYPES(x.scalar_type(), "gemma_activation", [&] {
+    auto input = reinterpret_cast<const scalar_t*>(x.const_data_ptr());
+    auto output = reinterpret_cast<scalar_t*>(out.mutable_data_ptr());
     if (gelu)
-      gemma_precise_gate<true, V><<<blocks, 256, 0, stream>>>(input, output, out.numel(), width);
+      gemma_precise_gate<true, scalar_t>
+          <<<(out.numel() + 255) / 256, 256, 0, stream>>>(input, output, out.numel(), width);
     else
-      gemma_precise_gate<false, V><<<blocks, 256, 0, stream>>>(input, output, out.numel(), width);
-  };
-  if (width % 4 == 0 && reinterpret_cast<uintptr_t>(input) % 8 == 0)
-    launch.template operator()<4>();
-  else
-    launch.template operator()<1>();
+      gemma_precise_gate<false, scalar_t>
+          <<<(out.numel() + 255) / 256, 256, 0, stream>>>(input, output, out.numel(), width);
+  });
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
 }
 
-at::Tensor
-gemma_norm_cuda(const at::Tensor& x, const at::Tensor& scale, double epsilon, bool reference) {
+namespace {
+template <bool Reference, bool WarpRows>
+__global__ void gemma_half_norm(const at::Half* x,
+                                const float* scale,
+                                at::Half* out,
+                                int64_t width,
+                                int64_t heads,
+                                int64_t stride,
+                                int64_t rows,
+                                float epsilon,
+                                const at::Half* residual) {
+  const int64_t row = int64_t(blockIdx.x) * blockDim.y + threadIdx.y;
+  if (row >= rows)
+    return;
+  const int64_t base = (row / heads) * stride + (row % heads) * width;
+  float sum = 0.f;
+  for (int64_t col = threadIdx.x; col < width; col += blockDim.x) {
+    float value = float(x[base + col]);
+    sum = __fadd_rn(sum, __fmul_rn(value, value));
+  }
+  for (int offset = 16; offset; offset >>= 1)
+    sum += __shfl_down_sync(0xffffffff, sum, offset);
+  float denominator;
+  if constexpr (WarpRows) {
+    sum = __shfl_sync(0xffffffff, sum, 0);
+    const float variance = __fadd_rn(__fmul_rn(sum, 1.f / width), epsilon);
+    denominator = Reference ? sqrtf(variance) : rsqrtf(variance);
+  } else {
+    __shared__ float partial[8];
+    if ((threadIdx.x & 31) == 0)
+      partial[threadIdx.x / 32] = sum;
+    __syncthreads();
+    if (threadIdx.x < 32) {
+      sum = threadIdx.x < blockDim.x / 32 ? partial[threadIdx.x] : 0.f;
+      for (int offset = 16; offset; offset >>= 1)
+        sum += __shfl_down_sync(0xffffffff, sum, offset);
+      if (threadIdx.x == 0) {
+        const float variance = __fadd_rn(__fmul_rn(sum, 1.f / width), epsilon);
+        partial[0] = Reference ? sqrtf(variance) : rsqrtf(variance);
+      }
+    }
+    __syncthreads();
+    denominator = partial[0];
+  }
+  for (int64_t col = threadIdx.x; col < width; col += blockDim.x) {
+    const float value = float(x[base + col]);
+    const float normalized = Reference ? value / denominator : __fmul_rn(value, denominator);
+    auto result = at::Half(__fmul_rn(normalized, scale[col]));
+    if (residual)
+      result = at::Half(__fadd_rn(float(residual[row * width + col]), float(result)));
+    out[row * width + col] = result;
+  }
+}
+}
+
+static at::Tensor gemma_norm_impl(const at::Tensor& x,
+                                  const at::Tensor& scale,
+                                  double epsilon,
+                                  bool reference,
+                                  const at::Tensor& residual) {
   c10::cuda::CUDAGuard guard(x.device());
-  TORCH_CHECK(x.scalar_type() == at::kBFloat16 && scale.scalar_type() == at::kFloat &&
-                  x.dim() >= 2 && x.dim() <= 3 && x.stride(-1) == 1,
-              "Gemma CUDA norm requires packed BF16 rows and FP32 scales");
+  TORCH_CHECK((x.scalar_type() == at::kBFloat16 || x.scalar_type() == at::kHalf) &&
+                  scale.scalar_type() == at::kFloat && x.dim() >= 2 && x.dim() <= 3 &&
+                  x.stride(-1) == 1,
+              "Gemma CUDA norm requires packed FP16/BF16 rows and FP32 scales");
   auto width = x.size(-1), heads = x.dim() == 3 ? x.size(1) : 1, rows = x.numel() / width;
   TORCH_CHECK(width > 0 && width <= 8192 && scale.numel() == width,
               "Invalid Gemma CUDA norm width");
@@ -584,6 +664,40 @@ gemma_norm_cuda(const at::Tensor& x, const at::Tensor& scale, double epsilon, bo
   if (!reference && threads < 32)
     threads = 32;
   auto stream = at::cuda::getCurrentCUDAStream(x.device().index());
+  if (x.scalar_type() == at::kHalf) {
+    auto launch = [&](auto recipe) {
+      constexpr bool ref = decltype(recipe)::value;
+      // Small batches spread rows across SMs; bulk work shares a CTA across four warps.
+      if (rows < 1024)
+        gemma_half_norm<ref, false><<<rows, 256, 0, stream>>>(
+            x.const_data_ptr<at::Half>(),
+            scale.const_data_ptr<float>(),
+            output.mutable_data_ptr<at::Half>(),
+            width,
+            heads,
+            x.stride(0),
+            rows,
+            epsilon,
+            residual.defined() ? residual.const_data_ptr<at::Half>() : nullptr);
+      else
+        gemma_half_norm<ref, true><<<(rows + 3) / 4, dim3(32, 4), 0, stream>>>(
+            x.const_data_ptr<at::Half>(),
+            scale.const_data_ptr<float>(),
+            output.mutable_data_ptr<at::Half>(),
+            width,
+            heads,
+            x.stride(0),
+            rows,
+            epsilon,
+            residual.defined() ? residual.const_data_ptr<at::Half>() : nullptr);
+    };
+    if (reference)
+      launch(std::true_type{});
+    else
+      launch(std::false_type{});
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+    return output;
+  }
   auto source = reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr());
   auto destination = reinterpret_cast<__nv_bfloat16*>(output.mutable_data_ptr());
   if (reference)
@@ -594,6 +708,23 @@ gemma_norm_cuda(const at::Tensor& x, const at::Tensor& scale, double epsilon, bo
         source, scale.const_data_ptr<float>(), destination, width, heads, x.stride(0), epsilon);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output;
+}
+
+at::Tensor
+gemma_norm_cuda(const at::Tensor& x, const at::Tensor& scale, double epsilon, bool reference) {
+  return gemma_norm_impl(x, scale, epsilon, reference, {});
+}
+
+at::Tensor gemma_half_residual_norm_cuda(const at::Tensor& residual,
+                                         const at::Tensor& x,
+                                         const at::Tensor& scale,
+                                         double epsilon,
+                                         bool reference) {
+  TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kHalf && x.dim() == 2 && x.is_contiguous() &&
+                  residual.device() == x.device() && residual.scalar_type() == x.scalar_type() &&
+                  residual.sizes() == x.sizes() && residual.is_contiguous(),
+              "Gemma fused residual requires matching packed FP16 rows");
+  return gemma_norm_impl(x, scale, epsilon, reference, residual);
 }
 
 // SPDX-License-Identifier: MIT

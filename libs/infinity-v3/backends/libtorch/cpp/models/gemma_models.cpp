@@ -384,7 +384,8 @@ class Gemma final : public Model {
     auto activation = [&](const at::Tensor& gu) {
 #ifdef TEI_TORCH_CUDA_KERNELS
       auto act = string("hidden_activation", "gelu_pytorch_tanh");
-      if (device.is_cuda() && dtype == at::kBFloat16 && act != "relu" && act != "gelu")
+      if (device.is_cuda() && (dtype == at::kBFloat16 || dtype == at::kHalf) && act != "relu" &&
+          act != "gelu")
         return gemma_gated_cuda(gu, act != "silu" && act != "swish");
 #endif
       auto width = gu.size(-1) / 2;
@@ -789,7 +790,7 @@ class Gemma final : public Model {
   /// converting to the input dtype.
   at::Tensor norm(const at::Tensor& x, const std::string& name, bool unit = false) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
-    if (device.is_cuda() && dtype == at::kBFloat16 && x.size(-1) <= 8192) {
+    if (device.is_cuda() && (dtype == at::kBFloat16 || dtype == at::kHalf) && x.size(-1) <= 8192) {
       const auto& scale =
           unit ? norm_ones.at(x.size(-1)) : weight(norm_scales, prefix + name + ".weight");
       if (embedding2_reference_cuda)
@@ -811,6 +812,10 @@ class Gemma final : public Model {
   at::Tensor
   residual_norm(const at::Tensor& residual, const at::Tensor& x, const std::string& name) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
+    if (device.is_cuda() && dtype == at::kHalf && x.dim() == 2 && x.size(1) > 0 &&
+        x.size(1) <= 8192 && x.is_contiguous() && residual.is_contiguous())
+      return gemma_half_residual_norm_cuda(
+          residual, x, weight(norm_scales, prefix + name + ".weight"), epsilon, !legacy);
     if (publisher_sequence && ple_width == 0 && device.is_cuda() && dtype == at::kBFloat16 &&
         x.dim() == 2 && x.size(1) > 0 && x.size(1) <= 8192 && x.is_contiguous() &&
         residual.is_contiguous())
@@ -836,7 +841,8 @@ class Gemma final : public Model {
     if (act == "gelu")
       return at::gelu(x, "none");
 #ifdef TEI_TORCH_CUDA_KERNELS
-    if (x.is_cuda() && x.scalar_type() == at::kBFloat16 && act != "relu")
+    if (x.is_cuda() && (x.scalar_type() == at::kBFloat16 || x.scalar_type() == at::kHalf) &&
+        act != "relu")
       return gemma_activation_cuda(x, act != "silu" && act != "swish");
 #endif
     if (act == "silu" || act == "swish")
@@ -853,8 +859,9 @@ class Gemma final : public Model {
   /// Layer-local tables support different sliding/global attention settings.
   at::Tensor rotate(const at::Tensor& x, const Layer& layer, const at::Tensor& positions) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
-    if (!legacy && (!embedding2 || embedding2_reference_cuda) && x.is_cuda() &&
-        x.scalar_type() == at::kBFloat16)
+    if (!legacy && x.is_cuda() &&
+        (x.scalar_type() == at::kHalf ||
+         (x.scalar_type() == at::kBFloat16 && (!embedding2 || embedding2_reference_cuda))))
       return gemma_rotary_cuda(x, layer.cos, layer.sin, positions);
 #endif
     auto cos = layer.cos.index_select(0, positions).unsqueeze(1);
@@ -1461,7 +1468,8 @@ public:
           [this](const at::Tensor& gu) {
 #ifdef TEI_TORCH_CUDA_KERNELS
             const auto act = string("hidden_activation", "gelu_pytorch_tanh");
-            if (device.is_cuda() && dtype == at::kBFloat16 && act != "relu" && act != "gelu")
+            if (device.is_cuda() && (dtype == at::kBFloat16 || dtype == at::kHalf) &&
+                act != "relu" && act != "gelu")
               return gemma_gated_cuda(gu, act != "silu" && act != "swish");
 #endif
             const auto width = gu.size(-1) / 2;

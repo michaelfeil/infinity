@@ -28,6 +28,9 @@ std::pair<at::Tensor, at::Tensor> gemma3_qk_norm_rotary_cuda(const at::Tensor&,
                                                              double);
 /// Apply a prepared Gemma affine scale, selecting the reference reduction when requested.
 at::Tensor gemma_norm_cuda(const at::Tensor&, const at::Tensor&, double, bool);
+/// Normalize a branch in FP32, round to FP16, then add the FP16 residual.
+at::Tensor gemma_half_residual_norm_cuda(
+    const at::Tensor&, const at::Tensor&, const at::Tensor&, double, bool);
 // Undefined result preserves the ordinary legacy norm-plus-add fallback.
 std::pair<at::Tensor, at::Tensor> gemma3_residual_prenorm_cuda(
     const at::Tensor&, const at::Tensor&, const at::Tensor&, const at::Tensor&, double);
