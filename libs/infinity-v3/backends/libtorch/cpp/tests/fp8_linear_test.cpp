@@ -181,6 +181,16 @@ int main() {
       TORCH_CHECK(at::equal(linear.forward(input, bias), output + bias),
                   "FP8 bias lost separate model-dtype rounding");
     }
+    // Reusing a geometry must rebind both activation and weight scale pointers.
+    infinity::Fp8Linear other(at::randn({512, 256}, options) * 2);
+    for (const auto* projection : {&linear, &other, &linear}) {
+      auto values = at::randn({17, 256}, options) * 3;
+      auto quantized = infinity::fp8_quantize_rows(values);
+      auto expected = fp8_original_recipe(quantized.first, projection->matrix(),
+          quantized.second, projection->scales(), dtype);
+      TORCH_CHECK(at::equal(projection->forward(values), expected),
+                  "Reused FP8 geometry retained another projection's scale pointers");
+    }
     auto empty = linear.forward(at::empty({0, 256}, options));
     TORCH_CHECK(empty.sizes() == at::IntArrayRef({0, 512}), "FP8 empty rows not preserved");
     for (int64_t width : {4096, 4104, 5120, 6144, 6152})

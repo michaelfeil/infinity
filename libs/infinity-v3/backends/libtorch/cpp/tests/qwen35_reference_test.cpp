@@ -1,4 +1,5 @@
 #include "kernels/qwen35_reference.h"
+#include "helpers/fp8_linear.h"
 #include "kernels/qwen35_recurrent.h"
 #include <array>
 #include "kernels/qwen35_kernels.h"
@@ -337,6 +338,15 @@ int main(int argc, char** argv) {
             width,
             " offset=",
             offset);
+        std::pair<at::Tensor, at::Tensor> quantized;
+        auto with_quantization = infinity::qwen35_reference_residual_norm_cuda(
+            residual, addition, cuda_gamma, 1e-6, &quantized);
+        auto separate = infinity::fp8_quantize_rows(fused.second);
+        TORCH_CHECK(at::equal(with_quantization.first, fused.first) &&
+                        at::equal(with_quantization.second, fused.second) &&
+                        at::equal(quantized.first.view(at::kByte), separate.first.view(at::kByte)) &&
+                        at::equal(quantized.second, separate.second),
+                    "Fused Qwen norm quantization changed rounded rows, E4M3 bytes or row scales");
       }
     }
   auto rejects = [&](const at::Tensor& x, const at::Tensor& gamma) {

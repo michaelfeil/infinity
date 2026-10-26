@@ -419,6 +419,136 @@ std::pair<at::Tensor, at::Tensor> fp8_quantize_rows(const at::Tensor&) {
   TORCH_CHECK(false, "Dynamic FP8 requires a CUDA LibTorch build");
 }
 #endif
+#if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
+namespace {
+// Reuse the vendor's first heuristic for repeated projection geometries. Plans
+// are thread-local; scale pointers are rebound for each invocation. Workspace
+// remains owned by ATen, and capture retains ATen's graph-aware path.
+struct ScaledPlan {
+  int device;
+  CUcontext context;
+  cudaStream_t stream;
+  cublasLtHandle_t handle;
+  int64_t m, n, k;
+  at::ScalarType dtype;
+  size_t workspace_bytes;
+  cublasLtMatmulDesc_t operation{};
+  cublasLtMatrixLayout_t a{}, b{}, c{}, d{};
+  cublasLtMatmulAlgo_t algorithm{};
+  ~ScaledPlan() {
+    if (a)
+      cublasLtMatrixLayoutDestroy(a);
+    if (b)
+      cublasLtMatrixLayoutDestroy(b);
+    if (c)
+      cublasLtMatrixLayoutDestroy(c);
+    if (d)
+      cublasLtMatrixLayoutDestroy(d);
+    if (operation)
+      cublasLtMatmulDescDestroy(operation);
+  }
+};
+at::Tensor scaled_mm_cached(const at::Tensor& input, const at::Tensor& weight,
+                            const at::Tensor& input_scale, const at::Tensor& weight_scale,
+                            at::ScalarType dtype) {
+  const auto stream = at::cuda::getCurrentCUDAStream();
+  cudaStreamCaptureStatus capture;
+  C10_CUDA_CHECK(cudaStreamIsCapturing(stream, &capture));
+  if (capture != cudaStreamCaptureStatusNone ||
+      at::cuda::tunable::getTuningContext()->IsTunableOpEnabled() ||
+      at::globalContext()._SMCarveout_EXPERIMENTAL().has_value() ||
+      at::globalContext().deterministicAlgorithms())
+    return {};
+  // Match the default 256-byte alignment used by ATen's cuBLASLt heuristic.
+  if ((reinterpret_cast<uintptr_t>(input.const_data_ptr()) % 256) ||
+      (reinterpret_cast<uintptr_t>(weight.const_data_ptr()) % 256))
+    return {};
+  CUcontext context{};
+  auto get_context = c10::cuda::DriverAPI::get()->cuCtxGetCurrent_;
+  if (!get_context || get_context(&context) != CUDA_SUCCESS || !context)
+    return {};
+  auto handle = at::cuda::getCurrentCUDABlasLtHandle();
+  auto workspace_bytes = at::cuda::getCUDABlasLtWorkspaceSize();
+  const auto m = input.size(0), n = weight.size(0), k = input.size(1);
+  static thread_local std::vector<std::unique_ptr<ScaledPlan>> plans;
+  ScaledPlan* plan = nullptr;
+  for (auto& entry : plans)
+    if (entry->device == input.get_device() && entry->context == context &&
+        entry->stream == stream.stream() && entry->handle == handle &&
+        entry->workspace_bytes == workspace_bytes && entry->dtype == dtype &&
+        entry->m == m && entry->n == n && entry->k == k) {
+      plan = entry.get();
+      break;
+    }
+  if (!plan) {
+    auto entry = std::make_unique<ScaledPlan>();
+    entry->device = input.get_device();
+    entry->context = context;
+    entry->stream = stream.stream();
+    entry->handle = handle;
+    entry->m = m;
+    entry->n = n;
+    entry->k = k;
+    entry->dtype = dtype;
+    entry->workspace_bytes = workspace_bytes;
+    TORCH_CUDABLAS_CHECK(cublasLtMatmulDescCreate(&entry->operation, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+    auto set = [&](auto attribute, const auto& value) {
+      TORCH_CUDABLAS_CHECK(cublasLtMatmulDescSetAttribute(entry->operation, attribute, &value, sizeof(value)));
+    };
+    const auto transpose = CUBLAS_OP_T, normal = CUBLAS_OP_N;
+    const int8_t fast = 1;
+    const int mode = CUBLASLT_MATMUL_MATRIX_SCALE_OUTER_VEC_32F;
+    set(CUBLASLT_MATMUL_DESC_TRANSA, transpose);
+    set(CUBLASLT_MATMUL_DESC_TRANSB, normal);
+    set(CUBLASLT_MATMUL_DESC_FAST_ACCUM, fast);
+    set(CUBLASLT_MATMUL_DESC_A_SCALE_MODE, mode);
+    set(CUBLASLT_MATMUL_DESC_B_SCALE_MODE, mode);
+    auto ws = weight_scale.const_data_ptr(), xs = input_scale.const_data_ptr();
+    set(CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, ws);
+    set(CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, xs);
+    auto output_type = dtype == at::kBFloat16 ? CUDA_R_16BF : CUDA_R_16F;
+    TORCH_CUDABLAS_CHECK(cublasLtMatrixLayoutCreate(&entry->a, CUDA_R_8F_E4M3, k, n, k));
+    TORCH_CUDABLAS_CHECK(cublasLtMatrixLayoutCreate(&entry->b, CUDA_R_8F_E4M3, k, m, k));
+    TORCH_CUDABLAS_CHECK(cublasLtMatrixLayoutCreate(&entry->c, output_type, n, m, n));
+    TORCH_CUDABLAS_CHECK(cublasLtMatrixLayoutCreate(&entry->d, output_type, n, m, n));
+    cublasLtMatmulPreference_t preference{};
+    TORCH_CUDABLAS_CHECK(cublasLtMatmulPreferenceCreate(&preference));
+    auto status = cublasLtMatmulPreferenceSetAttribute(preference,
+        CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspace_bytes, sizeof(workspace_bytes));
+    cublasLtMatmulHeuristicResult_t heuristic{};
+    int returned = 0;
+    if (status == CUBLAS_STATUS_SUCCESS)
+      status = cublasLtMatmulAlgoGetHeuristic(handle, entry->operation, entry->a, entry->b,
+          entry->c, entry->d, preference, 1, &heuristic, &returned);
+    cublasLtMatmulPreferenceDestroy(preference);
+    TORCH_CUDABLAS_CHECK(status);
+    if (!returned)
+      return {}; // Preserve ATen's supported full-accumulation handling.
+    entry->algorithm = heuristic.algo;
+    if (plans.size() == 128)
+      plans.erase(plans.begin());
+    plan = entry.get();
+    plans.push_back(std::move(entry));
+  }
+  auto ws = weight_scale.const_data_ptr(), xs = input_scale.const_data_ptr();
+  TORCH_CUDABLAS_CHECK(cublasLtMatmulDescSetAttribute(plan->operation,
+      CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &ws, sizeof(ws)));
+  TORCH_CUDABLAS_CHECK(cublasLtMatmulDescSetAttribute(plan->operation,
+      CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &xs, sizeof(xs)));
+  auto output = at::empty({m, n}, input.options().dtype(dtype));
+  const float alpha = 1.f, beta = 0.f;
+  auto status = cublasLtMatmul(handle, plan->operation, &alpha,
+      weight.const_data_ptr(), plan->a, input.const_data_ptr(), plan->b, &beta,
+      weight.const_data_ptr(), plan->c, output.mutable_data_ptr(), plan->d,
+      &plan->algorithm, at::cuda::getCUDABlasLtWorkspace(), workspace_bytes, stream);
+  if (status == CUBLAS_STATUS_NOT_SUPPORTED)
+    return {};
+  TORCH_CUDABLAS_CHECK(status);
+  return output;
+}
+}
+#endif
+
 Fp8Linear::Fp8Linear(const at::Tensor& weight) : dtype_(weight.scalar_type()), rowwise_(false) {
   TORCH_CHECK(weight.is_cuda() && weight.dim() == 2 && weight.size(0) > 0 && weight.size(1) > 0,
               "Dynamic FP8 requires nonempty CUDA matrix weights");
@@ -486,15 +616,22 @@ at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
 #endif
   at::Tensor output;
   if (rowwise_) {
-    try {
-      // Candle's Hopper recipe prefers fast accumulation. Some CUDA versions
-      // lack fast tactics for short, wide-K shapes; preserve its full fallback.
-      output = at::_scaled_mm(input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, true);
-    } catch (const c10::Error& error) {
-      if (std::string(error.what_without_backtrace()).find("CUBLAS_STATUS_NOT_SUPPORTED") ==
-          std::string::npos)
-        throw;
-      output = at::_scaled_mm(input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, false);
+#if defined(TEI_TORCH_CUDA_KERNELS) && CUDA_VERSION >= 12090
+    output = scaled_mm_cached(input, matrix_, row_scales, scales_, dtype_);
+#endif
+    if (!output.defined()) {
+      try {
+        // Candle's Hopper recipe prefers fast accumulation. Some CUDA versions
+        // lack fast tactics for short, wide-K shapes; preserve its full fallback.
+        output = at::_scaled_mm(
+            input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, true);
+      } catch (const c10::Error& error) {
+        if (std::string(error.what_without_backtrace()).find("CUBLAS_STATUS_NOT_SUPPORTED") ==
+            std::string::npos)
+          throw;
+        output = at::_scaled_mm(
+            input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, false);
+      }
     }
   } else {
     // Match the portable recipe: scale full FP32 accumulation before the

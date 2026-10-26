@@ -34,6 +34,7 @@ DEALINGS IN THE SOFTWARE.
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
 #include <cuda_bf16.h>
+#include <cuda_fp8.h>
 #define gdn_sum tei_reference_gdn_sum
 #define qwen35_conv_bf16 tei_reference_qwen35_conv_bf16
 #define qwen35_gdn_prepare tei_reference_qwen35_gdn_prepare
@@ -53,7 +54,7 @@ template <int V> struct alignas(V * 2) NormValues {
   __nv_bfloat16 values[V];
 };
 
-template <int V, bool Residual = false>
+template <int V, bool Residual = false, bool Quantize = false>
 __global__ void norm_tree(const __nv_bfloat16* x,
                           const __nv_bfloat16* gamma,
                           __nv_bfloat16* out,
@@ -64,7 +65,9 @@ __global__ void norm_tree(const __nv_bfloat16* x,
                           long stride1,
                           float eps,
                           const __nv_bfloat16* addition = nullptr,
-                          __nv_bfloat16* updated = nullptr) {
+                          __nv_bfloat16* updated = nullptr,
+                          __nv_fp8_e4m3* quantized = nullptr,
+                          float* scales = nullptr) {
   __shared__ float sums[1024];
   int row = blockIdx.x, tid = threadIdx.x * V, threads = blockDim.x * V;
   long base = int64_t(row / heads) * stride0 + (row % heads) * stride1;
@@ -116,7 +119,7 @@ __global__ void norm_tree(const __nv_bfloat16* x,
     }
   }
   __syncthreads();
-  float inv = sums[0];
+  float inv = sums[0], amax = 0.f;
   for (int d = tid; d < width; d += threads) {
     auto values = *reinterpret_cast<const NormValues<V>*>((Residual ? updated : x) + base + d);
     auto weights = *reinterpret_cast<const NormValues<V>*>(gamma + d);
@@ -126,8 +129,47 @@ __global__ void norm_tree(const __nv_bfloat16* x,
       float z = __bfloat162float(values.values[j]),
             weight = __fadd_rn(__bfloat162float(weights.values[j]), 1.f);
       result.values[j] = __float2bfloat16_rn(__fmul_rn(__fmul_rn(z, inv), weight));
+      if constexpr (Quantize)
+        amax = fmaxf(amax, fabsf(__bfloat162float(result.values[j])));
     }
     *reinterpret_cast<NormValues<V>*>(out + int64_t(row) * width + d) = result;
+  }
+  if constexpr (Quantize) {
+    // Quantize the rounded BF16 norm, using the existing row-scale contract.
+    // The same shared storage is reusable after every lane has read its inverse.
+    __syncthreads();
+    const int lane = threadIdx.x % 32, warp = threadIdx.x / 32;
+    const int active = min(int(blockDim.x), 32);
+    const unsigned mask = __activemask();
+    for (int d = 16; d; d >>= 1) {
+      const float other = __shfl_down_sync(mask, amax, d);
+      if (lane + d < active)
+        amax = fmaxf(amax, other);
+    }
+    if (!lane)
+      sums[warp] = amax;
+    __syncthreads();
+    if (!warp) {
+      amax = lane < (blockDim.x + 31) / 32 ? sums[lane] : 0.f;
+      for (int d = 16; d; d >>= 1) {
+        const float other = __shfl_down_sync(mask, amax, d);
+        if (lane + d < active)
+          amax = fmaxf(amax, other);
+      }
+      if (!lane)
+        sums[0] = __fmul_rn(fmaxf(amax, 1e-12f), 1.f / 448.f);
+    }
+    __syncthreads();
+    const float scale = sums[0];
+    if (!threadIdx.x)
+      scales[row] = scale;
+    for (int d = tid; d < width; d += threads) {
+      const auto values = *reinterpret_cast<const NormValues<V>*>(out + int64_t(row) * width + d);
+#pragma unroll
+      for (int j = 0; j < V; ++j)
+        quantized[int64_t(row) * width + d + j] =
+            __nv_fp8_e4m3(__fdiv_rn(__bfloat162float(values.values[j]), scale));
+    }
   }
 }
 }
@@ -174,10 +216,12 @@ at::Tensor qwen35_reference_norm_cuda(const at::Tensor& x, const at::Tensor& gam
   return out;
 }
 
-std::pair<at::Tensor, at::Tensor> qwen35_reference_residual_norm_cuda(const at::Tensor& x,
-                                                                      const at::Tensor& addition,
-                                                                      const at::Tensor& gamma,
-                                                                      double eps) {
+std::pair<at::Tensor, at::Tensor>
+qwen35_reference_residual_norm_cuda(const at::Tensor& x,
+                                    const at::Tensor& addition,
+                                    const at::Tensor& gamma,
+                                    double eps,
+                                    std::pair<at::Tensor, at::Tensor>* quantized) {
   TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.scalar_type() == at::kBFloat16 &&
                   x.is_contiguous() && addition.device() == x.device() &&
                   addition.scalar_type() == x.scalar_type() && addition.sizes() == x.sizes() &&
@@ -190,11 +234,14 @@ std::pair<at::Tensor, at::Tensor> qwen35_reference_residual_norm_cuda(const at::
               "Invalid Qwen3.5 residual norm geometry");
   c10::cuda::CUDAGuard guard(x.device());
   auto updated = at::empty_like(x), normalized = at::empty_like(x);
+  if (quantized)
+    *quantized = {at::empty_like(x, x.options().dtype(at::kFloat8_e4m3fn)),
+                  at::empty({rows, 1}, x.options().dtype(at::kFloat))};
   int threads = 1;
   while (threads < width && threads < 1024)
     threads *= 2;
-  auto launch = [&]<int V>() {
-    norm_tree<V, true><<<rows, threads / V, 0, at::cuda::getCurrentCUDAStream()>>>(
+  auto launch = [&]<int V, bool Quantize>() {
+    norm_tree<V, true, Quantize><<<rows, threads / V, 0, at::cuda::getCurrentCUDAStream()>>>(
         reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),
         reinterpret_cast<const __nv_bfloat16*>(gamma.const_data_ptr()),
         reinterpret_cast<__nv_bfloat16*>(normalized.mutable_data_ptr()),
@@ -205,15 +252,22 @@ std::pair<at::Tensor, at::Tensor> qwen35_reference_residual_norm_cuda(const at::
         0,
         static_cast<float>(eps),
         reinterpret_cast<const __nv_bfloat16*>(addition.const_data_ptr()),
-        reinterpret_cast<__nv_bfloat16*>(updated.mutable_data_ptr()));
+        reinterpret_cast<__nv_bfloat16*>(updated.mutable_data_ptr()),
+        quantized ? reinterpret_cast<__nv_fp8_e4m3*>(quantized->first.mutable_data_ptr()) : nullptr,
+        quantized ? quantized->second.mutable_data_ptr<float>() : nullptr);
   };
   const bool vector = width % 4 == 0 && reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 8 == 0 &&
                       reinterpret_cast<uintptr_t>(addition.const_data_ptr()) % 8 == 0 &&
                       reinterpret_cast<uintptr_t>(gamma.const_data_ptr()) % 8 == 0;
-  if (vector)
-    launch.template operator()<4>();
+  if (quantized) {
+    if (vector)
+      launch.template operator()<4, true>();
+    else
+      launch.template operator()<1, true>();
+  } else if (vector)
+    launch.template operator()<4, false>();
   else
-    launch.template operator()<1>();
+    launch.template operator()<1, false>();
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return {updated, normalized};
 }

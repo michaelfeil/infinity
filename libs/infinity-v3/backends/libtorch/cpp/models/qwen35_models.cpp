@@ -79,6 +79,7 @@ class Qwen35 final : public Model {
     DenseMlp dense_mlp, shared_mlp;
   };
 
+  using QuantizedRows = std::pair<at::Tensor, at::Tensor>;
   std::vector<Mlp> mlps;
   std::map<std::string, std::unique_ptr<Fp8Linear>> fp8_projections;
   std::unique_ptr<Qwen3VL> visual;
@@ -353,14 +354,18 @@ class Qwen35 final : public Model {
 
   /// Run dense or routed feed-forward layers with the checkpoint's
   /// selected activation and prefix recipe.
-  at::Tensor feed_forward(const at::Tensor& x, int64_t layer, const PackedInput& input) const {
+  at::Tensor feed_forward(const at::Tensor& x,
+                         int64_t layer,
+                         const PackedInput& input,
+                         const QuantizedRows* quantized = nullptr) const {
     const auto& m = mlps[layer];
     MlpContext context;
     context.gemm = [&](const MlpProjection& projection, const at::Tensor& rows) {
       return prefix_linear(rows, projection.weight(), projection.gemm_bias(), input);
     };
     if (!m.router.defined())
-      return m.dense_mlp.forward(x, context);
+      return quantized ? m.dense_mlp.forward(quantized->first, context, quantized->second)
+                       : m.dense_mlp.forward(x, context);
     auto top = integer("num_experts_per_tok", 8);
     auto renormalize = cfg.boolean(key("norm_topk_prob"), true);
     const bool native = top == 8 && device.is_cuda() && dtype == at::kBFloat16 &&
@@ -398,11 +403,14 @@ class Qwen35 final : public Model {
         .to(x.scalar_type());
   }
 
-  std::pair<at::Tensor, at::Tensor>
-  residual_norm(const at::Tensor& x, const at::Tensor& addition, const std::string& name) const {
+  std::pair<at::Tensor, at::Tensor> residual_norm(const at::Tensor& x,
+                                                const at::Tensor& addition,
+                                                const std::string& name,
+                                                QuantizedRows* quantized = nullptr) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kBFloat16 && x.size(-1) <= 8192)
-      return qwen35_reference_residual_norm_cuda(x, addition, w(name + ".weight"), epsilon);
+      return qwen35_reference_residual_norm_cuda(
+          x, addition, w(name + ".weight"), epsilon, quantized);
 #endif
     auto updated = x + addition;
     return {updated, norm(updated, name)};
@@ -447,8 +455,9 @@ class Qwen35 final : public Model {
   AttentionProjections project_attention(const at::Tensor& x,
                                          const std::string& p,
                                          const PackedInput& input,
-                                         bool linear) const {
-    std::pair<at::Tensor, at::Tensor> quantized;
+                                         bool linear,
+                                         const QuantizedRows* prepared = nullptr) const {
+    QuantizedRows quantized = prepared ? *prepared : QuantizedRows{};
     auto project = [&](const std::string& name) {
       if (auto it = fp8_projections.find(name); it != fp8_projections.end()) {
         if (!quantized.first.defined())
@@ -913,6 +922,7 @@ class Qwen35 final : public Model {
                            input.block_layout->history_cumulative,
                            input.block_layout->history_offsets};
     auto normalized = norm(hidden, "layers.0.input_layernorm");
+    QuantizedRows attention_rows;
     for (int64_t layer = 0; layer < layer_count; ++layer) {
       const auto p = "layers." + std::to_string(layer) + ".";
       BlockCache cache{metadata};
@@ -922,7 +932,12 @@ class Qwen35 final : public Model {
       // Project the combined representative-prefix/suffix rows once per layer, then slice those
       // projections for separate attention passes. Row-local output projections
       // and MLPs can remain batched.
-      auto projections = project_attention(normalized, ap, input, linear);
+      auto projections =
+          project_attention(normalized,
+                            ap,
+                            input,
+                            linear,
+                            attention_rows.first.defined() ? &attention_rows : nullptr);
       auto attention = [&](const PackedInput& part, bool prefill) {
         const auto start = prefill ? 0 : prefix_tokens,
                    count = prefill ? prefix_tokens : hidden.size(0) - prefix_tokens;
@@ -937,13 +952,19 @@ class Qwen35 final : public Model {
       auto attended = has_suffix ? at::cat({prefix_attention, attention(suffixes, false)}, 0)
                                  : prefix_attention;
       attended = prefix_projection(attended, ap + (linear ? "out_proj" : "o_proj"), input);
-      auto post = residual_norm(hidden, attended, p + "post_attention_layernorm");
-      auto mlp = feed_forward(post.second, layer, input);
-      auto next = residual_norm(post.first,
-                                mlp,
-                                layer + 1 == layer_count
-                                    ? "norm"
-                                    : "layers." + std::to_string(layer + 1) + ".input_layernorm");
+      QuantizedRows mlp_rows;
+      auto post = residual_norm(hidden,
+                                attended,
+                                p + "post_attention_layernorm",
+                                mlps[layer].dense_mlp.fp8() ? &mlp_rows : nullptr);
+      auto mlp =
+          feed_forward(post.second, layer, input, mlp_rows.first.defined() ? &mlp_rows : nullptr);
+      auto next = residual_norm(
+          post.first,
+          mlp,
+          layer + 1 == layer_count ? "norm"
+                                   : "layers." + std::to_string(layer + 1) + ".input_layernorm",
+          layer + 1 < layer_count && !fp8_projections.empty() ? &attention_rows : nullptr);
       hidden = next.first;
       normalized = next.second;
     }

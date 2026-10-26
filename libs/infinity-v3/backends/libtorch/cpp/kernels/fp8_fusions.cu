@@ -98,11 +98,10 @@ __global__ __launch_bounds__(512) void swiglu_quant_vector_kernel(const T* input
 #pragma unroll
   for (int j = 0; j < Groups; ++j) {
     int col = threadIdx.x + j * blockDim.x;
-    Packed<T, 8> gate{}, up{};
-    if (col < stride) {
-      gate = source[row * 2 * stride + col];
-      up = source[row * 2 * stride + stride + col];
-    }
+    if (col >= stride)
+      continue;
+    auto gate = source[row * 2 * stride + col];
+    auto up = source[row * 2 * stride + stride + col];
 #pragma unroll
     for (int lane = 0; lane < 8; ++lane) {
       T exponential = hexp(T(-gate.value[lane]));
