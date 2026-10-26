@@ -254,6 +254,14 @@ clinical/de-identification models have domain-specific labels. DeBERTa-v2/v3
 execution remains experimental. Training on clinical text does not imply coverage
 of every medical concept or de-identification policy.
 
+The native loader requires `tokenizer.json` at the checkpoint root; `vocab.txt`
+alone is insufficient. For `dslim/bert-base-NER`, use `--revision refs/pr/27`
+until [the upstream tokenizer addition](https://huggingface.co/dslim/bert-base-NER/discussions/27)
+is merged. This revision adds the converted tokenizer without changing weights.
+It has been validated with Infinity 3.0.0 GPU NER inference and all aggregation
+modes. For a local copy, include this revision's root `tokenizer.json` alongside
+the model weights and configuration.
+
 | Checkpoint | Native implementation / support basis | Additional launch settings |
 | --- | --- | --- |
 | [Babelscape/wikineural-multilingual-ner](https://huggingface.co/Babelscape/wikineural-multilingual-ner) | BERT + token-label head; [non-commercial license](#model-licenses) | `--max-batch-tokens 8192` |
@@ -261,7 +269,7 @@ of every medical concept or de-identification policy.
 | [Davlan/bert-base-multilingual-cased-ner-hrl](https://huggingface.co/Davlan/bert-base-multilingual-cased-ner-hrl) | BERT + token-label head | `--max-batch-tokens 8192` |
 | [Davlan/xlm-roberta-base-ner-hrl](https://huggingface.co/Davlan/xlm-roberta-base-ner-hrl) | XLM-RoBERTa + token-label head | `--max-batch-tokens 8192` |
 | [dbmdz/bert-large-cased-finetuned-conll03-english](https://huggingface.co/dbmdz/bert-large-cased-finetuned-conll03-english) | BERT + token-label head | `--max-batch-tokens 8192` |
-| [dslim/bert-base-NER](https://huggingface.co/dslim/bert-base-NER) | BERT + token-label head | `--max-batch-tokens 8192` |
+| [dslim/bert-base-NER](https://huggingface.co/dslim/bert-base-NER) | BERT + token-label head; requires tokenizer revision above | `--revision refs/pr/27 --max-batch-tokens 8192` |
 | [dslim/bert-large-NER](https://huggingface.co/dslim/bert-large-NER) | BERT + token-label head | `--max-batch-tokens 8192` |
 | [gravitee-io/bert-small-pii-detection](https://huggingface.co/gravitee-io/bert-small-pii-detection) | BERT + token-label head | `--max-batch-tokens 8192` |
 | [Jean-Baptiste/camembert-ner](https://huggingface.co/Jean-Baptiste/camembert-ner) | CamemBERT + token-label head | `--max-batch-tokens 8192` |
