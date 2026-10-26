@@ -62,6 +62,15 @@ Replay keys include block boundaries and prefix sharing; token and image values
 are refreshed for each request. Existing graph admission and memory budgets
 apply, so changing shapes may continue to execute eagerly.
 
+For Qwen3.5 cached GDN suffixes, `INFINITY_TORCH_GDN_SUFFIX_PREFILL=1`
+opts into the existing tensor-core prefill kernels for batches with at least
+256 suffix tokens and 64 tokens per sequence on average. This setting is off
+by default. Stored recurrent states remain FP32, but BF16 normalized Q/K and
+chunk arithmetic can change probabilities and selected answers. Validate
+quality on your workload before enabling it. The GDN provider and native
+backend must be rebuilt together for provider ABI 2; old provider bundles are
+rejected during configuration.
+
 Send requests to `/v1/systemone`. See [decision inputs](cli.md#structured-decision-inputs)
 for the request schema, image content parts and input limits.
 
