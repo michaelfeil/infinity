@@ -3219,6 +3219,7 @@ mod multi_model_test {
             dtype: Some(infinity_v3_backend::DType::Float32),
             pooling: None,
             decision_protocol: None,
+            priority_queue_bonus_ms: 1000,
             max_concurrent_requests: 4,
             max_batch_tokens: 128,
             max_sequence_length: None,

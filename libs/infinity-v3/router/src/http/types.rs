@@ -302,7 +302,7 @@ impl From<TruncationDirection> for tokenizers::TruncationDirection {
     }
 }
 
-/// Priority requests receive one second of virtual queue age; equal virtual times retain queue order.
+/// Priority requests receive a configurable virtual queue age bonus (default one second); equal virtual times retain queue order.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceTier {

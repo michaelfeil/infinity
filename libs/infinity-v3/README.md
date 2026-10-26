@@ -104,9 +104,10 @@ reranking, classification, and SystemOne decisions:
 {"input": ["first text", "second text"], "service_tier": "priority"}
 ```
 
-Each model's existing queue orders inputs by enqueue time, subtracting one second
-for `priority` requests. A priority input passes normal inputs enqueued less than
-one second earlier, but stays behind older work. Equal virtual enqueue times
+Each model's existing queue orders inputs by queue-worker admission time, subtracting
+a configurable bonus for `priority` requests (one second by default). With the
+default bonus, a priority input passes normal inputs admitted less than one second
+earlier, but stays behind older work. Equal virtual enqueue times
 retain queue insertion order. Omitted tiers, `default`, `auto`, and `flex` use
 real enqueue time. Every input in a client batch inherits its request tier;
 response ordering is unchanged. Vertex instances inherit the envelope tier
@@ -116,8 +117,14 @@ This orders inputs ready for model batching, without adding an actual delay.
 It does not preempt dispatched batches or reorder image downloads, tokenization,
 or admission limits. Later priority arrivals cannot indefinitely overtake older
 normal work. `/tokenize` and `/decode` accept the field for compatibility but do
-not use the inference queue. No server flag is required. Queue latency metrics
-continue to use real enqueue times.
+not use the inference queue. Queue latency metrics continue to use real enqueue
+times. Two FIFO buffers compare only their heads: enqueue is O(1) amortized and
+next-input selection is O(1), without sorted middle insertions.
+
+Set `--priority-queue-bonus-ms 250` for a 250 ms head start, or `0` for FIFO.
+The default is `1000`. `INFINITY_PRIORITY_QUEUE_BONUS_MS` is the environment
+variable. One value applies to all models; semicolon-separated values align
+with `--model-id`.
 
 ### CLI overview
 

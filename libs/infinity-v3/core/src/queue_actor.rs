@@ -1,4 +1,4 @@
-//! FIFO selection and packed-batch construction on a dedicated thread.
+//! Two-tier FIFO selection and packed-batch construction on a dedicated thread.
 //!
 //! `infer::batching_task` asks for batches; this worker owns the pending entries.
 //! The early-dispatch target is a soft cut, relaxed for unfinished client batches
@@ -78,11 +78,71 @@ pub struct Metadata {
     pub(crate) token_classification: bool,
 }
 
-impl Metadata {
-    fn virtual_queue_time(&self) -> Option<Instant> {
-        // Keep the real queue timestamp for latency metrics.
-        self.queue_time
-            .checked_sub(Duration::from_secs(u64::from(self.priority)))
+type PendingEntry = (Instant, Entry);
+
+// Monotonic actor admissions keep each tier FIFO; only the two heads compete.
+struct PendingEntries {
+    normal: VecDeque<PendingEntry>,
+    priority: VecDeque<PendingEntry>,
+    bonus: Duration,
+}
+
+impl PendingEntries {
+    fn new(capacity: usize, bonus: Duration) -> Self {
+        Self {
+            normal: VecDeque::with_capacity(capacity),
+            priority: VecDeque::new(),
+            bonus,
+        }
+    }
+
+    fn tier(&mut self, priority: bool) -> &mut VecDeque<PendingEntry> {
+        if priority && !self.bonus.is_zero() {
+            &mut self.priority
+        } else {
+            &mut self.normal
+        }
+    }
+
+    fn push_back(&mut self, entry: Entry, now: Instant) {
+        self.tier(entry.metadata.priority).push_back((now, entry));
+    }
+
+    fn push_front(&mut self, pending: PendingEntry) {
+        self.tier(pending.1.metadata.priority).push_front(pending);
+    }
+
+    fn pop_front(&mut self) -> Option<PendingEntry> {
+        let normal_first = match (self.normal.front(), self.priority.front()) {
+            (Some((normal, _)), Some((priority, _))) => {
+                priority.saturating_duration_since(*normal) >= self.bonus
+            }
+            (Some(_), None) => true,
+            _ => false,
+        };
+        if normal_first {
+            self.normal.pop_front()
+        } else {
+            self.priority.pop_front()
+        }
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &Entry> {
+        self.normal
+            .iter()
+            .chain(self.priority.iter())
+            .map(|(_, entry)| entry)
+    }
+
+    fn drain(&mut self) -> impl Iterator<Item = Entry> + '_ {
+        self.normal
+            .drain(..)
+            .chain(self.priority.drain(..))
+            .map(|(_, entry)| entry)
+    }
+
+    fn len(&self) -> usize {
+        self.normal.len() + self.priority.len()
     }
 }
 
@@ -125,6 +185,7 @@ impl Queue {
             max_concurrent_requests,
             replicas,
             String::new(),
+            Duration::from_secs(1),
         )
     }
 
@@ -135,6 +196,7 @@ impl Queue {
         max_concurrent_requests: usize,
         replicas: usize,
         model_name: String,
+        priority_queue_bonus: Duration,
     ) -> Self {
         // Validate on the caller's thread before spawning the detached worker.
         let configured_target =
@@ -169,6 +231,7 @@ impl Queue {
                 replicas,
                 worker_closed,
                 model_name.into(),
+                priority_queue_bonus,
             )
         });
 
@@ -269,6 +332,7 @@ fn queue_blocking_task(
     replicas: usize,
     closed: Arc<AtomicBool>,
     model_name: metrics::SharedString,
+    priority_queue_bonus: Duration,
 ) {
     tracing::info!(
         ?early_dispatch_tokens,
@@ -280,7 +344,7 @@ fn queue_blocking_task(
         .ok()
         .and_then(|s| s.parse().ok());
 
-    let mut entries: VecDeque<Entry> = VecDeque::with_capacity(max_concurrent_requests);
+    let mut entries = PendingEntries::new(max_concurrent_requests, priority_queue_bonus);
     // Canceled entries stay counted until removal. This may disable a soft
     // dispatch cut, but never bypasses the hard token/request limits.
     let mut queued_tokens = 0;
@@ -302,7 +366,7 @@ fn queue_blocking_task(
             // Stop accepting commands, then settle those already buffered. The
             // worker must exit even while runtime owners still hold senders.
             queue_receiver.close();
-            for entry in entries.drain(..) {
+            for entry in entries.drain() {
                 let _ = entry
                     .metadata
                     .response_tx
@@ -331,11 +395,8 @@ fn queue_blocking_task(
             QueueCommand::Append(entry, span) => {
                 let _span = span.entered();
                 queued_tokens += entry.encoding.input_ids.len();
-                let virtual_time = entry.metadata.virtual_queue_time();
-                let index = entries.partition_point(|pending| {
-                    pending.metadata.virtual_queue_time() <= virtual_time
-                });
-                entries.insert(index, *entry);
+                // Actor admission is monotonic even when senders race or wait on channel capacity.
+                entries.push_back(*entry, Instant::now());
                 let gauge = metrics::gauge!("infinity_queue_size", "model" => model_name.clone());
                 gauge.increment(1.0);
             }
@@ -357,7 +418,7 @@ fn queue_blocking_task(
                 // Canceled tails stay counted until popped; only soft cuts can change.
                 let mut pending_clients: Option<HashMap<usize, usize>> = None;
 
-                while let Some(entry) = entries.pop_front() {
+                while let Some((queued_at, entry)) = entries.pop_front() {
                     if let (Some(clients), Some(client)) =
                         (&mut pending_clients, &entry.metadata.client_batch)
                     {
@@ -395,7 +456,7 @@ fn queue_blocking_task(
                                         || pending_clients
                                             .get_or_insert_with(|| {
                                                 let mut clients = HashMap::new();
-                                                for pending in &entries {
+                                                for pending in entries.iter() {
                                                     if let Some(client) =
                                                         &pending.metadata.client_batch
                                                     {
@@ -411,7 +472,7 @@ fn queue_blocking_task(
                         })
                     };
                     if should_cut(current_tokens, entry_tokens, target) && !unfinished_client() {
-                        entries.push_front(entry);
+                        entries.push_front((queued_at, entry));
                         break;
                     }
 
@@ -422,7 +483,7 @@ fn queue_blocking_task(
                             entry_tokens <= max_batch_tokens,
                             "Single entry exceeds max batch tokens, leading to stall."
                         );
-                        entries.push_front(entry);
+                        entries.push_front((queued_at, entry));
                         break;
                     }
 
@@ -683,6 +744,7 @@ mod tests {
                 1,
                 worker_closed,
                 "test".into(),
+                Duration::from_secs(1),
             );
         });
         Queue {
@@ -725,9 +787,9 @@ mod tests {
         )
     }
 
-    #[tokio::test]
-    async fn priority_gets_one_second_of_virtual_age_without_starving_older_work() {
-        let queue = test_queue(3);
+    #[test]
+    fn priority_gets_one_second_of_virtual_age_without_starving_older_work() {
+        let mut queue = PendingEntries::new(8, Duration::from_secs(1));
         let base = Instant::now() - Duration::from_secs(10);
         let mut responses = Vec::new();
         // Equal virtual times retain append order, including across tiers.
@@ -742,18 +804,14 @@ mod tests {
             entry.metadata.priority = priority;
             entry.metadata.queue_time = base + Duration::from_millis(millis);
             responses.push(response);
-            queue.append(entry).await;
+            let now = base + Duration::from_millis(millis);
+            queue.push_back(entry, now);
         }
-        let (mut canceled, response) = test_entry(vec![9; 2], true);
-        canceled.metadata.priority = true;
-        canceled.metadata.queue_time = base;
-        queue.append(canceled).await;
-        drop(response);
         for id in [1, 2, 4, 5] {
-            let (metadata, batch) = queue.next_batch().await.unwrap();
-            assert_eq!(batch.input_ids, [id; 2]);
+            let (_, entry) = queue.pop_front().unwrap();
+            assert_eq!(entry.encoding.input_ids, [id; 2]);
             if id == 4 {
-                assert_eq!(metadata[0].queue_time, base + Duration::from_secs(2));
+                assert_eq!(entry.metadata.queue_time, base + Duration::from_secs(2));
             }
         }
         // Later priority arrivals cannot keep passing an older normal input.
@@ -761,8 +819,55 @@ mod tests {
         entry.metadata.priority = true;
         entry.metadata.queue_time = base + Duration::from_millis(2_501);
         responses.push(response);
-        queue.append(entry).await;
+        queue.push_back(entry, base + Duration::from_millis(2_501));
         for id in [3, 6] {
+            let (_, entry) = queue.pop_front().unwrap();
+            assert_eq!(entry.encoding.input_ids, [id; 2]);
+        }
+        assert!(queue.pop_front().is_none());
+    }
+
+    #[test]
+    fn configured_bonus_and_zero_fifo_preserve_admission_order() {
+        let base = Instant::now();
+        for (bonus_ms, expected) in [(0, [1, 2, 3, 4]), (500, [1, 2, 3, 4]), (1000, [2, 1, 4, 3])] {
+            let mut queue = PendingEntries::new(4, Duration::from_millis(bonus_ms));
+            for (id, priority, millis) in [
+                (1, false, 0),
+                (2, true, 750),
+                (3, false, 1000),
+                (4, true, 1500),
+            ] {
+                let (mut entry, _) = test_entry(vec![id], true);
+                entry.metadata.priority = priority;
+                // Producer timestamps can arrive out of order; scheduling uses actor admission.
+                entry.metadata.queue_time = base + Duration::from_secs(5 - u64::from(id));
+                queue.push_back(entry, base + Duration::from_millis(millis));
+            }
+            for id in expected {
+                let pending = queue.pop_front().unwrap();
+                assert_eq!(pending.1.encoding.input_ids, [id]);
+                // A hard batch cut returns the same head without changing its scheduling time.
+                queue.push_front(pending);
+                assert_eq!(queue.pop_front().unwrap().1.encoding.input_ids, [id]);
+            }
+            assert!(queue.pop_front().is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn priority_entries_preserve_hard_cuts_and_cancellation() {
+        let queue = test_queue(3);
+        let mut responses = Vec::new();
+        for id in [1, 2, 3] {
+            let (mut entry, response) = test_entry(vec![id; 2], true);
+            entry.metadata.priority = true;
+            queue.append(entry).await;
+            if id != 1 {
+                responses.push(response);
+            }
+        }
+        for id in [2, 3] {
             let (_, batch) = queue.next_batch().await.unwrap();
             assert_eq!(batch.input_ids, [id; 2]);
         }

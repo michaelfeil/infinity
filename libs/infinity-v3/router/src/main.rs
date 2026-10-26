@@ -201,6 +201,10 @@ struct Args {
     )]
     max_concurrent_requests: Vec<usize>,
 
+    /// Virtual queue age bonus for priority requests, in milliseconds; zero uses FIFO.
+    #[clap(long, default_value = "1000", env = infinity_v3_config::infinity_env!("PRIORITY_QUEUE_BONUS_MS"), value_delimiter = ';')]
+    priority_queue_bonus_ms: Vec<u64>,
+
     /// **IMPORTANT** This is one critical control to allow maximum usage
     /// of the available hardware.
     ///
@@ -399,6 +403,11 @@ impl Args {
             count,
             "image-memory-budget-mib",
         )?;
+        let priority_queue_bonus_ms = expand(
+            &self.priority_queue_bonus_ms,
+            count,
+            "priority-queue-bonus-ms",
+        )?;
         let max_concurrent_requests = expand(
             &self.max_concurrent_requests,
             count,
@@ -444,6 +453,7 @@ impl Args {
                     dtype: Some(dtype[i].clone()),
                     pooling: pooling[i].clone(),
                     decision_protocol: decision_protocol[i].clone(),
+                    priority_queue_bonus_ms: priority_queue_bonus_ms[i],
                     max_concurrent_requests: max_concurrent_requests[i],
                     max_batch_tokens: max_batch_tokens[i],
                     max_sequence_length: max_sequence_length[i],
@@ -574,6 +584,51 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn priority_queue_bonus_defaults_broadcasts_and_validates() {
+        let args = Args::try_parse_from(["infinity_v3", "--model-id", "a"]).unwrap();
+        assert_eq!(args.models().unwrap()[0].priority_queue_bonus_ms, 1000);
+        for (value, expected) in [("250", [250, 250]), ("0;1500", [0, 1500])] {
+            let args = Args::try_parse_from([
+                "infinity_v3",
+                "--model-id",
+                "a",
+                "--model-id",
+                "b",
+                "--priority-queue-bonus-ms",
+                value,
+            ])
+            .unwrap();
+            let models = args.models().unwrap();
+            assert_eq!(
+                [
+                    models[0].priority_queue_bonus_ms,
+                    models[1].priority_queue_bonus_ms
+                ],
+                expected
+            );
+        }
+        for invalid in ["-1", "1.5", "abc"] {
+            assert!(Args::try_parse_from([
+                "infinity_v3",
+                "--model-id",
+                "a",
+                "--priority-queue-bonus-ms",
+                invalid
+            ])
+            .is_err());
+        }
+        let args = Args::try_parse_from([
+            "infinity_v3",
+            "--model-id",
+            "a",
+            "--priority-queue-bonus-ms",
+            "0;1000",
+        ])
+        .unwrap();
+        assert!(args.models().is_err());
+    }
+
     #[test]
     fn model_options_broadcast_align_and_preserve_single_model_flags() {
         for (flags, truncate, hosts) in [
