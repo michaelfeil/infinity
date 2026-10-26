@@ -1090,27 +1090,29 @@ public:
       return at::linear(forward(input), score, score_bias);
     // After the final attention operation, remaining computation is token-wise.
     // Sequence classification needs only the last non-padding row of each input.
-    if (!causal && !token_classifier && !bidirectional_classifier &&
-        device.is_cuda() && dtype == at::kBFloat16 &&
-        !fp8_dynamic && family != "ultrabert" &&
-        options.integer("num_experts", 0) == 0 && !radix_enabled(input) &&
-        !input.prefix && !input.capture_prefix) {
+    if (!causal && !token_classifier && !bidirectional_classifier && device.is_cuda() &&
+        dtype == at::kBFloat16 && !fp8_dynamic && family != "ultrabert" &&
+        options.integer("num_experts", 0) == 0 && !radix_enabled(input) && !input.prefix &&
+        !input.capture_prefix) {
       auto starts = input.cumulative.narrow(0, 0, input.batch).to(at::kLong);
       auto ends = input.cumulative.narrow(0, 1, input.batch).to(at::kLong) - 1;
       at::Tensor selected = ends;
       if (options.values.count("pad_token_id")) {
-        auto rows = at::repeat_interleave(at::arange(input.batch, input.ids.options()),
-                                         ends - starts + 1, 0, input.ids.numel());
+        auto rows = at::repeat_interleave(
+            at::arange(input.batch, input.ids.options()), ends - starts + 1, 0, input.ids.numel());
         auto positions = at::arange(input.ids.numel(), input.ids.options());
         auto candidates = at::where(input.ids == options.integer("pad_token_id"), -1, positions);
         selected = at::full({input.batch}, -1, input.ids.options());
         selected.scatter_reduce_(0, rows, candidates, "amax", true);
         selected = at::where(selected < 0, starts, selected);
       }
-      auto h = forward_states(input, at::embedding(embedding, input.ids),
+      auto h = forward_states(input,
+                              at::embedding(embedding, input.ids),
                               cos_cache.index_select(0, input.positions).unsqueeze(1),
                               sin_cache.index_select(0, input.positions).unsqueeze(1),
-                              {}, {}, selected);
+                              {},
+                              {},
+                              selected);
       return at::linear(h, score, score_bias);
     }
     return classify_hidden(input, forward(input));

@@ -661,6 +661,48 @@ void check_close(const at::Tensor& a, const at::Tensor& b) {
   TORCH_CHECK(error < 2e-5, "Decoder parity error ", error);
 }
 
+void selected_classifier_rows_test() {
+  for (auto family : {"qwen2", "qwen3"})
+    for (bool padding : {false, true}) {
+      auto cfg = config(family);
+      cfg.values["architectures.0"] = std::string(family) == "qwen2"
+                                          ? "Qwen2ForSequenceClassification"
+                                          : "Qwen3ForSequenceClassification";
+      cfg.values["use_bidirectional_attention"] = "true";
+      cfg.values["num_labels"] = "3";
+      cfg.values["num_attention_heads"] = "2";
+      cfg.values["num_key_value_heads"] = "1";
+      cfg.values["head_dim"] = "8";
+      if (padding)
+        cfg.values["pad_token_id"] = "0";
+      auto tensors = weights(cfg);
+      tensors["score.weight"] = at::arange(48, at::kFloat).view({3, 16}) * .013;
+      tensors["score.bias"] = at::tensor({.1f, -.2f, .3f});
+      if (std::string(family) == "qwen3")
+        for (int layer = 0; layer < 2; ++layer)
+          for (auto norm : {"q_norm", "k_norm"})
+            tensors["model.layers." + std::to_string(layer) + ".self_attn." + norm + ".weight"] =
+                at::ones({8});
+      for (auto& [name, value] : tensors)
+        value = value.to(at::kCUDA, at::kBFloat16);
+      auto model = create_decoder(cfg, tensors, c10::Device("cuda:0"), at::kBFloat16);
+      model->ready();
+      // Ragged lengths, an all-padding sequence and trailing padding in the last row.
+      std::vector<int32_t> offsets{0, 1, 4, 9, 16};
+      auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kLong);
+      PackedInput input{at::tensor({0, 3, 4, 5, 0, 0, 0, 0, 0, 3, 6, 7, 8, 0, 0, 0}, opts),
+                        at::zeros({16}, opts),
+                        at::tensor({0, 0, 1, 2, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 6}, opts),
+                        at::tensor(offsets, opts.dtype(at::kInt)),
+                        offsets.data(),
+                        4,
+                        7};
+      auto expected = model->classify_hidden(input, model->forward(input));
+      auto actual = model->predict(input, false);
+      check_close(actual, expected);
+    }
+}
+
 void bidirectional_classifier_test(c10::Device device, at::ScalarType dtype) {
   auto cfg = config("llama");
   cfg.values["architectures.0"] = "LlamaBidirectionalForSequenceClassification";
@@ -2860,6 +2902,7 @@ int main(int argc, char** argv) {
   bidirectional_classifier_test(c10::Device("cpu"), at::kFloat);
   decoder_token_classifier_test(c10::Device("cpu"), at::kFloat);
   if (argc > 1) {
+    selected_classifier_rows_test();
     bidirectional_classifier_test(c10::Device(argv[1]), at::kBFloat16);
     decoder_token_classifier_test(c10::Device(argv[1]), at::kBFloat16);
   }

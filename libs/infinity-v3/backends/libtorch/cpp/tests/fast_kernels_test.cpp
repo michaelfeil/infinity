@@ -99,10 +99,11 @@ int main(int argc, char** argv) {
       auto view = storage.narrow(0, 1, value.numel()).view_as(value);
       return view.copy_(value);
     };
-    for (int width : {1536, 2048, 4096})
-      for (int rows : {127, 128, 257, 1023, 1024, 4096})
+    for (int width = 256; width <= 4096; width += 256)
+      for (int rows : {127, 128, 1024})
         for (bool residual : {false, true}) {
-          auto x = at::randn({rows, width}, opts), r = at::randn_like(x), w = at::randn({width}, opts);
+          auto x = at::randn({rows, width}, opts), r = at::randn_like(x),
+               w = at::randn({width}, opts);
           for (double eps : {1e-6, 1e-5}) {
             auto expected =
                 infinity::fused_add_rms_norm(unaligned(x), residual ? r : at::Tensor(), w, eps);
