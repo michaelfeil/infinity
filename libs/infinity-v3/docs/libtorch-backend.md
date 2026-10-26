@@ -19,14 +19,16 @@ NVIDIA Container Toolkit:
 
 ```bash
 docker run --rm --gpus all -p 8000:8000 -v infinity-cache:/data \
-  ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0-alpha.16 \
+  ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0 \
   --model-id sentence-transformers/all-MiniLM-L6-v2 \
   --torch-device cuda --dtype float16 --port 8000
 ```
 
 Choose a version from the [container registry](https://github.com/michaelfeil/infinity/pkgs/container/infinity_v3).
 Use `--device-id 0` for one GPU; otherwise each visible GPU runs a complete replica.
-For CPU builds, use `--torch-device cpu --dtype float32`.
+For native LibTorch CPU builds, use `--torch-device cpu --dtype float32`.
+The published `cpu-*` image uses Candle rather than LibTorch; its model coverage
+is separate from the native LibTorch catalog.
 
 ## Optional dynamic FP8
 

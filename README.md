@@ -24,7 +24,7 @@ Container Toolkit:
 
 ```bash
 docker run --rm --gpus all -p 8000:8000 -v infinity-cache:/data \
-  ghcr.io/michaelfeil/infinity_v3:nvidia-latest \
+  ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0 \
   --model-id sentence-transformers/all-MiniLM-L6-v2 \
   --torch-device cuda --dtype bfloat16 \
   --hostname 0.0.0.0 --port 8000

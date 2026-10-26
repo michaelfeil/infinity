@@ -20,9 +20,12 @@ on:
 permissions:
   contents: read
 
+env:
+  INFINITY_DOCS_REF: ${{ github.event_name == 'release' && github.event.release.tag_name || 'main' }}
+
 jobs:
   build:
-    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.')
+    if: github.event_name != 'release' || startsWith(github.event.release.tag_name, '0.') || startsWith(github.event.release.tag_name, 'v0.') || startsWith(github.event.release.tag_name, '3.') || startsWith(github.event.release.tag_name, 'v3.')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,12 +60,26 @@ jobs:
       - name: Publish documentation
         env:
           EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          RELEASE_PRERELEASE: ${{ github.event.release.prerelease }}
         run: |
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           if [ "$EVENT_NAME" = release ]; then
-            version=$(python -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("libs/infinity_emb/pyproject.toml").read_text())["tool"]["poetry"]["version"])')
-            args=("$version" latest --update-aliases --alias-type=redirect)
+            version="${RELEASE_TAG#v}"
+            if ! [[ "$version" =~ ^(0|3)\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Unsupported documentation release tag: $RELEASE_TAG"
+              exit 1
+            fi
+            args=("$version")
+            if [ "$RELEASE_PRERELEASE" != true ] && [[ "$version" != *-* ]]; then
+              if [[ "$version" = 3.* ]]; then
+                args+=(latest)
+              else
+                args+=(latest-v2)
+              fi
+              args+=(--update-aliases --alias-type=redirect)
+            fi
           else
             args=(main)
           fi

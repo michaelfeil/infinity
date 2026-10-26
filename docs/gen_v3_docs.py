@@ -1,5 +1,6 @@
 """Publish existing v3 Markdown without maintaining a second copy."""
 from pathlib import Path
+import os
 import re
 from urllib.parse import urlsplit
 
@@ -7,6 +8,7 @@ import mkdocs_gen_files
 
 REPO = Path(__file__).resolve().parents[1]
 SOURCE = REPO / "libs/infinity-v3"
+DOCS_REF = os.environ.get("INFINITY_DOCS_REF", "main")
 files = [SOURCE / name for name in (
     "README.md", "CONTRIBUTING.md", "LICENSING.md", "LICENSE", "NOTICE",
     "THIRD_PARTY_NOTICES.md", "CODE_OF_CONDUCT.md",
@@ -32,7 +34,7 @@ for source in files:
             return match.group(0)
         # Source code and vendor documentation remain browsable on GitHub.
         path = resolved.relative_to(REPO).as_posix()
-        return f"](https://github.com/michaelfeil/infinity/blob/main/{path}" + (
+        return f"](https://github.com/michaelfeil/infinity/blob/{DOCS_REF}/{path}" + (
             f"#{url.fragment}" if url.fragment else ""
         ) + ")"
 
@@ -40,7 +42,7 @@ for source in files:
     content = content.replace("<details>", '<details markdown="1">')
     if destination == Path("v3/README.md"):
         content = content.replace("# Infinity V3 ♾️", "# Infinity V3 ♾️\n\n"
-            "> Preview documentation for the native v3 server. "
+            "> Documentation for the native v3 server. "
             "[Quickstart](quickstart.md) · "
             "[Python / v2 documentation](../cli_v2.md)", 1)
     with mkdocs_gen_files.open(destination, "w") as output:

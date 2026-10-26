@@ -2387,7 +2387,7 @@ dependencies = [
 
 [[package]]
 name = "infinity-backend-libtorch"
-version = "1.8.18-rc.0"
+version = "3.0.0"
 dependencies = [
  "bytemuck",
  "cmake",
@@ -2405,11 +2405,11 @@ dependencies = [
 
 [[package]]
 name = "infinity-v3-config"
-version = "1.8.18-rc.0"
+version = "3.0.0"
 
 [[package]]
 name = "infinity_v3-backend"
-version = "1.8.18-rc.0"
+version = "3.0.0"
 dependencies = [
  "clap",
  "hf-hub",
@@ -2424,7 +2424,7 @@ dependencies = [
 
 [[package]]
 name = "infinity_v3-backend-candle"
-version = "1.8.18-rc.0"
+version = "3.0.0"
 dependencies = [
  "accelerate-src",
  "anyhow",
@@ -2459,7 +2459,7 @@ dependencies = [
 
 [[package]]
 name = "infinity_v3-backend-core"
-version = "1.8.18-rc.0"
+version = "3.0.0"
 dependencies = [
  "clap",
  "infinity-v3-config",
@@ -2472,7 +2472,7 @@ dependencies = [
 
 [[package]]
 name = "infinity_v3-core"
-version = "1.8.18-rc.0"
+version = "3.0.0"
 dependencies = [
  "async-channel",
  "base64 0.22.1",
@@ -2500,7 +2500,7 @@ dependencies = [
 
 [[package]]
 name = "infinity_v3-router"
-version = "1.8.18-rc.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "axum 0.7.9",

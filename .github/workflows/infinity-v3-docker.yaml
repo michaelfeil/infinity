@@ -3,7 +3,7 @@ name: Infinity v3 Docker
 on:
   push:
     branches: [main]
-    tags: ['v3.*']
+    tags: ['v3.*', '3.*']
     paths:
       - 'libs/infinity-v3/**'
       - '.github/workflows/infinity-v3-docker.yaml'
@@ -33,8 +33,35 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.matrix.outputs.matrix }}
+      stable: ${{ steps.release.outputs.stable }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@v6
+      - name: Validate release version
+        id: release
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("libs/infinity-v3/Cargo.toml", "rb"))["workspace"]["package"]["version"])')
+          stable=false
+          if [ "$REF_TYPE" = tag ]; then
+            tag_version="${REF_NAME#v}"
+            if [[ ! "$tag_version" =~ ^3\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+              echo "Invalid v3 release tag: $REF_NAME" >&2
+              exit 1
+            fi
+            if [ "${tag_version%%-*}" != "${version%%-*}" ]; then
+              echo "Tag $REF_NAME does not match Cargo version $version" >&2
+              exit 1
+            fi
+            if [[ "$tag_version" != *-* ]]; then
+              test "$tag_version" = "$version"
+              stable=true
+            fi
+          fi
+          echo "stable=$stable" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Select image variants
         id: matrix
         env:
@@ -88,36 +115,53 @@ jobs:
           tags: |
             type=semver,pattern={{version}},prefix=${{ matrix.imageNamePrefix }}
             type=semver,pattern={{major}}.{{minor}},prefix=${{ matrix.imageNamePrefix }}
-            type=raw,value=${{ matrix.imageNamePrefix }}latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=${{ matrix.imageNamePrefix }}latest,enable=${{ needs.matrix.outputs.stable == 'true' }}
+            type=raw,value=${{ matrix.imageNamePrefix }}main,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=${{ matrix.imageNamePrefix }}sha-
-      - name: Build and push
+      - name: Build image locally
         uses: docker/build-push-action@v6
         with:
           context: ./libs/infinity-v3
           file: ${{ matrix.dockerfile }}
-          push: ${{ github.event_name != 'pull_request' }}
+          push: false
           load: true
           platforms: linux/amd64
           build-args: |
             SCCACHE_GHA_ENABLED=false
             CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
             GIT_SHA=${{ github.sha }}
-            DOCKER_LABEL=sha-${{ github.sha }}
+            DOCKER_LABEL=${{ github.ref_type == 'tag' && github.ref_name || format('sha-{0}', github.sha) }}
             ${{ matrix.extraBuildArgs }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           # Keep large SDK/build layers out of the repository's shared Actions cache quota.
           cache-from: type=registry,ref=${{ env.CACHE_REF }}
           cache-to: ${{ github.event_name != 'pull_request' && format('type=registry,ref={0},mode=max', env.CACHE_REF) || '' }}
-      - name: Check CPU image starts
-        if: matrix.name == 'cpu'
+      - name: Check server startup and version
         env:
           IMAGE: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
-        run: docker run --rm "$IMAGE" --help
-      - name: Check NVIDIA image starts without a GPU
+          EXPECTED_VERSION: ${{ needs.matrix.outputs.version }}
+        run: |
+          docker run --rm "$IMAGE" --help
+          test "$(docker run --rm "$IMAGE" --version)" = "infinity_v3 $EXPECTED_VERSION"
+      - name: Check NVIDIA architecture manifest
         if: matrix.name == 'nvidia'
         env:
           IMAGE: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+        run: docker run --rm --entrypoint cat "$IMAGE" /usr/share/infinity_v3/cuda-architectures.txt
+      - name: Check embedding inference before publishing
+        if: matrix.name == 'cpu' || matrix.name == 'nvidia'
+        env:
+          IMAGE: ${{ fromJSON(steps.meta.outputs.json).tags[0] }}
+          EXPECTED_VERSION: ${{ needs.matrix.outputs.version }}
         run: |
-          docker run --rm "$IMAGE" --help
-          docker run --rm --entrypoint cat "$IMAGE" /usr/share/infinity_v3/cuda-architectures.txt
+          python3 libs/infinity-v3/scripts/docker-smoke-test.py \
+            --image "$IMAGE" --expected-version "$EXPECTED_VERSION"
+      - name: Publish checked image
+        if: github.event_name != 'pull_request'
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          while IFS= read -r tag; do
+            docker push "$tag"
+          done <<< "$TAGS"
