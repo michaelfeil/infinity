@@ -1,9 +1,9 @@
-# H100 benchmarks
+# H100 performance
 
 Infinity V3 alpha.19 on **one H100 80 GB**, with eight CPU threads and 64 GiB RAM.
-Measured October 25–26, 2026 through the HTTP API: text embeddings, reranking,
-image embeddings and decision requests. These synthetic workloads measure
-throughput under load; production latency depends on the traffic mix.
+End-to-end HTTP throughput, request latency and startup time for text embeddings,
+reranking, image embeddings and decision requests. Measured October 25–26, 2026;
+production latency depends on the traffic mix.
 
 ## Text embeddings
 
@@ -11,7 +11,7 @@ FP16 with CUDA graphs. Throughput is **input tokens/s** at concurrency 32.
 Latency is the fastest observed 8-token request; startup is the median of three
 starts with local weights, excluding downloads.
 
-| Model | 128 tokens | 512 tokens | Latency (ms) | Startup (s) |
+| Model | 128 tokens | 512 tokens | Min. latency (ms) | Startup (s) |
 |---|---:|---:|---:|---:|
 | BGE-small | 959,425 | 2,262,919 | 0.71 | 1.41 |
 | BGE-large | 435,406 | 648,951 | 1.25 | 1.42 |
@@ -66,7 +66,7 @@ DeBERTa uses 8K. Startup storage caches were uncontrolled.
 [Measurement data](h100-alpha19.json) contains mixed-length workloads, individual
 runs, checkpoint names, image identity and numerical checks.
 
-**Quality caveat:** these are timing benchmarks, not accuracy evaluations.
-Against saved alpha.16 outputs, text embeddings passed the 0.999 cosine screen,
-but **† Qwen3-VL BF16 reached 0.998545 on one fixture**. Elephant's sampled choices
-were unchanged, with probability shifts up to **1.87 percentage points**.
+**Accuracy:** not evaluated on a task benchmark. † Qwen3-VL BF16 failed one
+numerical parity check (0.998545 cosine; threshold 0.999). Elephant passed the
+sampled choice checks but showed probability differences up to 1.87 percentage
+points. Validation details and reference outputs are described in the data file.
