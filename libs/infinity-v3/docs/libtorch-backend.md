@@ -56,24 +56,15 @@ For compatible decision checkpoints, use `--decision-protocol onejev` with
 shared prefixes are reused within a backend batch. This is not a persistent
 cross-request cache.
 
-For recurring packed shapes, enable CUDA graph replay with
-`INFINITY_TORCH_CUDA_GRAPHS=1` and `INFINITY_TORCH_MEDIA_CUDA_GRAPHS=1`.
-Replay keys include block boundaries and prefix sharing; token and image values
-are refreshed for each request. Existing graph admission and memory budgets
-apply, so changing shapes may continue to execute eagerly.
-
 For dense Qwen3.5, `--enable-fp8-dynamic` uses all-linear dynamic FP8 by
-default. Projections use FP8 while GDN activations remain BF16 and stored
-recurrent states remain FP32. The suffix-prefill setting below is independent:
-the default FP8 recipe leaves it disabled, and enabling both requires its own
-quality evaluation.
+default and enables the FP8 optimizations automatically. GDN activations remain
+BF16 and stored recurrent states remain FP32.
 
-For Qwen3.5 cached GDN suffixes, `INFINITY_TORCH_GDN_SUFFIX_PREFILL=1`
-opts into the existing tensor-core prefill kernels for batches with at least
-256 suffix tokens and 64 tokens per sequence on average. This setting is off
-by default. Stored recurrent states remain FP32, but BF16 normalized Q/K and
-chunk arithmetic can change probabilities and selected answers. Validate
-quality on your workload before enabling it. The GDN provider and native
+`INFINITY_TORCH_GDN_SUFFIX_PREFILL=1` separately opts cached GDN suffixes into
+the existing tensor-core prefill kernels. Batch geometry is selected automatically.
+This setting is off by default because BF16 normalized Q/K and chunk arithmetic
+can change probabilities and selected answers, including with FP8 enabled.
+Validate those changes on your workload before enabling it. The GDN provider and native
 backend must be rebuilt together for provider ABI 2; old provider bundles are
 rejected during configuration.
 
