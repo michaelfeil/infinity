@@ -2,18 +2,17 @@
 
 Infinity V3 on **one H100 80 GB**, with eight CPU threads and 64 GiB RAM.
 End-to-end HTTP throughput, request latency and startup time for text embeddings,
-reranking, image embeddings and decision requests. Measured October 25–26, 2026;
-production latency depends on the traffic mix.
+reranking, image embeddings and decision requests. Updated as models are
+rebenchmarked; last updated October 26, 2026. Production latency depends on the
+traffic mix.
 
 ## Text embeddings
 
 FP16 unless marked BF16, with the same server CPU allocation. Throughput is
 **input tokens/s** at concurrency 32. Latency is the fastest observed 8-token request;
 startup is the median of three fresh starts with local weights, excluding downloads.
-Gemma and Qwen3 were refreshed on October 26 using a local H100 build of main
-`c82fb16`, vLLM 0.32.0 and TEI 1.9.4; other rows retain the alpha.19 comparison.
-BF16 rows are separate precision measurements.
-Small differences should not be treated as decisive.
+Comparisons use vLLM 0.32.0 and TEI 1.9.4. Small differences should not be
+treated as decisive; build revisions are recorded in the measurement data.
 
 | Model | Runtime | 128 tokens | 512 tokens | Min. latency (ms) | Startup (s) |
 |---|---|---:|---:|---:|---:|
@@ -87,10 +86,9 @@ decision rows report the best median across tested concurrency levels.
 Text embeddings use JSON float outputs, a 16K batch-token budget and no Radix MLP;
 DeBERTa uses 8K. Startup storage caches were uncontrolled.
 [Measurement data](h100-alpha19.json) contains mixed-length workloads, individual
-runs, checkpoint names, image identity and numerical checks.
+runs, checkpoint names, commit SHAs and numerical checks.
 
-**Accuracy:** not evaluated on a task benchmark. Refreshed Gemma/Qwen outputs
-passed 14-fixture comparisons against their controls (minimum cosine 0.999998). † Qwen3-VL BF16 failed one
-numerical parity check (0.998545 cosine; threshold 0.999). Elephant passed the
-sampled choice checks but showed probability differences up to 1.87 percentage
-points. Validation details and reference outputs are described in the data file.
+**Accuracy:** these are timing benchmarks, not task-accuracy evaluations.
+† Qwen3-VL BF16 failed one numerical parity check (0.998545 cosine; threshold
+0.999). Elephant’s sampled choices matched, with probability differences up to
+1.87 percentage points. Numerical checks are included in the data file.
