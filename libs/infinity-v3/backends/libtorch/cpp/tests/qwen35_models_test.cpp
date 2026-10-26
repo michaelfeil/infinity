@@ -94,12 +94,9 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
       auto down = loader.at("model.layers.0.mlp.down_proj.weight").storage().getWeakStorageImpl();
       auto projection =
           loader.at("model.layers.0.linear_attn.out_proj.weight").storage().getWeakStorageImpl();
-      auto decay =
-          loader.at("model.layers.0.linear_attn.in_proj_a.weight").storage().getWeakStorageImpl();
       auto quantized = create_qwen35(enabled, loader, device, at::kBFloat16);
       quantized->ready();
-      TORCH_CHECK(loader.empty() && down.expired() && decay.expired(),
-                  "Qwen3.5 retained consumed MLP or merged decay weights");
+      TORCH_CHECK(loader.empty() && down.expired(), "Qwen3.5 retained consumed MLP weights");
       TORCH_CHECK(projection.expired() == (std::string(scope) != "mlp"),
                   "Qwen3.5 FP8 projection scope ignored");
       auto reference = build(cfg);
@@ -164,6 +161,8 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
                                  std::string(invalid) == "cpu" ? c10::Device("cpu") : device,
                                  std::string(invalid) == "float16" ? at::kHalf : at::kBFloat16);
       model->ready();
+      if (std::string(invalid) == "qkv_shape")
+        (void)model->forward(input);
     } catch (const c10::Error&) {
       rejected = true;
     }

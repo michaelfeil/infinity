@@ -469,30 +469,12 @@ class Qwen35 final : public Model {
       }
       return prefix_projection(x, name, input);
     };
-    if (fp8_projections.count(p + "qkv_proj")) {
-      auto rows = project(p + "qkv_proj");
-      // Norm accepts row strides. Own V separately so prefix caches cannot
-      // retain the larger merged Q/K/gate allocation through its storage.
-      const auto query = heads * 2 * dim, key_value = kv_heads * dim;
-      return {rows.narrow(1, 0, query),
-              rows.narrow(1, query, key_value),
-              rows.narrow(1, query + key_value, key_value).clone(at::MemoryFormat::Contiguous)};
-    }
     // The three outputs represent different layouts by layer type: GDN uses [QKV, Z, A|B], whereas
     // full attention uses [query|gate, K, V].
-    if (linear && fp8_projections.count(p + "in_proj_qkvz")) {
-      auto rows = project(p + "in_proj_qkvz");
-      const auto qkv_width =
-          (2 * integer("linear_num_key_heads") + integer("linear_num_value_heads")) * 128;
-      // Both slices retain the GEMM storage; GDN reads their original row strides.
-      return {rows.narrow(1, 0, qkv_width),
-              rows.narrow(1, qkv_width, rows.size(1) - qkv_width),
-              project(p + "in_proj_ab").contiguous()};
-    }
     if (linear)
       return {project(p + "in_proj_qkv").contiguous(),
               project(p + "in_proj_z").contiguous(),
-              project(p + "in_proj_ab").contiguous()};
+              at::cat({project(p + "in_proj_a"), project(p + "in_proj_b")}, -1).contiguous()};
     return {project(p + "q_proj"), project(p + "k_proj"), project(p + "v_proj")};
   }
 
@@ -1214,30 +1196,14 @@ public:
       if (fp8 && scope == "all") {
         // Keep the small DeltaNet decay/update gates, convolution and recurrent
         // state in their original precision, along with vision and output heads.
-        if (kind == "full_attention") {
-          const auto attention = p + "self_attn.";
-          auto query = w(attention + "q_proj.weight"), key = w(attention + "k_proj.weight"),
-               value = w(attention + "v_proj.weight");
-          TORCH_CHECK(query.sizes() == at::IntArrayRef({heads * 2 * dim, hidden}) &&
-                          key.sizes() == at::IntArrayRef({kv_heads * dim, hidden}) &&
-                          value.sizes() == at::IntArrayRef({kv_heads * dim, hidden}),
-                      "Invalid Qwen3.5 Q/K/V projection shapes");
-          auto matrix = at::cat({query, key, value}, 0);
-          fp8_projections.emplace(attention + "qkv_proj", std::make_unique<Fp8Linear>(matrix));
-          for (const auto& name : {"q_proj.weight", "k_proj.weight", "v_proj.weight"})
-            weights.erase(prefix + attention + name);
-        }
-        if (kind == "linear_attention") {
-          const auto attention = p + "linear_attn.";
-          auto matrix =
-              at::cat({w(attention + "in_proj_qkv.weight"), w(attention + "in_proj_z.weight")}, 0);
-          fp8_projections.emplace(attention + "in_proj_qkvz", std::make_unique<Fp8Linear>(matrix));
-          weights.erase(prefix + attention + "in_proj_qkv.weight");
-          weights.erase(prefix + attention + "in_proj_z.weight");
-        }
         const std::vector<std::string> projections =
-            kind == "linear_attention" ? std::vector<std::string>{"linear_attn.out_proj"}
-                                       : std::vector<std::string>{"self_attn.o_proj"};
+            kind == "linear_attention" ? std::vector<std::string>{"linear_attn.in_proj_qkv",
+                                                                  "linear_attn.in_proj_z",
+                                                                  "linear_attn.out_proj"}
+                                       : std::vector<std::string>{"self_attn.q_proj",
+                                                                  "self_attn.k_proj",
+                                                                  "self_attn.v_proj",
+                                                                  "self_attn.o_proj"};
         for (const auto& projection : projections) {
           const auto name = p + projection;
           fp8_projections.emplace(name, std::make_unique<Fp8Linear>(w(name + ".weight")));
@@ -1248,10 +1214,7 @@ public:
         auto kh = integer("linear_num_key_heads"), vh = integer("linear_num_value_heads");
         TORCH_CHECK(kh > 0 && vh > 0 && vh % kh == 0, "Invalid Qwen3.5 DeltaNet heads");
         const auto ap = p + "linear_attn.";
-        weights[prefix + ap + "in_proj_ab.weight"] =
-            at::cat({w(ap + "in_proj_a.weight"), w(ap + "in_proj_b.weight")}, 0);
-        weights.erase(prefix + ap + "in_proj_a.weight");
-        weights.erase(prefix + ap + "in_proj_b.weight");
+
         w(p + "linear_attn.conv1d.weight");
         // Both CUDA and CPU recurrence consume these fixed parameters in FP32.
         for (const auto& name : {ap + "A_log", ap + "dt_bias"})

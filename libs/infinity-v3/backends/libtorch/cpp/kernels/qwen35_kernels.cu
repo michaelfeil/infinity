@@ -1465,8 +1465,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
     if (final_state)
       *final_state =
           at::empty({input.batch, value_heads, 128, 128}, qkv.options().dtype(at::kFloat));
-    // Three 16-head sequences already fill the wider tile; retain narrower
-    // tiles for one or two sequences to expose enough independent column work.
+    // Preserve the original geometry policy and FP32 reduction order.
 #define CACHED(L)                                                                                  \
   qwen35_gdn_cached<L><<<dim3(input.batch, value_heads, L / 4), 512, 0, stream>>>(                 \
       bf(convolution),                                                                             \
@@ -1479,7 +1478,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
       initial.defined() ? initial.const_data_ptr<float>() : nullptr,                               \
       final_state ? final_state->mutable_data_ptr<float>() : nullptr,                              \
       initial.defined() ? input.block_cache_sources.const_data_ptr<int64_t>() : nullptr);
-    if (input.batch * value_heads >= 48) {
+    if (input.batch * value_heads >= 256) {
       CACHED(8);
     } else {
       CACHED(16);
