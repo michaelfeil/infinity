@@ -63,13 +63,14 @@ void packed_batch_metadata(at::ScalarType dtype, int heads, int kv_heads, bool c
   auto opts = at::TensorOptions().device(at::kCUDA).dtype(dtype);
   std::vector<int64_t> qe{0}, ke{0};
   for (int row = 0; row < batch; ++row) {
-    const int length = causal ? row % 7 + 1 : row % 97 + 101;
+    const int length = causal ? row % 9 + 60 : row % 97 + 101;
     qe.push_back(qe.back() + length);
     ke.push_back(ke.back() + length + (causal ? 128 : 0));
   }
   auto q = at::randn({qe.back(), heads, 128}, opts);
   auto k = at::randn({ke.back(), kv_heads, 128}, opts);
-  auto v = at::randn({ke.back(), heads + 2 * kv_heads, 128}, opts).narrow(1, heads + kv_heads, kv_heads);
+  auto v =
+      at::randn({ke.back(), heads + 2 * kv_heads, 128}, opts).narrow(1, heads + kv_heads, kv_heads);
   auto cq = offsets(qe, opts), ck = offsets(ke, opts);
   auto run = [&] {
     return infinity::infinity_fa4(q, k, v, cq, ck, 256, 1. / std::sqrt(128.), causal);
@@ -80,9 +81,13 @@ void packed_batch_metadata(at::ScalarType dtype, int heads, int kv_heads, bool c
       auto local_q = cq.narrow(0, start, count + 1) - qe[start];
       auto local_k = ck.narrow(0, start, count + 1) - ke[start];
       chunks.push_back(infinity::infinity_fa4(q.narrow(0, qe[start], qe[start + count] - qe[start]),
-          k.narrow(0, ke[start], ke[start + count] - ke[start]),
-          v.narrow(0, ke[start], ke[start + count] - ke[start]),
-          local_q, local_k, 256, 1. / std::sqrt(128.), causal));
+                                              k.narrow(0, ke[start], ke[start + count] - ke[start]),
+                                              v.narrow(0, ke[start], ke[start + count] - ke[start]),
+                                              local_q,
+                                              local_k,
+                                              256,
+                                              1. / std::sqrt(128.),
+                                              causal));
     }
     return at::cat(chunks);
   };
@@ -96,11 +101,12 @@ void packed_batch_metadata(at::ScalarType dtype, int heads, int kv_heads, bool c
   auto captured = run();
   graph.capture_end();
   // Move a boundary across a query-tile edge without changing tensor shapes.
-  cq.narrow(0, 92, 1).add_(causal ? 1 : 10);
+  cq.narrow(0, causal ? 95 : 92, 1).add_(causal ? 1 : 10);
   q.mul_(.8);
   graph.replay();
   c10::cuda::getCurrentCUDAStream().synchronize();
-  TORCH_CHECK(at::equal(captured, expected()), "Packed attention graph retained stale tile metadata");
+  TORCH_CHECK(at::equal(captured, expected()),
+              "Packed attention graph retained stale tile metadata");
 }
 
 void concurrent_first_use() {

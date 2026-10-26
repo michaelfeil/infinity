@@ -41,9 +41,27 @@ using Forward = int (*)(int,
                         int,
                         const int64_t*,
                         int);
-using ForwardBatch = int (*)(int, int, int, void*, void*, void*, void*, void*, void*, void*,
-                              int64_t, int64_t, int64_t, int64_t, int64_t, double,
-                              int, int, const int64_t*, int, void*);
+using ForwardBatch = int (*)(int,
+                             int,
+                             int,
+                             void*,
+                             void*,
+                             void*,
+                             void*,
+                             void*,
+                             void*,
+                             void*,
+                             int64_t,
+                             int64_t,
+                             int64_t,
+                             int64_t,
+                             int64_t,
+                             double,
+                             int,
+                             int,
+                             const int64_t*,
+                             int,
+                             void*);
 using Deberta = int (*)(int,
                         int,
                         void*,
@@ -139,9 +157,15 @@ Bundle* bundle(const at::Tensor& q, std::optional<at::ScalarType> dtype = std::n
       reinterpret_cast<ForwardBatch>(dlsym(handle, "infinity_fa4_batch_forward_v1"));
   auto batch_modes = reinterpret_cast<int (*)()>(dlsym(handle, "infinity_fa4_batch_modes_v1"));
   auto batch_tile = reinterpret_cast<int (*)(int)>(dlsym(handle, "infinity_fa4_batch_tile_v1"));
-  auto result = std::make_unique<Bundle>(Bundle{handle, forward, forward_batch,
-      forward_batch && batch_modes && batch_tile ? batch_modes() : 0, batch_tile,
-      deberta, error, modes ? modes() : 0xf});
+  auto result = std::make_unique<Bundle>(
+      Bundle{handle,
+             forward,
+             forward_batch,
+             forward_batch && batch_modes && batch_tile ? batch_modes() : 0,
+             batch_tile,
+             deberta,
+             error,
+             modes ? modes() : 0xf});
   auto* ptr = result.get();
   bundles.emplace(sm, std::move(result));
   return ptr;
@@ -262,8 +286,8 @@ at::Tensor infinity_fa4(const at::Tensor& query,
                    static_cast<int>(std::clamp<int64_t>(left, -1, INT32_MAX)),
                    static_cast<int>(std::clamp<int64_t>(right, -1, INT32_MAX)),
                    strides.data(),
-                   static_cast<int>(max_q), extra...);
-
+                   static_cast<int>(max_q),
+                   extra...);
   };
   int status;
   if (max_q <= 256 && cu_q.numel() - 1 > 256 && (native->batch_modes & (1 << mode))) {

@@ -263,17 +263,13 @@ __global__ __launch_bounds__(256) void gather_norm_kernel(const int64_t* ids,
 }
 
 template <int Threads>
-__global__ void attention_tile_prefix_kernel(const int32_t* cumulative,
-                                             int32_t* output,
-                                             int64_t batch,
-                                             int tile,
-                                             int group) {
+__global__ void attention_tile_prefix_kernel(
+    const int32_t* cumulative, int32_t* output, int64_t batch, int tile, int group) {
   using Scan = cub::BlockScan<int32_t, Threads>;
   __shared__ typename Scan::TempStorage storage;
   const int row = threadIdx.x;
-  const int32_t count = row < batch
-                            ? (int64_t(cumulative[row + 1] - cumulative[row]) * group + tile - 1) / tile
-                            : 0;
+  const int32_t count =
+      row < batch ? (int64_t(cumulative[row + 1] - cumulative[row]) * group + tile - 1) / tile : 0;
   int32_t prefix;
   Scan(storage).InclusiveSum(count, prefix);
   if (row == 0)
@@ -967,10 +963,10 @@ at::Tensor fused_embedding_layer_norm(const at::Tensor& ids,
 }
 
 at::Tensor attention_tile_prefix(const at::Tensor& cumulative, int tile, int group) {
-  TORCH_CHECK(cumulative.is_cuda() && cumulative.scalar_type() == at::kInt &&
-                  cumulative.dim() == 1 && cumulative.is_contiguous() && cumulative.numel() > 0 &&
-                  tile > 0 && group > 0,
-              "Attention tile metadata requires CUDA int32 cumulative lengths and positive tile/group sizes");
+  TORCH_CHECK(
+      cumulative.is_cuda() && cumulative.scalar_type() == at::kInt && cumulative.dim() == 1 &&
+          cumulative.is_contiguous() && cumulative.numel() > 0 && tile > 0 && group > 0,
+      "Attention tile metadata requires CUDA int32 cumulative lengths and positive tile/group sizes");
   c10::cuda::CUDAGuard guard(cumulative.device());
   const auto batch = cumulative.numel() - 1;
   if (batch > 1024) {
@@ -983,11 +979,14 @@ at::Tensor attention_tile_prefix(const at::Tensor& cumulative, int tile, int gro
   auto input_ptr = cumulative.const_data_ptr<int32_t>();
   auto output_ptr = output.mutable_data_ptr<int32_t>();
   if (batch <= 256)
-    attention_tile_prefix_kernel<256><<<1, 256, 0, stream>>>(input_ptr, output_ptr, batch, tile, group);
+    attention_tile_prefix_kernel<256>
+        <<<1, 256, 0, stream>>>(input_ptr, output_ptr, batch, tile, group);
   else if (batch <= 512)
-    attention_tile_prefix_kernel<512><<<1, 512, 0, stream>>>(input_ptr, output_ptr, batch, tile, group);
+    attention_tile_prefix_kernel<512>
+        <<<1, 512, 0, stream>>>(input_ptr, output_ptr, batch, tile, group);
   else
-    attention_tile_prefix_kernel<1024><<<1, 1024, 0, stream>>>(input_ptr, output_ptr, batch, tile, group);
+    attention_tile_prefix_kernel<1024>
+        <<<1, 1024, 0, stream>>>(input_ptr, output_ptr, batch, tile, group);
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output;
 }

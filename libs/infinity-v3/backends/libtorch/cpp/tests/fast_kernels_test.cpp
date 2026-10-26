@@ -69,7 +69,8 @@ int main(int argc, char** argv) {
       for (int group : {1, 2, 6, 7})
         for (int tile : {128, 192}) {
           auto lengths = at::arange(batch, at::TensorOptions().dtype(at::kInt)).remainder(197) + 1;
-          auto cumulative = at::cat({at::zeros({1}, lengths.options()), lengths.cumsum(0, at::kInt)});
+          auto cumulative =
+              at::cat({at::zeros({1}, lengths.options()), lengths.cumsum(0, at::kInt)});
           auto counts = at::floor_divide(lengths * group + tile - 1, tile);
           auto expected = at::cat({at::zeros({1}, counts.options()), counts.cumsum(0, at::kInt)});
           auto actual = infinity::attention_tile_prefix(cumulative.to(at::kCUDA), tile, group);
