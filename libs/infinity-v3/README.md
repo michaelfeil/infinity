@@ -4,6 +4,19 @@ Infinity V3 is a high-throughput, low-latency REST API for serving embeddings,
 reranking, classification and typed decision models. The server is written in
 Rust and uses **LibTorch, the C++ interface of PyTorch**, for model inference.
 
+**Looking for Python / v2?** See the [Python server README](../infinity_emb/README.md)
+and [v2 documentation](https://michaelfeil.eu/infinity/main/deploy/).
+The `infinity-emb` Python package and `infinity_emb v2` command belong to that server.
+
+## History
+
+- **2026/10:** Native Rust/LibTorch v3 server for embeddings, reranking, classification and typed decisions.
+- **2025/07:** Blackwell support in the Python server.
+- **2024:** Python / v2 gained multi-model and multimodal serving, Python clients, and broader GPU, CPU, ONNX and TensorRT deployment options.
+- **2023/10:** Initial Infinity release.
+
+See the [Python / v2 README](../infinity_emb/README.md) for the full earlier updates.
+
 <p align="center">
   <a href="https://github.com/basetenlabs/truss-examples/tree/7025918c813d08d718b8939f44f10651a0ff2c8c/custom-server/infinity-embedding-server"><img src="https://avatars.githubusercontent.com/u/54861414" alt="Logo Baseten.co" width="50"/></a>
   <a href="https://github.com/runpod-workers/worker-infinity-embedding"><img src="https://github.com/user-attachments/assets/24f1906d-31b8-4e16-a479-1382cbdea046" alt="Logo Runpod" width="50"/></a>
