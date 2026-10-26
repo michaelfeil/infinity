@@ -78,6 +78,14 @@ pub struct Metadata {
     pub(crate) token_classification: bool,
 }
 
+impl Metadata {
+    fn virtual_queue_time(&self) -> Option<Instant> {
+        // Keep the real queue timestamp for latency metrics.
+        self.queue_time
+            .checked_sub(Duration::from_secs(u64::from(self.priority)))
+    }
+}
+
 /// Request Queue
 #[derive(Debug, Clone)]
 pub struct Queue {
@@ -323,12 +331,11 @@ fn queue_blocking_task(
             QueueCommand::Append(entry, span) => {
                 let _span = span.entered();
                 queued_tokens += entry.encoding.input_ids.len();
-                if entry.metadata.priority {
-                    let index = entries.partition_point(|pending| pending.metadata.priority);
-                    entries.insert(index, *entry);
-                } else {
-                    entries.push_back(*entry);
-                }
+                let virtual_time = entry.metadata.virtual_queue_time();
+                let index = entries.partition_point(|pending| {
+                    pending.metadata.virtual_queue_time() <= virtual_time
+                });
+                entries.insert(index, *entry);
                 let gauge = metrics::gauge!("infinity_queue_size", "model" => model_name.clone());
                 gauge.increment(1.0);
             }
@@ -719,30 +726,43 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn priority_drains_first_with_fifo_ties_and_hard_token_limits() {
+    async fn priority_gets_one_second_of_virtual_age_without_starving_older_work() {
         let queue = test_queue(3);
+        let base = Instant::now() - Duration::from_secs(10);
         let mut responses = Vec::new();
-        for (id, priority) in [(1, false), (2, true), (3, true), (4, false)] {
+        // Equal virtual times retain append order, including across tiers.
+        for (id, priority, millis) in [
+            (1, false, 0),
+            (2, false, 1_000),
+            (3, false, 1_500),
+            (4, true, 2_000),
+            (5, true, 2_000),
+        ] {
             let (mut entry, response) = test_entry(vec![id; 2], true);
             entry.metadata.priority = priority;
+            entry.metadata.queue_time = base + Duration::from_millis(millis);
             responses.push(response);
             queue.append(entry).await;
         }
-        // Canceled priority work must not consume a batch or block normal work.
         let (mut canceled, response) = test_entry(vec![9; 2], true);
         canceled.metadata.priority = true;
+        canceled.metadata.queue_time = base;
         queue.append(canceled).await;
         drop(response);
-        for id in [2, 3] {
-            let (_, batch) = queue.next_batch().await.unwrap();
+        for id in [1, 2, 4, 5] {
+            let (metadata, batch) = queue.next_batch().await.unwrap();
             assert_eq!(batch.input_ids, [id; 2]);
+            if id == 4 {
+                assert_eq!(metadata[0].queue_time, base + Duration::from_secs(2));
+            }
         }
-        // New priority arrivals can keep passing already-waiting normal inputs.
-        let (mut entry, response) = test_entry(vec![5; 2], true);
+        // Later priority arrivals cannot keep passing an older normal input.
+        let (mut entry, response) = test_entry(vec![6; 2], true);
         entry.metadata.priority = true;
+        entry.metadata.queue_time = base + Duration::from_millis(2_501);
         responses.push(response);
         queue.append(entry).await;
-        for id in [5, 1, 4] {
+        for id in [3, 6] {
             let (_, batch) = queue.next_batch().await.unwrap();
             assert_eq!(batch.input_ids, [id; 2]);
         }

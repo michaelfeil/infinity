@@ -104,17 +104,20 @@ reranking, classification, and SystemOne decisions:
 {"input": ["first text", "second text"], "service_tier": "priority"}
 ```
 
-Each model's existing queue drains priority inputs before normal inputs, FIFO
-within each group. Omitted tiers, `default`, `auto`, and `flex` all use normal
-priority. Every input in a client batch inherits its request tier; response
-ordering is unchanged. Vertex instances inherit the envelope tier unless they
-specify their own.
+Each model's existing queue orders inputs by enqueue time, subtracting one second
+for `priority` requests. A priority input passes normal inputs enqueued less than
+one second earlier, but stays behind older work. Equal virtual enqueue times
+retain queue insertion order. Omitted tiers, `default`, `auto`, and `flex` use
+real enqueue time. Every input in a client batch inherits its request tier;
+response ordering is unchanged. Vertex instances inherit the envelope tier
+unless they specify their own.
 
-This orders inputs ready for model batching. It does not preempt dispatched
-batches or reorder image downloads, tokenization, or admission limits. Continuous
-priority traffic may starve normal work. `/tokenize` and `/decode` accept the
-field for compatibility but do not use the inference queue. No server flag is
-required; requests without the field keep existing FIFO behavior.
+This orders inputs ready for model batching, without adding an actual delay.
+It does not preempt dispatched batches or reorder image downloads, tokenization,
+or admission limits. Later priority arrivals cannot indefinitely overtake older
+normal work. `/tokenize` and `/decode` accept the field for compatibility but do
+not use the inference queue. No server flag is required. Queue latency metrics
+continue to use real enqueue times.
 
 ### CLI overview
 
