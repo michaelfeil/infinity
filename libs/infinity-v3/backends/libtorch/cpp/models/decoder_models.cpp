@@ -1079,6 +1079,30 @@ public:
     return score.defined() ? score.size(0) : 0;
   }
 
+  bool can_select_final_rows(const PackedInput& input) const {
+    return device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16) && !fp8_dynamic &&
+           family != "ultrabert" && options.integer("num_experts", 0) == 0 &&
+           !radix_enabled(input) && !input.prefix && !input.capture_prefix;
+  }
+
+  bool supports_last_token(const PackedInput& input) const override {
+    // Avoid extra gather launches for tiny packed inputs.
+    return input.ids.numel() >= 128 && can_select_final_rows(input);
+  }
+
+  at::Tensor forward_last(const PackedInput& input) const override {
+    if (!can_select_final_rows(input))
+      return Model::forward_last(input);
+    auto rows = input.cumulative.narrow(0, 1, input.batch).to(at::kLong) - 1;
+    return forward_states(input,
+                          at::embedding(embedding, input.ids),
+                          cos_cache.index_select(0, input.positions).unsqueeze(1),
+                          sin_cache.index_select(0, input.positions).unsqueeze(1),
+                          {},
+                          {},
+                          rows);
+  }
+
   at::Tensor predict(const PackedInput& input, bool tokenwise) const override {
     TORCH_CHECK(!tokenwise || token_classifier,
                 "Decoder sequence classifier does not implement token classification");
@@ -1090,10 +1114,8 @@ public:
       return at::linear(forward(input), score, score_bias);
     // After the final attention operation, remaining computation is token-wise.
     // Sequence classification needs only the last non-padding row of each input.
-    if (!causal && !token_classifier && !bidirectional_classifier && device.is_cuda() &&
-        dtype == at::kBFloat16 && !fp8_dynamic && family != "ultrabert" &&
-        options.integer("num_experts", 0) == 0 && !radix_enabled(input) && !input.prefix &&
-        !input.capture_prefix) {
+    if (!causal && !token_classifier && !bidirectional_classifier && dtype == at::kBFloat16 &&
+        can_select_final_rows(input)) {
       auto starts = input.cumulative.narrow(0, 0, input.batch).to(at::kLong);
       auto ends = input.cumulative.narrow(0, 1, input.batch).to(at::kLong) - 1;
       at::Tensor selected = ends;
@@ -1253,7 +1275,7 @@ public:
                             const at::Tensor& sine,
                             const at::Tensor& visual_indices = at::Tensor(),
                             const std::vector<at::Tensor>& deepstack = {},
-                            const at::Tensor& classification_rows = {}) const {
+                            const at::Tensor& output_rows = {}) const {
     // CUDA fused norms carry the accumulated residual separately from h, which holds the latest
     // branch. The composed path instead materializes each residual addition directly in h.
     at::Tensor residual;
@@ -1391,11 +1413,11 @@ public:
       auto attended = attend(q, k, v, input, layer_index, layer)
                           .contiguous()
                           .view({h.size(0), heads * head_dim});
-      if (classification_rows.defined() && layer_index + 1 == layers.size()) {
-        attended = attended.index_select(0, classification_rows);
-        h = h.index_select(0, classification_rows);
+      if (output_rows.defined() && layer_index + 1 == layers.size()) {
+        attended = attended.index_select(0, output_rows);
+        h = h.index_select(0, output_rows);
         if (residual.defined())
-          residual = residual.index_select(0, classification_rows);
+          residual = residual.index_select(0, output_rows);
       }
       at::Tensor projected;
 #ifdef TEI_TORCH_CUDA_KERNELS

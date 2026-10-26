@@ -1424,15 +1424,18 @@ static int32_t forward_radix(void* handle,
     const bool graph_eligible =
         model.graphs && model.graph_policy_ready() &&
         (model.media_graphs || (!image_count && !audio_count && !media_positions));
+    const bool last_pooled = pool == 2 && pooled_count && !raw_count && !cached &&
+                             model.model->supports_last_token(packed);
+    const int graph_operation = last_pooled ? 3 : operation;
     if (cached || !graph_eligible)
       model.model->prepare_input(packed);
     auto h =
         cached ? model.prefix->run(
                      *model.model, packed, operation, graph_eligible ? model.graphs.get() : nullptr)
-        : graph_eligible
-            ? model.graphs->forward(*model.model, packed, pool >= 4 ? (pool == 5 ? 2 : 1) : 0)
-        : pool >= 4 ? model.model->predict(packed, pool == 5)
-                    : model.model->forward(packed);
+        : graph_eligible ? model.graphs->forward(*model.model, packed, graph_operation)
+        : pool >= 4      ? model.model->predict(packed, pool == 5)
+        : last_pooled    ? model.model->forward_last(packed)
+                         : model.model->forward(packed);
     // Project only requested real token spans once. Offsets below preserve
     // caller order, repeated requests and mixed pooled/raw output semantics.
     at::Tensor sparse_scores;
@@ -1470,7 +1473,7 @@ static int32_t forward_radix(void* handle,
     for (size_t i = 0; i < pooled_count && !mean_pooled; ++i) {
       const auto row = pooled[i];
       const auto start = cumulative[row], length = cumulative[row + 1] - start;
-      if (pool == 4)
+      if (pool == 4 || last_pooled)
         outputs.push_back(h.narrow(0, row, 1));
       else if (pool == 3)
         outputs.push_back(

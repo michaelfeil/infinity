@@ -298,9 +298,11 @@ at::Tensor CudaGraphCache::forward(const Model& model,
                                    int operation,
                                    const MathPolicy* known_policy,
                                    PrefixContext* publish) {
-  TORCH_CHECK(operation >= 0 && operation <= 2, "Invalid CUDA graph operation");
+  TORCH_CHECK(operation >= 0 && operation <= 3, "Invalid CUDA graph operation");
   auto run = [&](const PackedInput& input) {
-    return operation == 0 ? model.forward(input) : model.predict(input, operation == 2);
+    return operation == 0   ? model.forward(input)
+           : operation == 3 ? model.forward_last(input)
+                            : model.predict(input, operation == 2);
   };
 #ifdef TEI_TORCH_CUDA_KERNELS
   auto input = original;
