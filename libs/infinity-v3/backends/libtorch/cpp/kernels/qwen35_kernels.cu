@@ -2,6 +2,7 @@
 // The included Candle kernels retain their MIT notices. This wrapper dispatches
 // those native packed kernels on LibTorch's current stream, without Python.
 #include "kernels/flashinfer_gdn.h"
+#include "kernels/fp8_quant_pair.cuh"
 #include "kernels/qwen35_kernels.h"
 #include "kernels/gemma2_norm.h"
 #include "kernels/qwen35_recurrent.h"
@@ -30,6 +31,7 @@ __global__ void packed_conv_vector(const __nv_bfloat16* x,
                                    int channels,
                                    int kernel,
                                    int sequences,
+                                   int64_t row_stride,
                                    const int64_t* sources = nullptr,
                                    const __nv_bfloat16* history = nullptr,
                                    const int32_t* history_cu = nullptr) {
@@ -54,7 +56,7 @@ __global__ void packed_conv_vector(const __nv_bfloat16* x,
     const int source = token + j - kernel + 1;
     const __nv_bfloat16* row = nullptr;
     if (source >= int(cumulative[lo]))
-      row = x + int64_t(source) * channels;
+      row = x + int64_t(source) * row_stride;
     else if constexpr (Cached) {
       if (source >= int(cumulative[lo]) - previous)
         row = history + int64_t(history_end + source - int(cumulative[lo])) * channels;
@@ -1227,21 +1229,25 @@ __global__ void qwen35_gdn_cached(const __nv_bfloat16* qkv,
     for (int i = 0; i < entries; ++i)
       state[i] = initial[((source * vh + head) * 128 + lane + i * Lanes) * 128 + col];
   constexpr int tile = 32;
-  __shared__ float queries_keys[tile][256], gates[tile][2];
-  __shared__ __nv_bfloat16 values[tile][columns], outputs[tile][columns];
+  __shared__ __align__(16) float queries_keys[tile][256];
+  __shared__ float gates[tile][2];
+  __shared__ __align__(8) __nv_bfloat16 values[tile][columns], outputs[tile][columns];
   const uint32_t begin = cu[seq], end = cu[seq + 1];
   for (uint32_t start = begin; start < end; start += tile) {
     const int count = min(uint32_t(tile), end - start);
     __syncthreads();
     // Cooperatively stage each head once for all state columns.
-    for (int i = threadIdx.x; i < count * 256; i += blockDim.x)
-      queries_keys[i / 256][i % 256] = qk[(uint64_t(start + i / 256) * kh + qhead) * 256 + i % 256];
+    for (int i = threadIdx.x; i < count * 64; i += blockDim.x)
+      reinterpret_cast<float4*>(queries_keys[i / 64])[i % 64] = reinterpret_cast<const float4*>(
+          qk + (uint64_t(start + i / 64) * kh + qhead) * 256)[i % 64];
     for (int i = threadIdx.x; i < count * 2; i += blockDim.x)
       gates[i / 2][i % 2] = decay_beta[uint64_t(start + i / 2) * 2 * vh + head + (i % 2) * vh];
-    for (int i = threadIdx.x; i < count * columns; i += blockDim.x)
-      values[i / columns][i % columns] =
-          qkv[uint64_t(start + i / columns) * channels + 2 * kh * 128 + head * 128 +
-              blockIdx.z * columns + i % columns];
+    for (int i = threadIdx.x; i < count * (columns / 4); i += blockDim.x) {
+      const int row = i / (columns / 4), pack = i % (columns / 4);
+      reinterpret_cast<ConvValues*>(values[row])[pack] = reinterpret_cast<const ConvValues*>(
+          qkv + uint64_t(start + row) * channels + 2 * kh * 128 + head * 128 +
+          blockIdx.z * columns)[pack];
+    }
     __syncthreads();
 #pragma unroll 2
     for (int row = 0; row < count; ++row) {
@@ -1267,13 +1273,157 @@ __global__ void qwen35_gdn_cached(const __nv_bfloat16* qkv,
         outputs[row][threadIdx.x / Lanes] = __float2bfloat16_rn(value);
     }
     __syncthreads();
-    for (int i = threadIdx.x; i < count * columns; i += blockDim.x)
-      out[(uint64_t(start + i / columns) * vh + head) * 128 + blockIdx.z * columns + i % columns] =
-          outputs[i / columns][i % columns];
+    for (int i = threadIdx.x; i < count * (columns / 4); i += blockDim.x) {
+      const int row = i / (columns / 4), pack = i % (columns / 4);
+      reinterpret_cast<ConvValues*>(out + (uint64_t(start + row) * vh + head) * 128 +
+                                    blockIdx.z * columns)[pack] =
+          reinterpret_cast<const ConvValues*>(outputs[row])[pack];
+    }
   }
   if (final_state)
     for (int i = 0; i < entries; ++i)
       final_state[((int64_t(seq) * vh + head) * 128 + lane + i * Lanes) * 128 + col] = state[i];
+}
+
+namespace {
+template <class T>
+__global__ void pack_gdn_inputs(const T* values,
+                                const float* qk,
+                                const float* gates,
+                                T* q,
+                                T* k,
+                                T* v,
+                                float* alpha,
+                                float* beta,
+                                int kh,
+                                int vh,
+                                int64_t value_stride,
+                                int64_t qk_stride,
+                                int64_t gate_stride) {
+  const int64_t row = blockIdx.x;
+  const int col = blockIdx.y * blockDim.x + threadIdx.x;
+  if (col < kh * 128) {
+    const auto source = (row * kh + col / 128) * qk_stride + col % 128;
+    q[row * kh * 128 + col] = T(qk[source]);
+    k[row * kh * 128 + col] = T(qk[source + 128]);
+  }
+  if (col < vh * 128)
+    v[row * vh * 128 + col] = values[row * value_stride + 2 * kh * 128 + col];
+  if (col < vh) {
+    alpha[row * vh + col] = gates[row * gate_stride + col];
+    beta[row * vh + col] = gates[row * gate_stride + vh + col];
+  }
+}
+}
+
+std::array<at::Tensor, 5> flashinfer_gdn_pack_cuda(const at::Tensor& values,
+                                                   const at::Tensor& qk,
+                                                   const at::Tensor& gates,
+                                                   int64_t kh,
+                                                   int64_t vh) {
+  TORCH_CHECK(values.is_cuda() && values.dim() == 2 && values.stride(1) == 1 &&
+                  (values.scalar_type() == at::kHalf || values.scalar_type() == at::kBFloat16) &&
+                  kh > 0 && vh > 0 && vh <= 128 && vh % kh == 0,
+              "Invalid GDN provider packing geometry");
+  const auto tokens = values.size(0);
+  TORCH_CHECK(tokens <= INT32_MAX && values.size(1) == (2 * kh + vh) * 128 &&
+                  qk.device() == values.device() && qk.scalar_type() == at::kFloat &&
+                  qk.sizes() == at::IntArrayRef({tokens * kh, 256}) && qk.stride(1) == 1 &&
+                  gates.device() == values.device() && gates.scalar_type() == at::kFloat &&
+                  gates.sizes() == at::IntArrayRef({tokens, 2 * vh}) && gates.stride(1) == 1,
+              "Invalid GDN provider packing operands");
+  c10::cuda::CUDAGuard guard(values.device());
+  auto q = at::empty({tokens, kh, 128}, values.options()), k = at::empty_like(q),
+       v = at::empty({tokens, vh * 128}, values.options());
+  // Fresh allocations retain the provider's alignment even for a single gate.
+  auto alpha = at::empty({tokens, vh}, gates.options()), beta = at::empty_like(alpha);
+  auto launch = [&]<class T>() {
+    pack_gdn_inputs<<<dim3(tokens, (vh * 128 + 255) / 256),
+                      256,
+                      0,
+                      at::cuda::getCurrentCUDAStream()>>>(
+        reinterpret_cast<const T*>(values.const_data_ptr()),
+        qk.const_data_ptr<float>(),
+        gates.const_data_ptr<float>(),
+        reinterpret_cast<T*>(q.mutable_data_ptr()),
+        reinterpret_cast<T*>(k.mutable_data_ptr()),
+        reinterpret_cast<T*>(v.mutable_data_ptr()),
+        alpha.mutable_data_ptr<float>(),
+        beta.mutable_data_ptr<float>(),
+        kh,
+        vh,
+        values.stride(0),
+        qk.stride(0),
+        gates.stride(0));
+  };
+  if (tokens) {
+    if (values.scalar_type() == at::kBFloat16)
+      launch.template operator()<__nv_bfloat16>();
+    else
+      launch.template operator()<__half>();
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+  }
+  return {q, k, v, alpha, beta};
+}
+
+namespace {
+// Adapted from the included Candle GDN norm. One warp handles each head's
+// four original 32-lane reductions, preserving every intermediate BF16 round.
+__global__ void gdn_norm_quant(const __nv_bfloat16* x,
+                               const __nv_bfloat16* z,
+                               const __nv_bfloat16* weight,
+                               __nv_fp8_e4m3* output,
+                               float* scales,
+                               int heads,
+                               float epsilon,
+                               int64_t gate_stride) {
+  extern __shared__ __align__(16) unsigned char storage[];
+  auto normalized = reinterpret_cast<__nv_bfloat16*>(storage);
+  auto maxima = reinterpret_cast<float*>(normalized + heads * 128);
+  const int row = blockIdx.x, lane = threadIdx.x % 32, warp = threadIdx.x / 32;
+  const int width = heads * 128, warps = blockDim.x / 32;
+  float amax = 0.f;
+  for (int head = warp; head < heads; head += warps) {
+    float values[4], sums[4];
+#pragma unroll
+    for (int j = 0; j < 4; ++j) {
+      values[j] = __bfloat162float(x[int64_t(row) * width + head * 128 + lane + j * 32]);
+      sums[j] = ::gdn_sum(values[j] * values[j]);
+    }
+    const float variance = (sums[0] + sums[1] + sums[2] + sums[3]) / 128.f;
+    const float inverse = rsqrtf(variance + epsilon);
+#pragma unroll
+    for (int j = 0; j < 4; ++j) {
+      const int column = head * 128 + lane + j * 32;
+      float value = __bfloat162float(__float2bfloat16_rn(values[j] * inverse));
+      value =
+          __bfloat162float(__float2bfloat16_rn(value * __bfloat162float(weight[lane + j * 32])));
+      const float gate = __bfloat162float(z[int64_t(row) * gate_stride + column]);
+      auto rounded = __float2bfloat16_rn(value * (gate / (1.f + expf(-gate))));
+      normalized[column] = rounded;
+      amax = fmaxf(amax, fabsf(__bfloat162float(rounded)));
+    }
+  }
+  for (int step = 16; step; step >>= 1)
+    amax = fmaxf(amax, __shfl_down_sync(0xffffffff, amax, step));
+  if (!lane)
+    maxima[warp] = amax;
+  __syncthreads();
+  if (!warp) {
+    amax = lane < warps ? maxima[lane] : 0.f;
+    for (int step = 16; step; step >>= 1)
+      amax = fmaxf(amax, __shfl_down_sync(0xffffffff, amax, step));
+    if (!lane)
+      maxima[0] = __fmul_rn(fmaxf(amax, 1e-12f), 1.f / 448.f);
+  }
+  __syncthreads();
+  const float scale = maxima[0];
+  if (!threadIdx.x)
+    scales[row] = scale;
+  for (int col = 2 * threadIdx.x; col < width; col += 2 * blockDim.x)
+    reinterpret_cast<__nv_fp8x2_e4m3*>(output + int64_t(row) * width)[col / 2] = fp8_quantize_pair(
+        __bfloat162float(normalized[col]), __bfloat162float(normalized[col + 1]), scale);
+}
 }
 
 /// Build normalized Q/K and decay buffers, then select cached, chunked, or recurrent execution.
@@ -1295,7 +1445,9 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              const at::Tensor& history_cumulative,
                              bool chunk_prefill,
                              int64_t cache_layer,
-                             bool allow_prefill) {
+                             bool allow_prefill,
+                             const std::pair<at::Tensor, at::Tensor>* quantized_output,
+                             bool suffix_prefill) {
   c10::cuda::CUDAGuard guard(qkv.device());
   TORCH_CHECK(qkv.scalar_type() == at::kBFloat16 && z.scalar_type() == at::kBFloat16 &&
                   ab.scalar_type() == at::kBFloat16 && conv.scalar_type() == at::kBFloat16 &&
@@ -1310,14 +1462,28 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                   ab.sizes() == at::IntArrayRef({tokens, 2 * value_heads}) &&
                   conv.size(0) == channels && conv.size(-1) > 0 && conv.size(-1) <= 16,
               "Invalid packed DeltaNet tensors");
+  TORCH_CHECK(qkv.stride(1) == 1 && qkv.stride(0) >= channels && qkv.stride(0) % 4 == 0 &&
+                  reinterpret_cast<uintptr_t>(qkv.const_data_ptr()) % 8 == 0 && z.stride(1) == 1 &&
+                  z.stride(0) >= value_heads * 128,
+              "Invalid packed DeltaNet row strides");
   TORCH_CHECK(tokens <= INT32_MAX && tokens * channels <= UINT32_MAX,
               "DeltaNet token buffer exceeds kernel range");
+  if (quantized_output) {
+    const auto& [rows, scales] = *quantized_output;
+    TORCH_CHECK(rows.device() == qkv.device() && rows.scalar_type() == at::kFloat8_e4m3fn &&
+                    rows.sizes() == at::IntArrayRef({tokens, value_heads * 128}) &&
+                    rows.is_contiguous() &&
+                    reinterpret_cast<uintptr_t>(rows.const_data_ptr()) % 2 == 0 &&
+                    scales.device() == qkv.device() && scales.scalar_type() == at::kFloat &&
+                    scales.is_contiguous() && scales.sizes() == at::IntArrayRef({tokens, 1}),
+                "Invalid quantized GDN output buffers");
+  }
   auto stream = at::cuda::getCurrentCUDAStream(qkv.device().index());
-  auto convolution = at::empty_like(qkv),
+  auto convolution = at::empty({tokens, channels}, qkv.options()),
        qk = at::empty({tokens * key_heads, 256}, qkv.options().dtype(at::kFloat));
   auto decay = at::empty({tokens, 2 * value_heads}, qkv.options().dtype(at::kFloat));
-  auto recurrence = at::empty({tokens, value_heads, 128}, qkv.options()),
-       output = at::empty_like(recurrence);
+  auto recurrence = at::empty({tokens, value_heads, 128}, qkv.options());
+  auto output = quantized_output ? at::Tensor() : at::empty_like(recurrence);
   auto bf = [](const at::Tensor& t) {
     return reinterpret_cast<const __nv_bfloat16*>(t.const_data_ptr());
   };
@@ -1326,7 +1492,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
   auto cached = prefix_recurrent(input, qkv, cache_layer, value_heads, conv.size(-1));
   if (input.prefix)
     qwen35_cached_conv_cuda(
-        qkv, conv, input, cached.history, cached.history_lengths, convolution, true);
+        qkv.contiguous(), conv, input, cached.history, cached.history_lengths, convolution, true);
   else if (history.defined()) {
     TORCH_CHECK(history.device() == qkv.device() && history.scalar_type() == qkv.scalar_type() &&
                     history.is_contiguous() && history.dim() == 2 && history.size(1) == channels &&
@@ -1351,12 +1517,20 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
         channels,
         conv.size(-1),
         input.batch,
+        qkv.stride(0),
         input.block_cache_sources.const_data_ptr<int64_t>(),
         bf(history),
         history_cumulative.const_data_ptr<int32_t>());
   } else
     packed_conv_vector<<<dim3(tokens, (channels / 4 + 255) / 256), 256, 0, stream>>>(
-        bf(qkv), bf(conv), cu, mut(convolution), channels, conv.size(-1), input.batch);
+        bf(qkv),
+        bf(conv),
+        cu,
+        mut(convolution),
+        channels,
+        conv.size(-1),
+        input.batch,
+        qkv.stride(0));
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   qwen35_gdn_prepare<<<tokens * key_heads, 128, 0, stream>>>(bf(convolution),
                                                              bf(ab),
@@ -1378,9 +1552,21 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
   }
   // Prefill benefits from chunk-parallel work; short question suffixes keep the
   // register-resident recurrent path. Both consume/produce the same FP32 state.
-  if ((final_state || allow_prefill) && !initial.defined() && !input.prefix &&
-      flashinfer_gdn_prefill(
-          convolution, qk, decay, input, recurrence, key_heads, value_heads, final_state)) {
+  if (suffix_prefill && initial.defined() && !input.prefix && input.batch > 0 && tokens >= 256 &&
+      tokens / input.batch >= 64 &&
+      flashinfer_gdn_resume(convolution,
+                            qk,
+                            decay,
+                            input,
+                            recurrence,
+                            key_heads,
+                            value_heads,
+                            final_state,
+                            initial)) {
+    // The shared provider resumes each suffix from its immutable FP32 prefix state.
+  } else if ((final_state || allow_prefill) && !initial.defined() && !input.prefix &&
+             flashinfer_gdn_prefill(
+                 convolution, qk, decay, input, recurrence, key_heads, value_heads, final_state)) {
     // The AOT bundle selects the upstream provider for the actual device family.
   } else
 #ifdef TEI_TORCH_GDN_HOPPER
@@ -1410,7 +1596,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
     if (final_state)
       *final_state =
           at::empty({input.batch, value_heads, 128, 128}, qkv.options().dtype(at::kFloat));
-    // Wider column tiles amortize shared loads once enough heads fill the GPU.
+    // Preserve the original geometry policy and FP32 reduction order.
 #define CACHED(L)                                                                                  \
   qwen35_gdn_cached<L><<<dim3(input.batch, value_heads, L / 4), 512, 0, stream>>>(                 \
       bf(convolution),                                                                             \
@@ -1443,12 +1629,28 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
         value_heads);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
   }
-  qwen35_gdn_norm<<<tokens * value_heads, 128, 0, stream>>>(
-      bf(recurrence), bf(z), bf(norm), mut(output), epsilon);
+  if (quantized_output) {
+    const auto& [rows, scales] = *quantized_output;
+    constexpr int threads = 512;
+    const auto shared = value_heads * 128 * sizeof(__nv_bfloat16) + threads / 32 * sizeof(float);
+    gdn_norm_quant<<<tokens, threads, shared, stream>>>(
+        bf(recurrence),
+        bf(z),
+        bf(norm),
+        reinterpret_cast<__nv_fp8_e4m3*>(rows.mutable_data_ptr()),
+        scales.mutable_data_ptr<float>(),
+        value_heads,
+        epsilon,
+        z.stride(0));
+  } else {
+    auto gate = z.contiguous();
+    qwen35_gdn_norm<<<tokens * value_heads, 128, 0, stream>>>(
+        bf(recurrence), bf(gate), bf(norm), mut(output), epsilon);
+  }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   if (input.prefix)
     prefix_recurrent_commit(input, qkv, cache_layer, conv.size(-1), cached);
-  return output.view({tokens, value_heads * 128});
+  return quantized_output ? at::Tensor() : output.view({tokens, value_heads * 128});
 }
 }
 

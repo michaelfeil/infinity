@@ -9,6 +9,7 @@
 #include "helpers/workspace_admission.h"
 // Native adaptation of Candle Qwen3.5. Upstream notices retained in LICENSE/NOTICE.
 #include "models/qwen35_models.h"
+#include "env_config.h"
 #include "helpers/dense_mlp.h"
 #include "models/qwen3_vl_models.h"
 #include "models/decoder_models.h"
@@ -19,6 +20,8 @@
 #include <ATen/ops/_efficient_attention_forward.h>
 #include <ATen/ops/_flash_attention_forward.h>
 #include <cmath>
+#include <cstdlib>
+#include <string_view>
 #include "batching/radix.h"
 #include <array>
 #include <map>
@@ -67,7 +70,7 @@ class Qwen35 final : public Model {
   std::string prefix;
   int64_t hidden, heads, kv_heads, dim, layer_count, rotary;
   double epsilon;
-  bool delta_prefill = false;
+  bool delta_prefill = false, delta_suffix_prefill = false;
   at::Tensor cos_cache, sin_cache;
 
   /// Dense, routed, and shared-expert projections for one Qwen3.5 feed-forward block.
@@ -79,6 +82,7 @@ class Qwen35 final : public Model {
     DenseMlp dense_mlp, shared_mlp;
   };
 
+  using QuantizedRows = std::pair<at::Tensor, at::Tensor>;
   std::vector<Mlp> mlps;
   std::map<std::string, std::unique_ptr<Fp8Linear>> fp8_projections;
   std::unique_ptr<Qwen3VL> visual;
@@ -353,14 +357,18 @@ class Qwen35 final : public Model {
 
   /// Run dense or routed feed-forward layers with the checkpoint's
   /// selected activation and prefix recipe.
-  at::Tensor feed_forward(const at::Tensor& x, int64_t layer, const PackedInput& input) const {
+  at::Tensor feed_forward(const at::Tensor& x,
+                          int64_t layer,
+                          const PackedInput& input,
+                          const QuantizedRows* quantized = nullptr) const {
     const auto& m = mlps[layer];
     MlpContext context;
     context.gemm = [&](const MlpProjection& projection, const at::Tensor& rows) {
       return prefix_linear(rows, projection.weight(), projection.gemm_bias(), input);
     };
     if (!m.router.defined())
-      return m.dense_mlp.forward(x, context);
+      return quantized ? m.dense_mlp.forward(quantized->first, context, quantized->second)
+                       : m.dense_mlp.forward(x, context);
     auto top = integer("num_experts_per_tok", 8);
     auto renormalize = cfg.boolean(key("norm_topk_prob"), true);
     const bool native = top == 8 && device.is_cuda() && dtype == at::kBFloat16 &&
@@ -396,6 +404,19 @@ class Qwen35 final : public Model {
     return (f * at::reciprocal(at::sqrt(f.square().mean(-1, true) + epsilon)) *
             (w(name + ".weight").to(at::kFloat) + 1.))
         .to(x.scalar_type());
+  }
+
+  std::pair<at::Tensor, at::Tensor> residual_norm(const at::Tensor& x,
+                                                  const at::Tensor& addition,
+                                                  const std::string& name,
+                                                  QuantizedRows* quantized = nullptr) const {
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if (device.is_cuda() && dtype == at::kBFloat16 && x.size(-1) <= 8192)
+      return qwen35_reference_residual_norm_cuda(
+          x, addition, w(name + ".weight"), epsilon, quantized);
+#endif
+    auto updated = x + addition;
+    return {updated, norm(updated, name)};
   }
 
   /// Rotate only the configured leading rotary features and copy the remaining head features
@@ -437,8 +458,9 @@ class Qwen35 final : public Model {
   AttentionProjections project_attention(const at::Tensor& x,
                                          const std::string& p,
                                          const PackedInput& input,
-                                         bool linear) const {
-    std::pair<at::Tensor, at::Tensor> quantized;
+                                         bool linear,
+                                         const QuantizedRows* prepared = nullptr) const {
+    QuantizedRows quantized = prepared ? *prepared : QuantizedRows{};
     auto project = [&](const std::string& name) {
       if (auto it = fp8_projections.find(name); it != fp8_projections.end()) {
         if (!quantized.first.defined())
@@ -680,7 +702,8 @@ class Qwen35 final : public Model {
                              BlockCache* cache = nullptr,
                              bool prefill = false,
                              int64_t cache_layer = -1,
-                             const AttentionProjections* projected = nullptr) const {
+                             const AttentionProjections* projected = nullptr,
+                             const QuantizedRows* quantized_output = nullptr) const {
     auto projections = projected ? *projected : project_attention(x, p, input, true);
     auto qkv = projections[0], z = projections[1], ab = projections[2];
     qkv = radix_unfold(qkv, input);
@@ -690,11 +713,11 @@ class Qwen35 final : public Model {
     if (device.is_cuda()) {
 #ifdef TEI_TORCH_CUDA_KERNELS
       auto conv = w(p + "conv1d.weight").view({qkv.size(1), -1}).contiguous();
-      auto alog = w(p + "A_log").to(at::kFloat).contiguous(),
-           dt = w(p + "dt_bias").to(at::kFloat).contiguous();
+      const auto& alog = w(p + "A_log");
+      const auto& dt = w(p + "dt_bias");
       if (integer("num_experts", 0) > 0)
-        output = qwen35_reference_delta_cuda(qkv,
-                                             z,
+        output = qwen35_reference_delta_cuda(qkv.contiguous(),
+                                             z.contiguous(),
                                              ab,
                                              conv,
                                              alog,
@@ -731,7 +754,9 @@ class Qwen35 final : public Model {
                               cache && !prefill ? cache->metadata.history_cumulative : at::Tensor(),
                               chunks,
                               cache_layer,
-                              delta_prefill && !cache);
+                              delta_prefill && !cache,
+                              quantized_output,
+                              delta_suffix_prefill);
       }
 #else
       TORCH_CHECK(false, "Qwen3.5 requires the native DeltaNet CUDA kernel build");
@@ -758,6 +783,8 @@ class Qwen35 final : public Model {
         metadata.history_offsets = cache->history_offsets;
       }
     }
+    if (quantized_output)
+      return {};
     auto compact = radix_fold(output, input);
     if (cache)
       return compact;
@@ -839,7 +866,7 @@ class Qwen35 final : public Model {
     PackedInput prefixes{at::cat(prefix_ids, 0),
                          at::cat(prefix_types, 0),
                          at::cat(prefix_positions, 0),
-                         at::tensor(prefix_offsets, input.cumulative.options()),
+                         input.block_layout->prefix_cumulative,
                          prefix_offsets.data(),
                          int64_t(representatives.size()),
                          max_prefix};
@@ -869,7 +896,7 @@ class Qwen35 final : public Model {
       suffixes = PackedInput{at::cat(suffix_ids, 0),
                              at::cat(suffix_types, 0),
                              at::cat(suffix_positions, 0),
-                             at::tensor(suffix_offsets, input.cumulative.options()),
+                             input.block_layout->suffix_cumulative,
                              suffix_offsets.data(),
                              int64_t(suffix_rows.size()),
                              max_suffix};
@@ -886,7 +913,7 @@ class Qwen35 final : public Model {
       // Each executed suffix maps to a representative prefix index, not its original batch row.
       // Host indices drive structural assembly; the device copy selects cached recurrent state.
       suffixes.block_prefix_sources = suffix_sources;
-      suffixes.block_cache_sources = at::tensor(suffix_sources, input.ids.options());
+      suffixes.block_cache_sources = input.block_layout->cache_sources;
     }
     // Count only images in the executed representative prefixes and suffixes.
     // One cache spans both passes, releasing features after their final use.
@@ -899,18 +926,35 @@ class Qwen35 final : public Model {
     if (has_suffix)
       hidden = at::cat({hidden, embeddings(suffixes, shared_features)}, 0);
     // These sequence boundaries are shared by all layers of this request.
-    BlockMetadata metadata;
+    BlockMetadata metadata{input.block_layout->kv_cumulative,
+                           input.block_layout->history_cumulative,
+                           input.block_layout->history_offsets};
+    auto normalized = norm(hidden, "layers.0.input_layernorm");
+    QuantizedRows attention_rows;
     for (int64_t layer = 0; layer < layer_count; ++layer) {
       const auto p = "layers." + std::to_string(layer) + ".";
       BlockCache cache{metadata};
       cache.offsets = prefix_offsets;
-      auto normalized = norm(hidden, p + "input_layernorm");
       const bool linear = string("layer_types." + std::to_string(layer)) == "linear_attention";
       const auto ap = p + (linear ? "linear_attn." : "self_attn.");
       // Project the combined representative-prefix/suffix rows once per layer, then slice those
       // projections for separate attention passes. Row-local output projections
       // and MLPs can remain batched.
-      auto projections = project_attention(normalized, ap, input, linear);
+      auto projections =
+          project_attention(normalized,
+                            ap,
+                            input,
+                            linear,
+                            attention_rows.first.defined() ? &attention_rows : nullptr);
+      const auto output_name = ap + (linear ? "out_proj" : "o_proj");
+      const auto output_projection = fp8_projections.find(output_name);
+      QuantizedRows output_rows;
+      if (linear && output_projection != fp8_projections.end()) {
+        const auto width = integer("linear_num_value_heads") * 128;
+        output_rows = {
+            at::empty({hidden.size(0), width}, hidden.options().dtype(at::kFloat8_e4m3fn)),
+            at::empty({hidden.size(0), 1}, hidden.options().dtype(at::kFloat))};
+      }
       auto attention = [&](const PackedInput& part, bool prefill) {
         const auto start = prefill ? 0 : prefix_tokens,
                    count = prefill ? prefix_tokens : hidden.size(0) - prefix_tokens;
@@ -918,17 +962,49 @@ class Qwen35 final : public Model {
         for (size_t i = 0; i < block.size(); ++i)
           block[i] = projections[i].narrow(0, start, count);
         auto x = normalized.narrow(0, start, count);
-        return linear ? delta_attention(x, ap, part, &cache, prefill, -1, &block)
+        QuantizedRows slice;
+        if (output_rows.first.defined())
+          slice = {output_rows.first.narrow(0, start, count),
+                   output_rows.second.narrow(0, start, count)};
+        return linear ? delta_attention(x,
+                                        ap,
+                                        part,
+                                        &cache,
+                                        prefill,
+                                        -1,
+                                        &block,
+                                        slice.first.defined() ? &slice : nullptr)
                       : full_attention(x, ap, part, &cache, prefill, -1, &block);
       };
       auto prefix_attention = attention(prefixes, true);
-      auto attended = has_suffix ? at::cat({prefix_attention, attention(suffixes, false)}, 0)
-                                 : prefix_attention;
-      attended = prefix_projection(attended, ap + (linear ? "out_proj" : "o_proj"), input);
-      hidden = hidden + attended;
-      hidden = hidden + feed_forward(norm(hidden, p + "post_attention_layernorm"), layer, input);
+      at::Tensor attended;
+      if (output_rows.first.defined()) {
+        if (has_suffix)
+          attention(suffixes, false);
+        attended =
+            output_projection->second->forward_quantized(output_rows.first, output_rows.second);
+      } else {
+        attended = has_suffix ? at::cat({prefix_attention, attention(suffixes, false)}, 0)
+                              : prefix_attention;
+        attended = prefix_projection(attended, output_name, input);
+      }
+      QuantizedRows mlp_rows;
+      auto post = residual_norm(hidden,
+                                attended,
+                                p + "post_attention_layernorm",
+                                mlps[layer].dense_mlp.fp8() ? &mlp_rows : nullptr);
+      auto mlp =
+          feed_forward(post.second, layer, input, mlp_rows.first.defined() ? &mlp_rows : nullptr);
+      auto next = residual_norm(
+          post.first,
+          mlp,
+          layer + 1 == layer_count ? "norm"
+                                   : "layers." + std::to_string(layer + 1) + ".input_layernorm",
+          layer + 1 < layer_count && !fp8_projections.empty() ? &attention_rows : nullptr);
+      hidden = next.first;
+      normalized = next.second;
     }
-    hidden = norm(hidden, "norm");
+    hidden = normalized;
     // Execution storage contains each representative prefix once. Reconstruction below repeats its
     // hidden rows for every logical request and appends that request's own suffix.
     auto prefix_hidden = hidden.narrow(0, 0, prefix_tokens);
@@ -984,6 +1060,8 @@ public:
   void ready() override {
     // Let the native provider select supported GPU families and GDN layouts.
     delta_prefill = device.is_cuda() && !cfg.boolean("_fp8_dynamic", false);
+    const auto* suffix_policy = std::getenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
+    delta_suffix_prefill = suffix_policy && std::string_view(suffix_policy) == "1";
     const auto fp8 = cfg.boolean("_fp8_dynamic", false);
     const auto scope = cfg.string("_fp8_scope", fp8 ? "all" : "mlp");
     TORCH_CHECK(scope == "mlp" || scope == "all", "FP8 scope must be mlp or all");
@@ -1135,9 +1213,12 @@ public:
       if (kind == "linear_attention") {
         auto kh = integer("linear_num_key_heads"), vh = integer("linear_num_value_heads");
         TORCH_CHECK(kh > 0 && vh > 0 && vh % kh == 0, "Invalid Qwen3.5 DeltaNet heads");
+        const auto ap = p + "linear_attn.";
+
         w(p + "linear_attn.conv1d.weight");
-        w(p + "linear_attn.A_log");
-        w(p + "linear_attn.dt_bias");
+        // Both CUDA and CPU recurrence consume these fixed parameters in FP32.
+        for (const auto& name : {ap + "A_log", ap + "dt_bias"})
+          weights[prefix + name] = w(name).to(at::kFloat).contiguous();
         w(p + "linear_attn.norm.weight");
       }
     }
@@ -1184,12 +1265,53 @@ public:
            !cfg.boolean("use_bidirectional_attention", false);
   }
 
+  void prepare_input(PackedInput& input) const override {
+    if (!block_attention() || input.block_layout)
+      return;
+    TORCH_CHECK(input.block_prefix_lengths.size() == size_t(input.batch) &&
+                    input.block_prefix_sources.size() == size_t(input.batch),
+                "Missing OneJev block boundaries");
+    auto layout = std::make_shared<BlockLayout>();
+    std::vector<int32_t> prefixes{0}, suffixes{0}, kv{0};
+    std::vector<int64_t> indices(input.batch, -1), sources;
+    layout->history_offsets = {0};
+    const auto history = integer("linear_conv_kernel_dim", 4) - 1;
+    for (int64_t row = 0; row < input.batch; ++row) {
+      const auto prefix = input.block_prefix_lengths[row], source = input.block_prefix_sources[row];
+      const int64_t length = input.offsets[row + 1] - input.offsets[row];
+      TORCH_CHECK(prefix > 0 && prefix <= length && source >= 0 && source <= row &&
+                      input.block_prefix_sources[source] == source &&
+                      input.block_prefix_lengths[source] == prefix,
+                  "Invalid shared OneJev prefix");
+      if (source == row) {
+        indices[row] = prefixes.size() - 1;
+        prefixes.push_back(prefixes.back() + prefix);
+        layout->history_offsets.push_back(layout->history_offsets.back() +
+                                          std::min(prefix, history));
+      }
+      if (length > prefix) {
+        suffixes.push_back(suffixes.back() + length - prefix);
+        kv.push_back(kv.back() + length);
+        sources.push_back(indices[source]);
+      }
+    }
+    layout->prefix_cumulative = at::tensor(prefixes, input.cumulative.options());
+    layout->suffix_cumulative = at::tensor(suffixes, input.cumulative.options());
+    layout->kv_cumulative = at::tensor(kv, input.cumulative.options());
+    layout->history_cumulative = at::tensor(layout->history_offsets, input.cumulative.options());
+    layout->cache_sources = at::tensor(sources, input.ids.options());
+    input.block_layout = std::move(layout);
+  }
+
   /// Alternate full-attention and gated-delta layers according to checkpoint layer_types.
   /// Block-attention checkpoints use their dedicated path; causal
   /// compact/prefix paths restore logical rows.
   at::Tensor forward(const PackedInput& input) const override {
-    if (block_attention())
-      return block_forward(input);
+    if (block_attention()) {
+      auto prepared = input;
+      prepare_input(prepared);
+      return block_forward(prepared);
+    }
     TORCH_CHECK(!radix_enabled(input) || supports_radix(),
                 "Noncausal Qwen3.5 attention does not support radix folding");
     TORCH_CHECK(!radix_enabled(input) || input.audios.empty(),

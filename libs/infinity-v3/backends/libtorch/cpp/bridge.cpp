@@ -1249,7 +1249,7 @@ int32_t tei_decide_radix(void* handle,
                           return request.kind == infinity::DecisionRequest::Kind::Warmup;
                         });
     const bool use_graph =
-        !blocks && engine.graphs && engine.graph_policy_ready() &&
+        engine.graphs && engine.graph_policy_ready() &&
         (engine.media_graphs || (!image_count && !audio_count && !media_positions));
     auto prepared_decision = engine.decision->prepare(packed, converted);
     if (cached || !use_graph)

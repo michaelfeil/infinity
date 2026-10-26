@@ -56,6 +56,18 @@ For compatible decision checkpoints, use `--decision-protocol onejev` with
 shared prefixes are reused within a backend batch. This is not a persistent
 cross-request cache.
 
+For dense Qwen3.5, `--enable-fp8-dynamic` uses all-linear dynamic FP8 by
+default and enables the FP8 optimizations automatically. GDN activations remain
+BF16 and stored recurrent states remain FP32.
+
+`INFINITY_TORCH_GDN_SUFFIX_PREFILL=1` separately opts cached GDN suffixes into
+the existing tensor-core prefill kernels. Batch geometry is selected automatically.
+This setting is off by default because BF16 normalized Q/K and chunk arithmetic
+can change probabilities and selected answers, including with FP8 enabled.
+Validate those changes on your workload before enabling it. The GDN provider and native
+backend must be rebuilt together for provider ABI 2; old provider bundles are
+rejected during configuration.
+
 Send requests to `/v1/systemone`. See [decision inputs](cli.md#structured-decision-inputs)
 for the request schema, image content parts and input limits.
 

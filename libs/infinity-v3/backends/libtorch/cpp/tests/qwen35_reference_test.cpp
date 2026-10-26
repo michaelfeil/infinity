@@ -1,4 +1,6 @@
 #include "kernels/qwen35_reference.h"
+#include "kernels/flashinfer_gdn.h"
+#include "helpers/fp8_linear.h"
 #include "kernels/qwen35_recurrent.h"
 #include <array>
 #include "kernels/qwen35_kernels.h"
@@ -8,7 +10,8 @@
 #include <iostream>
 #include <vector>
 
-void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
+void resumed_delta(
+    c10::Device device, int64_t kh, int64_t vh, bool fma, bool quantization_only = false) {
   constexpr int64_t tokens = 35;
   auto opts = at::TensorOptions().device(device).dtype(at::kBFloat16);
   auto qkv = (at::randn({tokens, (2 * kh + vh) * 128}, opts) * .2).contiguous();
@@ -16,14 +19,19 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
   auto ab = (at::randn({tokens, 2 * vh}, opts) * .2).contiguous();
   auto conv = (at::randn({(2 * kh + vh) * 128, 4}, opts) * .2).contiguous();
   auto alog = at::zeros({vh}, opts.dtype(at::kFloat)), dt = at::zeros_like(alog);
-  auto norm = at::ones({128}, opts);
+  auto norm =
+      quantization_only ? (at::randn({128}, opts) * .2 + 1).contiguous() : at::ones({128}, opts);
+  if (quantization_only)
+    qkv[0].zero_();
   int32_t offsets[] = {0, tokens};
   infinity::PackedInput full;
   full.offsets = offsets;
   full.batch = 1;
   full.max_sequence = tokens;
   full.cumulative = at::tensor(std::vector<int32_t>{0, tokens}, opts.dtype(at::kInt));
-  auto run = [&](const infinity::PackedInput& input, int64_t start) {
+  auto run = [&](const infinity::PackedInput& input,
+                 int64_t start,
+                 const std::pair<at::Tensor, at::Tensor>* quantized = nullptr) {
     auto count = tokens - start;
     if (fma)
       return infinity::qwen35_delta_cuda(qkv.narrow(0, start, count),
@@ -42,7 +50,9 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
                                          {},
                                          {},
                                          false,
-                                         0);
+                                         0,
+                                         false,
+                                         quantized);
     return infinity::qwen35_reference_delta_cuda(qkv.narrow(0, start, count),
                                                  z.narrow(0, start, count),
                                                  ab.narrow(0, start, count),
@@ -57,6 +67,49 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
                                                  0);
   };
   auto expected = run(full, 0);
+  if (fma && kh == 16 && vh == 16) {
+    // Merged QKV/Z projections share storage. Poison the surrounding columns so
+    // contiguous indexing or a lost slice offset changes the outputs.
+    const auto qkv_width = qkv.size(1), gate_width = z.size(1);
+    auto packed = at::full({tokens, qkv_width + gate_width + 8}, NAN, opts);
+    auto queries = packed.narrow(1, 4, qkv_width);
+    auto gates = packed.narrow(1, 4 + qkv_width, gate_width);
+    queries.copy_(qkv);
+    gates.copy_(z);
+    qkv = queries;
+    z = gates;
+    TORCH_CHECK(at::equal(run(full, 0), expected),
+                "Strided QKV/gates changed packed DeltaNet output");
+  }
+  if (fma) {
+    auto values = at::ones({tokens + 2, vh * 128}, opts).to(at::kFloat8_e4m3fn);
+    auto scales = at::full({tokens + 2, 1}, -7.f, opts.dtype(at::kFloat));
+    auto sentinel = values[0].view(at::kByte).clone();
+    std::pair<at::Tensor, at::Tensor> quantized = {values.narrow(0, 1, tokens),
+                                                   scales.narrow(0, 1, tokens)};
+    run(full, 0, &quantized);
+    auto separate = infinity::fp8_quantize_rows(expected);
+    TORCH_CHECK(at::equal(quantized.first.view(at::kByte), separate.first.view(at::kByte)) &&
+                    at::equal(quantized.second, separate.second) &&
+                    at::equal(values[0].view(at::kByte), sentinel) &&
+                    at::equal(values[tokens + 1].view(at::kByte), sentinel) &&
+                    scales[0].item<float>() == -7.f && scales[tokens + 1].item<float>() == -7.f,
+                "Fused GDN normalization changed FP8 bytes/scales or wrote outside its slice");
+    if (vh == 1) {
+      auto storage = at::empty({tokens * vh * 128 + 1}, values.options());
+      std::pair<at::Tensor, at::Tensor> odd = {
+          storage.narrow(0, 1, tokens * vh * 128).view({tokens, vh * 128}), quantized.second};
+      bool rejected = false;
+      try {
+        run(full, 0, &odd);
+      } catch (const c10::Error&) {
+        rejected = true;
+      }
+      TORCH_CHECK(rejected, "Misaligned FP8 output must fail before launching a CUDA kernel");
+    }
+  }
+  if (quantization_only)
+    return;
   for (int64_t boundary : {1, 13, 34}) {
     if (fma) {
       auto prefill = full;
@@ -82,8 +135,17 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
                                                 {},
                                                 {},
                                                 false);
-      TORCH_CHECK(at::equal(prefix, expected.narrow(0, 0, boundary)),
-                  "Block prefill changed recurrent arithmetic");
+      // Tensor-core prefill rounds Q/K to BF16, while scalar recurrence retains
+      // FP32 normalized Q/K. Bound that provider drift; state sharing below must
+      // still preserve its inputs and repeat exactly across batch rows.
+      TORCH_CHECK(at::allclose(prefix, expected.narrow(0, 0, boundary), 1e-2, 2e-3),
+                  "Block prefill exceeded BF16 recurrent tolerance");
+      if (boundary == 13) {
+        auto storage = at::empty({state.numel() + 1}, state.options());
+        auto shifted = storage.narrow(0, 1, state.numel()).view(state.sizes());
+        shifted.copy_(state);
+        state = shifted;
+      }
       auto immutable = state.clone();
       auto suffix = full;
       int32_t suffix_offsets[] = {0, int32_t(tokens - boundary)};
@@ -94,7 +156,8 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
       suffix.block_prefix_sources = {0};
       suffix.block_cache_sources = at::zeros({1}, opts.dtype(at::kLong));
       auto history =
-          qkv.narrow(0, std::max(int64_t(0), boundary - 3), std::min(boundary, int64_t(3)));
+          qkv.narrow(0, std::max(int64_t(0), boundary - 3), std::min(boundary, int64_t(3)))
+              .contiguous();
       auto history_cu =
           at::tensor(std::vector<int32_t>{0, int32_t(history.size(0))}, opts.dtype(at::kInt));
       at::Tensor final_state;
@@ -114,9 +177,10 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
                                                  history,
                                                  history_cu,
                                                  false);
-      TORCH_CHECK(at::equal(resumed, expected.narrow(0, boundary, tokens - boundary)) &&
-                      at::equal(state, immutable),
-                  "Block resume changed outputs or mutated shared state");
+      TORCH_CHECK(
+          at::allclose(resumed, expected.narrow(0, boundary, tokens - boundary), 1e-2, 2e-3) &&
+              at::equal(state, immutable),
+          "Block resume changed outputs or mutated shared state");
       auto batched = suffix;
       std::vector<int32_t> batch_offsets;
       for (int i = 0; i <= 8; ++i)
@@ -300,6 +364,28 @@ at::Tensor independent_norm(const at::Tensor& x, const at::Tensor& gamma, float 
 int main(int argc, char** argv) {
   c10::Device device(argc > 1 ? argv[1] : "cuda:0");
   at::manual_seed(717);
+  for (auto dtype : {at::kHalf, at::kBFloat16})
+    for (auto shape : {std::array<int64_t, 3>{1, 1, 1}, {17, 2, 4}, {255, 16, 16}}) {
+      const auto [tokens, kh, vh] = shape;
+      const auto channels = (2 * kh + vh) * 128;
+      auto options = at::TensorOptions().device(device);
+      auto values = at::randn({tokens, channels + 8}, options.dtype(dtype)).narrow(1, 0, channels);
+      auto qk = at::randn({tokens * kh, 264}, options).narrow(1, 0, 256);
+      auto gates = at::randn({tokens, 2 * vh + 1}, options).narrow(1, 0, 2 * vh);
+      auto packed = infinity::flashinfer_gdn_pack_cuda(values, qk, gates, kh, vh);
+      auto pairs = qk.view({tokens, kh, 256});
+      const std::array<at::Tensor, 5> expected = {
+          pairs.narrow(2, 0, 128).to(dtype).contiguous(),
+          pairs.narrow(2, 128, 128).to(dtype).contiguous(),
+          values.narrow(1, 2 * kh * 128, vh * 128).contiguous(),
+          gates.narrow(1, 0, vh).contiguous(),
+          gates.narrow(1, vh, vh).contiguous()};
+      for (size_t i = 0; i < packed.size(); ++i)
+        TORCH_CHECK(at::equal(packed[i], expected[i]) && packed[i].is_contiguous() &&
+                        reinterpret_cast<uintptr_t>(packed[i].const_data_ptr()) % 16 == 0,
+                    "GDN packing changed provider values, casts or alignment");
+    }
+  std::cout << "GDN provider packing values, casts, strides and alignment passed\n";
   for (int width : {1, 4, 7, 8, 16, 32, 33, 64, 128, 256, 384, 1024, 2048, 4096, 5120, 8192})
     for (int layout : {0, 1, 2}) {
       bool strided = layout == 1;
@@ -319,6 +405,31 @@ int main(int argc, char** argv) {
                   width,
                   " strided=",
                   strided);
+      if (!strided) {
+        auto residual = cuda_x.reshape({6, width}).contiguous();
+        auto addition = (residual.flip({0}) * .25).to(at::kBFloat16);
+        addition.select(0, 0).copy_(-residual.select(0, 0));
+        auto expected = (residual + addition).cpu();
+        auto fused =
+            infinity::qwen35_reference_residual_norm_cuda(residual, addition, cuda_gamma, 1e-6);
+        TORCH_CHECK(
+            at::equal(fused.first.cpu(), expected) &&
+                at::equal(fused.second.cpu(), independent_norm(expected, gamma, 1e-6)),
+            "Fused residual norm changed BF16 addition or the independent norm oracle width=",
+            width,
+            " offset=",
+            offset);
+        std::pair<at::Tensor, at::Tensor> quantized;
+        auto with_quantization = infinity::qwen35_reference_residual_norm_cuda(
+            residual, addition, cuda_gamma, 1e-6, &quantized);
+        auto separate = infinity::fp8_quantize_rows(fused.second);
+        TORCH_CHECK(
+            at::equal(with_quantization.first, fused.first) &&
+                at::equal(with_quantization.second, fused.second) &&
+                at::equal(quantized.first.view(at::kByte), separate.first.view(at::kByte)) &&
+                at::equal(quantized.second, separate.second),
+            "Fused Qwen norm quantization changed rounded rows, E4M3 bytes or row scales");
+      }
     }
   auto rejects = [&](const at::Tensor& x, const at::Tensor& gamma) {
     bool rejected = false;
@@ -381,6 +492,7 @@ int main(int argc, char** argv) {
     for (auto geometry : {std::pair<int64_t, int64_t>{1, 1},
                           {2, 4},
                           {4, 8},
+                          {16, 16},
                           {16, 32},
                           {16, 48},
                           {32, 64},
@@ -389,6 +501,8 @@ int main(int argc, char** argv) {
       resumed_delta(device, geometry.first, geometry.second, fma);
       independent_recurrent(device, geometry.first, geometry.second, fma);
     }
+  for (auto geometry : {std::pair<int64_t, int64_t>{16, 16}, {16, 48}, {32, 128}})
+    resumed_delta(device, geometry.first, geometry.second, true, true);
   std::cout << "Independent original norms and synthetic packed sequence isolation passed\n";
-  std::cout << "DeltaNet cache capture and split/resume preserve both arithmetic modes exactly\n";
+  std::cout << "DeltaNet cache isolation and split/resume passed in both arithmetic modes\n";
 }

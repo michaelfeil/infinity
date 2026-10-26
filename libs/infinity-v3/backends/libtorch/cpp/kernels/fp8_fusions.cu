@@ -8,6 +8,7 @@
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cuda_fp8.h>
+#include "kernels/fp8_quant_pair.cuh"
 #include <climits>
 #include <cstdint>
 #include <cmath>
@@ -71,6 +72,7 @@ __global__ void swiglu_quant_kernel(const T* input, __nv_fp8_e4m3* out, float* s
     amax = fmaxf(amax, fabsf(value));
   }
   float scale = row_scale(amax);
+
   if (!threadIdx.x)
     scales[row] = scale;
 #pragma unroll
@@ -98,11 +100,10 @@ __global__ __launch_bounds__(512) void swiglu_quant_vector_kernel(const T* input
 #pragma unroll
   for (int j = 0; j < Groups; ++j) {
     int col = threadIdx.x + j * blockDim.x;
-    Packed<T, 8> gate{}, up{};
-    if (col < stride) {
-      gate = source[row * 2 * stride + col];
-      up = source[row * 2 * stride + stride + col];
-    }
+    if (col >= stride)
+      continue;
+    auto gate = source[row * 2 * stride + col];
+    auto up = source[row * 2 * stride + stride + col];
 #pragma unroll
     for (int lane = 0; lane < 8; ++lane) {
       T exponential = hexp(T(-gate.value[lane]));
@@ -114,17 +115,18 @@ __global__ __launch_bounds__(512) void swiglu_quant_vector_kernel(const T* input
     }
   }
   float scale = row_scale(amax);
+
   if (!threadIdx.x)
     scales[row] = scale;
 #pragma unroll
   for (int j = 0; j < Groups; ++j) {
     int col = threadIdx.x + j * blockDim.x;
     if (col < stride) {
-      Packed<__nv_fp8_e4m3, 8> result;
+      Packed<__nv_fp8x2_e4m3, 4> result;
 #pragma unroll
-      for (int lane = 0; lane < 8; ++lane)
-        result.value[lane] = __nv_fp8_e4m3(__fdiv_rn(values[j][lane], scale));
-      reinterpret_cast<Packed<__nv_fp8_e4m3, 8>*>(out)[row * stride + col] = result;
+      for (int lane = 0; lane < 4; ++lane)
+        result.value[lane] = fp8_quantize_pair(values[j][2 * lane], values[j][2 * lane + 1], scale);
+      reinterpret_cast<Packed<__nv_fp8x2_e4m3, 4>*>(out)[row * stride + col] = result;
     }
   }
 }
@@ -161,6 +163,7 @@ __global__ void rms_quant_kernel(const __nv_bfloat16* x,
     amax = fmaxf(amax, fabsf(value));
   }
   float scale = row_scale(amax);
+
   if (!threadIdx.x)
     scales[row] = scale;
 #pragma unroll
@@ -216,6 +219,7 @@ __global__ void rms_quant_vector4096(const __nv_bfloat16* x,
     amax = fmaxf(amax, fabsf(value));
   }
   float scale = row_scale(amax);
+
   if (!threadIdx.x)
     scales[row] = scale;
 #pragma unroll

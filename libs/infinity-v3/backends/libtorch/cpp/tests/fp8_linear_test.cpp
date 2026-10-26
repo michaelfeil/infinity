@@ -3,6 +3,7 @@
 #include "kernels/fast_kernels.h"
 #include "helpers/workspace_admission.h"
 #include <ATen/cuda/CUDAContext.h>
+#include <ATen/Parallel.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
 #include <c10/cuda/driver_api.h>
@@ -19,9 +20,44 @@ int main() {
   setenv("CUBLASLT_WORKSPACE_SIZE", "32768", 1);
   c10::InferenceMode inference;
   at::manual_seed(7249);
+  at::set_num_threads(4);
   at::globalContext().setAllowTF32CuBLAS(false);
   for (auto dtype : {at::kHalf, at::kBFloat16}) {
     auto options = at::TensorOptions().device(at::kCUDA, 0).dtype(dtype);
+    // Cover every input bit pattern against every row-maximum significand.
+    // Include a maximum sentinel per row so every pattern sees the intended
+    // scale, including FP8 midpoints and the BF16 scale floor.
+    auto patterns = at::arange(65536, at::TensorOptions().dtype(at::kInt))
+                        .to(at::kShort)
+                        .view(dtype)
+                        .to(at::kFloat);
+    patterns.masked_fill_(at::logical_not(at::isfinite(patterns)), 0);
+    auto padded = at::zeros({17 * 4095}, patterns.options());
+    padded.narrow(0, 0, patterns.numel()).copy_(patterns);
+    auto chunks = padded.view({1, 17, 4095});
+    auto check_rounding = [&](const at::Tensor& maxima) {
+      auto limits = maxima.view({-1, 1, 1});
+      auto clipped = at::minimum(at::maximum(chunks, -limits), limits);
+      auto values = at::cat({limits.expand({maxima.size(0), 17, 1}), clipped}, 2).view({-1, 4096});
+      auto scales = at::repeat_interleave(maxima.clamp_min(1e-12) * (1.f / 448.f), 17, 0);
+      auto expected = (values / scales).to(at::kFloat8_e4m3fn);
+      auto actual = infinity::fp8_quantize_rows(values.to(dtype).to(at::kCUDA));
+      TORCH_CHECK(
+          at::equal(actual.second.to(at::kCPU), scales) &&
+              at::equal(actual.first.to(at::kCPU).view(at::kByte), expected.view(at::kByte)),
+          "FP8 conversion changed exhaustive input/significand rounding: ",
+          dtype);
+    };
+    const int significands = dtype == at::kHalf ? 1024 : 128;
+    for (int first = 0; first < significands; first += 32)
+      check_rounding(
+          (1 + at::arange(first, first + 32, patterns.options()) / significands).unsqueeze(1));
+    if (dtype == at::kBFloat16) {
+      auto floor = at::full({1, 1}, 1e-12, at::TensorOptions().dtype(dtype));
+      if (floor.item<float>() > 1e-12f)
+        floor.view(at::kShort).sub_(1);
+      check_rounding(floor.to(at::kFloat));
+    }
     if (at::globalContext().blasPreferredBackend() == at::BlasBackend::Cublaslt) {
       infinity::OrdinaryLinearExecutor ordinary;
       for (const auto [input, output] : {std::pair{1024, 3072}, std::pair{1536, 1024}}) {
@@ -181,9 +217,19 @@ int main() {
       TORCH_CHECK(at::equal(linear.forward(input, bias), output + bias),
                   "FP8 bias lost separate model-dtype rounding");
     }
+    // Reusing a geometry must rebind both activation and weight scale pointers.
+    infinity::Fp8Linear other(at::randn({512, 256}, options) * 2);
+    for (const auto* projection : {&linear, &other, &linear}) {
+      auto values = at::randn({17, 256}, options) * 3;
+      auto quantized = infinity::fp8_quantize_rows(values);
+      auto expected = fp8_original_recipe(
+          quantized.first, projection->matrix(), quantized.second, projection->scales(), dtype);
+      TORCH_CHECK(at::equal(projection->forward(values), expected),
+                  "Reused FP8 geometry retained another projection's scale pointers");
+    }
     auto empty = linear.forward(at::empty({0, 256}, options));
     TORCH_CHECK(empty.sizes() == at::IntArrayRef({0, 512}), "FP8 empty rows not preserved");
-    for (int64_t width : {4096, 4104, 5120, 6144, 6152})
+    for (int64_t width : {1024, 1032, 2048, 2056, 4096, 4104, 5120, 6144, 6152})
       for (int64_t offset : {0, 1}) {
         auto storage = at::randn({17 * width + offset}, options) * 3;
         auto x = storage.narrow(0, offset, 17 * width).view({17, width});

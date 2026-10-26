@@ -116,9 +116,9 @@ int main() {
     if (!supported)
       continue;
     ++tested;
-    for (int64_t heads : {32, 48})
+    for (int64_t heads : {16, 32, 48})
       for (int mode : {0, 1, 2}) {
-        constexpr int64_t tokens = 143, kh = 16;
+        constexpr int64_t tokens = 519, kh = 16;
         std::vector<int32_t> offsets{0, 1, 14, tokens};
         auto options = at::TensorOptions().dtype(at::kFloat);
         auto q = at::randn({tokens, kh, 128}, options), k = at::randn_like(q);
@@ -131,39 +131,75 @@ int main() {
         else
           for (int64_t t = 0; t < tokens; t += 3)
             decay[t].zero_();
-        std::vector<at::Tensor> outputs, states;
-        for (int row = 0; row < 3; ++row) {
-          auto state = at::zeros({heads, 128, 128}, options.dtype(at::kDouble));
-          for (int t = offsets[row]; t < offsets[row + 1]; ++t) {
-            auto qt = at::repeat_interleave(q[t], heads / kh, 0).to(at::kDouble);
-            auto kt = at::repeat_interleave(k[t], heads / kh, 0).to(at::kDouble);
-            state = state * decay[t].to(at::kDouble).view({heads, 1, 1});
-            auto delta = (v[t].to(at::kDouble) - (state * kt.unsqueeze(-1)).sum(1)) *
-                         beta[t].to(at::kDouble).unsqueeze(-1);
-            state = state + kt.unsqueeze(-1) * delta.unsqueeze(1);
-            outputs.push_back((state * qt.unsqueeze(-1)).sum(1));
+        for (bool resume : {false, true}) {
+          if (resume && !infinity::flashinfer_gdn_available(c10::Device(at::kCUDA, index)))
+            continue;
+          auto initial_cpu = at::randn({3, heads, 128, 128}, options) * .03;
+          auto initial = initial_cpu.to(at::kCUDA), immutable = initial.clone();
+          const std::vector<int64_t> sources{2, 0, 2};
+          std::vector<at::Tensor> outputs, states;
+          for (int row = 0; row < 3; ++row) {
+            auto state = resume ? initial_cpu[sources[row]].to(at::kDouble).clone()
+                                : at::zeros({heads, 128, 128}, options.dtype(at::kDouble));
+            for (int t = offsets[row]; t < offsets[row + 1]; ++t) {
+              auto qt = at::repeat_interleave(q[t], heads / kh, 0).to(at::kDouble);
+              auto kt = at::repeat_interleave(k[t], heads / kh, 0).to(at::kDouble);
+              state = state * decay[t].to(at::kDouble).view({heads, 1, 1});
+              auto delta = (v[t].to(at::kDouble) - (state * kt.unsqueeze(-1)).sum(1)) *
+                           beta[t].to(at::kDouble).unsqueeze(-1);
+              state = state + kt.unsqueeze(-1) * delta.unsqueeze(1);
+              outputs.push_back((state * qt.unsqueeze(-1)).sum(1));
+            }
+            states.push_back(state);
           }
-          states.push_back(state);
-        }
-        infinity::PackedInput input;
-        input.batch = 3;
-        input.cumulative = at::tensor(offsets, options.dtype(at::kInt)).to(at::kCUDA);
-        auto values =
-            at::cat({at::zeros({tokens, kh * 256}, v.options()), v.flatten(1)}, 1).to(at::kCUDA);
-        auto qk = at::cat({q, k}, -1).reshape({tokens * kh, 256}).to(at::kCUDA);
-        auto gates = at::cat({decay, beta}, -1).to(at::kCUDA);
-        auto output = at::empty({tokens, heads, 128}, values.options());
-        at::Tensor state;
-        if (!infinity::flashinfer_gdn_prefill(
-                values, qk, gates, input, output, kh, heads, &state)) {
+          infinity::PackedInput input;
+          input.batch = 3;
+          input.block_cache_sources = at::tensor(sources, options.dtype(at::kLong)).to(at::kCUDA);
+          input.cumulative = at::tensor(offsets, options.dtype(at::kInt)).to(at::kCUDA);
+          auto values =
+              at::cat({at::zeros({tokens, kh * 256}, v.options()), v.flatten(1)}, 1).to(at::kCUDA);
+          auto qk = at::cat({q, k}, -1).reshape({tokens * kh, 256}).to(at::kCUDA);
+          auto gates = at::cat({decay, beta}, -1).to(at::kCUDA);
+          auto output = at::empty({tokens, heads, 128}, values.options());
+          at::Tensor state;
+          if (resume) {
+            TORCH_CHECK(infinity::flashinfer_gdn_resume(
+                            values, qk, gates, input, output, kh, heads, &state, initial),
+                        "Registered initial-state GDN export was unavailable");
+            TORCH_CHECK(at::equal(initial, immutable), "GDN resume mutated shared prefix states");
+          } else if (!infinity::flashinfer_gdn_prefill(
+                         values, qk, gates, input, output, kh, heads, &state)) {
 #ifdef TEI_TORCH_GDN_HOPPER
-          infinity::qwen35_prefill_cuda(values, qk, gates, input, output, kh, heads, &state);
+            infinity::qwen35_prefill_cuda(values, qk, gates, input, output, kh, heads, &state);
 #else
-          TORCH_CHECK(false, "Registered FlashInfer GDN bundle was unavailable");
+            TORCH_CHECK(false, "Registered FlashInfer GDN bundle was unavailable");
 #endif
+          }
+          check(output, at::stack(outputs), .007);
+          check(state, at::stack(states), .006);
+          if (resume && heads == 16 && mode == 2) {
+            auto stream = c10::cuda::getStreamFromPool();
+            c10::cuda::CUDAStreamGuard guard(stream);
+            auto forward = [&] {
+              TORCH_CHECK(infinity::flashinfer_gdn_resume(
+                              values, qk, gates, input, output, kh, heads, nullptr, initial),
+                          "Initial-state graph lost its GDN export");
+            };
+            forward();
+            stream.synchronize();
+            at::cuda::CUDAGraph graph;
+            graph.capture_begin();
+            forward();
+            graph.capture_end();
+            qk.mul_(.8);
+            initial.mul_(.7);
+            graph.replay();
+            auto replayed = output.clone();
+            forward();
+            TORCH_CHECK(at::equal(replayed, output),
+                        "Initial-state graph replay lost changing Q/K or prefix states");
+          }
         }
-        check(output, at::stack(outputs), .007);
-        check(state, at::stack(states), .006);
       }
     for (int64_t heads : {32, 48})
       production_prefill(heads);

@@ -94,12 +94,9 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
       auto down = loader.at("model.layers.0.mlp.down_proj.weight").storage().getWeakStorageImpl();
       auto projection =
           loader.at("model.layers.0.linear_attn.out_proj.weight").storage().getWeakStorageImpl();
-      auto decay =
-          loader.at("model.layers.0.linear_attn.in_proj_a.weight").storage().getWeakStorageImpl();
       auto quantized = create_qwen35(enabled, loader, device, at::kBFloat16);
       quantized->ready();
-      TORCH_CHECK(loader.empty() && down.expired() && !decay.expired(),
-                  "Qwen3.5 FP8 weight ownership changed");
+      TORCH_CHECK(loader.empty() && down.expired(), "Qwen3.5 retained consumed MLP weights");
       TORCH_CHECK(projection.expired() == (std::string(scope) != "mlp"),
                   "Qwen3.5 FP8 projection scope ignored");
       auto reference = build(cfg);
@@ -146,7 +143,7 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
       std::cout << family << " FP8 " << scope
                 << " drift, ownership, radix, prefix cache, graphs and block isolation passed\n";
     }
-  for (const auto* invalid : {"cpu", "float16", "moe", "quantized"}) {
+  for (const auto* invalid : {"cpu", "float16", "moe", "quantized", "qkv_shape"}) {
     auto enabled = cfg;
     enabled.values["_fp8_dynamic"] = "true";
     if (std::string(invalid) == "moe")
@@ -154,6 +151,9 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
     if (std::string(invalid) == "quantized")
       enabled.values["text_config.quantization_config.quant_method"] = "fp8";
     auto loader = weights;
+    if (std::string(invalid) == "qkv_shape")
+      loader["model.layers.1.self_attn.q_proj.weight"] =
+          at::zeros({80, 16}, weights.at("model.layers.1.self_attn.q_proj.weight").options());
     bool rejected = false;
     try {
       auto model = create_qwen35(enabled,
@@ -161,6 +161,8 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
                                  std::string(invalid) == "cpu" ? c10::Device("cpu") : device,
                                  std::string(invalid) == "float16" ? at::kHalf : at::kBFloat16);
       model->ready();
+      if (std::string(invalid) == "qkv_shape")
+        (void)model->forward(input);
     } catch (const c10::Error&) {
       rejected = true;
     }
@@ -558,6 +560,34 @@ int main(int argc, char** argv) {
                     block_device,
                     " row=",
                     row);
+      }
+      if (block_device.is_cuda()) {
+        CudaGraphCache graphs(8, 4096, 1);
+        auto shared = packed;
+        shared.block_prefix_sources = {0, 0};
+        auto independent = packed;
+        independent.block_prefix_sources = {0, 1};
+        auto shorter = shared;
+        shorter.block_prefix_lengths = {1, 1};
+        // Equal packed lengths with different sharing/boundaries must not reuse
+        // one another's graph. Changed token values must reach every replay.
+        for (auto layout : {shared, independent, shorter, mixed}) {
+          for (int iteration = 0; iteration < 3; ++iteration) {
+            auto replay = layout;
+            replay.ids = (layout.ids + iteration).remainder(32);
+            auto expected = blocks->forward(replay);
+            auto actual = graphs.forward(*blocks, replay);
+            TORCH_CHECK(at::allclose(expected, actual, 1e-2, 1e-2),
+                        "Block graph replay changed boundaries, sharing, or token values");
+          }
+        }
+        TORCH_CHECK(graphs.stats().captures == 4 && graphs.stats().hits >= 8,
+                    "Block execution did not capture and replay each distinct layout: captures=",
+                    graphs.stats().captures,
+                    " hits=",
+                    graphs.stats().hits,
+                    " attempts=",
+                    graphs.stats().attempts);
       }
       bool missing = false;
       try {

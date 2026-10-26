@@ -3,6 +3,7 @@
 
 #pragma once
 #include "batching/packed_input.h"
+#include <utility>
 
 namespace infinity {
 /// Evaluate convolution, recurrent update, and gated normalization with the reference operation
@@ -22,4 +23,11 @@ at::Tensor qwen35_reference_delta_cuda(const at::Tensor&,
                                        int64_t cache_layer = -1);
 /// Apply per-head RMS normalization while preserving reference intermediate rounding.
 at::Tensor qwen35_reference_norm_cuda(const at::Tensor&, const at::Tensor&, double);
+/// Preserve BF16 residual addition and the original norm reduction in one launch.
+std::pair<at::Tensor, at::Tensor>
+qwen35_reference_residual_norm_cuda(const at::Tensor&,
+                                    const at::Tensor&,
+                                    const at::Tensor&,
+                                    double,
+                                    std::pair<at::Tensor, at::Tensor>* quantized = nullptr);
 }
