@@ -9,7 +9,7 @@
     "license": {
       "name": "Infinity Restricted MIT License 1.0 (see scope and retained licenses)"
     },
-    "version": "1.8.18-rc.0"
+    "version": "3.0.0"
   },
   "paths": {
     "/decode": {

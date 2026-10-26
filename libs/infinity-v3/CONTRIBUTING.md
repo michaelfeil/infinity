@@ -78,14 +78,34 @@ Use the same context for `Dockerfile-cuda` and `Dockerfile-cuda-all`. Run
 `push-docker-images.sh` from `libs/infinity-v3` for local multi-variant builds.
 
 V3 CI and Docker workflows live in the repository's root `.github/workflows`,
-with V3 path filters and independent names. CPU builds and unit tests run on
-pull requests without model downloads or GPU credentials. Checkpoint-dependent
+with V3 path filters and independent names. CPU unit tests run on pull requests
+without model downloads or GPU credentials. Docker smoke tests download a pinned
+MiniLM checkpoint and run CPU inference before publishing. Checkpoint-dependent
 integration tests can be run separately with their documented fixtures.
 Docker pull requests build the CPU image without publishing. Main and `v3.*`
-tags build all image variants; manual runs can select CPU or all variants.
+or `3.*` tags build the CPU and native NVIDIA images; manual runs can select
+additional variants.
 Publishing uses GHCR and the workflow token, with GitHub Actions build caching.
 Python release workflows remain scoped to `0.*` and `v0.*` releases, and use
 the triggering release tag independently of V3 tags.
+
+## Releasing v3
+
+1. Update the workspace version in `Cargo.toml`, its local packages in
+   `Cargo.lock`, the checked-in OpenAPI version, and the local publishing script.
+   A stable release tag must match the Cargo version exactly.
+2. Merge the release changes and push a tag such as `v3.0.0`. The Docker workflow
+   builds, checks version reporting and runs MiniLM CPU inference before pushing
+   the `cpu-*` and `nvidia-*` images. GPU execution needs separate validation on
+   the built NVIDIA image; the CI inference check runs without a GPU.
+3. After validating the images, publish the GitHub release. Stable v3 releases
+   publish versioned documentation and update the website's `latest` alias.
+   A tag push alone builds images; publishing the release publishes its docs.
+
+Stable image tags update `*-latest`; main builds update `*-main`. Prerelease
+tags do not move stable aliases. The published CPU image uses Candle; the native
+LibTorch model catalog applies to the NVIDIA image and LibTorch source builds.
+Python/v2 releases update `latest-v2` documentation independently of v3.
 
 ## Ways to contribute
 

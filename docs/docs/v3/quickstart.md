@@ -1,28 +1,39 @@
 # Quickstart
 
-Infinity v3 is the native Rust server with LibTorch inference. These preview
-docs track `main`; available features depend on the image version you deploy.
+Infinity v3 is the native Rust server with LibTorch inference. Use the
+documentation version matching your image; `main` documents ongoing development.
 
 ## Run on an NVIDIA GPU
 
 CUDA inference requires SM80 (Ampere) or newer; SM75/Turing is unsupported.
 
-Choose a published `nvidia-3.0.0-alpha.*` tag from the
+Use the versioned NVIDIA image from the
 [container registry](https://github.com/michaelfeil/infinity/pkgs/container/infinity_v3).
-For example:
+The 3.0.0 launch command is:
 
 ```bash
 docker run --rm --gpus all -p 8000:8000 -v infinity-cache:/data \
-  ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0-alpha.16 \
+  ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0 \
   --model-id sentence-transformers/all-MiniLM-L6-v2 \
   --torch-device cuda --dtype float16 \
   --hostname 0.0.0.0 --port 8000
 ```
 
 The image starts `infinity_v3` directly. There is no `v2` subcommand.
-Each visible GPU runs a model replica; use `--device-id 0` to select one GPU.
+All visible CUDA GPUs run complete model replicas by default.
 Choose another task or checkpoint from the
 [supported models and configuration](docs/supported-models.md) catalog.
+
+Versioned tags such as `nvidia-3.0.0` identify a release. `nvidia-latest` follows
+stable releases; `nvidia-main` follows development builds. Pin a version or digest
+for reproducible deployments.
+
+## CPU deployments
+
+The published `cpu-3.0.0` image uses Candle, with its own model coverage. The
+native LibTorch model catalog does not imply identical support in that image.
+For native LibTorch CPU inference, build the [LibTorch backend](docs/libtorch-backend.md#build-from-source)
+and use `--torch-device cpu --dtype float32`.
 
 ## Send an embedding request
 

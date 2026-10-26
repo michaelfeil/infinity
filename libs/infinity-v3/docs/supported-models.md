@@ -5,8 +5,8 @@ classification, and structured decisions with the native LibTorch backend.
 Choose a checkpoint below by task. The [architecture coverage](libtorch-model-coverage.md)
 explains the underlying model paths and their limitations.
 
-These docs track `main`. Use an image containing the model integration you need;
-older alpha images may lack support. Listing a checkpoint describes its supported
+Use documentation matching your image version; `main` tracks ongoing development.
+Use an image containing the model integration you need. Listing a checkpoint describes its supported
 task, not an accuracy or throughput guarantee for every precision and GPU.
 The support-basis column identifies the implemented architecture and task head
 or pooling used by each checkpoint. Related checkpoints are included when their
@@ -31,12 +31,12 @@ fixture coverage are different levels of validation.
 
 Use a published NVIDIA image from the
 [container registry](https://github.com/michaelfeil/infinity/pkgs/container/infinity_v3).
-The example uses `nvidia-latest`; pin its version or digest for reproducible deployments.
+The example pins `nvidia-3.0.0`; pin a version or digest for reproducible deployments.
 CUDA requires an Ampere/SM80 or newer GPU and NVIDIA Container Toolkit.
 
 ```bash
 docker run --rm --gpus all -p 8000:8000 -v infinity-cache:/data \
-  ghcr.io/michaelfeil/infinity_v3:nvidia-latest \
+  ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0 \
   --model-id BAAI/bge-small-en-v1.5 \
   --torch-device cuda --dtype bfloat16 \
   --max-batch-tokens 8192 \
@@ -49,6 +49,7 @@ same flags to `infinity_v3`. Tables use BF16 compute unless a row specifies a
 different `--dtype`; replace the common dtype flag in that case. Checkpoint
 storage precision does not set compute precision.
 For CPU, use a LibTorch CPU build, `--torch-device cpu` and `--dtype float32`.
+The published `cpu-*` image uses Candle and has different model coverage.
 
 `--max-batch-tokens` is the total batch capacity, not a model's context length or
 a memory guarantee. These are starting configurations: lower the budget for
