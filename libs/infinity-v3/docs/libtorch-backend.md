@@ -62,6 +62,12 @@ Replay keys include block boundaries and prefix sharing; token and image values
 are refreshed for each request. Existing graph admission and memory budgets
 apply, so changing shapes may continue to execute eagerly.
 
+For dense Qwen3.5, `--enable-fp8-dynamic` uses all-linear dynamic FP8 by
+default. Projections use FP8 while GDN activations remain BF16 and stored
+recurrent states remain FP32. The suffix-prefill setting below is independent:
+the default FP8 recipe leaves it disabled, and enabling both requires its own
+quality evaluation.
+
 For Qwen3.5 cached GDN suffixes, `INFINITY_TORCH_GDN_SUFFIX_PREFILL=1`
 opts into the existing tensor-core prefill kernels for batches with at least
 256 suffix tokens and 64 tokens per sequence on average. This setting is off
