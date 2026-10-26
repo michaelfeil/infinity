@@ -708,7 +708,8 @@ class Qwen35 final : public Model {
                              BlockCache* cache = nullptr,
                              bool prefill = false,
                              int64_t cache_layer = -1,
-                             const AttentionProjections* projected = nullptr) const {
+                             const AttentionProjections* projected = nullptr,
+                             const QuantizedRows* quantized_output = nullptr) const {
     auto projections = projected ? *projected : project_attention(x, p, input, true);
     auto qkv = projections[0], z = projections[1], ab = projections[2];
     qkv = radix_unfold(qkv, input);
@@ -759,7 +760,8 @@ class Qwen35 final : public Model {
                               cache && !prefill ? cache->metadata.history_cumulative : at::Tensor(),
                               chunks,
                               cache_layer,
-                              delta_prefill && !cache);
+                              delta_prefill && !cache,
+                              quantized_output);
       }
 #else
       TORCH_CHECK(false, "Qwen3.5 requires the native DeltaNet CUDA kernel build");
@@ -786,6 +788,8 @@ class Qwen35 final : public Model {
         metadata.history_offsets = cache->history_offsets;
       }
     }
+    if (quantized_output)
+      return {};
     auto compact = radix_fold(output, input);
     if (cache)
       return compact;
@@ -947,6 +951,14 @@ class Qwen35 final : public Model {
                             input,
                             linear,
                             attention_rows.first.defined() ? &attention_rows : nullptr);
+      const auto output_name = ap + (linear ? "out_proj" : "o_proj");
+      const auto output_projection = fp8_projections.find(output_name);
+      QuantizedRows output_rows;
+      if (linear && output_projection != fp8_projections.end()) {
+        const auto width = integer("linear_num_value_heads") * 128;
+        output_rows = {at::empty({hidden.size(0), width}, hidden.options().dtype(at::kFloat8_e4m3fn)),
+                       at::empty({hidden.size(0), 1}, hidden.options().dtype(at::kFloat))};
+      }
       auto attention = [&](const PackedInput& part, bool prefill) {
         const auto start = prefill ? 0 : prefix_tokens,
                    count = prefill ? prefix_tokens : hidden.size(0) - prefix_tokens;
@@ -954,13 +966,25 @@ class Qwen35 final : public Model {
         for (size_t i = 0; i < block.size(); ++i)
           block[i] = projections[i].narrow(0, start, count);
         auto x = normalized.narrow(0, start, count);
-        return linear ? delta_attention(x, ap, part, &cache, prefill, -1, &block)
+        QuantizedRows slice;
+        if (output_rows.first.defined())
+          slice = {output_rows.first.narrow(0, start, count),
+                    output_rows.second.narrow(0, start, count)};
+        return linear ? delta_attention(x, ap, part, &cache, prefill, -1, &block,
+                                          slice.first.defined() ? &slice : nullptr)
                       : full_attention(x, ap, part, &cache, prefill, -1, &block);
       };
       auto prefix_attention = attention(prefixes, true);
-      auto attended = has_suffix ? at::cat({prefix_attention, attention(suffixes, false)}, 0)
-                                 : prefix_attention;
-      attended = prefix_projection(attended, ap + (linear ? "out_proj" : "o_proj"), input);
+      at::Tensor attended;
+      if (output_rows.first.defined()) {
+        if (has_suffix)
+          attention(suffixes, false);
+        attended = output_projection->second->forward_quantized(output_rows.first, output_rows.second);
+      } else {
+        attended = has_suffix ? at::cat({prefix_attention, attention(suffixes, false)}, 0)
+                              : prefix_attention;
+        attended = prefix_projection(attended, output_name, input);
+      }
       QuantizedRows mlp_rows;
       auto post = residual_norm(hidden,
                                 attended,

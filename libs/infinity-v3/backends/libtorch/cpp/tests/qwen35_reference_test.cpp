@@ -10,7 +10,8 @@
 #include <iostream>
 #include <vector>
 
-void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
+void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma,
+                   bool quantization_only = false) {
   constexpr int64_t tokens = 35;
   auto opts = at::TensorOptions().device(device).dtype(at::kBFloat16);
   auto qkv = (at::randn({tokens, (2 * kh + vh) * 128}, opts) * .2).contiguous();
@@ -18,14 +19,18 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
   auto ab = (at::randn({tokens, 2 * vh}, opts) * .2).contiguous();
   auto conv = (at::randn({(2 * kh + vh) * 128, 4}, opts) * .2).contiguous();
   auto alog = at::zeros({vh}, opts.dtype(at::kFloat)), dt = at::zeros_like(alog);
-  auto norm = at::ones({128}, opts);
+  auto norm = quantization_only ? (at::randn({128}, opts) * .2 + 1).contiguous()
+                                : at::ones({128}, opts);
+  if (quantization_only)
+    qkv[0].zero_();
   int32_t offsets[] = {0, tokens};
   infinity::PackedInput full;
   full.offsets = offsets;
   full.batch = 1;
   full.max_sequence = tokens;
   full.cumulative = at::tensor(std::vector<int32_t>{0, tokens}, opts.dtype(at::kInt));
-  auto run = [&](const infinity::PackedInput& input, int64_t start) {
+  auto run = [&](const infinity::PackedInput& input, int64_t start,
+                 const std::pair<at::Tensor, at::Tensor>* quantized = nullptr) {
     auto count = tokens - start;
     if (fma)
       return infinity::qwen35_delta_cuda(qkv.narrow(0, start, count),
@@ -44,7 +49,9 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
                                          {},
                                          {},
                                          false,
-                                         0);
+                                         0,
+                                         false,
+                                         quantized);
     return infinity::qwen35_reference_delta_cuda(qkv.narrow(0, start, count),
                                                  z.narrow(0, start, count),
                                                  ab.narrow(0, start, count),
@@ -59,6 +66,35 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
                                                  0);
   };
   auto expected = run(full, 0);
+  if (fma) {
+    auto values = at::ones({tokens + 2, vh * 128}, opts).to(at::kFloat8_e4m3fn);
+    auto scales = at::full({tokens + 2, 1}, -7.f, opts.dtype(at::kFloat));
+    auto sentinel = values[0].view(at::kByte).clone();
+    std::pair<at::Tensor, at::Tensor> quantized = {
+        values.narrow(0, 1, tokens), scales.narrow(0, 1, tokens)};
+    run(full, 0, &quantized);
+    auto separate = infinity::fp8_quantize_rows(expected);
+    TORCH_CHECK(at::equal(quantized.first.view(at::kByte), separate.first.view(at::kByte)) &&
+                    at::equal(quantized.second, separate.second) &&
+                    at::equal(values[0].view(at::kByte), sentinel) &&
+                    at::equal(values[tokens + 1].view(at::kByte), sentinel) &&
+                    scales[0].item<float>() == -7.f && scales[tokens + 1].item<float>() == -7.f,
+                "Fused GDN normalization changed FP8 bytes/scales or wrote outside its slice");
+    if (vh == 1) {
+      auto storage = at::empty({tokens * vh * 128 + 1}, values.options());
+      std::pair<at::Tensor, at::Tensor> odd = {
+          storage.narrow(0, 1, tokens * vh * 128).view({tokens, vh * 128}), quantized.second};
+      bool rejected = false;
+      try {
+        run(full, 0, &odd);
+      } catch (const c10::Error&) {
+        rejected = true;
+      }
+      TORCH_CHECK(rejected, "Misaligned FP8 output must fail before launching a CUDA kernel");
+    }
+  }
+  if (quantization_only)
+    return;
   for (int64_t boundary : {1, 13, 34}) {
     if (fma) {
       auto prefill = full;
@@ -89,6 +125,12 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
       // still preserve its inputs and repeat exactly across batch rows.
       TORCH_CHECK(at::allclose(prefix, expected.narrow(0, 0, boundary), 1e-2, 2e-3),
                   "Block prefill exceeded BF16 recurrent tolerance");
+      if (boundary == 13) {
+        auto storage = at::empty({state.numel() + 1}, state.options());
+        auto shifted = storage.narrow(0, 1, state.numel()).view(state.sizes());
+        shifted.copy_(state);
+        state = shifted;
+      }
       auto immutable = state.clone();
       auto suffix = full;
       int32_t suffix_offsets[] = {0, int32_t(tokens - boundary)};
@@ -438,6 +480,9 @@ int main(int argc, char** argv) {
                           {32, 96},
                           {16, 128}}) {
       resumed_delta(device, geometry.first, geometry.second, fma);
+  resumed_delta(device, 16, 32, true);
+  for (auto geometry : {std::pair<int64_t, int64_t>{16, 16}, {16, 48}, {32, 128}})
+    resumed_delta(device, geometry.first, geometry.second, true, true);
       independent_recurrent(device, geometry.first, geometry.second, fma);
     }
   std::cout << "Independent original norms and synthetic packed sequence isolation passed\n";

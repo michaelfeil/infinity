@@ -3,6 +3,7 @@
 
 #pragma once
 #include "batching/packed_input.h"
+#include <utility>
 
 namespace infinity {
 /// Rotate vision Q/K rows using already selected spatial cosine/sine tables.
@@ -40,6 +41,8 @@ at::Tensor gemma_activation_cuda(const at::Tensor&, bool);
 /// Optional initial/history buffers resume block execution;
 /// cache_layer enables resident checkpoints. hopper_prefill opts qualified fresh requests into
 /// the existing BF16 Hopper prefill provider without retaining a final state.
+/// Optional two-byte-aligned quantized destinations receive E4M3 rows and FP32 scales directly;
+/// that mode returns an undefined tensor instead of materializing BF16 output.
 at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              const at::Tensor& z,
                              const at::Tensor& ab,
@@ -57,5 +60,6 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              const at::Tensor& history_cumulative = {},
                              bool chunk_prefill = true,
                              int64_t cache_layer = -1,
-                             bool allow_prefill = false);
+                             bool allow_prefill = false,
+                             const std::pair<at::Tensor, at::Tensor>* quantized_output = nullptr);
 }
