@@ -10,8 +10,8 @@
 #include <iostream>
 #include <vector>
 
-void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma,
-                   bool quantization_only = false) {
+void resumed_delta(
+    c10::Device device, int64_t kh, int64_t vh, bool fma, bool quantization_only = false) {
   constexpr int64_t tokens = 35;
   auto opts = at::TensorOptions().device(device).dtype(at::kBFloat16);
   auto qkv = (at::randn({tokens, (2 * kh + vh) * 128}, opts) * .2).contiguous();
@@ -19,8 +19,8 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma,
   auto ab = (at::randn({tokens, 2 * vh}, opts) * .2).contiguous();
   auto conv = (at::randn({(2 * kh + vh) * 128, 4}, opts) * .2).contiguous();
   auto alog = at::zeros({vh}, opts.dtype(at::kFloat)), dt = at::zeros_like(alog);
-  auto norm = quantization_only ? (at::randn({128}, opts) * .2 + 1).contiguous()
-                                : at::ones({128}, opts);
+  auto norm =
+      quantization_only ? (at::randn({128}, opts) * .2 + 1).contiguous() : at::ones({128}, opts);
   if (quantization_only)
     qkv[0].zero_();
   int32_t offsets[] = {0, tokens};
@@ -29,7 +29,8 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma,
   full.batch = 1;
   full.max_sequence = tokens;
   full.cumulative = at::tensor(std::vector<int32_t>{0, tokens}, opts.dtype(at::kInt));
-  auto run = [&](const infinity::PackedInput& input, int64_t start,
+  auto run = [&](const infinity::PackedInput& input,
+                 int64_t start,
                  const std::pair<at::Tensor, at::Tensor>* quantized = nullptr) {
     auto count = tokens - start;
     if (fma)
@@ -84,8 +85,8 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma,
     auto values = at::ones({tokens + 2, vh * 128}, opts).to(at::kFloat8_e4m3fn);
     auto scales = at::full({tokens + 2, 1}, -7.f, opts.dtype(at::kFloat));
     auto sentinel = values[0].view(at::kByte).clone();
-    std::pair<at::Tensor, at::Tensor> quantized = {
-        values.narrow(0, 1, tokens), scales.narrow(0, 1, tokens)};
+    std::pair<at::Tensor, at::Tensor> quantized = {values.narrow(0, 1, tokens),
+                                                   scales.narrow(0, 1, tokens)};
     run(full, 0, &quantized);
     auto separate = infinity::fp8_quantize_rows(expected);
     TORCH_CHECK(at::equal(quantized.first.view(at::kByte), separate.first.view(at::kByte)) &&
@@ -155,7 +156,8 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma,
       suffix.block_prefix_sources = {0};
       suffix.block_cache_sources = at::zeros({1}, opts.dtype(at::kLong));
       auto history =
-          qkv.narrow(0, std::max(int64_t(0), boundary - 3), std::min(boundary, int64_t(3))).contiguous();
+          qkv.narrow(0, std::max(int64_t(0), boundary - 3), std::min(boundary, int64_t(3)))
+              .contiguous();
       auto history_cu =
           at::tensor(std::vector<int32_t>{0, int32_t(history.size(0))}, opts.dtype(at::kInt));
       at::Tensor final_state;
@@ -376,7 +378,8 @@ int main(int argc, char** argv) {
           pairs.narrow(2, 0, 128).to(dtype).contiguous(),
           pairs.narrow(2, 128, 128).to(dtype).contiguous(),
           values.narrow(1, 2 * kh * 128, vh * 128).contiguous(),
-          gates.narrow(1, 0, vh).contiguous(), gates.narrow(1, vh, vh).contiguous()};
+          gates.narrow(1, 0, vh).contiguous(),
+          gates.narrow(1, vh, vh).contiguous()};
       for (size_t i = 0; i < packed.size(); ++i)
         TORCH_CHECK(at::equal(packed[i], expected[i]) && packed[i].is_contiguous() &&
                         reinterpret_cast<uintptr_t>(packed[i].const_data_ptr()) % 16 == 0,
@@ -420,11 +423,12 @@ int main(int argc, char** argv) {
         auto with_quantization = infinity::qwen35_reference_residual_norm_cuda(
             residual, addition, cuda_gamma, 1e-6, &quantized);
         auto separate = infinity::fp8_quantize_rows(fused.second);
-        TORCH_CHECK(at::equal(with_quantization.first, fused.first) &&
-                        at::equal(with_quantization.second, fused.second) &&
-                        at::equal(quantized.first.view(at::kByte), separate.first.view(at::kByte)) &&
-                        at::equal(quantized.second, separate.second),
-                    "Fused Qwen norm quantization changed rounded rows, E4M3 bytes or row scales");
+        TORCH_CHECK(
+            at::equal(with_quantization.first, fused.first) &&
+                at::equal(with_quantization.second, fused.second) &&
+                at::equal(quantized.first.view(at::kByte), separate.first.view(at::kByte)) &&
+                at::equal(quantized.second, separate.second),
+            "Fused Qwen norm quantization changed rounded rows, E4M3 bytes or row scales");
       }
     }
   auto rejects = [&](const at::Tensor& x, const at::Tensor& gamma) {

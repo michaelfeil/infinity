@@ -28,7 +28,9 @@ int main() {
     // Include a maximum sentinel per row so every pattern sees the intended
     // scale, including FP8 midpoints and the BF16 scale floor.
     auto patterns = at::arange(65536, at::TensorOptions().dtype(at::kInt))
-                        .to(at::kShort).view(dtype).to(at::kFloat);
+                        .to(at::kShort)
+                        .view(dtype)
+                        .to(at::kFloat);
     patterns.masked_fill_(at::logical_not(at::isfinite(patterns)), 0);
     auto padded = at::zeros({17 * 4095}, patterns.options());
     padded.narrow(0, 0, patterns.numel()).copy_(patterns);
@@ -36,20 +38,20 @@ int main() {
     auto check_rounding = [&](const at::Tensor& maxima) {
       auto limits = maxima.view({-1, 1, 1});
       auto clipped = at::minimum(at::maximum(chunks, -limits), limits);
-      auto values = at::cat({limits.expand({maxima.size(0), 17, 1}), clipped}, 2)
-                        .view({-1, 4096});
+      auto values = at::cat({limits.expand({maxima.size(0), 17, 1}), clipped}, 2).view({-1, 4096});
       auto scales = at::repeat_interleave(maxima.clamp_min(1e-12) * (1.f / 448.f), 17, 0);
       auto expected = (values / scales).to(at::kFloat8_e4m3fn);
       auto actual = infinity::fp8_quantize_rows(values.to(dtype).to(at::kCUDA));
-      TORCH_CHECK(at::equal(actual.second.to(at::kCPU), scales) &&
-                      at::equal(actual.first.to(at::kCPU).view(at::kByte),
-                                expected.view(at::kByte)),
-                  "FP8 conversion changed exhaustive input/significand rounding: ", dtype);
+      TORCH_CHECK(
+          at::equal(actual.second.to(at::kCPU), scales) &&
+              at::equal(actual.first.to(at::kCPU).view(at::kByte), expected.view(at::kByte)),
+          "FP8 conversion changed exhaustive input/significand rounding: ",
+          dtype);
     };
     const int significands = dtype == at::kHalf ? 1024 : 128;
     for (int first = 0; first < significands; first += 32)
-      check_rounding((1 + at::arange(first, first + 32, patterns.options()) / significands)
-                         .unsqueeze(1));
+      check_rounding(
+          (1 + at::arange(first, first + 32, patterns.options()) / significands).unsqueeze(1));
     if (dtype == at::kBFloat16) {
       auto floor = at::full({1, 1}, 1e-12, at::TensorOptions().dtype(dtype));
       if (floor.item<float>() > 1e-12f)
@@ -220,8 +222,8 @@ int main() {
     for (const auto* projection : {&linear, &other, &linear}) {
       auto values = at::randn({17, 256}, options) * 3;
       auto quantized = infinity::fp8_quantize_rows(values);
-      auto expected = fp8_original_recipe(quantized.first, projection->matrix(),
-          quantized.second, projection->scales(), dtype);
+      auto expected = fp8_original_recipe(
+          quantized.first, projection->matrix(), quantized.second, projection->scales(), dtype);
       TORCH_CHECK(at::equal(projection->forward(values), expected),
                   "Reused FP8 geometry retained another projection's scale pointers");
     }

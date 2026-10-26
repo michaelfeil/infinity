@@ -173,7 +173,8 @@ __global__ void norm_tree(const __nv_bfloat16* x,
         for (int j = 0; j < V / 2; ++j)
           reinterpret_cast<__nv_fp8x2_e4m3*>(quantized + int64_t(row) * width + d)[j] =
               fp8_quantize_pair(__bfloat162float(values.values[2 * j]),
-                                 __bfloat162float(values.values[2 * j + 1]), scale);
+                                __bfloat162float(values.values[2 * j + 1]),
+                                scale);
       } else {
         quantized[int64_t(row) * width + d] =
             __nv_fp8_e4m3(__fdiv_rn(__bfloat162float(values.values[0]), scale));

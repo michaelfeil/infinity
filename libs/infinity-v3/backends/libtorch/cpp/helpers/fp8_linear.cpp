@@ -435,6 +435,7 @@ struct ScaledPlan {
   cublasLtMatmulDesc_t operation{};
   cublasLtMatrixLayout_t a{}, b{}, c{}, d{};
   cublasLtMatmulAlgo_t algorithm{};
+
   ~ScaledPlan() {
     if (a)
       cublasLtMatrixLayoutDestroy(a);
@@ -448,8 +449,11 @@ struct ScaledPlan {
       cublasLtMatmulDescDestroy(operation);
   }
 };
-at::Tensor scaled_mm_cached(const at::Tensor& input, const at::Tensor& weight,
-                            const at::Tensor& input_scale, const at::Tensor& weight_scale,
+
+at::Tensor scaled_mm_cached(const at::Tensor& input,
+                            const at::Tensor& weight,
+                            const at::Tensor& input_scale,
+                            const at::Tensor& weight_scale,
                             at::ScalarType dtype) {
   const auto stream = at::cuda::getCurrentCUDAStream();
   cudaStreamCaptureStatus capture;
@@ -475,8 +479,8 @@ at::Tensor scaled_mm_cached(const at::Tensor& input, const at::Tensor& weight,
   for (auto& entry : plans)
     if (entry->device == input.get_device() && entry->context == context &&
         entry->stream == stream.stream() && entry->handle == handle &&
-        entry->workspace_bytes == workspace_bytes && entry->dtype == dtype &&
-        entry->m == m && entry->n == n && entry->k == k) {
+        entry->workspace_bytes == workspace_bytes && entry->dtype == dtype && entry->m == m &&
+        entry->n == n && entry->k == k) {
       plan = entry.get();
       break;
     }
@@ -491,9 +495,11 @@ at::Tensor scaled_mm_cached(const at::Tensor& input, const at::Tensor& weight,
     entry->k = k;
     entry->dtype = dtype;
     entry->workspace_bytes = workspace_bytes;
-    TORCH_CUDABLAS_CHECK(cublasLtMatmulDescCreate(&entry->operation, CUBLAS_COMPUTE_32F, CUDA_R_32F));
+    TORCH_CUDABLAS_CHECK(
+        cublasLtMatmulDescCreate(&entry->operation, CUBLAS_COMPUTE_32F, CUDA_R_32F));
     auto set = [&](auto attribute, const auto& value) {
-      TORCH_CUDABLAS_CHECK(cublasLtMatmulDescSetAttribute(entry->operation, attribute, &value, sizeof(value)));
+      TORCH_CUDABLAS_CHECK(
+          cublasLtMatmulDescSetAttribute(entry->operation, attribute, &value, sizeof(value)));
     };
     const auto transpose = CUBLAS_OP_T, normal = CUBLAS_OP_N;
     const int8_t fast = 1;
@@ -514,12 +520,22 @@ at::Tensor scaled_mm_cached(const at::Tensor& input, const at::Tensor& weight,
     cublasLtMatmulPreference_t preference{};
     TORCH_CUDABLAS_CHECK(cublasLtMatmulPreferenceCreate(&preference));
     auto status = cublasLtMatmulPreferenceSetAttribute(preference,
-        CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES, &workspace_bytes, sizeof(workspace_bytes));
+                                                       CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                                       &workspace_bytes,
+                                                       sizeof(workspace_bytes));
     cublasLtMatmulHeuristicResult_t heuristic{};
     int returned = 0;
     if (status == CUBLAS_STATUS_SUCCESS)
-      status = cublasLtMatmulAlgoGetHeuristic(handle, entry->operation, entry->a, entry->b,
-          entry->c, entry->d, preference, 1, &heuristic, &returned);
+      status = cublasLtMatmulAlgoGetHeuristic(handle,
+                                              entry->operation,
+                                              entry->a,
+                                              entry->b,
+                                              entry->c,
+                                              entry->d,
+                                              preference,
+                                              1,
+                                              &heuristic,
+                                              &returned);
     cublasLtMatmulPreferenceDestroy(preference);
     TORCH_CUDABLAS_CHECK(status);
     if (!returned)
@@ -531,16 +547,28 @@ at::Tensor scaled_mm_cached(const at::Tensor& input, const at::Tensor& weight,
     plans.push_back(std::move(entry));
   }
   auto ws = weight_scale.const_data_ptr(), xs = input_scale.const_data_ptr();
-  TORCH_CUDABLAS_CHECK(cublasLtMatmulDescSetAttribute(plan->operation,
-      CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &ws, sizeof(ws)));
-  TORCH_CUDABLAS_CHECK(cublasLtMatmulDescSetAttribute(plan->operation,
-      CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &xs, sizeof(xs)));
+  TORCH_CUDABLAS_CHECK(cublasLtMatmulDescSetAttribute(
+      plan->operation, CUBLASLT_MATMUL_DESC_A_SCALE_POINTER, &ws, sizeof(ws)));
+  TORCH_CUDABLAS_CHECK(cublasLtMatmulDescSetAttribute(
+      plan->operation, CUBLASLT_MATMUL_DESC_B_SCALE_POINTER, &xs, sizeof(xs)));
   auto output = at::empty({m, n}, input.options().dtype(dtype));
   const float alpha = 1.f, beta = 0.f;
-  auto status = cublasLtMatmul(handle, plan->operation, &alpha,
-      weight.const_data_ptr(), plan->a, input.const_data_ptr(), plan->b, &beta,
-      weight.const_data_ptr(), plan->c, output.mutable_data_ptr(), plan->d,
-      &plan->algorithm, at::cuda::getCUDABlasLtWorkspace(), workspace_bytes, stream);
+  auto status = cublasLtMatmul(handle,
+                               plan->operation,
+                               &alpha,
+                               weight.const_data_ptr(),
+                               plan->a,
+                               input.const_data_ptr(),
+                               plan->b,
+                               &beta,
+                               weight.const_data_ptr(),
+                               plan->c,
+                               output.mutable_data_ptr(),
+                               plan->d,
+                               &plan->algorithm,
+                               at::cuda::getCUDABlasLtWorkspace(),
+                               workspace_bytes,
+                               stream);
   if (status == CUBLAS_STATUS_NOT_SUPPORTED)
     return {};
   TORCH_CUDABLAS_CHECK(status);
@@ -623,14 +651,12 @@ at::Tensor Fp8Linear::forward_quantized(const at::Tensor& input,
       try {
         // Candle's Hopper recipe prefers fast accumulation. Some CUDA versions
         // lack fast tactics for short, wide-K shapes; preserve its full fallback.
-        output = at::_scaled_mm(
-            input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, true);
+        output = at::_scaled_mm(input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, true);
       } catch (const c10::Error& error) {
         if (std::string(error.what_without_backtrace()).find("CUBLAS_STATUS_NOT_SUPPORTED") ==
             std::string::npos)
           throw;
-        output = at::_scaled_mm(
-            input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, false);
+        output = at::_scaled_mm(input, matrix_.t(), row_scales, scales_.t(), {}, {}, dtype_, false);
       }
     }
   } else {

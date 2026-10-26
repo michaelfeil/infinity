@@ -358,9 +358,9 @@ class Qwen35 final : public Model {
   /// Run dense or routed feed-forward layers with the checkpoint's
   /// selected activation and prefix recipe.
   at::Tensor feed_forward(const at::Tensor& x,
-                         int64_t layer,
-                         const PackedInput& input,
-                         const QuantizedRows* quantized = nullptr) const {
+                          int64_t layer,
+                          const PackedInput& input,
+                          const QuantizedRows* quantized = nullptr) const {
     const auto& m = mlps[layer];
     MlpContext context;
     context.gemm = [&](const MlpProjection& projection, const at::Tensor& rows) {
@@ -407,9 +407,9 @@ class Qwen35 final : public Model {
   }
 
   std::pair<at::Tensor, at::Tensor> residual_norm(const at::Tensor& x,
-                                                const at::Tensor& addition,
-                                                const std::string& name,
-                                                QuantizedRows* quantized = nullptr) const {
+                                                  const at::Tensor& addition,
+                                                  const std::string& name,
+                                                  QuantizedRows* quantized = nullptr) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (device.is_cuda() && dtype == at::kBFloat16 && x.size(-1) <= 8192)
       return qwen35_reference_residual_norm_cuda(
@@ -969,8 +969,9 @@ class Qwen35 final : public Model {
       QuantizedRows output_rows;
       if (linear && output_projection != fp8_projections.end()) {
         const auto width = integer("linear_num_value_heads") * 128;
-        output_rows = {at::empty({hidden.size(0), width}, hidden.options().dtype(at::kFloat8_e4m3fn)),
-                       at::empty({hidden.size(0), 1}, hidden.options().dtype(at::kFloat))};
+        output_rows = {
+            at::empty({hidden.size(0), width}, hidden.options().dtype(at::kFloat8_e4m3fn)),
+            at::empty({hidden.size(0), 1}, hidden.options().dtype(at::kFloat))};
       }
       auto attention = [&](const PackedInput& part, bool prefill) {
         const auto start = prefill ? 0 : prefix_tokens,
@@ -982,9 +983,15 @@ class Qwen35 final : public Model {
         QuantizedRows slice;
         if (output_rows.first.defined())
           slice = {output_rows.first.narrow(0, start, count),
-                    output_rows.second.narrow(0, start, count)};
-        return linear ? delta_attention(x, ap, part, &cache, prefill, -1, &block,
-                                          slice.first.defined() ? &slice : nullptr)
+                   output_rows.second.narrow(0, start, count)};
+        return linear ? delta_attention(x,
+                                        ap,
+                                        part,
+                                        &cache,
+                                        prefill,
+                                        -1,
+                                        &block,
+                                        slice.first.defined() ? &slice : nullptr)
                       : full_attention(x, ap, part, &cache, prefill, -1, &block);
       };
       auto prefix_attention = attention(prefixes, true);
@@ -992,7 +999,8 @@ class Qwen35 final : public Model {
       if (output_rows.first.defined()) {
         if (has_suffix)
           attention(suffixes, false);
-        attended = output_projection->second->forward_quantized(output_rows.first, output_rows.second);
+        attended =
+            output_projection->second->forward_quantized(output_rows.first, output_rows.second);
       } else {
         attended = has_suffix ? at::cat({prefix_attention, attention(suffixes, false)}, 0)
                               : prefix_attention;
@@ -1221,8 +1229,8 @@ public:
         }
         if (kind == "linear_attention") {
           const auto attention = p + "linear_attn.";
-          auto matrix = at::cat({w(attention + "in_proj_qkv.weight"),
-                                 w(attention + "in_proj_z.weight")}, 0);
+          auto matrix =
+              at::cat({w(attention + "in_proj_qkv.weight"), w(attention + "in_proj_z.weight")}, 0);
           fp8_projections.emplace(attention + "in_proj_qkvz", std::make_unique<Fp8Linear>(matrix));
           weights.erase(prefix + attention + "in_proj_qkv.weight");
           weights.erase(prefix + attention + "in_proj_z.weight");
