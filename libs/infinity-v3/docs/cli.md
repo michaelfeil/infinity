@@ -55,20 +55,20 @@ values align with `--model-id`, and `none` leaves a model's limit unchanged.
 
 ## UltraBERT embeddings
 
-`dmis-lab/UltraBERT-Embed-150M` uses the Candle backend and produces
-768-dimensional CLS embeddings with a 32,768-token context. The override below
-selects Candle in dual-backend builds; Candle-only builds can omit it:
+`dmis-lab/UltraBERT-Embed-150M` supports native LibTorch and Candle and produces
+768-dimensional CLS embeddings with a 32,768-token context. For the native
+LibTorch GPU image:
 
 ```sh
-infinity_v3 --backend candle --model-id dmis-lab/UltraBERT-Embed-150M \
-  --max-batch-tokens 32768
+infinity_v3 --model-id dmis-lab/UltraBERT-Embed-150M \
+  --torch-device cuda --dtype bfloat16 --max-batch-tokens 32768
 ```
 
 Use `prompt_name: "query"` for retrieval queries; documents use the empty
 `document` prompt. Mean and last-token pooling overrides and raw token
-embeddings are supported. CPU supports FP32/FP16; CUDA SM80+ supports FP16/BF16.
-Its attention geometry uses FA2 even with `ATTN_BACKEND=fa4`. Native LibTorch
-and Metal are unsupported for this checkpoint.
+embeddings are supported. Native LibTorch uses FP32 on CPU and FP16/BF16 on
+CUDA SM80+. See [native model coverage](libtorch-model-coverage.md) for backend
+limitations and the [model catalog](supported-models.md) for other checkpoints.
 
 UltraBERT sequence classification checkpoints with a saved trained classifier
 head use `/predict`; trained single-label rerankers also use `/rerank`.

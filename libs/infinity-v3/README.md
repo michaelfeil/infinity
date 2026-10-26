@@ -195,6 +195,8 @@ supported, including Qwen3, Qwen3.5 and Gemma4 MoE models.** Use checkpoints
 with a supported task head; each GPU replica must fit the full model, including
 all experts.
 
+The [supported model catalog](docs/supported-models.md) groups named checkpoints
+by task with launch settings, input requirements and request examples.
 The [native model coverage](docs/libtorch-model-coverage.md) lists implemented
 LibTorch paths and their limitations; it is not a claim that every checkpoint
 in each family has been validated.
@@ -212,6 +214,7 @@ Example models:
 - [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3), dense embeddings
 - **GTE embeddings**: [Alibaba-NLP/gte-large-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5), using the native GTE/New encoder path.
 - **ModernBERT embeddings**: [nomic-ai/modernbert-embed-base](https://huggingface.co/nomic-ai/modernbert-embed-base), using native local/global rotary attention.
+- **Nomic v1.5**: [nomic-ai/nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5), mean pooling with `search_query: ` / `search_document: ` retrieval prefixes.
 - [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B)
 - [perplexity-ai/pplx-embed-v1-0.6b](https://huggingface.co/perplexity-ai/pplx-embed-v1-0.6b) and [pplx-embed-v1-4b](https://huggingface.co/perplexity-ai/pplx-embed-v1-4b), floating-point output only; contextual variants are unsupported
 - [dmis-lab/UltraBERT-Embed-150M](https://huggingface.co/dmis-lab/UltraBERT-Embed-150M), native bidirectional encoder with per-layer rotary positions and sliding windows
@@ -234,6 +237,7 @@ Example models:
 
 - [BAAI/bge-reranker-base](https://huggingface.co/BAAI/bge-reranker-base)
 - [BAAI/bge-reranker-v2-m3](https://huggingface.co/BAAI/bge-reranker-v2-m3)
+- [nvidia/llama-nemotron-rerank-1b-v2](https://huggingface.co/nvidia/llama-nemotron-rerank-1b-v2), using its saved average pooling and temperature
 - [nvidia/Nemotron-3.5-Rerank-8B-BF16](https://huggingface.co/nvidia/Nemotron-3.5-Rerank-8B-BF16), text and document images through the [native Mistral3 reranking recipe](docs/ministral-3-multimodal.md)
 
 LibTorch supports architecture-specific encoder and decoder classification
@@ -260,14 +264,14 @@ Backbone support requires a checkpoint with an appropriate trained output head;
 it does not make every instruction model a retrieval embedding model.
 
 **Nemotron 3 and 3.5 dense embeddings:** the Ministral3/Mistral3 backbones are
-implemented. Complete query/document prefix handling and embedding parity for
+implemented. Supported checkpoints include
 [Nemotron 3 1B](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16),
 [Nemotron 3 8B](https://huggingface.co/nvidia/Nemotron-3-Embed-8B-BF16),
 [Nemotron 3.5 1B](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) and
 [Nemotron 3.5 8B](https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16)
-are tracked in [PR #800](https://github.com/michaelfeil/infinity/pull/800).
-Nemotron 3 is text-only; 3.5 adds document images. This integration is pending,
-not yet part of the supported release list.
+with mean pooling and the checkpoint's query/document instructions.
+Nemotron 3 is text-only; 3.5 adds document images. See the
+[model catalog](docs/supported-models.md) for launch settings.
 
 For token-vector retrieval, see **ColBERT, ColQwen3 and Nemotron ColEmbed** below.
 Full architecture details are in [native model coverage](docs/libtorch-model-coverage.md).
@@ -325,7 +329,7 @@ Supported model families and protocols (LibTorch):
 - **Perplexity Decider / Pplx**: [v1.1-27b](https://huggingface.co/perplexity-ai/pplx-decider-v1.1-27b) and [flash-v1.2](https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2). Flash v1.2 supports shared text/images, joint question readouts and calibrated answers. The short model aliases select the protocol automatically.
 - **Rune**: Gemma4-based decision checkpoints using `--decision-protocol rune`.
 - **Clef**: dense Qwen3.5 checkpoints with `joint_head_config.json`, using `--decision-protocol clef`.
-- **D3**: [vllm-sr/d3](https://huggingface.co/vllm-sr/d3), a dense Qwen3.5 decision model with its code-readout head. The `d3` alias selects `--decision-protocol d3` automatically.
+- **D3**: [vllm-sr/d3](https://huggingface.co/vllm-sr/d3) and [vllm-sr/d3-mini](https://huggingface.co/vllm-sr/d3-mini), dense Qwen3.5 decision models with code-readout heads. The `d3` and `d3-mini` aliases select `--decision-protocol d3` automatically.
 
 For example:
 
@@ -342,6 +346,7 @@ server's `/docs`, [decision inputs](docs/cli.md#structured-decision-inputs) and
 
 ## Documentation
 
+- [Supported models and configuration](docs/supported-models.md)
 - [Performance and Radix MLP](docs/performance.md)
 - [CLI and deployment options](docs/cli.md)
 - [Native LibTorch backend](docs/libtorch-backend.md)

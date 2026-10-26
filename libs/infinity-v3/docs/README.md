@@ -5,6 +5,7 @@ and client are separate projects in the parent `libs` directory.
 
 - [Build and development commands](../CONTRIBUTING.md#working-in-the-infinity-monorepo)
 - [Running the server](cli.md)
+- [Supported models and configuration by task](supported-models.md)
 - [Performance and Radix MLP](performance.md)
 - [Native LibTorch backend](libtorch-backend.md)
 - [Native model coverage](libtorch-model-coverage.md)

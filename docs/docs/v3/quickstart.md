@@ -21,6 +21,8 @@ docker run --rm --gpus all -p 8000:8000 -v infinity-cache:/data \
 
 The image starts `infinity_v3` directly. There is no `v2` subcommand.
 Each visible GPU runs a model replica; use `--device-id 0` to select one GPU.
+Choose another task or checkpoint from the
+[supported models and configuration](docs/supported-models.md) catalog.
 
 ## Send an embedding request
 
@@ -37,7 +39,7 @@ for model routing, batching, truncation and decision inputs.
 ## Moving from Python / v2
 
 Use the v3 container and CLI instead of `infinity_emb v2`. Check the
-[supported model and task coverage](docs/libtorch-model-coverage.md) and
+[supported models and configuration](docs/supported-models.md) and
 [API reference](api.md) for your checkpoint and request format. Python engine
 APIs and the v2 backend choices do not carry over to the native server.
 
