@@ -11,9 +11,10 @@ use crate::http::types::{
     EncodingFormat, InputBatch, InputIds, OpenAICompatEmbedding, OpenAICompatErrorResponse,
     OpenAICompatRequest, OpenAICompatResponse, OpenAICompatUsage, PredictInput, PredictRequest,
     PredictResponse, PredictTokensRequest, Prediction, Rank, RerankRequest, RerankResponse,
-    Sequence, SimilarityInput, SimilarityParameters, SimilarityRequest, SimilarityResponse,
-    SimpleToken, SparseValue, TokenPredictResponse, TokenizeInput, TokenizeRequest,
-    TokenizeResponse, TruncationDirection, VertexPrediction, VertexRequest, VertexResponse,
+    Sequence, ServiceTier, SimilarityInput, SimilarityParameters, SimilarityRequest,
+    SimilarityResponse, SimpleToken, SparseValue, TokenPredictResponse, TokenizeInput,
+    TokenizeRequest, TokenizeResponse, TruncationDirection, VertexPrediction, VertexRequest,
+    VertexResponse,
 };
 use crate::model_registry::ModelRegistry;
 use crate::{
@@ -249,6 +250,7 @@ async fn run_classification(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     req: PredictRequest,
 ) -> Result<(Vec<Vec<f32>>, ResponseMetadata), ErrorResponse> {
+    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -632,6 +634,7 @@ async fn predict_tokens_inner(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<PredictTokensRequest>,
 ) -> Result<(HeaderMap, Json<TokenPredictResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -862,6 +865,7 @@ async fn rerank_inner(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<RerankRequest>,
 ) -> Result<(HeaderMap, Json<RerankResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -1124,6 +1128,7 @@ async fn similarity_inner(
     }
     let parameters = req.parameters.unwrap_or_default();
     let embed_req = EmbedRequest {
+        service_tier: req.service_tier,
         encoding_format: EncodingFormat::Float,
         model: None,
         inputs: EmbeddingInput::TextBatch(inputs),
@@ -1199,6 +1204,7 @@ async fn embed_inner(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<EmbedRequest>,
 ) -> Result<(HeaderMap, Json<EmbedResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
     if info.is_multi_vector() {
         if req.dimensions.is_some() {
             return Err(ErrorResponse {
@@ -1212,6 +1218,7 @@ async fn embed_inner(
             info,
             Extension(context),
             Json(EmbedAllRequest {
+                service_tier: req.service_tier,
                 encoding_format: req.encoding_format,
                 model: req.model,
                 inputs: req.inputs,
@@ -1433,6 +1440,7 @@ async fn embed_sparse_inner(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<EmbedSparseRequest>,
 ) -> Result<(HeaderMap, Json<EmbedSparseResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -1641,6 +1649,7 @@ async fn embed_all_inner(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<EmbedAllRequest>,
 ) -> Result<(HeaderMap, Json<EmbedAllResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -1843,6 +1852,7 @@ async fn openai_embed_inner(
     Json(req): Json<OpenAICompatRequest>,
 ) -> Result<(HeaderMap, Json<OpenAICompatResponse>), (StatusCode, Json<OpenAICompatErrorResponse>)>
 {
+    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
     if info.is_multi_vector() {
         let model = info.model_id.clone();
         let (headers, Json(values)) = embed_inner(
@@ -1850,6 +1860,7 @@ async fn openai_embed_inner(
             info,
             Extension(context),
             Json(EmbedRequest {
+                service_tier: req.service_tier,
                 encoding_format: req.encoding_format,
                 dimensions: req.dimensions,
                 normalize: true,
@@ -2338,7 +2349,12 @@ async fn vertex_compatibility_inner(
     };
 
     let mut futures = Vec::with_capacity(req.instances.len());
-    for instance in req.instances {
+    for mut instance in req.instances {
+        if let Some(object) = instance.as_object_mut() {
+            object
+                .entry("service_tier")
+                .or_insert_with(|| serde_json::json!(req.service_tier));
+        }
         let local_infer = infer.clone();
         let local_info = info.clone();
         let local_context = context.clone();
@@ -2423,6 +2439,7 @@ fn api_doc() -> utoipa::openapi::OpenApi {
     ),
     components(
     schemas(
+    ServiceTier,
     super::systemone::SystemOneRequest,
     super::systemone::SystemOneRequestBody,
     super::systemone::D3SystemOneRequest,
@@ -3040,6 +3057,17 @@ mod classify_tests {
         let mut saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         let names = [
+            "ServiceTier",
+            "EmbedRequest",
+            "EmbedAllRequest",
+            "EmbedSparseRequest",
+            "OpenAICompatRequest",
+            "PredictRequest",
+            "ClassifyRequest",
+            "RerankRequest",
+            "SimilarityRequest",
+            "TokenizeRequest",
+            "DecodeRequest",
             "SystemOneRequestBody",
             "SystemOneRequest",
             "SystemOneState",
@@ -3066,6 +3094,16 @@ mod classify_tests {
             assert_eq!(
                 doc["components"]["schemas"][name], saved["components"]["schemas"][name],
                 "{name}"
+            );
+        }
+        for name in [
+            "SystemOneRequest",
+            "D3SystemOneRequest",
+            "PplxJointSystemOneRequest",
+        ] {
+            assert_eq!(
+                doc["components"]["schemas"][name]["properties"]["service_tier"]["$ref"],
+                "#/components/schemas/ServiceTier"
             );
         }
         let operation = &doc["paths"]["/v1/systemone"]["post"];

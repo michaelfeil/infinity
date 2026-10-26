@@ -1,6 +1,7 @@
 //! D3's d3-code-readout-v1 prompt and FP32 probability contract.
 use super::super::result_value::{AnswerError, ResultValue};
 use super::*;
+use crate::http::types::ServiceTier;
 use infinity_v3_core::chat::ChatProcessor;
 use infinity_v3_core::multimodal::{D3MediaProcessor, PreparedD3Media};
 
@@ -27,6 +28,8 @@ struct Config {
 #[schema(as = D3SystemOneRequest)]
 #[serde(deny_unknown_fields)]
 pub struct Request {
+    #[serde(default)]
+    service_tier: ServiceTier,
     state: Value,
     questions: Map<String, Value>,
     model: Option<String>,
@@ -64,6 +67,7 @@ impl Request {
         };
         Ok((
             SystemOneRequest {
+                service_tier: self.service_tier,
                 state: ModelInput::Text(state),
                 questions: self.questions,
                 model: self.model,
@@ -637,10 +641,11 @@ mod tests {
         let codes: Vec<String> = serde_json::from_value(fixtures["codes"].clone()).unwrap();
         for case in fixtures["cases"].as_array().unwrap() {
             let request: Request = serde_json::from_value(
-                json!({"state":case["state"],"questions":{"q":case["question"]}}),
+                json!({"state":case["state"],"questions":{"q":case["question"]}, "service_tier":"priority"}),
             )
             .unwrap();
             let (request, _, _) = request.into_common().unwrap();
+            assert!(request.service_tier.is_priority());
             let ModelInput::Text(state) = request.state else {
                 unreachable!()
             };

@@ -59,6 +59,7 @@ pub struct Entry {
 /// Entry metadata
 #[derive(Debug)]
 pub struct Metadata {
+    pub(crate) priority: bool,
     /// Retained through queueing, model execution and result delivery.
     pub(crate) input_memory: Option<crate::input_memory::InputMemoryOwner>,
     pub decision: Option<infinity_v3_backend::DecisionInput>,
@@ -322,7 +323,12 @@ fn queue_blocking_task(
             QueueCommand::Append(entry, span) => {
                 let _span = span.entered();
                 queued_tokens += entry.encoding.input_ids.len();
-                entries.push_back(*entry);
+                if entry.metadata.priority {
+                    let index = entries.partition_point(|pending| pending.metadata.priority);
+                    entries.insert(index, *entry);
+                } else {
+                    entries.push_back(*entry);
+                }
                 let gauge = metrics::gauge!("infinity_queue_size", "model" => model_name.clone());
                 gauge.increment(1.0);
             }
@@ -696,6 +702,7 @@ mod tests {
                     offsets: vec![],
                 },
                 metadata: Metadata {
+                    priority: false,
                     input_memory: None,
                     decision: None,
                     client_batch: None,
@@ -709,6 +716,38 @@ mod tests {
             },
             response_rx,
         )
+    }
+
+    #[tokio::test]
+    async fn priority_drains_first_with_fifo_ties_and_hard_token_limits() {
+        let queue = test_queue(3);
+        let mut responses = Vec::new();
+        for (id, priority) in [(1, false), (2, true), (3, true), (4, false)] {
+            let (mut entry, response) = test_entry(vec![id; 2], true);
+            entry.metadata.priority = priority;
+            responses.push(response);
+            queue.append(entry).await;
+        }
+        // Canceled priority work must not consume a batch or block normal work.
+        let (mut canceled, response) = test_entry(vec![9; 2], true);
+        canceled.metadata.priority = true;
+        queue.append(canceled).await;
+        drop(response);
+        for id in [2, 3] {
+            let (_, batch) = queue.next_batch().await.unwrap();
+            assert_eq!(batch.input_ids, [id; 2]);
+        }
+        // New priority arrivals can keep passing already-waiting normal inputs.
+        let (mut entry, response) = test_entry(vec![5; 2], true);
+        entry.metadata.priority = true;
+        responses.push(response);
+        queue.append(entry).await;
+        for id in [5, 1, 4] {
+            let (_, batch) = queue.next_batch().await.unwrap();
+            assert_eq!(batch.input_ids, [id; 2]);
+        }
+        assert!(queue.next_batch().await.is_none());
+        queue.shutdown().await;
     }
 
     #[tokio::test]
@@ -972,6 +1011,7 @@ mod tests {
         let metadata = [canceled, live]
             .into_iter()
             .map(|response_tx| Metadata {
+                priority: false,
                 input_memory: None,
                 client_batch: None,
                 response_tx,
@@ -1050,6 +1090,7 @@ mod tests {
             .into_iter()
             .enumerate()
             .map(|(i, response_tx)| Metadata {
+                priority: false,
                 input_memory: None,
                 client_batch: None,
                 response_tx,

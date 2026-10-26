@@ -95,6 +95,27 @@ on the running server for the interactive API, or `/api-doc/openapi.json` for
 its OpenAPI schema. See [running the server](docs/cli.md) and
 [building Infinity V3](CONTRIBUTING.md#working-in-the-infinity-monorepo).
 
+### Request priority
+
+Add `"service_tier": "priority"` to any inference request, including embeddings,
+reranking, classification, and SystemOne decisions:
+
+```json
+{"input": ["first text", "second text"], "service_tier": "priority"}
+```
+
+Each model's existing queue drains priority inputs before normal inputs, FIFO
+within each group. Omitted tiers, `default`, `auto`, and `flex` all use normal
+priority. Every input in a client batch inherits its request tier; response
+ordering is unchanged. Vertex instances inherit the envelope tier unless they
+specify their own.
+
+This orders inputs ready for model batching. It does not preempt dispatched
+batches or reorder image downloads, tokenization, or admission limits. Continuous
+priority traffic may starve normal work. `/tokenize` and `/decode` accept the
+field for compatibility but do not use the inference queue. No server flag is
+required; requests without the field keep existing FIFO behavior.
+
 ### CLI overview
 
 Serve an embedding model on one NVIDIA GPU:
