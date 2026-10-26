@@ -477,6 +477,15 @@ class Qwen35 final : public Model {
     }
     // The three outputs represent different layouts by layer type: GDN uses [QKV, Z, A|B], whereas
     // full attention uses [query|gate, K, V].
+    if (linear && fp8_projections.count(p + "in_proj_qkvz")) {
+      auto rows = project(p + "in_proj_qkvz");
+      const auto qkv_width =
+          (2 * integer("linear_num_key_heads") + integer("linear_num_value_heads")) * 128;
+      // Both slices retain the GEMM storage; GDN reads their original row strides.
+      return {rows.narrow(1, 0, qkv_width),
+              rows.narrow(1, qkv_width, rows.size(1) - qkv_width),
+              project(p + "in_proj_ab").contiguous()};
+    }
     if (linear)
       return {project(p + "in_proj_qkv").contiguous(),
               project(p + "in_proj_z").contiguous(),
@@ -722,8 +731,8 @@ class Qwen35 final : public Model {
       const auto& alog = w(p + "A_log");
       const auto& dt = w(p + "dt_bias");
       if (integer("num_experts", 0) > 0)
-        output = qwen35_reference_delta_cuda(qkv,
-                                             z,
+        output = qwen35_reference_delta_cuda(qkv.contiguous(),
+                                             z.contiguous(),
                                              ab,
                                              conv,
                                              alog,
@@ -1204,10 +1213,16 @@ public:
           for (const auto& name : {"q_proj.weight", "k_proj.weight", "v_proj.weight"})
             weights.erase(prefix + attention + name);
         }
+        if (kind == "linear_attention") {
+          const auto attention = p + "linear_attn.";
+          auto matrix = at::cat({w(attention + "in_proj_qkv.weight"),
+                                 w(attention + "in_proj_z.weight")}, 0);
+          fp8_projections.emplace(attention + "in_proj_qkvz", std::make_unique<Fp8Linear>(matrix));
+          weights.erase(prefix + attention + "in_proj_qkv.weight");
+          weights.erase(prefix + attention + "in_proj_z.weight");
+        }
         const std::vector<std::string> projections =
-            kind == "linear_attention" ? std::vector<std::string>{"linear_attn.in_proj_qkv",
-                                                                  "linear_attn.in_proj_z",
-                                                                  "linear_attn.out_proj"}
+            kind == "linear_attention" ? std::vector<std::string>{"linear_attn.out_proj"}
                                        : std::vector<std::string>{"self_attn.o_proj"};
         for (const auto& projection : projections) {
           const auto name = p + projection;

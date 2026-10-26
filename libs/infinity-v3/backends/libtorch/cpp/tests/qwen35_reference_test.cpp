@@ -66,6 +66,20 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma,
                                                  0);
   };
   auto expected = run(full, 0);
+  if (fma && kh == 16 && vh == 16) {
+    // Merged QKV/Z projections share storage. Poison the surrounding columns so
+    // contiguous indexing or a lost slice offset changes the outputs.
+    const auto qkv_width = qkv.size(1), gate_width = z.size(1);
+    auto packed = at::full({tokens, qkv_width + gate_width + 8}, NAN, opts);
+    auto queries = packed.narrow(1, 4, qkv_width);
+    auto gates = packed.narrow(1, 4 + qkv_width, gate_width);
+    queries.copy_(qkv);
+    gates.copy_(z);
+    qkv = queries;
+    z = gates;
+    TORCH_CHECK(at::equal(run(full, 0), expected),
+                "Strided QKV/gates changed packed DeltaNet output");
+  }
   if (fma) {
     auto values = at::ones({tokens + 2, vh * 128}, opts).to(at::kFloat8_e4m3fn);
     auto scales = at::full({tokens + 2, 1}, -7.f, opts.dtype(at::kFloat));
@@ -141,7 +155,7 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma,
       suffix.block_prefix_sources = {0};
       suffix.block_cache_sources = at::zeros({1}, opts.dtype(at::kLong));
       auto history =
-          qkv.narrow(0, std::max(int64_t(0), boundary - 3), std::min(boundary, int64_t(3)));
+          qkv.narrow(0, std::max(int64_t(0), boundary - 3), std::min(boundary, int64_t(3))).contiguous();
       auto history_cu =
           at::tensor(std::vector<int32_t>{0, int32_t(history.size(0))}, opts.dtype(at::kInt));
       at::Tensor final_state;
@@ -474,17 +488,17 @@ int main(int argc, char** argv) {
     for (auto geometry : {std::pair<int64_t, int64_t>{1, 1},
                           {2, 4},
                           {4, 8},
+                          {16, 16},
                           {16, 32},
                           {16, 48},
                           {32, 64},
                           {32, 96},
                           {16, 128}}) {
       resumed_delta(device, geometry.first, geometry.second, fma);
-  resumed_delta(device, 16, 32, true);
-  for (auto geometry : {std::pair<int64_t, int64_t>{16, 16}, {16, 48}, {32, 128}})
-    resumed_delta(device, geometry.first, geometry.second, true, true);
       independent_recurrent(device, geometry.first, geometry.second, fma);
     }
+  for (auto geometry : {std::pair<int64_t, int64_t>{16, 16}, {16, 48}, {32, 128}})
+    resumed_delta(device, geometry.first, geometry.second, true, true);
   std::cout << "Independent original norms and synthetic packed sequence isolation passed\n";
   std::cout << "DeltaNet cache isolation and split/resume passed in both arithmetic modes\n";
 }

@@ -38,6 +38,7 @@ at::Tensor gemma_gated_cuda(const at::Tensor&, bool);
 /// Activate rows using the selected GELU or SiLU recipe without changing their shape.
 at::Tensor gemma_activation_cuda(const at::Tensor&, bool);
 /// Compose packed depthwise convolution, F32 gated-delta state updates, and gated RMS output.
+/// QKV and Z may be column slices of merged projections with their original row strides.
 /// Optional initial/history buffers resume block execution;
 /// cache_layer enables resident checkpoints. hopper_prefill opts qualified fresh requests into
 /// the existing BF16 Hopper prefill provider without retaining a final state.

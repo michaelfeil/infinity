@@ -30,6 +30,7 @@ __global__ void packed_conv_vector(const __nv_bfloat16* x,
                                    int channels,
                                    int kernel,
                                    int sequences,
+                                   int64_t row_stride,
                                    const int64_t* sources = nullptr,
                                    const __nv_bfloat16* history = nullptr,
                                    const int32_t* history_cu = nullptr) {
@@ -54,7 +55,7 @@ __global__ void packed_conv_vector(const __nv_bfloat16* x,
     const int source = token + j - kernel + 1;
     const __nv_bfloat16* row = nullptr;
     if (source >= int(cumulative[lo]))
-      row = x + int64_t(source) * channels;
+      row = x + int64_t(source) * row_stride;
     else if constexpr (Cached) {
       if (source >= int(cumulative[lo]) - previous)
         row = history + int64_t(history_end + source - int(cumulative[lo])) * channels;
@@ -1219,7 +1220,7 @@ namespace {
 // four original 32-lane reductions, preserving every intermediate BF16 round.
 __global__ void gdn_norm_quant(const __nv_bfloat16* x, const __nv_bfloat16* z,
                                const __nv_bfloat16* weight, __nv_fp8_e4m3* output,
-                               float* scales, int heads, float epsilon) {
+                               float* scales, int heads, float epsilon, int64_t gate_stride) {
   extern __shared__ __align__(16) unsigned char storage[];
   auto normalized = reinterpret_cast<__nv_bfloat16*>(storage);
   auto maxima = reinterpret_cast<float*>(normalized + heads * 128);
@@ -1241,7 +1242,7 @@ __global__ void gdn_norm_quant(const __nv_bfloat16* x, const __nv_bfloat16* z,
       float value = __bfloat162float(__float2bfloat16_rn(values[j] * inverse));
       value = __bfloat162float(__float2bfloat16_rn(
           value * __bfloat162float(weight[lane + j * 32])));
-      const float gate = __bfloat162float(z[int64_t(row) * width + column]);
+      const float gate = __bfloat162float(z[int64_t(row) * gate_stride + column]);
       auto rounded = __float2bfloat16_rn(value * (gate / (1.f + expf(-gate))));
       normalized[column] = rounded;
       amax = fmaxf(amax, fabsf(__bfloat162float(rounded)));
@@ -1305,6 +1306,10 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                   ab.sizes() == at::IntArrayRef({tokens, 2 * value_heads}) &&
                   conv.size(0) == channels && conv.size(-1) > 0 && conv.size(-1) <= 16,
               "Invalid packed DeltaNet tensors");
+  TORCH_CHECK(qkv.stride(1) == 1 && qkv.stride(0) >= channels && qkv.stride(0) % 4 == 0 &&
+                  reinterpret_cast<uintptr_t>(qkv.const_data_ptr()) % 8 == 0 && z.stride(1) == 1 &&
+                  z.stride(0) >= value_heads * 128,
+              "Invalid packed DeltaNet row strides");
   TORCH_CHECK(tokens <= INT32_MAX && tokens * channels <= UINT32_MAX,
               "DeltaNet token buffer exceeds kernel range");
   if (quantized_output) {
@@ -1318,7 +1323,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                 "Invalid quantized GDN output buffers");
   }
   auto stream = at::cuda::getCurrentCUDAStream(qkv.device().index());
-  auto convolution = at::empty_like(qkv),
+  auto convolution = at::empty({tokens, channels}, qkv.options()),
        qk = at::empty({tokens * key_heads, 256}, qkv.options().dtype(at::kFloat));
   auto decay = at::empty({tokens, 2 * value_heads}, qkv.options().dtype(at::kFloat));
   auto recurrence = at::empty({tokens, value_heads, 128}, qkv.options());
@@ -1331,7 +1336,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
   auto cached = prefix_recurrent(input, qkv, cache_layer, value_heads, conv.size(-1));
   if (input.prefix)
     qwen35_cached_conv_cuda(
-        qkv, conv, input, cached.history, cached.history_lengths, convolution, true);
+        qkv.contiguous(), conv, input, cached.history, cached.history_lengths, convolution, true);
   else if (history.defined()) {
     TORCH_CHECK(history.device() == qkv.device() && history.scalar_type() == qkv.scalar_type() &&
                     history.is_contiguous() && history.dim() == 2 && history.size(1) == channels &&
@@ -1356,12 +1361,13 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
         channels,
         conv.size(-1),
         input.batch,
+        qkv.stride(0),
         input.block_cache_sources.const_data_ptr<int64_t>(),
         bf(history),
         history_cumulative.const_data_ptr<int32_t>());
   } else
     packed_conv_vector<<<dim3(tokens, (channels / 4 + 255) / 256), 256, 0, stream>>>(
-        bf(qkv), bf(conv), cu, mut(convolution), channels, conv.size(-1), input.batch);
+        bf(qkv), bf(conv), cu, mut(convolution), channels, conv.size(-1), input.batch, qkv.stride(0));
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   qwen35_gdn_prepare<<<tokens * key_heads, 128, 0, stream>>>(bf(convolution),
                                                              bf(ab),
@@ -1415,7 +1421,8 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
     if (final_state)
       *final_state =
           at::empty({input.batch, value_heads, 128, 128}, qkv.options().dtype(at::kFloat));
-    // Wider column tiles amortize shared loads once enough heads fill the GPU.
+    // Three 16-head sequences already fill the wider tile; retain narrower
+    // tiles for one or two sequences to expose enough independent column work.
 #define CACHED(L)                                                                                  \
   qwen35_gdn_cached<L><<<dim3(input.batch, value_heads, L / 4), 512, 0, stream>>>(                 \
       bf(convolution),                                                                             \
@@ -1428,7 +1435,7 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
       initial.defined() ? initial.const_data_ptr<float>() : nullptr,                               \
       final_state ? final_state->mutable_data_ptr<float>() : nullptr,                              \
       initial.defined() ? input.block_cache_sources.const_data_ptr<int64_t>() : nullptr);
-    if (input.batch * value_heads >= 256) {
+    if (input.batch * value_heads >= 48) {
       CACHED(8);
     } else {
       CACHED(16);
@@ -1455,10 +1462,12 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
     gdn_norm_quant<<<tokens, threads, shared, stream>>>(
         bf(recurrence), bf(z), bf(norm),
         reinterpret_cast<__nv_fp8_e4m3*>(rows.mutable_data_ptr()),
-        scales.mutable_data_ptr<float>(), value_heads, epsilon);
-  } else
+        scales.mutable_data_ptr<float>(), value_heads, epsilon, z.stride(0));
+  } else {
+    auto gate = z.contiguous();
     qwen35_gdn_norm<<<tokens * value_heads, 128, 0, stream>>>(
-        bf(recurrence), bf(z), bf(norm), mut(output), epsilon);
+        bf(recurrence), bf(gate), bf(norm), mut(output), epsilon);
+  }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   if (input.prefix)
     prefix_recurrent_commit(input, qkv, cache_layer, conv.size(-1), cached);
