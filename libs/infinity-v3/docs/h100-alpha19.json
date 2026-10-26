@@ -4963,6 +4963,39 @@
             "container_launch_to_health_seconds": 67.72269261721522,
             "process_to_health_seconds": 67.65558409690857
           }
+        ],
+        "min_8_token_ms": 7.404160685837269,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 634,
+            "seconds": 5.004551426041871,
+            "client_cpu_fraction": 0.01932116003381259,
+            "requests_per_second": 126.68468080893201,
+            "inputs_per_second": 126.68468080893201,
+            "tokens_per_second": 1013.4774464714561,
+            "minimum_ms": 7.425298914313316,
+            "p50_ms": 7.785586174577475,
+            "p95_ms": 8.44984082505107
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 636,
+            "seconds": 5.008076057303697,
+            "client_cpu_fraction": 0.019031160850882394,
+            "requests_per_second": 126.99487642015099,
+            "inputs_per_second": 126.99487642015099,
+            "tokens_per_second": 1015.9590113612079,
+            "minimum_ms": 7.404160685837269,
+            "p50_ms": 7.735132938250899,
+            "p95_ms": 8.726352825760841
+          }
         ]
       },
       {
@@ -5051,6 +5084,39 @@
             "trial": 2,
             "container_launch_to_health_seconds": 32.54510956304148,
             "process_to_health_seconds": 32.47595715522766
+          }
+        ],
+        "min_8_token_ms": 3.866602201014757,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 1180,
+            "seconds": 5.002672435715795,
+            "client_cpu_fraction": 0.029229598155586137,
+            "requests_per_second": 235.87392841785427,
+            "inputs_per_second": 235.87392841785427,
+            "tokens_per_second": 1886.9914273428342,
+            "minimum_ms": 3.9329049177467823,
+            "p50_ms": 4.180080955848098,
+            "p95_ms": 4.719580989331007
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 1203,
+            "seconds": 5.0013587940484285,
+            "client_cpu_fraction": 0.02931436456317963,
+            "requests_per_second": 240.5346325945579,
+            "inputs_per_second": 240.5346325945579,
+            "tokens_per_second": 1924.2770607564632,
+            "minimum_ms": 3.866602201014757,
+            "p50_ms": 4.104452207684517,
+            "p95_ms": 4.597469698637724
           }
         ]
       },
@@ -5141,6 +5207,39 @@
             "container_launch_to_health_seconds": 62.2660084287636,
             "process_to_health_seconds": 62.22284483909607
           }
+        ],
+        "min_8_token_ms": 6.1491322703659534,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 765,
+            "seconds": 5.0051535768434405,
+            "client_cpu_fraction": 0.01973086389534552,
+            "requests_per_second": 152.8424629244756,
+            "inputs_per_second": 152.8424629244756,
+            "tokens_per_second": 1222.7397033958048,
+            "minimum_ms": 6.1491322703659534,
+            "p50_ms": 6.364654749631882,
+            "p95_ms": 7.599776145070791
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 775,
+            "seconds": 5.00013699894771,
+            "client_cpu_fraction": 0.01919732199741745,
+            "requests_per_second": 154.99575314898382,
+            "inputs_per_second": 154.99575314898382,
+            "tokens_per_second": 1239.9660251918706,
+            "minimum_ms": 6.1613149009644985,
+            "p50_ms": 6.3744159415364265,
+            "p95_ms": 6.863181013613939
+          }
         ]
       },
       {
@@ -5229,6 +5328,39 @@
             "trial": 2,
             "container_launch_to_health_seconds": 37.704994157887995,
             "process_to_health_seconds": 37.66295838356018
+          }
+        ],
+        "min_8_token_ms": 4.79174917563796,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 968,
+            "seconds": 5.001138206105679,
+            "client_cpu_fraction": 0.02500553171022633,
+            "requests_per_second": 193.55593868975856,
+            "inputs_per_second": 193.55593868975856,
+            "tokens_per_second": 1548.4475095180685,
+            "minimum_ms": 4.833168350160122,
+            "p50_ms": 5.000295117497444,
+            "p95_ms": 6.014577113091946
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 972,
+            "seconds": 5.0016104518435895,
+            "client_cpu_fraction": 0.025574020854193455,
+            "requests_per_second": 194.33740579331234,
+            "inputs_per_second": 194.33740579331234,
+            "tokens_per_second": 1554.6992463464987,
+            "minimum_ms": 4.79174917563796,
+            "p50_ms": 5.0569456070661545,
+            "p95_ms": 5.7516456581652164
           }
         ]
       },
@@ -5319,6 +5451,39 @@
             "container_launch_to_health_seconds": 13.005123011302203,
             "process_to_health_seconds": 12.89753270149231
           }
+        ],
+        "min_8_token_ms": 8.472566958516836,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 583,
+            "seconds": 5.000420107040554,
+            "client_cpu_fraction": 0.01619221390738707,
+            "requests_per_second": 116.59020392689413,
+            "inputs_per_second": 116.59020392689413,
+            "tokens_per_second": 932.7216314151531,
+            "minimum_ms": 8.472566958516836,
+            "p50_ms": 8.54661175981164,
+            "p95_ms": 8.716169744729996
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 585,
+            "seconds": 5.006693592760712,
+            "client_cpu_fraction": 0.015697085620265595,
+            "requests_per_second": 116.84357933264866,
+            "inputs_per_second": 116.84357933264866,
+            "tokens_per_second": 934.7486346611893,
+            "minimum_ms": 8.477254770696163,
+            "p50_ms": 8.542770054191351,
+            "p95_ms": 8.668596856296062
+          }
         ]
       },
       {
@@ -5407,6 +5572,39 @@
             "trial": 2,
             "container_launch_to_health_seconds": 7.431702394038439,
             "process_to_health_seconds": 7.396125555038452
+          }
+        ],
+        "min_8_token_ms": 0.9075389243662357,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 4784,
+            "seconds": 5.000016100239009,
+            "client_cpu_fraction": 0.11743165166446821,
+            "requests_per_second": 956.796919068184,
+            "inputs_per_second": 956.796919068184,
+            "tokens_per_second": 7654.375352545472,
+            "minimum_ms": 0.9102108888328075,
+            "p50_ms": 0.9963787160813808,
+            "p95_ms": 1.2960699386894703
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 4967,
+            "seconds": 5.0007447600364685,
+            "client_cpu_fraction": 0.11826427189930948,
+            "requests_per_second": 993.2520531129402,
+            "inputs_per_second": 993.2520531129402,
+            "tokens_per_second": 7946.0164249035215,
+            "minimum_ms": 0.9075389243662357,
+            "p50_ms": 0.9857341647148132,
+            "p95_ms": 1.1450671590864658
           }
         ]
       },
@@ -5497,6 +5695,39 @@
             "container_launch_to_health_seconds": 71.05397281935439,
             "process_to_health_seconds": 71.01426768302917
           }
+        ],
+        "min_8_token_ms": 28.947805985808372,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 164,
+            "seconds": 5.011497973930091,
+            "client_cpu_fraction": 0.010383435904932087,
+            "requests_per_second": 32.724746343933724,
+            "inputs_per_second": 32.724746343933724,
+            "tokens_per_second": 261.7979707514698,
+            "minimum_ms": 28.947805985808372,
+            "p50_ms": 30.03162005916238,
+            "p95_ms": 34.32029485702515
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 167,
+            "seconds": 5.018476780038327,
+            "client_cpu_fraction": 0.010695572053556538,
+            "requests_per_second": 33.2770295290127,
+            "inputs_per_second": 33.2770295290127,
+            "tokens_per_second": 266.2162362321016,
+            "minimum_ms": 29.35550082474947,
+            "p50_ms": 29.855373315513134,
+            "p95_ms": 31.178630888462067
+          }
         ]
       },
       {
@@ -5585,6 +5816,39 @@
             "trial": 2,
             "container_launch_to_health_seconds": 7.700591159053147,
             "process_to_health_seconds": 7.664090156555176
+          }
+        ],
+        "min_8_token_ms": 1.695313025265932,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 2822,
+            "seconds": 5.0009989202953875,
+            "client_cpu_fraction": 0.07028434010924338,
+            "requests_per_second": 564.2872643998325,
+            "inputs_per_second": 564.2872643998325,
+            "tokens_per_second": 4514.29811519866,
+            "minimum_ms": 1.6959039494395256,
+            "p50_ms": 1.7493108753114939,
+            "p95_ms": 1.927727833390236
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 2787,
+            "seconds": 5.000314800068736,
+            "client_cpu_fraction": 0.07904151114537168,
+            "requests_per_second": 557.3649082977114,
+            "inputs_per_second": 557.3649082977114,
+            "tokens_per_second": 4458.919266381691,
+            "minimum_ms": 1.695313025265932,
+            "p50_ms": 1.7622429877519608,
+            "p95_ms": 1.9549974240362644
           }
         ]
       },
@@ -5675,6 +5939,39 @@
             "container_launch_to_health_seconds": 10.103041109163314,
             "process_to_health_seconds": 10.063655614852905
           }
+        ],
+        "min_8_token_ms": 1.8951082602143288,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 2485,
+            "seconds": 5.001299771945924,
+            "client_cpu_fraction": 0.0625551553128103,
+            "requests_per_second": 496.8708362452602,
+            "inputs_per_second": 496.8708362452602,
+            "tokens_per_second": 3974.9666899620815,
+            "minimum_ms": 1.8951082602143288,
+            "p50_ms": 1.9906600937247276,
+            "p95_ms": 2.1618339233100414
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 2438,
+            "seconds": 5.001307552680373,
+            "client_cpu_fraction": 0.06364191836781083,
+            "requests_per_second": 487.472520799764,
+            "inputs_per_second": 487.472520799764,
+            "tokens_per_second": 3899.780166398112,
+            "minimum_ms": 1.8963329493999481,
+            "p50_ms": 2.0013954490423203,
+            "p95_ms": 2.3551112972199917
+          }
         ]
       },
       {
@@ -5763,6 +6060,39 @@
             "trial": 2,
             "container_launch_to_health_seconds": 9.775151685345918,
             "process_to_health_seconds": 9.73975396156311
+          }
+        ],
+        "min_8_token_ms": 3.037207294255495,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 1592,
+            "seconds": 5.002773330081254,
+            "client_cpu_fraction": 0.040680164095440736,
+            "requests_per_second": 318.22349224327996,
+            "inputs_per_second": 318.22349224327996,
+            "tokens_per_second": 2545.7879379462397,
+            "minimum_ms": 3.037207294255495,
+            "p50_ms": 3.1058003660291433,
+            "p95_ms": 3.3962922170758247
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 1555,
+            "seconds": 5.0002105217427015,
+            "client_cpu_fraction": 0.04195043510425893,
+            "requests_per_second": 310.9869060989141,
+            "inputs_per_second": 310.9869060989141,
+            "tokens_per_second": 2487.895248791313,
+            "minimum_ms": 3.050098195672035,
+            "p50_ms": 3.115846775472164,
+            "p95_ms": 3.613639622926712
           }
         ]
       },
@@ -5853,6 +6183,39 @@
             "container_launch_to_health_seconds": 79.4473085696809,
             "process_to_health_seconds": 79.38495707511902
           }
+        ],
+        "min_8_token_ms": 10.889126919209957,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 444,
+            "seconds": 5.0037895096465945,
+            "client_cpu_fraction": 0.014770481623480566,
+            "requests_per_second": 88.73274927812834,
+            "inputs_per_second": 88.73274927812834,
+            "tokens_per_second": 709.8619942250267,
+            "minimum_ms": 10.897513944655657,
+            "p50_ms": 11.19769224897027,
+            "p95_ms": 11.70425908640027
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 447,
+            "seconds": 5.002246224321425,
+            "client_cpu_fraction": 0.013747524994999363,
+            "requests_per_second": 89.35985554382368,
+            "inputs_per_second": 89.35985554382368,
+            "tokens_per_second": 714.8788443505895,
+            "minimum_ms": 10.889126919209957,
+            "p50_ms": 11.11979829147458,
+            "p95_ms": 11.538186110556126
+          }
         ]
       },
       {
@@ -5941,6 +6304,39 @@
             "trial": 2,
             "container_launch_to_health_seconds": 34.74164363881573,
             "process_to_health_seconds": 34.691022634506226
+          }
+        ],
+        "min_8_token_ms": 5.018144845962524,
+        "latency_windows": [
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 896,
+            "seconds": 5.005166681017727,
+            "client_cpu_fraction": 0.024748271115481252,
+            "requests_per_second": 179.01501730164392,
+            "inputs_per_second": 179.01501730164392,
+            "tokens_per_second": 1432.1201384131514,
+            "minimum_ms": 5.018144845962524,
+            "p50_ms": 5.3461415227502584,
+            "p95_ms": 6.59522507339716
+          },
+          {
+            "shape": "8",
+            "concurrency": 1,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 936,
+            "seconds": 5.000086142681539,
+            "client_cpu_fraction": 0.025947966954509218,
+            "requests_per_second": 187.1967748735674,
+            "inputs_per_second": 187.1967748735674,
+            "tokens_per_second": 1497.5741989885391,
+            "minimum_ms": 5.076143890619278,
+            "p50_ms": 5.231289658695459,
+            "p95_ms": 6.072002928704023
           }
         ]
       }

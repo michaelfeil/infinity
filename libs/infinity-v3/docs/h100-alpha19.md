@@ -7,56 +7,38 @@ production latency depends on the traffic mix.
 
 ## Text embeddings
 
-FP16 with CUDA graphs. Throughput is **input tokens/s** at concurrency 32.
-Latency is the fastest observed 8-token request; startup is the median of three
-starts with local weights, excluding downloads.
+FP16 on one H100 with the same server CPU allocation. Throughput is **input
+tokens/s** at concurrency 32. Latency is the fastest observed 8-token request;
+startup is the median of three fresh starts with local weights, excluding downloads.
+Infinity uses alpha.19; vLLM 0.32.0 and TEI 1.9.4 use saved October 2026 runs.
+Small differences should not be treated as decisive.
 
-| Model | 128 tokens | 512 tokens | Min. latency (ms) | Startup (s) |
-|---|---:|---:|---:|---:|
-| BGE-small | 959,425 | 2,262,919 | 0.71 | 1.41 |
-| BGE-large | 435,406 | 648,951 | 1.25 | 1.42 |
-| ModernBERT-base | 578,841 | 1,153,286 | 1.12 | 1.47 |
-| Qwen3-Embedding-0.6B | 296,344 | 418,911 | 1.50 | 1.66 |
-| Qwen3-Embedding-8B | 39,008 | 42,051 | 6.29 | 3.18 |
-| EmbeddingGemma2 | 59,401 | 150,284 | 6.69 | 2.45 |
-| pplx-embed-v1-4B | 62,968 | 69,945 | 4.40 | 3.15 |
-| UltraBERT-Embed-150M | 498,933 | 1,011,166 | 1.20 | 1.45 |
+| Model | Runtime | 128 tokens | 512 tokens | Min. latency (ms) | Startup (s) |
+|---|---|---:|---:|---:|---:|
+| BGE-small | Infinity | 959,425 | 2,262,919 | 0.71 | 1.41 |
+| BGE-small | vLLM | 108,689 | 362,949 | 3.87 | 32.48 |
+| BGE-small | TEI | 1,058,801 | 2,292,809 | 0.91 | 7.40 |
+| BGE-large | Infinity | 435,406 | 648,951 | 1.25 | 1.42 |
+| BGE-large | vLLM | 91,839 | 299,205 | 5.02 | 34.69 |
+| BGE-large | TEI | 476,558 | 612,727 | 1.70 | 7.80 |
+| ModernBERT-base | Infinity | 578,841 | 1,153,286 | 1.12 | 1.47 |
+| ModernBERT-base | vLLM | 101,425 | 339,407 | 4.79 | 37.48 |
+| ModernBERT-base | TEI | 385,416 | 551,745 | 1.90 | 10.18 |
+| Qwen3-Embedding-0.6B | Infinity | 296,344 | 418,911 | 1.50 | 1.66 |
+| Qwen3-Embedding-0.6B | vLLM | 95,049 | 305,404 | 6.15 | 62.19 |
+| Qwen3-Embedding-0.6B | TEI | 165,829 | 211,818 | 3.04 | 9.75 |
+| Qwen3-Embedding-8B | Infinity | 39,008 | 42,051 | 6.29 | 3.18 |
+| Qwen3-Embedding-8B | vLLM | 37,946 | 41,555 | 10.89 | 79.17 |
+| Qwen3-Embedding-8B | TEI | 28,098 | 29,747 | 8.47 | 12.90 |
+| EmbeddingGemma2 | Infinity | 59,401 | 150,284 | 6.69 | 2.45 |
+| EmbeddingGemma2 | vLLM | 64,291 | 204,947 | 28.95 | 71.31 |
+| pplx-embed-v1-4B | Infinity | 62,968 | 69,945 | 4.40 | 3.15 |
+| pplx-embed-v1-4B | vLLM | 57,574 | 70,348 | 7.40 | 68.65 |
+| UltraBERT-Embed-150M | Infinity | 498,933 | 1,011,166 | 1.20 | 1.45 |
 
-## Compared with vLLM and TEI
-
-FP16 on the same H100 and server CPU allocation. Infinity uses alpha.19;
-vLLM 0.32.0 and TEI 1.9.4 results are from the earlier October 2026 benchmark,
-not a fresh rerun. Small differences should not be treated as decisive.
-
-**Throughput (input tokens/s).** Each cell shows **128-token / 512-token**
-inputs at concurrency 32.
-
-| Model | Infinity | vLLM | TEI |
-|---|---:|---:|---:|
-| BGE-small | 959,425 / 2,262,919 | 108,689 / 362,949 | 1,058,801 / 2,292,809 |
-| BGE-large | 435,406 / 648,951 | 91,839 / 299,205 | 476,558 / 612,727 |
-| ModernBERT-base | 578,841 / 1,153,286 | 101,425 / 339,407 | 385,416 / 551,745 |
-| Qwen3-Embedding-0.6B | 296,344 / 418,911 | 95,049 / 305,404 | 165,829 / 211,818 |
-| Qwen3-Embedding-8B | 39,008 / 42,051 | 37,946 / 41,555 | 28,098 / 29,747 |
-| EmbeddingGemma2 | 59,401 / 150,284 | 64,291 / 204,947 | — |
-| pplx-embed-v1-4B | 62,968 / 69,945 | 57,574 / 70,348 | — |
-
-**Startup (seconds).** Median of three fresh starts with local weights;
-downloads excluded, filesystem caches uncontrolled.
-
-| Model | Infinity | vLLM | TEI |
-|---|---:|---:|---:|
-| BGE-small | 1.41 | 32.48 | 7.40 |
-| BGE-large | 1.42 | 34.69 | 7.80 |
-| ModernBERT-base | 1.47 | 37.48 | 10.18 |
-| Qwen3-Embedding-0.6B | 1.66 | 62.19 | 9.75 |
-| Qwen3-Embedding-8B | 3.18 | 79.17 | 12.90 |
-| EmbeddingGemma2 | 2.45 | 71.31 | — |
-| pplx-embed-v1-4B | 3.15 | 68.65 | — |
-
-— means no comparable measurement. TEI’s Perplexity run used FP32 and quantized
-output; EmbeddingGemma2 was unsupported in the tested TEI image. UltraBERT is
-omitted because vLLM failed its numerical check and TEI could not load it.
+Only comparable measurements are shown. TEI’s Perplexity run used FP32 and
+quantized output; EmbeddingGemma2 and UltraBERT could not load in the tested TEI
+image. UltraBERT’s vLLM run failed its numerical check.
 
 ## Reranking
 
