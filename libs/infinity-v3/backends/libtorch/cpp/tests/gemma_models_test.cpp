@@ -601,11 +601,100 @@ void embedding_layer_key_aliases() {
               "Omitted head default conflicts with explicit alias");
 }
 
+#ifdef TEI_TORCH_CUDA_KERNELS
+// Exercise the actual local/global head widths and strided packed QKV layouts.
+// Unary/gated activation and rotary must retain their low-precision stages.
+void gemma_low_precision_pointwise(c10::Device device) {
+  at::manual_seed(418);
+  for (auto dtype : {at::kHalf, at::kBFloat16}) {
+    auto options = at::TensorOptions().device(device).dtype(dtype);
+    for (int64_t width : {256, 512}) {
+      auto packed = at::randn({37, 8, width}, options);
+      auto x = packed.narrow(1, 1, 4);
+      auto scale = at::randn({width}, options).to(at::kFloat);
+      auto f = x.to(at::kFloat);
+      auto variance = f.square().mean(-1, true) + 1e-6;
+      for (bool reference : {false, true}) {
+        auto expected =
+            ((reference ? f / at::sqrt(variance) : f * at::rsqrt(variance)) * scale).to(dtype);
+        // FP32 reduction trees may shift the final BF16 value by one ULP.
+        TORCH_CHECK(at::allclose(gemma_norm_cuda(x, scale, 1e-6, reference),
+                                 expected,
+                                 dtype == at::kBFloat16 ? .008 : .002,
+                                 .002),
+                    "Gemma packed norm changed its reference arithmetic: ",
+                    at::toString(dtype),
+                    " width=",
+                    width,
+                    " reference=",
+                    reference);
+      }
+      auto positions = at::arange(37, options.dtype(at::kLong)).remainder(19);
+      auto angles = at::randn({19, width / 2}, options.dtype(at::kFloat));
+      auto cos = angles.cos().to(dtype), sin = angles.sin().to(dtype);
+      auto c = cos.index_select(0, positions).unsqueeze(1),
+           sn = sin.index_select(0, positions).unsqueeze(1);
+      auto a = x.narrow(-1, 0, width / 2), b = x.narrow(-1, width / 2, width / 2);
+      auto expected = at::cat({a * c - b * sn, b * c + a * sn}, -1);
+      TORCH_CHECK(at::equal(gemma_rotary_cuda(x, cos, sin, positions), expected),
+                  "Gemma rotary changed rounded products or packed strides");
+    }
+    if (dtype == at::kHalf) {
+      // Cover both launch layouts and a final partial group of four rows.
+      for (int64_t rows : {1023, 1024, 1025}) {
+        auto x = at::randn({rows, 512}, options);
+        auto scale = at::randn({512}, options).to(at::kFloat);
+        auto f = x.to(at::kFloat);
+        auto expected = (f / at::sqrt(f.square().mean(-1, true) + 1e-6) * scale).to(dtype);
+        TORCH_CHECK(at::allclose(gemma_norm_cuda(x, scale, 1e-6, true), expected, .002, .002),
+                    "Gemma bulk norm changed normalization or crossed row boundaries");
+        auto residual = at::randn_like(x);
+        auto before_x = x.clone(), before_residual = residual.clone();
+        for (bool reference : {false, true}) {
+          auto expected = residual + gemma_norm_cuda(x, scale, 1e-6, reference);
+          auto actual = gemma_half_residual_norm_cuda(residual, x, scale, 1e-6, reference);
+          TORCH_CHECK(at::equal(actual, expected), "Fused FP16 residual changed rounding stages");
+          TORCH_CHECK(actual.const_data_ptr() != x.const_data_ptr() &&
+                          actual.const_data_ptr() != residual.const_data_ptr() &&
+                          at::equal(x, before_x) && at::equal(residual, before_residual),
+                      "Fused FP16 residual overwrote retained input storage");
+        }
+      }
+    }
+    for (int64_t columns : {6, 4096}) {
+      auto storage = at::randn({37 * columns + 1}, options);
+      for (int64_t offset : {0, 1}) {
+        auto x = storage.narrow(0, offset, 37 * columns).view({37, columns});
+        auto constant = [&](double value) { return at::scalar_tensor(value, options); };
+        for (bool gelu : {false, true}) {
+          at::Tensor expected;
+          if (gelu) {
+            auto cube = (x * x) * x;
+            auto alpha = x + constant(.044715) * cube;
+            auto value = at::tanh(constant(M_2_SQRTPI * M_SQRT1_2) * alpha);
+            expected = (constant(.5) * x) * (constant(1.) + value);
+          } else
+            expected = x / (constant(1.) + at::exp(-x));
+          TORCH_CHECK(at::equal(gemma_activation_cuda(x, gelu), expected),
+                      "Gemma activation changed low-precision rounding");
+          auto width = columns / 2;
+          auto gated = expected.narrow(1, 0, width) * x.narrow(1, width, width);
+          TORCH_CHECK(at::equal(gemma_gated_cuda(x, gelu), gated),
+                      "Gemma gated activation changed its staged reference");
+        }
+      }
+    }
+  }
+  std::cout << "Gemma FP16/BF16 packed norm, rotary and activation parity passed\n";
+}
+#endif
+
 int main(int argc, char** argv) {
   embedding_layer_key_aliases();
   feature_cache_bounds();
 #ifdef TEI_TORCH_CUDA_KERNELS
   if (argc > 1) {
+    gemma_low_precision_pointwise(c10::Device(argv[1]));
     dynamic_fp8(c10::Device(argv[1]));
     feature_cache_stream_lifetime(c10::Device(argv[1]));
     publisher_bf16_score_readout(c10::Device(argv[1]));
@@ -1127,44 +1216,51 @@ int main(int argc, char** argv) {
         if (key.ends_with("q_norm.weight") || key.ends_with("k_norm.weight"))
           value = f.legacy ? at::full_like(value, -.95) : value * .05;
       }
-      for (auto& [key, value] : f.weights)
-        value = value.to(at::kBFloat16);
-      auto cpu = create_gemma(f.cfg, f.weights, c10::Device("cpu"), at::kBFloat16);
-      cpu->ready();
-      Weights gpu_weights;
-      for (const auto& [key, value] : f.weights)
-        gpu_weights[key] = value.to(device);
-      auto gpu = create_gemma(f.cfg, gpu_weights, device, at::kBFloat16);
-      gpu->ready();
-      for (int64_t length : {5, 129}) {
-        std::vector<int64_t> ids;
-        for (int64_t i = 0; i < length + 2; ++i)
-          ids.push_back(i % 63 + 1);
-        const std::vector<int32_t> offsets = {
-            0, static_cast<int32_t>(length), static_cast<int32_t>(length + 2)};
-        auto host = input(ids, offsets), dev = host;
-        dev.ids = host.ids.to(device);
-        dev.types = host.types.to(device);
-        dev.positions = host.positions.to(device);
-        dev.cumulative = host.cumulative.to(device);
-        auto reference = cpu->forward(host).to(at::kFloat),
-             actual = gpu->forward(dev).cpu().to(at::kFloat);
-        check_prefix_cache(*gpu, dev, 0, .01, .02);
-        if (std::string(family) == "gemma4") {
-          auto causal_cfg = f.cfg;
-          causal_cfg.values["_decision.kind"] = "option_tokens";
-          auto causal = create_gemma(causal_cfg, gpu_weights, device, at::kBFloat16);
-          causal->ready();
-          check_prefix_cache(*causal, dev, 0, .01, .02);
+      for (auto dtype : {at::kHalf, at::kBFloat16}) {
+        Weights cpu_weights;
+        for (const auto& [key, value] : f.weights)
+          cpu_weights[key] = value.to(dtype);
+        auto cpu = create_gemma(f.cfg, cpu_weights, c10::Device("cpu"), dtype);
+        cpu->ready();
+        Weights gpu_weights;
+        for (const auto& [key, value] : cpu_weights)
+          gpu_weights[key] = value.to(device);
+        auto gpu = create_gemma(f.cfg, gpu_weights, device, dtype);
+        gpu->ready();
+        for (int64_t length : {5, 129}) {
+          std::vector<int64_t> ids;
+          for (int64_t i = 0; i < length + 2; ++i)
+            ids.push_back(i % 63 + 1);
+          const std::vector<int32_t> offsets = {
+              0, static_cast<int32_t>(length), static_cast<int32_t>(length + 2)};
+          auto host = input(ids, offsets), dev = host;
+          dev.ids = host.ids.to(device);
+          dev.types = host.types.to(device);
+          dev.positions = host.positions.to(device);
+          dev.cumulative = host.cumulative.to(device);
+          auto reference = cpu->forward(host).to(at::kFloat),
+               actual = gpu->forward(dev).cpu().to(at::kFloat);
+          check_prefix_cache(*gpu, dev, 0, .01, .02);
+          if (std::string(family) == "gemma4") {
+            auto causal_cfg = f.cfg;
+            causal_cfg.values["_decision.kind"] = "option_tokens";
+            auto causal = create_gemma(causal_cfg, gpu_weights, device, dtype);
+            causal->ready();
+            check_prefix_cache(*causal, dev, 0, .01, .02);
+          }
+          TORCH_CHECK(at::allclose(reference,
+                                   actual,
+                                   dtype == at::kHalf ? .005 : .04,
+                                   dtype == at::kHalf ? .005 : .04),
+                      family,
+                      " Torch varlen-vs-CPU mismatch max_length",
+                      length,
+                      " maxabs=",
+                      (reference - actual).abs().max().item<float>());
+          std::cout << family << " " << at::toString(dtype) << " Torch" << head_dim
+                    << " GPU/CPU parity max_length=" << length
+                    << " maxabs=" << (reference - actual).abs().max().item<float>() << "\n";
         }
-        TORCH_CHECK(at::allclose(reference, actual, .04, .04),
-                    family,
-                    " Torch varlen-vs-CPU mismatch max_length",
-                    length,
-                    " maxabs=",
-                    (reference - actual).abs().max().item<float>());
-        std::cout << family << " Torch" << head_dim << " GPU/CPU parity max_length=" << length
-                  << " maxabs=" << (reference - actual).abs().max().item<float>() << "\n";
       }
     }
   }

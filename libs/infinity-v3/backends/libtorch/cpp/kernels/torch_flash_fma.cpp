@@ -58,10 +58,9 @@ bool torch_flash_fma_supported(const at::Tensor& q,
     return at::cuda::getDeviceProperties(q.device().index())->major >= 8;
   // The wide-head branch is a separate exported specialization, not a generic extension of the
   // <=256-head path. Preserve its dtype/mask constraints and dynamic-shared-memory checks together.
-  if (q.size(2) != 512 || q.scalar_type() != at::kBFloat16 || window_left != -1 ||
-      window_right != -1)
+  if (q.size(2) != 512 || window_left != -1 || window_right != -1)
     return false;
-  // The wide-head launch requires 128 KiB of dynamic shared memory.
+  // The wide-head FP16/BF16 launch requires 128 KiB of dynamic shared memory.
   // Devices with insufficient shared memory retain their efficient fallback.
   const auto* properties = at::cuda::getDeviceProperties(q.device().index());
   return properties->major >= 8 && properties->sharedMemPerBlockOptin >= 128 * 1024;
