@@ -466,6 +466,15 @@ class Qwen35 final : public Model {
       }
       return prefix_projection(x, name, input);
     };
+    if (fp8_projections.count(p + "qkv_proj")) {
+      auto rows = project(p + "qkv_proj");
+      // Norm accepts row strides. Own V separately so prefix caches cannot
+      // retain the larger merged Q/K/gate allocation through its storage.
+      const auto query = heads * 2 * dim, key_value = kv_heads * dim;
+      return {rows.narrow(1, 0, query),
+              rows.narrow(1, query, key_value),
+              rows.narrow(1, query + key_value, key_value).clone(at::MemoryFormat::Contiguous)};
+    }
     // The three outputs represent different layouts by layer type: GDN uses [QKV, Z, A|B], whereas
     // full attention uses [query|gate, K, V].
     if (linear)
@@ -709,8 +718,8 @@ class Qwen35 final : public Model {
     if (device.is_cuda()) {
 #ifdef TEI_TORCH_CUDA_KERNELS
       auto conv = w(p + "conv1d.weight").view({qkv.size(1), -1}).contiguous();
-      auto alog = w(p + "A_log").to(at::kFloat).contiguous(),
-           dt = w(p + "dt_bias").to(at::kFloat).contiguous();
+      const auto& alog = w(p + "A_log");
+      const auto& dt = w(p + "dt_bias");
       if (integer("num_experts", 0) > 0)
         output = qwen35_reference_delta_cuda(qkv,
                                              z,
@@ -1158,14 +1167,24 @@ public:
       if (fp8 && scope == "all") {
         // Keep the small DeltaNet decay/update gates, convolution and recurrent
         // state in their original precision, along with vision and output heads.
+        if (kind == "full_attention") {
+          const auto attention = p + "self_attn.";
+          auto query = w(attention + "q_proj.weight"), key = w(attention + "k_proj.weight"),
+               value = w(attention + "v_proj.weight");
+          TORCH_CHECK(query.sizes() == at::IntArrayRef({heads * 2 * dim, hidden}) &&
+                          key.sizes() == at::IntArrayRef({kv_heads * dim, hidden}) &&
+                          value.sizes() == at::IntArrayRef({kv_heads * dim, hidden}),
+                      "Invalid Qwen3.5 Q/K/V projection shapes");
+          auto matrix = at::cat({query, key, value}, 0);
+          fp8_projections.emplace(attention + "qkv_proj", std::make_unique<Fp8Linear>(matrix));
+          for (const auto& name : {"q_proj.weight", "k_proj.weight", "v_proj.weight"})
+            weights.erase(prefix + attention + name);
+        }
         const std::vector<std::string> projections =
             kind == "linear_attention" ? std::vector<std::string>{"linear_attn.in_proj_qkv",
                                                                   "linear_attn.in_proj_z",
                                                                   "linear_attn.out_proj"}
-                                       : std::vector<std::string>{"self_attn.q_proj",
-                                                                  "self_attn.k_proj",
-                                                                  "self_attn.v_proj",
-                                                                  "self_attn.o_proj"};
+                                       : std::vector<std::string>{"self_attn.o_proj"};
         for (const auto& projection : projections) {
           const auto name = p + projection;
           fp8_projections.emplace(name, std::make_unique<Fp8Linear>(w(name + ".weight")));
@@ -1181,8 +1200,9 @@ public:
         weights.erase(prefix + ap + "in_proj_a.weight");
         weights.erase(prefix + ap + "in_proj_b.weight");
         w(p + "linear_attn.conv1d.weight");
-        w(p + "linear_attn.A_log");
-        w(p + "linear_attn.dt_bias");
+        // Both CUDA and CPU recurrence consume these fixed parameters in FP32.
+        for (const auto& name : {ap + "A_log", ap + "dt_bias"})
+          weights[prefix + name] = w(name).to(at::kFloat).contiguous();
         w(p + "linear_attn.norm.weight");
       }
     }

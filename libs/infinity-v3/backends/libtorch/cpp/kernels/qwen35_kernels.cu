@@ -1145,6 +1145,67 @@ __global__ void qwen35_gdn_cached(const __nv_bfloat16* qkv,
       final_state[((int64_t(seq) * vh + head) * 128 + lane + i * Lanes) * 128 + col] = state[i];
 }
 
+namespace {
+template <class T>
+__global__ void pack_gdn_inputs(const T* values, const float* qk, const float* gates,
+                                T* q, T* k, T* v, float* alpha, float* beta,
+                                int kh, int vh, int64_t value_stride, int64_t qk_stride,
+                                int64_t gate_stride) {
+  const int64_t row = blockIdx.x;
+  const int col = blockIdx.y * blockDim.x + threadIdx.x;
+  if (col < kh * 128) {
+    const auto source = (row * kh + col / 128) * qk_stride + col % 128;
+    q[row * kh * 128 + col] = T(qk[source]);
+    k[row * kh * 128 + col] = T(qk[source + 128]);
+  }
+  if (col < vh * 128)
+    v[row * vh * 128 + col] = values[row * value_stride + 2 * kh * 128 + col];
+  if (col < vh) {
+    alpha[row * vh + col] = gates[row * gate_stride + col];
+    beta[row * vh + col] = gates[row * gate_stride + vh + col];
+  }
+}
+}
+
+std::array<at::Tensor, 5> flashinfer_gdn_pack_cuda(const at::Tensor& values,
+                                                 const at::Tensor& qk,
+                                                 const at::Tensor& gates,
+                                                 int64_t kh, int64_t vh) {
+  TORCH_CHECK(values.is_cuda() && values.dim() == 2 && values.stride(1) == 1 &&
+                  (values.scalar_type() == at::kHalf || values.scalar_type() == at::kBFloat16) &&
+                  kh > 0 && vh > 0 && vh <= 128 && vh % kh == 0,
+              "Invalid GDN provider packing geometry");
+  const auto tokens = values.size(0);
+  TORCH_CHECK(tokens <= INT32_MAX && values.size(1) == (2 * kh + vh) * 128 &&
+                  qk.device() == values.device() && qk.scalar_type() == at::kFloat &&
+                  qk.sizes() == at::IntArrayRef({tokens * kh, 256}) && qk.stride(1) == 1 &&
+                  gates.device() == values.device() && gates.scalar_type() == at::kFloat &&
+                  gates.sizes() == at::IntArrayRef({tokens, 2 * vh}) && gates.stride(1) == 1,
+              "Invalid GDN provider packing operands");
+  c10::cuda::CUDAGuard guard(values.device());
+  auto q = at::empty({tokens, kh, 128}, values.options()), k = at::empty_like(q),
+       v = at::empty({tokens, vh * 128}, values.options());
+  // Fresh allocations retain the provider's alignment even for a single gate.
+  auto alpha = at::empty({tokens, vh}, gates.options()), beta = at::empty_like(alpha);
+  auto launch = [&]<class T>() {
+    pack_gdn_inputs<<<dim3(tokens, (vh * 128 + 255) / 256), 256, 0,
+                      at::cuda::getCurrentCUDAStream()>>>(
+        reinterpret_cast<const T*>(values.const_data_ptr()), qk.const_data_ptr<float>(),
+        gates.const_data_ptr<float>(), reinterpret_cast<T*>(q.mutable_data_ptr()),
+        reinterpret_cast<T*>(k.mutable_data_ptr()), reinterpret_cast<T*>(v.mutable_data_ptr()),
+        alpha.mutable_data_ptr<float>(), beta.mutable_data_ptr<float>(), kh, vh,
+        values.stride(0), qk.stride(0), gates.stride(0));
+  };
+  if (tokens) {
+    if (values.scalar_type() == at::kBFloat16)
+      launch.template operator()<__nv_bfloat16>();
+    else
+      launch.template operator()<__half>();
+    C10_CUDA_KERNEL_LAUNCH_CHECK();
+  }
+  return {q, k, v, alpha, beta};
+}
+
 /// Build normalized Q/K and decay buffers, then select cached, chunked, or recurrent execution.
 /// Convolution history is sequence-local; prefix snapshots retain FP32 recurrent state.
 at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,

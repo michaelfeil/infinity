@@ -146,7 +146,7 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
       std::cout << family << " FP8 " << scope
                 << " drift, ownership, radix, prefix cache, graphs and block isolation passed\n";
     }
-  for (const auto* invalid : {"cpu", "float16", "moe", "quantized"}) {
+  for (const auto* invalid : {"cpu", "float16", "moe", "quantized", "qkv_shape"}) {
     auto enabled = cfg;
     enabled.values["_fp8_dynamic"] = "true";
     if (std::string(invalid) == "moe")
@@ -154,6 +154,9 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
     if (std::string(invalid) == "quantized")
       enabled.values["text_config.quantization_config.quant_method"] = "fp8";
     auto loader = weights;
+    if (std::string(invalid) == "qkv_shape")
+      loader["model.layers.1.self_attn.q_proj.weight"] =
+          at::zeros({80, 16}, weights.at("model.layers.1.self_attn.q_proj.weight").options());
     bool rejected = false;
     try {
       auto model = create_qwen35(enabled,

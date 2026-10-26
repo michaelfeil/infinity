@@ -1,4 +1,5 @@
 #include "kernels/qwen35_reference.h"
+#include "kernels/flashinfer_gdn.h"
 #include "helpers/fp8_linear.h"
 #include "kernels/qwen35_recurrent.h"
 #include <array>
@@ -305,6 +306,27 @@ at::Tensor independent_norm(const at::Tensor& x, const at::Tensor& gamma, float 
 int main(int argc, char** argv) {
   c10::Device device(argc > 1 ? argv[1] : "cuda:0");
   at::manual_seed(717);
+  for (auto dtype : {at::kHalf, at::kBFloat16})
+    for (auto shape : {std::array<int64_t, 3>{1, 1, 1}, {17, 2, 4}, {255, 16, 16}}) {
+      const auto [tokens, kh, vh] = shape;
+      const auto channels = (2 * kh + vh) * 128;
+      auto options = at::TensorOptions().device(device);
+      auto values = at::randn({tokens, channels + 8}, options.dtype(dtype)).narrow(1, 0, channels);
+      auto qk = at::randn({tokens * kh, 264}, options).narrow(1, 0, 256);
+      auto gates = at::randn({tokens, 2 * vh + 1}, options).narrow(1, 0, 2 * vh);
+      auto packed = infinity::flashinfer_gdn_pack_cuda(values, qk, gates, kh, vh);
+      auto pairs = qk.view({tokens, kh, 256});
+      const std::array<at::Tensor, 5> expected = {
+          pairs.narrow(2, 0, 128).to(dtype).contiguous(),
+          pairs.narrow(2, 128, 128).to(dtype).contiguous(),
+          values.narrow(1, 2 * kh * 128, vh * 128).contiguous(),
+          gates.narrow(1, 0, vh).contiguous(), gates.narrow(1, vh, vh).contiguous()};
+      for (size_t i = 0; i < packed.size(); ++i)
+        TORCH_CHECK(at::equal(packed[i], expected[i]) && packed[i].is_contiguous() &&
+                        reinterpret_cast<uintptr_t>(packed[i].const_data_ptr()) % 16 == 0,
+                    "GDN packing changed provider values, casts or alignment");
+    }
+  std::cout << "GDN provider packing values, casts, strides and alignment passed\n";
   for (int width : {1, 4, 7, 8, 16, 32, 33, 64, 128, 256, 384, 1024, 2048, 4096, 5120, 8192})
     for (int layout : {0, 1, 2}) {
       bool strided = layout == 1;

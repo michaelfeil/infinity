@@ -34,6 +34,7 @@ DEALINGS IN THE SOFTWARE.
 #include <cuda_fp16.h>
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
+#include "kernels/fp8_quant_pair.cuh"
 #include <climits>
 #include <cstdint>
 
@@ -60,6 +61,7 @@ __device__ void tei_fp8_quant_row(const T* x, __nv_fp8_e4m3* y, float* scales, i
   }
   __syncthreads();
   float s = partial[0];
+
   if (threadIdx.x == 0)
     scales[row] = s;
   for (int i = threadIdx.x; i < k; i += 128)
@@ -109,17 +111,18 @@ __global__ void quant_vector(const T* x, __nv_fp8_e4m3* y, float* scales, int wi
   }
   __syncthreads();
   const float scale = partial[0];
+
   if (!threadIdx.x)
     scales[row] = scale;
 #pragma unroll
   for (int group = 0; group < 3; ++group) {
     if (threadIdx.x + group * 256 >= packs)
       continue;
-    QuantPack<__nv_fp8_e4m3, 8> pack;
+    QuantPack<__nv_fp8x2_e4m3, 4> pack;
 #pragma unroll
-    for (int j = 0; j < 8; ++j)
-      pack.value[j] = __nv_fp8_e4m3(__fdiv_rn(values[group][j], scale));
-    reinterpret_cast<QuantPack<__nv_fp8_e4m3, 8>*>(y)[row * packs + threadIdx.x + group * 256] =
+    for (int j = 0; j < 4; ++j)
+      pack.value[j] = fp8_quantize_pair(values[group][2 * j], values[group][2 * j + 1], scale);
+    reinterpret_cast<QuantPack<__nv_fp8x2_e4m3, 4>*>(y)[row * packs + threadIdx.x + group * 256] =
         pack;
   }
 }
@@ -139,7 +142,7 @@ std::pair<at::Tensor, at::Tensor> fp8_quantize_rows(const at::Tensor& input) {
   if (input.size(0)) {
     auto stream = at::cuda::getCurrentCUDAStream(input.device().index());
     auto* target = reinterpret_cast<__nv_fp8_e4m3*>(output.data_ptr());
-    if (input.size(1) >= 4096 && input.size(1) <= 6144 && input.size(1) % 8 == 0 &&
+    if (input.size(1) >= 1024 && input.size(1) <= 6144 && input.size(1) % 8 == 0 &&
         reinterpret_cast<uintptr_t>(input.const_data_ptr()) % 16 == 0) {
       if (input.scalar_type() == at::kHalf)
         quant_vector<<<input.size(0), 256, 0, stream>>>(

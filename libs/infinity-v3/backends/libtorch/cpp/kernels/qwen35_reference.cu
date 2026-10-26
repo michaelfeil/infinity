@@ -35,6 +35,7 @@ DEALINGS IN THE SOFTWARE.
 #include <c10/cuda/CUDAException.h>
 #include <cuda_bf16.h>
 #include <cuda_fp8.h>
+#include "kernels/fp8_quant_pair.cuh"
 #define gdn_sum tei_reference_gdn_sum
 #define qwen35_conv_bf16 tei_reference_qwen35_conv_bf16
 #define qwen35_gdn_prepare tei_reference_qwen35_gdn_prepare
@@ -91,20 +92,21 @@ __global__ void norm_tree(const __nv_bfloat16* x,
 #pragma unroll
   for (int j = 0; j < V; ++j)
     sums[tid + j] = sum[j];
-  for (int s = threads / 2; s >= 32; s >>= 1) {
+  for (int s = threads / 2; s >= 32 * V; s >>= 1) {
     __syncthreads();
 #pragma unroll
     for (int j = 0; j < V; ++j)
       if (tid + j < s)
         sums[tid + j] = __fadd_rn(sums[tid + j], sums[tid + j + s]);
   }
-  if (tid < 32) {
+  // Once the remaining logical lanes fit in one warp, keep the same tree in registers.
+  if (tid < 32 * V) {
     float value[V];
 #pragma unroll
     for (int j = 0; j < V; ++j)
       value[j] = sums[tid + j];
     const unsigned mask = __activemask();
-    for (int s = min(threads / 2, 16); s >= V; s >>= 1)
+    for (int s = min(threads / 2, 16 * V); s >= V; s >>= 1)
 #pragma unroll
       for (int j = 0; j < V; ++j)
         value[j] = __fadd_rn(value[j], __shfl_down_sync(mask, value[j], s / V));
@@ -161,14 +163,21 @@ __global__ void norm_tree(const __nv_bfloat16* x,
     }
     __syncthreads();
     const float scale = sums[0];
+
     if (!threadIdx.x)
       scales[row] = scale;
     for (int d = tid; d < width; d += threads) {
       const auto values = *reinterpret_cast<const NormValues<V>*>(out + int64_t(row) * width + d);
+      if constexpr (V == 4) {
 #pragma unroll
-      for (int j = 0; j < V; ++j)
-        quantized[int64_t(row) * width + d + j] =
-            __nv_fp8_e4m3(__fdiv_rn(__bfloat162float(values.values[j]), scale));
+        for (int j = 0; j < V / 2; ++j)
+          reinterpret_cast<__nv_fp8x2_e4m3*>(quantized + int64_t(row) * width + d)[j] =
+              fp8_quantize_pair(__bfloat162float(values.values[2 * j]),
+                                 __bfloat162float(values.values[2 * j + 1]), scale);
+      } else {
+        quantized[int64_t(row) * width + d] =
+            __nv_fp8_e4m3(__fdiv_rn(__bfloat162float(values.values[0]), scale));
+      }
     }
   }
 }
