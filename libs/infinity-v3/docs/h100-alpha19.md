@@ -1,17 +1,18 @@
 # H100 performance
 
-Infinity V3 alpha.19 on **one H100 80 GB**, with eight CPU threads and 64 GiB RAM.
+Infinity V3 on **one H100 80 GB**, with eight CPU threads and 64 GiB RAM.
 End-to-end HTTP throughput, request latency and startup time for text embeddings,
-reranking, image embeddings and decision requests. Measured October 25–26, 2026;
-production latency depends on the traffic mix.
+reranking, image embeddings and decision requests. Updated as models are
+rebenchmarked; last updated October 26, 2026. Production latency depends on the
+traffic mix.
 
 ## Text embeddings
 
-FP16 on one H100 with the same server CPU allocation. Throughput is **input
-tokens/s** at concurrency 32. Latency is the fastest observed 8-token request;
+FP16 unless marked BF16, with the same server CPU allocation. Throughput is
+**input tokens/s** at concurrency 32. Latency is the fastest observed 8-token request;
 startup is the median of three fresh starts with local weights, excluding downloads.
-Infinity uses alpha.19; vLLM 0.32.0 and TEI 1.9.4 use saved October 2026 runs.
-Small differences should not be treated as decisive.
+Comparisons use vLLM 0.32.0 and TEI 1.9.4. Small differences should not be
+treated as decisive; build revisions are recorded in the measurement data.
 
 | Model | Runtime | 128 tokens | 512 tokens | Min. latency (ms) | Startup (s) |
 |---|---|---:|---:|---:|---:|
@@ -24,14 +25,16 @@ Small differences should not be treated as decisive.
 | ModernBERT-base | Infinity | 578,841 | 1,153,286 | 1.12 | 1.47 |
 | ModernBERT-base | vLLM | 101,425 | 339,407 | 4.79 | 37.48 |
 | ModernBERT-base | TEI | 385,416 | 551,745 | 1.90 | 10.18 |
-| Qwen3-Embedding-0.6B | Infinity | 296,344 | 418,911 | 1.50 | 1.66 |
-| Qwen3-Embedding-0.6B | vLLM | 95,049 | 305,404 | 6.15 | 62.19 |
-| Qwen3-Embedding-0.6B | TEI | 165,829 | 211,818 | 3.04 | 9.75 |
-| Qwen3-Embedding-8B | Infinity | 39,008 | 42,051 | 6.29 | 3.18 |
-| Qwen3-Embedding-8B | vLLM | 37,946 | 41,555 | 10.89 | 79.17 |
-| Qwen3-Embedding-8B | TEI | 28,098 | 29,747 | 8.47 | 12.90 |
-| EmbeddingGemma2 | Infinity | 59,401 | 150,284 | 6.69 | 2.45 |
-| EmbeddingGemma2 | vLLM | 64,291 | 204,947 | 28.95 | 71.31 |
+| Qwen3-Embedding-0.6B | Infinity | 296,030 | 423,359 | 1.49 | 1.64 |
+| Qwen3-Embedding-0.6B | Infinity (BF16) | 297,720 | 431,569 | 1.48 | 1.58 |
+| Qwen3-Embedding-0.6B | vLLM | 93,012 | 312,847 | 6.13 | 64.66 |
+| Qwen3-Embedding-0.6B | TEI | 166,755 | 207,355 | 2.96 | 9.86 |
+| Qwen3-Embedding-8B | Infinity | 37,724 | 41,770 | 6.25 | 3.31 |
+| Qwen3-Embedding-8B | Infinity (BF16) | 39,424 | 42,936 | 6.89 | 3.00 |
+| Qwen3-Embedding-8B | vLLM | 38,442 | 41,387 | 10.80 | 84.40 |
+| Qwen3-Embedding-8B | TEI | 28,422 | 30,682 | 8.46 | 13.03 |
+| EmbeddingGemma2 | Infinity | 241,031 | 410,507 | 2.17 | 2.52 |
+| EmbeddingGemma2 | vLLM | 62,830 | 212,170 | 28.58 | 72.14 |
 | pplx-embed-v1-4B | Infinity | 62,968 | 69,945 | 4.40 | 3.15 |
 | pplx-embed-v1-4B | vLLM | 57,574 | 70,348 | 7.40 | 68.65 |
 | UltraBERT-Embed-150M | Infinity | 498,933 | 1,011,166 | 1.20 | 1.45 |
@@ -77,14 +80,15 @@ state across its yes/no questions; state length below is in **words**, not token
 
 ## Measurement notes
 
-Throughput uses two five-second windows after warmup. Reranking, image and
+Throughput uses two five-second windows after warmup (six for Qwen3-8B BF16
+at 128 tokens, including confirmation runs). Reranking, image and
 decision rows report the best median across tested concurrency levels.
 Text embeddings use JSON float outputs, a 16K batch-token budget and no Radix MLP;
 DeBERTa uses 8K. Startup storage caches were uncontrolled.
 [Measurement data](h100-alpha19.json) contains mixed-length workloads, individual
-runs, checkpoint names, image identity and numerical checks.
+runs, checkpoint names, commit SHAs and numerical checks.
 
-**Accuracy:** not evaluated on a task benchmark. † Qwen3-VL BF16 failed one
-numerical parity check (0.998545 cosine; threshold 0.999). Elephant passed the
-sampled choice checks but showed probability differences up to 1.87 percentage
-points. Validation details and reference outputs are described in the data file.
+**Accuracy:** these are timing benchmarks, not task-accuracy evaluations.
+† Qwen3-VL BF16 failed one numerical parity check (0.998545 cosine; threshold
+0.999). Elephant’s sampled choices matched, with probability differences up to
+1.87 percentage points. Numerical checks are included in the data file.
