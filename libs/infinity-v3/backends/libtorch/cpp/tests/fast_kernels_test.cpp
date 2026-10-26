@@ -65,6 +65,19 @@ at::Tensor round_model_double(const at::Tensor& values, at::ScalarType dtype) {
 int main(int argc, char** argv) {
   c10::InferenceMode guard;
   {
+    for (int batch : {0, 1, 256, 257, 512, 1024, 1025, 4096})
+      for (int group : {1, 2, 6, 7})
+        for (int tile : {128, 192}) {
+          auto lengths = at::arange(batch, at::TensorOptions().dtype(at::kInt)).remainder(197) + 1;
+          auto cumulative =
+              at::cat({at::zeros({1}, lengths.options()), lengths.cumsum(0, at::kInt)});
+          auto counts = at::floor_divide(lengths * group + tile - 1, tile);
+          auto expected = at::cat({at::zeros({1}, counts.options()), counts.cumsum(0, at::kInt)});
+          auto actual = infinity::attention_tile_prefix(cumulative.to(at::kCUDA), tile, group);
+          TORCH_CHECK(at::equal(actual.cpu(), expected), "Packed attention tile prefix changed");
+        }
+  }
+  {
     // Captured strict failure: generic Half4096 RMS returned -8.28125 at
     // row14,col3320; original Candle4096, FP32 and direct FP64 return -8.2734375.
     // Restore these exact operands rather than selecting a passing random seed.

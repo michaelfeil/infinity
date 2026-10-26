@@ -7,6 +7,9 @@
 #include <utility>
 
 namespace infinity {
+// Prefix counts for FA4's packed query-tile scheduler; result is CUDA int32 [batch + 1].
+at::Tensor attention_tile_prefix(const at::Tensor& cumulative, int tile, int group);
+
 // Eight-expert CUDA router: pinned Candle descending bitonic ordering,
 // including its strict-comparison tie behavior. FP32 scores, int64 indices.
 std::pair<at::Tensor, at::Tensor> nomic_router_topk8(const at::Tensor& probabilities, int64_t k);
