@@ -35,12 +35,6 @@ jobs:
           working-directory: ${{ matrix.package.workdir }}
           cache-key: release
 
-      - name: Copy readme
-        if: matrix.package.workdir == 'libs/infinity_emb'
-        id: readme-copy
-        run: |
-          cp ../../README.md .
-
       - name: Build project for distribution
         run: poetry build
 
