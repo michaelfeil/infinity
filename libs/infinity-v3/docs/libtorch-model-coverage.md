@@ -1,5 +1,8 @@
 # Experimental native LibTorch model coverage
 
+For named checkpoints, launch settings and request examples, use the
+[supported model catalog](supported-models.md).
+
 This lists implemented model paths, not a general accuracy or performance
 qualification.
 All inference preserves actual token counts; CUDA uses packed attention or

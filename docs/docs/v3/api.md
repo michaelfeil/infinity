@@ -8,6 +8,6 @@ source revision. Use the running server's schema when integrating a deployed ver
 
 Common endpoints include `/v1/embeddings`, `/rerank`, `/v1/classify` and
 `/v1/systemone`. Tasks and modalities depend on the loaded checkpoint.
-See [supported models](docs/libtorch-model-coverage.md),
+See [supported models and configuration](docs/supported-models.md),
 [decision inputs](docs/cli.md#structured-decision-inputs) and
 [embedding response formats](docs/embedding-tensors.md).

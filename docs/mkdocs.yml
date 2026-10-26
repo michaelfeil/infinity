@@ -19,12 +19,13 @@ nav:
       - Introduction: v3/README.md
       - Quickstart: v3/quickstart.md
       - CLI and requests: v3/docs/cli.md
-      - Supported models: v3/docs/libtorch-model-coverage.md
+      - Supported models and configuration: v3/docs/supported-models.md
       - Performance: v3/docs/performance.md
       - API: v3/api.md
       - Embedding formats and clients: v3/docs/embedding-tensors.md
       - Licensing: v3/LICENSING.md
       - Internals:
+          - Architecture coverage: v3/docs/libtorch-model-coverage.md
           - LibTorch backend: v3/docs/libtorch-backend.md
           - Build configuration: v3/docs/build-configuration.md
           - Prefix caching: v3/docs/libtorch-prefix-cache.md
