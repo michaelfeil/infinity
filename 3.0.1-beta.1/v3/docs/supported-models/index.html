@@ -1,0 +1,2839 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://michaelfeil.eu/infinity/3.0.1-beta.1/v3/docs/supported-models/">
+      
+      
+        <link rel="prev" href="../cli/">
+      
+      
+        <link rel="next" href="../performance/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Supported models and configuration - Infinity</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#supported-models-and-configuration" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Infinity" class="md-header__button md-logo" aria-label="Infinity" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Infinity
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Supported models and configuration
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/michaelfeil/infinity/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Infinity" class="md-nav__button md-logo" aria-label="Infinity" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Infinity
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/michaelfeil/infinity/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infinity v3
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Infinity v3
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and requests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported models and configuration
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported models and configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#find-a-model-by-task" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Find a model by task
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-launch-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common launch configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dense-text-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dense text embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multimodal-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multimodal embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#late-interaction-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Late-interaction embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rerankers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rerankers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#token-classification-and-ner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token classification and NER
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#text-classification-and-reward-scoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Text classification and reward scoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#typed-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Typed decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sparse-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparse embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Request examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dense-embedding-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dense embedding request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multimodal-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multimodal request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reranking-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reranking request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#token-classification-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token classification request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reward-scoring-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reward scoring request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sentiment-classification-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sentiment classification request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sparse-embedding-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparse embedding request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d3-mini-decision-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D3-mini decision request
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-licenses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model licenses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#similar-models-that-need-additional-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Similar models that need additional integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture-support-beyond-this-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture support beyond this catalog
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../embedding-tensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding formats and clients
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../LICENSING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Licensing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_9" id="__nav_2_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-model-coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-backend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LibTorch backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../build-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-prefix-cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prefix caching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../modernbert-startup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Startup performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CONTRIBUTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python / v2
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python / v2
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli_v2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python_engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../embed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../client_infinity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Client
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../swagger_ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../benchmarking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../telemetry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Telemetry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#find-a-model-by-task" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Find a model by task
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#common-launch-configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Common launch configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dense-text-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dense text embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#multimodal-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multimodal embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#late-interaction-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Late-interaction embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rerankers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rerankers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#token-classification-and-ner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token classification and NER
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#text-classification-and-reward-scoring" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Text classification and reward scoring
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#typed-decisions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Typed decisions
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sparse-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparse embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#request-examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request examples
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Request examples">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dense-embedding-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dense embedding request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#multimodal-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Multimodal request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reranking-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reranking request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#token-classification-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Token classification request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reward-scoring-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reward scoring request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sentiment-classification-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sentiment classification request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#sparse-embedding-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sparse embedding request
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#d3-mini-decision-request" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        D3-mini decision request
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-licenses" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model licenses
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#similar-models-that-need-additional-integration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Similar models that need additional integration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#architecture-support-beyond-this-catalog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Architecture support beyond this catalog
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/michaelfeil/infinity/edit/main/libs/infinity-v3/docs/supported-models.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="supported-models-and-configuration">Supported models and configuration</h1>
+<p>Infinity v3 serves dense, sparse and token-vector embeddings, reranking,
+classification, and structured decisions with the native LibTorch backend.
+Choose a checkpoint below by task. The <a href="../libtorch-model-coverage/">architecture coverage</a>
+explains the underlying model paths and their limitations.</p>
+<p>Use documentation matching your image version; <code>main</code> tracks ongoing development.
+Use an image containing the model integration you need. Listing a checkpoint describes its supported
+task, not an accuracy or throughput guarantee for every precision and GPU.
+The support-basis column identifies the implemented architecture and task head
+or pooling used by each checkpoint. Related checkpoints are included when their
+published configuration matches that path; sharing a training organization does
+not by itself establish support. Checkpoint-specific execution and architecture
+fixture coverage are different levels of validation.</p>
+<h2 id="find-a-model-by-task">Find a model by task</h2>
+<table>
+<thead>
+<tr>
+<th>Task</th>
+<th>Endpoint</th>
+<th>Output</th>
+<th>Model list</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Text retrieval, similarity, clustering</td>
+<td><code>/v1/embeddings</code></td>
+<td>One dense vector per input</td>
+<td><a href="#dense-text-embeddings">Dense text embeddings</a></td>
+</tr>
+<tr>
+<td>Image, document or audio retrieval</td>
+<td><code>/v1/embeddings</code></td>
+<td>One dense vector per input</td>
+<td><a href="#multimodal-embeddings">Multimodal embeddings</a></td>
+</tr>
+<tr>
+<td>Token-vector retrieval / MaxSim</td>
+<td><code>/v1/embeddings</code></td>
+<td>A token-vector matrix per input</td>
+<td><a href="#late-interaction-embeddings">Late-interaction embeddings</a></td>
+</tr>
+<tr>
+<td>Query/document relevance</td>
+<td><code>/rerank</code></td>
+<td>Ranked document scores</td>
+<td><a href="#rerankers">Rerankers</a></td>
+</tr>
+<tr>
+<td>PII, named entities, medical entities</td>
+<td><code>/predict_tokens</code></td>
+<td>Token labels or aggregated spans</td>
+<td><a href="#token-classification-and-ner">Token classification and NER</a></td>
+</tr>
+<tr>
+<td>Sentiment, sequence labels, reward scoring</td>
+<td><code>/v1/classify</code></td>
+<td>Class scores or raw reward logits</td>
+<td><a href="#text-classification-and-reward-scoring">Classification and reward scoring</a></td>
+</tr>
+<tr>
+<td>Structured questions and decisions</td>
+<td><code>/v1/systemone</code></td>
+<td>Typed answers</td>
+<td><a href="#typed-decisions">Typed decisions</a></td>
+</tr>
+<tr>
+<td>Vocabulary-based sparse retrieval</td>
+<td><code>/embed_sparse</code></td>
+<td>Vocabulary index/value pairs</td>
+<td><a href="#sparse-embeddings">Sparse embeddings</a></td>
+</tr>
+</tbody>
+</table>
+<h2 id="common-launch-configuration">Common launch configuration</h2>
+<p>Use a published NVIDIA image from the
+<a href="https://github.com/michaelfeil/infinity/pkgs/container/infinity_v3">container registry</a>.
+The example pins <code>nvidia-3.0.0</code>; pin a version or digest for reproducible deployments.
+CUDA requires an Ampere/SM80 or newer GPU and NVIDIA Container Toolkit.</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="m">8000</span>:8000<span class="w"> </span>-v<span class="w"> </span>infinity-cache:/data<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--model-id<span class="w"> </span>BAAI/bge-small-en-v1.5<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--max-batch-tokens<span class="w"> </span><span class="m">8192</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span>--hostname<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
+</span></code></pre></div>
+<p>Replace <code>--model-id</code> and the task settings with a table row below. The native
+image selects LibTorch automatically. For a locally installed binary, pass the
+same flags to <code>infinity_v3</code>. Tables use BF16 compute unless a row specifies a
+different <code>--dtype</code>; replace the common dtype flag in that case. Checkpoint
+storage precision does not set compute precision.
+For CPU, use a LibTorch CPU build, <code>--torch-device cpu</code> and <code>--dtype float32</code>.
+The published <code>cpu-*</code> image uses Candle and has different model coverage.</p>
+<p><code>--max-batch-tokens</code> is the total batch capacity, not a model's context length or
+a memory guarantee. These are starting configurations: lower the budget for
+smaller GPUs and leave room for activations, media tokens and warmup.
+<code>--max-sequence-length</code> can impose a separate per-input cap. Automatic text
+truncation is enabled by default; use <code>--auto-truncate=false</code> to reject oversized
+text inputs instead. Some tasks and media inputs reject oversized inputs regardless
+of this setting. Disable truncation when dropping text would change the intended
+result. See <a href="../cli/#sequence-length-and-batch-capacity">sequence and batch limits</a>.</p>
+<p>Use <code>--revision</code> to pin a Hugging Face checkpoint, or pass a local directory
+containing its weights, tokenizer, pooling/head configuration and task sidecars.
+Gated checkpoints also require access credentials. A base language model needs
+a trained retrieval or classification head to provide that task's intended scores.</p>
+<p>All visible CUDA GPUs are used by default. Each GPU loads a full replica,
+including every MoE expert. To select only two or four visible GPUs, add
+<code>--backend-device-ids 0,1</code> or <code>--backend-device-ids 0,1,2,3</code>.
+Every selected GPU must fit the full model; this does not shard weights.
+Wait for <code>/health</code> before sending traffic; model warmup is part of startup.</p>
+<h2 id="dense-text-embeddings">Dense text embeddings</h2>
+<p>Use <code>/v1/embeddings</code> with <code>input</code> strings. Pooling is read from the checkpoint
+metadata automatically; the examples omit redundant overrides. Keep the saved
+<code>1_Pooling/config.json</code> when copying a checkpoint to a local directory. Explicit
+<code>--pooling splade</code> selects the sparse task described below.</p>
+<p>For Nomic v1.5, prefix retrieval queries with <code>search_query:</code> and documents with
+<code>search_document:</code>. It returns 768 dimensions by default. Qwen3 queries use the
+checkpoint's instruction format (<code>Instruct: ...\nQuery: ...</code>); documents use their
+ordinary text. E5 v2 and non-instruct multilingual E5 use <code>query:</code> and
+<code>passage:</code> prefixes, including for non-English text. E5-Mistral, multilingual
+E5 large instruct and GTE-Qwen2 use their model-card instruction/query formats.
+Jina code models distinguish code and text retrieval tasks through their trained
+prompts. Nomic v1 uses the same task-prefix convention as v1.5.
+GTE, BGE, Snowflake and Mixedbread also have model-specific
+retrieval instructions: follow the linked model card consistently when building
+and querying an index. A saved <code>prompt_name</code> can select a checkpoint prompt;
+do not also insert the same prefix manually.</p>
+<p>Perplexity Embed v1 supports floating-point output only; contextual variants are
+unsupported. BGE-M3 here provides dense embeddings. Nemotron Embed 3 supports
+text; 3.5 additionally supports document images. Use their query/document
+instructions and checkpoint formatting; they are separate from Nemotron ColEmbed.</p>
+<table>
+<thead>
+<tr>
+<th>Checkpoint</th>
+<th>Native implementation / support basis</th>
+<th>Additional launch settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://huggingface.co/Alibaba-NLP/gte-base-en-v1.5">Alibaba-NLP/gte-base-en-v1.5</a></td>
+<td>GTE rotary encoder + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5">Alibaba-NLP/gte-large-en-v1.5</a></td>
+<td>GTE rotary encoder + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Alibaba-NLP/gte-multilingual-base">Alibaba-NLP/gte-multilingual-base</a></td>
+<td>GTE rotary encoder + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct">Alibaba-NLP/gte-Qwen2-1.5B-instruct</a></td>
+<td>Qwen2 + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct">Alibaba-NLP/gte-Qwen2-7B-instruct</a></td>
+<td>Qwen2 + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/BAAI/bge-base-en-v1.5">BAAI/bge-base-en-v1.5</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/BAAI/bge-base-zh-v1.5">BAAI/bge-base-zh-v1.5</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/BAAI/bge-large-en-v1.5">BAAI/bge-large-en-v1.5</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/BAAI/bge-large-zh-v1.5">BAAI/bge-large-zh-v1.5</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/BAAI/bge-m3">BAAI/bge-m3</a></td>
+<td>XLM-RoBERTa + sentence pooling</td>
+<td><code>--max-batch-tokens 16384</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/BAAI/bge-small-en-v1.5">BAAI/bge-small-en-v1.5</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/BAAI/bge-small-zh-v1.5">BAAI/bge-small-zh-v1.5</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/dmis-lab/UltraBERT-Embed-150M">dmis-lab/UltraBERT-Embed-150M</a></td>
+<td>UltraBERT + sentence pooling</td>
+<td><code>--max-batch-tokens 32768</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/intfloat/e5-base-v2">intfloat/e5-base-v2</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/intfloat/e5-large-v2">intfloat/e5-large-v2</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/intfloat/e5-mistral-7b-instruct">intfloat/e5-mistral-7b-instruct</a></td>
+<td>Mistral + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/intfloat/e5-small-v2">intfloat/e5-small-v2</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/intfloat/multilingual-e5-base">intfloat/multilingual-e5-base</a></td>
+<td>XLM-RoBERTa + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/intfloat/multilingual-e5-large">intfloat/multilingual-e5-large</a></td>
+<td>XLM-RoBERTa + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/intfloat/multilingual-e5-large-instruct">intfloat/multilingual-e5-large-instruct</a></td>
+<td>XLM-RoBERTa + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/intfloat/multilingual-e5-small">intfloat/multilingual-e5-small</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/jinaai/jina-code-embeddings-0.5b">jinaai/jina-code-embeddings-0.5b</a></td>
+<td>Qwen2 + sentence pooling; <a href="#model-licenses">non-commercial license</a></td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/jinaai/jina-code-embeddings-1.5b">jinaai/jina-code-embeddings-1.5b</a></td>
+<td>Qwen2 + sentence pooling; <a href="#model-licenses">non-commercial license</a></td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/jinaai/jina-embeddings-v2-base-code">jinaai/jina-embeddings-v2-base-code</a></td>
+<td>JinaCode encoder + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/jinaai/jina-embeddings-v2-base-en">jinaai/jina-embeddings-v2-base-en</a></td>
+<td>Jina BERT/ALiBi + sentence pooling</td>
+<td><code>--max-batch-tokens 2048</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/jinaai/jina-embeddings-v2-small-en">jinaai/jina-embeddings-v2-small-en</a></td>
+<td>Jina BERT/ALiBi + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1">mixedbread-ai/mxbai-embed-large-v1</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nomic-ai/modernbert-embed-base">nomic-ai/modernbert-embed-base</a></td>
+<td>ModernBERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nomic-ai/nomic-embed-text-v1">nomic-ai/nomic-embed-text-v1</a></td>
+<td>Nomic BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5">nomic-ai/nomic-embed-text-v1.5</a></td>
+<td>Nomic BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe">nomic-ai/nomic-embed-text-v2-moe</a></td>
+<td>Nomic BERT MoE + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16">nvidia/Nemotron-3-Embed-1B-BF16</a></td>
+<td>Bidirectional Ministral3 + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nvidia/Nemotron-3-Embed-8B-BF16">nvidia/Nemotron-3-Embed-8B-BF16</a></td>
+<td>Bidirectional Ministral3 + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/perplexity-ai/pplx-embed-v1-0.6b">perplexity-ai/pplx-embed-v1-0.6b</a></td>
+<td>Bidirectional Qwen3 + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/perplexity-ai/pplx-embed-v1-4b">perplexity-ai/pplx-embed-v1-4b</a></td>
+<td>Bidirectional Qwen3 + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B">Qwen/Qwen3-Embedding-0.6B</a></td>
+<td>Qwen3 + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Qwen/Qwen3-Embedding-4B">Qwen/Qwen3-Embedding-4B</a></td>
+<td>Qwen3 + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Qwen/Qwen3-Embedding-8B">Qwen/Qwen3-Embedding-8B</a></td>
+<td>Qwen3 + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/all-distilroberta-v1">sentence-transformers/all-distilroberta-v1</a></td>
+<td>RoBERTa + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/all-MiniLM-L12-v2">sentence-transformers/all-MiniLM-L12-v2</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">sentence-transformers/all-MiniLM-L6-v2</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/all-mpnet-base-v2">sentence-transformers/all-mpnet-base-v2</a></td>
+<td>MPNet + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/all-roberta-large-v1">sentence-transformers/all-roberta-large-v1</a></td>
+<td>RoBERTa + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/bert-base-nli-mean-tokens">sentence-transformers/bert-base-nli-mean-tokens</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/distiluse-base-multilingual-cased-v2">sentence-transformers/distiluse-base-multilingual-cased-v2</a></td>
+<td>DistilBERT + sentence pooling + saved Dense projection</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/LaBSE">sentence-transformers/LaBSE</a></td>
+<td>BERT + sentence pooling + saved Dense projection</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/msmarco-distilbert-base-v4">sentence-transformers/msmarco-distilbert-base-v4</a></td>
+<td>DistilBERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/msmarco-MiniLM-L12-cos-v5">sentence-transformers/msmarco-MiniLM-L12-cos-v5</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/msmarco-MiniLM-L6-cos-v5">sentence-transformers/msmarco-MiniLM-L6-cos-v5</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1">sentence-transformers/multi-qa-MiniLM-L6-cos-v1</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-dot-v1">sentence-transformers/multi-qa-MiniLM-L6-dot-v1</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/multi-qa-mpnet-base-cos-v1">sentence-transformers/multi-qa-mpnet-base-cos-v1</a></td>
+<td>MPNet + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/multi-qa-mpnet-base-dot-v1">sentence-transformers/multi-qa-mpnet-base-dot-v1</a></td>
+<td>MPNet + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L12-v2">sentence-transformers/paraphrase-MiniLM-L12-v2</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L3-v2">sentence-transformers/paraphrase-MiniLM-L3-v2</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L6-v2">sentence-transformers/paraphrase-MiniLM-L6-v2</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2">sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/sentence-transformers/paraphrase-multilingual-mpnet-base-v2">sentence-transformers/paraphrase-multilingual-mpnet-base-v2</a></td>
+<td>XLM-RoBERTa + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-l">Snowflake/snowflake-arctic-embed-l</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-l-v2.0">Snowflake/snowflake-arctic-embed-l-v2.0</a></td>
+<td>XLM-RoBERTa + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-m">Snowflake/snowflake-arctic-embed-m</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-m-long">Snowflake/snowflake-arctic-embed-m-long</a></td>
+<td>Nomic BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0">Snowflake/snowflake-arctic-embed-m-v2.0</a></td>
+<td>GTE rotary encoder + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-s">Snowflake/snowflake-arctic-embed-s</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-xs">Snowflake/snowflake-arctic-embed-xs</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/thenlper/gte-base">thenlper/gte-base</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/thenlper/gte-large">thenlper/gte-large</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/thenlper/gte-small">thenlper/gte-small</a></td>
+<td>BERT + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/voyageai/voyage-4-nano">voyageai/voyage-4-nano</a></td>
+<td>Qwen3 + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+</tbody>
+</table>
+<p>For the Multi-QA <code>*-dot-v1</code> checkpoints and <code>msmarco-distilbert-base-v4</code>,
+use <code>/embed</code> with <code>normalize: false</code> when retaining the trained vector magnitudes
+for dot-product retrieval. <code>/v1/embeddings</code> normalizes outputs. The <code>*-cos-*</code>
+variants use normalized vectors. Keep document and query preprocessing consistent.
+LaBSE and DistilUSE also require their saved Dense projection modules; retain
+those subdirectories and <code>modules.json</code> when copying weights to a local directory.</p>
+<h2 id="multimodal-embeddings">Multimodal embeddings</h2>
+<p>Use <code>/v1/embeddings</code>. Qwen3-VL requires last-token pooling (selected by its
+checkpoint defaults). EmbeddingGemma2 supports image/audio when the downloaded
+checkpoint includes the corresponding towers. Nemotron 3.5 accepts text and
+document images. Media inputs must fit the actual token and memory budgets.
+See <a href="#multimodal-request">multimodal requests</a> and the linked model cards.</p>
+<table>
+<thead>
+<tr>
+<th>Checkpoint</th>
+<th>Native implementation / support basis</th>
+<th>Additional launch settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://huggingface.co/google/embeddinggemma-2">google/embeddinggemma-2</a></td>
+<td>EmbeddingGemma2 projection + media towers</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16">nvidia/Nemotron-3.5-Embed-1B-BF16</a></td>
+<td>Bidirectional Mistral3 + mean pooling + image tower</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16">nvidia/Nemotron-3.5-Embed-8B-BF16</a></td>
+<td>Bidirectional Mistral3 + mean pooling + image tower</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B">Qwen/Qwen3-VL-Embedding-2B</a></td>
+<td>Qwen3-VL + last-token pooling + image tower</td>
+<td><code>--max-batch-tokens 16384</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Qwen/Qwen3-VL-Embedding-8B">Qwen/Qwen3-VL-Embedding-8B</a></td>
+<td>Qwen3-VL + last-token pooling + image tower</td>
+<td><code>--max-batch-tokens 16384</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="late-interaction-embeddings">Late-interaction embeddings</h2>
+<p>Use <code>/v1/embeddings</code> to receive a <strong>matrix of token vectors per input</strong>, then
+score with MaxSim in your retrieval system. Do not force sentence pooling,
+request a dimension override, or use single-vector <code>/similarity</code> scoring.
+ColQwen3 additionally accepts images. It needs the trained query suffix of ten
+<code>&lt;|endoftext|&gt;</code> tokens; image documents use a user image message with
+<code>Describe the image.</code> and no assistant prefix.</p>
+<p>ColBERT does not automatically add query/document markers or expand queries.
+Use the checkpoint's exact input formatting; final token IDs can express that
+formatting directly. Native NVIDIA Nemotron ColEmbed V2 4B/8B is also supported
+with normalized text/image token vectors and its checkpoint retrieval instructions;
+the separate 3B Eagle architecture is outside this path.
+See <a href="../embedding-tensors/">matrix formats</a> and
+<a href="../libtorch-model-coverage/">model-specific requirements</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Checkpoint</th>
+<th>Native implementation / support basis</th>
+<th>Additional launch settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://huggingface.co/answerdotai/answerai-colbert-small-v1">answerdotai/answerai-colbert-small-v1</a></td>
+<td>Packed BERT + ColBERT token projection</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/colbert-ir/colbertv2.0">colbert-ir/colbertv2.0</a></td>
+<td>Packed BERT + ColBERT token projection</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nvidia/nemotron-colembed-vl-4b-v2">nvidia/nemotron-colembed-vl-4b-v2</a></td>
+<td>Bidirectional Qwen3-VL + ColEmbed token readout</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nvidia/nemotron-colembed-vl-8b-v2">nvidia/nemotron-colembed-vl-8b-v2</a></td>
+<td>Bidirectional Qwen3-VL + ColEmbed token readout</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/TomoroAI/tomoro-colqwen3-embed-4b">TomoroAI/tomoro-colqwen3-embed-4b</a></td>
+<td>Qwen3-VL + learned ColQwen3 token projection</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="rerankers">Rerankers</h2>
+<p>Use <code>/rerank</code> with <code>query</code> and <code>texts</code>. These models use their trained score
+heads; embedding pooling flags do not apply. Nemotron 1B uses its saved average
+pooling and temperature. Nemotron 3.5 renders the query/document chat template;
+image documents use <code>/v1/classify</code> with <code>query</code>/<code>document</code> messages and
+<code>use_activation: false</code>. See the <a href="../ministral-3-multimodal/#cross-encoder-reranking">Nemotron multimodal reranking recipe</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Checkpoint</th>
+<th>Native implementation / support basis</th>
+<th>Additional launch settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://huggingface.co/Alibaba-NLP/gte-multilingual-reranker-base">Alibaba-NLP/gte-multilingual-reranker-base</a></td>
+<td>GTE rotary encoder + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Alibaba-NLP/gte-reranker-modernbert-base">Alibaba-NLP/gte-reranker-modernbert-base</a></td>
+<td>ModernBERT + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/BAAI/bge-reranker-base">BAAI/bge-reranker-base</a></td>
+<td>XLM-RoBERTa + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/BAAI/bge-reranker-large">BAAI/bge-reranker-large</a></td>
+<td>XLM-RoBERTa + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/BAAI/bge-reranker-v2-m3">BAAI/bge-reranker-v2-m3</a></td>
+<td>XLM-RoBERTa + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/cross-encoder/mmarco-mMiniLMv2-L12-H384-v1">cross-encoder/mmarco-mMiniLMv2-L12-H384-v1</a></td>
+<td>XLM-RoBERTa + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-12-v2">cross-encoder/ms-marco-MiniLM-L-12-v2</a></td>
+<td>BERT + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2">cross-encoder/ms-marco-MiniLM-L-6-v2</a></td>
+<td>BERT + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/cross-encoder/ms-marco-MiniLM-L4-v2">cross-encoder/ms-marco-MiniLM-L4-v2</a></td>
+<td>BERT + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/cross-encoder/ms-marco-TinyBERT-L2-v2">cross-encoder/ms-marco-TinyBERT-L2-v2</a></td>
+<td>BERT + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v1">mixedbread-ai/mxbai-rerank-base-v1</a></td>
+<td>BERT + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/mixedbread-ai/mxbai-rerank-large-v1">mixedbread-ai/mxbai-rerank-large-v1</a></td>
+<td>BERT + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/mixedbread-ai/mxbai-rerank-xsmall-v1">mixedbread-ai/mxbai-rerank-xsmall-v1</a></td>
+<td>BERT + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nvidia/llama-nemotron-rerank-1b-v2">nvidia/llama-nemotron-rerank-1b-v2</a></td>
+<td>Bidirectional Llama + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/nvidia/Nemotron-3.5-Rerank-8B-BF16">nvidia/Nemotron-3.5-Rerank-8B-BF16</a></td>
+<td>Mistral3 + trained relevance head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="token-classification-and-ner">Token classification and NER</h2>
+<p>Use <code>/predict_tokens</code> with <code>inputs</code>, rather than <code>/v1/embeddings</code>. Label names
+come from the checkpoint's <code>id2label</code>. <code>aggregation_strategy: "simple"</code> groups
+tokens into spans; choose a strategy appropriate for the checkpoint's labeling
+scheme. PII detection and medical NER have different label sets and training domains.
+The BERT CoNLL and English RoBERTa models cover general entities; Davlan and
+WikiNEuRal provide multilingual entities, CamemBERT covers French, and the
+clinical/de-identification models have domain-specific labels. DeBERTa-v2/v3
+execution remains experimental. Training on clinical text does not imply coverage
+of every medical concept or de-identification policy.</p>
+<p>The native loader requires <code>tokenizer.json</code> at the checkpoint root; <code>vocab.txt</code>
+alone is insufficient. For <code>dslim/bert-base-NER</code>, use <code>--revision refs/pr/27</code>
+until <a href="https://huggingface.co/dslim/bert-base-NER/discussions/27">the upstream tokenizer addition</a>
+is merged. This revision adds the converted tokenizer without changing weights.
+It has been validated with Infinity 3.0.0 GPU NER inference and all aggregation
+modes. For a local copy, include this revision's root <code>tokenizer.json</code> alongside
+the model weights and configuration.</p>
+<table>
+<thead>
+<tr>
+<th>Checkpoint</th>
+<th>Native implementation / support basis</th>
+<th>Additional launch settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://huggingface.co/Babelscape/wikineural-multilingual-ner">Babelscape/wikineural-multilingual-ner</a></td>
+<td>BERT + token-label head; <a href="#model-licenses">non-commercial license</a></td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Clinical-AI-Apollo/Medical-NER">Clinical-AI-Apollo/Medical-NER</a></td>
+<td>Experimental DeBERTa-v2 + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Davlan/bert-base-multilingual-cased-ner-hrl">Davlan/bert-base-multilingual-cased-ner-hrl</a></td>
+<td>BERT + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Davlan/xlm-roberta-base-ner-hrl">Davlan/xlm-roberta-base-ner-hrl</a></td>
+<td>XLM-RoBERTa + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/dbmdz/bert-large-cased-finetuned-conll03-english">dbmdz/bert-large-cased-finetuned-conll03-english</a></td>
+<td>BERT + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/dslim/bert-base-NER">dslim/bert-base-NER</a></td>
+<td>BERT + token-label head; requires tokenizer revision above</td>
+<td><code>--revision refs/pr/27 --max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/dslim/bert-large-NER">dslim/bert-large-NER</a></td>
+<td>BERT + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/gravitee-io/bert-small-pii-detection">gravitee-io/bert-small-pii-detection</a></td>
+<td>BERT + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Jean-Baptiste/camembert-ner">Jean-Baptiste/camembert-ner</a></td>
+<td>CamemBERT + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Jean-Baptiste/roberta-large-ner-english">Jean-Baptiste/roberta-large-ner-english</a></td>
+<td>RoBERTa + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/obi/deid_bert_i2b2">obi/deid_bert_i2b2</a></td>
+<td>BERT + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/obi/deid_roberta_i2b2">obi/deid_roberta_i2b2</a></td>
+<td>RoBERTa + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/OpenMed/OpenMed-NER-DiseaseDetect-BioMed-335M">OpenMed/OpenMed-NER-DiseaseDetect-BioMed-335M</a></td>
+<td>BERT + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/OpenMed/OpenMed-NER-GenomicDetect-ModernMed-395M">OpenMed/OpenMed-NER-GenomicDetect-ModernMed-395M</a></td>
+<td>ModernBERT + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/OpenMed/OpenMed-NER-OncologyDetect-MultiMed-568M">OpenMed/OpenMed-NER-OncologyDetect-MultiMed-568M</a></td>
+<td>XLM-RoBERTa + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/OpenMed/OpenMed-NER-PharmaDetect-BigMed-278M">OpenMed/OpenMed-NER-PharmaDetect-BigMed-278M</a></td>
+<td>XLM-RoBERTa + token-label head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="text-classification-and-reward-scoring">Text classification and reward scoring</h2>
+<p>Use <code>/v1/classify</code>. Skywork scores a user/assistant conversation; send native
+<code>messages</code> and <code>use_activation: false</code> to obtain a raw reward score. Applying
+softmax to a single-label head would return 1.0 instead of a useful reward.
+FinBERT provides financial-sentiment labels; CardiffNLP provides its saved
+social-text sentiment labels. Use <code>input</code> for those sequence classifiers and
+retain their checkpoint label mapping. Preprocess mentions, URLs and other text
+as required by the corresponding model card.
+Other supported encoder/decoder classification checkpoints need a saved trained
+head and matching label configuration; architecture support alone does not
+supply labels or turn an embedding model into a classifier.</p>
+<table>
+<thead>
+<tr>
+<th>Checkpoint</th>
+<th>Native implementation / support basis</th>
+<th>Additional launch settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://huggingface.co/cardiffnlp/twitter-roberta-base-sentiment-latest">cardiffnlp/twitter-roberta-base-sentiment-latest</a></td>
+<td>RoBERTa + sequence-label/reward head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/ProsusAI/finbert">ProsusAI/finbert</a></td>
+<td>BERT + sequence-label/reward head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Skywork/Skywork-Reward-V2-Qwen3-0.6B">Skywork/Skywork-Reward-V2-Qwen3-0.6B</a></td>
+<td>Qwen3 + sequence-label/reward head</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="typed-decisions">Typed decisions</h2>
+<p>Use <code>/v1/systemone</code> and retain the checkpoint's trained heads and protocol
+sidecars. Set the protocol explicitly as shown; Laya is detected from its
+<code>rl_agent_config.json</code> and needs no decoder protocol flag. A local path or custom
+served model name does not select a protocol by its name. The <code>d3</code>, <code>d3-mini</code>,
+<code>pplx-decider-v1.1-27b</code> and <code>pplx-decider-flash-v1.2</code> short aliases select their
+registered checkpoints and protocols automatically.</p>
+<p>The protocol determines supported question types, media and request semantics;
+do not assume every model accepts the same payload. Laya accepts text/JSON state
+and rejects native message conversations. OneJev supports image inputs when the
+vision tower is present; Perplexity Flash v1.2 supports shared text/images and
+calibrated joint readouts. See <a href="../cli/#structured-decision-inputs">decision inputs</a>,
+<a href="../libtorch-backend/#onejev-block-attention">OneJev configuration</a>, and the running
+server's <code>/docs</code> for the selected protocol.</p>
+<table>
+<thead>
+<tr>
+<th>Checkpoint</th>
+<th>Native implementation / support basis</th>
+<th>Additional launch settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://huggingface.co/baselabs/elephant-1">baselabs/elephant-1</a></td>
+<td>Qwen3.5 dense/MoE + OneJev decision head</td>
+<td><code>--decision-protocol onejev</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/baselabs/mammoth-1">baselabs/mammoth-1</a></td>
+<td>Qwen3.5 dense/MoE + OneJev decision head</td>
+<td><code>--decision-protocol onejev</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Cloudflare/clef">Cloudflare/clef</a></td>
+<td>Qwen3.5 + Clef joint head</td>
+<td><code>--decision-protocol clef --max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/Cloudflare/clef-flash">Cloudflare/clef-flash</a></td>
+<td>Qwen3.5 + Clef joint head</td>
+<td><code>--decision-protocol clef --max-batch-tokens 16384</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/michaelfeil/laya-typed-decisions">michaelfeil/laya-typed-decisions</a></td>
+<td>ModernBERT encoder + Laya decision heads</td>
+<td><code>--dtype float16</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/michaelfeil/rune-26b-a4b">michaelfeil/rune-26b-a4b</a></td>
+<td>Gemma4 + Rune decision head</td>
+<td><code>--decision-protocol rune --max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/OmniJev/OneJev1.6-0.8B">OmniJev/OneJev1.6-0.8B</a></td>
+<td>Qwen3.5 dense/MoE + OneJev decision head</td>
+<td><code>--decision-protocol onejev</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2">perplexity-ai/pplx-decider-flash-v1.2</a></td>
+<td>Qwen3.5 + Perplexity decision readouts</td>
+<td><code>--decision-protocol pplx --max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/perplexity-ai/pplx-decider-v1.1-27b">perplexity-ai/pplx-decider-v1.1-27b</a></td>
+<td>Qwen3.5 + Perplexity decision readouts</td>
+<td><code>--decision-protocol pplx --max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/perplexity-ai/pplx-decider-v1.2">perplexity-ai/pplx-decider-v1.2</a></td>
+<td>Qwen3.5 + Perplexity decision readouts</td>
+<td><code>--decision-protocol pplx --max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/vllm-sr/d3">vllm-sr/d3</a></td>
+<td>Qwen3.5 + D3 code-readout head</td>
+<td><code>--decision-protocol d3 --max-batch-tokens 32768</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/vllm-sr/d3-mini">vllm-sr/d3-mini</a></td>
+<td>Qwen3.5 + D3 code-readout head</td>
+<td><code>--decision-protocol d3 --max-batch-tokens 32768</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="sparse-embeddings">Sparse embeddings</h2>
+<p>Use <code>/embed_sparse</code> with <code>{"inputs":["A document to index."]}</code>. Set
+<code>--pooling splade</code> to select the trained masked-LM head and sparse max-pooling
+path. The response contains vocabulary index/value pairs. These checkpoints
+provide vocabulary scores, not dense sentence vectors.</p>
+<table>
+<thead>
+<tr>
+<th>Checkpoint</th>
+<th>Native implementation / support basis</th>
+<th>Additional launch settings</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a href="https://huggingface.co/naver/splade-cocondenser-ensembledistil">naver/splade-cocondenser-ensembledistil</a></td>
+<td>BERT masked-LM head + SPLADE pooling</td>
+<td><code>--pooling splade --max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/naver/splade-cocondenser-selfdistil">naver/splade-cocondenser-selfdistil</a></td>
+<td>BERT masked-LM head + SPLADE pooling</td>
+<td><code>--pooling splade --max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/naver/splade_v2_distil">naver/splade_v2_distil</a></td>
+<td>DistilBERT masked-LM head + SPLADE pooling</td>
+<td><code>--pooling splade --max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/naver/splade_v2_max">naver/splade_v2_max</a></td>
+<td>DistilBERT masked-LM head + SPLADE pooling</td>
+<td><code>--pooling splade --max-batch-tokens 8192</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="request-examples">Request examples</h2>
+<p>Run the corresponding model first. The <code>model</code> field is optional with one loaded
+model; if provided, it must match its ID or configured <code>--served-model-name</code>.</p>
+<h3 id="dense-embedding-request">Dense embedding request</h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>http://localhost:8000/v1/embeddings<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"model":"BAAI/bge-small-en-v1.5","input":["A document about semantic search."],"encoding_format":"float"}'</span>
+</span></code></pre></div>
+<h3 id="multimodal-request">Multimodal request</h3>
+<p>After starting <code>Qwen/Qwen3-VL-Embedding-2B</code>, send a user conversation. Replace
+<code>&lt;base64 PNG&gt;</code> with an actual base64-encoded PNG (without the angle brackets).
+Inline media avoids configuring a remote-image host allowlist.</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="p">{</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Qwen/Qwen3-VL-Embedding-2B"</span><span class="p">,</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span><span class="nt">"input"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"role"</span><span class="p">:</span><span class="w"> </span><span class="s2">"user"</span><span class="p">,</span><span class="w"> </span><span class="nt">"content"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"image_url"</span><span class="p">,</span><span class="w"> </span><span class="nt">"image_url"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"url"</span><span class="p">:</span><span class="w"> </span><span class="s2">"data:image/png;base64,&lt;base64 PNG&gt;"</span><span class="p">}},</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="p">{</span><span class="nt">"type"</span><span class="p">:</span><span class="w"> </span><span class="s2">"text"</span><span class="p">,</span><span class="w"> </span><span class="nt">"text"</span><span class="p">:</span><span class="w"> </span><span class="s2">"Represent this image for retrieval."</span><span class="p">}</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span><span class="p">]}],</span>
+</span><span id="__span-2-7"><a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">  </span><span class="nt">"encoding_format"</span><span class="p">:</span><span class="w"> </span><span class="s2">"float"</span>
+</span><span id="__span-2-8"><a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="p">}</span>
+</span></code></pre></div>
+<p>Post this JSON to <code>/v1/embeddings</code>. Use the checkpoint's trained retrieval prompt
+for production queries and documents. Audio/video support is model-specific;
+Qwen3-VL's image path does not imply support for those modalities.</p>
+<h3 id="reranking-request">Reranking request</h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>curl<span class="w"> </span>http://localhost:8000/rerank<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"model":"BAAI/bge-reranker-base","query":"What is semantic search?","texts":["Retrieval by meaning.","A cake recipe."],"raw_scores":true}'</span>
+</span></code></pre></div>
+<p>The response ranks the supplied documents. Raw logits are relevance scores,
+not calibrated probabilities.</p>
+<h3 id="token-classification-request">Token classification request</h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>curl<span class="w"> </span>http://localhost:8000/predict_tokens<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"model":"gravitee-io/bert-small-pii-detection","inputs":["Contact Jane Smith in San Francisco."],"aggregation_strategy":"simple"}'</span>
+</span></code></pre></div>
+<p>The response reports predicted labels, scores and spans according to the
+checkpoint and aggregation strategy.</p>
+<h3 id="reward-scoring-request">Reward scoring request</h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>curl<span class="w"> </span>http://localhost:8000/v1/classify<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"model":"Skywork/Skywork-Reward-V2-Qwen3-0.6B","messages":[{"role":"user","content":"Why is the sky blue?"},{"role":"assistant","content":"Air molecules scatter shorter blue wavelengths more strongly."}],"use_activation":false}'</span>
+</span></code></pre></div>
+<h3 id="sentiment-classification-request">Sentiment classification request</h3>
+<p>After starting <code>ProsusAI/finbert</code>, send strings to the sequence classifier:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-6-1"><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>curl<span class="w"> </span>http://localhost:8000/v1/classify<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-2"><a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-6-3"><a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"model":"ProsusAI/finbert","input":["The company reported stronger earnings."]}'</span>
+</span></code></pre></div>
+<p>Class scores use the checkpoint's positive, negative and neutral labels.
+They are separate from Skywork's raw reward scores.</p>
+<h3 id="sparse-embedding-request">Sparse embedding request</h3>
+<p>Start <code>naver/splade-cocondenser-ensembledistil</code> with <code>--pooling splade</code>, then:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-7-1"><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>curl<span class="w"> </span>http://localhost:8000/embed_sparse<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-2"><a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-7-3"><a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"model":"naver/splade-cocondenser-ensembledistil","inputs":["A document about semantic search."]}'</span>
+</span></code></pre></div>
+<h3 id="d3-mini-decision-request">D3-mini decision request</h3>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-8-1"><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>curl<span class="w"> </span>http://localhost:8000/v1/systemone<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-2"><a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-8-3"><a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="w">  </span>-d<span class="w"> </span><span class="s1">'{"model":"vllm-sr/d3-mini","state":"The parcel arrived damaged. Please send a replacement.","questions":{"route":{"type":"choice","instructions":"Which team should handle this request?","criteria":{"returns":"Damaged items and replacements","billing":"Payments and invoices"}}}}'</span>
+</span></code></pre></div>
+<p>This returns a typed decision for <code>route</code>. Use the running schema for other
+protocols and question types. D3-mini can also process supported image state;
+text-only examples do not require a media configuration.</p>
+<h2 id="model-licenses">Model licenses</h2>
+<p>Model weight licenses are separate from <a href="../../LICENSING/">Infinity's license</a>.
+Technical support includes checkpoints with non-commercial terms. The following
+catalog entries publish such terms; use their linked model cards and license
+files for the applicable conditions, attribution and any separate permissions.
+This is not an exhaustive license table for the catalog.</p>
+<table>
+<thead>
+<tr>
+<th>Checkpoint</th>
+<th>Published model license</th>
+<th>Task</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>jinaai/jina-code-embeddings-0.5b</code></td>
+<td><a href="https://huggingface.co/jinaai/jina-code-embeddings-0.5b/blob/main/README.md">CC-BY-NC-4.0</a></td>
+<td>Code/text embeddings</td>
+</tr>
+<tr>
+<td><code>jinaai/jina-code-embeddings-1.5b</code></td>
+<td><a href="https://huggingface.co/jinaai/jina-code-embeddings-1.5b/blob/main/README.md">CC-BY-NC-4.0</a></td>
+<td>Code/text embeddings</td>
+</tr>
+<tr>
+<td><code>Babelscape/wikineural-multilingual-ner</code></td>
+<td><a href="https://huggingface.co/Babelscape/wikineural-multilingual-ner/blob/main/README.md">CC-BY-NC-SA-4.0</a></td>
+<td>Multilingual NER</td>
+</tr>
+</tbody>
+</table>
+<p>Nomic Embed v1, v1.5 and v2 MoE publish Apache-2.0 model licenses. Jina's
+license varies by checkpoint: the v2 text/code encoder family and the Qwen2
+code-embedding family do not all share the same weight license. Other catalog
+entries may also carry custom or restrictive terms; check the exact revision.</p>
+<h2 id="similar-models-that-need-additional-integration">Similar models that need additional integration</h2>
+<p>A familiar organization name or Hugging Face task tag is insufficient to select
+a native implementation. These examples are excluded from the supported model
+tables above:</p>
+<table>
+<thead>
+<tr>
+<th>Model or family</th>
+<th>Missing native integration</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>jinaai/jina-embeddings-v3</code></td>
+<td>Custom XLM-RoBERTa Flash rotary encoder and task-specific LoRA adapters; ordinary XLM-RoBERTa support does not cover this contract.</td>
+</tr>
+<tr>
+<td><code>jinaai/jina-reranker-v2-base-multilingual</code></td>
+<td>Custom XLM-RoBERTa Flash configuration/loader; this checkpoint does not declare a standard native <code>model_type</code>.</td>
+</tr>
+<tr>
+<td>Jina reranker v1 tiny/turbo</td>
+<td>Checkpoints declare <code>JinaBertModel</code> rather than a native sequence-classification architecture; their reranker head/loading contract needs integration.</td>
+</tr>
+<tr>
+<td><code>cross-encoder/ms-marco-electra-base</code></td>
+<td>ELECTRA backbone and classifier support.</td>
+</tr>
+<tr>
+<td>GLiNER</td>
+<td>Span/label-conditioned extraction architecture and API, rather than a fixed token-label head.</td>
+</tr>
+<tr>
+<td><code>numind/NuNER-v2.0</code></td>
+<td>Publishes a RoBERTa representation encoder rather than a ready-to-serve <code>ForTokenClassification</code> head.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="architecture-support-beyond-this-catalog">Architecture support beyond this catalog</h2>
+<p>The model list is not exhaustive. Compatible checkpoints also use native
+RoBERTa, XLM-RoBERTa, CamemBERT, DistilBERT, Nomic BERT/MoE, JinaCode,
+Llama, Mistral/Ministral3, Qwen2, Qwen3/MoE, Qwen3.5 dense/MoE, Gemma3 text,
+Gemma4 and experimental DeBERTa-v2/v3 paths. Support depends on architecture,
+trained output head, tokenizer and media metadata. Instruction checkpoints can
+expose hidden-state embeddings without being trained retrieval models.
+Consult <a href="../libtorch-model-coverage/">native model coverage</a> before substituting
+a checkpoint; arbitrary remote custom code is not executed to add a new architecture.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.sections", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

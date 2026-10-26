@@ -1,0 +1,1548 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://michaelfeil.eu/infinity/3.0.1-beta.1/v3/docs/libtorch-prefix-cache/">
+      
+      
+        <link rel="prev" href="../build-configuration/">
+      
+      
+        <link rel="next" href="../modernbert-startup/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Prefix caching - Infinity</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#experimental-libtorch-prefix-cache" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Infinity" class="md-header__button md-logo" aria-label="Infinity" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Infinity
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Prefix caching
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/michaelfeil/infinity/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Infinity" class="md-nav__button md-logo" aria-label="Infinity" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Infinity
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/michaelfeil/infinity/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infinity v3
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Infinity v3
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and requests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../supported-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported models and configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../embedding-tensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding formats and clients
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../LICENSING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Licensing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_9" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2_9" id="__nav_2_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_9_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-model-coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-backend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LibTorch backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../build-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prefix caching
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prefix caching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-and-operation-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model and operation coverage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#identity-ownership-and-output-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity, ownership and output behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#combining-persistence-with-radixmlp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Combining persistence with RadixMLP
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-execution-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current execution limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#short-shared-prefix-qualification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Short shared prefix qualification
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../modernbert-startup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Startup performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CONTRIBUTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python / v2
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python / v2
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli_v2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python_engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../embed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../client_infinity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Client
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../swagger_ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../benchmarking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../telemetry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Telemetry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Configuration
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#model-and-operation-coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Model and operation coverage
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#identity-ownership-and-output-behavior" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Identity, ownership and output behavior
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#combining-persistence-with-radixmlp" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Combining persistence with RadixMLP
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#current-execution-limits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Current execution limits
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#short-shared-prefix-qualification" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Short shared prefix qualification
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/michaelfeil/infinity/edit/main/libs/infinity-v3/docs/libtorch-prefix-cache.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="experimental-libtorch-prefix-cache">Experimental LibTorch prefix cache</h1>
+<p>This is an opt-in port of <a href="https://github.com/michaelfeil/text-embeddings-inference/pull/203">text-embeddings-inference #203</a>
+at <code>80c83f9f525bd33d4212a61caf95e6dd364ec47a</code>, including the prerequisite
+cache manager from #197 and lookup work from #199. It is <strong>disabled by default</strong>
+in Infinity. Set <code>INFINITY_TORCH_PREFIX_CACHE_SIZE=0</code> to explicitly disable it.
+The performance and sanitizer reports below describe their original source
+revisions, not fresh qualification of this port. Known short-request and
+long-admission regressions remain; this feature is not enabled for production
+by this change. OneJev block-bidirectional execution bypasses persistent caching.</p>
+<p>To experiment, set <code>INFINITY_TORCH_PREFIX_CACHE_SIZE</code> to a positive resident
+storage budget, for example <code>INFINITY_TORCH_PREFIX_CACHE_SIZE=3.5GB</code>.
+The <code>INFINITY_</code> prefix follows the build's <code>ENV_VAR_BASE</code> setting.
+This budget bounds retained cache entries, not estimated forward activations.</p>
+<p>The native backend can retain transformer prefix state between requests. It is disabled by default; enable it after numerical and performance controls for your deployment. The implementation covers the currently supported causal decoder families; support follows the loaded operation's actual attention policy.</p>
+<h2 id="configuration">Configuration</h2>
+<table>
+<thead>
+<tr>
+<th>Environment variable</th>
+<th>Default</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>INFINITY_TORCH_PREFIX_CACHE_SIZE</code></td>
+<td><code>0</code></td>
+<td>Charged resident cache budget in GB or GiB (e.g. <code>3.5GiB</code>); zero disables the manager.</td>
+</tr>
+<tr>
+<td><code>INFINITY_TORCH_PREFIX_CACHE_MAX_TOKENS</code></td>
+<td><code>8192</code></td>
+<td>Maximum retained prefix length per entry.</td>
+</tr>
+<tr>
+<td><code>INFINITY_TORCH_PREFIX_CACHE_ENTRIES</code></td>
+<td><code>64</code></td>
+<td>Maximum published entries per loaded engine.</td>
+</tr>
+</tbody>
+</table>
+<p><code>GB</code> means 1,000,000,000 bytes; <code>GiB</code> means 1,073,741,824 bytes.
+For example, <code>3.5GB</code> is <code>3500000000</code> bytes and <code>3.5GiB</code> is <code>3758096384</code> bytes.
+Up to nine decimal places are accepted; fractional bytes round down.
+Positive unitless numbers, percentages and other units are not accepted.
+The former <code>INFINITY_TORCH_PREFIX_CACHE_BYTES</code> setting is no longer read. The budget applies per engine and must be nonnegative. Token and entry bounds must be positive. Startup reports whether the loaded model and task can use prefix state. Each engine owns its cache; replicas do not share GPU storage.</p>
+<h2 id="model-and-operation-coverage">Model and operation coverage</h2>
+<table>
+<thead>
+<tr>
+<th>Loaded causal path</th>
+<th>Saved state</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Llama, Mistral/Ministral3, Qwen2, Qwen3 dense and Qwen3 MoE</td>
+<td>Per-layer keys and values, plus final hidden rows.</td>
+</tr>
+<tr>
+<td>Gemma3</td>
+<td>Keys and values for full and sliding attention, plus final hidden rows.</td>
+</tr>
+<tr>
+<td>Gemma4 dense/MoE option-token decisions and sequence classification</td>
+<td>Physical KV producers, including shared consumers and local/global layers, plus final hidden rows.</td>
+</tr>
+<tr>
+<td>Qwen3.5 dense/MoE and text aliases</td>
+<td>Full-attention KV, FP32 DeltaNet checkpoints, projected convolution history and final hidden rows.</td>
+</tr>
+<tr>
+<td>Qwen3-VL</td>
+<td>Text KV and final hidden rows, with image layout/content and every rotary axis included in identity.</td>
+</tr>
+</tbody>
+</table>
+<p>Bidirectional encoders and bidirectional decoder modes continue through their existing execution paths. Ordinary Gemma4 embeddings, EmbeddingGemma2 and Qwen3.5's <code>noncausal_full_attention</code> decision mode cannot reuse arbitrary prefix states. Existing unsupported task heads remain unsupported; enabling a cache does not change model eligibility.</p>
+<h2 id="identity-ownership-and-output-behavior">Identity, ownership and output behavior</h2>
+<p>Native text admission counts shared prepared prefixes at each depth up to64 tokens, then at eight-token boundaries through the configured retention limit. Each token or longer block extends a64-bit XXH3 chain scoped to operation and rotary-coordinate presence. Separate short-depth tables and one bounded longer-prefix table use eight-way buckets. Short tables follow the entry limit, rounded to a power of two between64 and4096 cells, and total at most6MiB. The longer table grows lazily with request length, preserving counter values, and caps at65,536 cells (1.5MiB); growth temporarily retains both tables. Already verified reader rows skip counter updates. A confirmed prefix covers at least eight tokens, or the complete observed sequence if shorter. Clear, model/policy changes and failures reset all observations. Recurrent checkpoint and image admission retain their existing policy.</p>
+<p>A cold confirmed stem can seed a complete snapshot to discover longer matches. Once a reader exists, a confirmed64-token stem no longer promotes every changing document into a complete snapshot. Longer prefixes need their own observation counts, while repeated complete eligible prefixes use a separate XXH3-128 fingerprint in the bounded64-slot history. Fingerprints only permit capture; exact prepared identities still authorize reuse. The first-token miss shortcut retains bounded observation and avoids allocating full identities or hashing complete documents. Native controls reproduce the old changing-document admission churn, preserve complete readout promotion, and check longer-question thresholds, counter growth and clear. CPU ThreadSanitizer covers short and long indexed registries with concurrent inference and clear.</p>
+<p>Text registries with at least256 resident snapshots use a position-first hash index for candidate lookup, complete readout and duplicate detection. The first16 positions are indexed individually so short questions under an eight-token role header do not share one large candidate bucket; later positions use parent-chained eight-token blocks. Query preparation hashes the bounded prefix once, then binary search finds the deepest candidate bucket. Exact prepared tokens authorize reuse. A pending deepest bucket or colliding overestimate falls back to the original longest-prefix search, preserving shorter ready readers and insertion ties. Operation, rotary presence and complete CUDA geometry form separate namespaces. Media and recurrent checkpoints retain their existing lookup. Smaller registries retain the original scan.</p>
+<p>Index buckets hold weak snapshot references. Eviction and replacement remove their registrations, and clear, namespace changes or errors discard the index. A conservative allowance for index nodes, weak-reference capacity and geometry metadata is charged with each eligible resident snapshot; the index cannot keep evicted GPU storage alive. This is a lookup index, not shared or paged KV storage.</p>
+<p>Lookup controls compare both ordinary and deliberately colliding digests with an independent scalar oracle, including readiness changes, media fallback, original geometry, first ties, eviction and2,048 related twelve-token questions. CPU ThreadSanitizer covers an indexed registry with concurrent inference and clear. A CUDA fixture publishes320 twelve-token question snapshots, blocks one consuming stream, switches readers, clears the index and poisons retired allocations on the publishing stream while the reader remains pending. Outputs survive clear and caller mutation, and memcheck reports zero errors. Removing snapshot stream retention makes the same fixture fail with incorrect values; the protected source and native library are restored. These controls qualify indexed-reader lifetime, not universal race freedom or the unresolved full-graph racecheck.</p>
+<p>Prepared H100/Qwen3 BF16 classifier controls compare the preceding native library, indexed lookup and cache-off execution in two opposite-order rounds, with120 measured calls after10 discarded. They use pinned NUMA-local CPU affinity, one-thread helpers,2048 entry capacity,8GiB resident and4GiB graph budgets. All compared scores are bitwise equal. At1,024 primed questions with32 reused tokens out of64, indexed p50 is1.409–1.412ms versus1.446–1.545ms previously and1.386ms uncached. With12 reused tokens, it is1.540–1.543ms versus1.676–1.686ms previously and1.387–1.388ms uncached. Eight-document128-token batches over32 primed questions improve to2.885–2.891ms from2.930–2.937ms, versus2.955–2.956ms uncached. The single32-token/eight-prefix control remains slower than uncached. The large-question controls start with full document snapshots, so they qualify indexed lookup and parent switching, not natural admission or an improvement for every workload.</p>
+<p>CUDA suffix boundaries reuse up to four immutable device buffers, each containing at most4097 INT32 values. Uploads use owned pinned host storage. Independent callers wait for the upload event on another stream and record that stream's read; native engines use their submission fence. The buffers count as bounded execution metadata, separate from resident snapshots, and are released on clear, policy changes or failure. A genuinely pending control covers four-shape eviction, stream switching and clear; removing the upload wait makes that control fail with incorrect values.</p>
+<p>Identity uses prepared token IDs, token types, positions, multimodal rotary axes and image content/layout. The native bridge supplies borrowed host token views for lookup, avoiding a device-to-host token transfer. Rust supplies SHA-256 image identities; native callers without a digest use exact pixel bytes. Retained keys, values, recurrent state and output rows are independently owned snapshots.</p>
+<p>Identity distinguishes absent rotary coordinates from explicitly provided coordinates, including all zeros. Qwen3-VL infers its rotary coordinates from token positions when they are absent; explicit zeros choose different attention arithmetic. The earlier identity treated both as zero-valued metadata and incorrectly returned a complete cached result. A failing CPU control reproduces that error; CPU and CUDA controls now verify both transition directions without reusing the incompatible entry. Presence also scopes admission and every lookup shortcut.</p>
+<p>Lookup uses an adaptive exact scan with cached64-token, parent-chained XXH3-128 fingerprints. Simple misses and single-candidate hits avoid query hashing. Competing long prefixes use fingerprints to rank candidates and refine partial blocks; the selected complete prefix is verified exactly. A hash collision falls back to the full exact scan, including recurrent checkpoint eligibility. Ordered, non-overlapping image metadata bounds unusable prefixes before token comparison; other native layouts preserve the original comparison order. Readiness is queried only for candidates that can improve the result. Equal-length hits retain the original first valid entry. Fingerprint storage is charged with each resident entry and follows its existing eviction/reader lifetime.</p>
+<p>Image-batch execution context is also part of identity for text-only rows. Qwen3-VL's deepstack residual stages affect the whole batch's arithmetic. When all visual rows are already cached, empty feature metadata preserves those stages on real suffix rows without repeating image processing.</p>
+<p>Entries are scoped to the loaded model instance and operation. Changing the instance or arithmetic settings, including BLAS workspace limits, cuDNN algorithm controls and SDPA backend/reduction/priority settings, invalidates them. Failed cached work clears the registry. CUDA snapshots can be reused immediately on their producing stream because writes are queued before publication; other streams require their completion event to be ready. Source allocations are retained on the consuming stream. Charged bytes include tensor payloads and saved input metadata. Admission reserves a complete entry before capturing any layers, including recurrent checkpoints. Entries larger than the budget bypass capture. CUDA allocator reservations and temporary execution buffers are separate from this resident budget.</p>
+<p>Native engines use an explicitly ordered cache mode: their submission fence covers every snapshot write and result transfer, including when the next call switches streams. This permits reuse of a pending snapshot on the already-ordered consumer and avoids redundant per-snapshot events. The default cache mode for independent C++ callers retains producer/completion checks and never assumes that a host mutex orders GPU work. A genuinely blocked producer control reproduces unnecessary recomputation in the earlier native path; the ordered path reuses all4 tokens with bitwise-equal results, while an independent consumer still bypasses pending state.</p>
+<p>Full-request graphs and suffix graphs share the same arithmetic-policy snapshot as resident entries. Their process-local keys include the fixed policy bytes, so a miss cannot replay a shader captured under old settings after resident snapshots are invalidated. A miss forwards the already-read policy to graph fallback rather than querying it again. A controlled policy-dependent model reproduces stale full-graph output in the previous implementation and verifies separate captures after BLAS and cuDNN settings change.</p>
+<p>Native engines observe a causal stem twice before capturing it. Text uses the depth-indexed counters described above; recurrent checkpoint and image paths retain a fixed64-slot table over up to64 prepared tokens, operation, rotary presence and image context. Counter collisions only permit extra capture, never authorize reuse. Clear and namespace changes reset observations. One-off misses retain eligible CUDA graphs. Capture utility for every changing-tail distribution remains unproven.</p>
+<p>Text requests with no possible resident first-token match observe the bounded stem before allocating full identities and suffix metadata. If no row permits capture, the original graph/eager fallback runs immediately. Mixed batches retain each row's observation decision, preventing a first-seen row from being observed twice when another row permits admission. Borrowed host metadata is validated once, including equality with the original packed token count. A negative control using shorter views backed by valid larger allocations demonstrates that the prior implementation accepted an inconsistent host identity. The revised path rejects it before lookup and clears failed cached state.</p>
+<p>A CPU control isolating cache management, with a model returning a fixed tensor, measures2048-token first-token misses at approximately1.0microsecond versus14.3–15.5microseconds previously, across three alternating pairs of20000 calls. Prepared H100 controls retain bitwise output vectors, but GPU miss latency remains variable. Snapshot admission can now publish independent K/V and complete hidden rows from an already warmed full-request graph, without another backbone call or graph capture. The observer retains original forward tensors without changing attention/projection arithmetic. Whole backing storage is charged once; snapshots own a packed slab copied by a batched, bit-preserving row-strided CUDA kernel, with the original copy fallback for unsupported layouts. Cold graphs and recurrent checkpoints retain eager capture. Graph retirement drains publication copies, including after errors.</p>
+<p>Three alternating H100/Qwen3 BF16 prepared last-token pairs retain bitwise-equal outputs. The128-token admission p50 ratio is0.948–1.007 versus the warmed uncached graph, down from the earlier1.49–1.55;512-token ratios are1.005–1.017. The2048-token ratios remain1.108–1.133 because remaining graph capacity cannot retain the full state, so admission uses eager capture. These controls exclude service/tokenization/loading/startup timing and do not establish an improvement for every workload. Short/cold/churn/budget qualification and the long-admission regression remain required work.</p>
+<p>Startup warmup and model health probes carry an explicit probe operation. LibTorch temporarily bypasses the user prefix cache for these calls and restores the previous mode on success or error. Token values do not determine probe intent, and an existing user entry remains available afterward.</p>
+<p>The native probe flag uses atomic loads and exchange. A concurrent CPU inference/probe/clear/statistics regression reproduces a data race with the old plain flag and passes ThreadSanitizer after this change. Probe begin/end still form a caller-owned scope; the serialized Rust backend owns that scope.</p>
+<p>Native engine calls serialize host access to model, graph and staging metadata. Submission events order GPU work when callers switch streams, including result staging; a host mutex alone cannot protect queued graph buffers. Readiness drains prior work and publishes its new initialization event. Destruction drains the last submission, and output leases retain their result pool independently. The regression with a blocked producer detects deferred-output corruption in the earlier library and passes with ordering enabled, both with and without prefix caching. Handles must stay alive until all native calls have returned; starting a new call during or after handle destruction remains invalid.</p>
+<p>Reinitialization retires the old graphs, prefix cache and decision head after draining submitted work, then derives optional features from the new configuration. Disabling a feature removes it rather than retaining its earlier instance. CPU/CUDA controls reproduce stale enabled features in the earlier library and verify zero cache/graph state and rejected decision requests after disabling them. A blocked GPU producer also verifies that reload waits, old result leases survive reload and the next inference, and another stream observes completed initialization. The two-slot result pool requires collecting the previous A result before submitting the next A request.</p>
+<p>Concurrent waits on the same live output lease use an atomic completion flag. GPU-backed host ThreadSanitizer controls reproduce two racing writes in the earlier flag and pass after this change; Torch and CUDA libraries are uninstrumented. Native stream controls cover embeddings and multi-label classification with cache off/on, one-entry eviction,96 alternating submissions per mode, completion on another CPU thread, cancellation, cache clear while another lease is outstanding, and recovery from an undersized output buffer on another stream. Genuinely pending controls also cover exact snapshot reuse, reload and retirement. Lease/engine destruction still requires caller-owned lifetime discipline.</p>
+<p>Decoder sequence classifiers use one packed selector for contiguous CUDA BF16, FP16 and FP32 rows with device INT64 IDs and INT32 boundaries. It copies the last non-PAD row, falls back to the first row for all-PAD sequences, and selects the packed end when no PAD configuration exists. The trained head still receives the original batch/hidden geometry. Other input layouts use the existing selector, including valid INT32 token IDs without PAD configuration. Raw16/32-bit oracle controls cover widths16/129/896/1024/2048, changing IDs, interior/trailing/all PAD and absent PAD configuration. A traced negative control shows the earlier generic padding sequence blocking a classification graph launch under Compute Sanitizer until the producer watchdog opens; the packed selector passes the genuinely pending control with its original2-second watchdog and unchanged pending assertions.</p>
+<p>The manager preserves original logical offsets. Pooling, repeated/mixed output selectors, raw token outputs and trained heads receive restored full hidden rows. With complete snapshots, an exact match of every sequence and the original offsets, maximum sequence length and compact token count bypasses the backbone. Hidden-state operations return fresh copies of saved full outputs. Qualified sequence classifiers run their original trained head on the saved full rows: decoder padding selection and Gemma's complete-token scoring and softcap order stay unchanged. Readout results own storage independently of the snapshots. An optional model readout that returns no result falls back to suffix execution. Source allocations remain retained on the consuming stream. Other hits recompute at least the final query token. Checkpoint-only operations retain suffix execution. Qwen3.5 admits sparse, aligned recurrent endpoints; a token match alone cannot create a missing checkpoint.</p>
+<p>CUDA prefix readers currently require the same packed offsets, maximum sequence length and compact token count as the request that produced them. Selecting the current GEMM recipe for suffix rows cannot repair cached rows produced by another recipe. A learned Skywork classifier control that first retains32 tokens, then grows to128/512, reproduces logit differences of0.015625/0.0390625 in the earlier library. Geometry filtering fixes that control, including subsequent exact repeats. Geometry also participates in resident duplicate detection and replacement, allowing the same token identity to retain separately qualified shapes. Fingerprint shortcuts, tie selection and collision fallback all honor this filter before querying readiness. CPU partial reuse retains its existing path; cross-geometry CUDA reuse remains a qualification and optimization gap.</p>
+<p>The cache uses the original logical GEMM geometry to choose supported MLP output-projection recipes while executing only real suffix rows. This removed measured Qwen3 rounding differences caused by suffix geometry. Plans use a bounded LRU, honor reduction and SM settings, and keep scratch workspace owned by ATen's current stream. CPU execution and unsupported native recipes retain the existing operator path. This does not guarantee identical reduction order across every family and BLAS provider; learned numerical qualification covers each family, dtype and operation separately.</p>
+<p>Planning uses the original provider's workspace allowance, which can differ from default cuBLASLt scratch. Valid suffix recipes exceeding that default use temporary ATen storage bounded by the original provider allowance. The measured Gemma2048 router needed only231 bytes beyond the default1MiB; falling back at that boundary changed its reductions. Temporary scratch remains separate from charged resident entries and follows CUDA stream lifetime.</p>
+<p>Cold capture keeps the original input buffers and sequence-length bound. A real hit packs only the suffix; a single sequence uses token/position/type views and returns its restored output without another concatenation. Publication events are created only when admitting snapshots.</p>
+<p>Ordinary decoder output and gate/up projections use the planner for reused suffixes. Gemma and Qwen3.5 also preserve ordinary text/input/gate/router projection geometry while retaining existing Radix recipes. The registered Gemma4 FP32 expert router uses the shared planner. Cold capture and existing dynamic FP8 providers remain unchanged.</p>
+<h2 id="combining-persistence-with-radixmlp">Combining persistence with RadixMLP</h2>
+<p>The manager derives uncached compact/unfold maps from the original full-context Radix mapping. It does not rebuild a tree from isolated suffix tokens. Equal suffixes with different parent histories remain distinct. Prefix hits skip layer computation for cached tokens; RadixMLP can still share token-local work on uncached branches.</p>
+<p>Suffix attention uses independent query/key cumulative arrays and a causal mask that includes the prefix offset. Prepared logical positions and API token usage retain their original meaning.</p>
+<p>For default Torch global attention with head64 or head128, a single remaining query uses a separate native specialization with Torch's unfused softmax arithmetic and no single-query GQA layout swap. Longer and windowed suffixes retain their existing attention provider. Matched-operand controls compare the final query against original full-context execution. Across96 reproducible head128 inputs, BF16 matches bitwise; five FP16 cases differ by one representable output step. The FP16 regression includes that rounding-boundary input and bounds the difference to one step rather than claiming universal bitwise equivalence. Random-input controls found rounding differences for broader uses of this specialization, so they are excluded from its dispatch contract.</p>
+<h2 id="current-execution-limits">Current execution limits</h2>
+<p><a href="../libtorch-cache-references/">Native cache design references</a> compare mistral.rs, SGLang, llama.cpp and FlashInfer and describe the C++ ownership boundary and next integration steps.</p>
+<p>The implementation assembles contiguous prefix/suffix KV rather than using paged attention. Sliding-window layers currently retain the whole admitted prefix and apply the original window mask. Cold capture remains eager. Eligible non-recurrent suffixes can use CUDA graphs keyed by original/suffix geometry, model namespace and math policy. Replays bind matched parent state into owned graph buffers and copy it when the immutable parent changes, so the shader can rebind without retaining its owner. Graph publication batches copies into one owned resident buffer per snapshot; tensor views keep its layers and hidden output alive. Input copies are grouped by device/dtype to preserve the fast foreach route. The graph input/state buffers count against the existing graph budget, with a lower-bound rejection before known oversized prefix arenas allocate/capture. Non-admitted misses and capacity bypasses retain eligible full-request graphs; exact hidden-state repeats can return saved results without backbone execution. Recurrent suffix graphs and paged storage remain outstanding.</p>
+<p>Suffix graphs remember the last copied immutable parent using a weak reference. Replays using that same live snapshot skip prefix-buffer copies; changed or expired parents copy again. The graph owns its execution buffers, so weak references do not keep resident snapshots alive after clear or eviction. A binding is invalidated before replacement copies and published only after those copies succeed.</p>
+<p>Graph warmup allocates full K/V arenas and initializes their prefixes once. Parent views then point into those arenas, so replay copies only suffix rows instead of concatenating full K/V at every layer. Parent replacement updates the arena's prefix views before replay. Retired warmup allocations are retained on the capture stream; full arena storage is charged once, independently of its prefix aliases. Snapshot publication remains independently owned. Graph lookup describes matched spans directly without constructing temporary tensor views.</p>
+<p>Graph keys now serialize typed metadata directly into a process-local byte string. Variable-sized fields carry their lengths; operation, model namespace, device, dtypes, arithmetic policy, original/suffix geometry, media, Radix maps and retained state shapes remain part of identity. This removes repeated stream formatting without weakening graph compatibility. Rebinding a changed parent copies the target's leading row count directly from the immutable source, avoiding temporary source views. The copy kernel validates every span before submission; unsupported layouts use the existing typed copy route.</p>
+<p>Multi-sequence CUDA INT64 requests gather suffix IDs, positions and token types into three views of one owned allocation. One kernel handles up to64 sequences per launch, preserving sequence order and exact integer bits. All boundaries and retained lengths are checked before GPU work. Single-sequence requests keep their zero-copy slices; CPU and unsupported layouts retain their existing packing. The native submission fence covers these reads and writes along with graph replay and result staging.</p>
+<p>The fused BF16 head128 attention adapter uses a16-query, one-warp tile for a single causal suffix query on SM90 and32-query, two-warp blocks for2–64 suffix queries. It retains the original64-key reduction blocks and fused softmax; full requests, other dtypes, other architectures and other attention policies retain their existing dispatch. Single-query controls compare128 final-query vectors across32 seeded ragged/GQA batches against original full-context execution, bitwise. The short-query control covers64 seeded batches with2/7/8/16/24/32/33/47/52/64 queries, contexts16–2048 and GQA ratios2/8; every compared attention value matches bitwise. The extended64-query fixture also retains exact full-context references under filtered CUDA memory and synchronization checks; four matching launches have no race hazards.</p>
+<p>Eligible Half/BF16 head128 Q/K-normalized decoder suffix graphs now write normalized keys and raw values directly into their owned attention arenas. The fused normalization preserves the original reduction and intermediate rounding, while removing temporary key storage and a separate suffix K/V copy. Multi-sequence graphs own an immutable INT32 row map from compact suffix rows to original packed rows; its allocation counts against the graph budget. Single-sequence graphs write through contiguous suffix views. Radix, eager execution and other geometries retain their existing path. The wrapper rejects unsupported layouts, lazy flags and aliased output storage before launching. Graph construction validates unique, in-range destination rows. Raw-byte controls preserve Q/K arithmetic, V values and untouched prefix/gap rows; a ragged Half/BF16 graph control covers capture, replay, parent rebinding, caller output mutation and resident clear.</p>
+<p>The suffix shader fixture repeats and changes complete parent identities, survives resident-cache clear, verifies independent output storage, and rejects a known oversized arena before capture. Three alternating cache-off/on learned Qwen3 BF16 changing-tail runs measure p50 ranges of1.56-1.57ms versus1.59-1.60ms at128 tokens,1.92-1.94ms versus2.45-2.49ms at512, and3.83-3.91ms versus6.85-6.88ms at2048. The32-token no-admission case is0.1-0.8% slower in these runs. All compared output vectors match bitwise. Each shape has200 measured calls after30 discarded calls, on a shared H100. These scoped improvements do not establish the requested Pareto improvement for all workloads. Timing covers prepared native inference, excluding HTTP/tokenization/loading, and is scoped to the recorded evidence revision.</p>
+<p>A separate fresh cache-off/on pair for the learned Skywork Qwen3 scalar classifier matches every compared changing-tail score bitwise at32/128/512/2048 tokens. Its512/2048 p50 measures2.01/4.00ms versus2.57/6.97ms. This extends numerical coverage to a trained head; one pair does not establish stable performance across classifiers, dtypes or request distributions.</p>
+<p>The complete-classifier readout and geometry filter have separate learned controls. Three alternating cache-off/on exact-repeat pairs, preserving the earlier shapes' resident entries as requests grow from32 to2048 tokens, match all compared logits bitwise. Repeated classification p50 is approximately0.2ms versus1.5–6.9ms without caching; each shape has200 measured calls after30 discarded calls on the shared H100. Ragged learned batches, reordered/repeated selectors, padded and all-pad rows, exact repeats and changed tails also match every retained cold/warm score. Native CPU/CUDA fixtures check multi-label padding, independent caller mutations and geometry changes. These controls cover prepared native inference and the recorded checkpoint; cold/admission latency and broader family/provider/dtype distributions remain separate gates.</p>
+<p>Separate learned exact-repeat controls for Qwen2 BF16/FP16 and the Gemma4 publisher classifier also match every compared score at32/128/512/2048. These use20 measured calls after5 discarded calls, one fresh cache-off/on pair per checkpoint/dtype. They qualify the tested readout outputs, including the existing Qwen2 packed selector and Gemma's all-token score/cap order; they do not establish stable family-wide latency gains. The native publisher fixture also checks complete cached readout with a distinguishing softcap.</p>
+<p>Production readiness remains unproven. Required work includes paired cold/hot/churn/changing-tail and mixed-batch controls with eager and graph baselines; classifier, decision, recurrent and media workloads; budget pressure and sustained eviction; cancellation, error recovery and cross-stream/concurrent native callers. Improvements on exact repeats do not establish a Pareto improvement over those other workloads. The cache-manager stress test covers concurrent CPU inference, clear and statistics, while CUDA controls cover pending publication and cross-stream clear/allocation reuse; these tests do not prove every native engine access is race-free.</p>
+<p>Optional cuDNN execution keeps the original packed query geometry and causal provider. Cached query rows use discarded zero placeholders; only real suffix rows are returned. This repeats full attention work, while QKV and MLP computation still skip the prefix. Dense suffix attention with an explicit bias was mathematically equivalent but changed trained logits, so it is not used. Matched-operand single/mixed-batch controls and learned Qwen2 classification/last/mean controls match exactly at the tested lengths. The replay buffers are temporary execution storage, separate from the resident cache budget.</p>
+<p>Gemma4 image support continues to follow the existing vision implementation. Checkpoints requiring clipped vision linears remain unsupported before cache lookup; enabling persistence does not override their model configuration.</p>
+<p>Functional CPU/CUDA controls are necessary but do not establish learned-model equivalence. Qualification also compares cache-off, cold fill and warm/partial reuse on real checkpoints, including full vectors and trained logits. Timing evidence must distinguish backend inference from HTTP/tokenization, and short-prefix or churn regressions require separate attention. Production deployments should qualify their actual model, provider and request distribution before enabling the cache.</p>
+<p>Current H100/Torch 2.14.1 controls match exactly for the tested Qwen3 BF16, FP16 and dynamic MLP FP8 checkpoint at128/512/2048, its mixed/raw/mean/changing-tail requests, and the tested Skywork scalar classifier. Qwen2 BF16 classifier logits and complete last-token/mean vectors match at128/512/2048 on cold fill and exact-input reuse. Additional learned controls match for TinyLlama BF16, E5-Mistral FP16, Qwen3 MoE BF16 and Qwen3.5 dense/MoE BF16 at128/512/2048, and the Gemma4 MoE classifier at32/128/512/2048. These are numerical controls on specific checkpoints, not a complete family/dtype/task or end-to-end performance qualification.</p>
+<p>Qwen3-VL and Qwen3.5 dense learned-image controls match cache-off results exactly for cold fill, exact-input warm reuse and changed text tails/pixels/rotary axes at128/512/2048 tokens. A Qwen3-VL512 layer trace matches all447 captured stages after preserving default Torch head128 attention arithmetic. Ministral3 BF16 text controls also match cold/warm outputs at128/512/2048 using a documented byte-preserving extraction of its original learned text submodule; this does not add support for the original Mistral3 vision model.</p>
+<p>The tested causal Gemma3 BF16 checkpoint also matches complete cold/warm vectors at128/512/2048, including contexts exceeding its512-token sliding window. The checkpoint is the public Unsloth mirror of Gemma3-1B-IT, with a recorded immutable revision and file hashes.</p>
+<p>The learned Qwen2 BF16 classifier also matches all20 tested512-token requests with changing64-token tails on default Torch attention. This extends its exact-input controls without claiming every partial span or dtype is qualified.</p>
+<p>Gemma4 E2B dense and Qwen3.5 dense option-token controls match complete hidden vectors and logits at128/512/2048, including changed choices/tails and a warmup probe between hits. Their extracted text-config aliases also match.</p>
+<p>Qwen3, Qwen3.5 dense and Gemma4 E2B also match cache-off results for the tested growing requests, mixed batches, mean pooling and complete raw token outputs, both with and without RadixMLP. Gemma4's cached dense Radix projection fallback uses the same logical projection planner as its ordinary cached path; a513-token continuation trace matches all536 captured stages. These controls establish the tested combinations rather than every supported shape or dtype.</p>
+<p>Three alternating off/on prepared-token H100/Qwen3 BF16 eager runs measured p50 ranges of7.13-7.18ms without caching versus4.27-4.33ms for a repeated2048-token input. Short8/32/128-token requests measured about1.99-2.12ms off versus2.26-2.38ms on; unique128-token churn measured1.98-2.00ms off versus2.55-2.66ms on. The512-token on results varied2.68-3.77ms versus2.74-2.78ms off, so that shape does not establish a stable gain. Complete cold/warm/churn outputs match exactly. Each hot run has100 samples; churn has128 measured requests after32 discarded calls. These are shared-machine backend measurements; HTTP, tokenization and model loading are excluded.</p>
+<p>The faster lookup was also compared against the preceding cache implementation with64 resident learned Qwen3 BF16 prefixes of2048 tokens, diverging across the last64 positions. Three alternating H100 runs measured late-match p50 of4.91-5.05ms before versus4.31-4.35ms after, a12-14% reduction; early matches improved8-11%. All64 fill vectors and every compared warm vector match exactly. Each run has120 measured requests per case after10 warmups. The32GiB budget retains all64 entries; these results do not establish the same gain for smaller caches or other request distributions. HTTP, tokenization and model loading are excluded.</p>
+<p>Qualification is specific to the recorded checkpoints, providers, dtypes and shapes. Other combinations still need deployment-specific numerical and performance controls.</p>
+<p>The latest three learned Qwen3 BF16 pairs with packed readout match every retained exact-repeat, changing-tail and mixed/padded score. Exact-repeat p50 is0.085–0.108ms across32/128/512/2048 tokens; uncached p50 is1.35–6.86ms in those controls. Changing-tail512/2048 cases are1.92–1.93/3.84–3.90ms versus2.45–2.49/6.86ms. Short changing tails still vary around parity. These prepared native controls use200 measured calls after30 discarded; they do not qualify cold/admission, wider families/dtypes, or end-to-end service latency.</p>
+<h2 id="short-shared-prefix-qualification">Short shared prefix qualification</h2>
+<p>Short query/document prefixes are a primary workload for the next cache design. A prepared H100/Qwen3 BF16 causal-scoring control uses changing documents after8/16/32 shared tokens, batches1/8/32 and1/32 distinct queries. Matching controls use a4GiB graph budget and up to8GiB resident budget, rather than the production512MiB graph default. Providers are warmed by explicit probes; primed controls seed each query/document batch twice before timing. Loading, startup, tokenization and HTTP are excluded. Two opposite-order rounds retain every compared score bitwise.</p>
+<p>The earlier admission implementation produced no hits for these small prefixes. Primed controls verify that they are reusable, but current overhead remains too high. The initial32-request/32-token/16-shared-token batch took6.75–6.82ms cached versus3.07–3.09ms uncached. Strided copies made the suffix graph contain2139 operations, including896 separate memory copies. Batching those transfers reduces it to375 operations. Packed K/V and hidden arenas remove concatenations, reducing it to287 operations; the same cached batch now takes3.12–3.14ms versus3.03–3.06ms uncached. Eight-token hits remain slower in the measured cases. This is progress in restoration cost, not a claim that short hits improve model latency yet.</p>
+<p>The32-query attention tile now improves the primed32-request/32-token/16-shared-token control to2.89–2.93ms versus3.04–3.12ms with the preceding library and3.06ms uncached. Two opposite-order rounds match every trained score bitwise. Eight-token prefixes in the same batch improve to3.37–3.39ms from3.57–3.61ms, but uncached inference is still2.97–3.07ms. Single-request eight-token hits remain around1.57–1.58ms versus1.36–1.37ms uncached. These are60 prepared native calls after10 discarded, under the matched4GiB graph budget; the smaller tile does not establish a gain for every small hit.</p>
+<p>Separate opposite-order controls with32 suffix queries after512/2048-token contexts also retain every compared trained score bitwise. Compared with the preceding library,512-token latency falls about6% for a single request and2–3% for eight requests. The2048-token single-request result varies from1.2% slower to2.4% faster, so it establishes no stable kernel latency gain. Total cached inference remains faster than uncached inference in these long-prefix controls; they do not qualify every context or the default graph budget.</p>
+<p>An earlier eight-token-stem admission experiment detects naturally shared short prefixes and avoids duplicate snapshots within a batch. Its16-token case gains roughly7–11% over uncached inference, but eight-token cases and many-query distributions still regress. That early variant is retained in qualification evidence and was excluded at its recorded revision. The initial cumulative-offset experiment also failed to establish a useful gain; the current bounded boundary-buffer implementation was retested after the later kernel and preparation improvements. The GPU trace shows nearly unchanged projection cost for24 versus32 token rows on the tested single-request workload, alongside state-copy overhead. Reduced token arithmetic must translate into lower complete inference latency before these paths qualify.</p>
+<p>The latest host changes address measured preparation costs. Under temporary profiler instrumentation, the32-request/eight-token-hit graph key falls from0.52ms to0.12ms and suffix preparation from0.52ms to0.17ms. These instrumented durations diagnose overhead rather than measure production latency. Separate uninstrumented opposite-order controls match every compared trained score bitwise: primed16-token hits take2.45–2.48ms versus3.03ms uncached, and eight-token hits take2.87–2.88ms versus3.05–3.06ms uncached. Switching among32 queries with eight128-token documents and32 shared tokens improves from3.19–3.20ms before direct parent-span copying to2.95–3.00ms, while uncached remains2.90–2.92ms. The many-query case and single-request eight-token hits still do not establish a gain. These controls retain the matched4GiB graph budget,60 measured calls and10 discarded calls. Natural short-stem admission remains outstanding. Retesting its prototype with the host changes restores batched8/16-token gains, but single-request and many-query regressions still prevent adoption.</p>
+<p>The remaining work must share immutable block storage across related requests, index many resident prefixes cheaply, and measure the complete execution cost before using a hit. Recurrent and media boundaries remain component-specific.</p>
+<p>The latest two-warp tile retains every compared trained score bitwise in two opposite-order rounds. Primed32-document/32-token controls measure2.35ms for16-token hits versus3.04–3.07ms uncached, and2.77–2.78ms for eight-token hits versus3.06ms. The single-request eight-token case improves from1.55ms with one warp to1.42–1.43ms, but uncached remains1.35–1.37ms. With32 suffix queries after512/2048-token contexts, single-request cached p50 improves from2.30–2.31/4.26ms to1.98–2.01/3.58–3.60ms. Eight512-token requests improve from4.99–5.20ms to4.75–4.90ms. All controls retain the matched4GiB graph budget,60 measured calls and10 discarded calls. The32 seeded ragged/GQA attention oracle remains bitwise; kernel-filtered memory and synchronization checks pass, and four sampled launches report no race hazards. These gains do not establish production readiness for all workloads.</p>
+<p>The direct Q/K/V placement revision improves the preceding library by approximately2–4% in a final pinned-CPU comparison. Two opposite-order rounds measure primed32-document/32-token p50 of2.27–2.32ms for16-token hits versus3.04–3.07ms uncached, and2.70–2.72ms for eight-token hits versus3.06–3.07ms. Eight128-token documents with32 shared tokens take2.77–2.79ms versus2.91–2.94ms uncached. Switching among32 queries remains0.4–0.9% slower than uncached, and single-request8/16/24-token hits remain approximately1–4% slower. Every compared trained score matches bitwise. These controls retain the matched4GiB graph budget,60 measured calls and10 discarded calls; CPU affinity and one-thread helper limits reduce scheduling noise, but the shared machine is not reserved. Earlier unpinned repetitions are retained as diagnostic evidence rather than substituted for this comparison.</p>
+<p>At this revision, all32 native suites, nine no-custom-CUDA CPU suites and native CPU ThreadSanitizer pass; Torch is uninstrumented. Full graph and native stress memory checks report zero errors, and isolated direct-kernel race/synchronization checks pass. A synchronization check of the new kernel inside the ragged graph also passes. The full graph race-check attempt is inconclusive: the sanitizer reports an internal hardware-exception failure while executing the original normalization path, and the same fixture/filter reproduces it with the preceding library, which lacks the new kernel. Both libraries pass the uninstrumented fixture. Failed sanitizer logs are retained; this does not establish a clean graph race-check result or universal race freedom.</p>
+<p>The graph race-check gap is resolved for the tested native revision <code>2bbb9f73</code> (library SHA256 <code>164861f8e8e8fc46ee1eb86a006b1ae374043b664c888bd68389de0f443811c1</code>). On H100, Compute Sanitizer2025.4 reports zero hazards, errors or race warnings for both the focused Half/BF16 prefix graph fixture and the complete <code>cuda_graph_test</code> suite, without kernel filters or error suppression. The suite retains parent rebinding, caller mutation, clear, warmed snapshot publication, dynamic inputs, bounded eviction and intentional capture-failure recovery. Run <code>compute-sanitizer --tool racecheck --error-exitcode 97 &lt;build&gt;/cuda_graph_test</code> with the build's Torch/CUDA library environment.</p>
+<p>The earlier internal failure depends on kernel filtering in this setup. Synchronizing individual model steps locates it in the projection GEMM before normalization, even with eager inference and no cache. A Torch-only <code>[24,16]</code> by <code>[512,16]</code> linear projection reproduces the failure with the old normalization filter and passes unfiltered with an exact output oracle. Eager and captured standalone normalization, matching packed-layout controls, and unfiltered Half/BF16 model steps also pass. Changing CUDA library search order does not remove the filtered failure. Failed logs and minimal reproducers are retained in the revision-scoped evidence; the successful graph suite does not qualify every model, dtype, architecture or service lifetime.</p>
+<p>A subsequent full-graph observer experiment writes normalized K and raw V into compact owned storage, releasing unused Q/K projection backing allocations. With the default512MiB graph budget, two pinned-CPU Qwen3 BF16 rounds preserve every compared last-token vector bitwise and reduce2048-token second-call admission from7.58–7.64ms to7.10–7.17ms; uncached is6.84ms. However, warmed2048-token misses increase from6.84–6.86ms to6.96ms, and512-token misses increase from2.47ms to2.52ms. This variant remains an unpublished experiment and is excluded from this branch. Future compaction needs to avoid that recurring value-copy cost on misses.</p>
+<p>Depth-indexed text admission now discovers shared prefixes without manual seeding. Two opposite-order prepared H100/Qwen3 BF16 rounds measure natural32-document/32-token p50 of2.23–2.24ms for16-token prefixes versus3.02–3.07ms uncached, and2.69–2.70ms for eight-token prefixes versus3.02–3.07ms. Eight128-token documents with32 shared tokens take2.74ms versus2.91–2.94ms uncached; switching among32 distinct queries takes2.88ms versus2.91–2.94ms. These use the matched4GiB graph budget,2048 entries,60 measured calls after10 discarded calls, fixed NUMA-local CPU affinity and one-thread helpers. Every compared trained score matches bitwise. The general counter costs more than the earlier restricted rolling-sample implementation in some batches; its benefit is retaining longer prefixes for interleaved questions under a common role header.</p>
+<p>The single32-token/eight-token-prefix request still takes1.374–1.377ms versus1.349–1.356ms uncached. With two128-token questions sharing a role header and32-token prefixes, the new admission reuses2128 tokens versus544 with the rolling sample, but takes1.643–1.644ms versus1.605–1.608ms uncached. A32-query role-sharing batch remains variable around parity. More reused tokens therefore do not prove lower model latency. Hit execution cost, shared8-token storage and scalable resident lookup remain required work. The memory/concurrency controls validate their stated stream and lifetime scopes; the earlier full-graph race-checker crash remains unresolved.</p>
+<p>The latest SM90 tile and extended-admission controls use two opposite-order H100/Qwen3 BF16 rounds,120 measured calls after10 discarded, pinned NUMA-local CPU affinity, one-thread helpers,2048 entries,8GiB resident and matched4GiB graph budgets. All compared trained scores remain bitwise. The32-query/eight-document128-token workload with a64-token shared prefix now takes2.326–2.358ms versus3.314–3.373ms with the preceding tile-only cache and2.952–2.953ms uncached. During these primed controls, admissions fall from1,296 to287 and evictions from722 to zero; allocated GPU memory falls from10.413GB to5.893GB. A two-query2,048-token workload with2,000 shared tokens takes3.267–3.280ms versus3.607–3.610ms previously and6.867–6.877ms uncached. Admissions fall from132 to2, evictions from97 to zero, and allocated memory from10.736GB to2.847GB. These are decimal GB reported by the allocator, distinct from the configured GiB budgets.</p>
+<p>The extended tile alone reduces the1,024-question64-token/twelve-prefix case from1.540–1.582ms to1.418–1.421ms, preserving scores. Combined controls still take1.424–1.426ms versus1.384ms uncached, and the single64-token/eight-prefix case remains about1% slower. The32-prefix comparison is noisy and does not establish nonregression. These gains do not close the remaining short-hit utility, cold/long-admission, shared eight-token storage, broader index/model/service and race qualification gaps. The large registries are primed; natural short-prefix controls remain scoped to earlier reports.</p>
+<p>A satisfied reader now skips admission identity trimming and duplicate lookup when it already covers every eligible retained row. Observation counters still update first, preserving longer-prefix promotion. Existing CPU/CUDA threshold, full-readout, clear/growth, geometry and ownership controls pass; CPU ThreadSanitizer and full native memcheck also pass. Two opposite-order trained-model rounds preserve every compared score, reuse/admission/eviction count and allocator byte total. Latency differences are small and mixed, so this shortcut does not establish a further gain or remove the remaining short-hit regressions.</p>
+<p>Temporary host instrumentation measures warmed graph-key construction at roughly3–8microseconds, graph-copy preparation at6–15microseconds and result handling at8microseconds for the measured single-request controls. Prefix-manager preparation adds roughly9–15microseconds. These diagnostics guide work and are excluded from the implementation. Borrowing graph outputs through native result staging passed scoped ownership checks but showed a batch regression in two paired rounds; that experiment remains excluded.</p>
+<p>The contiguous direct Q/K/V kernel now omits a redundant device row assertion. Host validation requires both output targets to have exactly the input token count, bounding every sequential Q/K row. Indexed output retains the original assertion, including Q rows. Its Half/BF16 normal execution instructions match the preceding mapped kernels; only cold assertion-message constant addresses relocate. All32 native suites, complete unfiltered graph racecheck and operator memcheck pass at native SHA256 <code>e16e7ec012590f1db7fd9f6b3d008ac6ae2dad8339f0ead0b9fbc4630faaf7d0</code>. Host/CPU code is unchanged; earlier CPU and ThreadSanitizer checks retain their recorded revision scope.</p>
+<p>An isolated H100/BF16 graph benchmark with16 query heads, eight KV heads, head dimension128 and32/128/512/2048 tokens reduces direct-kernel time by roughly8–9%, preserving Q/K bits and raw V. A register-limited variant spills and runs slower, so it is excluded. An initial variant also removed the indexed Q assertion and regressed a trained mapped batch by0.38%/1.34% in two opposite-order rounds; it is excluded. The retained contiguous-only change is checked with two separately owned engines in one Torch process, alternating per-call order for240 measured calls after30 discarded. All compared trained scores and cache counters match across five short/indexed/batch/long controls; median changes are only0.03–0.16% lower. This diagnostic uses4GiB graph and8GiB resident budgets, has no cache-off engine, and does not establish a meaningful end-to-end gain or resolve default512MiB admission and short-hit regressions. The earlier full-observer compaction variant remains excluded.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.sections", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
