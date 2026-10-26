@@ -1088,6 +1088,31 @@ public:
                   "Sequence classification requires nonempty inputs");
     if (tokenwise)
       return at::linear(forward(input), score, score_bias);
+    // After the final attention operation, remaining computation is token-wise.
+    // Sequence classification needs only the last non-padding row of each input.
+    if (!causal && !token_classifier && !bidirectional_classifier &&
+        device.is_cuda() && dtype == at::kBFloat16 &&
+        !fp8_dynamic && family != "ultrabert" &&
+        options.integer("num_experts", 0) == 0 && !radix_enabled(input) &&
+        !input.prefix && !input.capture_prefix) {
+      auto starts = input.cumulative.narrow(0, 0, input.batch).to(at::kLong);
+      auto ends = input.cumulative.narrow(0, 1, input.batch).to(at::kLong) - 1;
+      at::Tensor selected = ends;
+      if (options.values.count("pad_token_id")) {
+        auto rows = at::repeat_interleave(at::arange(input.batch, input.ids.options()),
+                                         ends - starts + 1, 0, input.ids.numel());
+        auto positions = at::arange(input.ids.numel(), input.ids.options());
+        auto candidates = at::where(input.ids == options.integer("pad_token_id"), -1, positions);
+        selected = at::full({input.batch}, -1, input.ids.options());
+        selected.scatter_reduce_(0, rows, candidates, "amax", true);
+        selected = at::where(selected < 0, starts, selected);
+      }
+      auto h = forward_states(input, at::embedding(embedding, input.ids),
+                              cos_cache.index_select(0, input.positions).unsqueeze(1),
+                              sin_cache.index_select(0, input.positions).unsqueeze(1),
+                              {}, {}, selected);
+      return at::linear(h, score, score_bias);
+    }
     return classify_hidden(input, forward(input));
   }
 
@@ -1225,7 +1250,8 @@ public:
                             const at::Tensor& cosine,
                             const at::Tensor& sine,
                             const at::Tensor& visual_indices = at::Tensor(),
-                            const std::vector<at::Tensor>& deepstack = {}) const {
+                            const std::vector<at::Tensor>& deepstack = {},
+                            const at::Tensor& classification_rows = {}) const {
     // CUDA fused norms carry the accumulated residual separately from h, which holds the latest
     // branch. The composed path instead materializes each residual addition directly in h.
     at::Tensor residual;
@@ -1363,6 +1389,12 @@ public:
       auto attended = attend(q, k, v, input, layer_index, layer)
                           .contiguous()
                           .view({h.size(0), heads * head_dim});
+      if (classification_rows.defined() && layer_index + 1 == layers.size()) {
+        attended = attended.index_select(0, classification_rows);
+        h = h.index_select(0, classification_rows);
+        if (residual.defined())
+          residual = residual.index_select(0, classification_rows);
+      }
       at::Tensor projected;
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (layer.fp8_out)

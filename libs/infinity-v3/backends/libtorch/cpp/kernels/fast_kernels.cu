@@ -300,21 +300,21 @@ struct alignas(16) Bf16NormVector {
   __nv_bfloat16 v[8];
 };
 
-__global__ void add_rms_bf16_4096_kernel(const __nv_bfloat16* x,
-                                         const __nv_bfloat16* residual,
-                                         const __nv_bfloat16* weight,
-                                         __nv_bfloat16* out,
-                                         __nv_bfloat16* summed,
-                                         float epsilon) {
-  __shared__ float values[4096];
+template <int Width>
+__global__ void add_rms_bf16_vector_kernel(const __nv_bfloat16* x,
+                                           const __nv_bfloat16* residual,
+                                           const __nv_bfloat16* weight,
+                                           __nv_bfloat16* out,
+                                           __nv_bfloat16* summed,
+                                           float epsilon) {
+  __shared__ float values[Width];
   const int64_t row = blockIdx.x;
 #pragma unroll
-  for (int j = 0; j < 2; ++j) {
-    const int group = threadIdx.x + j * 256;
-    auto input = reinterpret_cast<const Bf16NormVector*>(x)[row * 512 + group];
+  for (int group = threadIdx.x; group < Width / 8; group += 256) {
+    auto input = reinterpret_cast<const Bf16NormVector*>(x)[row * (Width / 8) + group];
     Bf16NormVector add{}, sum;
     if (residual)
-      add = reinterpret_cast<const Bf16NormVector*>(residual)[row * 512 + group];
+      add = reinterpret_cast<const Bf16NormVector*>(residual)[row * (Width / 8) + group];
 #pragma unroll
     for (int i = 0; i < 8; ++i) {
       float value = float(input.v[i]);
@@ -324,25 +324,24 @@ __global__ void add_rms_bf16_4096_kernel(const __nv_bfloat16* x,
       sum.v[i] = __nv_bfloat16(value);
     }
     if (residual)
-      reinterpret_cast<Bf16NormVector*>(summed)[row * 512 + group] = sum;
+      reinterpret_cast<Bf16NormVector*>(summed)[row * (Width / 8) + group] = sum;
   }
   __syncthreads();
   float variance = 0;
 #pragma unroll
-  for (int j = 0; j < 16; ++j) {
+  for (int j = 0; j < Width / 256; ++j) {
     float value = values[threadIdx.x + j * 256];
     variance += value * value;
   }
-  float inverse = rsqrtf(block_sum(variance) / 4096 + epsilon);
+  float inverse = rsqrtf(block_sum(variance) / Width + epsilon);
 #pragma unroll
-  for (int j = 0; j < 2; ++j) {
-    const int group = threadIdx.x + j * 256;
+  for (int group = threadIdx.x; group < Width / 8; group += 256) {
     auto gamma = reinterpret_cast<const Bf16NormVector*>(weight)[group];
     Bf16NormVector result;
 #pragma unroll
     for (int i = 0; i < 8; ++i)
       result.v[i] = __nv_bfloat16((values[group * 8 + i] * inverse) * float(gamma.v[i]));
-    reinterpret_cast<Bf16NormVector*>(out)[row * 512 + group] = result;
+    reinterpret_cast<Bf16NormVector*>(out)[row * (Width / 8) + group] = result;
   }
 }
 
@@ -433,10 +432,17 @@ void run_rms(const at::Tensor& x,
   auto sp = residual.defined() ? reinterpret_cast<T*>(sum.mutable_data_ptr()) : nullptr;
   auto width = x.size(-1), rows = x.numel() / width;
   if constexpr (std::is_same_v<T, __nv_bfloat16>) {
-    if (width == 4096 && rows >= 128 && reinterpret_cast<uintptr_t>(xp) % 16 == 0 &&
+    const bool vector_width = (width == 4096 && rows >= 128) ||
+                              (rp && rows >= 1024 && (width == 1536 || width == 2048));
+    if (vector_width && reinterpret_cast<uintptr_t>(xp) % 16 == 0 &&
         reinterpret_cast<uintptr_t>(wp) % 16 == 0 &&
         (!rp || reinterpret_cast<uintptr_t>(rp) % 16 == 0)) {
-      add_rms_bf16_4096_kernel<<<rows, 256, 0, stream>>>(xp, rp, wp, op, sp, epsilon);
+      if (width == 1536)
+        add_rms_bf16_vector_kernel<1536><<<rows, 256, 0, stream>>>(xp, rp, wp, op, sp, epsilon);
+      else if (width == 2048)
+        add_rms_bf16_vector_kernel<2048><<<rows, 256, 0, stream>>>(xp, rp, wp, op, sp, epsilon);
+      else
+        add_rms_bf16_vector_kernel<4096><<<rows, 256, 0, stream>>>(xp, rp, wp, op, sp, epsilon);
       return;
     }
   }

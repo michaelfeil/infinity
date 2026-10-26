@@ -99,19 +99,20 @@ int main(int argc, char** argv) {
       auto view = storage.narrow(0, 1, value.numel()).view_as(value);
       return view.copy_(value);
     };
-    for (int rows : {127, 128, 257})
-      for (bool residual : {false, true}) {
-        auto x = at::randn({rows, 4096}, opts), r = at::randn_like(x), w = at::randn({4096}, opts);
-        for (double eps : {1e-6, 1e-5}) {
-          auto expected =
-              infinity::fused_add_rms_norm(unaligned(x), residual ? r : at::Tensor(), w, eps);
-          auto actual = infinity::fused_add_rms_norm(x, residual ? r : at::Tensor(), w, eps);
-          close(actual.first, expected.first, 0, "BF16 vector RMS versus scalar fallback");
-          close(actual.second, expected.second, 0, "BF16 vector RMS residual");
-          if (!residual)
-            TORCH_CHECK(actual.second.is_alias_of(x), "BF16 RMS input alias");
+    for (int width : {1536, 2048, 4096})
+      for (int rows : {127, 128, 257, 1023, 1024, 4096})
+        for (bool residual : {false, true}) {
+          auto x = at::randn({rows, width}, opts), r = at::randn_like(x), w = at::randn({width}, opts);
+          for (double eps : {1e-6, 1e-5}) {
+            auto expected =
+                infinity::fused_add_rms_norm(unaligned(x), residual ? r : at::Tensor(), w, eps);
+            auto actual = infinity::fused_add_rms_norm(x, residual ? r : at::Tensor(), w, eps);
+            close(actual.first, expected.first, 0, "BF16 vector RMS versus scalar fallback");
+            close(actual.second, expected.second, 0, "BF16 vector RMS residual");
+            if (!residual)
+              TORCH_CHECK(actual.second.is_alias_of(x), "BF16 RMS input alias");
+          }
         }
-      }
     for (int width : {12288, 14336}) {
       auto both = at::randn({17, 2 * width}, opts) * 8;
       close(infinity::fused_gated_activation(both, 5),
