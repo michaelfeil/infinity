@@ -38,13 +38,12 @@ CUDA requires an Ampere/SM80 or newer GPU and NVIDIA Container Toolkit.
 docker run --rm --gpus all -p 8000:8000 -v infinity-cache:/data \
   ghcr.io/michaelfeil/infinity_v3:nvidia-latest \
   --model-id BAAI/bge-small-en-v1.5 \
-  --torch-device cuda --device-id 0 --dtype bfloat16 \
-  --pooling cls --max-batch-tokens 8192 \
+  --torch-device cuda --dtype bfloat16 \
+  --max-batch-tokens 8192 \
   --hostname 0.0.0.0 --port 8000
 ```
 
-Replace `--model-id` and the task settings with a table row below. Remove the
-example's `--pooling cls` unless the chosen row specifies it. The native
+Replace `--model-id` and the task settings with a table row below. The native
 image selects LibTorch automatically. For a locally installed binary, pass the
 same flags to `infinity_v3`. Tables use BF16 compute unless a row specifies a
 different `--dtype`; replace the common dtype flag in that case. Checkpoint
@@ -65,16 +64,18 @@ containing its weights, tokenizer, pooling/head configuration and task sidecars.
 Gated checkpoints also require access credentials. A base language model needs
 a trained retrieval or classification head to provide that task's intended scores.
 
-Each GPU loads a full replica, including every MoE expert. For DP2 or DP4,
-replace `--device-id 0` with `--backend-device-ids 0,1` or
-`--backend-device-ids 0,1,2,3`.
+All visible CUDA GPUs are used by default. Each GPU loads a full replica,
+including every MoE expert. To select only two or four visible GPUs, add
+`--backend-device-ids 0,1` or `--backend-device-ids 0,1,2,3`.
 Every selected GPU must fit the full model; this does not shard weights.
 Wait for `/health` before sending traffic; model warmup is part of startup.
 
 ## Dense text embeddings
 
-Use `/v1/embeddings` with `input` strings. Pooling overrides appear explicitly
-where needed; omitted pooling uses checkpoint metadata and architecture defaults.
+Use `/v1/embeddings` with `input` strings. Pooling is read from the checkpoint
+metadata automatically; the examples omit redundant overrides. Keep the saved
+`1_Pooling/config.json` when copying a checkpoint to a local directory. Explicit
+`--pooling splade` selects the sparse task described below.
 
 For Nomic v1.5, prefix retrieval queries with `search_query: ` and documents with
 `search_document: `. It returns 768 dimensions by default. Qwen3 queries use the
@@ -96,75 +97,75 @@ instructions and checkpoint formatting; they are separate from Nemotron ColEmbed
 
 | Checkpoint | Native implementation / support basis | Additional launch settings |
 | --- | --- | --- |
-| [Alibaba-NLP/gte-base-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-base-en-v1.5) | GTE rotary encoder + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [Alibaba-NLP/gte-large-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5) | GTE rotary encoder + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [Alibaba-NLP/gte-multilingual-base](https://huggingface.co/Alibaba-NLP/gte-multilingual-base) | GTE rotary encoder + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [Alibaba-NLP/gte-Qwen2-1.5B-instruct](https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct) | Qwen2 + sentence pooling | `--pooling last-token --max-batch-tokens 8192` |
-| [Alibaba-NLP/gte-Qwen2-7B-instruct](https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct) | Qwen2 + sentence pooling | `--pooling last-token --max-batch-tokens 8192` |
-| [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [BAAI/bge-base-zh-v1.5](https://huggingface.co/BAAI/bge-base-zh-v1.5) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [BAAI/bge-large-en-v1.5](https://huggingface.co/BAAI/bge-large-en-v1.5) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [BAAI/bge-large-zh-v1.5](https://huggingface.co/BAAI/bge-large-zh-v1.5) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
+| [Alibaba-NLP/gte-base-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-base-en-v1.5) | GTE rotary encoder + sentence pooling | `--max-batch-tokens 8192` |
+| [Alibaba-NLP/gte-large-en-v1.5](https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5) | GTE rotary encoder + sentence pooling | `--max-batch-tokens 8192` |
+| [Alibaba-NLP/gte-multilingual-base](https://huggingface.co/Alibaba-NLP/gte-multilingual-base) | GTE rotary encoder + sentence pooling | `--max-batch-tokens 8192` |
+| [Alibaba-NLP/gte-Qwen2-1.5B-instruct](https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct) | Qwen2 + sentence pooling | `--max-batch-tokens 8192` |
+| [Alibaba-NLP/gte-Qwen2-7B-instruct](https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct) | Qwen2 + sentence pooling | `--max-batch-tokens 8192` |
+| [BAAI/bge-base-en-v1.5](https://huggingface.co/BAAI/bge-base-en-v1.5) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [BAAI/bge-base-zh-v1.5](https://huggingface.co/BAAI/bge-base-zh-v1.5) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [BAAI/bge-large-en-v1.5](https://huggingface.co/BAAI/bge-large-en-v1.5) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [BAAI/bge-large-zh-v1.5](https://huggingface.co/BAAI/bge-large-zh-v1.5) | BERT + sentence pooling | `--max-batch-tokens 8192` |
 | [BAAI/bge-m3](https://huggingface.co/BAAI/bge-m3) | XLM-RoBERTa + sentence pooling | `--max-batch-tokens 16384` |
-| [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [BAAI/bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
+| [BAAI/bge-small-en-v1.5](https://huggingface.co/BAAI/bge-small-en-v1.5) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [BAAI/bge-small-zh-v1.5](https://huggingface.co/BAAI/bge-small-zh-v1.5) | BERT + sentence pooling | `--max-batch-tokens 8192` |
 | [dmis-lab/UltraBERT-Embed-150M](https://huggingface.co/dmis-lab/UltraBERT-Embed-150M) | UltraBERT + sentence pooling | `--max-batch-tokens 32768` |
-| [intfloat/e5-base-v2](https://huggingface.co/intfloat/e5-base-v2) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [intfloat/e5-large-v2](https://huggingface.co/intfloat/e5-large-v2) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [intfloat/e5-mistral-7b-instruct](https://huggingface.co/intfloat/e5-mistral-7b-instruct) | Mistral + sentence pooling | `--pooling last-token --max-batch-tokens 8192` |
-| [intfloat/e5-small-v2](https://huggingface.co/intfloat/e5-small-v2) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [intfloat/multilingual-e5-base](https://huggingface.co/intfloat/multilingual-e5-base) | XLM-RoBERTa + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [intfloat/multilingual-e5-large](https://huggingface.co/intfloat/multilingual-e5-large) | XLM-RoBERTa + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [intfloat/multilingual-e5-large-instruct](https://huggingface.co/intfloat/multilingual-e5-large-instruct) | XLM-RoBERTa + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [intfloat/multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [jinaai/jina-code-embeddings-0.5b](https://huggingface.co/jinaai/jina-code-embeddings-0.5b) | Qwen2 + sentence pooling; [non-commercial license](#model-licenses) | `--pooling last-token --max-batch-tokens 8192` |
-| [jinaai/jina-code-embeddings-1.5b](https://huggingface.co/jinaai/jina-code-embeddings-1.5b) | Qwen2 + sentence pooling; [non-commercial license](#model-licenses) | `--pooling last-token --max-batch-tokens 8192` |
-| [jinaai/jina-embeddings-v2-base-code](https://huggingface.co/jinaai/jina-embeddings-v2-base-code) | JinaCode encoder + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [jinaai/jina-embeddings-v2-base-en](https://huggingface.co/jinaai/jina-embeddings-v2-base-en) | Jina BERT/ALiBi + sentence pooling | `--pooling mean --max-batch-tokens 2048` |
-| [jinaai/jina-embeddings-v2-small-en](https://huggingface.co/jinaai/jina-embeddings-v2-small-en) | Jina BERT/ALiBi + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [mixedbread-ai/mxbai-embed-large-v1](https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
+| [intfloat/e5-base-v2](https://huggingface.co/intfloat/e5-base-v2) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [intfloat/e5-large-v2](https://huggingface.co/intfloat/e5-large-v2) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [intfloat/e5-mistral-7b-instruct](https://huggingface.co/intfloat/e5-mistral-7b-instruct) | Mistral + sentence pooling | `--max-batch-tokens 8192` |
+| [intfloat/e5-small-v2](https://huggingface.co/intfloat/e5-small-v2) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [intfloat/multilingual-e5-base](https://huggingface.co/intfloat/multilingual-e5-base) | XLM-RoBERTa + sentence pooling | `--max-batch-tokens 8192` |
+| [intfloat/multilingual-e5-large](https://huggingface.co/intfloat/multilingual-e5-large) | XLM-RoBERTa + sentence pooling | `--max-batch-tokens 8192` |
+| [intfloat/multilingual-e5-large-instruct](https://huggingface.co/intfloat/multilingual-e5-large-instruct) | XLM-RoBERTa + sentence pooling | `--max-batch-tokens 8192` |
+| [intfloat/multilingual-e5-small](https://huggingface.co/intfloat/multilingual-e5-small) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [jinaai/jina-code-embeddings-0.5b](https://huggingface.co/jinaai/jina-code-embeddings-0.5b) | Qwen2 + sentence pooling; [non-commercial license](#model-licenses) | `--max-batch-tokens 8192` |
+| [jinaai/jina-code-embeddings-1.5b](https://huggingface.co/jinaai/jina-code-embeddings-1.5b) | Qwen2 + sentence pooling; [non-commercial license](#model-licenses) | `--max-batch-tokens 8192` |
+| [jinaai/jina-embeddings-v2-base-code](https://huggingface.co/jinaai/jina-embeddings-v2-base-code) | JinaCode encoder + sentence pooling | `--max-batch-tokens 8192` |
+| [jinaai/jina-embeddings-v2-base-en](https://huggingface.co/jinaai/jina-embeddings-v2-base-en) | Jina BERT/ALiBi + sentence pooling | `--max-batch-tokens 2048` |
+| [jinaai/jina-embeddings-v2-small-en](https://huggingface.co/jinaai/jina-embeddings-v2-small-en) | Jina BERT/ALiBi + sentence pooling | `--max-batch-tokens 8192` |
+| [mixedbread-ai/mxbai-embed-large-v1](https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1) | BERT + sentence pooling | `--max-batch-tokens 8192` |
 | [nomic-ai/modernbert-embed-base](https://huggingface.co/nomic-ai/modernbert-embed-base) | ModernBERT + sentence pooling | `--max-batch-tokens 8192` |
-| [nomic-ai/nomic-embed-text-v1](https://huggingface.co/nomic-ai/nomic-embed-text-v1) | Nomic BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [nomic-ai/nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) | Nomic BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [nomic-ai/nomic-embed-text-v2-moe](https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe) | Nomic BERT MoE + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [nvidia/Nemotron-3-Embed-1B-BF16](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16) | Bidirectional Ministral3 + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [nvidia/Nemotron-3-Embed-8B-BF16](https://huggingface.co/nvidia/Nemotron-3-Embed-8B-BF16) | Bidirectional Ministral3 + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [perplexity-ai/pplx-embed-v1-0.6b](https://huggingface.co/perplexity-ai/pplx-embed-v1-0.6b) | Bidirectional Qwen3 + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [perplexity-ai/pplx-embed-v1-4b](https://huggingface.co/perplexity-ai/pplx-embed-v1-4b) | Bidirectional Qwen3 + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) | Qwen3 + sentence pooling | `--pooling last-token --max-batch-tokens 8192` |
-| [Qwen/Qwen3-Embedding-4B](https://huggingface.co/Qwen/Qwen3-Embedding-4B) | Qwen3 + sentence pooling | `--pooling last-token --max-batch-tokens 8192` |
-| [Qwen/Qwen3-Embedding-8B](https://huggingface.co/Qwen/Qwen3-Embedding-8B) | Qwen3 + sentence pooling | `--pooling last-token --max-batch-tokens 8192` |
-| [sentence-transformers/all-distilroberta-v1](https://huggingface.co/sentence-transformers/all-distilroberta-v1) | RoBERTa + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/all-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L12-v2) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/all-mpnet-base-v2](https://huggingface.co/sentence-transformers/all-mpnet-base-v2) | MPNet + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/all-roberta-large-v1](https://huggingface.co/sentence-transformers/all-roberta-large-v1) | RoBERTa + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/bert-base-nli-mean-tokens](https://huggingface.co/sentence-transformers/bert-base-nli-mean-tokens) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/distiluse-base-multilingual-cased-v2](https://huggingface.co/sentence-transformers/distiluse-base-multilingual-cased-v2) | DistilBERT + sentence pooling + saved Dense projection | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/LaBSE](https://huggingface.co/sentence-transformers/LaBSE) | BERT + sentence pooling + saved Dense projection | `--pooling cls --max-batch-tokens 8192` |
-| [sentence-transformers/msmarco-distilbert-base-v4](https://huggingface.co/sentence-transformers/msmarco-distilbert-base-v4) | DistilBERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/msmarco-MiniLM-L12-cos-v5](https://huggingface.co/sentence-transformers/msmarco-MiniLM-L12-cos-v5) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/msmarco-MiniLM-L6-cos-v5](https://huggingface.co/sentence-transformers/msmarco-MiniLM-L6-cos-v5) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/multi-qa-MiniLM-L6-cos-v1](https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/multi-qa-MiniLM-L6-dot-v1](https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-dot-v1) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [sentence-transformers/multi-qa-mpnet-base-cos-v1](https://huggingface.co/sentence-transformers/multi-qa-mpnet-base-cos-v1) | MPNet + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/multi-qa-mpnet-base-dot-v1](https://huggingface.co/sentence-transformers/multi-qa-mpnet-base-dot-v1) | MPNet + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [sentence-transformers/paraphrase-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L12-v2) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/paraphrase-MiniLM-L3-v2](https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L3-v2) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/paraphrase-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L6-v2) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [sentence-transformers/paraphrase-multilingual-mpnet-base-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-mpnet-base-v2) | XLM-RoBERTa + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [Snowflake/snowflake-arctic-embed-l](https://huggingface.co/Snowflake/snowflake-arctic-embed-l) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [Snowflake/snowflake-arctic-embed-l-v2.0](https://huggingface.co/Snowflake/snowflake-arctic-embed-l-v2.0) | XLM-RoBERTa + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [Snowflake/snowflake-arctic-embed-m](https://huggingface.co/Snowflake/snowflake-arctic-embed-m) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [Snowflake/snowflake-arctic-embed-m-long](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-long) | Nomic BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [Snowflake/snowflake-arctic-embed-m-v2.0](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0) | GTE rotary encoder + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [Snowflake/snowflake-arctic-embed-s](https://huggingface.co/Snowflake/snowflake-arctic-embed-s) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [Snowflake/snowflake-arctic-embed-xs](https://huggingface.co/Snowflake/snowflake-arctic-embed-xs) | BERT + sentence pooling | `--pooling cls --max-batch-tokens 8192` |
-| [thenlper/gte-base](https://huggingface.co/thenlper/gte-base) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [thenlper/gte-large](https://huggingface.co/thenlper/gte-large) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [thenlper/gte-small](https://huggingface.co/thenlper/gte-small) | BERT + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
-| [voyageai/voyage-4-nano](https://huggingface.co/voyageai/voyage-4-nano) | Qwen3 + sentence pooling | `--pooling mean --max-batch-tokens 8192` |
+| [nomic-ai/nomic-embed-text-v1](https://huggingface.co/nomic-ai/nomic-embed-text-v1) | Nomic BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [nomic-ai/nomic-embed-text-v1.5](https://huggingface.co/nomic-ai/nomic-embed-text-v1.5) | Nomic BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [nomic-ai/nomic-embed-text-v2-moe](https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe) | Nomic BERT MoE + sentence pooling | `--max-batch-tokens 8192` |
+| [nvidia/Nemotron-3-Embed-1B-BF16](https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16) | Bidirectional Ministral3 + sentence pooling | `--max-batch-tokens 8192` |
+| [nvidia/Nemotron-3-Embed-8B-BF16](https://huggingface.co/nvidia/Nemotron-3-Embed-8B-BF16) | Bidirectional Ministral3 + sentence pooling | `--max-batch-tokens 8192` |
+| [perplexity-ai/pplx-embed-v1-0.6b](https://huggingface.co/perplexity-ai/pplx-embed-v1-0.6b) | Bidirectional Qwen3 + sentence pooling | `--max-batch-tokens 8192` |
+| [perplexity-ai/pplx-embed-v1-4b](https://huggingface.co/perplexity-ai/pplx-embed-v1-4b) | Bidirectional Qwen3 + sentence pooling | `--max-batch-tokens 8192` |
+| [Qwen/Qwen3-Embedding-0.6B](https://huggingface.co/Qwen/Qwen3-Embedding-0.6B) | Qwen3 + sentence pooling | `--max-batch-tokens 8192` |
+| [Qwen/Qwen3-Embedding-4B](https://huggingface.co/Qwen/Qwen3-Embedding-4B) | Qwen3 + sentence pooling | `--max-batch-tokens 8192` |
+| [Qwen/Qwen3-Embedding-8B](https://huggingface.co/Qwen/Qwen3-Embedding-8B) | Qwen3 + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/all-distilroberta-v1](https://huggingface.co/sentence-transformers/all-distilroberta-v1) | RoBERTa + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/all-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L12-v2) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/all-mpnet-base-v2](https://huggingface.co/sentence-transformers/all-mpnet-base-v2) | MPNet + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/all-roberta-large-v1](https://huggingface.co/sentence-transformers/all-roberta-large-v1) | RoBERTa + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/bert-base-nli-mean-tokens](https://huggingface.co/sentence-transformers/bert-base-nli-mean-tokens) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/distiluse-base-multilingual-cased-v2](https://huggingface.co/sentence-transformers/distiluse-base-multilingual-cased-v2) | DistilBERT + sentence pooling + saved Dense projection | `--max-batch-tokens 8192` |
+| [sentence-transformers/LaBSE](https://huggingface.co/sentence-transformers/LaBSE) | BERT + sentence pooling + saved Dense projection | `--max-batch-tokens 8192` |
+| [sentence-transformers/msmarco-distilbert-base-v4](https://huggingface.co/sentence-transformers/msmarco-distilbert-base-v4) | DistilBERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/msmarco-MiniLM-L12-cos-v5](https://huggingface.co/sentence-transformers/msmarco-MiniLM-L12-cos-v5) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/msmarco-MiniLM-L6-cos-v5](https://huggingface.co/sentence-transformers/msmarco-MiniLM-L6-cos-v5) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/multi-qa-MiniLM-L6-cos-v1](https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/multi-qa-MiniLM-L6-dot-v1](https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-dot-v1) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/multi-qa-mpnet-base-cos-v1](https://huggingface.co/sentence-transformers/multi-qa-mpnet-base-cos-v1) | MPNet + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/multi-qa-mpnet-base-dot-v1](https://huggingface.co/sentence-transformers/multi-qa-mpnet-base-dot-v1) | MPNet + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/paraphrase-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L12-v2) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/paraphrase-MiniLM-L3-v2](https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L3-v2) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/paraphrase-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L6-v2) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [sentence-transformers/paraphrase-multilingual-mpnet-base-v2](https://huggingface.co/sentence-transformers/paraphrase-multilingual-mpnet-base-v2) | XLM-RoBERTa + sentence pooling | `--max-batch-tokens 8192` |
+| [Snowflake/snowflake-arctic-embed-l](https://huggingface.co/Snowflake/snowflake-arctic-embed-l) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [Snowflake/snowflake-arctic-embed-l-v2.0](https://huggingface.co/Snowflake/snowflake-arctic-embed-l-v2.0) | XLM-RoBERTa + sentence pooling | `--max-batch-tokens 8192` |
+| [Snowflake/snowflake-arctic-embed-m](https://huggingface.co/Snowflake/snowflake-arctic-embed-m) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [Snowflake/snowflake-arctic-embed-m-long](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-long) | Nomic BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [Snowflake/snowflake-arctic-embed-m-v2.0](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0) | GTE rotary encoder + sentence pooling | `--max-batch-tokens 8192` |
+| [Snowflake/snowflake-arctic-embed-s](https://huggingface.co/Snowflake/snowflake-arctic-embed-s) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [Snowflake/snowflake-arctic-embed-xs](https://huggingface.co/Snowflake/snowflake-arctic-embed-xs) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [thenlper/gte-base](https://huggingface.co/thenlper/gte-base) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [thenlper/gte-large](https://huggingface.co/thenlper/gte-large) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [thenlper/gte-small](https://huggingface.co/thenlper/gte-small) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [voyageai/voyage-4-nano](https://huggingface.co/voyageai/voyage-4-nano) | Qwen3 + sentence pooling | `--max-batch-tokens 8192` |
 
 For the Multi-QA `*-dot-v1` checkpoints and `msmarco-distilbert-base-v4`,
 use `/embed` with `normalize: false` when retaining the trained vector magnitudes
@@ -184,8 +185,8 @@ See [multimodal requests](#multimodal-request) and the linked model cards.
 | Checkpoint | Native implementation / support basis | Additional launch settings |
 | --- | --- | --- |
 | [google/embeddinggemma-2](https://huggingface.co/google/embeddinggemma-2) | EmbeddingGemma2 projection + media towers | `--max-batch-tokens 8192` |
-| [nvidia/Nemotron-3.5-Embed-1B-BF16](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) | Bidirectional Mistral3 + mean pooling + image tower | `--pooling mean --max-batch-tokens 8192` |
-| [nvidia/Nemotron-3.5-Embed-8B-BF16](https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16) | Bidirectional Mistral3 + mean pooling + image tower | `--pooling mean --max-batch-tokens 8192` |
+| [nvidia/Nemotron-3.5-Embed-1B-BF16](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16) | Bidirectional Mistral3 + mean pooling + image tower | `--max-batch-tokens 8192` |
+| [nvidia/Nemotron-3.5-Embed-8B-BF16](https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16) | Bidirectional Mistral3 + mean pooling + image tower | `--max-batch-tokens 8192` |
 | [Qwen/Qwen3-VL-Embedding-2B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B) | Qwen3-VL + last-token pooling + image tower | `--max-batch-tokens 16384` |
 | [Qwen/Qwen3-VL-Embedding-8B](https://huggingface.co/Qwen/Qwen3-VL-Embedding-8B) | Qwen3-VL + last-token pooling + image tower | `--max-batch-tokens 16384` |
 
