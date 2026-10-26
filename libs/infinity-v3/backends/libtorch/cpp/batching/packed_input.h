@@ -10,6 +10,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <algorithm>
+#include <memory>
 
 namespace infinity {
 // Native images are contiguous F32 matrices. Admission and the upload cache
@@ -176,6 +177,13 @@ struct AudioInput {
   at::Tensor selected_frames{};
 };
 
+// Immutable structural buffers prepared outside CUDA graph capture. A retained
+// graph owns these boundaries independently of the request that supplied them.
+struct BlockLayout {
+  at::Tensor prefix_cumulative, suffix_cumulative, kv_cumulative, history_cumulative, cache_sources;
+  std::vector<int32_t> history_offsets;
+};
+
 // Packed token rows, without padding. For sequence lengths [3, 2], cumulative
 // is [0, 3, 5]. These offsets locate sequences in the packed buffer; they are
 // separate from model position IDs. offsets is the host view of those boundaries.
@@ -203,5 +211,6 @@ struct PackedInput {
   // Read-only full-forward observation during graph capture. This does not
   // select suffix execution or change the model's projection/attention recipe.
   PrefixContext* capture_prefix = nullptr;
+  std::shared_ptr<const BlockLayout> block_layout{};
 };
 }

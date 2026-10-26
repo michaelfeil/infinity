@@ -559,6 +559,34 @@ int main(int argc, char** argv) {
                     " row=",
                     row);
       }
+      if (block_device.is_cuda()) {
+        CudaGraphCache graphs(8, 4096, 1);
+        auto shared = packed;
+        shared.block_prefix_sources = {0, 0};
+        auto independent = packed;
+        independent.block_prefix_sources = {0, 1};
+        auto shorter = shared;
+        shorter.block_prefix_lengths = {1, 1};
+        // Equal packed lengths with different sharing/boundaries must not reuse
+        // one another's graph. Changed token values must reach every replay.
+        for (auto layout : {shared, independent, shorter, mixed}) {
+          for (int iteration = 0; iteration < 3; ++iteration) {
+            auto replay = layout;
+            replay.ids = (layout.ids + iteration).remainder(32);
+            auto expected = blocks->forward(replay);
+            auto actual = graphs.forward(*blocks, replay);
+            TORCH_CHECK(at::allclose(expected, actual, 1e-2, 1e-2),
+                        "Block graph replay changed boundaries, sharing, or token values");
+          }
+        }
+        TORCH_CHECK(graphs.stats().captures == 4 && graphs.stats().hits >= 8,
+                    "Block execution did not capture and replay each distinct layout: captures=",
+                    graphs.stats().captures,
+                    " hits=",
+                    graphs.stats().hits,
+                    " attempts=",
+                    graphs.stats().attempts);
+      }
       bool missing = false;
       try {
         blocks->forward(make({1, 2, 3}, one));

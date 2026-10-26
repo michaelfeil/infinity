@@ -223,6 +223,9 @@ static PackedInput clone_graph_input(const PackedInput& input, std::vector<int32
     owned.scatter_unfold = input.scatter_unfold.clone();
     owned.fold_gather = input.fold_gather.clone();
   }
+  owned.block_prefix_lengths = input.block_prefix_lengths;
+  owned.block_prefix_sources = input.block_prefix_sources;
+  owned.block_layout = input.block_layout;
   return owned;
 }
 
@@ -347,6 +350,12 @@ at::Tensor CudaGraphCache::forward(const Model& model,
   key.add(input.batch);
   for (int64_t i = 0; i <= input.batch; ++i)
     key.add(input.offsets[i]);
+  key.add(input.block_prefix_lengths.size());
+  for (auto boundary : input.block_prefix_lengths)
+    key.add(boundary);
+  key.add(input.block_prefix_sources.size());
+  for (auto source : input.block_prefix_sources)
+    key.add(source);
   auto describe_extras = [&](const PackedInput& value) {
     key.add(value.images.size());
     std::unordered_map<const at::TensorImpl*, size_t> image_aliases;
@@ -524,6 +533,12 @@ at::Tensor CudaGraphCache::forward(const Model& model,
   inputs_fit = inputs_fit && fits(input.multimodal_positions) && fits(input.compact_ids) &&
                fits(input.compact_positions) && fits(input.compact_types) &&
                fits(input.scatter_unfold) && fits(input.fold_gather);
+  if (input.block_layout) {
+    const auto& layout = *input.block_layout;
+    inputs_fit = inputs_fit && fits(layout.prefix_cumulative) && fits(layout.suffix_cumulative) &&
+                 fits(layout.kv_cumulative) && fits(layout.history_cumulative) &&
+                 fits(layout.cache_sources);
+  }
   if (!inputs_fit)
     return run(input);
   if (input.prefix) {
@@ -742,6 +757,14 @@ at::Tensor CudaGraphCache::forward(const Model& model,
   charge(entry->input.compact_types);
   charge(entry->input.scatter_unfold);
   charge(entry->input.fold_gather);
+  if (entry->input.block_layout) {
+    const auto& layout = *entry->input.block_layout;
+    charge(layout.prefix_cumulative);
+    charge(layout.suffix_cumulative);
+    charge(layout.kv_cumulative);
+    charge(layout.history_cumulative);
+    charge(layout.cache_sources);
+  }
   if (entry->prefix) {
     charge(entry->original.ids);
     charge(entry->original.types);

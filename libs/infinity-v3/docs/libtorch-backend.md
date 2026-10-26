@@ -56,6 +56,12 @@ For compatible decision checkpoints, use `--decision-protocol onejev` with
 shared prefixes are reused within a backend batch. This is not a persistent
 cross-request cache.
 
+For recurring packed shapes, enable CUDA graph replay with
+`INFINITY_TORCH_CUDA_GRAPHS=1` and `INFINITY_TORCH_MEDIA_CUDA_GRAPHS=1`.
+Replay keys include block boundaries and prefix sharing; token and image values
+are refreshed for each request. Existing graph admission and memory budgets
+apply, so changing shapes may continue to execute eagerly.
+
 Send requests to `/v1/systemone`. See [decision inputs](cli.md#structured-decision-inputs)
 for the request schema, image content parts and input limits.
 

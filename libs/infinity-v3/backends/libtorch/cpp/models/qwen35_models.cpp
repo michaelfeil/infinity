@@ -839,7 +839,7 @@ class Qwen35 final : public Model {
     PackedInput prefixes{at::cat(prefix_ids, 0),
                          at::cat(prefix_types, 0),
                          at::cat(prefix_positions, 0),
-                         at::tensor(prefix_offsets, input.cumulative.options()),
+                         input.block_layout->prefix_cumulative,
                          prefix_offsets.data(),
                          int64_t(representatives.size()),
                          max_prefix};
@@ -869,7 +869,7 @@ class Qwen35 final : public Model {
       suffixes = PackedInput{at::cat(suffix_ids, 0),
                              at::cat(suffix_types, 0),
                              at::cat(suffix_positions, 0),
-                             at::tensor(suffix_offsets, input.cumulative.options()),
+                             input.block_layout->suffix_cumulative,
                              suffix_offsets.data(),
                              int64_t(suffix_rows.size()),
                              max_suffix};
@@ -886,7 +886,7 @@ class Qwen35 final : public Model {
       // Each executed suffix maps to a representative prefix index, not its original batch row.
       // Host indices drive structural assembly; the device copy selects cached recurrent state.
       suffixes.block_prefix_sources = suffix_sources;
-      suffixes.block_cache_sources = at::tensor(suffix_sources, input.ids.options());
+      suffixes.block_cache_sources = input.block_layout->cache_sources;
     }
     // Count only images in the executed representative prefixes and suffixes.
     // One cache spans both passes, releasing features after their final use.
@@ -899,7 +899,9 @@ class Qwen35 final : public Model {
     if (has_suffix)
       hidden = at::cat({hidden, embeddings(suffixes, shared_features)}, 0);
     // These sequence boundaries are shared by all layers of this request.
-    BlockMetadata metadata;
+    BlockMetadata metadata{input.block_layout->kv_cumulative,
+                           input.block_layout->history_cumulative,
+                           input.block_layout->history_offsets};
     for (int64_t layer = 0; layer < layer_count; ++layer) {
       const auto p = "layers." + std::to_string(layer) + ".";
       BlockCache cache{metadata};
@@ -1184,12 +1186,53 @@ public:
            !cfg.boolean("use_bidirectional_attention", false);
   }
 
+  void prepare_input(PackedInput& input) const override {
+    if (!block_attention() || input.block_layout)
+      return;
+    TORCH_CHECK(input.block_prefix_lengths.size() == size_t(input.batch) &&
+                    input.block_prefix_sources.size() == size_t(input.batch),
+                "Missing OneJev block boundaries");
+    auto layout = std::make_shared<BlockLayout>();
+    std::vector<int32_t> prefixes{0}, suffixes{0}, kv{0};
+    std::vector<int64_t> indices(input.batch, -1), sources;
+    layout->history_offsets = {0};
+    const auto history = integer("linear_conv_kernel_dim", 4) - 1;
+    for (int64_t row = 0; row < input.batch; ++row) {
+      const auto prefix = input.block_prefix_lengths[row], source = input.block_prefix_sources[row];
+      const int64_t length = input.offsets[row + 1] - input.offsets[row];
+      TORCH_CHECK(prefix > 0 && prefix <= length && source >= 0 && source <= row &&
+                      input.block_prefix_sources[source] == source &&
+                      input.block_prefix_lengths[source] == prefix,
+                  "Invalid shared OneJev prefix");
+      if (source == row) {
+        indices[row] = prefixes.size() - 1;
+        prefixes.push_back(prefixes.back() + prefix);
+        layout->history_offsets.push_back(layout->history_offsets.back() +
+                                          std::min(prefix, history));
+      }
+      if (length > prefix) {
+        suffixes.push_back(suffixes.back() + length - prefix);
+        kv.push_back(kv.back() + length);
+        sources.push_back(indices[source]);
+      }
+    }
+    layout->prefix_cumulative = at::tensor(prefixes, input.cumulative.options());
+    layout->suffix_cumulative = at::tensor(suffixes, input.cumulative.options());
+    layout->kv_cumulative = at::tensor(kv, input.cumulative.options());
+    layout->history_cumulative = at::tensor(layout->history_offsets, input.cumulative.options());
+    layout->cache_sources = at::tensor(sources, input.ids.options());
+    input.block_layout = std::move(layout);
+  }
+
   /// Alternate full-attention and gated-delta layers according to checkpoint layer_types.
   /// Block-attention checkpoints use their dedicated path; causal
   /// compact/prefix paths restore logical rows.
   at::Tensor forward(const PackedInput& input) const override {
-    if (block_attention())
-      return block_forward(input);
+    if (block_attention()) {
+      auto prepared = input;
+      prepare_input(prepared);
+      return block_forward(prepared);
+    }
     TORCH_CHECK(!radix_enabled(input) || supports_radix(),
                 "Noncausal Qwen3.5 attention does not support radix folding");
     TORCH_CHECK(!radix_enabled(input) || input.audios.empty(),
