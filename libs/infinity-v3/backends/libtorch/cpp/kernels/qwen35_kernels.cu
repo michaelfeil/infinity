@@ -491,15 +491,24 @@ __device__ __forceinline__ __nv_bfloat16 gemma_precise_activation(__nv_bfloat16 
   }
 }
 
-template <bool Gelu>
+template <int V> struct alignas(V * 2) GateValues {
+  __nv_bfloat16 values[V];
+};
+
+template <bool Gelu, int V>
 __global__ void
 gemma_precise_gate(const __nv_bfloat16* x, __nv_bfloat16* out, int64_t count, int64_t width) {
-  auto i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
+  auto i = (int64_t(blockIdx.x) * blockDim.x + threadIdx.x) * V;
   if (i >= count)
     return;
   auto row = i / width, column = i % width;
-  out[i] = gemma_precise_activation<Gelu>(x[row * 2 * width + column]) *
-           x[row * 2 * width + width + column];
+  const auto gate = *reinterpret_cast<const GateValues<V>*>(x + row * 2 * width + column);
+  const auto up = *reinterpret_cast<const GateValues<V>*>(x + row * 2 * width + width + column);
+  GateValues<V> result;
+#pragma unroll
+  for (int j = 0; j < V; ++j)
+    result.values[j] = gemma_precise_activation<Gelu>(gate.values[j]) * up.values[j];
+  *reinterpret_cast<GateValues<V>*>(out + i) = result;
 }
 
 template <bool Gelu>
@@ -540,12 +549,17 @@ at::Tensor gemma_gated_cuda(const at::Tensor& x, bool gelu) {
   auto stream = at::cuda::getCurrentCUDAStream(x.device().index());
   auto input = reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr());
   auto output = reinterpret_cast<__nv_bfloat16*>(out.mutable_data_ptr());
-  if (gelu)
-    gemma_precise_gate<true>
-        <<<(out.numel() + 255) / 256, 256, 0, stream>>>(input, output, out.numel(), width);
+  auto launch = [&]<int V>() {
+    const auto blocks = (out.numel() + 256 * V - 1) / (256 * V);
+    if (gelu)
+      gemma_precise_gate<true, V><<<blocks, 256, 0, stream>>>(input, output, out.numel(), width);
+    else
+      gemma_precise_gate<false, V><<<blocks, 256, 0, stream>>>(input, output, out.numel(), width);
+  };
+  if (width % 4 == 0 && reinterpret_cast<uintptr_t>(input) % 8 == 0)
+    launch.template operator()<4>();
   else
-    gemma_precise_gate<false>
-        <<<(out.numel() + 255) / 256, 256, 0, stream>>>(input, output, out.numel(), width);
+    launch.template operator()<1>();
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
 }

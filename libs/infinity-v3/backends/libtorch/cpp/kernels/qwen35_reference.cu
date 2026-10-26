@@ -53,7 +53,7 @@ template <int V> struct alignas(V * 2) NormValues {
   __nv_bfloat16 values[V];
 };
 
-template <int V>
+template <int V, bool Residual = false>
 __global__ void norm_tree(const __nv_bfloat16* x,
                           const __nv_bfloat16* gamma,
                           __nv_bfloat16* out,
@@ -62,13 +62,23 @@ __global__ void norm_tree(const __nv_bfloat16* x,
                           int heads,
                           long stride0,
                           long stride1,
-                          float eps) {
+                          float eps,
+                          const __nv_bfloat16* addition = nullptr,
+                          __nv_bfloat16* updated = nullptr) {
   __shared__ float sums[1024];
   int row = blockIdx.x, tid = threadIdx.x * V, threads = blockDim.x * V;
   long base = int64_t(row / heads) * stride0 + (row % heads) * stride1;
   float sum[V] = {};
   for (int d = tid; d < width; d += threads) {
     auto values = *reinterpret_cast<const NormValues<V>*>(x + base + d);
+    if constexpr (Residual) {
+      auto delta = *reinterpret_cast<const NormValues<V>*>(addition + base + d);
+#pragma unroll
+      for (int j = 0; j < V; ++j)
+        values.values[j] = __float2bfloat16_rn(
+            __fadd_rn(__bfloat162float(values.values[j]), __bfloat162float(delta.values[j])));
+      *reinterpret_cast<NormValues<V>*>(updated + base + d) = values;
+    }
 #pragma unroll
     for (int j = 0; j < V; ++j) {
       float z = __bfloat162float(values.values[j]);
@@ -108,7 +118,7 @@ __global__ void norm_tree(const __nv_bfloat16* x,
   __syncthreads();
   float inv = sums[0];
   for (int d = tid; d < width; d += threads) {
-    auto values = *reinterpret_cast<const NormValues<V>*>(x + base + d);
+    auto values = *reinterpret_cast<const NormValues<V>*>((Residual ? updated : x) + base + d);
     auto weights = *reinterpret_cast<const NormValues<V>*>(gamma + d);
     NormValues<V> result;
 #pragma unroll
@@ -162,6 +172,50 @@ at::Tensor qwen35_reference_norm_cuda(const at::Tensor& x, const at::Tensor& gam
         static_cast<float>(eps));
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return out;
+}
+
+std::pair<at::Tensor, at::Tensor> qwen35_reference_residual_norm_cuda(const at::Tensor& x,
+                                                                      const at::Tensor& addition,
+                                                                      const at::Tensor& gamma,
+                                                                      double eps) {
+  TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.scalar_type() == at::kBFloat16 &&
+                  x.is_contiguous() && addition.device() == x.device() &&
+                  addition.scalar_type() == x.scalar_type() && addition.sizes() == x.sizes() &&
+                  addition.is_contiguous() && gamma.device() == x.device() &&
+                  gamma.scalar_type() == x.scalar_type() && gamma.dim() == 1 &&
+                  gamma.is_contiguous(),
+              "Invalid Qwen3.5 residual norm operands");
+  const auto rows = x.size(0), width = x.size(1);
+  TORCH_CHECK(rows > 0 && rows <= INT32_MAX && width > 0 && width <= 8192 && gamma.numel() == width,
+              "Invalid Qwen3.5 residual norm geometry");
+  c10::cuda::CUDAGuard guard(x.device());
+  auto updated = at::empty_like(x), normalized = at::empty_like(x);
+  int threads = 1;
+  while (threads < width && threads < 1024)
+    threads *= 2;
+  auto launch = [&]<int V>() {
+    norm_tree<V, true><<<rows, threads / V, 0, at::cuda::getCurrentCUDAStream()>>>(
+        reinterpret_cast<const __nv_bfloat16*>(x.const_data_ptr()),
+        reinterpret_cast<const __nv_bfloat16*>(gamma.const_data_ptr()),
+        reinterpret_cast<__nv_bfloat16*>(normalized.mutable_data_ptr()),
+        rows,
+        width,
+        1,
+        width,
+        0,
+        static_cast<float>(eps),
+        reinterpret_cast<const __nv_bfloat16*>(addition.const_data_ptr()),
+        reinterpret_cast<__nv_bfloat16*>(updated.mutable_data_ptr()));
+  };
+  const bool vector = width % 4 == 0 && reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 8 == 0 &&
+                      reinterpret_cast<uintptr_t>(addition.const_data_ptr()) % 8 == 0 &&
+                      reinterpret_cast<uintptr_t>(gamma.const_data_ptr()) % 8 == 0;
+  if (vector)
+    launch.template operator()<4>();
+  else
+    launch.template operator()<1>();
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return {updated, normalized};
 }
 
 /// Keep convolution and recurrence arithmetic in the reference order,

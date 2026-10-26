@@ -30,6 +30,15 @@ int main(int argc, char** argv) {
     auto valid = infinity::gemma_gated_cuda(at::ones({1, 12}, options), gelu);
     TORCH_CHECK(at::isfinite(valid).all().item<bool>(),
                 "Empty expert activation poisoned nonempty recovery");
+    for (int width : {6, 32, 3584, 6144})
+      for (int offset : {0, 1}) {
+        auto storage = at::randn({3 * 2 * width + offset}, options);
+        auto input = storage.narrow(0, offset, 3 * 2 * width).view({3, 2 * width});
+        auto expected = infinity::gemma_activation_cuda(input.narrow(1, 0, width), gelu) *
+                        input.narrow(1, width, width);
+        TORCH_CHECK(at::equal(infinity::gemma_gated_cuda(input, gelu), expected),
+                    "Packed gate changed scalar activation rounding or crossed a row boundary");
+      }
   }
   for (int64_t width : {4, 64, 768, 2048}) {
     auto input = at::randn({7, 3, width}, at::TensorOptions().device(device).dtype(at::kBFloat16));

@@ -398,6 +398,16 @@ class Qwen35 final : public Model {
         .to(x.scalar_type());
   }
 
+  std::pair<at::Tensor, at::Tensor>
+  residual_norm(const at::Tensor& x, const at::Tensor& addition, const std::string& name) const {
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if (device.is_cuda() && dtype == at::kBFloat16 && x.size(-1) <= 8192)
+      return qwen35_reference_residual_norm_cuda(x, addition, w(name + ".weight"), epsilon);
+#endif
+    auto updated = x + addition;
+    return {updated, norm(updated, name)};
+  }
+
   /// Rotate only the configured leading rotary features and copy the remaining head features
   /// unchanged. Multimodal axes are selected in logical or compact row order to
   /// match the input projection.
@@ -452,7 +462,7 @@ class Qwen35 final : public Model {
     if (linear)
       return {project(p + "in_proj_qkv").contiguous(),
               project(p + "in_proj_z").contiguous(),
-              at::cat({project(p + "in_proj_a"), project(p + "in_proj_b")}, -1).contiguous()};
+              project(p + "in_proj_ab").contiguous()};
     return {project(p + "q_proj"), project(p + "k_proj"), project(p + "v_proj")};
   }
 
@@ -902,11 +912,11 @@ class Qwen35 final : public Model {
     BlockMetadata metadata{input.block_layout->kv_cumulative,
                            input.block_layout->history_cumulative,
                            input.block_layout->history_offsets};
+    auto normalized = norm(hidden, "layers.0.input_layernorm");
     for (int64_t layer = 0; layer < layer_count; ++layer) {
       const auto p = "layers." + std::to_string(layer) + ".";
       BlockCache cache{metadata};
       cache.offsets = prefix_offsets;
-      auto normalized = norm(hidden, p + "input_layernorm");
       const bool linear = string("layer_types." + std::to_string(layer)) == "linear_attention";
       const auto ap = p + (linear ? "linear_attn." : "self_attn.");
       // Project the combined representative-prefix/suffix rows once per layer, then slice those
@@ -927,10 +937,17 @@ class Qwen35 final : public Model {
       auto attended = has_suffix ? at::cat({prefix_attention, attention(suffixes, false)}, 0)
                                  : prefix_attention;
       attended = prefix_projection(attended, ap + (linear ? "out_proj" : "o_proj"), input);
-      hidden = hidden + attended;
-      hidden = hidden + feed_forward(norm(hidden, p + "post_attention_layernorm"), layer, input);
+      auto post = residual_norm(hidden, attended, p + "post_attention_layernorm");
+      auto mlp = feed_forward(post.second, layer, input);
+      auto next = residual_norm(post.first,
+                                mlp,
+                                layer + 1 == layer_count
+                                    ? "norm"
+                                    : "layers." + std::to_string(layer + 1) + ".input_layernorm");
+      hidden = next.first;
+      normalized = next.second;
     }
-    hidden = norm(hidden, "norm");
+    hidden = normalized;
     // Execution storage contains each representative prefix once. Reconstruction below repeats its
     // hidden rows for every logical request and appends that request's own suffix.
     auto prefix_hidden = hidden.narrow(0, 0, prefix_tokens);
@@ -1137,6 +1154,11 @@ public:
       if (kind == "linear_attention") {
         auto kh = integer("linear_num_key_heads"), vh = integer("linear_num_value_heads");
         TORCH_CHECK(kh > 0 && vh > 0 && vh % kh == 0, "Invalid Qwen3.5 DeltaNet heads");
+        const auto ap = p + "linear_attn.";
+        weights[prefix + ap + "in_proj_ab.weight"] =
+            at::cat({w(ap + "in_proj_a.weight"), w(ap + "in_proj_b.weight")}, 0);
+        weights.erase(prefix + ap + "in_proj_a.weight");
+        weights.erase(prefix + ap + "in_proj_b.weight");
         w(p + "linear_attn.conv1d.weight");
         w(p + "linear_attn.A_log");
         w(p + "linear_attn.dt_bias");

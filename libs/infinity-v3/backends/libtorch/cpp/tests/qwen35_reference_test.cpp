@@ -82,8 +82,11 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
                                                 {},
                                                 {},
                                                 false);
-      TORCH_CHECK(at::equal(prefix, expected.narrow(0, 0, boundary)),
-                  "Block prefill changed recurrent arithmetic");
+      // Tensor-core prefill rounds Q/K to BF16, while scalar recurrence retains
+      // FP32 normalized Q/K. Bound that provider drift; state sharing below must
+      // still preserve its inputs and repeat exactly across batch rows.
+      TORCH_CHECK(at::allclose(prefix, expected.narrow(0, 0, boundary), 1e-2, 2e-3),
+                  "Block prefill exceeded BF16 recurrent tolerance");
       auto immutable = state.clone();
       auto suffix = full;
       int32_t suffix_offsets[] = {0, int32_t(tokens - boundary)};
@@ -114,9 +117,10 @@ void resumed_delta(c10::Device device, int64_t kh, int64_t vh, bool fma) {
                                                  history,
                                                  history_cu,
                                                  false);
-      TORCH_CHECK(at::equal(resumed, expected.narrow(0, boundary, tokens - boundary)) &&
-                      at::equal(state, immutable),
-                  "Block resume changed outputs or mutated shared state");
+      TORCH_CHECK(
+          at::allclose(resumed, expected.narrow(0, boundary, tokens - boundary), 1e-2, 2e-3) &&
+              at::equal(state, immutable),
+          "Block resume changed outputs or mutated shared state");
       auto batched = suffix;
       std::vector<int32_t> batch_offsets;
       for (int i = 0; i <= 8; ++i)
@@ -319,6 +323,21 @@ int main(int argc, char** argv) {
                   width,
                   " strided=",
                   strided);
+      if (!strided) {
+        auto residual = cuda_x.reshape({6, width}).contiguous();
+        auto addition = (residual.flip({0}) * .25).to(at::kBFloat16);
+        addition.select(0, 0).copy_(-residual.select(0, 0));
+        auto expected = (residual + addition).cpu();
+        auto fused =
+            infinity::qwen35_reference_residual_norm_cuda(residual, addition, cuda_gamma, 1e-6);
+        TORCH_CHECK(
+            at::equal(fused.first.cpu(), expected) &&
+                at::equal(fused.second.cpu(), independent_norm(expected, gamma, 1e-6)),
+            "Fused residual norm changed BF16 addition or the independent norm oracle width=",
+            width,
+            " offset=",
+            offset);
+      }
     }
   auto rejects = [&](const at::Tensor& x, const at::Tensor& gamma) {
     bool rejected = false;
@@ -390,5 +409,5 @@ int main(int argc, char** argv) {
       independent_recurrent(device, geometry.first, geometry.second, fma);
     }
   std::cout << "Independent original norms and synthetic packed sequence isolation passed\n";
-  std::cout << "DeltaNet cache capture and split/resume preserve both arithmetic modes exactly\n";
+  std::cout << "DeltaNet cache isolation and split/resume passed in both arithmetic modes\n";
 }

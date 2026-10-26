@@ -98,8 +98,8 @@ void dynamic_fp8_test(Options cfg, Weights weights, const c10::Device& device) {
           loader.at("model.layers.0.linear_attn.in_proj_a.weight").storage().getWeakStorageImpl();
       auto quantized = create_qwen35(enabled, loader, device, at::kBFloat16);
       quantized->ready();
-      TORCH_CHECK(loader.empty() && down.expired() && !decay.expired(),
-                  "Qwen3.5 FP8 weight ownership changed");
+      TORCH_CHECK(loader.empty() && down.expired() && decay.expired(),
+                  "Qwen3.5 retained consumed MLP or merged decay weights");
       TORCH_CHECK(projection.expired() == (std::string(scope) != "mlp"),
                   "Qwen3.5 FP8 projection scope ignored");
       auto reference = build(cfg);
