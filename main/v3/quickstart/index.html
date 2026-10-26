@@ -406,6 +406,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cpu-deployments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CPU deployments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#send-an-embedding-request" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1213,6 +1224,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#cpu-deployments" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CPU deployments
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#send-an-embedding-request" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1260,23 +1282,31 @@
 
 
 <h1 id="quickstart">Quickstart</h1>
-<p>Infinity v3 is the native Rust server with LibTorch inference. These preview
-docs track <code>main</code>; available features depend on the image version you deploy.</p>
+<p>Infinity v3 is the native Rust server with LibTorch inference. Use the
+documentation version matching your image; <code>main</code> documents ongoing development.</p>
 <h2 id="run-on-an-nvidia-gpu">Run on an NVIDIA GPU</h2>
 <p>CUDA inference requires SM80 (Ampere) or newer; SM75/Turing is unsupported.</p>
-<p>Choose a published <code>nvidia-3.0.0-alpha.*</code> tag from the
+<p>Use the versioned NVIDIA image from the
 <a href="https://github.com/michaelfeil/infinity/pkgs/container/infinity_v3">container registry</a>.
-For example:</p>
+The 3.0.0 launch command is:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="m">8000</span>:8000<span class="w"> </span>-v<span class="w"> </span>infinity-cache:/data<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0-alpha.16<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--model-id<span class="w"> </span>sentence-transformers/all-MiniLM-L6-v2<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>float16<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--hostname<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
 </span></code></pre></div>
 <p>The image starts <code>infinity_v3</code> directly. There is no <code>v2</code> subcommand.
-Each visible GPU runs a model replica; use <code>--device-id 0</code> to select one GPU.
+All visible CUDA GPUs run complete model replicas by default.
 Choose another task or checkpoint from the
 <a href="../docs/supported-models/">supported models and configuration</a> catalog.</p>
+<p>Versioned tags such as <code>nvidia-3.0.0</code> identify a release. <code>nvidia-latest</code> follows
+stable releases; <code>nvidia-main</code> follows development builds. Pin a version or digest
+for reproducible deployments.</p>
+<h2 id="cpu-deployments">CPU deployments</h2>
+<p>The published <code>cpu-3.0.0</code> image uses Candle, with its own model coverage. The
+native LibTorch model catalog does not imply identical support in that image.
+For native LibTorch CPU inference, build the <a href="../docs/libtorch-backend/#build-from-source">LibTorch backend</a>
+and use <code>--torch-device cpu --dtype float32</code>.</p>
 <h2 id="send-an-embedding-request">Send an embedding request</h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>http://localhost:8000/v1/embeddings<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>

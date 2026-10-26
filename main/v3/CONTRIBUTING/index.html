@@ -793,6 +793,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#releasing-v3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Releasing v3
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#ways-to-contribute" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1287,6 +1298,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#releasing-v3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Releasing v3
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#ways-to-contribute" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1467,14 +1489,33 @@ Docker context:</p>
 <p>Use the same context for <code>Dockerfile-cuda</code> and <code>Dockerfile-cuda-all</code>. Run
 <code>push-docker-images.sh</code> from <code>libs/infinity-v3</code> for local multi-variant builds.</p>
 <p>V3 CI and Docker workflows live in the repository's root <code>.github/workflows</code>,
-with V3 path filters and independent names. CPU builds and unit tests run on
-pull requests without model downloads or GPU credentials. Checkpoint-dependent
+with V3 path filters and independent names. CPU unit tests run on pull requests
+without model downloads or GPU credentials. Docker smoke tests download a pinned
+MiniLM checkpoint and run CPU inference before publishing. Checkpoint-dependent
 integration tests can be run separately with their documented fixtures.
 Docker pull requests build the CPU image without publishing. Main and <code>v3.*</code>
-tags build all image variants; manual runs can select CPU or all variants.
+or <code>3.*</code> tags build the CPU and native NVIDIA images; manual runs can select
+additional variants.
 Publishing uses GHCR and the workflow token, with GitHub Actions build caching.
 Python release workflows remain scoped to <code>0.*</code> and <code>v0.*</code> releases, and use
 the triggering release tag independently of V3 tags.</p>
+<h2 id="releasing-v3">Releasing v3</h2>
+<ol>
+<li>Update the workspace version in <code>Cargo.toml</code>, its local packages in
+   <code>Cargo.lock</code>, the checked-in OpenAPI version, and the local publishing script.
+   A stable release tag must match the Cargo version exactly.</li>
+<li>Merge the release changes and push a tag such as <code>v3.0.0</code>. The Docker workflow
+   builds, checks version reporting and runs MiniLM CPU inference before pushing
+   the <code>cpu-*</code> and <code>nvidia-*</code> images. GPU execution needs separate validation on
+   the built NVIDIA image; the CI inference check runs without a GPU.</li>
+<li>After validating the images, publish the GitHub release. Stable v3 releases
+   publish versioned documentation and update the website's <code>latest</code> alias.
+   A tag push alone builds images; publishing the release publishes its docs.</li>
+</ol>
+<p>Stable image tags update <code>*-latest</code>; main builds update <code>*-main</code>. Prerelease
+tags do not move stable aliases. The published CPU image uses Candle; the native
+LibTorch model catalog applies to the NVIDIA image and LibTorch source builds.
+Python/v2 releases update <code>latest-v2</code> documentation independently of v3.</p>
 <h2 id="ways-to-contribute">Ways to contribute</h2>
 <p>There are several ways you can contribute to infinity_v3.</p>
 <ul>

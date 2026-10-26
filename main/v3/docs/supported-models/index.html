@@ -1694,8 +1694,8 @@
 classification, and structured decisions with the native LibTorch backend.
 Choose a checkpoint below by task. The <a href="../libtorch-model-coverage/">architecture coverage</a>
 explains the underlying model paths and their limitations.</p>
-<p>These docs track <code>main</code>. Use an image containing the model integration you need;
-older alpha images may lack support. Listing a checkpoint describes its supported
+<p>Use documentation matching your image version; <code>main</code> tracks ongoing development.
+Use an image containing the model integration you need. Listing a checkpoint describes its supported
 task, not an accuracy or throughput guarantee for every precision and GPU.
 The support-basis column identifies the implemented architecture and task head
 or pooling used by each checkpoint. Related checkpoints are included when their
@@ -1766,10 +1766,10 @@ fixture coverage are different levels of validation.</p>
 <h2 id="common-launch-configuration">Common launch configuration</h2>
 <p>Use a published NVIDIA image from the
 <a href="https://github.com/michaelfeil/infinity/pkgs/container/infinity_v3">container registry</a>.
-The example uses <code>nvidia-latest</code>; pin its version or digest for reproducible deployments.
+The example pins <code>nvidia-3.0.0</code>; pin a version or digest for reproducible deployments.
 CUDA requires an Ampere/SM80 or newer GPU and NVIDIA Container Toolkit.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="m">8000</span>:8000<span class="w"> </span>-v<span class="w"> </span>infinity-cache:/data<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>ghcr.io/michaelfeil/infinity_v3:nvidia-latest<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>ghcr.io/michaelfeil/infinity_v3:nvidia-3.0.0<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--model-id<span class="w"> </span>BAAI/bge-small-en-v1.5<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--max-batch-tokens<span class="w"> </span><span class="m">8192</span><span class="w"> </span><span class="se">\</span>
@@ -1780,7 +1780,8 @@ image selects LibTorch automatically. For a locally installed binary, pass the
 same flags to <code>infinity_v3</code>. Tables use BF16 compute unless a row specifies a
 different <code>--dtype</code>; replace the common dtype flag in that case. Checkpoint
 storage precision does not set compute precision.
-For CPU, use a LibTorch CPU build, <code>--torch-device cpu</code> and <code>--dtype float32</code>.</p>
+For CPU, use a LibTorch CPU build, <code>--torch-device cpu</code> and <code>--dtype float32</code>.
+The published <code>cpu-*</code> image uses Candle and has different model coverage.</p>
 <p><code>--max-batch-tokens</code> is the total batch capacity, not a model's context length or
 a memory guarantee. These are starting configurations: lower the budget for
 smaller GPUs and leave room for activations, media tokens and warmup.
