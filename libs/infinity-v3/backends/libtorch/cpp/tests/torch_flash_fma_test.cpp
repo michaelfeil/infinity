@@ -521,81 +521,93 @@ int main(int argc, char** argv) {
             }
   // The exact-width512 launch is intentionally restricted; callers retain
   // efficient attention for unsupported devices, masks and activation types.
-  auto wide_options = at::TensorOptions().device(device).dtype(at::kBFloat16);
-  auto probe = at::zeros({3, 1, 512}, wide_options);
   const auto* properties = at::cuda::getDeviceProperties(device.index());
-  const bool hopper = properties->major >= 8 && properties->sharedMemPerBlockOptin >= 128 * 1024;
-  TORCH_CHECK(infinity::torch_flash_fma_supported(probe, probe, probe, false, -1, -1) == hopper,
-              "Wide-head architecture guard mismatch");
-  TORCH_CHECK(infinity::torch_flash_fma_supported(probe, probe, probe, true, -1, -1) == hopper,
-              "Wide-head causal architecture guard mismatch");
-  TORCH_CHECK(!infinity::torch_flash_fma_supported(probe, probe, probe, false, 2, 2),
-              "Wide-head local mask must retain fallback");
-  auto half_probe = probe.to(at::kHalf), cpu_probe = probe.cpu();
-  TORCH_CHECK(
-      !infinity::torch_flash_fma_supported(half_probe, half_probe, half_probe, false, -1, -1),
-      "Wide-head FP16 must retain fallback");
-  TORCH_CHECK(!infinity::torch_flash_fma_supported(cpu_probe, cpu_probe, cpu_probe, false, -1, -1),
-              "Wide-head CPU must retain fallback");
-  if (hopper)
-    for (bool causal : {false, true})
-      for (bool grouped : {false, true})
-        for (auto lengths : {std::vector<int32_t>{3, 17, 9}, std::vector<int32_t>{32, 129, 17}}) {
-          const int64_t heads = 4, key_heads = grouped ? 1 : 4;
-          std::vector<int32_t> offsets{0};
-          int64_t total = 0, maximum = 0;
-          for (auto n : lengths) {
-            total += n;
-            maximum = std::max<int64_t>(maximum, n);
-            offsets.push_back(total);
-          }
-          auto combined = at::randn({total, heads + 2 * key_heads, 512}, wide_options) * .1;
-          auto q = combined.narrow(1, 0, heads), k = combined.narrow(1, heads, key_heads),
-               v = combined.narrow(1, heads + key_heads, key_heads);
-          auto cu = at::tensor(offsets, at::TensorOptions().dtype(at::kInt)).to(device);
-          auto output = infinity::torch_flash_fma(q, k, v, cu, maximum, 1., causal, -1, -1);
-          TORCH_CHECK(output.sizes() == q.sizes() && at::isfinite(output).all().item<bool>(),
-                      "Wide-head packed result geometry/finiteness mismatch");
-          double worst = 0;
-          for (size_t row = 0; row + 1 < offsets.size(); ++row) {
-            int64_t start = offsets[row], n = offsets[row + 1] - start;
-            auto cpu = [&](const at::Tensor& x) {
-              return x.narrow(0, start, n)
-                  .to(at::TensorOptions().device(at::kCPU).dtype(at::kDouble))
-                  .transpose(0, 1);
-            };
-            auto qr = cpu(q), kr = cpu(k), vr = cpu(v);
-            if (grouped) {
-              kr = kr.repeat_interleave(heads / key_heads, 0);
-              vr = vr.repeat_interleave(heads / key_heads, 0);
+  const bool wide_supported =
+      properties->major >= 8 && properties->sharedMemPerBlockOptin >= 128 * 1024;
+  for (auto dtype : {at::kHalf, at::kBFloat16}) {
+    auto wide_options = at::TensorOptions().device(device).dtype(dtype);
+    auto probe = at::zeros({3, 1, 512}, wide_options);
+    TORCH_CHECK(infinity::torch_flash_fma_supported(probe, probe, probe, false, -1, -1) ==
+                    wide_supported,
+                "Wide-head architecture guard mismatch");
+    TORCH_CHECK(infinity::torch_flash_fma_supported(probe, probe, probe, true, -1, -1) ==
+                    wide_supported,
+                "Wide-head causal architecture guard mismatch");
+    TORCH_CHECK(!infinity::torch_flash_fma_supported(probe, probe, probe, false, 2, 2),
+                "Wide-head local mask must retain fallback");
+    auto cpu_probe = probe.cpu();
+    TORCH_CHECK(
+        !infinity::torch_flash_fma_supported(cpu_probe, cpu_probe, cpu_probe, false, -1, -1),
+        "Wide-head CPU must retain fallback");
+    if (wide_supported)
+      for (bool causal : {false, true})
+        for (bool grouped : {false, true})
+          for (auto lengths : {std::vector<int32_t>{3, 17, 9}, std::vector<int32_t>{32, 129, 17}}) {
+            const int64_t heads = 4, key_heads = grouped ? 1 : 4;
+            std::vector<int32_t> offsets{0};
+            int64_t total = 0, maximum = 0;
+            for (auto n : lengths) {
+              total += n;
+              maximum = std::max<int64_t>(maximum, n);
+              offsets.push_back(total);
             }
-            auto scores = at::matmul(qr, kr.transpose(1, 2));
-            if (causal)
-              scores = scores.masked_fill(
-                  at::ones({n, n}, at::TensorOptions().dtype(at::kBool)).triu(1), -INFINITY);
-            auto expected = at::matmul(at::softmax(scores, -1), vr).transpose(0, 1);
-            worst = std::max(worst,
-                             (output.narrow(0, start, n).cpu().to(at::kDouble) - expected)
-                                 .abs()
-                                 .max()
-                                 .item<double>());
+            auto combined = at::randn({total, heads + 2 * key_heads, 512}, wide_options) * .1;
+            auto q = combined.narrow(1, 0, heads), k = combined.narrow(1, heads, key_heads),
+                 v = combined.narrow(1, heads + key_heads, key_heads);
+            auto cu = at::tensor(offsets, at::TensorOptions().dtype(at::kInt)).to(device);
+            auto output = infinity::torch_flash_fma(q, k, v, cu, maximum, 1., causal, -1, -1);
+            TORCH_CHECK(output.sizes() == q.sizes() && at::isfinite(output).all().item<bool>(),
+                        "Wide-head packed result geometry/finiteness mismatch");
+            double worst = 0;
+            for (size_t row = 0; row + 1 < offsets.size(); ++row) {
+              int64_t start = offsets[row], n = offsets[row + 1] - start;
+              auto cpu = [&](const at::Tensor& x) {
+                return x.narrow(0, start, n)
+                    .to(at::TensorOptions().device(at::kCPU).dtype(at::kDouble))
+                    .transpose(0, 1);
+              };
+              auto qr = cpu(q), kr = cpu(k), vr = cpu(v);
+              if (grouped) {
+                kr = kr.repeat_interleave(heads / key_heads, 0);
+                vr = vr.repeat_interleave(heads / key_heads, 0);
+              }
+              auto scores = at::matmul(qr, kr.transpose(1, 2));
+              if (causal)
+                scores = scores.masked_fill(
+                    at::ones({n, n}, at::TensorOptions().dtype(at::kBool)).triu(1), -INFINITY);
+              auto expected = at::matmul(at::softmax(scores, -1), vr).transpose(0, 1);
+              worst = std::max(worst,
+                               (output.narrow(0, start, n).cpu().to(at::kDouble) - expected)
+                                   .abs()
+                                   .max()
+                                   .item<double>());
+            }
+            TORCH_CHECK(worst < .003, "Wide-head independent FP64 ragged/GQA mismatch: ", worst);
+            auto changed = v.clone();
+            changed.narrow(0, 0, lengths[0]).add_(1.);
+            auto isolated =
+                infinity::torch_flash_fma(q, k, changed, cu, maximum, 1., causal, -1, -1);
+            TORCH_CHECK(at::equal(output.narrow(0, lengths[0], total - lengths[0]),
+                                  isolated.narrow(0, lengths[0], total - lengths[0])),
+                        "Wide-head packed sequence isolation failed");
+            if (causal) {
+              auto one = at::tensor(std::vector<int32_t>{0, 1}, at::TensorOptions().dtype(at::kInt))
+                             .to(device);
+              auto prefix = infinity::torch_flash_fma(q.narrow(0, 0, 1),
+                                                      k.narrow(0, 0, 1),
+                                                      v.narrow(0, 0, 1),
+                                                      one,
+                                                      1,
+                                                      1.,
+                                                      true,
+                                                      -1,
+                                                      -1);
+              TORCH_CHECK(at::equal(prefix, output.narrow(0, 0, 1)),
+                          "Wide-head causal prefix preservation failed");
+            }
+            std::cout << "dtype=" << dtype << " head512 ragged/GQA total=" << total
+                      << " grouped=" << grouped << " causal=" << causal << " maxabs=" << worst
+                      << '\n';
           }
-          TORCH_CHECK(worst < .003, "Wide-head independent FP64 ragged/GQA mismatch: ", worst);
-          auto changed = v.clone();
-          changed.narrow(0, 0, lengths[0]).add_(1.);
-          auto isolated = infinity::torch_flash_fma(q, k, changed, cu, maximum, 1., causal, -1, -1);
-          TORCH_CHECK(at::equal(output.narrow(0, lengths[0], total - lengths[0]),
-                                isolated.narrow(0, lengths[0], total - lengths[0])),
-                      "Wide-head packed sequence isolation failed");
-          if (causal) {
-            auto one = at::tensor(std::vector<int32_t>{0, 1}, at::TensorOptions().dtype(at::kInt))
-                           .to(device);
-            auto prefix = infinity::torch_flash_fma(
-                q.narrow(0, 0, 1), k.narrow(0, 0, 1), v.narrow(0, 0, 1), one, 1, 1., true, -1, -1);
-            TORCH_CHECK(at::equal(prefix, output.narrow(0, 0, 1)),
-                        "Wide-head causal prefix preservation failed");
-          }
-          std::cout << "BF16 head512 ragged/GQA total=" << total << " grouped=" << grouped
-                    << " causal=" << causal << " maxabs=" << worst << '\n';
-        }
+  }
 }
