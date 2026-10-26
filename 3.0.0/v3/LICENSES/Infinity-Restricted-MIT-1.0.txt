@@ -1,0 +1,124 @@
+Infinity Restricted MIT License 1.0
+
+This is a custom, source-available license based on MIT. It is not the
+standard MIT License. Use on listed providers is prohibited for every purpose.
+
+1. COVERED RIGHTS
+
+The Software is the code and documentation expressly offered under this
+license by its copyright holders or their authorized representatives. Each
+licensor grants only rights they own or are authorized to license.
+Contributors retain their ownership.
+
+Inherited Apache-2.0 code, third-party components, and independently licensed
+contributions retain their licenses and notices. Existing MIT, Apache-2.0,
+INFOIL, PolyForm, and other grants remain available for the material and rights
+they cover. This license does not restrict independently granted rights or
+rights that applicable law does not permit licensors to restrict. Model
+weights, datasets, and outputs are not covered merely through use or inclusion.
+
+2. PERMISSION
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of the Software, to use, copy, modify, merge, publish, distribute, sublicense,
+and sell copies of the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following conditions.
+
+3. RESTRICTED PROVIDERS
+
+You must not use, execute, deploy, host, or offer the Software, including
+modified versions, on hosting or compute services operated by any provider
+named in Appendix A, on capacity rented from that provider, or as part of
+that provider's hosted services.
+
+This restriction applies to everyone, including providers, customers,
+researchers, educational institutions, nonprofit organizations, governments,
+and individuals. It applies to every purpose, including commercial use,
+noncommercial use, research, education, evaluation, testing, and personal use.
+Private endpoints, rented GPUs, and single-customer deployments are included.
+Reselling, routing, relabeling, or using an intermediary does not make a
+prohibited use permitted. There are no research, institutional, personal-use,
+or permitted-cloud leasing exceptions under this license.
+
+Use on your own hardware and on unlisted providers is permitted, subject to
+the other conditions of this license, provided it does not use hosting or
+compute services or capacity from a listed provider through an intermediary.
+
+Appendix A is exhaustive and fixed for this license version. A listed name
+covers the same provider or service after a rename, but does not automatically
+cover an acquirer's unrelated businesses. Where an entry names a particular
+service, that service is restricted, rather than the operator's other services.
+
+4. REDISTRIBUTION
+
+Include the applicable copyright notices and this complete license, including
+Appendix A, in all copies or substantial portions of the Software. Retain
+independently required third-party notices. Any sublicense for the Software
+must preserve the provider restriction for the covered code.
+
+You may keep modifications private, distribute binaries without source, and
+license your own additions under terms of your choice. Those terms do not
+remove this license's conditions from the covered code. This license does
+not require publishing source, licensing additions under this license, or
+restricting independently developed replacements.
+
+5. PATENTS AND TERMINATION
+
+Each contributor grants a worldwide, royalty-free patent license for permitted
+uses under patent claims they control that are necessarily practiced by their
+contribution alone or in its submitted combination with the Software. This
+patent license ends if you bring a patent claim alleging that the Software
+infringes. No trademark rights are granted.
+
+Permissions under this license terminate on breach and are automatically
+reinstated if the breach is cured within 30 days after you learn of it.
+Otherwise reinstatement requires the affected licensors' permission.
+Compliant recipients retain their rights. Later versions of this license
+do not change existing grants.
+
+6. WARRANTY AND LIABILITY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE, TO THE EXTENT PERMITTED BY APPLICABLE LAW.
+
+APPENDIX A -- PROVIDERS RESTRICTED FOR ALL PURPOSES
+
+The following 25 entries are the exhaustive list for this license
+version. The names below control, not a live directory or a future list.
+Identifiers disambiguate providers; they do not restrict unrelated software
+projects, purchased hardware, or independently licensed models.
+
+Nebius covers the provider's hosting and compute services, including Token
+Factory. Voyage AI identifies the Voyage AI service, not unrelated MongoDB
+products.
+
+- Fireworks (fireworks)
+- FriendliAI (friendli)
+- Morph (morph)
+- Prime Intellect (primeintellect)
+- Nebius (nebius)
+- Arcee AI (arcee-ai)
+- AssemblyAI (assemblyai)
+- Cerebras (cerebras)
+- Cloudflare (cloudflare)
+- Crusoe (crusoe)
+- DigitalOcean (digitalocean)
+- NovitaAI (novita)
+- Modal (modal)
+- Sail Research (sail-research)
+- Sakana (sakana)
+- SambaNova (sambanova)
+- Together (together)
+- TypeSafe (typesafe)
+- Venice (venice)
+- Voyage AI (voyageai)
+- Wafer (wafer)
+- Parasail (parasail)
+- SiliconFlow (siliconflow)
+- Runware (runware)
+- DeepInfra (deepinfra)

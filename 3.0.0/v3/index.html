@@ -1,0 +1,1819 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://michaelfeil.eu/infinity/3.0.0/v3/">
+      
+      
+        <link rel="prev" href="..">
+      
+      
+        <link rel="next" href="quickstart/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Introduction - Infinity</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#infinity-v3" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="Infinity" class="md-header__button md-logo" aria-label="Infinity" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Infinity
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Introduction
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/michaelfeil/infinity/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="Infinity" class="md-nav__button md-logo" aria-label="Infinity" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Infinity
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/michaelfeil/infinity/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infinity v3
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Infinity v3
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        History
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-highlights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance highlights
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getting-started" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting started
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Getting started">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cli-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI overview
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#supported-tasks-and-models-by-infinity-v3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Tasks and Models by Infinity V3
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="docs/cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and requests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="docs/supported-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported models and configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="docs/performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="docs/embedding-tensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding formats and clients
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="LICENSING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Licensing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_9" id="__nav_2_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="docs/libtorch-model-coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="docs/libtorch-backend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LibTorch backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="docs/build-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="docs/libtorch-prefix-cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prefix caching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="docs/modernbert-startup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Startup performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="CONTRIBUTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python / v2
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python / v2
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli_v2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../python_engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../embed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../client_infinity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Client
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../swagger_ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../benchmarking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../telemetry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Telemetry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../contribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#history" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        History
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-highlights" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Performance highlights
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#getting-started" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Getting started
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Getting started">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cli-overview" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CLI overview
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#supported-tasks-and-models-by-infinity-v3" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Supported Tasks and Models by Infinity V3
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#documentation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Documentation
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/michaelfeil/infinity/edit/main/libs/infinity-v3/README.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="infinity-v3">Infinity V3 ♾️</h1>
+<blockquote>
+<p>Documentation for the native v3 server. <a href="quickstart/">Quickstart</a> · <a href="../cli_v2/">Python / v2 documentation</a></p>
+</blockquote>
+<p>Infinity V3 is a high-throughput, low-latency REST API for serving embeddings,
+reranking, classification and typed decision models. The server is written in
+Rust and uses <strong>LibTorch, the C++ interface of PyTorch</strong>, for model inference.</p>
+<p><strong>Looking for Python / v2?</strong> See the <a href="https://github.com/michaelfeil/infinity/blob/v3.0.0/libs/infinity_emb/README.md">Python server README</a>
+and <a href="https://michaelfeil.eu/infinity/main/deploy/">v2 documentation</a>.
+The <code>infinity-emb</code> Python package and <code>infinity_emb v2</code> command belong to that server.</p>
+<h2 id="history">History</h2>
+<ul>
+<li><strong>2026/10:</strong> Native Rust/LibTorch v3 server for embeddings, reranking, classification and typed decisions.</li>
+<li><strong>2025/07:</strong> Blackwell support in the Python server.</li>
+<li><strong>2024:</strong> Python / v2 gained multi-model and multimodal serving, Python clients, and broader GPU, CPU, ONNX and TensorRT deployment options.</li>
+<li><strong>2023/10:</strong> Initial Infinity release.</li>
+</ul>
+<p>See the <a href="https://github.com/michaelfeil/infinity/blob/v3.0.0/libs/infinity_emb/README.md">Python / v2 README</a> for the full earlier updates.</p>
+<p align="center">
+  <a href="https://github.com/basetenlabs/truss-examples/tree/7025918c813d08d718b8939f44f10651a0ff2c8c/custom-server/infinity-embedding-server"><img src="https://avatars.githubusercontent.com/u/54861414" alt="Logo Baseten.co" width="50"/></a>
+  <a href="https://github.com/runpod-workers/worker-infinity-embedding"><img src="https://github.com/user-attachments/assets/24f1906d-31b8-4e16-a479-1382cbdea046" alt="Logo Runpod" width="50"/></a>
+  <a href="https://www.truefoundry.com/cognita"><img src="https://github.com/user-attachments/assets/1b515b0f-2332-4b12-be82-933056bddee4" alt="Logo TrueFoundry" width="50"/></a>
+  <a href="https://vast.ai/article/serving-infinity"><img src="https://github.com/user-attachments/assets/8286d620-f403-48f5-bd7f-f471b228ae7b" alt="Logo Vast" width="46"/></a>
+  <a href="https://www.dataguard.de"><img src="https://github.com/user-attachments/assets/3fde1ac6-c299-455d-9fc2-ba4012799f9c" alt="Logo DataGuard" width="50"/></a>
+  <a href="https://community.sap.com/t5/artificial-intelligence-and-machine-learning-blogs/bring-open-source-llms-into-sap-ai-core/ba-p/13655167"><img src="https://github.com/user-attachments/assets/743e932b-ed5b-4a71-84cb-f28235707a84" alt="Logo SAP" width="47"/></a>
+  <a href="https://x.com/StuartReid1929/status/1763434100382163333"><img src="https://github.com/user-attachments/assets/477a4c54-1113-434b-83bc-1985f10981d3" alt="Logo Nosible" width="44"/></a>
+  <a href="https://github.com/freshworksinc/freddy-infinity"><img src="https://github.com/user-attachments/assets/a68da78b-d958-464e-aaf6-f39132be68a0" alt="Logo FreshWorks" width="50"/></a>
+  <a href="https://github.com/dstackai/dstack/tree/master/examples/deployment/infinity"><img src="https://github.com/user-attachments/assets/9cde2d6b-dc16-4f0a-81ba-535a84321467" alt="Logo Dstack" width="50"/></a>
+  <a href="https://embeddedllm.com/blog/"><img src="https://avatars.githubusercontent.com/u/148834374" alt="Logo JamAI" width="50"/></a>
+  <a href="https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct#infinity_emb"><img src="https://avatars.githubusercontent.com/u/1961952" alt="Logo Alibaba Group" width="50"/></a>
+  <a href="https://github.com/bentoml/BentoInfinity/"><img src="https://avatars.githubusercontent.com/u/49176046" alt="Logo BentoML" width="50"/></a>
+  <a href="https://x.com/bo_wangbo/status/1766371909086724481"><img src="https://avatars.githubusercontent.com/u/60539444" alt="Logo JinaAi" width="50"/></a>
+  <a href="https://github.com/dwarvesf/llm-hosting"><img src="https://avatars.githubusercontent.com/u/10388449" alt="Logo Dwarves Foundation" width="50"/></a>
+  <a href="https://github.com/huggingface/chat-ui/blob/daf695ea4a6e2d081587d7dbcae3cacd466bf8b2/docs/source/configuration/embeddings.md#openai"><img src="https://avatars.githubusercontent.com/u/25720743" alt="Logo HF" width="50"/></a>
+  <a href="https://www.linkedin.com/posts/markhng525_join-me-and-ekin-karabulut-at-the-ai-infra-activity-7163233344875393024-LafB?utm_source=share&utm_medium=member_desktop"><img src="https://avatars.githubusercontent.com/u/86131705" alt="Logo Gradient.ai" width="50"/></a>
+</p>
+
+<h2 id="performance-highlights">Performance highlights</h2>
+<ul>
+<li><strong>High throughput</strong>: token-based dynamic batching and dedicated tokenization workers.</li>
+<li><strong>Memory-efficient batches</strong>: ragged attention avoids padding variable-length inputs, reducing memory waste and OOM risk.</li>
+<li><strong>Less repeated computation</strong>: from the authors of <a href="https://arxiv.org/abs/2601.15013">RadixMLP</a>, shared-prefix deduplication within a batch for supported decision models and rerankers.</li>
+<li><strong>Low latency</strong>: BERT-small runs in ~850 µs end-to-end through the Rust/C++ serving path, including ~250 µs HTTP/MessagePack, ~100 µs batching and ~500 µs inference with CUDA graphs.</li>
+<li><strong>Fast startup</strong>: ModernBERT-base <strong>0.92 s</strong>, Qwen3-8B <strong>2.51 s</strong> on one H100 80 GB.</li>
+<li><strong>Optimized inference</strong>: native LibTorch kernels, FlashAttention-4 and optional dynamic FP8 for supported models.</li>
+</ul>
+<p>Infinity aims to outperform vLLM and SGLang across embedding, reranking and
+decision models. Reported October 2026 benchmark highlights versus vLLM:
+<strong>~2× throughput on Mammoth</strong>, <strong>~5× on ModernBERT</strong> and <strong>~1.1× on
+Qwen3-Embedding-0.6B</strong>. Speedups depend on the workload and configuration.
+Startup timings above use local weights; see the
+<a href="docs/modernbert-startup/">startup measurements</a>.</p>
+<details>
+<summary>CUDA support and attention kernels</summary>
+<p>The NVIDIA image supports Ampere through Blackwell (SM80–SM120), with builds
+for the architectures below. FlashAttention-4 is enabled for supported FP16/BF16
+shapes; other shapes use existing attention kernels. DeBERTa-v2/v3 uses a novel
+CuTeDSL-based algorithm in FA4 to fuse relative-position lookup without
+quadratic bucket or attention-bias storage.</p>
+<table>
+<thead>
+<tr>
+<th>Compute capability</th>
+<th>Example GPUs</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>SM80</td>
+<td>A100, A30</td>
+</tr>
+<tr>
+<td>SM86</td>
+<td>A10 / A10G, GeForce RTX 3090, RTX A6000</td>
+</tr>
+<tr>
+<td>SM89</td>
+<td>L4, L40S, RTX 6000 Ada, GeForce RTX 4090</td>
+</tr>
+<tr>
+<td>SM90</td>
+<td>H100, H200</td>
+</tr>
+<tr>
+<td>SM100</td>
+<td>B200</td>
+</tr>
+<tr>
+<td>SM120</td>
+<td>RTX PRO 6000 Blackwell, GeForce RTX 5090</td>
+</tr>
+</tbody>
+</table>
+<p>FA4 has runtime validation on H100 and compile/link coverage on the other
+listed targets. See the <a href="docs/libtorch-backend/#infinityfa4">backend documentation</a>
+for supported attention shapes and the <code>INFINITY_TORCH_FA4=0</code> fallback switch.</p>
+<p>FP16 standard BERT CLS embeddings with 384 hidden features / 12 attention heads
+or 1024 hidden features / 16 attention heads use the existing native attention,
+LayerNorm and cached cuBLASLt projection paths on supported CUDA GPUs (SM80 and
+newer), subject to the existing GEMM policy and fallback guards. CUDA graphs
+remain opt-in with <code>INFINITY_TORCH_CUDA_GRAPHS=1</code>.</p>
+</details>
+<h2 id="getting-started">Getting started</h2>
+<p>Launch a compatible Hugging Face model or a local checkpoint:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>sentence-transformers/all-MiniLM-L6-v2
+</span></code></pre></div>
+<p>Check <code>infinity_v3 --help</code> for CLI options and environment variables. Open <code>/docs</code>
+on the running server for the interactive API, or <code>/api-doc/openapi.json</code> for
+its OpenAPI schema. See <a href="docs/cli/">running the server</a> and
+<a href="CONTRIBUTING/#working-in-the-infinity-monorepo">building Infinity V3</a>.</p>
+<h3 id="cli-overview">CLI overview</h3>
+<p>Serve an embedding model on one NVIDIA GPU:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>infinity_v3<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--model-id<span class="w"> </span>Qwen/Qwen3-Embedding-0.6B<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--served-model-name<span class="w"> </span>embeddings<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--device-id<span class="w"> </span><span class="m">0</span><span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--max-sequence-length<span class="w"> </span><span class="m">8192</span><span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>--hostname<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
+</span></code></pre></div>
+<p>Clients use <code>"model": "embeddings"</code> in requests. For CPU inference, use
+<code>--torch-device cpu --dtype float32</code>. Omit <code>--device-id</code> to use all visible CUDA
+GPUs as replicas; each GPU loads a complete model, rather than a shard.</p>
+<details>
+<summary>Model, precision and device options</summary>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--model-id</code></td>
+<td>Hugging Face model ID or local checkpoint directory. Repeat to serve multiple models.</td>
+</tr>
+<tr>
+<td><code>--revision</code></td>
+<td>Pin a Hugging Face commit, tag or branch.</td>
+</tr>
+<tr>
+<td><code>--served-model-name</code></td>
+<td>Public model name accepted by the API; defaults to the checkpoint ID.</td>
+</tr>
+<tr>
+<td><code>--torch-device</code></td>
+<td><code>auto</code>, <code>cpu</code> or <code>cuda</code>.</td>
+</tr>
+<tr>
+<td><code>--dtype</code></td>
+<td><code>auto</code>, <code>float32</code>, <code>float16</code> or <code>bfloat16</code>; CUDA attention requires FP16/BF16.</td>
+</tr>
+<tr>
+<td><code>--device-id</code></td>
+<td>Run on one visible accelerator ordinal, such as <code>0</code>.</td>
+</tr>
+<tr>
+<td><code>--backend-device-ids</code></td>
+<td>Select CUDA replicas, such as <code>0,1</code>, or <code>auto</code>.</td>
+</tr>
+<tr>
+<td><code>--enable-fp8-dynamic</code></td>
+<td>Enable experimental dynamic FP8 for supported models and GPUs. Off by default; validate task accuracy before enabling.</td>
+</tr>
+</tbody>
+</table>
+</details>
+<details>
+<summary>Batching, input limits and model behavior</summary>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--max-batch-tokens</code></td>
+<td>Total token budget per batch; defaults to <code>16384</code>. Larger batches need more memory.</td>
+</tr>
+<tr>
+<td><code>--max-sequence-length</code></td>
+<td>Token limit for one sequence, including prompts and image tokens; bounded by the model and batch limits.</td>
+</tr>
+<tr>
+<td><code>--max-batch-requests</code></td>
+<td>Optional maximum number of individual requests in a batch.</td>
+</tr>
+<tr>
+<td><code>--max-concurrent-requests</code></td>
+<td>Admission limit per model; defaults to <code>512</code>.</td>
+</tr>
+<tr>
+<td><code>--max-client-batch-size</code></td>
+<td>Maximum number of inputs in one client batch.</td>
+</tr>
+<tr>
+<td><code>--auto-truncate=false</code></td>
+<td>Reject oversized inputs instead of truncating. Truncation is enabled by default; decision and multimodal requests have additional restrictions.</td>
+</tr>
+<tr>
+<td><code>--pooling</code></td>
+<td>Override the checkpoint's embedding pooling configuration when the model supports it. Normally leave unset.</td>
+</tr>
+<tr>
+<td><code>--default-prompt-name</code></td>
+<td>Select a saved query/document prompt by name.</td>
+</tr>
+<tr>
+<td><code>--default-prompt</code></td>
+<td>Use a literal prefix instead; cannot be combined with <code>--default-prompt-name</code>.</td>
+</tr>
+<tr>
+<td><code>--decision-protocol</code></td>
+<td>Select <code>onejev</code>, <code>rune</code>, <code>clef</code>, <code>pplx</code> or <code>d3</code> for a compatible decision checkpoint.</td>
+</tr>
+</tbody>
+</table>
+<p>For example, an <code>8192</code> sequence limit with a <code>32768</code> batch budget allows several
+sequences in a batch while keeping each individual input at or below 8192 tokens.
+See <a href="docs/cli/#sequence-length-and-batch-capacity">sequence limits</a> for details.</p>
+</details>
+<details>
+<summary>HTTP, media and observability options</summary>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--hostname</code>, <code>--port</code></td>
+<td>HTTP bind address and port; defaults to <code>0.0.0.0:3000</code>.</td>
+</tr>
+<tr>
+<td><code>--api-key</code></td>
+<td>Require <code>Authorization: Bearer …</code> on API requests. Can also be supplied through <code>INFINITY_API_KEY</code>.</td>
+</tr>
+<tr>
+<td><code>--image-allowed-hosts</code></td>
+<td>Comma-separated host allowlist replacing the defaults; <code>--image-allowed-hosts=</code> permits inline media only.</td>
+</tr>
+<tr>
+<td><code>--image-memory-budget-mib</code></td>
+<td>Memory budget for encoded images, preprocessing and prepared patches.</td>
+</tr>
+<tr>
+<td><code>--json-output</code></td>
+<td>Write structured JSON logs.</td>
+</tr>
+<tr>
+<td><code>--prometheus-port</code></td>
+<td>Prometheus metrics port; defaults to <code>9000</code>.</td>
+</tr>
+<tr>
+<td><code>--huggingface-hub-cache</code></td>
+<td>Model download cache directory.</td>
+</tr>
+</tbody>
+</table>
+</details>
+<details>
+<summary>Multiple models and environment variables</summary>
+<p>Repeat <code>--model-id</code> and align per-model settings in the same order:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>infinity_v3<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--model-id<span class="w"> </span>sentence-transformers/all-MiniLM-L6-v2<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--model-id<span class="w"> </span>BAAI/bge-reranker-base<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--served-model-name<span class="w"> </span>embeddings<span class="w"> </span>--served-model-name<span class="w"> </span>reranker<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>--device-id<span class="w"> </span><span class="m">0</span><span class="w"> </span>--device-id<span class="w"> </span><span class="m">1</span><span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
+</span></code></pre></div>
+<p>A single per-model setting applies to every model. Multiple values must match
+the number of models; semicolon-separated values are also accepted. HTTP bind
+settings are shared by the server.</p>
+<p>Official builds expose <code>INFINITY_*</code> environment variables for CLI options:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">INFINITY_MODEL_ID</span><span class="o">=</span>sentence-transformers/all-MiniLM-L6-v2<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nv">INFINITY_TORCH_DEVICE</span><span class="o">=</span>cpu<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nv">INFINITY_DTYPE</span><span class="o">=</span>float32<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="nv">INFINITY_PORT</span><span class="o">=</span><span class="m">8000</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>infinity_v3
+</span></code></pre></div>
+<p>Use quotes for lists, such as <code>INFINITY_DEVICE_ID="0;1"</code>. CLI arguments take
+precedence over environment values. Run <code>infinity_v3 --help</code> for the complete
+option list and the environment names used by your build.</p>
+</details>
+<h3 id="supported-tasks-and-models-by-infinity-v3">Supported Tasks and Models by Infinity V3</h3>
+<p>Click on the sections below to find tasks and <strong>example models</strong>. Support depends
+on the checkpoint architecture and trained output head. The models below use
+the LibTorch backend. <strong>Dense and Mixture-of-Experts (MoE) architectures are
+supported, including Qwen3, Qwen3.5 and Gemma4 MoE models.</strong> Use checkpoints
+with a supported task head; each GPU replica must fit the full model, including
+all experts.</p>
+<p>The <a href="docs/supported-models/">supported model catalog</a> groups named checkpoints
+by task with launch settings, input requirements and request examples.
+The <a href="docs/libtorch-model-coverage/">native model coverage</a> lists implemented
+LibTorch paths and their limitations; it is not a claim that every checkpoint
+in each family has been validated.</p>
+<details>
+<summary>Text Embeddings — BGE, GTE, ModernBERT, Qwen3 and more</summary>
+<p>Text embeddings represent sentences and documents as vectors for semantic
+search, clustering and recommendations. Use <code>/v1/embeddings</code> or <code>/embed</code>.</p>
+<p>Example models:</p>
+<ul>
+<li><a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">sentence-transformers/all-MiniLM-L6-v2</a></li>
+<li><a href="https://huggingface.co/BAAI/bge-small-en-v1.5">BAAI/bge-small-en-v1.5</a></li>
+<li><a href="https://huggingface.co/BAAI/bge-m3">BAAI/bge-m3</a>, dense embeddings</li>
+<li><strong>GTE embeddings</strong>: <a href="https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5">Alibaba-NLP/gte-large-en-v1.5</a>, using the native GTE/New encoder path.</li>
+<li><strong>ModernBERT embeddings</strong>: <a href="https://huggingface.co/nomic-ai/modernbert-embed-base">nomic-ai/modernbert-embed-base</a>, using native local/global rotary attention.</li>
+<li><strong>Nomic v1.5</strong>: <a href="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5">nomic-ai/nomic-embed-text-v1.5</a>, mean pooling with <code>search_query:</code> / <code>search_document:</code> retrieval prefixes.</li>
+<li><a href="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B">Qwen/Qwen3-Embedding-0.6B</a></li>
+<li><a href="https://huggingface.co/perplexity-ai/pplx-embed-v1-0.6b">perplexity-ai/pplx-embed-v1-0.6b</a> and <a href="https://huggingface.co/perplexity-ai/pplx-embed-v1-4b">pplx-embed-v1-4b</a>, floating-point output only; contextual variants are unsupported</li>
+<li><a href="https://huggingface.co/dmis-lab/UltraBERT-Embed-150M">dmis-lab/UltraBERT-Embed-150M</a>, native bidirectional encoder with per-layer rotary positions and sliding windows</li>
+</ul>
+<p>Native LibTorch families also include RoBERTa, XLM-RoBERTa, CamemBERT,
+DistilBERT, ModernBERT, Nomic BERT, Jina BERT/JinaCode, MPNet, Llama,
+Mistral/Ministral3, Qwen2, Qwen3/MoE and Gemma3 text.
+Use the checkpoint's query/document instructions and pooling configuration.</p>
+</details>
+<details>
+<summary>Reranking</summary>
+<p>Given a query and a list of documents, reranking scores the documents for
+relevance. Use <code>/rerank</code> with a supported sequence-classification checkpoint
+and its trained scoring head.</p>
+<p>Example models:</p>
+<ul>
+<li><a href="https://huggingface.co/BAAI/bge-reranker-base">BAAI/bge-reranker-base</a></li>
+<li><a href="https://huggingface.co/BAAI/bge-reranker-v2-m3">BAAI/bge-reranker-v2-m3</a></li>
+<li><a href="https://huggingface.co/nvidia/llama-nemotron-rerank-1b-v2">nvidia/llama-nemotron-rerank-1b-v2</a>, using its saved average pooling and temperature</li>
+<li><a href="https://huggingface.co/nvidia/Nemotron-3.5-Rerank-8B-BF16">nvidia/Nemotron-3.5-Rerank-8B-BF16</a>, text and document images through the <a href="docs/ministral-3-multimodal/">native Mistral3 reranking recipe</a></li>
+</ul>
+<p>LibTorch supports architecture-specific encoder and decoder classification
+heads, including experimental DeBERTa-v2/v3. A generative language-model
+checkpoint does not automatically become a reranker.</p>
+</details>
+<details>
+<summary>Multi-modal Embeddings — Qwen3-VL, EmbeddingGemma2 and Nemotron</summary>
+<p>Multi-modal models encode text and media for retrieval. Send images as
+<code>image_url</code> content parts in user messages on <code>/v1/embeddings</code>.</p>
+<p>Models and native LibTorch paths:</p>
+<ul>
+<li><strong>Qwen3-VL Embedding</strong>: <a href="https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B">2B</a> and <a href="https://huggingface.co/Qwen/Qwen3-VL-Embedding-8B">8B</a>, text/image embeddings with last-token pooling.</li>
+<li><strong>EmbeddingGemma2</strong> (<code>embedding_gemma2</code>): text embeddings with the checkpoint's trained projection, plus image and audio inputs when the corresponding towers are present.</li>
+<li><strong>Mistral3 / Ministral 3</strong>: Pixtral vision tower and native text/image preprocessing. See the <a href="docs/ministral-3-multimodal/">multimodal input recipe</a>.</li>
+<li><strong>Qwen3.5 dense and MoE</strong>: native text/image backbones with full attention, DeltaNet and vision processing.</li>
+<li><strong>Gemma4 dense and MoE</strong>: native text/image backbones with routed experts for MoE checkpoints. Gemma3 support is text-only.</li>
+</ul>
+<p>Backbone support requires a checkpoint with an appropriate trained output head;
+it does not make every instruction model a retrieval embedding model.</p>
+<p><strong>Nemotron 3 and 3.5 dense embeddings:</strong> the Ministral3/Mistral3 backbones are
+implemented. Supported checkpoints include
+<a href="https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16">Nemotron 3 1B</a>,
+<a href="https://huggingface.co/nvidia/Nemotron-3-Embed-8B-BF16">Nemotron 3 8B</a>,
+<a href="https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16">Nemotron 3.5 1B</a> and
+<a href="https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16">Nemotron 3.5 8B</a>
+with mean pooling and the checkpoint's query/document instructions.
+Nemotron 3 is text-only; 3.5 adds document images. See the
+<a href="docs/supported-models/">model catalog</a> for launch settings.</p>
+<p>For token-vector retrieval, see <strong>ColBERT, ColQwen3 and Nemotron ColEmbed</strong> below.
+Full architecture details are in <a href="docs/libtorch-model-coverage/">native model coverage</a>.</p>
+</details>
+<details>
+<summary>Late-interaction Embeddings — ColBERT, ColQwen3 and Nemotron ColEmbed</summary>
+<p>Late-interaction models return a matrix of token vectors instead of one pooled
+vector. Use MaxSim scoring in a compatible retrieval system.</p>
+<p>Supported models:</p>
+<ul>
+<li><strong>ColBERTv2</strong>: <a href="https://huggingface.co/colbert-ir/colbertv2.0">colbert-ir/colbertv2.0</a></li>
+<li><strong>Answer.AI ColBERT Small</strong>: <a href="https://huggingface.co/answerdotai/answerai-colbert-small-v1">answerdotai/answerai-colbert-small-v1</a></li>
+<li><strong>ColQwen3 (TomoroAI 4B)</strong>, text/image token vectors with a learned projection</li>
+<li><strong>NVIDIA Nemotron ColEmbed V2 4B and 8B</strong>, text/image token vectors; the 3B Eagle architecture is not supported by this path</li>
+</ul>
+<p>ColBERT returns text token vectors; ColQwen3 and Nemotron ColEmbed also encode
+images. ColQwen2/2.5 adapters and the Python server's other ColBERT variants are
+not implied by these native implementations.</p>
+<p>Use the checkpoint's query/document formatting.
+Responses preserve the token matrix through float, base64 or packed tensor
+encoding. Sentence pooling, dimension overrides and single-vector <code>/similarity</code>
+scoring are unsupported for these models. See <a href="docs/embedding-tensors/">embedding formats and client usage</a>
+and <a href="docs/libtorch-model-coverage/">model-specific input requirements</a>.</p>
+</details>
+<details>
+<summary>Sparse Embeddings and Text Classification</summary>
+<p>SPLADE checkpoints produce sparse vocabulary vectors through <code>/embed_sparse</code>.
+LibTorch implements SPLADE heads for BERT and DistilBERT; head support is
+architecture-specific.</p>
+<p>Text classification returns trained label scores through <code>/v1/classify</code>.
+Supported encoder and decoder families need a compatible classification head
+and label configuration. See <a href="docs/libtorch-model-coverage/">native model coverage</a>.</p>
+</details>
+<details>
+<summary>Typed Decisions — OneJev, Laya, Rune, Clef, Perplexity Decider and D3</summary>
+<p>Typed decision models answer structured questions through <code>/v1/systemone</code>.
+These checkpoints require their trained decision heads and protocol metadata.</p>
+<p>Supported model families and protocols (LibTorch):</p>
+<ul>
+<li><strong>Laya</strong>: ModernBERT-based decision checkpoints with <code>rl_agent_config.json</code> and trained decision heads. Accepts text or structured state; native conversations are unsupported.</li>
+<li><strong>OneJev</strong>, including <strong>Elephant and Mammoth</strong>: Qwen3.5 dense/MoE decision checkpoints using <code>--decision-protocol onejev</code>. Supports block-attention question batches and image inputs when the checkpoint includes its vision tower.</li>
+<li><strong>Perplexity Decider / Pplx</strong>: <a href="https://huggingface.co/perplexity-ai/pplx-decider-v1.1-27b">v1.1-27b</a> and <a href="https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2">flash-v1.2</a>. Flash v1.2 supports shared text/images, joint question readouts and calibrated answers. The short model aliases select the protocol automatically.</li>
+<li><strong>Rune</strong>: Gemma4-based decision checkpoints using <code>--decision-protocol rune</code>.</li>
+<li><strong>Clef</strong>: dense Qwen3.5 checkpoints with <code>joint_head_config.json</code>, using <code>--decision-protocol clef</code>.</li>
+<li><strong>D3</strong>: <a href="https://huggingface.co/vllm-sr/d3">vllm-sr/d3</a> and <a href="https://huggingface.co/vllm-sr/d3-mini">vllm-sr/d3-mini</a>, dense Qwen3.5 decision models with code-readout heads. The <code>d3</code> and <code>d3-mini</code> aliases select <code>--decision-protocol d3</code> automatically.</li>
+</ul>
+<p>For example:</p>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>pplx-decider-flash-v1.2<span class="w"> </span>--backend<span class="w"> </span>libtorch<span class="w"> </span>--dtype<span class="w"> </span>bfloat16
+</span></code></pre></div>
+<p>Use the request schema for the checkpoint's protocol: OneJev, Laya and Perplexity
+joint v1.2 do not share an interchangeable payload format. See the running
+server's <code>/docs</code>, <a href="docs/cli/#structured-decision-inputs">decision inputs</a> and
+<a href="docs/libtorch-backend/#onejev-block-attention">OneJev configuration</a>.</p>
+</details>
+<h2 id="documentation">Documentation</h2>
+<ul>
+<li><a href="docs/supported-models/">Supported models and configuration</a></li>
+<li><a href="docs/performance/">Performance and Radix MLP</a></li>
+<li><a href="docs/cli/">CLI and deployment options</a></li>
+<li><a href="docs/libtorch-backend/">Native LibTorch backend</a></li>
+<li><a href="docs/libtorch-model-coverage/">Model coverage and limitations</a></li>
+<li><a href="docs/">API and documentation index</a></li>
+<li><a href="LICENSING/">Licensing</a>: Infinity Restricted MIT License 1.0, with retained third-party and earlier grants</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
