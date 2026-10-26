@@ -1201,13 +1201,16 @@ End-to-end HTTP throughput, request latency and startup time for text embeddings
 reranking, image embeddings and decision requests. Measured October 25–26, 2026;
 production latency depends on the traffic mix.</p>
 <h2 id="text-embeddings">Text embeddings</h2>
-<p>FP16 with CUDA graphs. Throughput is <strong>input tokens/s</strong> at concurrency 32.
-Latency is the fastest observed 8-token request; startup is the median of three
-starts with local weights, excluding downloads.</p>
+<p>FP16 on one H100 with the same server CPU allocation. Throughput is <strong>input
+tokens/s</strong> at concurrency 32. Latency is the fastest observed 8-token request;
+startup is the median of three fresh starts with local weights, excluding downloads.
+Infinity uses alpha.19; vLLM 0.32.0 and TEI 1.9.4 use saved October 2026 runs.
+Small differences should not be treated as decisive.</p>
 <table>
 <thead>
 <tr>
 <th>Model</th>
+<th>Runtime</th>
 <th style="text-align: right;">128 tokens</th>
 <th style="text-align: right;">512 tokens</th>
 <th style="text-align: right;">Min. latency (ms)</th>
@@ -1217,55 +1220,159 @@ starts with local weights, excluding downloads.</p>
 <tbody>
 <tr>
 <td>BGE-small</td>
+<td>Infinity</td>
 <td style="text-align: right;">959,425</td>
 <td style="text-align: right;">2,262,919</td>
 <td style="text-align: right;">0.71</td>
 <td style="text-align: right;">1.41</td>
 </tr>
 <tr>
+<td>BGE-small</td>
+<td>vLLM</td>
+<td style="text-align: right;">108,689</td>
+<td style="text-align: right;">362,949</td>
+<td style="text-align: right;">3.87</td>
+<td style="text-align: right;">32.48</td>
+</tr>
+<tr>
+<td>BGE-small</td>
+<td>TEI</td>
+<td style="text-align: right;">1,058,801</td>
+<td style="text-align: right;">2,292,809</td>
+<td style="text-align: right;">0.91</td>
+<td style="text-align: right;">7.40</td>
+</tr>
+<tr>
 <td>BGE-large</td>
+<td>Infinity</td>
 <td style="text-align: right;">435,406</td>
 <td style="text-align: right;">648,951</td>
 <td style="text-align: right;">1.25</td>
 <td style="text-align: right;">1.42</td>
 </tr>
 <tr>
+<td>BGE-large</td>
+<td>vLLM</td>
+<td style="text-align: right;">91,839</td>
+<td style="text-align: right;">299,205</td>
+<td style="text-align: right;">5.02</td>
+<td style="text-align: right;">34.69</td>
+</tr>
+<tr>
+<td>BGE-large</td>
+<td>TEI</td>
+<td style="text-align: right;">476,558</td>
+<td style="text-align: right;">612,727</td>
+<td style="text-align: right;">1.70</td>
+<td style="text-align: right;">7.80</td>
+</tr>
+<tr>
 <td>ModernBERT-base</td>
+<td>Infinity</td>
 <td style="text-align: right;">578,841</td>
 <td style="text-align: right;">1,153,286</td>
 <td style="text-align: right;">1.12</td>
 <td style="text-align: right;">1.47</td>
 </tr>
 <tr>
+<td>ModernBERT-base</td>
+<td>vLLM</td>
+<td style="text-align: right;">101,425</td>
+<td style="text-align: right;">339,407</td>
+<td style="text-align: right;">4.79</td>
+<td style="text-align: right;">37.48</td>
+</tr>
+<tr>
+<td>ModernBERT-base</td>
+<td>TEI</td>
+<td style="text-align: right;">385,416</td>
+<td style="text-align: right;">551,745</td>
+<td style="text-align: right;">1.90</td>
+<td style="text-align: right;">10.18</td>
+</tr>
+<tr>
 <td>Qwen3-Embedding-0.6B</td>
+<td>Infinity</td>
 <td style="text-align: right;">296,344</td>
 <td style="text-align: right;">418,911</td>
 <td style="text-align: right;">1.50</td>
 <td style="text-align: right;">1.66</td>
 </tr>
 <tr>
+<td>Qwen3-Embedding-0.6B</td>
+<td>vLLM</td>
+<td style="text-align: right;">95,049</td>
+<td style="text-align: right;">305,404</td>
+<td style="text-align: right;">6.15</td>
+<td style="text-align: right;">62.19</td>
+</tr>
+<tr>
+<td>Qwen3-Embedding-0.6B</td>
+<td>TEI</td>
+<td style="text-align: right;">165,829</td>
+<td style="text-align: right;">211,818</td>
+<td style="text-align: right;">3.04</td>
+<td style="text-align: right;">9.75</td>
+</tr>
+<tr>
 <td>Qwen3-Embedding-8B</td>
+<td>Infinity</td>
 <td style="text-align: right;">39,008</td>
 <td style="text-align: right;">42,051</td>
 <td style="text-align: right;">6.29</td>
 <td style="text-align: right;">3.18</td>
 </tr>
 <tr>
+<td>Qwen3-Embedding-8B</td>
+<td>vLLM</td>
+<td style="text-align: right;">37,946</td>
+<td style="text-align: right;">41,555</td>
+<td style="text-align: right;">10.89</td>
+<td style="text-align: right;">79.17</td>
+</tr>
+<tr>
+<td>Qwen3-Embedding-8B</td>
+<td>TEI</td>
+<td style="text-align: right;">28,098</td>
+<td style="text-align: right;">29,747</td>
+<td style="text-align: right;">8.47</td>
+<td style="text-align: right;">12.90</td>
+</tr>
+<tr>
 <td>EmbeddingGemma2</td>
+<td>Infinity</td>
 <td style="text-align: right;">59,401</td>
 <td style="text-align: right;">150,284</td>
 <td style="text-align: right;">6.69</td>
 <td style="text-align: right;">2.45</td>
 </tr>
 <tr>
+<td>EmbeddingGemma2</td>
+<td>vLLM</td>
+<td style="text-align: right;">64,291</td>
+<td style="text-align: right;">204,947</td>
+<td style="text-align: right;">28.95</td>
+<td style="text-align: right;">71.31</td>
+</tr>
+<tr>
 <td>pplx-embed-v1-4B</td>
+<td>Infinity</td>
 <td style="text-align: right;">62,968</td>
 <td style="text-align: right;">69,945</td>
 <td style="text-align: right;">4.40</td>
 <td style="text-align: right;">3.15</td>
 </tr>
 <tr>
+<td>pplx-embed-v1-4B</td>
+<td>vLLM</td>
+<td style="text-align: right;">57,574</td>
+<td style="text-align: right;">70,348</td>
+<td style="text-align: right;">7.40</td>
+<td style="text-align: right;">68.65</td>
+</tr>
+<tr>
 <td>UltraBERT-Embed-150M</td>
+<td>Infinity</td>
 <td style="text-align: right;">498,933</td>
 <td style="text-align: right;">1,011,166</td>
 <td style="text-align: right;">1.20</td>
@@ -1273,6 +1380,9 @@ starts with local weights, excluding downloads.</p>
 </tr>
 </tbody>
 </table>
+<p>Only comparable measurements are shown. TEI’s Perplexity run used FP32 and
+quantized output; EmbeddingGemma2 and UltraBERT could not load in the tested TEI
+image. UltraBERT’s vLLM run failed its numerical check.</p>
 <h2 id="reranking">Reranking</h2>
 <p>Input tokens/s, counting the query, document and special tokens together.</p>
 <table>
