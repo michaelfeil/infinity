@@ -3,6 +3,9 @@
 See the [README highlights](../README.md#performance-highlights) for measured
 latency, throughput and startup times.
 
+See the [alpha.19 H100 benchmark](h100-alpha19.md) for
+per-model measurements, methodology and numerical caveats.
+
 ## Radix MLP
 
 [RadixMLP](https://arxiv.org/abs/2601.15013) shares MLP computation across common
