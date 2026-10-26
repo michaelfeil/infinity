@@ -21,7 +21,7 @@ resolver = "2"
 [workspace.package]
 # Fork license adoption; inherited and third-party grants remain in LICENSE.
 license-file = "LICENSE"
-version = "3.0.0"
+version = "3.0.1-beta.1"
 edition = "2021"
 authors = ["infinity authors"]
 homepage = "https://github.com/michaelfeil/infinity"
