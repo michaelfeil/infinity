@@ -471,14 +471,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../docs/libtorch-model-coverage/" class="md-nav__link">
+      <a href="../docs/supported-models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Supported models
+    Supported models and configuration
   
 
     
@@ -652,6 +652,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../docs/libtorch-model-coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -1246,7 +1274,9 @@ For example:</p>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--hostname<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
 </span></code></pre></div>
 <p>The image starts <code>infinity_v3</code> directly. There is no <code>v2</code> subcommand.
-Each visible GPU runs a model replica; use <code>--device-id 0</code> to select one GPU.</p>
+Each visible GPU runs a model replica; use <code>--device-id 0</code> to select one GPU.
+Choose another task or checkpoint from the
+<a href="../docs/supported-models/">supported models and configuration</a> catalog.</p>
 <h2 id="send-an-embedding-request">Send an embedding request</h2>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>curl<span class="w"> </span>http://localhost:8000/v1/embeddings<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>-H<span class="w"> </span><span class="s1">'Content-Type: application/json'</span><span class="w"> </span><span class="se">\</span>
@@ -1257,7 +1287,7 @@ API documentation. <code>/health</code> reports readiness. See <a href="../docs/
 for model routing, batching, truncation and decision inputs.</p>
 <h2 id="moving-from-python-v2">Moving from Python / v2</h2>
 <p>Use the v3 container and CLI instead of <code>infinity_emb v2</code>. Check the
-<a href="../docs/libtorch-model-coverage/">supported model and task coverage</a> and
+<a href="../docs/supported-models/">supported models and configuration</a> and
 <a href="../api/">API reference</a> for your checkpoint and request format. Python engine
 APIs and the v2 backend choices do not carry over to the native server.</p>
 <p>The <a href="../../cli_v2/">Python / v2 docs</a> remain available

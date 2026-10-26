@@ -14,7 +14,7 @@
         <link rel="prev" href="../../quickstart/">
       
       
-        <link rel="next" href="../libtorch-model-coverage/">
+        <link rel="next" href="../supported-models/">
       
       
         
@@ -471,14 +471,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../libtorch-model-coverage/" class="md-nav__link">
+      <a href="../supported-models/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    Supported models
+    Supported models and configuration
   
 
     
@@ -652,6 +652,34 @@
 
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-model-coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
             
               
                 
@@ -1273,17 +1301,17 @@ Set <code>INFINITY_MAX_SEQUENCE_LENGTH</code> (or <code>MAX_SEQUENCE_LENGTH</cod
 Like other model settings, one value applies to all models; semicolon-separated
 values align with <code>--model-id</code>, and <code>none</code> leaves a model's limit unchanged.</p>
 <h2 id="ultrabert-embeddings">UltraBERT embeddings</h2>
-<p><code>dmis-lab/UltraBERT-Embed-150M</code> uses the Candle backend and produces
-768-dimensional CLS embeddings with a 32,768-token context. The override below
-selects Candle in dual-backend builds; Candle-only builds can omit it:</p>
-<div class="language-sh highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>infinity_v3<span class="w"> </span>--backend<span class="w"> </span>candle<span class="w"> </span>--model-id<span class="w"> </span>dmis-lab/UltraBERT-Embed-150M<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span>
+<p><code>dmis-lab/UltraBERT-Embed-150M</code> supports native LibTorch and Candle and produces
+768-dimensional CLS embeddings with a 32,768-token context. For the native
+LibTorch GPU image:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>dmis-lab/UltraBERT-Embed-150M<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span>
 </span></code></pre></div>
 <p>Use <code>prompt_name: "query"</code> for retrieval queries; documents use the empty
 <code>document</code> prompt. Mean and last-token pooling overrides and raw token
-embeddings are supported. CPU supports FP32/FP16; CUDA SM80+ supports FP16/BF16.
-Its attention geometry uses FA2 even with <code>ATTN_BACKEND=fa4</code>. Native LibTorch
-and Metal are unsupported for this checkpoint.</p>
+embeddings are supported. Native LibTorch uses FP32 on CPU and FP16/BF16 on
+CUDA SM80+. See <a href="../libtorch-model-coverage/">native model coverage</a> for backend
+limitations and the <a href="../supported-models/">model catalog</a> for other checkpoints.</p>
 <p>UltraBERT sequence classification checkpoints with a saved trained classifier
 head use <code>/predict</code>; trained single-label rerankers also use <code>/rerank</code>.
 <code>UltrabertForTokenClassification</code> checkpoints use <code>/predict_tokens</code>. These
