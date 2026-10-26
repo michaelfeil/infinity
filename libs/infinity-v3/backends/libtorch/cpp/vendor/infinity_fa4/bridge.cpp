@@ -92,7 +92,11 @@ extern "C" int infinity_fa4_batch_modes_v1(){
 
 extern "C" int infinity_fa4_batch_tile_v1(int mode){
  if(mode<0 || mode>=attention_modes || !(infinity_fa4_batch_modes_v1()&(1<<mode)))return 0;
- return profiles[mode].causal || profiles[mode].local ? 128 : 192;
+#ifdef INFINITY_FA4_BATCH_HINTS
+ return INFINITY_FA4_BATCH_TILE;
+#else
+ return 0;
+#endif
 }
 
 // Export families: 0 global d64 MHA, 1 windowed d64 MHA, 2 causal d128 GQA4, 3 global d128 GQA2, 4 GQA6, 5 GQA8, 6 global d256 GQA4.
@@ -152,7 +156,7 @@ static int forward_impl(int mode,int dtype,int device,void* stream,void* q,void*
        nullptr,nullptr,aux,int64_t(max_q));
   else
     fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,&ckt,nullptr,nullptr,nullptr,lb,rb,nullptr,
-       nullptr,nullptr,aux,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,int64_t(max_q));
+       nullptr,nullptr,aux,nullptr,nullptr,nullptr,nullptr,tile_argument,nullptr,nullptr,int64_t(max_q));
 #else
   fn(&qt,&kt,&vt,&ot,nullptr,scale,&ct,&ckt,nullptr,nullptr,nullptr,lb,rb,nullptr,nullptr,aux,tile_argument,nullptr);
 #endif
