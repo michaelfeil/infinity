@@ -4871,5 +4871,491 @@
     "qwen-vl": "Qwen/Qwen3-VL-Embedding-8B",
     "elephant": "Same Elephant checkpoint as original comparison; weights not bundled."
   },
-  "validation_reference": "Saved alpha.16 outputs; historical performance measurements excluded."
+  "validation_reference": "Saved alpha.16 outputs; historical performance measurements excluded.",
+  "runtime_comparison": {
+    "scope": "Saved October 2026 aggregate results, not rerun alongside alpha.19. FP16, 512-token inputs, concurrency 32, same H100 and server CPU allocation.",
+    "excluded": "TEI Perplexity used FP32 and quantized output; UltraBERT vLLM failed numerical validation.",
+    "embedding_summary": [
+      {
+        "model": "pplx-4b",
+        "runtime": "vllm",
+        "image": "vllm/vllm-openai:v0.32.0",
+        "artifact": "pplx-4b-vllm-screen-repeat.json",
+        "512_token_tokens_s": 70348.1500143233,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 717,
+            "seconds": 5.132598177995533,
+            "client_cpu_fraction": 0.022448344094802532,
+            "requests_per_second": 139.69533073403667,
+            "inputs_per_second": 139.69533073403667,
+            "tokens_per_second": 71524.00933582678,
+            "minimum_ms": 35.720821004360914,
+            "p50_ms": 227.20895195379853,
+            "p95_ms": 241.53061723336577
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 705,
+            "seconds": 5.218274490907788,
+            "client_cpu_fraction": 0.022160815649213326,
+            "requests_per_second": 135.10213025941374,
+            "inputs_per_second": 135.10213025941374,
+            "tokens_per_second": 69172.29069281984,
+            "minimum_ms": 34.91346398368478,
+            "p50_ms": 235.47077272087336,
+            "p95_ms": 243.68304992094636
+          }
+        ],
+        "image_id": "sha256:bd8a5d7a8774800c92d714c0c226b32c1863f929150f36efd610aebcd12a335d"
+      },
+      {
+        "model": "bge-small",
+        "runtime": "vllm",
+        "image": "vllm/vllm-openai:v0.32.0",
+        "artifact": "bge-small-vllm-screen-repeat.json",
+        "512_token_tokens_s": 362948.8627034122,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 3485,
+            "seconds": 5.023048229049891,
+            "client_cpu_fraction": 0.0795159422698891,
+            "requests_per_second": 693.8018193504757,
+            "inputs_per_second": 693.8018193504757,
+            "tokens_per_second": 355226.5315074436,
+            "minimum_ms": 22.124601993709803,
+            "p50_ms": 44.368417002260685,
+            "p95_ms": 56.70351581647992
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 3639,
+            "seconds": 5.026470982003957,
+            "client_cpu_fraction": 0.07982743567735257,
+            "requests_per_second": 723.9671755847282,
+            "inputs_per_second": 723.9671755847282,
+            "tokens_per_second": 370671.19389938086,
+            "minimum_ms": 27.561538852751255,
+            "p50_ms": 43.087932746857405,
+            "p95_ms": 52.72674188017845
+          }
+        ],
+        "image_id": "sha256:bd8a5d7a8774800c92d714c0c226b32c1863f929150f36efd610aebcd12a335d"
+      },
+      {
+        "model": "qwen-06",
+        "runtime": "vllm",
+        "image": "vllm/vllm-openai:v0.32.0",
+        "artifact": "qwen-06-vllm-screen-repeat.json",
+        "512_token_tokens_s": 305403.73218464566,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 2893,
+            "seconds": 5.0357787371613085,
+            "client_cpu_fraction": 0.06867969723287733,
+            "requests_per_second": 574.4891010900128,
+            "inputs_per_second": 574.4891010900128,
+            "tokens_per_second": 294138.41975808656,
+            "minimum_ms": 31.18133917450905,
+            "p50_ms": 54.629880003631115,
+            "p95_ms": 72.35453696921468
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 3109,
+            "seconds": 5.026724358089268,
+            "client_cpu_fraction": 0.07089734300359886,
+            "requests_per_second": 618.4942277562593,
+            "inputs_per_second": 618.4942277562593,
+            "tokens_per_second": 316669.04461120476,
+            "minimum_ms": 31.01567504927516,
+            "p50_ms": 51.25201400369406,
+            "p95_ms": 63.18245502188802
+          }
+        ],
+        "image_id": "sha256:bd8a5d7a8774800c92d714c0c226b32c1863f929150f36efd610aebcd12a335d"
+      },
+      {
+        "model": "modernbert",
+        "runtime": "vllm",
+        "image": "vllm/vllm-openai:v0.32.0",
+        "artifact": "modernbert-native-vllm-screen-repeat.json",
+        "512_token_tokens_s": 339407.2561824767,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 3400,
+            "seconds": 5.023725584149361,
+            "client_cpu_fraction": 0.07730391250376341,
+            "requests_per_second": 676.7885592173926,
+            "inputs_per_second": 676.7885592173926,
+            "tokens_per_second": 346515.742319305,
+            "minimum_ms": 29.75410921499133,
+            "p50_ms": 46.48920684121549,
+            "p95_ms": 56.075772270560265
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 3262,
+            "seconds": 5.026031242217869,
+            "client_cpu_fraction": 0.0736699143232165,
+            "requests_per_second": 649.021035245407,
+            "inputs_per_second": 649.021035245407,
+            "tokens_per_second": 332298.7700456484,
+            "minimum_ms": 28.859396930783987,
+            "p50_ms": 46.35406215675175,
+            "p95_ms": 68.88538785278797
+          }
+        ],
+        "image_id": "sha256:bd8a5d7a8774800c92d714c0c226b32c1863f929150f36efd610aebcd12a335d"
+      },
+      {
+        "model": "qwen-8",
+        "runtime": "tei",
+        "image": "ghcr.io/huggingface/text-embeddings-inference:hopper-latest",
+        "artifact": "qwen-8-tei-screen-repeat.json",
+        "512_token_tokens_s": 29746.796899036286,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 321,
+            "seconds": 5.364832116756588,
+            "client_cpu_fraction": 0.0088401944306642,
+            "requests_per_second": 59.83411838692665,
+            "inputs_per_second": 59.83411838692665,
+            "tokens_per_second": 30635.068614106443,
+            "minimum_ms": 25.902782566845417,
+            "p50_ms": 533.9821670204401,
+            "p95_ms": 536.7075009271502
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 321,
+            "seconds": 5.695093527901918,
+            "client_cpu_fraction": 0.008447324660131312,
+            "requests_per_second": 56.364306999933845,
+            "inputs_per_second": 56.364306999933845,
+            "tokens_per_second": 28858.52518396613,
+            "minimum_ms": 24.506688117980957,
+            "p50_ms": 532.330674584955,
+            "p95_ms": 887.9750119522214
+          }
+        ],
+        "image_id": "sha256:9add295ed634121a944ceaad3bd94c973dfac84becfa31eb40e08dbeeb0a3a21"
+      },
+      {
+        "model": "bge-small",
+        "runtime": "tei",
+        "image": "ghcr.io/huggingface/text-embeddings-inference:hopper-latest",
+        "artifact": "tei-bge-tuned-repeat.json",
+        "512_token_tokens_s": 2292808.524871355,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 22509,
+            "seconds": 5.004594432190061,
+            "client_cpu_fraction": 0.4444893453687,
+            "requests_per_second": 4497.667154648901,
+            "inputs_per_second": 4497.667154648901,
+            "tokens_per_second": 2302805.583180237,
+            "minimum_ms": 3.478344064205885,
+            "p50_ms": 6.8270862102508545,
+            "p95_ms": 9.011125192046165
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 22318,
+            "seconds": 5.005589014850557,
+            "client_cpu_fraction": 0.4433502018275975,
+            "requests_per_second": 4458.616145629829,
+            "inputs_per_second": 4458.616145629829,
+            "tokens_per_second": 2282811.4665624723,
+            "minimum_ms": 4.041539970785379,
+            "p50_ms": 6.751056527718902,
+            "p95_ms": 8.632962126284838
+          }
+        ],
+        "image_id": "sha256:9add295ed634121a944ceaad3bd94c973dfac84becfa31eb40e08dbeeb0a3a21"
+      },
+      {
+        "model": "gemma2",
+        "runtime": "vllm",
+        "image": "vllm/vllm-openai:v0.32.0",
+        "artifact": "gemma2-vllm-screen-repeat.json",
+        "512_token_tokens_s": 204947.28723716259,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 1997,
+            "seconds": 5.052115865051746,
+            "client_cpu_fraction": 0.04789049350069125,
+            "requests_per_second": 395.2799289134169,
+            "inputs_per_second": 395.2799289134169,
+            "tokens_per_second": 202383.32360366944,
+            "minimum_ms": 47.8773033246398,
+            "p50_ms": 82.0218320004642,
+            "p95_ms": 88.20266695693135
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 2051,
+            "seconds": 5.060506336856633,
+            "client_cpu_fraction": 0.04641240804094926,
+            "requests_per_second": 405.2954118567495,
+            "inputs_per_second": 405.2954118567495,
+            "tokens_per_second": 207511.25087065576,
+            "minimum_ms": 44.67919422313571,
+            "p50_ms": 73.70836194604635,
+            "p95_ms": 90.80202411860228
+          }
+        ],
+        "image_id": "sha256:bd8a5d7a8774800c92d714c0c226b32c1863f929150f36efd610aebcd12a335d"
+      },
+      {
+        "model": "bge-large",
+        "runtime": "tei",
+        "image": "ghcr.io/huggingface/text-embeddings-inference:hopper-latest",
+        "artifact": "bge-large-tei-screen-repeat.json",
+        "512_token_tokens_s": 612726.5102855465,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 5954,
+            "seconds": 5.017225290648639,
+            "client_cpu_fraction": 0.12273648228389364,
+            "requests_per_second": 1186.7117091786508,
+            "inputs_per_second": 1186.7117091786508,
+            "tokens_per_second": 607596.3950994692,
+            "minimum_ms": 6.758799776434898,
+            "p50_ms": 26.86579036526382,
+            "p95_ms": 27.987709268927574
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 6057,
+            "seconds": 5.0192615441046655,
+            "client_cpu_fraction": 0.12346444403317942,
+            "requests_per_second": 1206.751221624265,
+            "inputs_per_second": 1206.751221624265,
+            "tokens_per_second": 617856.6254716237,
+            "minimum_ms": 7.766846101731062,
+            "p50_ms": 25.98154777660966,
+            "p95_ms": 27.5226142257452
+          }
+        ],
+        "image_id": "sha256:9add295ed634121a944ceaad3bd94c973dfac84becfa31eb40e08dbeeb0a3a21"
+      },
+      {
+        "model": "modernbert",
+        "runtime": "tei",
+        "image": "ghcr.io/huggingface/text-embeddings-inference:hopper-latest",
+        "artifact": "modernbert-tei-screen-repeat.json",
+        "512_token_tokens_s": 551744.6007342539,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 5377,
+            "seconds": 5.014195557218045,
+            "client_cpu_fraction": 0.11288190429374324,
+            "requests_per_second": 1072.3554633324363,
+            "inputs_per_second": 1072.3554633324363,
+            "tokens_per_second": 549045.9972262074,
+            "minimum_ms": 8.278993889689445,
+            "p50_ms": 29.343614354729652,
+            "p95_ms": 30.669014900922775
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 5442,
+            "seconds": 5.025409237015992,
+            "client_cpu_fraction": 0.1154810847493479,
+            "requests_per_second": 1082.8968832857427,
+            "inputs_per_second": 1082.8968832857427,
+            "tokens_per_second": 554443.2042423002,
+            "minimum_ms": 8.041511755436659,
+            "p50_ms": 29.121966566890478,
+            "p95_ms": 30.28946416452527
+          }
+        ],
+        "image_id": "sha256:9add295ed634121a944ceaad3bd94c973dfac84becfa31eb40e08dbeeb0a3a21"
+      },
+      {
+        "model": "qwen-06",
+        "runtime": "tei",
+        "image": "ghcr.io/huggingface/text-embeddings-inference:hopper-latest",
+        "artifact": "qwen-06-tei-screen-repeat.json",
+        "512_token_tokens_s": 211818.35083534243,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 2115,
+            "seconds": 5.050474840682,
+            "client_cpu_fraction": 0.04722498508037173,
+            "requests_per_second": 418.7725049065678,
+            "inputs_per_second": 418.7725049065678,
+            "tokens_per_second": 214411.52251216272,
+            "minimum_ms": 15.129846055060625,
+            "p50_ms": 75.88098058477044,
+            "p95_ms": 77.25961692631245
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 2069,
+            "seconds": 5.063099978026003,
+            "client_cpu_fraction": 0.047703723222579306,
+            "requests_per_second": 408.6429280439886,
+            "inputs_per_second": 408.6429280439886,
+            "tokens_per_second": 209225.17915852217,
+            "minimum_ms": 9.732256643474102,
+            "p50_ms": 77.40533910691738,
+            "p95_ms": 83.24057701975107
+          }
+        ],
+        "image_id": "sha256:9add295ed634121a944ceaad3bd94c973dfac84becfa31eb40e08dbeeb0a3a21"
+      },
+      {
+        "model": "qwen-8",
+        "runtime": "vllm",
+        "image": "vllm/vllm-openai:v0.32.0",
+        "artifact": "qwen-8-vllm-screen-repeat.json",
+        "512_token_tokens_s": 41555.07290369223,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 417,
+            "seconds": 5.139283853583038,
+            "client_cpu_fraction": 0.014289593276463982,
+            "requests_per_second": 81.13970971058026,
+            "inputs_per_second": 81.13970971058026,
+            "tokens_per_second": 41543.531371817095,
+            "minimum_ms": 34.8223396576941,
+            "p50_ms": 391.5955051779747,
+            "p95_ms": 406.4306253567338
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 434,
+            "seconds": 5.345828690100461,
+            "client_cpu_fraction": 0.01417352601296626,
+            "requests_per_second": 81.1847938194675,
+            "inputs_per_second": 81.1847938194675,
+            "tokens_per_second": 41566.61443556736,
+            "minimum_ms": 51.79107189178467,
+            "p50_ms": 390.1401939801872,
+            "p95_ms": 403.21702789515257
+          }
+        ],
+        "image_id": "sha256:bd8a5d7a8774800c92d714c0c226b32c1863f929150f36efd610aebcd12a335d"
+      },
+      {
+        "model": "bge-large",
+        "runtime": "vllm",
+        "image": "vllm/vllm-openai:v0.32.0",
+        "artifact": "bge-large-vllm-screen-repeat.json",
+        "512_token_tokens_s": 299204.7200638667,
+        "timed_windows": [
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 0,
+            "requests": 2830,
+            "seconds": 5.03084575291723,
+            "client_cpu_fraction": 0.06816435979996986,
+            "requests_per_second": 562.5296697595969,
+            "inputs_per_second": 562.5296697595969,
+            "tokens_per_second": 288015.1909169136,
+            "minimum_ms": 34.54194776713848,
+            "p50_ms": 53.33158257417381,
+            "p95_ms": 77.92458403855562
+          },
+          {
+            "shape": "512",
+            "concurrency": 32,
+            "client_batch": 1,
+            "repeat": 1,
+            "requests": 3049,
+            "seconds": 5.029371529817581,
+            "client_cpu_fraction": 0.07094528667937595,
+            "requests_per_second": 606.2387679898823,
+            "inputs_per_second": 606.2387679898823,
+            "tokens_per_second": 310394.2492108197,
+            "minimum_ms": 34.61082512512803,
+            "p50_ms": 51.88583629205823,
+            "p95_ms": 61.828904785215855
+          }
+        ],
+        "image_id": "sha256:bd8a5d7a8774800c92d714c0c226b32c1863f929150f36efd610aebcd12a335d"
+      }
+    ]
+  }
 }

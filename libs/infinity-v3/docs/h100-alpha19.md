@@ -22,6 +22,27 @@ starts with local weights, excluding downloads.
 | pplx-embed-v1-4B | 62,968 | 69,945 | 4.40 | 3.15 |
 | UltraBERT-Embed-150M | 498,933 | 1,011,166 | 1.20 | 1.45 |
 
+## Compared with vLLM and TEI
+
+Embedding throughput in **input tokens/s**: 512-token inputs, concurrency 32,
+FP16, same H100 and server CPU allocation. Infinity uses alpha.19; vLLM 0.32.0
+and TEI 1.9.4 results are from the earlier October 2026 benchmark, not a fresh
+rerun. Small differences should not be treated as decisive.
+
+| Model | Infinity | vLLM | TEI |
+|---|---:|---:|---:|
+| BGE-small | 2,262,919 | 362,949 | 2,292,809 |
+| BGE-large | 648,951 | 299,205 | 612,727 |
+| ModernBERT-base | 1,153,286 | 339,407 | 551,745 |
+| Qwen3-Embedding-0.6B | 418,911 | 305,404 | 211,818 |
+| Qwen3-Embedding-8B | 42,051 | 41,555 | 29,747 |
+| EmbeddingGemma2 | 150,284 | 204,947 | — |
+| pplx-embed-v1-4B | 69,945 | 70,348 | — |
+
+— means no comparable measurement. TEI’s Perplexity run used FP32 and quantized
+output; EmbeddingGemma2 was unsupported in the tested TEI image. UltraBERT is
+omitted because vLLM failed its numerical check and TEI could not load it.
+
 ## Reranking
 
 Input tokens/s, counting the query, document and special tokens together.
