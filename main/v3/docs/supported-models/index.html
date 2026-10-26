@@ -1771,12 +1771,11 @@ CUDA requires an Ampere/SM80 or newer GPU and NVIDIA Container Toolkit.</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>docker<span class="w"> </span>run<span class="w"> </span>--rm<span class="w"> </span>--gpus<span class="w"> </span>all<span class="w"> </span>-p<span class="w"> </span><span class="m">8000</span>:8000<span class="w"> </span>-v<span class="w"> </span>infinity-cache:/data<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="w">  </span>ghcr.io/michaelfeil/infinity_v3:nvidia-latest<span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="w">  </span>--model-id<span class="w"> </span>BAAI/bge-small-en-v1.5<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--device-id<span class="w"> </span><span class="m">0</span><span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--pooling<span class="w"> </span>cls<span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">8192</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">  </span>--max-batch-tokens<span class="w"> </span><span class="m">8192</span><span class="w"> </span><span class="se">\</span>
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span>--hostname<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
 </span></code></pre></div>
-<p>Replace <code>--model-id</code> and the task settings with a table row below. Remove the
-example's <code>--pooling cls</code> unless the chosen row specifies it. The native
+<p>Replace <code>--model-id</code> and the task settings with a table row below. The native
 image selects LibTorch automatically. For a locally installed binary, pass the
 same flags to <code>infinity_v3</code>. Tables use BF16 compute unless a row specifies a
 different <code>--dtype</code>; replace the common dtype flag in that case. Checkpoint
@@ -1794,14 +1793,16 @@ result. See <a href="../cli/#sequence-length-and-batch-capacity">sequence and ba
 containing its weights, tokenizer, pooling/head configuration and task sidecars.
 Gated checkpoints also require access credentials. A base language model needs
 a trained retrieval or classification head to provide that task's intended scores.</p>
-<p>Each GPU loads a full replica, including every MoE expert. For DP2 or DP4,
-replace <code>--device-id 0</code> with <code>--backend-device-ids 0,1</code> or
-<code>--backend-device-ids 0,1,2,3</code>.
+<p>All visible CUDA GPUs are used by default. Each GPU loads a full replica,
+including every MoE expert. To select only two or four visible GPUs, add
+<code>--backend-device-ids 0,1</code> or <code>--backend-device-ids 0,1,2,3</code>.
 Every selected GPU must fit the full model; this does not shard weights.
 Wait for <code>/health</code> before sending traffic; model warmup is part of startup.</p>
 <h2 id="dense-text-embeddings">Dense text embeddings</h2>
-<p>Use <code>/v1/embeddings</code> with <code>input</code> strings. Pooling overrides appear explicitly
-where needed; omitted pooling uses checkpoint metadata and architecture defaults.</p>
+<p>Use <code>/v1/embeddings</code> with <code>input</code> strings. Pooling is read from the checkpoint
+metadata automatically; the examples omit redundant overrides. Keep the saved
+<code>1_Pooling/config.json</code> when copying a checkpoint to a local directory. Explicit
+<code>--pooling splade</code> selects the sparse task described below.</p>
 <p>For Nomic v1.5, prefix retrieval queries with <code>search_query:</code> and documents with
 <code>search_document:</code>. It returns 768 dimensions by default. Qwen3 queries use the
 checkpoint's instruction format (<code>Instruct: ...\nQuery: ...</code>); documents use their
@@ -1830,47 +1831,47 @@ instructions and checkpoint formatting; they are separate from Nemotron ColEmbed
 <tr>
 <td><a href="https://huggingface.co/Alibaba-NLP/gte-base-en-v1.5">Alibaba-NLP/gte-base-en-v1.5</a></td>
 <td>GTE rotary encoder + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Alibaba-NLP/gte-large-en-v1.5">Alibaba-NLP/gte-large-en-v1.5</a></td>
 <td>GTE rotary encoder + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Alibaba-NLP/gte-multilingual-base">Alibaba-NLP/gte-multilingual-base</a></td>
 <td>GTE rotary encoder + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Alibaba-NLP/gte-Qwen2-1.5B-instruct">Alibaba-NLP/gte-Qwen2-1.5B-instruct</a></td>
 <td>Qwen2 + sentence pooling</td>
-<td><code>--pooling last-token --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Alibaba-NLP/gte-Qwen2-7B-instruct">Alibaba-NLP/gte-Qwen2-7B-instruct</a></td>
 <td>Qwen2 + sentence pooling</td>
-<td><code>--pooling last-token --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/BAAI/bge-base-en-v1.5">BAAI/bge-base-en-v1.5</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/BAAI/bge-base-zh-v1.5">BAAI/bge-base-zh-v1.5</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/BAAI/bge-large-en-v1.5">BAAI/bge-large-en-v1.5</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/BAAI/bge-large-zh-v1.5">BAAI/bge-large-zh-v1.5</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/BAAI/bge-m3">BAAI/bge-m3</a></td>
@@ -1880,12 +1881,12 @@ instructions and checkpoint formatting; they are separate from Nemotron ColEmbed
 <tr>
 <td><a href="https://huggingface.co/BAAI/bge-small-en-v1.5">BAAI/bge-small-en-v1.5</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/BAAI/bge-small-zh-v1.5">BAAI/bge-small-zh-v1.5</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/dmis-lab/UltraBERT-Embed-150M">dmis-lab/UltraBERT-Embed-150M</a></td>
@@ -1895,72 +1896,72 @@ instructions and checkpoint formatting; they are separate from Nemotron ColEmbed
 <tr>
 <td><a href="https://huggingface.co/intfloat/e5-base-v2">intfloat/e5-base-v2</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/intfloat/e5-large-v2">intfloat/e5-large-v2</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/intfloat/e5-mistral-7b-instruct">intfloat/e5-mistral-7b-instruct</a></td>
 <td>Mistral + sentence pooling</td>
-<td><code>--pooling last-token --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/intfloat/e5-small-v2">intfloat/e5-small-v2</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/intfloat/multilingual-e5-base">intfloat/multilingual-e5-base</a></td>
 <td>XLM-RoBERTa + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/intfloat/multilingual-e5-large">intfloat/multilingual-e5-large</a></td>
 <td>XLM-RoBERTa + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/intfloat/multilingual-e5-large-instruct">intfloat/multilingual-e5-large-instruct</a></td>
 <td>XLM-RoBERTa + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/intfloat/multilingual-e5-small">intfloat/multilingual-e5-small</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/jinaai/jina-code-embeddings-0.5b">jinaai/jina-code-embeddings-0.5b</a></td>
 <td>Qwen2 + sentence pooling; <a href="#model-licenses">non-commercial license</a></td>
-<td><code>--pooling last-token --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/jinaai/jina-code-embeddings-1.5b">jinaai/jina-code-embeddings-1.5b</a></td>
 <td>Qwen2 + sentence pooling; <a href="#model-licenses">non-commercial license</a></td>
-<td><code>--pooling last-token --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/jinaai/jina-embeddings-v2-base-code">jinaai/jina-embeddings-v2-base-code</a></td>
 <td>JinaCode encoder + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/jinaai/jina-embeddings-v2-base-en">jinaai/jina-embeddings-v2-base-en</a></td>
 <td>Jina BERT/ALiBi + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 2048</code></td>
+<td><code>--max-batch-tokens 2048</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/jinaai/jina-embeddings-v2-small-en">jinaai/jina-embeddings-v2-small-en</a></td>
 <td>Jina BERT/ALiBi + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1">mixedbread-ai/mxbai-embed-large-v1</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/nomic-ai/modernbert-embed-base">nomic-ai/modernbert-embed-base</a></td>
@@ -1970,207 +1971,207 @@ instructions and checkpoint formatting; they are separate from Nemotron ColEmbed
 <tr>
 <td><a href="https://huggingface.co/nomic-ai/nomic-embed-text-v1">nomic-ai/nomic-embed-text-v1</a></td>
 <td>Nomic BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5">nomic-ai/nomic-embed-text-v1.5</a></td>
 <td>Nomic BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/nomic-ai/nomic-embed-text-v2-moe">nomic-ai/nomic-embed-text-v2-moe</a></td>
 <td>Nomic BERT MoE + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/nvidia/Nemotron-3-Embed-1B-BF16">nvidia/Nemotron-3-Embed-1B-BF16</a></td>
 <td>Bidirectional Ministral3 + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/nvidia/Nemotron-3-Embed-8B-BF16">nvidia/Nemotron-3-Embed-8B-BF16</a></td>
 <td>Bidirectional Ministral3 + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/perplexity-ai/pplx-embed-v1-0.6b">perplexity-ai/pplx-embed-v1-0.6b</a></td>
 <td>Bidirectional Qwen3 + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/perplexity-ai/pplx-embed-v1-4b">perplexity-ai/pplx-embed-v1-4b</a></td>
 <td>Bidirectional Qwen3 + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Qwen/Qwen3-Embedding-0.6B">Qwen/Qwen3-Embedding-0.6B</a></td>
 <td>Qwen3 + sentence pooling</td>
-<td><code>--pooling last-token --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Qwen/Qwen3-Embedding-4B">Qwen/Qwen3-Embedding-4B</a></td>
 <td>Qwen3 + sentence pooling</td>
-<td><code>--pooling last-token --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Qwen/Qwen3-Embedding-8B">Qwen/Qwen3-Embedding-8B</a></td>
 <td>Qwen3 + sentence pooling</td>
-<td><code>--pooling last-token --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/all-distilroberta-v1">sentence-transformers/all-distilroberta-v1</a></td>
 <td>RoBERTa + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/all-MiniLM-L12-v2">sentence-transformers/all-MiniLM-L12-v2</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2">sentence-transformers/all-MiniLM-L6-v2</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/all-mpnet-base-v2">sentence-transformers/all-mpnet-base-v2</a></td>
 <td>MPNet + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/all-roberta-large-v1">sentence-transformers/all-roberta-large-v1</a></td>
 <td>RoBERTa + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/bert-base-nli-mean-tokens">sentence-transformers/bert-base-nli-mean-tokens</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/distiluse-base-multilingual-cased-v2">sentence-transformers/distiluse-base-multilingual-cased-v2</a></td>
 <td>DistilBERT + sentence pooling + saved Dense projection</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/LaBSE">sentence-transformers/LaBSE</a></td>
 <td>BERT + sentence pooling + saved Dense projection</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/msmarco-distilbert-base-v4">sentence-transformers/msmarco-distilbert-base-v4</a></td>
 <td>DistilBERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/msmarco-MiniLM-L12-cos-v5">sentence-transformers/msmarco-MiniLM-L12-cos-v5</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/msmarco-MiniLM-L6-cos-v5">sentence-transformers/msmarco-MiniLM-L6-cos-v5</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-cos-v1">sentence-transformers/multi-qa-MiniLM-L6-cos-v1</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/multi-qa-MiniLM-L6-dot-v1">sentence-transformers/multi-qa-MiniLM-L6-dot-v1</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/multi-qa-mpnet-base-cos-v1">sentence-transformers/multi-qa-mpnet-base-cos-v1</a></td>
 <td>MPNet + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/multi-qa-mpnet-base-dot-v1">sentence-transformers/multi-qa-mpnet-base-dot-v1</a></td>
 <td>MPNet + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L12-v2">sentence-transformers/paraphrase-MiniLM-L12-v2</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L3-v2">sentence-transformers/paraphrase-MiniLM-L3-v2</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/paraphrase-MiniLM-L6-v2">sentence-transformers/paraphrase-MiniLM-L6-v2</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2">sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/sentence-transformers/paraphrase-multilingual-mpnet-base-v2">sentence-transformers/paraphrase-multilingual-mpnet-base-v2</a></td>
 <td>XLM-RoBERTa + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-l">Snowflake/snowflake-arctic-embed-l</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-l-v2.0">Snowflake/snowflake-arctic-embed-l-v2.0</a></td>
 <td>XLM-RoBERTa + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-m">Snowflake/snowflake-arctic-embed-m</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-m-long">Snowflake/snowflake-arctic-embed-m-long</a></td>
 <td>Nomic BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0">Snowflake/snowflake-arctic-embed-m-v2.0</a></td>
 <td>GTE rotary encoder + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-s">Snowflake/snowflake-arctic-embed-s</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Snowflake/snowflake-arctic-embed-xs">Snowflake/snowflake-arctic-embed-xs</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling cls --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/thenlper/gte-base">thenlper/gte-base</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/thenlper/gte-large">thenlper/gte-large</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/thenlper/gte-small">thenlper/gte-small</a></td>
 <td>BERT + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/voyageai/voyage-4-nano">voyageai/voyage-4-nano</a></td>
 <td>Qwen3 + sentence pooling</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 </tbody>
 </table>
@@ -2203,12 +2204,12 @@ See <a href="#multimodal-request">multimodal requests</a> and the linked model c
 <tr>
 <td><a href="https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16">nvidia/Nemotron-3.5-Embed-1B-BF16</a></td>
 <td>Bidirectional Mistral3 + mean pooling + image tower</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/nvidia/Nemotron-3.5-Embed-8B-BF16">nvidia/Nemotron-3.5-Embed-8B-BF16</a></td>
 <td>Bidirectional Mistral3 + mean pooling + image tower</td>
-<td><code>--pooling mean --max-batch-tokens 8192</code></td>
+<td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
 <td><a href="https://huggingface.co/Qwen/Qwen3-VL-Embedding-2B">Qwen/Qwen3-VL-Embedding-2B</a></td>
