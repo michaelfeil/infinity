@@ -36,6 +36,8 @@ sys.path.insert(0, str(vendor.parent / "infinity_fa4"))
 from portable_host import validate_host_object
 objects = [a.output / f"gdn_{family}_{dtype}.o"
            for family in sorted(families) for dtype in ("fp16", "bf16")]
+objects += [a.output / f"gdn_{family}_{dtype}_initial.o"
+            for family in sorted(families) for dtype in ("fp16", "bf16")]
 if not objects:
     raise RuntimeError("No supported FlashInfer GDN targets were exported")
 for obj in objects:
@@ -50,7 +52,7 @@ for source in (ffi / "lib/libtvm_ffi.so", runtime / "libcute_dsl_runtime.so"):
     shutil.copy2(source, a.output / source.name)
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
-manifest = dict(abi_version=1, flashinfer=importlib.metadata.version("flashinfer-python"),
+manifest = dict(abi_version=2, capabilities=["fresh_prefill", "initial_state"], flashinfer=importlib.metadata.version("flashinfer-python"),
                 architectures=[json.loads((a.output / f"sm_{family}.json").read_text())
                                for family in sorted(families)],
                 libraries={x.name: digest(x) for x in a.output.glob("*.so")})

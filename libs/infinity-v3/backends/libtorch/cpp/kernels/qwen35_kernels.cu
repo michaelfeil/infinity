@@ -1291,7 +1291,8 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
                              bool chunk_prefill,
                              int64_t cache_layer,
                              bool allow_prefill,
-                             const std::pair<at::Tensor, at::Tensor>* quantized_output) {
+                             const std::pair<at::Tensor, at::Tensor>* quantized_output,
+                             bool suffix_prefill) {
   c10::cuda::CUDAGuard guard(qkv.device());
   TORCH_CHECK(qkv.scalar_type() == at::kBFloat16 && z.scalar_type() == at::kBFloat16 &&
                   ab.scalar_type() == at::kBFloat16 && conv.scalar_type() == at::kBFloat16 &&
@@ -1389,9 +1390,21 @@ at::Tensor qwen35_delta_cuda(const at::Tensor& qkv,
   }
   // Prefill benefits from chunk-parallel work; short question suffixes keep the
   // register-resident recurrent path. Both consume/produce the same FP32 state.
-  if ((final_state || allow_prefill) && !initial.defined() && !input.prefix &&
-      flashinfer_gdn_prefill(
-          convolution, qk, decay, input, recurrence, key_heads, value_heads, final_state)) {
+  if (suffix_prefill && initial.defined() && !input.prefix && input.batch > 0 && tokens >= 256 &&
+      tokens / input.batch >= 64 &&
+      flashinfer_gdn_resume(convolution,
+                            qk,
+                            decay,
+                            input,
+                            recurrence,
+                            key_heads,
+                            value_heads,
+                            final_state,
+                            initial)) {
+    // The shared provider resumes each suffix from its immutable FP32 prefix state.
+  } else if ((final_state || allow_prefill) && !initial.defined() && !input.prefix &&
+             flashinfer_gdn_prefill(
+                 convolution, qk, decay, input, recurrence, key_heads, value_heads, final_state)) {
     // The AOT bundle selects the upstream provider for the actual device family.
   } else
 #ifdef TEI_TORCH_GDN_HOPPER

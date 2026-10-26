@@ -21,4 +21,14 @@ bool flashinfer_gdn_prefill(const at::Tensor& values,
                             int64_t key_heads,
                             int64_t value_heads,
                             at::Tensor* final_state);
+/// Resume packed suffixes from immutable FP32 prefix states.
+bool flashinfer_gdn_resume(const at::Tensor& values,
+                           const at::Tensor& qk,
+                           const at::Tensor& gates,
+                           const PackedInput& input,
+                           at::Tensor& output,
+                           int64_t kh,
+                           int64_t vh,
+                           at::Tensor* final_state,
+                           const at::Tensor& initial);
 }

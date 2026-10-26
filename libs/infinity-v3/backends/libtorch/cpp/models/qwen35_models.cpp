@@ -9,6 +9,7 @@
 #include "helpers/workspace_admission.h"
 // Native adaptation of Candle Qwen3.5. Upstream notices retained in LICENSE/NOTICE.
 #include "models/qwen35_models.h"
+#include "env_config.h"
 #include "helpers/dense_mlp.h"
 #include "models/qwen3_vl_models.h"
 #include "models/decoder_models.h"
@@ -19,6 +20,8 @@
 #include <ATen/ops/_efficient_attention_forward.h>
 #include <ATen/ops/_flash_attention_forward.h>
 #include <cmath>
+#include <cstdlib>
+#include <string_view>
 #include "batching/radix.h"
 #include <array>
 #include <map>
@@ -67,7 +70,7 @@ class Qwen35 final : public Model {
   std::string prefix;
   int64_t hidden, heads, kv_heads, dim, layer_count, rotary;
   double epsilon;
-  bool delta_prefill = false;
+  bool delta_prefill = false, delta_suffix_prefill = false;
   at::Tensor cos_cache, sin_cache;
 
   /// Dense, routed, and shared-expert projections for one Qwen3.5 feed-forward block.
@@ -770,7 +773,8 @@ class Qwen35 final : public Model {
                               chunks,
                               cache_layer,
                               delta_prefill && !cache,
-                              quantized_output);
+                              quantized_output,
+                              delta_suffix_prefill);
       }
 #else
       TORCH_CHECK(false, "Qwen3.5 requires the native DeltaNet CUDA kernel build");
@@ -1066,6 +1070,8 @@ public:
   void ready() override {
     // Let the native provider select supported GPU families and GDN layouts.
     delta_prefill = device.is_cuda() && !cfg.boolean("_fp8_dynamic", false);
+    const auto* suffix_policy = std::getenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
+    delta_suffix_prefill = suffix_policy && std::string_view(suffix_policy) == "1";
     const auto fp8 = cfg.boolean("_fp8_dynamic", false);
     const auto scope = cfg.string("_fp8_scope", fp8 ? "all" : "mlp");
     TORCH_CHECK(scope == "mlp" || scope == "all", "FP8 scope must be mlp or all");
