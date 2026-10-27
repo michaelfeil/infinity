@@ -423,6 +423,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#request-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request priority
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sequence-length-and-batch-capacity" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1202,6 +1213,17 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
+  <a href="#request-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request priority
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#sequence-length-and-batch-capacity" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1286,11 +1308,20 @@ image; startup errors list the compiled choices.</p>
 schema is available at <code>/api-doc/openapi.json</code>.</p>
 <p>CUDA inference requires SM80 (Ampere) or newer in both backends. SM75/Turing
 is unsupported; use a CPU build on hosts without a supported GPU.</p>
+<h2 id="request-priority">Request priority</h2>
+<p><code>--priority-queue-bonus-ms</code> sets the virtual queue age bonus for requests carrying
+<code>"service_tier": "priority"</code>. It defaults to <code>1000</code> ms; <code>0</code> uses FIFO across tiers.
+Only inputs waiting for model batching are reordered, without adding a delay.</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>/path/to/model<span class="w"> </span>--priority-queue-bonus-ms<span class="w"> </span><span class="m">250</span>
+</span></code></pre></div>
+<p><code>INFINITY_PRIORITY_QUEUE_BONUS_MS</code> (or <code>PRIORITY_QUEUE_BONUS_MS</code>) is the environment
+alternative. One value applies to all models; semicolon-separated values align
+with <code>--model-id</code>. Negative and fractional millisecond values are rejected.</p>
 <h2 id="sequence-length-and-batch-capacity">Sequence length and batch capacity</h2>
 <p>Use <code>--max-sequence-length</code> to cap tokens per sequence independently of the
 batch's total token budget:</p>
-<div class="language-sh highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>/path/to/model<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--max-sequence-length<span class="w"> </span><span class="m">8192</span><span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>/path/to/model<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--max-sequence-length<span class="w"> </span><span class="m">8192</span><span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span>
 </span></code></pre></div>
 <p>The cap includes formatted prompts and image tokens, and cannot exceed the
 model's supported input length or the batch token budget. When omitted, existing
@@ -1304,8 +1335,8 @@ values align with <code>--model-id</code>, and <code>none</code> leaves a model'
 <p><code>dmis-lab/UltraBERT-Embed-150M</code> supports native LibTorch and Candle and produces
 768-dimensional CLS embeddings with a 32,768-token context. For the native
 LibTorch GPU image:</p>
-<div class="language-sh highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>dmis-lab/UltraBERT-Embed-150M<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>dmis-lab/UltraBERT-Embed-150M<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span>
 </span></code></pre></div>
 <p>Use <code>prompt_name: "query"</code> for retrieval queries; documents use the empty
 <code>document</code> prompt. Mean and last-token pooling overrides and raw token

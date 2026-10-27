@@ -1562,6 +1562,9 @@
             "type": "string",
             "description": "Served model name; required for multi-model deployments.",
             "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
           }
         }
       },
@@ -1616,6 +1619,9 @@
               }
             ],
             "default": "float"
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
           }
         }
       },
@@ -1689,6 +1695,9 @@
               }
             ],
             "default": "float"
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
           }
         }
       },
@@ -1739,6 +1748,9 @@
             "type": "string",
             "description": "Served model name; required for multi-model deployments.",
             "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
           }
         }
       },
@@ -2074,6 +2086,9 @@
                 "type": "string",
                 "example": "null",
                 "nullable": true
+              },
+              "service_tier": {
+                "$ref": "#/components/schemas/ServiceTier"
               }
             }
           },
@@ -2117,6 +2132,9 @@
                 "type": "string",
                 "example": "null",
                 "nullable": true
+              },
+              "service_tier": {
+                "$ref": "#/components/schemas/ServiceTier"
               }
             }
           }
@@ -2283,6 +2301,9 @@
             "type": "string",
             "description": "Served model name; required for multi-model deployments.",
             "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
           }
         }
       },
@@ -2396,6 +2417,9 @@
             "type": "string",
             "description": "Served model name; required for multi-model deployments.",
             "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
           }
         }
       },
@@ -2477,6 +2501,9 @@
             "type": "string",
             "description": "Served model name; required for multi-model deployments.",
             "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
           }
         }
       },
@@ -2583,6 +2610,9 @@
             "type": "string",
             "description": "Served model name; required for multi-model deployments.",
             "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
           }
         }
       },
@@ -2903,6 +2933,9 @@
               "user": {
                 "type": "string",
                 "nullable": true
+              },
+              "service_tier": {
+                "$ref": "#/components/schemas/ServiceTier"
               }
             }
           },
@@ -3144,6 +3177,9 @@
           },
           "state": {
             "$ref": "#/components/schemas/SystemOneState"
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
           }
         },
         "additionalProperties": false
@@ -3288,6 +3324,9 @@
               "type": "string"
             },
             "description": "Ordered video sources; supported only by the D3 protocol."
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
           }
         },
         "additionalProperties": false
@@ -3333,9 +3372,22 @@
             },
             "description": "Must be omitted or empty for this protocol.",
             "maxItems": 0
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
           }
         },
         "additionalProperties": false
+      },
+      "ServiceTier": {
+        "type": "string",
+        "description": "Priority requests receive a configurable virtual queue age bonus (default one second); equal virtual times retain queue order.",
+        "enum": [
+          "default",
+          "auto",
+          "flex",
+          "priority"
+        ]
       }
     }
   },

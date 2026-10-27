@@ -401,6 +401,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#request-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request priority
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cli-overview" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1275,6 +1286,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#request-priority" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request priority
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#cli-overview" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1447,14 +1469,38 @@ remain opt-in with <code>INFINITY_TORCH_CUDA_GRAPHS=1</code>.</p>
 on the running server for the interactive API, or <code>/api-doc/openapi.json</code> for
 its OpenAPI schema. See <a href="docs/cli/">running the server</a> and
 <a href="CONTRIBUTING/#working-in-the-infinity-monorepo">building Infinity V3</a>.</p>
+<h3 id="request-priority">Request priority</h3>
+<p>Add <code>"service_tier": "priority"</code> to any inference request, including embeddings,
+reranking, classification, and SystemOne decisions:</p>
+<div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span><span class="nt">"input"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"first text"</span><span class="p">,</span><span class="w"> </span><span class="s2">"second text"</span><span class="p">],</span><span class="w"> </span><span class="nt">"service_tier"</span><span class="p">:</span><span class="w"> </span><span class="s2">"priority"</span><span class="p">}</span>
+</span></code></pre></div>
+<p>Each model's existing queue orders inputs by queue-worker admission time, subtracting
+a configurable bonus for <code>priority</code> requests (one second by default). With the
+default bonus, a priority input passes normal inputs admitted less than one second
+earlier, but stays behind older work. Equal virtual enqueue times
+retain queue insertion order. Omitted tiers, <code>default</code>, <code>auto</code>, and <code>flex</code> use
+real enqueue time. Every input in a client batch inherits its request tier;
+response ordering is unchanged. Vertex instances inherit the envelope tier
+unless they specify their own.</p>
+<p>This orders inputs ready for model batching, without adding an actual delay.
+It does not preempt dispatched batches or reorder image downloads, tokenization,
+or admission limits. Later priority arrivals cannot indefinitely overtake older
+normal work. <code>/tokenize</code> and <code>/decode</code> accept the field for compatibility but do
+not use the inference queue. Queue latency metrics continue to use real enqueue
+times. Two FIFO buffers compare only their heads: enqueue is O(1) amortized and
+next-input selection is O(1), without sorted middle insertions.</p>
+<p>Set <code>--priority-queue-bonus-ms 250</code> for a 250 ms head start, or <code>0</code> for FIFO.
+The default is <code>1000</code>. <code>INFINITY_PRIORITY_QUEUE_BONUS_MS</code> is the environment
+variable. One value applies to all models; semicolon-separated values align
+with <code>--model-id</code>.</p>
 <h3 id="cli-overview">CLI overview</h3>
 <p>Serve an embedding model on one NVIDIA GPU:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>infinity_v3<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--model-id<span class="w"> </span>Qwen/Qwen3-Embedding-0.6B<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span>--served-model-name<span class="w"> </span>embeddings<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-4"><a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--device-id<span class="w"> </span><span class="m">0</span><span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-5"><a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a><span class="w">  </span>--max-sequence-length<span class="w"> </span><span class="m">8192</span><span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-1-6"><a id="__codelineno-1-6" name="__codelineno-1-6" href="#__codelineno-1-6"></a><span class="w">  </span>--hostname<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>infinity_v3<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--model-id<span class="w"> </span>Qwen/Qwen3-Embedding-0.6B<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--served-model-name<span class="w"> </span>embeddings<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--device-id<span class="w"> </span><span class="m">0</span><span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span>--max-sequence-length<span class="w"> </span><span class="m">8192</span><span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>--hostname<span class="w"> </span><span class="m">0</span>.0.0.0<span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
 </span></code></pre></div>
 <p>Clients use <code>"model": "embeddings"</code> in requests. For CPU inference, use
 <code>--torch-device cpu --dtype float32</code>. Omit <code>--device-id</code> to use all visible CUDA
@@ -1604,22 +1650,22 @@ See <a href="docs/cli/#sequence-length-and-batch-capacity">sequence limits</a> f
 <details>
 <summary>Multiple models and environment variables</summary>
 <p>Repeat <code>--model-id</code> and align per-model settings in the same order:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>infinity_v3<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--model-id<span class="w"> </span>sentence-transformers/all-MiniLM-L6-v2<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">  </span>--model-id<span class="w"> </span>BAAI/bge-reranker-base<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">  </span>--served-model-name<span class="w"> </span>embeddings<span class="w"> </span>--served-model-name<span class="w"> </span>reranker<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-5"><a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-2-6"><a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">  </span>--device-id<span class="w"> </span><span class="m">0</span><span class="w"> </span>--device-id<span class="w"> </span><span class="m">1</span><span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>infinity_v3<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--model-id<span class="w"> </span>sentence-transformers/all-MiniLM-L6-v2<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="w">  </span>--model-id<span class="w"> </span>BAAI/bge-reranker-base<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="w">  </span>--served-model-name<span class="w"> </span>embeddings<span class="w"> </span>--served-model-name<span class="w"> </span>reranker<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-6"><a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a><span class="w">  </span>--device-id<span class="w"> </span><span class="m">0</span><span class="w"> </span>--device-id<span class="w"> </span><span class="m">1</span><span class="w"> </span>--port<span class="w"> </span><span class="m">8000</span>
 </span></code></pre></div>
 <p>A single per-model setting applies to every model. Multiple values must match
 the number of models; semicolon-separated values are also accepted. HTTP bind
 settings are shared by the server.</p>
 <p>Official builds expose <code>INFINITY_*</code> environment variables for CLI options:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="nv">INFINITY_MODEL_ID</span><span class="o">=</span>sentence-transformers/all-MiniLM-L6-v2<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="nv">INFINITY_TORCH_DEVICE</span><span class="o">=</span>cpu<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="nv">INFINITY_DTYPE</span><span class="o">=</span>float32<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-4"><a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a><span class="nv">INFINITY_PORT</span><span class="o">=</span><span class="m">8000</span><span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-5"><a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>infinity_v3
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nv">INFINITY_MODEL_ID</span><span class="o">=</span>sentence-transformers/all-MiniLM-L6-v2<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="nv">INFINITY_TORCH_DEVICE</span><span class="o">=</span>cpu<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-3"><a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="nv">INFINITY_DTYPE</span><span class="o">=</span>float32<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-4"><a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="nv">INFINITY_PORT</span><span class="o">=</span><span class="m">8000</span><span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-5"><a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>infinity_v3
 </span></code></pre></div>
 <p>Use quotes for lists, such as <code>INFINITY_DEVICE_ID="0;1"</code>. CLI arguments take
 precedence over environment values. Run <code>infinity_v3 --help</code> for the complete
@@ -1743,7 +1789,7 @@ These checkpoints require their trained decision heads and protocol metadata.</p
 <li><strong>D3</strong>: <a href="https://huggingface.co/vllm-sr/d3">vllm-sr/d3</a> and <a href="https://huggingface.co/vllm-sr/d3-mini">vllm-sr/d3-mini</a>, dense Qwen3.5 decision models with code-readout heads. The <code>d3</code> and <code>d3-mini</code> aliases select <code>--decision-protocol d3</code> automatically.</li>
 </ul>
 <p>For example:</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>pplx-decider-flash-v1.2<span class="w"> </span>--backend<span class="w"> </span>libtorch<span class="w"> </span>--dtype<span class="w"> </span>bfloat16
+<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>pplx-decider-flash-v1.2<span class="w"> </span>--backend<span class="w"> </span>libtorch<span class="w"> </span>--dtype<span class="w"> </span>bfloat16
 </span></code></pre></div>
 <p>Use the request schema for the checkpoint's protocol: OneJev, Laya and Perplexity
 joint v1.2 do not share an interchangeable payload format. See the running
