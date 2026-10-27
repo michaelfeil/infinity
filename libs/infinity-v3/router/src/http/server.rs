@@ -2400,7 +2400,7 @@ async fn metrics(prom_handle: Extension<PrometheusHandle>) -> String {
     prom_handle.render()
 }
 
-fn api_doc() -> utoipa::openapi::OpenApi {
+fn api_doc() -> anyhow::Result<utoipa::openapi::OpenApi> {
     // OpenAPI documentation
     #[derive(OpenApi)]
     #[openapi(
@@ -2543,8 +2543,8 @@ fn api_doc() -> utoipa::openapi::OpenApi {
         }
     }
     super::response_format::document(&mut doc);
-    super::tensor::document(&mut doc);
-    doc
+    super::tensor::document(&mut doc)?;
+    Ok(doc)
 }
 
 /// Serving method
@@ -2618,7 +2618,7 @@ fn build_router(
     api_key: Option<String>,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<Router, anyhow::Error> {
-    let doc = api_doc();
+    let doc = api_doc()?;
 
     let cors_layer = cors_layer(cors_allow_origin);
 
@@ -3036,7 +3036,7 @@ mod classify_tests {
 
     #[test]
     fn systemone_openapi_schema_snapshot() {
-        let doc = serde_json::to_value(api_doc()).unwrap();
+        let doc = serde_json::to_value(api_doc().unwrap()).unwrap();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/openapi.json");
         let mut saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
@@ -3102,15 +3102,21 @@ mod classify_tests {
     #[test]
     fn tensor_openapi_matches_json_and_messagepack_wire_types() {
         use serde_json::json;
-        let doc = serde_json::to_value(api_doc()).unwrap();
+        let doc = serde_json::to_value(api_doc().unwrap()).unwrap();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/openapi.json");
         let mut saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         // UPDATE_OPENAPI=1 cargo test --lib tensor_openapi_matches_json_and_messagepack_wire_types
         if std::env::var_os("UPDATE_OPENAPI").is_some() {
             for (name, schema) in doc["components"]["schemas"].as_object().unwrap() {
-                if matches!(name.as_str(), "Tensor" | "EncodingFormat")
-                    || name.ends_with("MessagePack")
+                if matches!(
+                    name.as_str(),
+                    "Tensor"
+                        | "EncodingFormat"
+                        | "EmbedRequest"
+                        | "EmbedAllRequest"
+                        | "OpenAICompatRequest"
+                ) || name.ends_with("MessagePack")
                 {
                     saved["components"]["schemas"][name] = schema.clone();
                 }
@@ -3199,7 +3205,7 @@ mod classify_tests {
 
     #[test]
     fn classify_openapi_and_predict_deprecation_are_documented() {
-        let doc = serde_json::to_value(api_doc()).unwrap();
+        let doc = serde_json::to_value(api_doc().unwrap()).unwrap();
         let checked_in: serde_json::Value =
             serde_json::from_str(include_str!("../../../docs/openapi.json")).unwrap();
         for (path, item) in doc["paths"].as_object().unwrap() {

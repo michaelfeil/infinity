@@ -545,6 +545,7 @@ impl From<EmbeddingInput> for InputBatch {
 /// `float` keeps numeric arrays; legacy `base64` keeps native-endian float32 vectors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, ToSchema, Default)]
 #[serde(rename_all = "snake_case")]
+#[schema(example = "tensor")]
 pub(crate) enum EncodingFormat {
     #[default]
     Float,
@@ -578,7 +579,9 @@ struct OpenAICompatRequestBody {
     #[allow(dead_code)]
     #[schema(nullable = true, example = "null")]
     pub user: Option<String>,
-    #[schema(default = "float", example = "float")]
+    /// Opt in with "tensor" for portable float32 buffers. Add Accept: application/msgpack
+    /// for binary data; JSON returns base64. The default "float" keeps numeric arrays.
+    #[schema(default = "float", example = "tensor")]
     #[serde(default)]
     pub encoding_format: EncodingFormat,
     #[schema(default = "null", example = "null", nullable = true)]
@@ -767,9 +770,10 @@ pub(crate) struct SimilarityResponse(pub Vec<f32>);
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedRequest {
-    /// float preserves nested arrays; tensor returns shape, dtype and packed data.
+    /// Opt in with "tensor" for portable float32 buffers. Add Accept: application/msgpack
+    /// for binary data; JSON returns base64. The default "float" keeps numeric arrays.
     #[serde(default)]
-    #[schema(default = "float")]
+    #[schema(default = "float", example = "tensor")]
     pub encoding_format: EncodingFormat,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
@@ -848,9 +852,10 @@ pub(crate) struct EmbedSparseResponse(pub Vec<Vec<SparseValue>>);
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedAllRequest {
-    /// float preserves nested arrays; tensor returns shape, dtype and packed data.
+    /// Opt in with "tensor" for portable float32 buffers. Add Accept: application/msgpack
+    /// for binary data; JSON returns base64. The default "float" keeps numeric arrays.
     #[serde(default)]
-    #[schema(default = "float")]
+    #[schema(default = "float", example = "tensor")]
     pub encoding_format: EncodingFormat,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,

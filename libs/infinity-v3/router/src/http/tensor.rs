@@ -185,33 +185,48 @@ pub(super) fn messagepack_schema(value: &mut serde_json::Value) {
     }
 }
 
-pub(super) fn document(doc: &mut OpenApi) {
+pub(super) fn document(doc: &mut OpenApi) -> anyhow::Result<()> {
+    use anyhow::Context;
     use serde_json::json;
-    let Some(components) = doc.components.as_mut() else {
-        return;
-    };
-    let Some(schema) = components.schemas.get("Tensor") else {
-        return;
-    };
-    let mut tensor = serde_json::to_value(schema).expect("Tensor schema is serializable");
-    tensor["properties"]["data_encoding"]["enum"] = json!(["base64"]);
+    let components = doc
+        .components
+        .as_mut()
+        .context("Missing OpenAPI components")?;
+    let schema = components
+        .schemas
+        .get("Tensor")
+        .context("Missing Tensor schema")?;
+    let mut tensor = serde_json::to_value(schema)?;
+    tensor
+        .pointer_mut("/properties/data_encoding")
+        .and_then(serde_json::Value::as_object_mut)
+        .context("Missing Tensor data encoding schema")?
+        .insert("enum".into(), json!(["base64"]));
     components
         .schemas
-        .insert("Tensor".into(), serde_json::from_value(tensor).unwrap());
+        .insert("Tensor".into(), serde_json::from_value(tensor)?);
     for name in TENSOR_SCHEMAS {
         let schema = components
             .schemas
             .get(name)
-            .expect("Tensor response schema registered");
-        let mut schema = serde_json::to_value(schema).unwrap();
+            .with_context(|| format!("Missing tensor response schema: {name}"))?;
+        let mut schema = serde_json::to_value(schema)?;
         messagepack_schema(&mut schema);
         if name == "Tensor" {
-            schema["properties"]["data"]["format"] = json!("binary");
-            schema["properties"]["data_encoding"]["enum"] = json!(["binary"]);
+            schema
+                .pointer_mut("/properties/data")
+                .and_then(serde_json::Value::as_object_mut)
+                .context("Missing Tensor data schema")?
+                .insert("format".into(), json!("binary"));
+            schema
+                .pointer_mut("/properties/data_encoding")
+                .and_then(serde_json::Value::as_object_mut)
+                .context("Missing Tensor data encoding schema")?
+                .insert("enum".into(), json!(["binary"]));
         }
         components.schemas.insert(
             format!("{name}MessagePack"),
-            serde_json::from_value(schema).unwrap(),
+            serde_json::from_value(schema)?,
         );
     }
     for path in doc.paths.paths.values_mut() {
@@ -221,16 +236,17 @@ pub(super) fn document(doc: &mut OpenApi) {
                     continue;
                 };
                 if let Some(content) = response.content.get_mut("application/msgpack") {
-                    let original = serde_json::to_value(&content.schema).unwrap();
+                    let original = serde_json::to_value(&content.schema)?;
                     let mut schema = original.clone();
                     messagepack_schema(&mut schema);
                     if schema != original {
-                        content.schema = serde_json::from_value(schema).unwrap();
+                        content.schema = serde_json::from_value(schema)?;
                     }
                 }
             }
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

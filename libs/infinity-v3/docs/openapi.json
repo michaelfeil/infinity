@@ -1580,8 +1580,21 @@
           "inputs"
         ],
         "properties": {
+          "encoding_format": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EncodingFormat"
+              }
+            ],
+            "default": "float"
+          },
           "inputs": {
             "$ref": "#/components/schemas/EmbeddingInput"
+          },
+          "model": {
+            "type": "string",
+            "description": "Served model name; required for multi-model deployments.",
+            "nullable": true
           },
           "prompt_name": {
             "type": "string",
@@ -1603,19 +1616,6 @@
               }
             ],
             "default": "right"
-          },
-          "model": {
-            "type": "string",
-            "description": "Served model name; required for multi-model deployments.",
-            "nullable": true
-          },
-          "encoding_format": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/EncodingFormat"
-              }
-            ],
-            "default": "float"
           }
         }
       },
@@ -1648,8 +1648,21 @@
             "nullable": true,
             "minimum": 0
           },
+          "encoding_format": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EncodingFormat"
+              }
+            ],
+            "default": "float"
+          },
           "inputs": {
             "$ref": "#/components/schemas/EmbeddingInput"
+          },
+          "model": {
+            "type": "string",
+            "description": "Served model name; required for multi-model deployments.",
+            "nullable": true
           },
           "normalize": {
             "type": "boolean",
@@ -1676,19 +1689,6 @@
               }
             ],
             "default": "right"
-          },
-          "model": {
-            "type": "string",
-            "description": "Served model name; required for multi-model deployments.",
-            "nullable": true
-          },
-          "encoding_format": {
-            "allOf": [
-              {
-                "$ref": "#/components/schemas/EncodingFormat"
-              }
-            ],
-            "default": "float"
           }
         }
       },
@@ -1787,7 +1787,8 @@
           "float",
           "base64",
           "tensor"
-        ]
+        ],
+        "example": "tensor"
       },
       "ErrorResponse": {
         "type": "object",

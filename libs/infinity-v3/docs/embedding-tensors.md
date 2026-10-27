@@ -18,37 +18,34 @@ normalization or truncation. Include `model` when serving multiple models.
 The legacy `base64` format retains native-endian float32 for compatibility;
 the explicit portable byte-order guarantee applies to `tensor`.
 
-## Python: Baseten Performance Client
+## Opt in to packed tensors
 
-For batched embedding workloads, use
-[baseten-performance-client](https://github.com/basetenlabs/truss/tree/main/baseten-performance-client).
-Its Rust implementation handles concurrent requests and exposes results as NumPy
-arrays. It works with a local Infinity server as well as hosted endpoints.
+For clients that consume typed numeric buffers, choose `"encoding_format": "tensor"`.
+Also send `Accept: application/msgpack` to receive the data as binary bytes,
+avoiding base64 expansion and decoding. This is the recommended combination for
+new buffer-oriented integrations. Keep the default `float` format when your
+client expects OpenAI-style arrays of numbers.
 
 ```bash
-pip install baseten-performance-client numpy
+curl http://localhost:8000/v1/embeddings \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/msgpack' \
+  -d '{"input":["A mountain lake."],"encoding_format":"tensor"}' \
+  --output embeddings.msgpack
 ```
 
-```python
-from baseten_performance_client import PerformanceClient, RequestProcessingPreference
+To inspect the same contract as JSON, omit the `Accept` header. For example, a
+two-element vector `[1.0, -2.0]` has this tensor representation:
 
-client = PerformanceClient(
-    base_url="http://localhost:8000",
-    api_key="unused",  # For a local server without authentication; otherwise use its API key.
-)
-response = client.embed(
-    input=["A mountain lake.", "An alpine lake."],
-    model="sentence-transformers/all-MiniLM-L6-v2",
-    encoding_format="float",
-    preference=RequestProcessingPreference(batch_size=32, max_concurrent_requests=8),
-)
-embeddings = response.numpy()  # shape: [inputs, dimensions]
+```json
+{"shape":[2],"dtype":"float32","data_encoding":"base64","data":"AACAPwAAAMA="}
 ```
 
-Version 0.1.16 assembles the vectors into a contiguous array in Rust; `.numpy()`
-is not a zero-copy view of the response bytes. For that, use v3's tensor format
-and `np.frombuffer` as below. The client's typed embedding response does not yet
-support this tensor envelope.
+`encoding_format` selects the embedding representation; `Accept` selects the
+response transport. Setting either one alone does not select the other. The
+request body stays JSON. MessagePack uses standard maps and bin values and needs
+no custom extension decoder or Safetensors dependency. Existing clients remain
+on the default numeric-array representation until they opt in.
 
 ## Zero-copy NumPy views
 
@@ -99,6 +96,57 @@ embedding = np.frombuffer(buffer, dtype="<f4").reshape(tensor["shape"])
 
 Base64 decoding allocates a buffer; the resulting NumPy view shares that buffer.
 
+## Node.js: binary tensor bytes
+
+Use the standard [`@msgpack/msgpack`](https://github.com/msgpack/msgpack-javascript)
+decoder. Its bin values decode to `Uint8Array`.
+
+```bash
+npm install @msgpack/msgpack
+```
+
+```js
+import { decode } from "@msgpack/msgpack";
+
+const response = await fetch("http://localhost:8000/v1/embeddings", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", Accept: "application/msgpack" },
+  body: JSON.stringify({ input: ["A mountain lake."], encoding_format: "tensor" }),
+});
+if (!response.ok) throw new Error(`Infinity returned HTTP ${response.status}`);
+const result = decode(new Uint8Array(await response.arrayBuffer()));
+const tensor = result.data[0].embedding;
+if (tensor.dtype !== "float32" || tensor.data_encoding !== "binary" ||
+    !(tensor.data instanceof Uint8Array)) {
+  throw new Error("Unsupported tensor representation");
+}
+if (!Array.isArray(tensor.shape) || tensor.shape.length < 1 ||
+    tensor.shape.length > 2 ||
+    !tensor.shape.every(n => Number.isSafeInteger(n) && n >= 0)) {
+  throw new Error("Invalid tensor shape");
+}
+const byteLength = tensor.shape.reduce((size, n) => size * n, 4);
+if (!Number.isSafeInteger(byteLength) || byteLength !== tensor.data.byteLength) {
+  throw new Error("Tensor shape and buffer size disagree");
+}
+const values = new DataView(
+  tensor.data.buffer, tensor.data.byteOffset, tensor.data.byteLength,
+);
+// Explicit little-endian reads; works even if the bin buffer is unaligned.
+console.log(tensor.shape);
+if (values.byteLength > 0) console.log(values.getFloat32(0, true));
+```
+
+`DataView` shares the decoded byte buffer. A `Float32Array` view additionally
+requires suitable byte alignment and a little-endian host; neither should be
+assumed for arbitrary MessagePack slices. For JSON tensor responses, parse JSON
+and use `Buffer.from(tensor.data, "base64")` to obtain the bytes, validating the
+representation and dimensions before reading them.
+
+These examples buffer one response. Bound response sizes before decoding when
+connecting to an untrusted endpoint; the validation above does not replace a
+network-body limit.
+
 ## Token embeddings
 
 Use `/embed_all` with `{"inputs": ["hello"], "encoding_format": "tensor"}`
@@ -106,6 +154,38 @@ for supported token-embedding models. The response is a top-level list of tensor
 each shaped `[tokens, dimensions]`. Decode each input independently using the
 same `np.frombuffer(...).reshape(...)` pattern. Token counts can differ, so no
 batch padding is added. Stacking separate buffers into one array requires a copy.
+
+## Python: Baseten Performance Client
+
+For batched embedding workloads, use
+[baseten-performance-client](https://github.com/basetenlabs/truss/tree/main/baseten-performance-client).
+Its Rust implementation handles concurrent requests and exposes results as NumPy
+arrays. It works with a local Infinity server as well as hosted endpoints.
+
+```bash
+pip install baseten-performance-client numpy
+```
+
+```python
+from baseten_performance_client import PerformanceClient, RequestProcessingPreference
+
+client = PerformanceClient(
+    base_url="http://localhost:8000",
+    api_key="unused",  # For a local server without authentication; otherwise use its API key.
+)
+response = client.embed(
+    input=["A mountain lake.", "An alpine lake."],
+    model="sentence-transformers/all-MiniLM-L6-v2",
+    encoding_format="float",
+    preference=RequestProcessingPreference(batch_size=32, max_concurrent_requests=8),
+)
+embeddings = response.numpy()  # shape: [inputs, dimensions]
+```
+
+Version 0.1.16 assembles the vectors into a contiguous array in Rust; `.numpy()`
+is not a zero-copy view of the response bytes. For that, use v3's tensor format
+and `np.frombuffer` as below. The client's typed embedding response does not yet
+support this tensor envelope.
 
 <details>
   <summary>Tensor wire format</summary>
