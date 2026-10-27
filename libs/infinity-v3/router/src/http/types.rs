@@ -302,8 +302,27 @@ impl From<TruncationDirection> for tokenizers::TruncationDirection {
     }
 }
 
+/// Priority requests receive a configurable virtual queue age bonus (default one second); equal virtual times retain queue order.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceTier {
+    #[default]
+    Default,
+    Auto,
+    Flex,
+    Priority,
+}
+
+impl ServiceTier {
+    pub fn is_priority(self) -> bool {
+        self == Self::Priority
+    }
+}
+
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct PredictRequest {
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     pub inputs: PredictInput,
@@ -321,6 +340,8 @@ pub(crate) struct PredictRequest {
 /// Provide exactly one of input or messages. String arrays are independent inputs.
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct ClassifyRequest {
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     #[serde(default, deserialize_with = "present_input")]
     pub input: Option<EmbeddingInput>,
     #[serde(default, deserialize_with = "present_input")]
@@ -399,6 +420,7 @@ impl ClassifyRequest {
             _ => (),
         }
         Ok(PredictRequest {
+            service_tier: self.service_tier,
             model: None,
             inputs,
             truncate: self.truncate,
@@ -447,6 +469,8 @@ pub(crate) struct ClassifyErrorResponse {
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct PredictTokensRequest {
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     pub inputs: Vec<String>,
@@ -482,6 +506,8 @@ pub(crate) enum PredictResponse {
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct RerankRequest {
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     #[schema(example = "What is Deep Learning?")]
@@ -556,6 +582,7 @@ pub(crate) enum EncodingFormat {
 #[derive(Deserialize)]
 #[serde(try_from = "OpenAICompatRequestBody")]
 pub(crate) struct OpenAICompatRequest {
+    pub service_tier: ServiceTier,
     pub input: EmbeddingInput,
     #[allow(dead_code)]
     pub model: Option<String>,
@@ -567,6 +594,8 @@ pub(crate) struct OpenAICompatRequest {
 
 #[derive(Deserialize, ToSchema)]
 struct OpenAICompatRequestBody {
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     /// Provide exactly one of `input` or `messages`.
     #[serde(default, deserialize_with = "present_input")]
     pub input: Option<EmbeddingInput>,
@@ -606,6 +635,7 @@ impl TryFrom<OpenAICompatRequestBody> for OpenAICompatRequest {
         };
         Ok(Self {
             input,
+            service_tier: body.service_tier,
             model: body.model,
             user: body.user,
             encoding_format: body.encoding_format,
@@ -754,6 +784,8 @@ pub(crate) struct SimilarityParameters {
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct SimilarityRequest {
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     pub inputs: SimilarityInput,
@@ -768,6 +800,8 @@ pub(crate) struct SimilarityResponse(pub Vec<f32>);
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedRequest {
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     /// float preserves nested arrays; tensor returns shape, dtype and packed data.
     #[serde(default)]
     #[schema(default = "float")]
@@ -816,6 +850,8 @@ pub(crate) struct EmbedResponse(pub Vec<Embedding>);
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedSparseRequest {
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     pub inputs: EmbeddingInput,
@@ -849,6 +885,8 @@ pub(crate) struct EmbedSparseResponse(pub Vec<Vec<SparseValue>>);
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedAllRequest {
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     /// float preserves nested arrays; tensor returns shape, dtype and packed data.
     #[serde(default)]
     #[schema(default = "float")]
@@ -896,6 +934,10 @@ pub(crate) enum TokenizeInput {
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct TokenizeRequest {
+    /// Accepted for compatibility; this endpoint does not use the inference queue.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     pub inputs: TokenizeInput,
@@ -946,6 +988,10 @@ pub(crate) enum InputIds {
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct DecodeRequest {
+    /// Accepted for compatibility; this endpoint does not use the inference queue.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     pub ids: InputIds,
@@ -964,6 +1010,8 @@ pub(crate) struct DecodeResponse(pub Vec<String>);
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct VertexRequest {
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
     pub instances: Vec<serde_json::Value>,
@@ -1015,6 +1063,57 @@ fn serialize_token_scores<S: serde::Serializer>(
 #[serde(untagged)]
 pub(crate) enum TokenPredictResponse {
     Batch(Vec<Vec<TokenPrediction>>),
+}
+
+#[cfg(test)]
+mod service_tier_tests {
+    use super::*;
+
+    #[test]
+    fn inference_inputs_preserve_tier_and_reject_invalid_values() {
+        macro_rules! check {
+            ($ty:ty, $body:expr) => {{
+                let mut body = $body;
+                assert!(!serde_json::from_value::<$ty>(body.clone())
+                    .unwrap()
+                    .service_tier
+                    .is_priority());
+                for tier in ["priority", "default", "auto", "flex"] {
+                    body["service_tier"] = json!(tier);
+                    let request: $ty = serde_json::from_value(body.clone()).unwrap();
+                    assert_eq!(request.service_tier.is_priority(), tier == "priority");
+                }
+                for invalid in [json!("primar"), json!(1), json!({})] {
+                    body["service_tier"] = invalid;
+                    assert!(serde_json::from_value::<$ty>(body.clone()).is_err());
+                }
+            }};
+        }
+        check!(EmbedRequest, json!({"inputs": "hello"}));
+        check!(EmbedSparseRequest, json!({"inputs": "hello"}));
+        check!(EmbedAllRequest, json!({"inputs": "hello"}));
+        check!(OpenAICompatRequest, json!({"input": ["hello", "world"]}));
+        check!(
+            OpenAICompatRequest,
+            json!({"messages": [{"role": "user", "content": "hello"}]})
+        );
+        check!(PredictRequest, json!({"inputs": "hello"}));
+        check!(ClassifyRequest, json!({"input": "hello"}));
+        check!(PredictTokensRequest, json!({"inputs": ["hello"]}));
+        check!(RerankRequest, json!({"query": "hello", "texts": ["world"]}));
+        check!(
+            SimilarityRequest,
+            json!({"inputs": {"source_sentence": "hello", "sentences": ["world"]}})
+        );
+        check!(
+            super::super::systemone::SystemOneRequest,
+            json!({"state": "hello", "questions": {}})
+        );
+        check!(VertexRequest, json!({"instances": [{"inputs": "hello"}]}));
+        let request: ClassifyRequest =
+            serde_json::from_value(json!({"input":"hello", "service_tier":"priority"})).unwrap();
+        assert!(request.into_predict().unwrap().service_tier.is_priority());
+    }
 }
 
 #[cfg(test)]

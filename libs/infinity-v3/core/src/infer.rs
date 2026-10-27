@@ -20,6 +20,7 @@ use tracing::instrument;
 /// for a prepared batch. Per-request replies travel through `Metadata` channels.
 #[derive(Debug, Clone)]
 pub struct Infer {
+    priority: bool,
     model_name: metrics::SharedString,
     tokenization: Tokenization,
     queue: Queue,
@@ -49,6 +50,12 @@ impl Drop for BatchPreparation<'_> {
 }
 
 impl Infer {
+    /// Set priority on this request's handle; shared model state is unchanged.
+    pub fn with_priority(mut self, priority: bool) -> Self {
+        self.priority = priority;
+        self
+    }
+
     pub async fn decide(
         &self,
         encoding: crate::tokenization::ValidEncoding,
@@ -69,6 +76,7 @@ impl Infer {
         self.queue
             .append(Entry {
                 metadata: Metadata {
+                    priority: self.priority,
                     input_memory: None,
                     client_batch: Some(batch_counter.clone()),
                     response_tx,
@@ -137,6 +145,7 @@ impl Infer {
             shutdown: Mutex::new(()),
         });
         Self {
+            priority: false,
             model_name: backend.model_label(),
             tokenization,
             queue,
@@ -473,6 +482,7 @@ impl Infer {
         self.queue
             .append(Entry {
                 metadata: Metadata {
+                    priority: self.priority,
                     input_memory: None,
                     client_batch: batch_counter.clone(),
                     response_tx,
@@ -553,6 +563,7 @@ impl Infer {
         self.queue
             .append(Entry {
                 metadata: Metadata {
+                    priority: self.priority,
                     input_memory: None,
                     client_batch: batch_counter.clone(),
                     response_tx,
@@ -676,6 +687,7 @@ impl Infer {
         self.queue
             .append(Entry {
                 metadata: Metadata {
+                    priority: self.priority,
                     input_memory: None,
                     client_batch: batch_counter.clone(),
                     response_tx,
@@ -1167,6 +1179,7 @@ mod completion_tests {
                             offsets: vec![],
                         },
                         metadata: Metadata {
+                            priority: false,
                             input_memory: None,
                             decision: None,
                             client_batch: Some(remaining.clone()),
@@ -1242,6 +1255,7 @@ mod completion_tests {
             outputs.insert(0, vec![vec![0.25, 0.75]]);
             let (response_tx, receiver) = oneshot::channel();
             let entry = Metadata {
+                priority: false,
                 input_memory: None,
                 decision: None,
                 client_batch: None,
@@ -1297,6 +1311,7 @@ mod completion_tests {
             let (response_tx, receiver) = oneshot::channel();
             receivers.push(receiver);
             entries.push(Metadata {
+                priority: false,
                 input_memory: None,
                 decision: None,
                 client_batch: None,
