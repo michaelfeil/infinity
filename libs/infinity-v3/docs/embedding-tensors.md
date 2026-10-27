@@ -101,8 +101,9 @@ A direct `Float32Array` view requires alignment and a little-endian host.
 
 ## Validation
 
-The live OpenAPI is at `/api-doc/openapi.json` and `/docs`. One shared tensor
-schema describes both encodings; `data_encoding` identifies the representation.
+The live OpenAPI is at `/api-doc/openapi.json` and `/docs`. `Tensor` describes JSON
+base64 bytes; `TensorMessagePack` describes MessagePack bin bytes. Each schema
+fixes `data_encoding` to the corresponding value.
 Validate dtype, rank, nonnegative integer dimensions and decoded byte length
 with checked arithmetic before constructing an array. Bound response sizes and
 any decompression before decoding untrusted responses; the examples buffer one

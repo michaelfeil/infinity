@@ -5,7 +5,13 @@ use base64::{display::Base64Display, engine::general_purpose::STANDARD, Engine};
 use infinity_v3_backend::BackendError;
 use infinity_v3_core::TextEmbeddingsError;
 use serde::{Serialize, Serializer};
-use utoipa::ToSchema;
+use utoipa::{
+    openapi::{
+        schema::{KnownFormat, Schema, SchemaFormat},
+        RefOr,
+    },
+    ToSchema,
+};
 
 /// Packed public output values, independent of the backend's internal precision.
 /// Storage is contiguous C-order, little-endian, without padding or a tensor header.
@@ -23,7 +29,7 @@ pub(crate) struct Tensor {
     /// Exactly 4 * product(shape) decoded bytes: little-endian IEEE 754 float32,
     /// contiguous row-major, with no padding. JSON carries standard padded base64;
     /// MessagePack carries a bin value, never an array of numbers.
-    #[schema(value_type = String)]
+    #[schema(value_type = String, format = Byte)]
     data: TensorData,
 }
 
@@ -37,7 +43,7 @@ enum TensorDType {
 fn data_encoding_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
     utoipa::openapi::ObjectBuilder::new()
         .schema_type(utoipa::openapi::schema::SchemaType::String)
-        .enum_values(Some(["base64", "binary"]))
+        .enum_values(Some(["base64"]))
         .into()
 }
 
@@ -154,6 +160,73 @@ pub(crate) fn encode_matrix(
             }
             Ok(AllEmbedding::Base64(rows))
         }
+    }
+}
+
+// Documentation only: specialize the tensor response graph without changing serialization.
+const TENSOR_SCHEMAS: &[&str] = &[
+    "Tensor",
+    "AllEmbedding",
+    "Embedding",
+    "EmbedResponse",
+    "EmbedAllResponse",
+    "OpenAICompatEmbedding",
+    "OpenAICompatResponse",
+];
+
+pub(super) fn messagepack_schema(schema: &mut RefOr<Schema>) {
+    match schema {
+        RefOr::Ref(reference) => {
+            if reference
+                .ref_location
+                .strip_prefix("#/components/schemas/")
+                .is_some_and(|name| TENSOR_SCHEMAS.contains(&name))
+            {
+                reference.ref_location.push_str("MessagePack");
+            }
+        }
+        RefOr::T(Schema::Object(object)) => {
+            for property in object.properties.values_mut() {
+                messagepack_schema(property);
+            }
+        }
+        RefOr::T(Schema::Array(array)) => messagepack_schema(&mut array.items),
+        RefOr::T(composite) => {
+            let items = match composite {
+                Schema::OneOf(value) => &mut value.items,
+                Schema::AllOf(value) => &mut value.items,
+                Schema::AnyOf(value) => &mut value.items,
+                _ => return,
+            };
+            for item in items {
+                messagepack_schema(item);
+            }
+        }
+    }
+}
+
+pub(super) fn document(doc: &mut utoipa::openapi::OpenApi) {
+    let Some(components) = doc.components.as_mut() else {
+        return;
+    };
+    for name in TENSOR_SCHEMAS {
+        let Some(mut schema) = components.schemas.get(*name).cloned() else {
+            continue;
+        };
+        messagepack_schema(&mut schema);
+        if let ("Tensor", RefOr::T(Schema::Object(object))) = (*name, &mut schema) {
+            if let Some(RefOr::T(Schema::Object(data))) = object.properties.get_mut("data") {
+                data.format = Some(SchemaFormat::KnownFormat(KnownFormat::Binary));
+            }
+            if let Some(RefOr::T(Schema::Object(encoding))) =
+                object.properties.get_mut("data_encoding")
+            {
+                encoding.enum_values = Some(vec![serde_json::json!("binary")]);
+            }
+        }
+        components
+            .schemas
+            .insert(format!("{name}MessagePack"), schema);
     }
 }
 

@@ -133,7 +133,7 @@
               },
               "application/msgpack": {
                 "schema": {
-                  "$ref": "#/components/schemas/EmbedResponse"
+                  "$ref": "#/components/schemas/EmbedResponseMessagePack"
                 }
               }
             }
@@ -265,7 +265,7 @@
               },
               "application/msgpack": {
                 "schema": {
-                  "$ref": "#/components/schemas/EmbedAllResponse"
+                  "$ref": "#/components/schemas/EmbedAllResponseMessagePack"
                 }
               }
             }
@@ -520,10 +520,10 @@
               },
               "application/msgpack": {
                 "schema": {
-                  "nullable": true,
                   "enum": [
                     null
-                  ]
+                  ],
+                  "nullable": true
                 }
               }
             }
@@ -1150,7 +1150,7 @@
               },
               "application/msgpack": {
                 "schema": {
-                  "$ref": "#/components/schemas/OpenAICompatResponse"
+                  "$ref": "#/components/schemas/OpenAICompatResponseMessagePack"
                 }
               }
             }
@@ -3193,13 +3193,13 @@
         "properties": {
           "data": {
             "type": "string",
+            "format": "byte",
             "description": "Exactly 4 * product(shape) decoded bytes: little-endian IEEE 754 float32,\ncontiguous row-major, with no padding. JSON carries standard padded base64;\nMessagePack carries a bin value, never an array of numbers."
           },
           "data_encoding": {
             "type": "string",
             "enum": [
-              "base64",
-              "binary"
+              "base64"
             ]
           },
           "dtype": {
@@ -3346,6 +3346,164 @@
           }
         },
         "additionalProperties": false
+      },
+      "AllEmbeddingMessagePack": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              }
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/schemas/TensorMessagePack"
+          }
+        ]
+      },
+      "EmbedAllResponseMessagePack": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/AllEmbeddingMessagePack"
+        },
+        "example": [
+          [
+            [
+              0.0,
+              1.0,
+              2.0
+            ]
+          ]
+        ]
+      },
+      "EmbedResponseMessagePack": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/EmbeddingMessagePack"
+        },
+        "example": [
+          [
+            0.0,
+            1.0,
+            2.0
+          ]
+        ]
+      },
+      "EmbeddingMessagePack": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          {
+            "$ref": "#/components/schemas/AllEmbeddingMessagePack"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "OpenAICompatEmbeddingMessagePack": {
+        "type": "object",
+        "required": [
+          "object",
+          "embedding",
+          "index"
+        ],
+        "properties": {
+          "embedding": {
+            "$ref": "#/components/schemas/EmbeddingMessagePack"
+          },
+          "index": {
+            "type": "integer",
+            "example": "0",
+            "minimum": 0
+          },
+          "object": {
+            "type": "string",
+            "example": "embedding"
+          }
+        }
+      },
+      "OpenAICompatResponseMessagePack": {
+        "type": "object",
+        "required": [
+          "object",
+          "data",
+          "model",
+          "usage"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenAICompatEmbeddingMessagePack"
+            }
+          },
+          "model": {
+            "type": "string",
+            "example": "thenlper/gte-base"
+          },
+          "object": {
+            "type": "string",
+            "example": "list"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/OpenAICompatUsage"
+          }
+        }
+      },
+      "TensorMessagePack": {
+        "type": "object",
+        "description": "Packed public output values, independent of the backend's internal precision.\nStorage is contiguous C-order, little-endian, without padding or a tensor header.",
+        "required": [
+          "shape",
+          "dtype",
+          "data_encoding",
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "string",
+            "format": "binary",
+            "description": "Exactly 4 * product(shape) decoded bytes: little-endian IEEE 754 float32,\ncontiguous row-major, with no padding. JSON carries standard padded base64;\nMessagePack carries a bin value, never an array of numbers."
+          },
+          "data_encoding": {
+            "type": "string",
+            "enum": [
+              "binary"
+            ]
+          },
+          "dtype": {
+            "type": "string",
+            "description": "Public output dtype, independent of backend precision. Only float32 is supported.",
+            "enum": [
+              "float32"
+            ]
+          },
+          "shape": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Element counts: [dimensions] or [tokens, dimensions]; never byte counts.",
+            "maxItems": 2,
+            "minItems": 1
+          }
+        }
       }
     }
   },
