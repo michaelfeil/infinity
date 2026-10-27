@@ -747,9 +747,10 @@ std::unique_ptr<DecisionHead> create_decision_head(const std::string& kind,
     TORCH_CHECK(head.string("format_id") == "d3-code-readout-v1" && head.string("prompt") == "d3",
                 "Unknown D3 readout format");
     TORCH_CHECK(head.string("pooling") == "last" &&
-                    head.string("attention_mode") == "noncausal_full_attention" &&
+                    (head.string("attention_mode") == "noncausal_full_attention" ||
+                     head.string("attention_mode") == "prefix_bidir") &&
                     head.string("readout_dtype") == "float32",
-                "D3 requires last-token pooling, noncausal full attention and FP32 readout");
+                "D3 requires last-token pooling, supported decision attention and FP32 readout");
     TORCH_CHECK(backbone.string("model_type") == "qwen3_5" ||
                     backbone.string("model_type") == "qwen3_5_text",
                 "D3 requires the dense Qwen3.5 backbone");

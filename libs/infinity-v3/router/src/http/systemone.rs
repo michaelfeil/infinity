@@ -231,6 +231,7 @@ impl SystemOne {
         &self,
         question: &Question,
         output: DecisionOutput,
+        question_count: usize,
     ) -> Result<ResultValue, AnswerError> {
         match self {
             Self::Laya(model) => model.answer(question, output),
@@ -239,7 +240,7 @@ impl SystemOne {
             Self::Clef(_) => clef::answer(question, output),
             Self::Pplx(model) => model.answer(question, output),
             Self::PplxJoint(model) => model.answer(question, output),
-            Self::D3(model) => model.answer(question, output),
+            Self::D3(model) => model.answer(question, output, question_count),
         }
     }
 }
@@ -820,6 +821,7 @@ pub(crate) async fn systemone_inner(
     let start = Instant::now();
     // Validate and tokenize questions before fetching media, off the async executor.
     let worker = service.clone();
+    let d3_has_media = !d3_images.is_empty() || !d3_videos.is_empty();
     let (prepared, _input_memory) = infinity_v3_core::input_memory::spawn_blocking(move || {
         let sources = match worker.as_ref() {
             SystemOne::Rune(_) => rune::Rune::image_sources(&mut request)?,
@@ -829,7 +831,11 @@ pub(crate) async fn systemone_inner(
             _ => vec![],
         };
         let max_len = request.max_len;
-        Ok::<_, String>((worker.prepare(request)?, sources, max_len))
+        let questions = match worker.as_ref() {
+            SystemOne::D3(model) if d3_has_media => model.prepare_with_media(request)?,
+            _ => worker.prepare(request)?,
+        };
+        Ok::<_, String>((questions, sources, max_len))
     })
     .await
     .map_err(|e| error(StatusCode::INTERNAL_SERVER_ERROR, e))?;
@@ -937,14 +943,16 @@ pub(crate) async fn systemone_inner(
                     };
                     error(status, e)
                 })?;
-            let answer = service.answer(&question, output.results).map_err(|e| {
-                let status = if matches!(e, AnswerError::Memory(_)) {
-                    StatusCode::TOO_MANY_REQUESTS
-                } else {
-                    StatusCode::INTERNAL_SERVER_ERROR
-                };
-                error(status, e)
-            })?;
+            let answer = service
+                .answer(&question, output.results, sequences)
+                .map_err(|e| {
+                    let status = if matches!(e, AnswerError::Memory(_)) {
+                        StatusCode::TOO_MANY_REQUESTS
+                    } else {
+                        StatusCode::INTERNAL_SERVER_ERROR
+                    };
+                    error(status, e)
+                })?;
             Ok::<_, ApiError>((question.id, answer, output.metadata))
         }
     }))

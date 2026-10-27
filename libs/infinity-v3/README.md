@@ -381,7 +381,7 @@ Supported model families and protocols (LibTorch):
 - **Perplexity Decider / Pplx**: [v1.1-27b](https://huggingface.co/perplexity-ai/pplx-decider-v1.1-27b) and [flash-v1.2](https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2). Flash v1.2 supports shared text/images, joint question readouts and calibrated answers. The short model aliases select the protocol automatically.
 - **Rune**: Gemma4-based decision checkpoints using `--decision-protocol rune`.
 - **Clef**: dense Qwen3.5 checkpoints with `joint_head_config.json`, using `--decision-protocol clef`.
-- **D3**: [vllm-sr/d3](https://huggingface.co/vllm-sr/d3) and [vllm-sr/d3-mini](https://huggingface.co/vllm-sr/d3-mini), dense Qwen3.5 decision models with code-readout heads. The `d3` and `d3-mini` aliases select `--decision-protocol d3` automatically.
+- **D3**: [vllm-sr/d3](https://huggingface.co/vllm-sr/d3), [vllm-sr/d3-mini](https://huggingface.co/vllm-sr/d3-mini), and [vllm-sr/d3-ultra](https://huggingface.co/vllm-sr/d3-ultra), dense Qwen3.5 decision models with code-readout heads. Their short aliases select `--decision-protocol d3` automatically. D3 Ultra supports choice, yes/no, and score decisions with shared text/images/video; see the [model catalog](docs/supported-models.md#typed-decisions) for its supported inputs.
 
 For example:
 

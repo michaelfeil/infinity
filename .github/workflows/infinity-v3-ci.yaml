@@ -67,6 +67,9 @@ jobs:
 
   cpu:
     runs-on: ubuntu-latest
+    env:
+      # Bundled Oniguruma uses pre-C23 function declarations.
+      CFLAGS: -std=gnu17
     steps:
       - uses: actions/checkout@v6
       - name: Read Rust toolchain
