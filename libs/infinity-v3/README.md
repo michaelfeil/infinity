@@ -204,7 +204,7 @@ option list and the environment names used by your build.
 For buffer-oriented clients, opt in with `"encoding_format": "tensor"` and
 `Accept: application/msgpack`. Responses carry explicit shapes and portable
 little-endian float32 bytes, avoiding base64 and per-element numeric encoding.
-See the [tensor quickstart and Python/Node.js examples](docs/embedding-tensors.md#opt-in-to-packed-tensors).
+See the [tensor quickstart and Python/Node.js examples](docs/embedding-tensors.md).
 The default numeric-array output remains available for existing clients.
 
 ### Supported Tasks and Models by Infinity V3

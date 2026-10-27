@@ -579,9 +579,7 @@ struct OpenAICompatRequestBody {
     #[allow(dead_code)]
     #[schema(nullable = true, example = "null")]
     pub user: Option<String>,
-    /// Opt in with "tensor" for portable float32 buffers. Add Accept: application/msgpack
-    /// for binary data; JSON returns base64. The default "float" keeps numeric arrays.
-    #[schema(default = "float", example = "tensor")]
+    #[schema(default = "float", example = "float")]
     #[serde(default)]
     pub encoding_format: EncodingFormat,
     #[schema(default = "null", example = "null", nullable = true)]
@@ -770,10 +768,9 @@ pub(crate) struct SimilarityResponse(pub Vec<f32>);
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedRequest {
-    /// Opt in with "tensor" for portable float32 buffers. Add Accept: application/msgpack
-    /// for binary data; JSON returns base64. The default "float" keeps numeric arrays.
+    /// float preserves nested arrays; tensor returns shape, dtype and packed data.
     #[serde(default)]
-    #[schema(default = "float", example = "tensor")]
+    #[schema(default = "float")]
     pub encoding_format: EncodingFormat,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,
@@ -852,10 +849,9 @@ pub(crate) struct EmbedSparseResponse(pub Vec<Vec<SparseValue>>);
 
 #[derive(Deserialize, ToSchema)]
 pub(crate) struct EmbedAllRequest {
-    /// Opt in with "tensor" for portable float32 buffers. Add Accept: application/msgpack
-    /// for binary data; JSON returns base64. The default "float" keeps numeric arrays.
+    /// float preserves nested arrays; tensor returns shape, dtype and packed data.
     #[serde(default)]
-    #[schema(default = "float", example = "tensor")]
+    #[schema(default = "float")]
     pub encoding_format: EncodingFormat,
     /// Served model name; required for multi-model deployments.
     pub model: Option<String>,

@@ -5,7 +5,7 @@ use base64::{display::Base64Display, engine::general_purpose::STANDARD, Engine};
 use infinity_v3_backend::BackendError;
 use infinity_v3_core::TextEmbeddingsError;
 use serde::{Serialize, Serializer};
-use utoipa::{openapi::OpenApi, ToSchema};
+use utoipa::ToSchema;
 
 /// Packed public output values, independent of the backend's internal precision.
 /// Storage is contiguous C-order, little-endian, without padding or a tensor header.
@@ -18,12 +18,12 @@ pub(crate) struct Tensor {
     #[schema(inline)]
     dtype: TensorDType,
     /// "base64" for JSON, "binary" for MessagePack.
-    #[schema(value_type = String)]
+    #[schema(schema_with = data_encoding_schema)]
     data_encoding: DataEncoding,
     /// Exactly 4 * product(shape) decoded bytes: little-endian IEEE 754 float32,
     /// contiguous row-major, with no padding. JSON carries standard padded base64;
     /// MessagePack carries a bin value, never an array of numbers.
-    #[schema(value_type = String, format = Byte)]
+    #[schema(value_type = String)]
     data: TensorData,
 }
 
@@ -32,6 +32,13 @@ pub(crate) struct Tensor {
 enum TensorDType {
     #[serde(rename = "float32")]
     Float32,
+}
+
+fn data_encoding_schema() -> utoipa::openapi::RefOr<utoipa::openapi::schema::Schema> {
+    utoipa::openapi::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::SchemaType::String)
+        .enum_values(Some(["base64", "binary"]))
+        .into()
 }
 
 #[derive(Debug)]
@@ -148,105 +155,6 @@ pub(crate) fn encode_matrix(
             Ok(AllEmbedding::Base64(rows))
         }
     }
-}
-
-// OpenAPI describes JSON strings and MessagePack bin values separately. This
-// runs only while constructing API documentation, never during tensor packing.
-const TENSOR_SCHEMAS: [&str; 7] = [
-    "Tensor",
-    "AllEmbedding",
-    "Embedding",
-    "EmbedResponse",
-    "EmbedAllResponse",
-    "OpenAICompatEmbedding",
-    "OpenAICompatResponse",
-];
-
-pub(super) fn messagepack_schema(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(fields) => {
-            if let Some(serde_json::Value::String(reference)) = fields.get_mut("$ref") {
-                if let Some(name) = reference.strip_prefix("#/components/schemas/") {
-                    if TENSOR_SCHEMAS.contains(&name) {
-                        reference.push_str("MessagePack");
-                    }
-                }
-            }
-            for value in fields.values_mut() {
-                messagepack_schema(value);
-            }
-        }
-        serde_json::Value::Array(values) => {
-            for value in values {
-                messagepack_schema(value);
-            }
-        }
-        _ => {}
-    }
-}
-
-pub(super) fn document(doc: &mut OpenApi) -> anyhow::Result<()> {
-    use anyhow::Context;
-    use serde_json::json;
-    let components = doc
-        .components
-        .as_mut()
-        .context("Missing OpenAPI components")?;
-    let schema = components
-        .schemas
-        .get("Tensor")
-        .context("Missing Tensor schema")?;
-    let mut tensor = serde_json::to_value(schema)?;
-    tensor
-        .pointer_mut("/properties/data_encoding")
-        .and_then(serde_json::Value::as_object_mut)
-        .context("Missing Tensor data encoding schema")?
-        .insert("enum".into(), json!(["base64"]));
-    components
-        .schemas
-        .insert("Tensor".into(), serde_json::from_value(tensor)?);
-    for name in TENSOR_SCHEMAS {
-        let schema = components
-            .schemas
-            .get(name)
-            .with_context(|| format!("Missing tensor response schema: {name}"))?;
-        let mut schema = serde_json::to_value(schema)?;
-        messagepack_schema(&mut schema);
-        if name == "Tensor" {
-            schema
-                .pointer_mut("/properties/data")
-                .and_then(serde_json::Value::as_object_mut)
-                .context("Missing Tensor data schema")?
-                .insert("format".into(), json!("binary"));
-            schema
-                .pointer_mut("/properties/data_encoding")
-                .and_then(serde_json::Value::as_object_mut)
-                .context("Missing Tensor data encoding schema")?
-                .insert("enum".into(), json!(["binary"]));
-        }
-        components.schemas.insert(
-            format!("{name}MessagePack"),
-            serde_json::from_value(schema)?,
-        );
-    }
-    for path in doc.paths.paths.values_mut() {
-        for operation in path.operations.values_mut() {
-            for response in operation.responses.responses.values_mut() {
-                let utoipa::openapi::RefOr::T(response) = response else {
-                    continue;
-                };
-                if let Some(content) = response.content.get_mut("application/msgpack") {
-                    let original = serde_json::to_value(&content.schema)?;
-                    let mut schema = original.clone();
-                    messagepack_schema(&mut schema);
-                    if schema != original {
-                        content.schema = serde_json::from_value(schema)?;
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
