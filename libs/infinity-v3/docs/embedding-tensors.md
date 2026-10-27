@@ -39,6 +39,7 @@ the portable byte-order guarantee applies to `tensor`.
 Install `requests`, `msgpack` and `numpy`:
 
 ```python
+import base64
 import msgpack
 import numpy as np
 import requests
