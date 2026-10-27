@@ -1,8 +1,9 @@
 //! Two-tier FIFO selection and packed-batch construction on a dedicated thread.
 //!
 //! `infer::batching_task` asks for batches; this worker owns the pending entries.
-//! The early-dispatch target is a soft cut, relaxed for unfinished client batches
-//! or a large backlog. Token and request maxima still apply. Selection never
+//! An explicit early-dispatch target stays active under backlog. Only questions
+//! from a selected HTTP request may exceed it; token/request maxima still apply.
+//! Automatic multi-replica targets can relax under backlog. Selection never
 //! runs a model; the selected entries' metadata follows the batch into delivery.
 
 use crate::infer::InferResult;
@@ -10,7 +11,7 @@ use crate::log_response_dropped_after;
 use crate::tokenization::ValidEncoding;
 use infinity_v3_backend::{BackendError, Batch};
 use std::cmp::max;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
@@ -43,8 +44,9 @@ fn target_for_backlog(
     queued_tokens: usize,
     target: Option<usize>,
     replicas: usize,
+    fixed_target: bool,
 ) -> Option<usize> {
-    target.filter(|_| queued_tokens < 20_000usize.saturating_mul(replicas.max(1)))
+    target.filter(|_| fixed_target || queued_tokens < 20_000usize.saturating_mul(replicas.max(1)))
 }
 
 /// Queue entry
@@ -54,6 +56,83 @@ pub struct Entry {
     pub encoding: ValidEncoding,
     /// Entry metadata
     pub metadata: Metadata,
+}
+
+impl Entry {
+    fn same_client(&self, other: &Self) -> bool {
+        self.metadata.client_batch.as_ref().is_some_and(|client| {
+            other
+                .metadata
+                .client_batch
+                .as_ref()
+                .is_some_and(|other| Arc::ptr_eq(client, other))
+        })
+    }
+
+    /// Charge a block prefix once per HTTP request in this batch, then every suffix.
+    /// Exact host inputs must agree with native prefix sharing; other inputs pay full cost.
+    fn batch_tokens(&self, selected: &[Self]) -> usize {
+        use infinity_v3_backend::DecisionInput::BlockOptionTokens;
+        let tokens = self.encoding.input_ids.len();
+        let Some(BlockOptionTokens { prefix_length, .. }) = self.metadata.decision.as_ref() else {
+            return tokens;
+        };
+        let prefix = *prefix_length;
+        if prefix == 0 || prefix > tokens {
+            return tokens;
+        }
+        let shared = selected.iter().any(|other| {
+            self.same_client(other)
+                && matches!(other.metadata.decision.as_ref(), Some(BlockOptionTokens { prefix_length, .. }) if *prefix_length == prefix)
+                && [
+                    (&self.encoding.input_ids, &other.encoding.input_ids),
+                    (&self.encoding.token_type_ids, &other.encoding.token_type_ids),
+                    (&self.encoding.position_ids, &other.encoding.position_ids),
+                ].into_iter().all(|(left, right)| {
+                    left.get(..prefix).is_some_and(|left| right.get(..prefix) == Some(left))
+                })
+                && same_prefix_media(&self.encoding, &other.encoding, prefix)
+        });
+        if shared {
+            tokens - prefix
+        } else {
+            tokens
+        }
+    }
+}
+
+/// Immutable image identity and all positional axes must agree within the prefix.
+/// Distinct image allocations are conservatively charged even if pixels might match.
+fn same_prefix_media(left: &ValidEncoding, right: &ValidEncoding, prefix: usize) -> bool {
+    match (&left.multimodal, &right.multimodal) {
+        (None, None) => true,
+        (Some(left), Some(right)) => {
+            if !left.audios.is_empty()
+                || !right.audios.is_empty()
+                || left.position_ids.len() != right.position_ids.len()
+                || !left
+                    .position_ids
+                    .iter()
+                    .zip(&right.position_ids)
+                    .all(|(left, right)| {
+                        left.get(..prefix)
+                            .is_some_and(|left| right.get(..prefix) == Some(left))
+                    })
+            {
+                return false;
+            }
+            let mut left = left.images.iter().filter(|(start, _)| *start < prefix);
+            let mut right = right.images.iter().filter(|(start, _)| *start < prefix);
+            loop {
+                match (left.next(), right.next()) {
+                    (Some((a, x)), Some((b, y))) if a == b && Arc::ptr_eq(x, y) => {}
+                    (None, None) => return true,
+                    _ => return false,
+                }
+            }
+        }
+        _ => false,
+    }
 }
 
 /// Entry metadata
@@ -125,13 +204,6 @@ impl PendingEntries {
         } else {
             self.priority.pop_front()
         }
-    }
-
-    fn iter(&self) -> impl Iterator<Item = &Entry> {
-        self.normal
-            .iter()
-            .chain(self.priority.iter())
-            .map(|(_, entry)| entry)
     }
 
     fn drain(&mut self) -> impl Iterator<Item = Entry> + '_ {
@@ -208,7 +280,8 @@ impl Queue {
                     infinity_v3_config::infinity_env!("EARLY_DISPATCH_TOKENS")
                 ),
             };
-        let early_dispatch_tokens = if replicas > 1 || configured_target.is_some() {
+        let fixed_target = configured_target.is_some();
+        let early_dispatch_tokens = if replicas > 1 || fixed_target {
             early_dispatch_tokens(configured_target.as_deref())
         } else {
             None
@@ -228,6 +301,7 @@ impl Queue {
                 max_concurrent_requests,
                 queue_receiver,
                 early_dispatch_tokens,
+                fixed_target,
                 replicas,
                 worker_closed,
                 model_name.into(),
@@ -329,6 +403,7 @@ fn queue_blocking_task(
     max_concurrent_requests: usize,
     mut queue_receiver: mpsc::Receiver<QueueCommand>,
     early_dispatch_tokens: Option<usize>,
+    fixed_target: bool,
     replicas: usize,
     closed: Arc<AtomicBool>,
     model_name: metrics::SharedString,
@@ -336,6 +411,7 @@ fn queue_blocking_task(
 ) {
     tracing::info!(
         ?early_dispatch_tokens,
+        fixed_target,
         replicas,
         full_batch_backlog_tokens = 20_000usize.saturating_mul(replicas.max(1)),
         "Early dispatch token target"
@@ -407,28 +483,18 @@ fn queue_blocking_task(
                 let _span = span.entered();
                 // Snapshot the target once, including the batch being selected.
                 // Draining a busy queue must not enable the cut midway through this batch.
-                let target = target_for_backlog(queued_tokens, early_dispatch_tokens, replicas);
+                let target = target_for_backlog(
+                    queued_tokens,
+                    early_dispatch_tokens,
+                    replicas,
+                    fixed_target,
+                );
 
                 let mut current_tokens = 0;
                 let mut pooled_count = 0;
                 let mut token_count = 0;
                 let mut offset_count = 0;
-                // Build lookahead only for a soft cut, then update it on removal.
-                // Consecutive inputs from the same HTTP request avoid this map.
-                // Canceled tails stay counted until popped; only soft cuts can change.
-                let mut pending_clients: Option<HashMap<usize, usize>> = None;
-
                 while let Some((queued_at, entry)) = entries.pop_front() {
-                    if let (Some(clients), Some(client)) =
-                        (&mut pending_clients, &entry.metadata.client_batch)
-                    {
-                        let id = Arc::as_ptr(client) as usize;
-                        let count = clients.get_mut(&id).expect("queued client counted");
-                        *count -= 1;
-                        if *count == 0 {
-                            clients.remove(&id);
-                        }
-                    }
                     // Filter entries where the response receiver was dropped (== entries where the request
                     // was dropped by the client)
                     if entry.metadata.response_tx.is_closed() {
@@ -438,45 +504,19 @@ fn queue_blocking_task(
                     }
 
                     let entry_tokens = entry.encoding.input_ids.len();
+                    let work_tokens = entry.batch_tokens(&selected);
 
-                    // Soft limit: always allow one input, even if it exceeds the target.
-                    let mut unfinished_client = || {
-                        selected.iter().any(|selected| {
-                            selected
-                                .metadata
-                                .client_batch
-                                .as_ref()
-                                .is_some_and(|client| {
-                                    client.load(Ordering::SeqCst) != 0
-                                        || entry
-                                            .metadata
-                                            .client_batch
-                                            .as_ref()
-                                            .is_some_and(|next| Arc::ptr_eq(client, next))
-                                        || pending_clients
-                                            .get_or_insert_with(|| {
-                                                let mut clients = HashMap::new();
-                                                for pending in entries.iter() {
-                                                    if let Some(client) =
-                                                        &pending.metadata.client_batch
-                                                    {
-                                                        *clients
-                                                            .entry(Arc::as_ptr(client) as usize)
-                                                            .or_default() += 1;
-                                                    }
-                                                }
-                                                clients
-                                            })
-                                            .contains_key(&(Arc::as_ptr(client) as usize))
-                                })
-                        })
-                    };
-                    if should_cut(current_tokens, entry_tokens, target) && !unfinished_client() {
+                    // Always allow one input. Beyond the preferred target, only
+                    // continue requests already selected; do not pull unrelated
+                    // work in while waiting for their tokenization or later siblings.
+                    if should_cut(current_tokens, work_tokens, target)
+                        && !selected.iter().any(|other| entry.same_client(other))
+                    {
                         entries.push_front((queued_at, entry));
                         break;
                     }
 
-                    let total_tokens = current_tokens + entry_tokens;
+                    let total_tokens = current_tokens + work_tokens;
 
                     if total_tokens > max_batch_tokens {
                         debug_assert!(
@@ -741,6 +781,7 @@ mod tests {
                 16,
                 queue_receiver,
                 target,
+                true,
                 1,
                 worker_closed,
                 "test".into(),
@@ -902,160 +943,157 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn backlog_accounting_preserves_hard_cuts_and_cancellation() {
-        let queue = test_queue_with_limits(15_000, None, Some(5_000));
+    async fn preferred_target_survives_backlog_and_cancellation() {
+        let queue = test_queue_with_limits(34_816, Some(512), Some(16_384));
         let mut responses = Vec::new();
-        for value in 0..4 {
-            let (entry, response) = test_entry(vec![value; 5_000], true);
-            responses.push(response);
-            queue.append(entry).await;
-        }
-        // The original 20k backlog disables the soft target for the entire batch.
-        let (metadata, batch) = queue.next_batch().await.unwrap();
-        assert_eq!(metadata.len(), 3);
-        assert_eq!(batch.input_ids.len(), 15_000);
-        assert_eq!(queue.next_batch().await.unwrap().0.len(), 1);
-        assert!(queue.next_batch().await.is_none());
-
-        let (canceled, response) = test_entry(vec![9; 15_000], true);
+        let (canceled, response) = test_entry(vec![99; 16_384], true);
         drop(response);
         queue.append(canceled).await;
-        let (live, response) = test_entry(vec![10; 5_000], true);
-        responses.push(response);
-        queue.append(live).await;
-        let (live, response) = test_entry(vec![10; 5_000], true);
-        responses.push(response);
-        queue.append(live).await;
-        // The canceled input conservatively disables only this soft cut.
-        assert_eq!(queue.next_batch().await.unwrap().0.len(), 2);
-        assert!(queue.next_batch().await.is_none());
-        // Neither a hard-cut front entry nor a canceled entry leaves a stale charge.
-        for value in 11..14 {
-            let (entry, response) = test_entry(vec![value; 5_000], true);
-            responses.push(response);
-            queue.append(entry).await;
+        // Six 16K HTTP requests remain separate even with roughly 100K queued.
+        for id in 0..6 {
+            let client = Arc::new(AtomicUsize::new(0));
+            for question in 0..224 {
+                let mut ids = vec![id; 2_048];
+                ids.extend(vec![question + 100; 64]);
+                let (mut entry, response) = test_entry(ids, true);
+                entry.metadata.client_batch = Some(client.clone());
+                entry.metadata.decision =
+                    Some(infinity_v3_backend::DecisionInput::BlockOptionTokens {
+                        prefix_length: 2_048,
+                        token_ids: vec![1, 2],
+                    });
+                responses.push(response);
+                queue.append(entry).await;
+            }
         }
-        for value in 11..14 {
+        for id in 0..6 {
             let (metadata, batch) = queue.next_batch().await.unwrap();
-            assert_eq!(metadata.len(), 1);
-            assert_eq!(batch.input_ids, vec![value; 5_000]);
+            assert_eq!(metadata.len(), 224);
+            assert_eq!(batch.input_ids.len(), 224 * 2_112);
+            assert!(batch.input_ids.chunks_exact(2_112).all(|ids| ids[0] == id));
         }
         assert!(queue.next_batch().await.is_none());
         queue.close();
     }
 
     #[tokio::test]
-    async fn request_limit_keeps_remaining_tokens_in_the_snapshot() {
-        let queue = test_queue_with_limits(32_000, Some(2), Some(5_000));
-        let mut responses = Vec::new();
-        for value in 0..6 {
-            let (entry, response) = test_entry(vec![value; 5_000], true);
-            responses.push(response);
-            queue.append(entry).await;
-        }
-        assert_eq!(queue.next_batch().await.unwrap().0.len(), 2);
-        // Twenty thousand tokens remain, so the next selection still bypasses
-        // the soft target while respecting the two-request hard limit.
-        assert_eq!(queue.next_batch().await.unwrap().0.len(), 2);
-        assert_eq!(queue.next_batch().await.unwrap().0.len(), 1);
-        assert_eq!(queue.next_batch().await.unwrap().0.len(), 1);
-        assert!(queue.next_batch().await.is_none());
-        queue.close();
-    }
-
-    #[tokio::test]
-    async fn lookahead_preserves_interleaved_clients_and_cancellation() {
-        for cancel_grouped_tail in [false, true] {
-            let queue = test_queue_with_limits(32, None, Some(3));
+    async fn prefix_discount_requires_matching_attention_inputs() {
+        for difference in 0..7 {
+            let queue = test_queue_with_limits(8, None, None);
+            let image = Arc::new(infinity_v3_backend::ImagePatches {
+                pixels: vec![1.0],
+                grid_thw: [1, 1, 1],
+                patch_dim: 1,
+                merge_size: 1,
+            });
             let client = Arc::new(AtomicUsize::new(0));
             let mut responses = Vec::new();
-            for value in 1..5 {
-                let (mut entry, response) = test_entry(vec![value; 3], true);
-                entry.metadata.client_batch = (value == 1 || value == 3).then(|| client.clone());
-                if cancel_grouped_tail && value == 3 {
-                    drop(response);
-                } else {
-                    responses.push(response);
+            for question in 0..2 {
+                let (mut entry, response) = test_entry(vec![1, 2, 3, 4, 5, 6], true);
+                entry.metadata.client_batch = Some(client.clone());
+                entry.metadata.decision =
+                    Some(infinity_v3_backend::DecisionInput::BlockOptionTokens {
+                        prefix_length: 4,
+                        token_ids: vec![1, 2],
+                    });
+                if difference >= 4 {
+                    let patches = if question == 1 && difference == 5 {
+                        Arc::new(infinity_v3_backend::ImagePatches {
+                            pixels: vec![2.0],
+                            grid_thw: [1, 1, 1],
+                            patch_dim: 1,
+                            merge_size: 1,
+                        })
+                    } else {
+                        image.clone()
+                    };
+                    let mut axes = [vec![0; 6], vec![0; 6], vec![0; 6]];
+                    if question == 1 && difference == 6 {
+                        axes[1][0] = 1;
+                    }
+                    entry.encoding.multimodal =
+                        Some(Arc::new(infinity_v3_backend::MultimodalEncoding {
+                            images: vec![(0, patches)],
+                            audios: vec![],
+                            position_ids: axes,
+                            memory: None,
+                        }));
                 }
+                if question == 1 {
+                    match difference {
+                        1 => entry.encoding.input_ids[0] = 9,
+                        2 => entry.encoding.token_type_ids[0] = 1,
+                        3 => entry.encoding.position_ids[0] = 1,
+                        _ => {}
+                    }
+                }
+                responses.push(response);
                 queue.append(entry).await;
             }
-            let (metadata, batch) = queue.next_batch().await.unwrap();
-            assert_eq!(metadata.len(), if cancel_grouped_tail { 2 } else { 3 });
-            assert_eq!(&batch.input_ids[..6], &[1, 1, 1, 2, 2, 2]);
-            // Removing the tail also removes its lookahead charge; the final
-            // unrelated input starts a new selection in both cases.
-            let (metadata, batch) = queue.next_batch().await.unwrap();
-            assert_eq!(metadata.len(), 1);
-            assert_eq!(batch.input_ids, [4, 4, 4]);
+            assert_eq!(
+                queue.next_batch().await.unwrap().0.len(),
+                if matches!(difference, 0 | 4) { 2 } else { 1 }
+            );
+            if !matches!(difference, 0 | 4) {
+                assert_eq!(queue.next_batch().await.unwrap().0.len(), 1);
+            }
             assert!(queue.next_batch().await.is_none());
             queue.close();
         }
     }
 
     #[tokio::test]
-    async fn lookahead_matches_fifo_reference_across_client_patterns() {
-        for scenario in 0..256usize {
-            let clients: Vec<_> = (0..4)
-                .map(|i| Arc::new(AtomicUsize::new(usize::from((scenario + i) % 7 == 0))))
-                .collect();
-            let max_tokens = 32 + scenario % 64;
-            let max_requests = (scenario % 3 == 0).then_some(1 + scenario % 7);
-            let target = (scenario % 4 != 0).then_some(8 + scenario % 24);
-            let queue = test_queue_with_limits(max_tokens, max_requests, target);
-            let mut reference = VecDeque::new();
+    async fn same_client_overflow_respects_token_and_question_caps() {
+        for (prefix, max_tokens, questions, expected) in
+            [(4_096, 34_816, 512, 480), (2_048, 65_536, 513, 512)]
+        {
+            let queue = test_queue_with_limits(max_tokens, Some(512), Some(16_384));
+            let client = Arc::new(AtomicUsize::new(0));
             let mut responses = Vec::new();
-            let mut seed = scenario as u64 + 1;
-            for id in 0..32 {
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-                let tokens = 1 + ((seed >> 32) % 16) as usize;
-                let group = ((seed >> 40) % 5) as usize;
-                let (mut entry, response) = test_entry(vec![id; tokens], true);
-                entry.metadata.client_batch = clients.get(group).cloned();
-                queue.append(entry).await;
-                responses.push(response);
-                reference.push_back((id, tokens, group));
-            }
-            while !reference.is_empty() {
-                let mut expected: Vec<(u32, usize, usize)> = Vec::new();
-                let mut tokens = 0;
-                while let Some(&(id, count, group)) = reference.front() {
-                    let unfinished = expected.iter().any(|&(_, _, selected_group)| {
-                        clients.get(selected_group).is_some_and(|client| {
-                            client.load(Ordering::SeqCst) != 0
-                                || selected_group == group
-                                || reference
-                                    .iter()
-                                    .any(|&(_, _, pending_group)| pending_group == selected_group)
-                        })
+            for _ in 0..questions {
+                let (mut entry, response) = test_entry(vec![1; prefix + 64], true);
+                entry.metadata.client_batch = Some(client.clone());
+                entry.metadata.decision =
+                    Some(infinity_v3_backend::DecisionInput::BlockOptionTokens {
+                        prefix_length: prefix,
+                        token_ids: vec![1, 2],
                     });
-                    if should_cut(tokens, count, target) && !unfinished {
-                        break;
-                    }
-                    if tokens + count > max_tokens {
-                        break;
-                    }
-                    reference.pop_front();
-                    expected.push((id, count, group));
-                    tokens += count;
-                    if Some(expected.len()) == max_requests {
-                        break;
-                    }
-                }
-                let (metadata, batch) = queue.next_batch().await.unwrap();
-                assert_eq!(metadata.len(), expected.len(), "scenario {scenario}");
-                assert_eq!(batch.input_ids.len(), tokens, "scenario {scenario}");
-                assert_eq!(
-                    batch.cumulative_seq_lengths[..metadata.len()]
-                        .iter()
-                        .map(|&offset| batch.input_ids[offset as usize])
-                        .collect::<Vec<_>>(),
-                    expected.iter().map(|&(id, _, _)| id).collect::<Vec<_>>(),
-                    "scenario {scenario}"
-                );
+                responses.push(response);
+                queue.append(entry).await;
             }
+            let (metadata, batch) = queue.next_batch().await.unwrap();
+            assert_eq!(metadata.len(), expected);
+            assert_eq!(batch.input_ids.len(), expected * (prefix + 64));
+            assert_eq!(
+                queue.next_batch().await.unwrap().0.len(),
+                questions - expected
+            );
             assert!(queue.next_batch().await.is_none());
             queue.close();
         }
+    }
+
+    #[tokio::test]
+    async fn preferred_overflow_does_not_pull_in_interleaved_requests() {
+        let queue = test_queue_with_limits(32, None, Some(3));
+        let client = Arc::new(AtomicUsize::new(1));
+        let mut responses = Vec::new();
+        for id in 1..=4 {
+            let (mut entry, response) = test_entry(vec![id; 3], true);
+            entry.metadata.client_batch = (id != 3).then(|| client.clone());
+            responses.push(response);
+            queue.append(entry).await;
+        }
+        // Finish queued siblings beyond the soft target, but do not admit the
+        // unrelated head to reach a later sibling. Preserve FIFO without waiting.
+        assert_eq!(
+            queue.next_batch().await.unwrap().1.input_ids,
+            [1, 1, 1, 2, 2, 2]
+        );
+        assert_eq!(queue.next_batch().await.unwrap().1.input_ids, [3, 3, 3]);
+        assert_eq!(queue.next_batch().await.unwrap().1.input_ids, [4, 4, 4]);
+        assert!(queue.next_batch().await.is_none());
+        queue.close();
     }
 
     #[tokio::test]
@@ -1203,8 +1241,15 @@ mod tests {
         assert_eq!(permits.available_permits(), 1);
         drop(batch);
         assert_eq!(permits.available_permits(), 2);
-        assert_eq!(target_for_backlog(100_000, Some(5_000), 8), Some(5_000));
-        assert_eq!(target_for_backlog(160_000, Some(5_000), 8), None);
+        assert_eq!(
+            target_for_backlog(100_000, Some(5_000), 8, false),
+            Some(5_000)
+        );
+        assert_eq!(target_for_backlog(160_000, Some(5_000), 8, false), None);
+        assert_eq!(
+            target_for_backlog(100_000, Some(16_384), 1, true),
+            Some(16_384)
+        );
     }
     #[test]
     fn cancellation_preserves_decision_metadata() {

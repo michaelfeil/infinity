@@ -213,6 +213,9 @@ struct Args {
     /// For `max_batch_tokens=1000`, you could fit `10` queries of `total_tokens=100`
     /// or a single query of `1000` tokens.
     ///
+    /// Shared-prefix block decisions count each prefix once per HTTP request plus all suffixes.
+    /// Use max-batch-requests to bound the number of questions independently.
+    ///
     /// Overall this number should be the largest possible until the model is compute bound.
     /// Since the actual memory overhead depends on the model implementation,
     /// infinity_v3 cannot infer this number automatically.
