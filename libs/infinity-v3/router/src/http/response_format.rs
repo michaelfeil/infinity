@@ -342,6 +342,7 @@ pub(crate) async fn negotiate(request: Request, next: Next) -> Response {
 }
 
 pub(crate) fn document(doc: &mut utoipa::openapi::OpenApi) {
+    super::tensor::document(doc);
     for (name, path) in &mut doc.paths.paths {
         for operation in path.operations.values_mut() {
             for response in operation.responses.responses.values_mut() {
@@ -373,8 +374,10 @@ pub(crate) fn document(doc: &mut utoipa::openapi::OpenApi) {
                     .get("application/json")
                     .or_else(|| response.content.get("text/plain"))
                 {
+                    let mut schema = content.schema.clone();
+                    super::tensor::messagepack_schema(&mut schema);
                     let content = utoipa::openapi::ContentBuilder::new()
-                        .schema(content.schema.clone())
+                        .schema(schema)
                         .build();
                     response
                         .content

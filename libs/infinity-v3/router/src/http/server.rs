@@ -3149,7 +3149,17 @@ mod classify_tests {
             for operation in item.as_object().unwrap().values() {
                 for response in operation["responses"].as_object().unwrap().values() {
                     let content = &response["content"];
-                    if !content["application/json"].is_null() {
+                    if content["application/json"]["schema"].get("$ref").is_some() {
+                        let mut expected =
+                            serde_json::from_value(content["application/json"]["schema"].clone())
+                                .unwrap();
+                        super::super::tensor::messagepack_schema(&mut expected);
+                        assert_eq!(
+                            serde_json::to_value(expected).unwrap(),
+                            content["application/msgpack"]["schema"],
+                            "{path}"
+                        );
+                    } else if !content["application/json"].is_null() {
                         assert_eq!(
                             content["application/json"]["schema"],
                             content["application/msgpack"]["schema"],
@@ -3177,13 +3187,39 @@ mod classify_tests {
             "EmbedResponse",
             "EmbedAllResponse",
             "OpenAICompatRequest",
+            "TensorMessagePack",
+            "AllEmbeddingMessagePack",
+            "EmbeddingMessagePack",
+            "EmbedResponseMessagePack",
+            "EmbedAllResponseMessagePack",
+            "OpenAICompatEmbeddingMessagePack",
+            "OpenAICompatResponseMessagePack",
         ] {
+            assert!(doc["components"]["schemas"][schema].is_object(), "{schema}");
             assert_eq!(
                 doc["components"]["schemas"][schema], checked_in["components"]["schemas"][schema],
                 "{schema}"
             );
         }
 
+        for (name, format, encoding) in [
+            ("Tensor", "byte", "base64"),
+            ("TensorMessagePack", "binary", "binary"),
+        ] {
+            let schema = &doc["components"]["schemas"][name];
+            assert_eq!(schema, &checked_in["components"]["schemas"][name]);
+            assert_eq!(schema["properties"]["data"]["format"], format);
+            assert_eq!(
+                schema["properties"]["data_encoding"]["enum"],
+                serde_json::json!([encoding])
+            );
+        }
+        let packed = &doc["paths"]["/v1/embeddings"]["post"]["responses"]["200"]["content"]
+            ["application/msgpack"]["schema"]["$ref"];
+        assert_eq!(
+            packed,
+            "#/components/schemas/OpenAICompatResponseMessagePack"
+        );
         assert_eq!(doc["paths"]["/predict"]["post"]["deprecated"], true);
         assert_eq!(
             doc["paths"]["/v1/classify"]["post"]["responses"]["200"]["content"]["application/json"]
