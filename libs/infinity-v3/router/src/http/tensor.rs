@@ -5,20 +5,33 @@ use base64::{display::Base64Display, engine::general_purpose::STANDARD, Engine};
 use infinity_v3_backend::BackendError;
 use infinity_v3_core::TextEmbeddingsError;
 use serde::{Serialize, Serializer};
-use utoipa::ToSchema;
+use utoipa::{openapi::OpenApi, ToSchema};
 
+/// Packed public output values, independent of the backend's internal precision.
+/// Storage is contiguous C-order, little-endian, without padding or a tensor header.
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct Tensor {
+    /// Element counts: [dimensions] or [tokens, dimensions]; never byte counts.
+    #[schema(min_items = 1, max_items = 2)]
     shape: Vec<usize>,
-    /// Element dtype; currently float32.
-    #[schema(example = "float32")]
-    dtype: &'static str,
+    /// Public output dtype, not the model's compute or weight dtype. Only float32 is supported.
+    #[schema(inline)]
+    dtype: TensorDType,
     /// "base64" for JSON, "binary" for MessagePack.
     #[schema(value_type = String)]
     data_encoding: DataEncoding,
-    /// Contiguous row-major data, little-endian for multi-byte elements.
+    /// Exactly 4 * product(shape) decoded bytes: little-endian IEEE 754 float32,
+    /// contiguous row-major, with no padding. JSON carries standard padded base64;
+    /// MessagePack carries a bin value, never an array of numbers.
     #[schema(value_type = String, format = Byte)]
     data: TensorData,
+}
+
+/// Public output dtype, independent of backend precision. Only float32 is supported.
+#[derive(Debug, Serialize, ToSchema)]
+enum TensorDType {
+    #[serde(rename = "float32")]
+    Float32,
 }
 
 #[derive(Debug)]
@@ -87,7 +100,7 @@ impl Tensor {
         }
         Ok(Self {
             shape: dimensions,
-            dtype: "float32",
+            dtype: TensorDType::Float32,
             data_encoding: DataEncoding,
             data: TensorData(data),
         })
@@ -133,6 +146,89 @@ pub(crate) fn encode_matrix(
                 rows.push(encoded);
             }
             Ok(AllEmbedding::Base64(rows))
+        }
+    }
+}
+
+// OpenAPI describes JSON strings and MessagePack bin values separately. This
+// runs only while constructing API documentation, never during tensor packing.
+const TENSOR_SCHEMAS: [&str; 7] = [
+    "Tensor",
+    "AllEmbedding",
+    "Embedding",
+    "EmbedResponse",
+    "EmbedAllResponse",
+    "OpenAICompatEmbedding",
+    "OpenAICompatResponse",
+];
+
+pub(super) fn messagepack_schema(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(fields) => {
+            if let Some(serde_json::Value::String(reference)) = fields.get_mut("$ref") {
+                if let Some(name) = reference.strip_prefix("#/components/schemas/") {
+                    if TENSOR_SCHEMAS.contains(&name) {
+                        reference.push_str("MessagePack");
+                    }
+                }
+            }
+            for value in fields.values_mut() {
+                messagepack_schema(value);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for value in values {
+                messagepack_schema(value);
+            }
+        }
+        _ => {}
+    }
+}
+
+pub(super) fn document(doc: &mut OpenApi) {
+    use serde_json::json;
+    let Some(components) = doc.components.as_mut() else {
+        return;
+    };
+    let Some(schema) = components.schemas.get("Tensor") else {
+        return;
+    };
+    let mut tensor = serde_json::to_value(schema).expect("Tensor schema is serializable");
+    tensor["properties"]["data_encoding"]["enum"] = json!(["base64"]);
+    components
+        .schemas
+        .insert("Tensor".into(), serde_json::from_value(tensor).unwrap());
+    for name in TENSOR_SCHEMAS {
+        let schema = components
+            .schemas
+            .get(name)
+            .expect("Tensor response schema registered");
+        let mut schema = serde_json::to_value(schema).unwrap();
+        messagepack_schema(&mut schema);
+        if name == "Tensor" {
+            schema["properties"]["data"]["format"] = json!("binary");
+            schema["properties"]["data_encoding"]["enum"] = json!(["binary"]);
+        }
+        components.schemas.insert(
+            format!("{name}MessagePack"),
+            serde_json::from_value(schema).unwrap(),
+        );
+    }
+    for path in doc.paths.paths.values_mut() {
+        for operation in path.operations.values_mut() {
+            for response in operation.responses.responses.values_mut() {
+                let utoipa::openapi::RefOr::T(response) = response else {
+                    continue;
+                };
+                if let Some(content) = response.content.get_mut("application/msgpack") {
+                    let original = serde_json::to_value(&content.schema).unwrap();
+                    let mut schema = original.clone();
+                    messagepack_schema(&mut schema);
+                    if schema != original {
+                        content.schema = serde_json::from_value(schema).unwrap();
+                    }
+                }
+            }
         }
     }
 }

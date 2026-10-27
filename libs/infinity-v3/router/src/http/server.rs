@@ -2543,6 +2543,7 @@ fn api_doc() -> utoipa::openapi::OpenApi {
         }
     }
     super::response_format::document(&mut doc);
+    super::tensor::document(&mut doc);
     doc
 }
 
@@ -3099,6 +3100,104 @@ mod classify_tests {
     }
 
     #[test]
+    fn tensor_openapi_matches_json_and_messagepack_wire_types() {
+        use serde_json::json;
+        let doc = serde_json::to_value(api_doc()).unwrap();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/openapi.json");
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        // UPDATE_OPENAPI=1 cargo test --lib tensor_openapi_matches_json_and_messagepack_wire_types
+        if std::env::var_os("UPDATE_OPENAPI").is_some() {
+            for (name, schema) in doc["components"]["schemas"].as_object().unwrap() {
+                if matches!(name.as_str(), "Tensor" | "EncodingFormat")
+                    || name.ends_with("MessagePack")
+                {
+                    saved["components"]["schemas"][name] = schema.clone();
+                }
+            }
+            for (name, item) in doc["paths"].as_object().unwrap() {
+                if saved["paths"][name].is_null() {
+                    continue;
+                }
+                for (method, operation) in item.as_object().unwrap() {
+                    for (status, response) in operation["responses"].as_object().unwrap() {
+                        let saved_content =
+                            &mut saved["paths"][name][method]["responses"][status]["content"];
+                        let schema = &response["content"]["application/msgpack"]["schema"];
+                        if !saved_content["application/msgpack"].is_null()
+                            && saved_content["application/msgpack"]["schema"] != *schema
+                        {
+                            saved_content["application/msgpack"]["schema"] = schema.clone();
+                        }
+                    }
+                }
+            }
+            std::fs::write(
+                &path,
+                format!("{}\n", serde_json::to_string_pretty(&saved).unwrap()),
+            )
+            .unwrap();
+        }
+        for (name, encoding, format) in [
+            ("Tensor", "base64", "byte"),
+            ("TensorMessagePack", "binary", "binary"),
+        ] {
+            let schema = &doc["components"]["schemas"][name];
+            assert_eq!(schema, &saved["components"]["schemas"][name]);
+            assert_eq!(schema["properties"]["dtype"]["enum"], json!(["float32"]));
+            assert_eq!(
+                schema["properties"]["data_encoding"]["enum"],
+                json!([encoding])
+            );
+            assert_eq!(schema["properties"]["data"]["format"], format);
+            assert_eq!(schema["properties"]["shape"]["minItems"], 1);
+            assert_eq!(schema["properties"]["shape"]["maxItems"], 2);
+            assert!(schema["description"]
+                .as_str()
+                .unwrap()
+                .contains("little-endian"));
+        }
+        for (path, output) in [
+            ("/embed", "EmbedResponse"),
+            ("/embed_all", "EmbedAllResponse"),
+            ("/v1/embeddings", "OpenAICompatResponse"),
+        ] {
+            let content = &doc["paths"][path]["post"]["responses"]["200"]["content"];
+            assert_eq!(
+                content["application/json"]["schema"]["$ref"],
+                format!("#/components/schemas/{output}")
+            );
+            assert_eq!(
+                content["application/msgpack"]["schema"]["$ref"],
+                format!("#/components/schemas/{output}MessagePack")
+            );
+        }
+        // Every reference in the specialized responses must resolve to a registered schema.
+        fn check_refs(value: &serde_json::Value, doc: &serde_json::Value) {
+            match value {
+                serde_json::Value::Object(fields) => {
+                    if let Some(reference) = fields.get("$ref").and_then(|v| v.as_str()) {
+                        assert!(
+                            doc.pointer(reference.strip_prefix('#').unwrap()).is_some(),
+                            "{reference}"
+                        );
+                    }
+                    for value in fields.values() {
+                        check_refs(value, doc);
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    for value in values {
+                        check_refs(value, doc);
+                    }
+                }
+                _ => {}
+            }
+        }
+        check_refs(&doc, &doc);
+    }
+
+    #[test]
     fn classify_openapi_and_predict_deprecation_are_documented() {
         let doc = serde_json::to_value(api_doc()).unwrap();
         let checked_in: serde_json::Value =
@@ -3112,11 +3211,9 @@ mod classify_tests {
                 for response in operation["responses"].as_object().unwrap().values() {
                     let content = &response["content"];
                     if !content["application/json"].is_null() {
-                        assert_eq!(
-                            content["application/json"]["schema"],
-                            content["application/msgpack"]["schema"],
-                            "{path}"
-                        );
+                        let mut expected = content["application/json"]["schema"].clone();
+                        super::super::tensor::messagepack_schema(&mut expected);
+                        assert_eq!(expected, content["application/msgpack"]["schema"], "{path}");
                     }
                 }
             }

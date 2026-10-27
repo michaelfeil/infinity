@@ -540,6 +540,9 @@ impl From<EmbeddingInput> for InputBatch {
     }
 }
 
+/// Embedding representation, not model compute precision. `tensor` returns portable
+/// little-endian float32 with explicit shape and dtype: JSON base64 or MessagePack bin.
+/// `float` keeps numeric arrays; legacy `base64` keeps native-endian float32 vectors.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, ToSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum EncodingFormat {
