@@ -448,10 +448,16 @@ void d3_test() {
   Weights readout;
   readout["weight"] = at::sin(at::arange(255 * 16).view({255, 16}).to(at::kFloat) * .017);
   auto hidden = (at::cos(at::arange(80).view({5, 16}).to(at::kFloat) * .13)).to(at::kBFloat16);
+  auto block_cfg = cfg;
+  block_cfg.values["attention_mode"] = "prefix_bidir";
+  auto block_head = create_decision_head("d3", block_cfg, backbone, readout, {});
   auto head = create_decision_head("d3", cfg, backbone, readout, {});
   DecisionRequest first{DecisionRequest::Kind::OptionTokens}, second{DecisionRequest::Kind::Warmup};
   first.token_ids = {0, 1, 2};
   auto result = head->forward(hidden, in.input, {first, second});
+  auto block_result = block_head->forward(hidden, in.input, {first, second});
+  close(block_result[0].logits, result[0].logits);
+  close(block_result[1].logits, result[1].logits);
   auto full = at::linear(hidden[2].to(at::kFloat).unsqueeze(0), readout["weight"]);
   close(result[0].logits, full.narrow(1, 0, 3).flatten());
   close(result[1].logits,

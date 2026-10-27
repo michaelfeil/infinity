@@ -17,6 +17,7 @@ def main():
     parser.add_argument("--checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--text-only", action="store_true", help="Skip checkpoint-specific image/video assets")
     args = parser.parse_args()
     checkpoint = args.checkpoint.resolve()
     output = args.output.resolve()
@@ -44,6 +45,8 @@ def main():
         "mixed": {"state": "The attached receipt and a short clip from a test camera.", "images": [image], "videos": [video],
                   "questions": {"receipt": receipt, "direction": direction}},
     }
+    if args.text_only:
+        cases = {"text": cases["text"]}
     model = D3(checkpoint, device=args.device, batch_size=1)
     for name, request in cases.items():
         prepared = model.prepare(**request)
@@ -54,6 +57,10 @@ def main():
                 wire[field] = [f"data:{mime};base64," + base64.b64encode(Path(p).read_bytes()).decode() for p in wire[field]]
         (output / f"{name}-request.json").write_text(json.dumps(wire))
         (output / f"{name}-response.json").write_text(json.dumps(result, indent=2))
+        if prepared.sequences:
+            (output / f"{name}-tokens.json").write_text(json.dumps({
+                "sequences": prepared.sequences, "states": getattr(prepared, "states", {})
+            }, indent=2))
         print(name, json.dumps(result), flush=True)
 
 

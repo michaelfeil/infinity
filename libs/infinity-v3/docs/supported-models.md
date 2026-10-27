@@ -305,7 +305,7 @@ supply labels or turn an embedding model into a classifier.
 Use `/v1/systemone` and retain the checkpoint's trained heads and protocol
 sidecars. Set the protocol explicitly as shown; Laya is detected from its
 `rl_agent_config.json` and needs no decoder protocol flag. A local path or custom
-served model name does not select a protocol by its name. The `d3`, `d3-mini`,
+served model name does not select a protocol by its name. The `d3`, `d3-mini`, `d3-ultra`,
 `pplx-decider-v1.1-27b` and `pplx-decider-flash-v1.2` short aliases select their
 registered checkpoints and protocols automatically.
 
@@ -331,6 +331,7 @@ server's `/docs` for the selected protocol.
 | [perplexity-ai/pplx-decider-v1.2](https://huggingface.co/perplexity-ai/pplx-decider-v1.2) | Qwen3.5 + Perplexity decision readouts | `--decision-protocol pplx --max-batch-tokens 8192` |
 | [vllm-sr/d3](https://huggingface.co/vllm-sr/d3) | Qwen3.5 + D3 code-readout head | `--decision-protocol d3 --max-batch-tokens 32768` |
 | [vllm-sr/d3-mini](https://huggingface.co/vllm-sr/d3-mini) | Qwen3.5 + D3 code-readout head | `--decision-protocol d3 --max-batch-tokens 32768` |
+| [vllm-sr/d3-ultra](https://huggingface.co/vllm-sr/d3-ultra) | Qwen3.5-27B + D3 prefix-bidirectional code-readout head | `--decision-protocol d3 --dtype bfloat16 --max-batch-tokens 8192` |
 
 ## Sparse embeddings
 
@@ -444,6 +445,16 @@ curl http://localhost:8000/v1/systemone \
 This returns a typed decision for `route`. Use the running schema for other
 protocols and question types. D3-mini can also process supported image state;
 text-only examples do not require a media configuration.
+
+D3 Ultra uses the same endpoint and `choice`, `noul`, and `score` question types.
+Its checkpoint selects the `header-v1` text prompt, prefix-bidirectional attention
+and question-count temperature calibration automatically. Text and shared
+top-level image/video inputs are supported; video decoding requires `ffmpeg` and
+`ffprobe` in the server environment. Box/Track questions and image references
+inside instructions or criteria are not implemented. BF16 weights require
+approximately 52 GB before inference buffers; validate batch limits against
+available GPU memory.
+
 
 ## Model licenses
 

@@ -24,6 +24,7 @@ pub(crate) fn resolve(
         ),
         "d3" | "vllm-sr/d3" => ("vllm-sr/d3", DecisionProtocol::D3),
         "d3-mini" | "vllm-sr/d3-mini" => ("vllm-sr/d3-mini", DecisionProtocol::D3),
+        "d3-ultra" | "vllm-sr/d3-ultra" => ("vllm-sr/d3-ultra", DecisionProtocol::D3),
         _ => return Ok((model_id, protocol)),
     };
     anyhow::ensure!(
@@ -79,12 +80,21 @@ mod tests {
 
     #[test]
     fn d3_aliases_select_the_native_protocol() -> Result<()> {
-        for id in ["d3", "vllm-sr/d3", "d3-mini", "vllm-sr/d3-mini"] {
+        for id in [
+            "d3",
+            "vllm-sr/d3",
+            "d3-mini",
+            "vllm-sr/d3-mini",
+            "d3-ultra",
+            "vllm-sr/d3-ultra",
+        ] {
             let (target, protocol) = resolve(id.into(), None, None)?;
             assert_eq!(
                 target,
                 if id.ends_with("-mini") {
                     "vllm-sr/d3-mini"
+                } else if id.ends_with("-ultra") {
+                    "vllm-sr/d3-ultra"
                 } else {
                     "vllm-sr/d3"
                 }

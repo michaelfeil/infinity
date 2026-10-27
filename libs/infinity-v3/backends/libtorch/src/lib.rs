@@ -618,10 +618,15 @@ impl LibtorchBackend {
                 ("option_tokens", serde_json::json!({}))
             };
             if matches!(kind, "pplx" | "d3") {
-                options["_decision_attention_mode"] = config
-                    .get("attention_mode")
-                    .cloned()
-                    .unwrap_or_else(|| "causal".into());
+                options["_decision_attention_mode"] =
+                    if kind == "d3" && config["attention_mode"] == "prefix_bidir" {
+                        "block_bidirectional".into()
+                    } else {
+                        config
+                            .get("attention_mode")
+                            .cloned()
+                            .unwrap_or_else(|| "causal".into())
+                    };
             }
             options["_decision"] = serde_json::json!({"kind":kind,"config":config});
             Some(kind)
