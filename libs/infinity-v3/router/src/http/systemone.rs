@@ -886,7 +886,6 @@ pub(crate) async fn systemone_inner(
     let compute_chars = questions.iter().map(|q| q.compute_chars).sum();
     let input_tokens = input_token_count(&questions);
     let sequences = questions.len();
-    let batch_counter = Arc::new(std::sync::atomic::AtomicUsize::new(sequences));
     let output_tokens = if matches!(
         service.as_ref(),
         SystemOne::Rune(_) | SystemOne::Onejev(_) | SystemOne::Pplx(_)
@@ -900,11 +899,9 @@ pub(crate) async fn systemone_inner(
     } else {
         "laya-rl-agent"
     };
-    let answers = futures::future::try_join_all(questions.into_iter().map(|mut question| {
-        let infer = infer.clone();
-        let service = service.clone();
-        let batch_counter = batch_counter.clone();
-        async move {
+    let inputs = questions
+        .iter_mut()
+        .map(|question| {
             let encoding = std::mem::replace(
                 &mut question.encoding,
                 ValidEncoding {
@@ -916,27 +913,26 @@ pub(crate) async fn systemone_inner(
                     offsets: vec![],
                 },
             );
-            let output = infer
-                .decide(
-                    encoding,
-                    question.input.clone(),
-                    tokenization,
-                    batch_counter,
-                )
-                .await
-                .map_err(|e| {
-                    let status = if matches!(
-                        e,
-                        infinity_v3_core::TextEmbeddingsError::Backend(
-                            infinity_v3_backend::BackendError::Overloaded(_)
-                        )
-                    ) {
-                        StatusCode::TOO_MANY_REQUESTS
-                    } else {
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    };
-                    error(status, e)
-                })?;
+            (encoding, question.input.clone())
+        })
+        .collect();
+    let outputs = infer.decide(inputs, tokenization).await.map_err(|e| {
+        let status = if matches!(
+            e,
+            infinity_v3_core::TextEmbeddingsError::Backend(
+                infinity_v3_backend::BackendError::Overloaded(_)
+            )
+        ) {
+            StatusCode::TOO_MANY_REQUESTS
+        } else {
+            StatusCode::INTERNAL_SERVER_ERROR
+        };
+        error(status, e)
+    })?;
+    let answers = questions
+        .into_iter()
+        .zip(outputs)
+        .map(|(question, output)| {
             let answer = service.answer(&question, output.results).map_err(|e| {
                 let status = if matches!(e, AnswerError::Memory(_)) {
                     StatusCode::TOO_MANY_REQUESTS
@@ -946,9 +942,8 @@ pub(crate) async fn systemone_inner(
                 error(status, e)
             })?;
             Ok::<_, ApiError>((question.id, answer, output.metadata))
-        }
-    }))
-    .await?;
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let count = answers.len().max(1) as u32;
     let queue = answers.iter().map(|(_, _, m)| m.queue).sum::<Duration>() / count;
     let inference = answers

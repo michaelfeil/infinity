@@ -56,48 +56,62 @@ impl Infer {
         self
     }
 
+    /// Schedule all prepared questions as one request, preserving reply order across hard splits.
     pub async fn decide(
         &self,
-        encoding: crate::tokenization::ValidEncoding,
-        input: infinity_v3_backend::DecisionInput,
+        questions: Vec<(
+            crate::tokenization::ValidEncoding,
+            infinity_v3_backend::DecisionInput,
+        )>,
         tokenization: Duration,
-        batch_counter: Arc<AtomicUsize>,
-    ) -> Result<DecisionInferResponse, TextEmbeddingsError> {
-        let preparation = BatchPreparation {
-            remaining: Some(batch_counter.as_ref()),
-            notify: &self.notify_batching_task,
-        };
+    ) -> Result<Vec<DecisionInferResponse>, TextEmbeddingsError> {
         if self.backend.model_type != ModelType::Decision {
             return Err(TextEmbeddingsError::Validation(
                 "Loaded model does not support typed decisions".into(),
             ));
         }
-        let (response_tx, response_rx) = oneshot::channel();
-        self.queue
-            .append(Entry {
+        let queued_at = Instant::now();
+        let mut entries = Vec::with_capacity(questions.len());
+        let mut responses = Vec::with_capacity(questions.len());
+        for (encoding, input) in questions {
+            let (response_tx, response_rx) = oneshot::channel();
+            entries.push(Entry {
                 metadata: Metadata {
                     priority: self.priority,
                     input_memory: None,
-                    client_batch: Some(batch_counter.clone()),
                     response_tx,
                     tokenization,
-                    queue_time: Instant::now(),
+                    queue_time: queued_at,
                     prompt_tokens: encoding.input_ids.len(),
                     pooling: false,
                     token_classification: false,
                     decision: Some(input),
                 },
                 encoding,
-            })
-            .await;
-        drop(preparation);
-        match response_rx.await.map_err(|_| BackendError::Unhealthy)?? {
-            InferResult::Decision(output) => {
-                retain_for_request(output.metadata.memory.clone());
-                Ok(output)
-            }
-            _ => Err(BackendError::Inference("Unexpected decision response".into()).into()),
+            });
+            responses.push(response_rx);
         }
+        self.queue
+            .append_request(entries, self.backend.shares_block_prefix)
+            .await;
+        self.notify_batching_task.notify_one();
+        // Every question is already queued; awaiting channels in order does not
+        // serialize execution, and keeps result delivery aligned with the request.
+        let mut outputs = Vec::with_capacity(responses.len());
+        for response in responses {
+            match response.await.map_err(|_| BackendError::Unhealthy)?? {
+                InferResult::Decision(output) => {
+                    retain_for_request(output.metadata.memory.clone());
+                    outputs.push(output);
+                }
+                _ => {
+                    return Err(
+                        BackendError::Inference("Unexpected decision response".into()).into(),
+                    )
+                }
+            }
+        }
+        Ok(outputs)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -484,7 +498,6 @@ impl Infer {
                 metadata: Metadata {
                     priority: self.priority,
                     input_memory: None,
-                    client_batch: batch_counter.clone(),
                     response_tx,
                     tokenization: start_time.elapsed(),
                     queue_time: Instant::now(),
@@ -565,7 +578,6 @@ impl Infer {
                 metadata: Metadata {
                     priority: self.priority,
                     input_memory: None,
-                    client_batch: batch_counter.clone(),
                     response_tx,
                     tokenization: start_time.elapsed(),
                     queue_time: Instant::now(),
@@ -689,7 +701,6 @@ impl Infer {
                 metadata: Metadata {
                     priority: self.priority,
                     input_memory: None,
-                    client_batch: batch_counter.clone(),
                     response_tx,
                     tokenization: start_time.elapsed(),
                     queue_time: Instant::now(),
@@ -1182,7 +1193,6 @@ mod completion_tests {
                             priority: false,
                             input_memory: None,
                             decision: None,
-                            client_batch: Some(remaining.clone()),
                             response_tx,
                             tokenization: Duration::ZERO,
                             queue_time: Instant::now(),
@@ -1258,7 +1268,6 @@ mod completion_tests {
                 priority: false,
                 input_memory: None,
                 decision: None,
-                client_batch: None,
                 response_tx,
                 tokenization: Duration::from_micros(7),
                 queue_time: Instant::now(),
@@ -1314,7 +1323,6 @@ mod completion_tests {
                 priority: false,
                 input_memory: None,
                 decision: None,
-                client_batch: None,
                 response_tx,
                 tokenization: Duration::from_micros(7),
                 queue_time: Instant::now(),
