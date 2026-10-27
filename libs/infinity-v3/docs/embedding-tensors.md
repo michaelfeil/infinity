@@ -194,10 +194,9 @@ Each tensor has `shape`, `dtype: "float32"`, `data_encoding` and `data`.
 Buffers are contiguous, row-major, little-endian IEEE 754 float32, with exactly
 `4 * product(shape)` decoded bytes and no header or padding. IEEE 754 bits,
 including signed zero, are preserved. The public dtype is always `float32`,
-independent of the backend's weight or compute precision. FP16 and INT8 output
-are not currently supported. This is a portable output contract, not a dump of
-backend tensor storage: no pointers, device identifiers, strides or uninitialized
-allocation padding are transmitted.
+independent of the backend's weight or compute precision. This is a portable
+output contract, not a dump of backend tensor storage: no pointers, device
+identifiers, strides or uninitialized allocation padding are transmitted.
 
 JSON uses `data_encoding: "base64"` and a string; MessagePack uses
 `data_encoding: "binary"` and bin data. Both `application/msgpack` and
@@ -216,9 +215,9 @@ The live contract is available at `/api-doc/openapi.json` and `/docs`.
 OpenAPI uses `Tensor` for JSON (base64 string) and `TensorMessagePack` for
 MessagePack (binary data). Both carry the same logical values, shape and dtype;
 byte order and row-major layout are fixed by this contract, not negotiated or
-inherited from the server CPU. The generated dtype enum lists only implemented
-output types. In MessagePack, `format: binary` denotes a **bin** value, not a
-string containing base64 or a list of integers.
+inherited from the server CPU. The dtype enum is `float32`. In MessagePack,
+`format: binary` denotes a **bin** value, not a string containing base64 or a list
+of integers.
 
 Requests continue through the existing JSON parser and request validation;
 selecting tensor output does not enable uploading or deserializing arbitrary
@@ -240,25 +239,6 @@ MessagePack tensor output avoids base64 expansion and per-element numeric
 serialization; JSON tensor output remains available for clients preferring
 base64. Tensor packing writes little-endian float32 bytes directly into one
 admitted contiguous buffer. The byte-order guarantee needs no extra swapping
-pass and the response does not contain a second float32 representation. HTTP reception and serialization still copy
-bytes; this is not end-to-end zero-copy and no universal latency claim is made.
-
-## Future output precision
-
-Output precision and `encoding_format` are separate choices. `tensor` describes
-the container, not a request to expose the model's internal dtype. Future
-precision options must be explicitly requested and must preserve today's
-float32 default and existing tensor fields. They are not supported request
-parameters today.
-
-- `float16` would mean two bytes per element, little-endian IEEE 754 binary16.
-  Loss of precision and overflow on conversion must be documented.
-- `int8` would mean one signed two's-complement byte per element. A quantized
-  embedding also needs a specified quantization scheme, scale granularity and
-  zero point (or an explicitly defined symmetric scheme). Integer storage alone
-  does not explain how to recover approximate float values or compare vectors.
-
-These are design constraints, not currently advertised dtype enum values.
-Each new output type needs matching OpenAPI, Python/Node decoding examples and
-wire fixtures before it is enabled. Clients should reject unsupported types,
-rather than silently treating every tensor as float32.
+pass and the response does not contain a second float32 representation. HTTP
+reception and serialization still copy bytes; this is not end-to-end zero-copy
+and no universal latency claim is made.
