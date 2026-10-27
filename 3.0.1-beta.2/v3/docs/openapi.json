@@ -1,0 +1,3400 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "infinity_v3",
+    "description": "infinity_v3 inference server",
+    "contact": {
+      "name": "infinity authors"
+    },
+    "license": {
+      "name": "Infinity Restricted MIT License 1.0 (see scope and retained licenses)"
+    },
+    "version": "3.0.1-beta.2"
+  },
+  "paths": {
+    "/decode": {
+      "post": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "Decode input ids",
+        "operationId": "decode",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DecodeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Decoded ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecodeResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/DecodeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/embed": {
+      "post": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "Get Embeddings. Returns a 424 status code if the model is not an embedding model.",
+        "operationId": "embed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Embeddings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Embedding Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/embed_all": {
+      "post": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "Get all Embeddings without Pooling.",
+        "description": "Returns a 424 status code if the model is not an embedding model.",
+        "operationId": "embed_all",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedAllRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Embeddings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedAllResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedAllResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Embedding Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/embed_sparse": {
+      "post": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "Get Sparse Embeddings. Returns a 424 status code if the model is not an embedding model with SPLADE pooling.",
+        "operationId": "embed_sparse",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmbedSparseRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Embeddings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedSparseResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmbedSparseResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Embedding Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "Health check method",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Everything is working fine",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "nullable": true,
+                  "enum": [
+                    null
+                  ]
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "nullable": true,
+                  "enum": [
+                    null
+                  ]
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "One or more deployed models are unhealthy",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "unhealthy",
+                  "error_type": "unhealthy"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/info": {
+      "get": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "infinity_v3 endpoint info",
+        "operationId": "get_model_info",
+        "responses": {
+          "200": {
+            "description": "Served model info",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Info"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/Info"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or unknown model",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "model",
+            "in": "query",
+            "description": "Served model name; required when multiple models are deployed",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "nullable": true
+            }
+          }
+        ]
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "Prometheus metrics scrape endpoint",
+        "operationId": "metrics",
+        "responses": {
+          "200": {
+            "description": "Prometheus Metrics",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/predict": {
+      "post": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "Deprecated: use /v1/classify. This route retains the legacy label/score response.",
+        "operationId": "predict",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PredictRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Predictions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/PredictResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Prediction Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/rerank": {
+      "post": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "Get Ranks. Returns a 424 status code if the model is not a Sequence Classification model with",
+        "description": "a single class.",
+        "operationId": "rerank",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RerankRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Ranks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerankResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/RerankResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Rerank Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/similarity": {
+      "post": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "Get Sentence Similarity. Returns a 424 status code if the model is not an embedding model.",
+        "operationId": "similarity",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SimilarityRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Sentence Similarity",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimilarityResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/SimilarityResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Embedding Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Inference failed",
+                  "error_type": "backend"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Model is overloaded",
+                  "error_type": "overloaded"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/tokenize": {
+      "post": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "Tokenize inputs",
+        "operationId": "tokenize",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TokenizeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Tokenized ids",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenizeResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenizeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch is empty",
+                  "error_type": "empty"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Batch size error",
+                  "error_type": "validation"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                },
+                "example": {
+                  "error": "Tokenization error",
+                  "error_type": "tokenizer"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/embeddings": {
+      "post": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "summary": "OpenAI compatible route. Returns a 424 status code if the model is not an embedding model.",
+        "operationId": "openai_embed",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OpenAICompatRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Embeddings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Batch is empty",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                },
+                "example": {
+                  "message": "Batch is empty",
+                  "type": "empty"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch size error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                },
+                "example": {
+                  "message": "Batch size error",
+                  "type": "validation"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Tokenization error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                },
+                "example": {
+                  "message": "Tokenization error",
+                  "type": "tokenizer"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Embedding Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                },
+                "example": {
+                  "message": "Inference failed",
+                  "type": "backend"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                },
+                "example": {
+                  "message": "Model is overloaded",
+                  "type": "overloaded"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/OpenAICompatErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/classify": {
+      "post": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "operationId": "classify",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClassifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Classification probabilities and token usage",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid classification input",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Batch or token limit exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid JSON or tokenization",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyErrorResponse"
+                }
+              }
+            }
+          },
+          "424": {
+            "description": "Classification backend failure",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Model is overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ClassifyErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/models": {
+      "get": {
+        "tags": [
+          "infinity_v3"
+        ],
+        "operationId": "models",
+        "responses": {
+          "200": {
+            "description": "Resident models and capabilities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServedModels"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServedModels"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/systemone": {
+      "post": {
+        "tags": [
+          "super::systemone"
+        ],
+        "operationId": "systemone",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SystemOneRequestBody"
+              },
+              "examples": {
+                "joint_image": {
+                  "summary": "Perplexity joint v1.2: shared top-level image",
+                  "value": {
+                    "model": "perplexity-ai/pplx-decider-flash-v1.2",
+                    "state": "Inspect this delivery.",
+                    "images": [
+                      "https://bucket.s3.amazonaws.com/photo.jpg"
+                    ],
+                    "questions": {
+                      "damaged": {
+                        "type": "noul",
+                        "instructions": "Is the package damaged?"
+                      }
+                    }
+                  }
+                },
+                "onejev_image": {
+                  "summary": "OneJev: image inside state.messages",
+                  "value": {
+                    "model": "decision-models/baseten-elephant-9b-latest",
+                    "state": {
+                      "messages": [
+                        {
+                          "role": "user",
+                          "content": [
+                            {
+                              "type": "text",
+                              "text": "Inspect this delivery."
+                            },
+                            {
+                              "type": "image_url",
+                              "image_url": {
+                                "url": "https://bucket.s3.amazonaws.com/photo.jpg"
+                              }
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    "questions": {
+                      "damaged": {
+                        "type": "noul",
+                        "instructions": "Is the package damaged?"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Typed decisions",
+            "content": {
+              "application/json": {
+                "schema": {}
+              },
+              "application/msgpack": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or unsupported model",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Invalid request for the selected protocol, question or token budget",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Server overloaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              },
+              "application/msgpack": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ClassifierModel": {
+        "type": "object",
+        "required": [
+          "id2label",
+          "label2id"
+        ],
+        "properties": {
+          "id2label": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "example": {
+              "0": "LABEL"
+            }
+          },
+          "label2id": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "example": {
+              "LABEL": 0
+            }
+          }
+        }
+      },
+      "DecodeRequest": {
+        "type": "object",
+        "required": [
+          "ids"
+        ],
+        "properties": {
+          "ids": {
+            "$ref": "#/components/schemas/InputIds"
+          },
+          "skip_special_tokens": {
+            "type": "boolean",
+            "default": "true",
+            "example": "true"
+          },
+          "model": {
+            "type": "string",
+            "description": "Served model name; required for multi-model deployments.",
+            "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
+          }
+        }
+      },
+      "DecodeResponse": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "example": [
+          "test"
+        ]
+      },
+      "EmbedAllRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "$ref": "#/components/schemas/EmbeddingInput"
+          },
+          "prompt_name": {
+            "type": "string",
+            "description": "The name of the prompt that should be used by for encoding. If not set, no prompt\nwill be applied.\n\nMust be a key in the `sentence-transformers` configuration `prompts` dictionary.\n\nFor example if ``prompt_name`` is \"query\" and the ``prompts`` is {\"query\": \"query: \", ...},\nthen the sentence \"What is the capital of France?\" will be encoded as\n\"query: What is the capital of France?\" because the prompt text will be prepended before\nany text to encode.",
+            "default": "null",
+            "example": "null",
+            "nullable": true
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false",
+            "nullable": true
+          },
+          "truncation_direction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TruncationDirection"
+              }
+            ],
+            "default": "right"
+          },
+          "model": {
+            "type": "string",
+            "description": "Served model name; required for multi-model deployments.",
+            "nullable": true
+          },
+          "encoding_format": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EncodingFormat"
+              }
+            ],
+            "default": "float"
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
+          }
+        }
+      },
+      "EmbedAllResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/AllEmbedding"
+        },
+        "example": [
+          [
+            [
+              0.0,
+              1.0,
+              2.0
+            ]
+          ]
+        ]
+      },
+      "EmbedRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "dimensions": {
+            "type": "integer",
+            "description": "The number of dimensions that the output embeddings should have. If not set, the original\nshape of the representation will be returned instead.",
+            "default": "null",
+            "example": "null",
+            "nullable": true,
+            "minimum": 0
+          },
+          "inputs": {
+            "$ref": "#/components/schemas/EmbeddingInput"
+          },
+          "normalize": {
+            "type": "boolean",
+            "default": "true",
+            "example": "true"
+          },
+          "prompt_name": {
+            "type": "string",
+            "description": "The name of the prompt that should be used by for encoding. If not set, no prompt\nwill be applied.\n\nMust be a key in the `sentence-transformers` configuration `prompts` dictionary.\n\nFor example if ``prompt_name`` is \"query\" and the ``prompts`` is {\"query\": \"query: \", ...},\nthen the sentence \"What is the capital of France?\" will be encoded as\n\"query: What is the capital of France?\" because the prompt text will be prepended before\nany text to encode.",
+            "default": "null",
+            "example": "null",
+            "nullable": true
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false",
+            "nullable": true
+          },
+          "truncation_direction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TruncationDirection"
+              }
+            ],
+            "default": "right"
+          },
+          "model": {
+            "type": "string",
+            "description": "Served model name; required for multi-model deployments.",
+            "nullable": true
+          },
+          "encoding_format": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/EncodingFormat"
+              }
+            ],
+            "default": "float"
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
+          }
+        }
+      },
+      "EmbedResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/Embedding"
+        },
+        "example": [
+          [
+            0.0,
+            1.0,
+            2.0
+          ]
+        ]
+      },
+      "EmbedSparseRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "$ref": "#/components/schemas/EmbeddingInput"
+          },
+          "prompt_name": {
+            "type": "string",
+            "description": "The name of the prompt that should be used by for encoding. If not set, no prompt\nwill be applied.\n\nMust be a key in the `sentence-transformers` configuration `prompts` dictionary.\n\nFor example if ``prompt_name`` is \"query\" and the ``prompts`` is {\"query\": \"query: \", ...},\nthen the sentence \"What is the capital of France?\" will be encoded as\n\"query: What is the capital of France?\" because the prompt text will be prepended before\nany text to encode.",
+            "default": "null",
+            "example": "null",
+            "nullable": true
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false",
+            "nullable": true
+          },
+          "truncation_direction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TruncationDirection"
+              }
+            ],
+            "default": "right"
+          },
+          "model": {
+            "type": "string",
+            "description": "Served model name; required for multi-model deployments.",
+            "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
+          }
+        }
+      },
+      "EmbedSparseResponse": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/SparseValue"
+          }
+        }
+      },
+      "Embedding": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          },
+          {
+            "$ref": "#/components/schemas/AllEmbedding"
+          },
+          {
+            "type": "string"
+          }
+        ]
+      },
+      "EmbeddingModel": {
+        "type": "object",
+        "required": [
+          "pooling"
+        ],
+        "properties": {
+          "pooling": {
+            "type": "string",
+            "example": "cls"
+          }
+        }
+      },
+      "EncodingFormat": {
+        "type": "string",
+        "enum": [
+          "float",
+          "base64",
+          "tensor"
+        ]
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "required": [
+          "error",
+          "error_type"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "error_type": {
+            "$ref": "#/components/schemas/ErrorType"
+          }
+        }
+      },
+      "ErrorType": {
+        "type": "string",
+        "enum": [
+          "Unhealthy",
+          "Backend",
+          "Overloaded",
+          "Validation",
+          "Tokenizer",
+          "Empty"
+        ]
+      },
+      "Info": {
+        "type": "object",
+        "required": [
+          "model_id",
+          "model_dtype",
+          "model_type",
+          "max_concurrent_requests",
+          "max_input_length",
+          "max_batch_tokens",
+          "max_client_batch_size",
+          "max_decision_questions",
+          "auto_truncate",
+          "tokenization_workers",
+          "tokenization_queue_capacity",
+          "radix_mlp_threshold",
+          "enable_fp8_dynamic",
+          "version"
+        ],
+        "properties": {
+          "auto_truncate": {
+            "type": "boolean"
+          },
+          "docker_label": {
+            "type": "string",
+            "example": "null",
+            "nullable": true
+          },
+          "max_batch_requests": {
+            "type": "integer",
+            "default": "null",
+            "example": "null",
+            "nullable": true,
+            "minimum": 0
+          },
+          "max_batch_tokens": {
+            "type": "integer",
+            "example": "2048",
+            "minimum": 0
+          },
+          "max_client_batch_size": {
+            "type": "integer",
+            "example": "32",
+            "minimum": 0
+          },
+          "max_concurrent_requests": {
+            "type": "integer",
+            "description": "Router Parameters",
+            "example": "128",
+            "minimum": 0
+          },
+          "max_input_length": {
+            "type": "integer",
+            "example": "512",
+            "minimum": 0
+          },
+          "model_dtype": {
+            "type": "string",
+            "example": "float16"
+          },
+          "model_id": {
+            "type": "string",
+            "description": "Model info",
+            "example": "thenlper/gte-base"
+          },
+          "model_sha": {
+            "type": "string",
+            "example": "fca14538aa9956a46526bd1d0d11d69e19b5a101",
+            "nullable": true
+          },
+          "model_type": {
+            "$ref": "#/components/schemas/ModelType"
+          },
+          "sha": {
+            "type": "string",
+            "example": "null",
+            "nullable": true
+          },
+          "tokenization_queue_capacity": {
+            "type": "integer",
+            "description": "Maximum waiting tokenizer jobs (individual inputs, not HTTP requests).",
+            "example": "1024",
+            "minimum": 0
+          },
+          "tokenization_workers": {
+            "type": "integer",
+            "example": "4",
+            "minimum": 0
+          },
+          "version": {
+            "type": "string",
+            "description": "Router Info",
+            "example": "0.5.0"
+          },
+          "enable_fp8_dynamic": {
+            "type": "boolean",
+            "description": "Experimental per-token activation and per-row weight FP8 MLP quantization."
+          },
+          "max_decision_questions": {
+            "type": "integer",
+            "description": "Maximum question fanout for /v1/systemone, independent of the client batch limit.",
+            "minimum": 0
+          },
+          "radix_mlp_threshold": {
+            "type": "number",
+            "format": "float",
+            "example": "0.5"
+          }
+        }
+      },
+      "InputIds": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          }
+        ]
+      },
+      "ModelType": {
+        "oneOf": [
+          {
+            "type": "string",
+            "enum": [
+              "decision"
+            ]
+          },
+          {
+            "type": "object",
+            "required": [
+              "classifier"
+            ],
+            "properties": {
+              "classifier": {
+                "$ref": "#/components/schemas/ClassifierModel"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "embedding"
+            ],
+            "properties": {
+              "embedding": {
+                "$ref": "#/components/schemas/EmbeddingModel"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "reranker"
+            ],
+            "properties": {
+              "reranker": {
+                "$ref": "#/components/schemas/ClassifierModel"
+              }
+            }
+          }
+        ]
+      },
+      "OpenAICompatEmbedding": {
+        "type": "object",
+        "required": [
+          "object",
+          "embedding",
+          "index"
+        ],
+        "properties": {
+          "embedding": {
+            "$ref": "#/components/schemas/Embedding"
+          },
+          "index": {
+            "type": "integer",
+            "example": "0",
+            "minimum": 0
+          },
+          "object": {
+            "type": "string",
+            "example": "embedding"
+          }
+        }
+      },
+      "OpenAICompatErrorResponse": {
+        "type": "object",
+        "required": [
+          "message",
+          "code",
+          "error_type"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "error_type": {
+            "$ref": "#/components/schemas/ErrorType"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "OpenAICompatRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "input"
+            ],
+            "properties": {
+              "dimensions": {
+                "type": "integer",
+                "default": "null",
+                "example": "null",
+                "nullable": true,
+                "minimum": 0
+              },
+              "encoding_format": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/EncodingFormat"
+                  }
+                ],
+                "default": "float"
+              },
+              "input": {
+                "$ref": "#/components/schemas/EmbeddingInput"
+              },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Message"
+                },
+                "minItems": 1
+              },
+              "model": {
+                "type": "string",
+                "example": "null",
+                "nullable": true
+              },
+              "user": {
+                "type": "string",
+                "example": "null",
+                "nullable": true
+              },
+              "service_tier": {
+                "$ref": "#/components/schemas/ServiceTier"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "messages"
+            ],
+            "properties": {
+              "dimensions": {
+                "type": "integer",
+                "default": "null",
+                "example": "null",
+                "nullable": true,
+                "minimum": 0
+              },
+              "encoding_format": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/EncodingFormat"
+                  }
+                ],
+                "default": "float"
+              },
+              "input": {
+                "$ref": "#/components/schemas/EmbeddingInput"
+              },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Message"
+                },
+                "minItems": 1
+              },
+              "model": {
+                "type": "string",
+                "example": "null",
+                "nullable": true
+              },
+              "user": {
+                "type": "string",
+                "example": "null",
+                "nullable": true
+              },
+              "service_tier": {
+                "$ref": "#/components/schemas/ServiceTier"
+              }
+            }
+          }
+        ],
+        "description": "Provide exactly one of input or messages; a message list is one conversation."
+      },
+      "OpenAICompatResponse": {
+        "type": "object",
+        "required": [
+          "object",
+          "data",
+          "model",
+          "usage"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/OpenAICompatEmbedding"
+            }
+          },
+          "model": {
+            "type": "string",
+            "example": "thenlper/gte-base"
+          },
+          "object": {
+            "type": "string",
+            "example": "list"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/OpenAICompatUsage"
+          }
+        }
+      },
+      "OpenAICompatUsage": {
+        "type": "object",
+        "required": [
+          "prompt_tokens",
+          "total_tokens"
+        ],
+        "properties": {
+          "prompt_tokens": {
+            "type": "integer",
+            "example": "512",
+            "minimum": 0
+          },
+          "total_tokens": {
+            "type": "integer",
+            "example": "512",
+            "minimum": 0
+          }
+        }
+      },
+      "PredictInput": {
+        "oneOf": [
+          {
+            "type": "string",
+            "description": "A single string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "A pair of strings",
+            "maxItems": 2,
+            "minItems": 2
+          },
+          {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "A single string",
+                  "maxItems": 1,
+                  "minItems": 1
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "A pair of strings",
+                  "maxItems": 2,
+                  "minItems": 2
+                }
+              ]
+            },
+            "description": "A batch"
+          },
+          {
+            "$ref": "#/components/schemas/MessageInput"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MessageInput"
+            },
+            "description": "A batch of independent conversations",
+            "minItems": 1
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "maximum": 4294967295,
+              "minimum": 0
+            },
+            "description": "A final, unpadded token-ID sequence; segment IDs are zero",
+            "minItems": 1
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "maximum": 4294967295,
+                "minimum": 0
+              },
+              "description": "A final, unpadded token-ID sequence; segment IDs are zero",
+              "minItems": 1
+            },
+            "description": "A batch of independent final token-ID sequences",
+            "minItems": 1
+          }
+        ],
+        "description": "Model input: a string, a string pair, a batch of single strings and pairs, conversations, or final token IDs and batches of final token IDs.",
+        "example": "What is Deep Learning?"
+      },
+      "PredictRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "$ref": "#/components/schemas/PredictInput"
+          },
+          "raw_scores": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false"
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false",
+            "nullable": true
+          },
+          "truncation_direction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TruncationDirection"
+              }
+            ],
+            "default": "right"
+          },
+          "model": {
+            "type": "string",
+            "description": "Served model name; required for multi-model deployments.",
+            "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
+          }
+        }
+      },
+      "PredictResponse": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Prediction"
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "$ref": "#/components/schemas/Prediction"
+              }
+            }
+          }
+        ]
+      },
+      "Prediction": {
+        "type": "object",
+        "required": [
+          "score",
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "example": "admiration"
+          },
+          "score": {
+            "type": "number",
+            "format": "float",
+            "example": "0.5"
+          }
+        }
+      },
+      "Rank": {
+        "type": "object",
+        "required": [
+          "index",
+          "score"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "example": "0",
+            "minimum": 0
+          },
+          "score": {
+            "type": "number",
+            "format": "float",
+            "example": "1.0"
+          },
+          "text": {
+            "type": "string",
+            "default": "null",
+            "example": "Deep Learning is ...",
+            "nullable": true
+          }
+        }
+      },
+      "RerankRequest": {
+        "type": "object",
+        "required": [
+          "query",
+          "texts"
+        ],
+        "properties": {
+          "query": {
+            "type": "string",
+            "example": "What is Deep Learning?"
+          },
+          "raw_scores": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false"
+          },
+          "return_text": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false"
+          },
+          "texts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "example": [
+              "Deep Learning is ..."
+            ]
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false",
+            "nullable": true
+          },
+          "truncation_direction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TruncationDirection"
+              }
+            ],
+            "default": "right"
+          },
+          "model": {
+            "type": "string",
+            "description": "Served model name; required for multi-model deployments.",
+            "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
+          }
+        }
+      },
+      "RerankResponse": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/Rank"
+        }
+      },
+      "SimilarityInput": {
+        "type": "object",
+        "required": [
+          "source_sentence",
+          "sentences"
+        ],
+        "properties": {
+          "sentences": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "A list of strings which will be compared against the source_sentence.",
+            "example": [
+              "What is Machine Learning?"
+            ]
+          },
+          "source_sentence": {
+            "type": "string",
+            "description": "The string that you wish to compare the other strings with. This can be a phrase, sentence,\nor longer passage, depending on the model being used.",
+            "example": "What is Deep Learning?"
+          }
+        }
+      },
+      "SimilarityParameters": {
+        "type": "object",
+        "properties": {
+          "prompt_name": {
+            "type": "string",
+            "description": "The name of the prompt that should be used by for encoding. If not set, no prompt\nwill be applied.\n\nMust be a key in the `sentence-transformers` configuration `prompts` dictionary.\n\nFor example if ``prompt_name`` is \"query\" and the ``prompts`` is {\"query\": \"query: \", ...},\nthen the sentence \"What is the capital of France?\" will be encoded as\n\"query: What is the capital of France?\" because the prompt text will be prepended before\nany text to encode.",
+            "default": "null",
+            "example": "null",
+            "nullable": true
+          },
+          "truncate": {
+            "type": "boolean",
+            "default": "false",
+            "example": "false",
+            "nullable": true
+          },
+          "truncation_direction": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/TruncationDirection"
+              }
+            ],
+            "default": "right"
+          }
+        }
+      },
+      "SimilarityRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "inputs": {
+            "$ref": "#/components/schemas/SimilarityInput"
+          },
+          "parameters": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/SimilarityParameters"
+              }
+            ],
+            "default": "null",
+            "nullable": true
+          },
+          "model": {
+            "type": "string",
+            "description": "Served model name; required for multi-model deployments.",
+            "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
+          }
+        }
+      },
+      "SimilarityResponse": {
+        "type": "array",
+        "items": {
+          "type": "number",
+          "format": "float"
+        },
+        "example": [
+          0.0,
+          1.0,
+          0.5
+        ]
+      },
+      "SimpleToken": {
+        "type": "object",
+        "required": [
+          "id",
+          "text",
+          "special"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int32",
+            "example": 0,
+            "minimum": 0
+          },
+          "special": {
+            "type": "boolean",
+            "example": "false"
+          },
+          "start": {
+            "type": "integer",
+            "example": 0,
+            "nullable": true,
+            "minimum": 0
+          },
+          "stop": {
+            "type": "integer",
+            "example": 2,
+            "nullable": true,
+            "minimum": 0
+          },
+          "text": {
+            "type": "string",
+            "example": "test"
+          }
+        }
+      },
+      "SparseValue": {
+        "type": "object",
+        "required": [
+          "index",
+          "value"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "value": {
+            "type": "number",
+            "format": "float"
+          }
+        }
+      },
+      "TokenizeInput": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "TokenizeRequest": {
+        "type": "object",
+        "required": [
+          "inputs"
+        ],
+        "properties": {
+          "add_special_tokens": {
+            "type": "boolean",
+            "default": "true",
+            "example": "true"
+          },
+          "inputs": {
+            "$ref": "#/components/schemas/TokenizeInput"
+          },
+          "prompt_name": {
+            "type": "string",
+            "description": "The name of the prompt that should be used by for encoding. If not set, no prompt\nwill be applied.\n\nMust be a key in the `sentence-transformers` configuration `prompts` dictionary.\n\nFor example if ``prompt_name`` is \"query\" and the ``prompts`` is {\"query\": \"query: \", ...},\nthen the sentence \"What is the capital of France?\" will be encoded as\n\"query: What is the capital of France?\" because the prompt text will be prepended before\nany text to encode.",
+            "default": "null",
+            "example": "null",
+            "nullable": true
+          },
+          "model": {
+            "type": "string",
+            "description": "Served model name; required for multi-model deployments.",
+            "nullable": true
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
+          }
+        }
+      },
+      "TokenizeResponse": {
+        "type": "array",
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/components/schemas/SimpleToken"
+          }
+        },
+        "example": [
+          [
+            {
+              "id": 0,
+              "special": false,
+              "start": 0,
+              "stop": 2,
+              "text": "test"
+            }
+          ]
+        ]
+      },
+      "TruncationDirection": {
+        "type": "string",
+        "enum": [
+          "Left",
+          "Right"
+        ]
+      },
+      "AudioFormat": {
+        "type": "string",
+        "enum": [
+          "wav",
+          "mp3"
+        ]
+      },
+      "AudioSource": {
+        "type": "object",
+        "required": [
+          "data",
+          "format"
+        ],
+        "properties": {
+          "data": {
+            "type": "string",
+            "description": "Base64 encoded bytes. Not decoded by request deserialization."
+          },
+          "format": {
+            "$ref": "#/components/schemas/AudioFormat"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ContentPart": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": [
+              "text",
+              "type"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "text"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "image_url",
+              "type"
+            ],
+            "properties": {
+              "image_url": {
+                "$ref": "#/components/schemas/ImageSource"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "image_url"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "input_audio",
+              "type"
+            ],
+            "properties": {
+              "input_audio": {
+                "$ref": "#/components/schemas/AudioSource"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "input_audio"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "video_url",
+              "type"
+            ],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "video_url"
+                ]
+              },
+              "video_url": {
+                "$ref": "#/components/schemas/VideoSource"
+              }
+            }
+          }
+        ],
+        "description": "Ordered wire content, independent of a particular model's tensor format.\nThese types describe inputs; the loaded adapter must explicitly support each\nmodality. VideoUrl is an extension following the vLLM message convention.",
+        "discriminator": {
+          "propertyName": "type"
+        }
+      },
+      "EmbeddingInput": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer",
+                "format": "int32",
+                "minimum": 0
+              }
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            }
+          }
+        ],
+        "description": "Embedding input: text, final token IDs, batches of either, or one conversation.\nA message list always describes one input, regardless of the number of turns.\nAn empty array is parsed as an empty text batch and rejected by the request handler."
+      },
+      "ImageDetail": {
+        "type": "string",
+        "enum": [
+          "auto",
+          "low",
+          "high"
+        ]
+      },
+      "ImageSource": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "detail": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ImageDetail"
+              }
+            ],
+            "nullable": true
+          },
+          "url": {
+            "type": "string",
+            "description": "Remote URL or inline data URL; fetching is a processor responsibility."
+          }
+        },
+        "additionalProperties": false
+      },
+      "Message": {
+        "type": "object",
+        "required": [
+          "role",
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "$ref": "#/components/schemas/MessageContent"
+          },
+          "role": {
+            "$ref": "#/components/schemas/MessageRole"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MessageContent": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContentPart"
+            }
+          }
+        ]
+      },
+      "MessageRole": {
+        "type": "string",
+        "description": "Roles supported by the initial conversation contract. Additional roles require\nexplicit metadata and adapter support, rather than being silently discarded.",
+        "enum": [
+          "system",
+          "developer",
+          "user",
+          "assistant",
+          "query",
+          "document"
+        ]
+      },
+      "VideoSource": {
+        "type": "object",
+        "required": [
+          "url"
+        ],
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "MessageInput": {
+        "type": "object",
+        "required": [
+          "messages"
+        ],
+        "properties": {
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            }
+          }
+        },
+        "additionalProperties": false
+      },
+      "ClassifyRequest": {
+        "allOf": [
+          {
+            "type": "object",
+            "description": "SGLang-compatible classification, with native messages and truncation extensions.\nProvide exactly one of input or messages. String arrays are independent inputs.",
+            "properties": {
+              "input": {
+                "$ref": "#/components/schemas/EmbeddingInput"
+              },
+              "messages": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/Message"
+                },
+                "minItems": 1
+              },
+              "model": {
+                "type": "string",
+                "description": "Served model name; required for multi-model deployments.",
+                "nullable": true
+              },
+              "priority": {
+                "type": "integer",
+                "format": "int32",
+                "description": "Only absent or zero priority is supported.",
+                "nullable": true
+              },
+              "rid": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ClassifyRequestId"
+                  }
+                ],
+                "nullable": true
+              },
+              "truncate": {
+                "type": "boolean",
+                "nullable": true
+              },
+              "truncation_direction": {
+                "$ref": "#/components/schemas/TruncationDirection"
+              },
+              "use_activation": {
+                "type": "boolean",
+                "description": "vLLM extension: `false` returns raw logits instead of softmax probabilities, which\none-label cross-encoders need for a usable relevance score.",
+                "nullable": true
+              },
+              "user": {
+                "type": "string",
+                "nullable": true
+              },
+              "service_tier": {
+                "$ref": "#/components/schemas/ServiceTier"
+              }
+            }
+          },
+          {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": [
+                  "input"
+                ]
+              },
+              {
+                "type": "object",
+                "required": [
+                  "messages"
+                ]
+              }
+            ]
+          }
+        ],
+        "description": "Provide exactly one of input or messages; a message list is one conversation."
+      },
+      "ClassifyRequestId": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "ClassifyResponse": {
+        "type": "object",
+        "required": [
+          "id",
+          "object",
+          "created",
+          "model",
+          "data",
+          "usage"
+        ],
+        "properties": {
+          "created": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ClassifyData"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "usage": {
+            "$ref": "#/components/schemas/ClassifyUsage"
+          }
+        }
+      },
+      "ClassifyData": {
+        "type": "object",
+        "required": [
+          "index",
+          "label",
+          "probs",
+          "num_classes"
+        ],
+        "properties": {
+          "index": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "label": {
+            "type": "string"
+          },
+          "num_classes": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "probs": {
+            "type": "array",
+            "items": {
+              "type": "number",
+              "format": "float"
+            }
+          }
+        }
+      },
+      "ClassifyUsage": {
+        "type": "object",
+        "required": [
+          "prompt_tokens",
+          "completion_tokens",
+          "total_tokens"
+        ],
+        "properties": {
+          "completion_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "prompt_tokens": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "prompt_tokens_details": {
+            "nullable": true
+          },
+          "total_tokens": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ClassifyErrorResponse": {
+        "type": "object",
+        "required": [
+          "object",
+          "message",
+          "type",
+          "code"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "message": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          },
+          "param": {
+            "type": "string",
+            "nullable": true
+          },
+          "type": {
+            "type": "string"
+          }
+        }
+      },
+      "ModelInput": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "$ref": "#/components/schemas/MessageInput"
+          }
+        ],
+        "description": "A plain text state or an explicitly structured native conversation.\nMessage objects are never interpreted as text or silently flattened."
+      },
+      "ServedModel": {
+        "type": "object",
+        "required": [
+          "id",
+          "object",
+          "checkpoint_id",
+          "backend",
+          "capabilities"
+        ],
+        "properties": {
+          "backend": {
+            "type": "string"
+          },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "checkpoint_id": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "object": {
+            "type": "string"
+          }
+        }
+      },
+      "ServedModels": {
+        "type": "object",
+        "required": [
+          "object",
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServedModel"
+            }
+          },
+          "object": {
+            "type": "string"
+          }
+        }
+      },
+      "SystemOneRequest": {
+        "type": "object",
+        "description": "OneJev (including Elephant/Mammoth), Rune, Clef, Laya and Perplexity v1.1.\nTop-level images/videos are rejected with HTTP 422. Image-capable OneJev/Rune\nmodels accept user image_url content parts inside state.messages instead.",
+        "required": [
+          "state",
+          "questions"
+        ],
+        "properties": {
+          "head_max_len": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0
+          },
+          "max_len": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0
+          },
+          "model": {
+            "type": "string",
+            "nullable": true
+          },
+          "questions": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "state": {
+            "$ref": "#/components/schemas/SystemOneState"
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
+          }
+        },
+        "additionalProperties": false
+      },
+      "SystemOneState": {
+        "oneOf": [
+          {
+            "type": "string"
+          },
+          {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "required": [
+                  "messages"
+                ],
+                "additionalProperties": true
+              }
+            ],
+            "description": "Arbitrary JSON object without the reserved messages key."
+          },
+          {
+            "type": "array",
+            "items": {}
+          },
+          {
+            "$ref": "#/components/schemas/MessageInput"
+          }
+        ],
+        "description": "Text, a JSON array/object, or Infinity's native conversation envelope. Objects with messages must match MessageInput. Supported roles and media depend on the selected model: OneJev accepts user/assistant text and user image_url parts, with image detail omitted or auto; Laya rejects conversations. Content parts use Chat Completions-style names; this is not an OpenAI Chat Completions, Responses, or Decisions endpoint."
+      },
+      "Tensor": {
+        "type": "object",
+        "required": [
+          "shape",
+          "dtype",
+          "data_encoding",
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "type": "string",
+            "format": "byte",
+            "description": "Contiguous row-major data, little-endian for multi-byte elements."
+          },
+          "data_encoding": {
+            "type": "string",
+            "description": "\"base64\" for JSON, \"binary\" for MessagePack."
+          },
+          "dtype": {
+            "type": "string",
+            "description": "Element dtype; currently float32.",
+            "example": "float32"
+          },
+          "shape": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "AllEmbedding": {
+        "oneOf": [
+          {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "number",
+                "format": "float"
+              }
+            }
+          },
+          {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/schemas/Tensor"
+          }
+        ]
+      },
+      "SystemOneRequestBody": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/SystemOneRequest"
+          },
+          {
+            "$ref": "#/components/schemas/D3SystemOneRequest"
+          },
+          {
+            "$ref": "#/components/schemas/PplxJointSystemOneRequest"
+          }
+        ],
+        "description": "Use the schema for the selected model's decision protocol, not an arbitrary alternative. OneJev (Elephant/Mammoth), Rune, Clef, Laya and Perplexity v1.1 use SystemOneRequest. D3 and Perplexity joint v1.2 use their respective top-level media formats. Model is required when multiple models are loaded."
+      },
+      "D3SystemOneRequest": {
+        "type": "object",
+        "description": "D3 accepts arbitrary JSON states and top-level media shared by every question.\nObjects containing messages are serialized as JSON, not interpreted as native conversations.",
+        "required": [
+          "state",
+          "questions"
+        ],
+        "properties": {
+          "head_max_len": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered remote URLs or inline data URLs, subject to configured media limits and host policy."
+          },
+          "max_len": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0
+          },
+          "model": {
+            "type": "string",
+            "nullable": true
+          },
+          "questions": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "state": {},
+          "videos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered video sources; supported only by the D3 protocol."
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
+          }
+        },
+        "additionalProperties": false
+      },
+      "PplxJointSystemOneRequest": {
+        "type": "object",
+        "description": "Perplexity joint v1.2 (pplx-decider-flash-v1.2): arbitrary JSON state and shared top-level images. Nonempty videos are rejected. Native state.messages is serialized as JSON, not interpreted as a conversation.",
+        "required": [
+          "state",
+          "questions"
+        ],
+        "properties": {
+          "head_max_len": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0
+          },
+          "images": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered remote URLs or inline data URLs, subject to configured media limits and host policy."
+          },
+          "max_len": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 0
+          },
+          "model": {
+            "type": "string",
+            "nullable": true
+          },
+          "questions": {
+            "type": "object",
+            "additionalProperties": {}
+          },
+          "state": {},
+          "videos": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Must be omitted or empty for this protocol.",
+            "maxItems": 0
+          },
+          "service_tier": {
+            "$ref": "#/components/schemas/ServiceTier"
+          }
+        },
+        "additionalProperties": false
+      },
+      "ServiceTier": {
+        "type": "string",
+        "description": "Priority requests receive a configurable virtual queue age bonus (default one second); equal virtual times retain queue order.",
+        "enum": [
+          "default",
+          "auto",
+          "flex",
+          "priority"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "infinity_v3",
+      "description": "infinity_v3 API"
+    }
+  ]
+}
