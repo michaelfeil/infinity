@@ -852,7 +852,7 @@ pub async fn run_models(
     prometheus_port: u16,
     cors_allow_origin: Option<Vec<String>>,
 ) -> Result<()> {
-    billing_input_tokens_header()?;
+    billing_headers()?;
     anyhow::ensure!(!configs.is_empty(), "At least one model is required");
     // CUDA discovery can block on the driver. Overlap it with frontend setup
     // without blocking a Tokio worker or starting unvalidated weight loading.
@@ -1349,22 +1349,39 @@ impl From<TextEmbeddingsError> for ErrorResponse {
     }
 }
 
-static BILLING_INPUT_TOKENS: OnceLock<Result<Option<HeaderName>, String>> = OnceLock::new();
+struct BillingHeaders {
+    input_tokens: HeaderName,
+    service_tier: HeaderName,
+}
+
+static BILLING_HEADERS: OnceLock<Result<Option<BillingHeaders>, String>> = OnceLock::new();
 
 // Called at startup to validate and freeze the process-wide header configuration.
-fn billing_input_tokens_header() -> Result<&'static Option<HeaderName>> {
+fn billing_headers() -> Result<&'static Option<BillingHeaders>> {
     const ENV: &str = infinity_v3_config::infinity_env!("BILLING_HEADERS");
-    BILLING_INPUT_TOKENS
+    BILLING_HEADERS
         .get_or_init(|| match std::env::var(ENV) {
             Ok(prefix) if prefix.is_empty() => Ok(None),
-            Ok(prefix) => HeaderName::from_bytes(format!("{prefix}-input-tokens").as_bytes())
-                .map(Some)
-                .map_err(|_| format!("{ENV} must be empty or a valid HTTP header-name prefix")),
+            Ok(prefix) => {
+                let name = |suffix| {
+                    HeaderName::from_bytes(format!("{prefix}-{suffix}").as_bytes()).map_err(|_| {
+                        format!("{ENV} must be empty or a valid HTTP header-name prefix")
+                    })
+                };
+                Ok(Some(BillingHeaders {
+                    input_tokens: name("input-tokens")?,
+                    service_tier: name("service-tier")?,
+                }))
+            }
             Err(std::env::VarError::NotPresent) => Ok(None),
             Err(std::env::VarError::NotUnicode(_)) => Err(format!("{ENV} must be valid Unicode")),
         })
         .as_ref()
         .map_err(|error| anyhow!(error.clone()))
+}
+
+fn configured_billing_headers() -> Option<&'static BillingHeaders> {
+    BILLING_HEADERS.get()?.as_ref().ok()?.as_ref()
 }
 
 struct ResponseMetadata {
@@ -1431,9 +1448,15 @@ impl From<ResponseMetadata> for HeaderMap {
     fn from(value: ResponseMetadata) -> Self {
         // Headers
         let mut headers = HeaderMap::new();
-        headers.insert("x-service-tier", service_tier_header(value.priority));
-        if let Some(Ok(Some(name))) = BILLING_INPUT_TOKENS.get() {
-            headers.insert(name.clone(), HeaderValue::from(value.compute_tokens));
+        if let Some(names) = configured_billing_headers() {
+            headers.insert(
+                names.input_tokens.clone(),
+                HeaderValue::from(value.compute_tokens),
+            );
+            headers.insert(
+                names.service_tier.clone(),
+                service_tier_header(value.priority),
+            );
         }
         headers.insert("x-compute-type", "gpu+optimized".parse().unwrap());
         headers.insert(

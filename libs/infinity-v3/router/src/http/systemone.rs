@@ -1089,7 +1089,7 @@ mod tests {
 
     #[test]
     fn usage_headers_receive_the_deduplicated_count() {
-        let billing = crate::billing_input_tokens_header().unwrap();
+        let billing = crate::billing_headers().unwrap();
         let questions: Vec<_> = (0..10).map(|_| usage_question(1000, 100)).collect();
         let headers: HeaderMap = crate::ResponseMetadata::new(
             0,
@@ -1102,8 +1102,8 @@ mod tests {
         )
         .into();
         assert_eq!(headers["x-compute-tokens"], "2000");
-        if let Some(name) = billing {
-            assert_eq!(headers[name], "2000");
+        if let Some(names) = billing {
+            assert_eq!(headers[&names.input_tokens], "2000");
         }
     }
 

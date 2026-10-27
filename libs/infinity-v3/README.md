@@ -121,8 +121,11 @@ not use the inference queue. Queue latency metrics continue to use real enqueue
 times. Two FIFO buffers compare only their heads: enqueue is O(1) amortized and
 next-input selection is O(1), without sorted middle insertions.
 
-Successful inference responses include `X-Service-Tier: priority` or
-`X-Service-Tier: default`, reflecting the queue policy actually applied. A zero
+Set `INFINITY_BILLING_HEADERS=x-baseten` to include `x-baseten-input-tokens`
+and `x-baseten-service-tier` response headers. Any valid HTTP header-name prefix
+works; unset or empty disables these headers. The service-tier header contains
+`priority` or `default`, reflecting the queue policy actually applied, and is
+exposed through CORS for browser clients. A zero
 queue bonus reports `default` even if the request asked for priority. This reports
 scheduling eligibility, not a guarantee that another request was overtaken.
 Vertex reports `priority` only when every instance received priority treatment;

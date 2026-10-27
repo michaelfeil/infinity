@@ -2421,15 +2421,18 @@ async fn vertex_compatibility_inner(
         .into_iter()
         .collect::<Result<Vec<_>, (StatusCode, Json<ErrorResponse>)>>()?;
 
-    // A single header can promise priority only when every instance received it.
-    let priority = !predictions.is_empty()
-        && predictions.iter().all(|(headers, _)| {
-            headers.get("x-service-tier") == Some(&crate::service_tier_header(true))
-        });
-    let headers = HeaderMap::from_iter([(
-        http::HeaderName::from_static("x-service-tier"),
-        crate::service_tier_header(priority),
-    )]);
+    let mut headers = HeaderMap::new();
+    if let Some(names) = crate::configured_billing_headers() {
+        // A single header can promise priority only when every instance received it.
+        let priority = !predictions.is_empty()
+            && predictions.iter().all(|(headers, _)| {
+                headers.get(&names.service_tier) == Some(&crate::service_tier_header(true))
+            });
+        headers.insert(
+            names.service_tier.clone(),
+            crate::service_tier_header(priority),
+        );
+    }
     let predictions = predictions.into_iter().map(|(_, value)| value).collect();
     Ok((headers, Json(VertexResponse { predictions })))
 }
@@ -2632,7 +2635,8 @@ pub async fn run(
     Ok(())
 }
 
-fn cors_layer(cors_allow_origin: Option<Vec<String>>) -> CorsLayer {
+fn cors_layer(cors_allow_origin: Option<Vec<String>>) -> anyhow::Result<CorsLayer> {
+    let billing = crate::billing_headers()?;
     // CORS allowed origins
     // map to go inside the option and then map to parse from String to HeaderValue
     // Finally, convert to AllowOrigin
@@ -2650,11 +2654,16 @@ fn cors_layer(cors_allow_origin: Option<Vec<String>>) -> CorsLayer {
 
     // CORS layer
     let allow_origin = allow_origin.unwrap_or(AllowOrigin::any());
-    CorsLayer::new()
+    Ok(CorsLayer::new()
         .allow_methods([Method::GET, Method::POST])
         .allow_headers([http::header::CONTENT_TYPE, AUTHORIZATION])
-        .expose_headers([http::HeaderName::from_static("x-service-tier")])
-        .allow_origin(allow_origin)
+        .expose_headers(
+            billing
+                .iter()
+                .map(|names| names.service_tier.clone())
+                .collect::<Vec<_>>(),
+        )
+        .allow_origin(allow_origin))
 }
 
 fn build_router(
@@ -2666,7 +2675,7 @@ fn build_router(
 ) -> Result<Router, anyhow::Error> {
     let doc = api_doc();
 
-    let cors_layer = cors_layer(cors_allow_origin);
+    let cors_layer = cors_layer(cors_allow_origin)?;
 
     let mut routes = Router::new()
         // Base routes
@@ -2949,7 +2958,7 @@ mod classify_tests {
         for origins in [None, Some(vec!["https://client.example".into()])] {
             let app = Router::new()
                 .route("/v1/classify", post(|| async { StatusCode::OK }))
-                .layer(cors_layer(origins));
+                .layer(cors_layer(origins).unwrap());
             let response = app
                 .oneshot(
                     Request::builder()
@@ -3368,15 +3377,25 @@ mod multi_model_test {
                         )
                         .await?;
                     assert_eq!(response.status(), StatusCode::OK, "{path}: {body}");
-                    assert_eq!(
-                        response.headers()["x-service-tier"],
-                        expected,
-                        "{path}: {body}"
-                    );
-                    assert_eq!(
-                        response.headers()["access-control-expose-headers"],
-                        "x-service-tier"
-                    );
+                    if let Some(names) = crate::configured_billing_headers() {
+                        assert_eq!(
+                            response.headers()[&names.service_tier],
+                            expected,
+                            "{path}: {body}"
+                        );
+                        assert_eq!(
+                            response.headers()["access-control-expose-headers"],
+                            names.service_tier.as_str()
+                        );
+                        if path != "/vertex" {
+                            assert!(response.headers().contains_key(&names.input_tokens));
+                        }
+                    } else {
+                        assert!(!response.headers().contains_key("x-service-tier"));
+                        assert!(!response
+                            .headers()
+                            .contains_key("access-control-expose-headers"));
+                    }
                 }
             }
             runtime.infer.shutdown().await;
