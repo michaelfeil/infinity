@@ -474,6 +474,7 @@ pub struct LibtorchBackend {
     skip_tokens: Vec<u32>,
     query_marker: Option<u32>,
     supports_radix: bool,
+    shares_block_prefix: bool,
     cuda: bool,
     host_output_max_bytes: usize,
     host_result_pool: std::sync::Arc<text_embeddings_backend_core::result_memory::ResultPool>,
@@ -1135,6 +1136,8 @@ impl LibtorchBackend {
             pooled_width: 0,
             classification_width: 0,
             supports_radix: false,
+            shares_block_prefix: decision
+                && options["_decision_attention_mode"] == "block_bidirectional",
             prefix_cache: options["_prefix_cache_max_bytes"].as_i64().unwrap_or(0) > 0,
             cuda: device.to_bytes().starts_with(b"cuda")
                 || (device.to_bytes() == b"auto" && device_count("cuda").unwrap_or(0) > 0),
@@ -1929,6 +1932,9 @@ impl Backend for LibtorchBackend {
                 }
                 Ok(predictions)
             })
+    }
+    fn shares_block_prefix(&self) -> bool {
+        self.shares_block_prefix
     }
     fn supports_radix_mlp(&self) -> bool {
         // Native models advertise folding only when their complete forward path supports it.

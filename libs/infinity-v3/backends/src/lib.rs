@@ -171,6 +171,7 @@ pub struct Backend {
     health_receiver: watch::Receiver<bool>,
     _backend_thread: Arc<BackendThread>,
     pub radix_mlp_supported: bool,
+    pub shares_block_prefix: bool,
     pub max_batch_size: Option<usize>,
     pub model_type: ModelType,
 }
@@ -269,6 +270,7 @@ impl Backend {
         )
         .await?;
         let radix_mlp_supported = backend.supports_radix_mlp();
+        let shares_block_prefix = backend.shares_block_prefix();
         let max_batch_size = backend.max_batch_size();
 
         let (health_sender, health_receiver) = watch::channel(false);
@@ -280,6 +282,7 @@ impl Backend {
             health_receiver,
             _backend_thread,
             radix_mlp_supported,
+            shares_block_prefix,
             max_batch_size,
             model_type,
         })
@@ -1287,6 +1290,7 @@ mod completion_tests {
             health_receiver,
             _backend_thread: Arc::new(worker),
             radix_mlp_supported: false,
+            shares_block_prefix: false,
             max_batch_size: Some(1),
             model_type: ModelType::Embedding(Pool::Mean),
         };
@@ -1333,6 +1337,7 @@ mod completion_tests {
                 health_receiver,
                 _backend_thread: Arc::new(worker),
                 radix_mlp_supported: false,
+                shares_block_prefix: false,
                 max_batch_size: Some(1),
                 model_type,
             };

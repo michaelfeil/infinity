@@ -52,6 +52,7 @@ impl Inner {
 pub struct BackendPool {
     inner: Arc<Inner>,
     pub radix_mlp_supported: bool,
+    pub shares_block_prefix: bool,
     pub max_batch_size: Option<usize>,
     pub model_type: ModelType,
 }
@@ -66,7 +67,9 @@ impl BackendPool {
             BackendError::Start("At least one backend replica is required".into())
         })?;
         if backends.iter().any(|b| {
-            b.model_type != first.model_type || b.radix_mlp_supported != first.radix_mlp_supported
+            b.model_type != first.model_type
+                || b.radix_mlp_supported != first.radix_mlp_supported
+                || b.shares_block_prefix != first.shares_block_prefix
         }) {
             return Err(BackendError::Start(
                 "Backend replicas have incompatible capabilities".into(),
@@ -74,6 +77,7 @@ impl BackendPool {
         }
         let result = Self {
             radix_mlp_supported: first.radix_mlp_supported,
+            shares_block_prefix: first.shares_block_prefix,
             max_batch_size: backends.iter().filter_map(|b| b.max_batch_size).min(),
             model_type: first.model_type.clone(),
             inner: Arc::new(Inner {
@@ -460,6 +464,7 @@ mod completion_tests {
             }),
             model_type: ModelType::Classifier,
             radix_mlp_supported: false,
+            shares_block_prefix: false,
             max_batch_size: None,
         };
         Execution {

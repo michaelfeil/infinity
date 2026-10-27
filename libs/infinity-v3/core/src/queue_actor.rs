@@ -1,8 +1,9 @@
 //! Two-tier FIFO selection and packed-batch construction on a dedicated thread.
 //!
 //! `infer::batching_task` asks for batches; this worker owns the pending entries.
-//! An explicit early-dispatch target stays active under backlog. Only questions
-//! from a selected HTTP request may exceed it; token/request maxima still apply.
+//! Prepared decision requests enter atomically. The preferred target cuts between
+//! requests; only hard token/question limits may split one. Explicit targets stay
+//! active under backlog.
 //! Automatic multi-replica targets can relax under backlog. Selection never
 //! runs a model; the selected entries' metadata follows the batch into delivery.
 
@@ -13,7 +14,7 @@ use infinity_v3_backend::{BackendError, Batch};
 use std::cmp::max;
 use std::collections::VecDeque;
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, Ordering},
     Arc,
 };
 use std::time::{Duration, Instant};
@@ -59,16 +60,6 @@ pub struct Entry {
 }
 
 impl Entry {
-    fn same_client(&self, other: &Self) -> bool {
-        self.metadata.client_batch.as_ref().is_some_and(|client| {
-            other
-                .metadata
-                .client_batch
-                .as_ref()
-                .is_some_and(|other| Arc::ptr_eq(client, other))
-        })
-    }
-
     /// Charge a block prefix once per HTTP request in this batch, then every suffix.
     /// Exact host inputs must agree with native prefix sharing; other inputs pay full cost.
     fn batch_tokens(&self, selected: &[Self]) -> usize {
@@ -82,8 +73,7 @@ impl Entry {
             return tokens;
         }
         let shared = selected.iter().any(|other| {
-            self.same_client(other)
-                && matches!(other.metadata.decision.as_ref(), Some(BlockOptionTokens { prefix_length, .. }) if *prefix_length == prefix)
+            matches!(other.metadata.decision.as_ref(), Some(BlockOptionTokens { prefix_length, .. }) if *prefix_length == prefix)
                 && [
                     (&self.encoding.input_ids, &other.encoding.input_ids),
                     (&self.encoding.token_type_ids, &other.encoding.token_type_ids),
@@ -142,8 +132,6 @@ pub struct Metadata {
     /// Retained through queueing, model execution and result delivery.
     pub(crate) input_memory: Option<crate::input_memory::InputMemoryOwner>,
     pub decision: Option<infinity_v3_backend::DecisionInput>,
-    /// Shared HTTP-request identity and count of inputs still tokenizing.
-    pub(crate) client_batch: Option<Arc<AtomicUsize>>,
     /// InferResponse sender to communicate between the Infer struct and the batching_task
     pub(crate) response_tx: oneshot::Sender<Result<InferResult, BackendError>>,
     /// Tokenization duration
@@ -157,7 +145,32 @@ pub struct Metadata {
     pub(crate) token_classification: bool,
 }
 
-type PendingEntry = (Instant, Entry);
+/// One prepared HTTP request. Questions stay together unless a hard limit splits it.
+struct Request {
+    entries: VecDeque<Entry>,
+    priority: bool,
+    shares_block_prefix: bool,
+}
+
+impl Request {
+    fn new(entries: Vec<Entry>, shares_block_prefix: bool) -> Self {
+        let priority = entries.first().is_some_and(|entry| entry.metadata.priority);
+        Self {
+            entries: entries.into(),
+            priority,
+            shares_block_prefix,
+        }
+    }
+
+    fn tokens(&self) -> usize {
+        self.entries
+            .iter()
+            .map(|entry| entry.encoding.input_ids.len())
+            .sum()
+    }
+}
+
+type PendingEntry = (Instant, Request);
 
 // Monotonic actor admissions keep each tier FIFO; only the two heads compete.
 struct PendingEntries {
@@ -183,12 +196,12 @@ impl PendingEntries {
         }
     }
 
-    fn push_back(&mut self, entry: Entry, now: Instant) {
-        self.tier(entry.metadata.priority).push_back((now, entry));
+    fn push_back(&mut self, request: Request, now: Instant) {
+        self.tier(request.priority).push_back((now, request));
     }
 
     fn push_front(&mut self, pending: PendingEntry) {
-        self.tier(pending.1.metadata.priority).push_front(pending);
+        self.tier(pending.1.priority).push_front(pending);
     }
 
     fn pop_front(&mut self) -> Option<PendingEntry> {
@@ -210,11 +223,15 @@ impl PendingEntries {
         self.normal
             .drain(..)
             .chain(self.priority.drain(..))
-            .map(|(_, entry)| entry)
+            .flat_map(|(_, request)| request.entries)
     }
 
     fn len(&self) -> usize {
-        self.normal.len() + self.priority.len()
+        self.normal
+            .iter()
+            .chain(&self.priority)
+            .map(|(_, request)| request.entries.len())
+            .sum()
     }
 }
 
@@ -335,29 +352,47 @@ impl Queue {
         let _ = self.queue_sender.try_send(QueueCommand::Close);
     }
 
-    /// Append an entry to the queue
+    /// Append an independently prepared input, such as an embedding.
+    pub async fn append(&self, entry: Entry) {
+        self.append_request(vec![entry], false).await;
+    }
+
+    /// Admit a fully prepared HTTP request atomically, before the next batch can select it.
     #[instrument(skip_all)]
-    pub async fn append(&self, mut entry: Entry) {
-        if entry.metadata.input_memory.is_none() {
-            entry.metadata.input_memory = crate::input_memory::current();
-        }
-        if self.closed.load(Ordering::SeqCst) {
-            let _ = entry
-                .metadata
-                .response_tx
-                .send(Err(BackendError::Unhealthy));
+    pub async fn append_request(&self, mut entries: Vec<Entry>, shares_block_prefix: bool) {
+        if entries.is_empty() {
             return;
         }
-        if let Err(err) = self
-            .queue_sender
-            .send(QueueCommand::Append(Box::new(entry), Span::current()))
-            .await
-        {
-            if let QueueCommand::Append(entry, _) = err.0 {
+        for entry in &mut entries {
+            if entry.metadata.input_memory.is_none() {
+                entry.metadata.input_memory = crate::input_memory::current();
+            }
+        }
+        if self.closed.load(Ordering::SeqCst) {
+            for entry in entries {
                 let _ = entry
                     .metadata
                     .response_tx
                     .send(Err(BackendError::Unhealthy));
+            }
+            return;
+        }
+        if let Err(err) = self
+            .queue_sender
+            .send(QueueCommand::Append(
+                entries,
+                shares_block_prefix,
+                Span::current(),
+            ))
+            .await
+        {
+            if let QueueCommand::Append(entries, _, _) = err.0 {
+                for entry in entries {
+                    let _ = entry
+                        .metadata
+                        .response_tx
+                        .send(Err(BackendError::Unhealthy));
+                }
             }
         }
     }
@@ -451,11 +486,13 @@ fn queue_blocking_task(
             queued_tokens = 0;
             metrics::gauge!("infinity_queue_size", "model" => model_name.clone()).set(0.0);
             match cmd {
-                QueueCommand::Append(entry, _) => {
-                    let _ = entry
-                        .metadata
-                        .response_tx
-                        .send(Err(BackendError::Unhealthy));
+                QueueCommand::Append(entries, _, _) => {
+                    for entry in entries {
+                        let _ = entry
+                            .metadata
+                            .response_tx
+                            .send(Err(BackendError::Unhealthy));
+                    }
                 }
                 QueueCommand::NextBatch {
                     response_sender, ..
@@ -468,13 +505,15 @@ fn queue_blocking_task(
         }
         match cmd {
             QueueCommand::Close => {}
-            QueueCommand::Append(entry, span) => {
+            QueueCommand::Append(request, shares_block_prefix, span) => {
                 let _span = span.entered();
-                queued_tokens += entry.encoding.input_ids.len();
-                // Actor admission is monotonic even when senders race or wait on channel capacity.
-                entries.push_back(*entry, Instant::now());
+                let request = Request::new(request, shares_block_prefix);
+                queued_tokens += request.tokens();
+                let count = request.entries.len();
+                // One admission time for every question in the HTTP request.
+                entries.push_back(request, Instant::now());
                 let gauge = metrics::gauge!("infinity_queue_size", "model" => model_name.clone());
-                gauge.increment(1.0);
+                gauge.increment(count as f64);
             }
             QueueCommand::NextBatch {
                 response_sender,
@@ -494,45 +533,78 @@ fn queue_blocking_task(
                 let mut pooled_count = 0;
                 let mut token_count = 0;
                 let mut offset_count = 0;
-                while let Some((queued_at, entry)) = entries.pop_front() {
-                    // Filter entries where the response receiver was dropped (== entries where the request
-                    // was dropped by the client)
-                    if entry.metadata.response_tx.is_closed() {
-                        queued_tokens -= entry.encoding.input_ids.len();
-                        log_response_dropped_after("after tokenization / before batching");
+                while let Some((queued_at, mut request)) = entries.pop_front() {
+                    request.entries.retain(|entry| {
+                        if entry.metadata.response_tx.is_closed() {
+                            queued_tokens -= entry.encoding.input_ids.len();
+                            log_response_dropped_after("after tokenization / before batching");
+                            false
+                        } else {
+                            true
+                        }
+                    });
+                    if request.entries.is_empty() {
                         continue;
                     }
-
-                    let entry_tokens = entry.encoding.input_ids.len();
-                    let work_tokens = entry.batch_tokens(&selected);
-
-                    // Always allow one input. Beyond the preferred target, only
-                    // continue requests already selected; do not pull unrelated
-                    // work in while waiting for their tokenization or later siblings.
-                    if should_cut(current_tokens, work_tokens, target)
-                        && !selected.iter().any(|other| entry.same_client(other))
+                    let mut request_tokens = 0;
+                    let mut accepted = 0;
+                    let mut request_selected = Vec::new();
+                    // Cost only sharing inside this prepared request. A split starts
+                    // with a fresh prefix charge on the next GPU batch.
+                    while let Some(entry) = request.entries.pop_front() {
+                        let work_tokens = if request.shares_block_prefix {
+                            entry.batch_tokens(&request_selected)
+                        } else {
+                            entry.encoding.input_ids.len()
+                        };
+                        if current_tokens + request_tokens + work_tokens > max_batch_tokens
+                            || max_batch_requests
+                                .is_some_and(|max| selected.len() + accepted == max)
+                        {
+                            request.entries.push_front(entry);
+                            break;
+                        }
+                        request_tokens += work_tokens;
+                        accepted += 1;
+                        request_selected.push(entry);
+                    }
+                    // Never split a request just to fill space left by another.
+                    // An oversized request may be split only in an otherwise empty batch.
+                    if !selected.is_empty()
+                        && (!request.entries.is_empty()
+                            || should_cut(current_tokens, request_tokens, target))
                     {
-                        entries.push_front((queued_at, entry));
+                        request_selected.extend(request.entries);
+                        request.entries = request_selected.into();
+                        entries.push_front((queued_at, request));
                         break;
                     }
-
-                    let total_tokens = current_tokens + work_tokens;
-
-                    if total_tokens > max_batch_tokens {
-                        debug_assert!(
-                            entry_tokens <= max_batch_tokens,
-                            "Single entry exceeds max batch tokens, leading to stall."
-                        );
-                        entries.push_front((queued_at, entry));
+                    if request_selected.is_empty() {
+                        // A single prepared input exceeding the hard cap must fail,
+                        // rather than remaining at the head of the queue forever.
+                        if let Some(entry) = request.entries.pop_front() {
+                            queued_tokens -= entry.encoding.input_ids.len();
+                            let _ = entry.metadata.response_tx.send(Err(BackendError::Inference(
+                                "Single input exceeds max batch tokens".into(),
+                            )));
+                        }
+                        if !request.entries.is_empty() {
+                            entries.push_front((queued_at, request));
+                        }
+                        continue;
+                    }
+                    for entry in request_selected {
+                        queued_tokens -= entry.encoding.input_ids.len();
+                        pooled_count += usize::from(entry.metadata.pooling);
+                        token_count += entry.encoding.tokens.len();
+                        offset_count += entry.encoding.offsets.len();
+                        selected.push(entry);
+                    }
+                    current_tokens += request_tokens;
+                    if !request.entries.is_empty() {
+                        entries.push_front((queued_at, request));
                         break;
                     }
-
-                    queued_tokens -= entry_tokens;
-                    current_tokens = total_tokens;
-                    pooled_count += usize::from(entry.metadata.pooling);
-                    token_count += entry.encoding.tokens.len();
-                    offset_count += entry.encoding.offsets.len();
-                    selected.push(entry);
                     if Some(selected.len()) == max_batch_requests {
                         break;
                     }
@@ -687,7 +759,7 @@ pub type NextBatch = (Vec<Metadata>, Batch);
 #[derive(Debug)]
 enum QueueCommand {
     Close,
-    Append(Box<Entry>, Span),
+    Append(Vec<Entry>, bool, Span),
     NextBatch {
         response_sender: oneshot::Sender<Option<NextBatch>>,
         span: Span,
@@ -815,7 +887,6 @@ mod tests {
                     priority: false,
                     input_memory: None,
                     decision: None,
-                    client_batch: None,
                     response_tx,
                     tokenization: Duration::ZERO,
                     queue_time: Instant::now(),
@@ -846,10 +917,11 @@ mod tests {
             entry.metadata.queue_time = base + Duration::from_millis(millis);
             responses.push(response);
             let now = base + Duration::from_millis(millis);
-            queue.push_back(entry, now);
+            queue.push_back(Request::new(vec![entry], false), now);
         }
         for id in [1, 2, 4, 5] {
-            let (_, entry) = queue.pop_front().unwrap();
+            let (_, mut request) = queue.pop_front().unwrap();
+            let entry = request.entries.pop_front().unwrap();
             assert_eq!(entry.encoding.input_ids, [id; 2]);
             if id == 4 {
                 assert_eq!(entry.metadata.queue_time, base + Duration::from_secs(2));
@@ -860,9 +932,13 @@ mod tests {
         entry.metadata.priority = true;
         entry.metadata.queue_time = base + Duration::from_millis(2_501);
         responses.push(response);
-        queue.push_back(entry, base + Duration::from_millis(2_501));
+        queue.push_back(
+            Request::new(vec![entry], false),
+            base + Duration::from_millis(2_501),
+        );
         for id in [3, 6] {
-            let (_, entry) = queue.pop_front().unwrap();
+            let (_, mut request) = queue.pop_front().unwrap();
+            let entry = request.entries.pop_front().unwrap();
             assert_eq!(entry.encoding.input_ids, [id; 2]);
         }
         assert!(queue.pop_front().is_none());
@@ -883,14 +959,28 @@ mod tests {
                 entry.metadata.priority = priority;
                 // Producer timestamps can arrive out of order; scheduling uses actor admission.
                 entry.metadata.queue_time = base + Duration::from_secs(5 - u64::from(id));
-                queue.push_back(entry, base + Duration::from_millis(millis));
+                queue.push_back(
+                    Request::new(vec![entry], false),
+                    base + Duration::from_millis(millis),
+                );
             }
             for id in expected {
                 let pending = queue.pop_front().unwrap();
-                assert_eq!(pending.1.encoding.input_ids, [id]);
+                assert_eq!(pending.1.entries.front().unwrap().encoding.input_ids, [id]);
                 // A hard batch cut returns the same head without changing its scheduling time.
                 queue.push_front(pending);
-                assert_eq!(queue.pop_front().unwrap().1.encoding.input_ids, [id]);
+                assert_eq!(
+                    queue
+                        .pop_front()
+                        .unwrap()
+                        .1
+                        .entries
+                        .front()
+                        .unwrap()
+                        .encoding
+                        .input_ids,
+                    [id]
+                );
             }
             assert!(queue.pop_front().is_none());
         }
@@ -944,27 +1034,27 @@ mod tests {
 
     #[tokio::test]
     async fn preferred_target_survives_backlog_and_cancellation() {
-        let queue = test_queue_with_limits(34_816, Some(512), Some(16_384));
+        let queue = test_queue_with_limits(40_960, Some(512), Some(16_384));
         let mut responses = Vec::new();
         let (canceled, response) = test_entry(vec![99; 16_384], true);
         drop(response);
         queue.append(canceled).await;
         // Six 16K HTTP requests remain separate even with roughly 100K queued.
         for id in 0..6 {
-            let client = Arc::new(AtomicUsize::new(0));
+            let mut request = Vec::new();
             for question in 0..224 {
                 let mut ids = vec![id; 2_048];
                 ids.extend(vec![question + 100; 64]);
                 let (mut entry, response) = test_entry(ids, true);
-                entry.metadata.client_batch = Some(client.clone());
                 entry.metadata.decision =
                     Some(infinity_v3_backend::DecisionInput::BlockOptionTokens {
                         prefix_length: 2_048,
                         token_ids: vec![1, 2],
                     });
                 responses.push(response);
-                queue.append(entry).await;
+                request.push(entry);
             }
+            queue.append_request(request, true).await;
         }
         for id in 0..6 {
             let (metadata, batch) = queue.next_batch().await.unwrap();
@@ -978,7 +1068,7 @@ mod tests {
 
     #[tokio::test]
     async fn prefix_discount_requires_matching_attention_inputs() {
-        for difference in 0..7 {
+        for difference in 0..8 {
             let queue = test_queue_with_limits(8, None, None);
             let image = Arc::new(infinity_v3_backend::ImagePatches {
                 pixels: vec![1.0],
@@ -986,17 +1076,16 @@ mod tests {
                 patch_dim: 1,
                 merge_size: 1,
             });
-            let client = Arc::new(AtomicUsize::new(0));
+            let mut request = Vec::new();
             let mut responses = Vec::new();
             for question in 0..2 {
                 let (mut entry, response) = test_entry(vec![1, 2, 3, 4, 5, 6], true);
-                entry.metadata.client_batch = Some(client.clone());
                 entry.metadata.decision =
                     Some(infinity_v3_backend::DecisionInput::BlockOptionTokens {
                         prefix_length: 4,
                         token_ids: vec![1, 2],
                     });
-                if difference >= 4 {
+                if (4..=6).contains(&difference) {
                     let patches = if question == 1 && difference == 5 {
                         Arc::new(infinity_v3_backend::ImagePatches {
                             pixels: vec![2.0],
@@ -1028,8 +1117,9 @@ mod tests {
                     }
                 }
                 responses.push(response);
-                queue.append(entry).await;
+                request.push(entry);
             }
+            queue.append_request(request, difference != 7).await;
             assert_eq!(
                 queue.next_batch().await.unwrap().0.len(),
                 if matches!(difference, 0 | 4) { 2 } else { 1 }
@@ -1043,24 +1133,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn same_client_overflow_respects_token_and_question_caps() {
+    async fn request_splits_respect_token_and_question_caps() {
         for (prefix, max_tokens, questions, expected) in
-            [(4_096, 34_816, 512, 480), (2_048, 65_536, 513, 512)]
+            [(16_384, 40_960, 512, 384), (2_048, 65_536, 513, 512)]
         {
             let queue = test_queue_with_limits(max_tokens, Some(512), Some(16_384));
-            let client = Arc::new(AtomicUsize::new(0));
+            let mut request = Vec::new();
             let mut responses = Vec::new();
             for _ in 0..questions {
                 let (mut entry, response) = test_entry(vec![1; prefix + 64], true);
-                entry.metadata.client_batch = Some(client.clone());
                 entry.metadata.decision =
                     Some(infinity_v3_backend::DecisionInput::BlockOptionTokens {
                         prefix_length: prefix,
                         token_ids: vec![1, 2],
                     });
                 responses.push(response);
-                queue.append(entry).await;
+                request.push(entry);
             }
+            queue.append_request(request, true).await;
             let (metadata, batch) = queue.next_batch().await.unwrap();
             assert_eq!(metadata.len(), expected);
             assert_eq!(batch.input_ids.len(), expected * (prefix + 64));
@@ -1074,26 +1164,58 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preferred_overflow_does_not_pull_in_interleaved_requests() {
-        let queue = test_queue_with_limits(32, None, Some(3));
-        let client = Arc::new(AtomicUsize::new(1));
-        let mut responses = Vec::new();
-        for id in 1..=4 {
-            let (mut entry, response) = test_entry(vec![id; 3], true);
-            entry.metadata.client_batch = (id != 3).then(|| client.clone());
-            responses.push(response);
-            queue.append(entry).await;
+    async fn requests_stay_whole_across_soft_and_hard_cuts() {
+        for target in [None, Some(3)] {
+            let queue = test_queue_with_limits(9, Some(4), target);
+            let mut responses = Vec::new();
+            for ids in [vec![1], vec![2, 3, 4], vec![5]] {
+                let mut request = Vec::new();
+                for id in ids {
+                    let (entry, response) = test_entry(vec![id; 3], true);
+                    request.push(entry);
+                    responses.push(response);
+                }
+                queue.append_request(request, true).await;
+            }
+            assert_eq!(queue.next_batch().await.unwrap().1.input_ids, [1; 3]);
+            assert_eq!(
+                queue.next_batch().await.unwrap().1.input_ids,
+                [2, 2, 2, 3, 3, 3, 4, 4, 4]
+            );
+            assert_eq!(queue.next_batch().await.unwrap().1.input_ids, [5; 3]);
+            assert!(queue.next_batch().await.is_none());
+            queue.shutdown().await;
         }
-        // Finish queued siblings beyond the soft target, but do not admit the
-        // unrelated head to reach a later sibling. Preserve FIFO without waiting.
-        assert_eq!(
-            queue.next_batch().await.unwrap().1.input_ids,
-            [1, 1, 1, 2, 2, 2]
-        );
-        assert_eq!(queue.next_batch().await.unwrap().1.input_ids, [3, 3, 3]);
-        assert_eq!(queue.next_batch().await.unwrap().1.input_ids, [4, 4, 4]);
+    }
+
+    #[tokio::test]
+    async fn canceled_and_oversized_requests_do_not_block_later_work() {
+        let queue = test_queue_with_limits(4, Some(2), Some(3));
+        let budget = Arc::new(tokio::sync::Semaphore::new(1));
+        let (canceled, response) = test_entry(vec![1; 4], true);
+        let owner = Arc::new(budget.clone().try_acquire_owned().unwrap());
+        crate::input_memory::with_input_memory(owner, queue.append_request(vec![canceled], false))
+            .await;
+        drop(response);
+        let (oversized, failed) = test_entry(vec![2; 5], true);
+        let (live, reply) = test_entry(vec![3; 4], true);
+        queue.append_request(vec![oversized, live], false).await;
+        let (mut metadata, batch) = queue.next_batch().await.unwrap();
+        assert_eq!(batch.input_ids, [3; 4]);
+        assert_eq!(budget.available_permits(), 1);
+        assert!(matches!(
+            failed.await.unwrap(),
+            Err(BackendError::Inference(_))
+        ));
+        metadata
+            .pop()
+            .unwrap()
+            .response_tx
+            .send(Err(BackendError::Unhealthy))
+            .unwrap();
+        assert!(matches!(reply.await.unwrap(), Err(BackendError::Unhealthy)));
         assert!(queue.next_batch().await.is_none());
-        queue.close();
+        queue.shutdown().await;
     }
 
     #[tokio::test]
@@ -1176,7 +1298,6 @@ mod tests {
             .map(|response_tx| Metadata {
                 priority: false,
                 input_memory: None,
-                client_batch: None,
                 response_tx,
                 tokenization: Duration::ZERO,
                 queue_time: Instant::now(),
@@ -1262,7 +1383,6 @@ mod tests {
             .map(|(i, response_tx)| Metadata {
                 priority: false,
                 input_memory: None,
-                client_batch: None,
                 response_tx,
                 tokenization: Duration::ZERO,
                 queue_time: Instant::now(),

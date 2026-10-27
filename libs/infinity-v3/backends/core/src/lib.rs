@@ -170,6 +170,12 @@ pub trait Backend {
         None
     }
 
+    /// Whether explicit block-decision prefixes share computation within a batch.
+    /// This describes compute cost, not the memory used to materialize outputs.
+    fn shares_block_prefix(&self) -> bool {
+        false
+    }
+
     fn supports_radix_mlp(&self) -> bool {
         false
     }
