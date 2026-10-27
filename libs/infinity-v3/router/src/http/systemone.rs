@@ -972,7 +972,7 @@ pub(crate) async fn systemone_inner(
         tokenization,
         queue,
         inference,
-        priority,
+        priority && sequences != 0,
     );
     metadata.record_metrics(&info.model_id);
     metrics::counter!("infinity_request_success", "model" => info.model_id.clone(), "method" => "systemone").increment(1);
@@ -1033,7 +1033,7 @@ pub(crate) async fn systemone_inner(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn usage_question(prefix: usize, suffix: usize) -> Question {
@@ -1160,7 +1160,7 @@ mod tests {
         assert!(instructions(None).is_err());
     }
 
-    fn service() -> Laya {
+    pub(crate) fn service() -> Laya {
         use tokenizers::models::wordlevel::WordLevel;
         let tokenizer = Tokenizer::new(
             WordLevel::builder()

@@ -3334,6 +3334,20 @@ mod multi_model_test {
                 None,
                 None,
             )?;
+            let (headers, _) = super::super::systemone::systemone_inner(
+                Extension(runtime.infer.clone()),
+                Extension(runtime.info.clone()),
+                Extension(Some(Arc::new(super::super::systemone::SystemOne::Laya(
+                    super::super::systemone::tests::service(),
+                )))),
+                Json(json!({"state":"hello", "questions":{}, "service_tier":"priority"})),
+            )
+            .await
+            .map_err(|(status, _)| anyhow::anyhow!("Empty Laya request failed: {status}"))?;
+            if let Some(names) = crate::configured_billing_headers() {
+                assert_eq!(headers[&names.service_tier], "default");
+                assert_eq!(headers[&names.input_tokens], "0");
+            }
             for tier in [
                 None,
                 Some("default"),
