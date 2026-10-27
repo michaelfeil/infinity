@@ -1,6 +1,7 @@
 //! Jev typed decisions, submitted to infinity_v3's shared queue and replica pool.
 use super::response_format::Json;
 use super::result_value::{AnswerError, ResultValue};
+use super::types::ServiceTier;
 use crate::ErrorResponse;
 use axum::{
     extract::Extension,
@@ -128,6 +129,8 @@ fn instructions(value: Option<&Value>) -> Result<String, String> {
 #[derive(Debug, Deserialize, utoipa::ToSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SystemOneRequest {
+    #[serde(default)]
+    pub service_tier: ServiceTier,
     #[serde(deserialize_with = "deserialize_state")]
     #[schema(value_type = SystemOneState)]
     pub state: ModelInput,
@@ -797,6 +800,7 @@ pub(crate) async fn systemone_inner(
                 vec![],
             )
         };
+    let infer = infer.with_priority(request.service_tier.is_priority());
     let answer_count = request.questions.len();
     let d3_max_len = request.max_len;
     if request.questions.len() > info.max_decision_questions {

@@ -34,6 +34,20 @@ schema is available at `/api-doc/openapi.json`.
 CUDA inference requires SM80 (Ampere) or newer in both backends. SM75/Turing
 is unsupported; use a CPU build on hosts without a supported GPU.
 
+## Request priority
+
+`--priority-queue-bonus-ms` sets the virtual queue age bonus for requests carrying
+`"service_tier": "priority"`. It defaults to `1000` ms; `0` uses FIFO across tiers.
+Only inputs waiting for model batching are reordered, without adding a delay.
+
+```sh
+infinity_v3 --model-id /path/to/model --priority-queue-bonus-ms 250
+```
+
+`INFINITY_PRIORITY_QUEUE_BONUS_MS` (or `PRIORITY_QUEUE_BONUS_MS`) is the environment
+alternative. One value applies to all models; semicolon-separated values align
+with `--model-id`. Negative and fractional millisecond values are rejected.
+
 ## Sequence length and batch capacity
 
 Use `--max-sequence-length` to cap tokens per sequence independently of the
