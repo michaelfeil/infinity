@@ -423,6 +423,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#packed-embedding-output-opt-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packed embedding output (opt-in)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#supported-tasks-and-models-by-infinity-v3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1308,6 +1319,17 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#packed-embedding-output-opt-in" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Packed embedding output (opt-in)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#supported-tasks-and-models-by-infinity-v3" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1671,6 +1693,12 @@ settings are shared by the server.</p>
 precedence over environment values. Run <code>infinity_v3 --help</code> for the complete
 option list and the environment names used by your build.</p>
 </details>
+<h3 id="packed-embedding-output-opt-in">Packed embedding output (opt-in)</h3>
+<p>For buffer-oriented clients, opt in with <code>"encoding_format": "tensor"</code> and
+<code>Accept: application/msgpack</code>. Responses carry explicit shapes and portable
+little-endian float32 bytes, avoiding base64 and per-element numeric encoding.
+See the <a href="docs/embedding-tensors/">tensor quickstart and Python/Node.js examples</a>.
+The default numeric-array output remains available for existing clients.</p>
 <h3 id="supported-tasks-and-models-by-infinity-v3">Supported Tasks and Models by Infinity V3</h3>
 <p>Click on the sections below to find tasks and <strong>example models</strong>. Support depends
 on the checkpoint architecture and trained output head. The models below use
