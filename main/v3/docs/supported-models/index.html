@@ -2515,7 +2515,7 @@ supply labels or turn an embedding model into a classifier.</p>
 <p>Use <code>/v1/systemone</code> and retain the checkpoint's trained heads and protocol
 sidecars. Set the protocol explicitly as shown; Laya is detected from its
 <code>rl_agent_config.json</code> and needs no decoder protocol flag. A local path or custom
-served model name does not select a protocol by its name. The <code>d3</code>, <code>d3-mini</code>,
+served model name does not select a protocol by its name. The <code>d3</code>, <code>d3-mini</code>, <code>d3-ultra</code>,
 <code>pplx-decider-v1.1-27b</code> and <code>pplx-decider-flash-v1.2</code> short aliases select their
 registered checkpoints and protocols automatically.</p>
 <p>The protocol determines supported question types, media and request semantics;
@@ -2593,6 +2593,11 @@ server's <code>/docs</code> for the selected protocol.</p>
 <td><a href="https://huggingface.co/vllm-sr/d3-mini">vllm-sr/d3-mini</a></td>
 <td>Qwen3.5 + D3 code-readout head</td>
 <td><code>--decision-protocol d3 --max-batch-tokens 32768</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/vllm-sr/d3-ultra">vllm-sr/d3-ultra</a></td>
+<td>Qwen3.5-27B + D3 prefix-bidirectional code-readout head</td>
+<td><code>--decision-protocol d3 --dtype bfloat16 --max-batch-tokens 8192</code></td>
 </tr>
 </tbody>
 </table>
@@ -2697,6 +2702,14 @@ They are separate from Skywork's raw reward scores.</p>
 <p>This returns a typed decision for <code>route</code>. Use the running schema for other
 protocols and question types. D3-mini can also process supported image state;
 text-only examples do not require a media configuration.</p>
+<p>D3 Ultra uses the same endpoint and <code>choice</code>, <code>noul</code>, and <code>score</code> question types.
+Its checkpoint selects the <code>header-v1</code> text prompt, prefix-bidirectional attention
+and question-count temperature calibration automatically. Text and shared
+top-level image/video inputs are supported; video decoding requires <code>ffmpeg</code> and
+<code>ffprobe</code> in the server environment. Box/Track questions and image references
+inside instructions or criteria are not implemented. BF16 weights require
+approximately 52 GB before inference buffers; validate batch limits against
+available GPU memory.</p>
 <h2 id="model-licenses">Model licenses</h2>
 <p>Model weight licenses are separate from <a href="../../LICENSING/">Infinity's license</a>.
 Technical support includes checkpoints with non-commercial terms. The following
