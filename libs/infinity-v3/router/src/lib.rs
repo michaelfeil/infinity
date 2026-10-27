@@ -1368,6 +1368,7 @@ fn billing_input_tokens_header() -> Result<&'static Option<HeaderName>> {
 }
 
 struct ResponseMetadata {
+    priority: bool,
     compute_chars: usize,
     compute_tokens: usize,
     start_time: Instant,
@@ -1384,8 +1385,10 @@ impl ResponseMetadata {
         tokenization_time: Duration,
         queue_time: Duration,
         inference_time: Duration,
+        priority: bool,
     ) -> Self {
         Self {
+            priority,
             compute_chars,
             compute_tokens,
             start_time,
@@ -1419,10 +1422,16 @@ impl ResponseMetadata {
     }
 }
 
+#[cfg(feature = "http")]
+fn service_tier_header(priority: bool) -> HeaderValue {
+    HeaderValue::from_static(if priority { "priority" } else { "default" })
+}
+
 impl From<ResponseMetadata> for HeaderMap {
     fn from(value: ResponseMetadata) -> Self {
         // Headers
         let mut headers = HeaderMap::new();
+        headers.insert("x-service-tier", service_tier_header(value.priority));
         if let Some(Ok(Some(name))) = BILLING_INPUT_TOKENS.get() {
             headers.insert(name.clone(), HeaderValue::from(value.compute_tokens));
         }
