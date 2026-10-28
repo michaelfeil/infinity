@@ -118,7 +118,6 @@ impl<T: DeserializeOwned + RequestedModel + Send, S: Send + Sync> FromRequest<S>
             ),
             "/rerank" => matches!(&runtime.info.model_type, ModelType::Reranker(_)),
             "/v1/systemone" => matches!(&runtime.info.model_type, ModelType::Decision),
-            "/vertex" => !matches!(&runtime.info.model_type, ModelType::Decision),
             _ => true,
         };
         if !supported {

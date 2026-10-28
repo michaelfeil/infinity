@@ -115,8 +115,7 @@ default bonus, a priority input passes normal inputs admitted less than one seco
 earlier, but stays behind older work. Equal virtual enqueue times
 retain queue insertion order. Omitted tiers, `default`, and `auto` use
 real enqueue time. Every input in a client batch inherits its request tier;
-response ordering is unchanged. Vertex instances inherit the envelope tier
-unless they specify their own.
+response ordering is unchanged.
 
 This orders inputs ready for model batching, without adding an actual delay.
 It does not preempt dispatched batches or reorder image downloads, tokenization,
@@ -134,8 +133,7 @@ exposed through CORS for browser clients. For example, an effective flex
 request returns `x-baseten-service-tier: flex` with the prefix above. A zero
 queue bonus reports `default` even if the request asked for priority. This reports
 scheduling eligibility, not a guarantee that another request was overtaken.
-Vertex reports a tier only when every instance received it; mixed-tier or empty
-batches report `default`. Setting either tier's queue adjustment to zero reports
+Setting either tier's queue adjustment to zero reports
 `default` for that disabled tier.
 
 Set `INFINITY_EXPERIMENTAL_MULTIPLIER=2.0` to report twice the input tokens in
