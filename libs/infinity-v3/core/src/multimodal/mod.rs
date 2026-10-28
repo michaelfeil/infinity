@@ -21,3 +21,5 @@ pub use d3::{D3MediaProcessor, PreparedD3Media};
 
 mod mistral3;
 pub use mistral3::Mistral3Processor;
+mod ultravbert;
+pub use ultravbert::{PreparedUltraVbert, UltraVbertProcessor};

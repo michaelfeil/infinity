@@ -32,6 +32,7 @@
 #include "models/mistral3_models.h"
 #include "kernels/moe_kernels.h"
 #include "models/decision_models.h"
+#include "models/ultravbert_models.h"
 #include "models/dense_models.h"
 #include "models/multivector_model.h"
 #include "models/encoder_models.h"
@@ -209,13 +210,15 @@ struct Engine {
         } else
           ++it;
       }
-      decision = infinity::create_decision_head(decision_kind,
-                                                head_config,
-                                                options,
-                                                decision_kind == "laya" ? weights : head_weights,
-                                                weights);
-      if (decision_kind == "laya") {
-        TORCH_CHECK(family == "modernbert", "Laya requires a ModernBERT encoder");
+      decision = infinity::create_decision_head(
+          decision_kind,
+          head_config,
+          options,
+          decision_kind == "laya" || decision_kind == "vela3_encoder" ? weights : head_weights,
+          weights);
+      if (decision_kind == "laya" || decision_kind == "vela3_encoder") {
+        TORCH_CHECK(family == (decision_kind == "laya" ? "modernbert" : "ultrabert"),
+                    "Decision checkpoint has an incompatible encoder");
         infinity::Weights encoder;
         for (const auto& [key, value] : weights)
           if (key.starts_with("encoder."))
@@ -247,7 +250,9 @@ struct Engine {
       if (weights.count("linear.bias"))
         token_bias = weights.at("linear.bias");
     }
-    model = infinity::create_encoder(options, weights, device, dtype);
+    model = infinity::create_ultravbert(options, weights, device, dtype);
+    if (!model)
+      model = infinity::create_encoder(options, weights, device, dtype);
     if (!model)
       model = infinity::create_mistral3(options, weights, device, dtype);
     if (!model)
@@ -377,9 +382,11 @@ at::ScalarType weight_dtype(const Engine& model, const char* name) {
     auto kind = model.options.string("_decision.kind");
     if (kind == "pplx")
       target_dtype = at::kBFloat16;
-    if (kind == "d3")
+    if (kind == "d3" || kind == "vela3_vision")
       target_dtype = at::kFloat;
   }
+  if (model.options.string("_decision.kind") == "vela3_encoder" && !key.starts_with("encoder."))
+    target_dtype = at::kFloat;
   return target_dtype;
 }
 

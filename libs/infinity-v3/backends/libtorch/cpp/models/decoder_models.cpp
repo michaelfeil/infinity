@@ -1236,6 +1236,17 @@ public:
   at::Tensor visual_forward(const PackedInput& input,
                             const at::Tensor& indices,
                             const at::Tensor& visual) const {
+    if (family == "ultrabert") {
+      TORCH_CHECK(!radix_enabled(input) && indices.dim() == 1 &&
+                      indices.scalar_type() == at::kLong && indices.device() == device &&
+                      visual.dim() == 2 && visual.size(0) == indices.numel() &&
+                      visual.size(1) == hidden && visual.device() == device &&
+                      visual.scalar_type() == dtype,
+                  "Invalid UltraBERT visual embeddings");
+      auto h = at::embedding(embedding, input.ids);
+      h.index_copy_(0, indices, visual);
+      return forward_states(input, h, {}, {});
+    }
     return multimodal_forward(input,
                               indices,
                               visual,

@@ -455,6 +455,46 @@ inside instructions or criteria are not implemented. BF16 weights require
 approximately 52 GB before inference buffers; validate batch limits against
 available GPU memory.
 
+### Vela3 core decisions
+
+Vela3 models use `/v1/systemone` with the native LibTorch backend. The short
+aliases below and their full `vllm-sr/` IDs select `--decision-protocol vela3`
+automatically. For a local checkpoint directory, pass that protocol explicitly.
+
+| Model | Native backbone | Core question types | Inputs |
+| --- | --- | --- | --- |
+| [vela3-fast](https://huggingface.co/vllm-sr/vela3-fast) | UltraBERT-380M with its distilled cosine + MLP decision head | `choice`, `noul` | Text or JSON |
+| [vela3-fast-vision](https://huggingface.co/vllm-sr/vela3-fast-vision) | UltraVBERT: UltraBERT + SigLIP + pixel-shuffle connector, using the decision-trained backbone | `choice`, `noul` | Text or JSON, optionally 1–3 shared images |
+| [vela3-lite](https://huggingface.co/vllm-sr/vela3-lite) | Pinned D3-lite / Qwen3.5-0.8B | `choice`, `noul`, `score` | Text or JSON, shared media through the D3 path |
+| [vela3-mini](https://huggingface.co/vllm-sr/vela3-mini) | Pinned D3-mini / Qwen3.5-4B | `choice`, `noul`, `score` | Text or JSON, shared media through the D3 path |
+| [vela3-flash](https://huggingface.co/vllm-sr/vela3-flash) | Pinned D3-flash / Qwen3.5-9B | `choice`, `noul`, `score` | Text or JSON, shared media through the D3 path |
+| [vela3-turbo](https://huggingface.co/vllm-sr/vela3-turbo) | Pinned D3-turbo / Qwen3.5-27B, prefix-bidirectional attention | `choice`, `noul`, `score` | Text or JSON, shared media through the D3 path |
+
+```bash
+infinity_v3 --model-id vela3-fast --max-batch-tokens 4096
+```
+
+```json
+{"state":"My card was charged twice. Please refund the duplicate.","questions":{"route":{"type":"choice","instructions":"What does the customer want?","criteria":{"refund":"Money back for the duplicate charge","cancel":"Cancel the order"}},"urgent":{"type":"noul","instructions":"The customer needs a fast response."}}}
+```
+
+This integration serves **general decisions with task adapters off**. Task-specific
+router signals, adapter opt-in, span extraction (including NER, PII, relations,
+evidence and hallucination spans), generated label definitions, Box/Track and OCR
+readouts are not implemented. Requests matching trained adapter routes are rejected
+instead of silently using a different head. Use a general question ID and wording
+for ordinary decisions; changing the ID is not a substitute for a trained router
+signal. The encoder models do not implement `score`, even though some family
+descriptions list it; the Qwen-based models do.
+
+The Qwen packages download the D3 base revision pinned in `vela3_config.json`,
+including its tokenizer, prompt and FP32 readout. They do not substitute the base
+model's current `main`. No checkpoint Python code executes in the server.
+CUDA defaults to BF16 for Vela encoders; all learned decision heads remain FP32.
+The maximum formatted input is 32,768 tokens, also bounded by the configured
+sequence and batch token limits. Inputs are never truncated. D3 video processing
+requires `ffmpeg` and `ffprobe`; the UltraVBERT encoder accepts images only.
+
 
 ## Model licenses
 

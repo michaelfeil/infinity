@@ -604,6 +604,10 @@ impl LibtorchBackend {
         let decision_kind = if decision {
             let (kind, config) = if laya {
                 ("laya", read_config("rl_agent_config.json")?)
+            } else if path.join("vela3v_config.json").exists() {
+                ("vela3_vision", read_config("vela3v_config.json")?)
+            } else if path.join("vela3_config.json").exists() {
+                ("vela3_encoder", options.clone())
             } else if path.join("decision_config.json").exists() {
                 let config = read_config("decision_config.json")?;
                 let kind = if config["format_id"] == "d3-code-readout-v1" {
@@ -735,6 +739,7 @@ impl LibtorchBackend {
         .into();
         if decision
             && !laya
+            && !matches!(decision_kind, Some("vela3_encoder" | "vela3_vision"))
             && !matches!(
                 normalized_family.as_str(),
                 "gemma4"
@@ -1184,7 +1189,9 @@ impl LibtorchBackend {
             }
         }
         let index = path.join("model.safetensors.index.json");
-        let files = if path.join("model.safetensors").exists() {
+        let files = if decision_kind == Some("vela3_vision") {
+            vec!["backbone_h2.safetensors".to_owned()]
+        } else if path.join("model.safetensors").exists() {
             vec!["model.safetensors".to_owned()]
         } else if path.join("pytorch_model.bin").exists() {
             vec!["pytorch_model.bin".to_owned()]
@@ -1219,6 +1226,12 @@ impl LibtorchBackend {
             }
             if kind == "clef" {
                 files.push(("joint_head.safetensors".into(), "__tei_decision.".into()));
+            }
+            if kind == "vela3_vision" {
+                files.push((
+                    "decision_adapter.safetensors".into(),
+                    "__tei_decision.".into(),
+                ));
             }
         }
         for (i, dense_path) in dense_paths.iter().enumerate() {
