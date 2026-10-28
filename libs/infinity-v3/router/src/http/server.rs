@@ -250,8 +250,8 @@ async fn run_classification(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     req: PredictRequest,
 ) -> Result<(Vec<Vec<f32>>, ResponseMetadata), ErrorResponse> {
-    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
-    let priority = infer.is_priority();
+    let infer = Extension(infer.0.with_service_tier(req.service_tier));
+    let service_tier = infer.service_tier();
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -322,7 +322,7 @@ async fn run_classification(
                     tokenization,
                     queue,
                     inference,
-                    priority,
+                    service_tier,
                 ),
             )
         }
@@ -404,7 +404,7 @@ async fn run_classification(
                     Duration::from_nanos(total_tokenization_time / batch_size),
                     Duration::from_nanos(total_queue_time / batch_size),
                     Duration::from_nanos(total_inference_time / batch_size),
-                    priority,
+                    service_tier,
                 ),
             )
         }
@@ -637,8 +637,8 @@ async fn predict_tokens_inner(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<PredictTokensRequest>,
 ) -> Result<(HeaderMap, Json<TokenPredictResponse>), (StatusCode, Json<ErrorResponse>)> {
-    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
-    let priority = infer.is_priority();
+    let infer = Extension(infer.0.with_service_tier(req.service_tier));
+    let service_tier = infer.service_tier();
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -810,7 +810,7 @@ async fn predict_tokens_inner(
                 Duration::from_nanos(total_tokenization_time / batch_size),
                 Duration::from_nanos(total_queue_time / batch_size),
                 Duration::from_nanos(total_inference_time / batch_size),
-                priority,
+                service_tier,
             ),
         )
     };
@@ -870,8 +870,8 @@ async fn rerank_inner(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<RerankRequest>,
 ) -> Result<(HeaderMap, Json<RerankResponse>), (StatusCode, Json<ErrorResponse>)> {
-    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
-    let priority = infer.is_priority();
+    let infer = Extension(infer.0.with_service_tier(req.service_tier));
+    let service_tier = infer.service_tier();
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -1033,7 +1033,7 @@ async fn rerank_inner(
                 Duration::from_nanos(total_tokenization_time / batch_size),
                 Duration::from_nanos(total_queue_time / batch_size),
                 Duration::from_nanos(total_inference_time / batch_size),
-                priority,
+                service_tier,
             ),
         )
     };
@@ -1211,8 +1211,8 @@ async fn embed_inner(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<EmbedRequest>,
 ) -> Result<(HeaderMap, Json<EmbedResponse>), (StatusCode, Json<ErrorResponse>)> {
-    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
-    let priority = infer.is_priority();
+    let infer = Extension(infer.0.with_service_tier(req.service_tier));
+    let service_tier = infer.service_tier();
     if info.is_multi_vector() {
         if req.dimensions.is_some() {
             return Err(ErrorResponse {
@@ -1284,7 +1284,7 @@ async fn embed_inner(
                     response.metadata.tokenization,
                     response.metadata.queue,
                     response.metadata.inference,
-                    priority,
+                    service_tier,
                 ),
             )
         }
@@ -1383,7 +1383,7 @@ async fn embed_inner(
                     Duration::from_nanos(total_tokenization_time / batch_size),
                     Duration::from_nanos(total_queue_time / batch_size),
                     Duration::from_nanos(total_inference_time / batch_size),
-                    priority,
+                    service_tier,
                 ),
             )
         }
@@ -1450,8 +1450,8 @@ async fn embed_sparse_inner(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<EmbedSparseRequest>,
 ) -> Result<(HeaderMap, Json<EmbedSparseResponse>), (StatusCode, Json<ErrorResponse>)> {
-    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
-    let priority = infer.is_priority();
+    let infer = Extension(infer.0.with_service_tier(req.service_tier));
+    let service_tier = infer.service_tier();
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -1503,7 +1503,7 @@ async fn embed_sparse_inner(
                     response.metadata.tokenization,
                     response.metadata.queue,
                     response.metadata.inference,
-                    priority,
+                    service_tier,
                 ),
             )
         }
@@ -1601,7 +1601,7 @@ async fn embed_sparse_inner(
                     Duration::from_nanos(total_tokenization_time / batch_size),
                     Duration::from_nanos(total_queue_time / batch_size),
                     Duration::from_nanos(total_inference_time / batch_size),
-                    priority,
+                    service_tier,
                 ),
             )
         }
@@ -1662,8 +1662,8 @@ async fn embed_all_inner(
     Extension(context): Extension<Option<opentelemetry::Context>>,
     Json(req): Json<EmbedAllRequest>,
 ) -> Result<(HeaderMap, Json<EmbedAllResponse>), (StatusCode, Json<ErrorResponse>)> {
-    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
-    let priority = infer.is_priority();
+    let infer = Extension(infer.0.with_service_tier(req.service_tier));
+    let service_tier = infer.service_tier();
     let span = tracing::Span::current();
     if let Some(context) = context {
         span.set_parent(context);
@@ -1703,7 +1703,7 @@ async fn embed_all_inner(
                     response.metadata.tokenization,
                     response.metadata.queue,
                     response.metadata.inference,
-                    priority,
+                    service_tier,
                 ),
             )
         }
@@ -1800,7 +1800,7 @@ async fn embed_all_inner(
                     Duration::from_nanos(total_tokenization_time / batch_size),
                     Duration::from_nanos(total_queue_time / batch_size),
                     Duration::from_nanos(total_inference_time / batch_size),
-                    priority,
+                    service_tier,
                 ),
             )
         }
@@ -1868,8 +1868,8 @@ async fn openai_embed_inner(
     Json(req): Json<OpenAICompatRequest>,
 ) -> Result<(HeaderMap, Json<OpenAICompatResponse>), (StatusCode, Json<OpenAICompatErrorResponse>)>
 {
-    let infer = Extension(infer.0.with_priority(req.service_tier.is_priority()));
-    let priority = infer.is_priority();
+    let infer = Extension(infer.0.with_service_tier(req.service_tier));
+    let service_tier = infer.service_tier();
     if info.is_multi_vector() {
         let model = info.model_id.clone();
         let (headers, Json(values)) = embed_inner(
@@ -1967,7 +1967,7 @@ async fn openai_embed_inner(
                     response.metadata.tokenization,
                     response.metadata.queue,
                     response.metadata.inference,
-                    priority,
+                    service_tier,
                 ),
             )
         }
@@ -2070,7 +2070,7 @@ async fn openai_embed_inner(
                     Duration::from_nanos(total_tokenization_time / batch_size),
                     Duration::from_nanos(total_queue_time / batch_size),
                     Duration::from_nanos(total_inference_time / batch_size),
-                    priority,
+                    service_tier,
                 ),
             )
         }
@@ -2120,6 +2120,7 @@ async fn tokenize(RoutedJson { runtime, value }: RoutedJson<TokenizeRequest>) ->
         Json(value),
     )
     .await
+    .map(|body| (crate::service_tier_headers(crate::QueueTier::Default), body))
     .into_response()
 }
 
@@ -2236,6 +2237,7 @@ async fn decode(RoutedJson { runtime, value }: RoutedJson<DecodeRequest>) -> Res
         Json(value),
     )
     .await
+    .map(|body| (crate::service_tier_headers(crate::QueueTier::Default), body))
     .into_response()
 }
 
@@ -2423,15 +2425,17 @@ async fn vertex_compatibility_inner(
 
     let mut headers = HeaderMap::new();
     if let Some(names) = crate::configured_billing_headers() {
-        // A single header can promise priority only when every instance received it.
-        let priority = !predictions.is_empty()
-            && predictions.iter().all(|(headers, _)| {
-                headers.get(&names.service_tier) == Some(&crate::service_tier_header(true))
-            });
-        headers.insert(
-            names.service_tier.clone(),
-            crate::service_tier_header(priority),
-        );
+        let tier = predictions
+            .first()
+            .and_then(|(headers, _)| headers.get(&names.service_tier))
+            .filter(|tier| {
+                predictions
+                    .iter()
+                    .all(|(headers, _)| headers.get(&names.service_tier) == Some(*tier))
+            })
+            .cloned()
+            .unwrap_or_else(|| crate::service_tier_header(crate::QueueTier::Default));
+        headers.insert(names.service_tier.clone(), tier);
     }
     let predictions = predictions.into_iter().map(|(_, value)| value).collect();
     Ok((headers, Json(VertexResponse { predictions })))
@@ -3296,6 +3300,7 @@ mod multi_model_test {
             pooling: None,
             decision_protocol: None,
             priority_queue_bonus_ms: 1000,
+            flex_queue_offset_ms: 10000,
             max_concurrent_requests: 4,
             max_batch_tokens: 128,
             max_sequence_length: None,
@@ -3318,13 +3323,14 @@ mod multi_model_test {
     #[tokio::test]
     #[ignore = "requires MULTI_MODEL_EMBEDDING_DIR (local CPU embedding checkpoint)"]
     async fn service_tier_headers_follow_effective_queue_policy() -> anyhow::Result<()> {
-        for bonus in [1000, 0] {
+        for (bonus, offset) in [(1000, 1000), (0, 1000), (1000, 0), (0, 0)] {
             let mut config = settings(
                 std::env::var("MULTI_MODEL_EMBEDDING_DIR")?,
                 "embed",
                 infinity_v3_backend::BackendKind::Candle,
             );
             config.priority_queue_bonus_ms = bonus;
+            config.flex_queue_offset_ms = offset;
             config.max_sequence_length = std::num::NonZeroUsize::new(128);
             let runtime = Arc::new(initialize_model(config, None, None, &mut None).await?);
             let app = build_router(
@@ -3359,6 +3365,8 @@ mod multi_model_test {
                     ("/embed", json!({"inputs":"hello"})),
                     ("/embed", json!({"inputs":["hello", "world"]})),
                     ("/v1/embeddings", json!({"input":["hello", "world"]})),
+                    ("/tokenize", json!({"inputs":"hello"})),
+                    ("/decode", json!({"ids":[101,7592,102]})),
                     (
                         "/similarity",
                         json!({"inputs":{"source_sentence":"hello", "sentences":["world"]}}),
@@ -3374,10 +3382,11 @@ mod multi_model_test {
                     }
                     let mixed =
                         path == "/vertex" && body["instances"].as_array().unwrap().len() > 1;
-                    let expected = if tier == Some("priority") && bonus != 0 && !mixed {
-                        "priority"
-                    } else {
-                        "default"
+                    let preprocessing = path == "/tokenize" || path == "/decode";
+                    let expected = match tier {
+                        Some("priority") if bonus != 0 && !mixed && !preprocessing => "priority",
+                        Some("flex") if offset != 0 && !mixed && !preprocessing => "flex",
+                        _ => "default",
                     };
                     let response = app
                         .clone()
@@ -3401,14 +3410,14 @@ mod multi_model_test {
                             response.headers()["access-control-expose-headers"],
                             names.service_tier.as_str()
                         );
-                        if path != "/vertex" {
+                        if path != "/vertex" && !preprocessing {
                             let actual = response.headers()["x-compute-tokens"]
                                 .to_str()?
                                 .parse::<usize>()?;
                             let reported = response.headers()[&names.input_tokens]
                                 .to_str()?
                                 .parse::<usize>()?;
-                            if expected == "default" || names.priority_multiplier.is_none() {
+                            if expected != "priority" || names.priority_multiplier.is_none() {
                                 assert_eq!(reported, actual, "{path}: {body}");
                             }
                             if path == "/v1/embeddings" {

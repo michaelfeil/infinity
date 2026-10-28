@@ -18,7 +18,7 @@ use hf_hub::{Repo, RepoType};
 use infinity_v3_backend::{DType, Pool};
 use infinity_v3_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use infinity_v3_core::infer::Infer;
-use infinity_v3_core::queue_actor::Queue;
+use infinity_v3_core::queue_actor::{Queue, ServiceTier as QueueTier};
 use infinity_v3_core::tokenization::{Tokenization, MAX_TOKENIZATION_WORKERS};
 use infinity_v3_core::TextEmbeddingsError;
 use serde::Deserialize;
@@ -60,6 +60,7 @@ pub struct ModelSettings {
     pub pooling: Option<infinity_v3_backend::Pool>,
     pub decision_protocol: Option<DecisionProtocol>,
     pub priority_queue_bonus_ms: u64,
+    pub flex_queue_offset_ms: u64,
     pub max_concurrent_requests: usize,
     pub max_batch_tokens: usize,
     pub max_sequence_length: Option<std::num::NonZeroUsize>,
@@ -142,6 +143,7 @@ pub async fn run(
             pooling,
             decision_protocol,
             priority_queue_bonus_ms: 1000,
+            flex_queue_offset_ms: 10000,
             max_concurrent_requests,
             max_batch_tokens,
             max_sequence_length: None,
@@ -190,6 +192,7 @@ async fn initialize_model(
     let frontend_started = std::time::Instant::now();
     let ModelSettings {
         priority_queue_bonus_ms,
+        flex_queue_offset_ms,
         served_model_name,
         model_id,
         revision,
@@ -789,7 +792,7 @@ async fn initialize_model(
         tracing::info!("RadixMLP disabled");
     }
 
-    let queue = Queue::with_replicas_named(
+    let queue = Queue::with_service_tiers_named(
         max_batch_tokens,
         max_batch_requests,
         radix_mlp_threshold,
@@ -797,6 +800,7 @@ async fn initialize_model(
         devices.len(),
         metric_model_name,
         std::time::Duration::from_millis(priority_queue_bonus_ms),
+        std::time::Duration::from_millis(flex_queue_offset_ms),
     );
 
     // Create infer task
@@ -1414,7 +1418,7 @@ fn billing_token_count(tokens: usize, multiplier: Option<&BigDecimal>) -> String
 }
 
 struct ResponseMetadata {
-    priority: bool,
+    service_tier: QueueTier,
     compute_chars: usize,
     compute_tokens: usize,
     start_time: Instant,
@@ -1431,10 +1435,10 @@ impl ResponseMetadata {
         tokenization_time: Duration,
         queue_time: Duration,
         inference_time: Duration,
-        priority: bool,
+        service_tier: QueueTier,
     ) -> Self {
         Self {
-            priority,
+            service_tier,
             compute_chars,
             compute_tokens,
             start_time,
@@ -1469,30 +1473,33 @@ impl ResponseMetadata {
 }
 
 #[cfg(feature = "http")]
-fn service_tier_header(priority: bool) -> HeaderValue {
-    HeaderValue::from_static(if priority { "priority" } else { "default" })
+fn service_tier_header(tier: QueueTier) -> HeaderValue {
+    HeaderValue::from_static(tier.as_str())
+}
+
+#[cfg(feature = "http")]
+fn service_tier_headers(tier: QueueTier) -> HeaderMap {
+    configured_billing_headers().map_or_else(HeaderMap::new, |names| {
+        HeaderMap::from_iter([(names.service_tier.clone(), service_tier_header(tier))])
+    })
 }
 
 impl From<ResponseMetadata> for HeaderMap {
     fn from(value: ResponseMetadata) -> Self {
         // Headers
-        let mut headers = HeaderMap::new();
+        let mut headers = service_tier_headers(value.service_tier);
         if let Some(names) = configured_billing_headers() {
             let tokens = billing_token_count(
                 value.compute_tokens,
                 names
                     .priority_multiplier
                     .as_ref()
-                    .filter(|_| value.priority),
+                    .filter(|_| value.service_tier == QueueTier::Priority),
             );
             // Decimal integer text is valid HTTP header text.
             if let Ok(tokens) = HeaderValue::try_from(tokens) {
                 headers.insert(names.input_tokens.clone(), tokens);
             }
-            headers.insert(
-                names.service_tier.clone(),
-                service_tier_header(value.priority),
-            );
         }
         headers.insert("x-compute-type", "gpu+optimized".parse().unwrap());
         headers.insert(

@@ -34,19 +34,26 @@ schema is available at `/api-doc/openapi.json`.
 CUDA inference requires SM80 (Ampere) or newer in both backends. SM75/Turing
 is unsupported; use a CPU build on hosts without a supported GPU.
 
-## Request priority
+## Request service tiers
 
 `--priority-queue-bonus-ms` sets the virtual queue age bonus for requests carrying
-`"service_tier": "priority"`. It defaults to `1000` ms; `0` uses FIFO across tiers.
+`"service_tier": "priority"`. It defaults to `1000` ms; `0` disables priority scheduling.
 Only inputs waiting for model batching are reordered, without adding a delay.
 
 ```sh
-infinity_v3 --model-id /path/to/model --priority-queue-bonus-ms 250
+infinity_v3 --model-id /path/to/model \
+  --priority-queue-bonus-ms 1000 --flex-queue-offset-ms 10000
 ```
 
 `INFINITY_PRIORITY_QUEUE_BONUS_MS` (or `PRIORITY_QUEUE_BONUS_MS`) is the environment
 alternative. One value applies to all models; semicolon-separated values align
 with `--model-id`. Negative and fractional millisecond values are rejected.
+
+`--flex-queue-offset-ms` / `INFINITY_FLEX_QUEUE_OFFSET_MS` adds a virtual enqueue-time
+offset for `"service_tier": "flex"` (default `10000` ms). Flex yields to recent
+work but ages, so later arrivals cannot starve it indefinitely. `0` disables flex
+scheduling; set both adjustments to `0` for FIFO. Values broadcast or align with
+`--model-id`, just like the priority bonus. Billing is unchanged for flex.
 
 ## Sequence length and batch capacity
 

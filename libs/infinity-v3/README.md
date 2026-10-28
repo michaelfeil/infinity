@@ -95,7 +95,7 @@ on the running server for the interactive API, or `/api-doc/openapi.json` for
 its OpenAPI schema. See [running the server](docs/cli.md) and
 [building Infinity V3](CONTRIBUTING.md#working-in-the-infinity-monorepo).
 
-### Request priority
+### Request service tiers
 
 Add `"service_tier": "priority"` to any inference request, including embeddings,
 reranking, classification, and SystemOne decisions:
@@ -104,11 +104,16 @@ reranking, classification, and SystemOne decisions:
 {"input": ["first text", "second text"], "service_tier": "priority"}
 ```
 
+Use `"service_tier": "flex"` for lower-priority work. Flex inputs receive a virtual
+queue offset (ten seconds by default), allowing recent default/priority work to
+pass them while preserving aging and FIFO within each tier. This adds no artificial
+wait and does not change billing-token counts. `auto` maps to `default`.
+
 Each model's existing queue orders inputs by queue-worker admission time, subtracting
 a configurable bonus for `priority` requests (one second by default). With the
 default bonus, a priority input passes normal inputs admitted less than one second
 earlier, but stays behind older work. Equal virtual enqueue times
-retain queue insertion order. Omitted tiers, `default`, `auto`, and `flex` use
+retain queue insertion order. Omitted tiers, `default`, and `auto` use
 real enqueue time. Every input in a client batch inherits its request tier;
 response ordering is unchanged. Vertex instances inherit the envelope tier
 unless they specify their own.
@@ -117,19 +122,21 @@ This orders inputs ready for model batching, without adding an actual delay.
 It does not preempt dispatched batches or reorder image downloads, tokenization,
 or admission limits. Later priority arrivals cannot indefinitely overtake older
 normal work. `/tokenize` and `/decode` accept the field for compatibility but do
-not use the inference queue. Queue latency metrics continue to use real enqueue
-times. Two FIFO buffers compare only their heads: enqueue is O(1) amortized and
+not use the inference queue and report `default` in the service-tier header. Queue latency metrics continue to use real enqueue
+times. Three FIFO buffers compare only their heads: enqueue is O(1) amortized and
 next-input selection is O(1), without sorted middle insertions.
 
 Set `INFINITY_BILLING_HEADERS=x-baseten` to include `x-baseten-input-tokens`
 and `x-baseten-service-tier` response headers. Any valid HTTP header-name prefix
 works; unset or empty disables these headers. The service-tier header contains
-`priority` or `default`, reflecting the queue policy actually applied, and is
-exposed through CORS for browser clients. A zero
+`priority`, `flex`, or `default`, reflecting the queue policy actually applied, and is
+exposed through CORS for browser clients. For example, an effective flex
+request returns `x-baseten-service-tier: flex` with the prefix above. A zero
 queue bonus reports `default` even if the request asked for priority. This reports
 scheduling eligibility, not a guarantee that another request was overtaken.
-Vertex reports `priority` only when every instance received priority treatment;
-mixed-tier or empty batches report `default`.
+Vertex reports a tier only when every instance received it; mixed-tier or empty
+batches report `default`. Setting either tier's queue adjustment to zero reports
+`default` for that disabled tier.
 
 Set `INFINITY_EXPERIMENTAL_MULTIPLIER=2.0` to report twice the input tokens in
 `<prefix>-input-tokens` for effective priority requests. This optional float is unset
@@ -140,10 +147,15 @@ Default-tier requests (including priority requests with a zero queue bonus) keep
 unmodified counts. `x-compute-tokens`, response-body usage and scheduling are
 unchanged. The multiplier applies only when billing headers are enabled.
 
-Set `--priority-queue-bonus-ms 250` for a 250 ms head start, or `0` for FIFO.
+Set `--priority-queue-bonus-ms 250` for a 250 ms head start, or `0` to disable priority scheduling.
 The default is `1000`. `INFINITY_PRIORITY_QUEUE_BONUS_MS` is the environment
 variable. One value applies to all models; semicolon-separated values align
 with `--model-id`.
+
+Set `--flex-queue-offset-ms 250` or `INFINITY_FLEX_QUEUE_OFFSET_MS` for a
+250 ms flex offset. The default is `10000`; `0` disables flex scheduling and reports
+`default`. As with the priority bonus, semicolon-separated values align with
+`--model-id`. Set both adjustments to `0` for FIFO across all requests.
 
 ### CLI overview
 

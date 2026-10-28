@@ -201,9 +201,13 @@ struct Args {
     )]
     max_concurrent_requests: Vec<usize>,
 
-    /// Virtual queue age bonus for priority requests, in milliseconds; zero uses FIFO.
+    /// Virtual queue age bonus for priority requests, in milliseconds; zero disables priority scheduling.
     #[clap(long, default_value = "1000", env = infinity_v3_config::infinity_env!("PRIORITY_QUEUE_BONUS_MS"), value_delimiter = ';')]
     priority_queue_bonus_ms: Vec<u64>,
+
+    /// Virtual enqueue-time offset for flex requests, in milliseconds; zero disables flex scheduling.
+    #[clap(long, default_value = "10000", env = infinity_v3_config::infinity_env!("FLEX_QUEUE_OFFSET_MS"), value_delimiter = ';')]
+    flex_queue_offset_ms: Vec<u64>,
 
     /// **IMPORTANT** This is one critical control to allow maximum usage
     /// of the available hardware.
@@ -408,6 +412,8 @@ impl Args {
             count,
             "priority-queue-bonus-ms",
         )?;
+        let flex_queue_offset_ms =
+            expand(&self.flex_queue_offset_ms, count, "flex-queue-offset-ms")?;
         let max_concurrent_requests = expand(
             &self.max_concurrent_requests,
             count,
@@ -454,6 +460,7 @@ impl Args {
                     pooling: pooling[i].clone(),
                     decision_protocol: decision_protocol[i].clone(),
                     priority_queue_bonus_ms: priority_queue_bonus_ms[i],
+                    flex_queue_offset_ms: flex_queue_offset_ms[i],
                     max_concurrent_requests: max_concurrent_requests[i],
                     max_batch_tokens: max_batch_tokens[i],
                     max_sequence_length: max_sequence_length[i],
@@ -585,48 +592,49 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
     #[test]
-    fn priority_queue_bonus_defaults_broadcasts_and_validates() {
+    fn queue_tier_options_default_broadcast_and_validate() {
         let args = Args::try_parse_from(["infinity_v3", "--model-id", "a"]).unwrap();
         assert_eq!(args.models().unwrap()[0].priority_queue_bonus_ms, 1000);
-        for (value, expected) in [("250", [250, 250]), ("0;1500", [0, 1500])] {
-            let args = Args::try_parse_from([
-                "infinity_v3",
-                "--model-id",
-                "a",
-                "--model-id",
-                "b",
-                "--priority-queue-bonus-ms",
-                value,
-            ])
-            .unwrap();
-            let models = args.models().unwrap();
-            assert_eq!(
-                [
-                    models[0].priority_queue_bonus_ms,
-                    models[1].priority_queue_bonus_ms
-                ],
-                expected
-            );
+        assert_eq!(args.models().unwrap()[0].flex_queue_offset_ms, 10000);
+        for flag in ["--priority-queue-bonus-ms", "--flex-queue-offset-ms"] {
+            for (value, expected) in [("250", [250, 250]), ("0;1500", [0, 1500])] {
+                let args = Args::try_parse_from([
+                    "infinity_v3",
+                    "--model-id",
+                    "a",
+                    "--model-id",
+                    "b",
+                    flag,
+                    value,
+                ])
+                .unwrap();
+                let models = args.models().unwrap();
+                assert_eq!(
+                    [
+                        if flag == "--priority-queue-bonus-ms" {
+                            models[0].priority_queue_bonus_ms
+                        } else {
+                            models[0].flex_queue_offset_ms
+                        },
+                        if flag == "--priority-queue-bonus-ms" {
+                            models[1].priority_queue_bonus_ms
+                        } else {
+                            models[1].flex_queue_offset_ms
+                        }
+                    ],
+                    expected
+                );
+            }
+            for invalid in ["-1", "1.5", "abc"] {
+                assert!(
+                    Args::try_parse_from(["infinity_v3", "--model-id", "a", flag, invalid])
+                        .is_err()
+                );
+            }
+            let args =
+                Args::try_parse_from(["infinity_v3", "--model-id", "a", flag, "0;1000"]).unwrap();
+            assert!(args.models().is_err());
         }
-        for invalid in ["-1", "1.5", "abc"] {
-            assert!(Args::try_parse_from([
-                "infinity_v3",
-                "--model-id",
-                "a",
-                "--priority-queue-bonus-ms",
-                invalid
-            ])
-            .is_err());
-        }
-        let args = Args::try_parse_from([
-            "infinity_v3",
-            "--model-id",
-            "a",
-            "--priority-queue-bonus-ms",
-            "0;1000",
-        ])
-        .unwrap();
-        assert!(args.models().is_err());
     }
 
     #[test]
