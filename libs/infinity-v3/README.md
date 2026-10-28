@@ -136,14 +136,25 @@ scheduling eligibility, not a guarantee that another request was overtaken.
 Setting either tier's queue adjustment to zero reports
 `default` for that disabled tier.
 
-Set `INFINITY_EXPERIMENTAL_MULTIPLIER=2.0` to report twice the input tokens in
-`<prefix>-input-tokens` for effective priority requests. This optional float is unset
-by default, skipping multiplication. When set, it must be finite and positive;
-fractional token counts round up to whole tokens (for example, `7.2` becomes `8`).
-The configured decimal is evaluated exactly, so `100 * 1.1` reports `110`.
-Default-tier requests (including priority requests with a zero queue bonus) keep
-unmodified counts. `x-compute-tokens`, response-body usage and scheduling are
-unchanged. The multiplier applies only when billing headers are enabled.
+Set independent billing-token multipliers for effective priority and flex requests:
+
+```ini
+INFINITY_EXPERIMENTAL_MULTIPLIER_PRIORITY=2.0
+INFINITY_EXPERIMENTAL_MULTIPLIER_FLEX=0.9
+```
+
+Both are optional and unset by default (`None`, equivalent to `1.0` without
+multiplication). Values must be finite and positive. Only `<prefix>-input-tokens`
+changes; fractional counts round up to whole tokens (`8 * 0.9` reports `8`).
+Decimals are evaluated exactly (`100 * 0.9` reports `90`). Default-tier requests,
+including requests whose tier's queue adjustment is disabled, keep unmodified
+counts. `x-compute-tokens`, response-body usage and scheduling are unchanged.
+Multipliers apply only when billing headers are enabled.
+
+For compatibility, priority accepts `INFINITY_EXPERIMENTAL_MULTIPLIER_PRIOIRTY`
+and the original `INFINITY_EXPERIMENTAL_MULTIPLIER` as fallback aliases, in that
+order. The correctly spelled `INFINITY_EXPERIMENTAL_MULTIPLIER_PRIORITY` takes
+precedence. The legacy variable never applies to flex.
 
 Set `--priority-queue-bonus-ms 250` for a 250 ms head start, or `0` to disable priority scheduling.
 The default is `1000`. `INFINITY_PRIORITY_QUEUE_BONUS_MS` is the environment
