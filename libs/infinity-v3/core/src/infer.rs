@@ -52,8 +52,13 @@ impl Drop for BatchPreparation<'_> {
 impl Infer {
     /// Set priority on this request's handle; shared model state is unchanged.
     pub fn with_priority(mut self, priority: bool) -> Self {
-        self.priority = priority;
+        self.priority = priority && self.queue.priority_enabled();
         self
+    }
+
+    /// Whether this request uses the queue's priority policy.
+    pub fn is_priority(&self) -> bool {
+        self.priority
     }
 
     pub async fn decide(

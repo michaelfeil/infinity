@@ -802,6 +802,7 @@ pub(crate) async fn systemone_inner(
             )
         };
     let infer = infer.with_priority(request.service_tier.is_priority());
+    let priority = infer.is_priority();
     let answer_count = request.questions.len();
     let d3_max_len = request.max_len;
     if request.questions.len() > info.max_decision_questions {
@@ -971,6 +972,7 @@ pub(crate) async fn systemone_inner(
         tokenization,
         queue,
         inference,
+        priority && sequences != 0,
     );
     metadata.record_metrics(&info.model_id);
     metrics::counter!("infinity_request_success", "model" => info.model_id.clone(), "method" => "systemone").increment(1);
@@ -1031,7 +1033,7 @@ pub(crate) async fn systemone_inner(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn usage_question(prefix: usize, suffix: usize) -> Question {
@@ -1087,7 +1089,7 @@ mod tests {
 
     #[test]
     fn usage_headers_receive_the_deduplicated_count() {
-        let billing = crate::billing_input_tokens_header().unwrap();
+        let billing = crate::billing_headers().unwrap();
         let questions: Vec<_> = (0..10).map(|_| usage_question(1000, 100)).collect();
         let headers: HeaderMap = crate::ResponseMetadata::new(
             0,
@@ -1096,11 +1098,12 @@ mod tests {
             Duration::ZERO,
             Duration::ZERO,
             Duration::ZERO,
+            false,
         )
         .into();
         assert_eq!(headers["x-compute-tokens"], "2000");
-        if let Some(name) = billing {
-            assert_eq!(headers[name], "2000");
+        if let Some(names) = billing {
+            assert_eq!(headers[&names.input_tokens], "2000");
         }
     }
 
@@ -1157,7 +1160,7 @@ mod tests {
         assert!(instructions(None).is_err());
     }
 
-    fn service() -> Laya {
+    pub(crate) fn service() -> Laya {
         use tokenizers::models::wordlevel::WordLevel;
         let tokenizer = Tokenizer::new(
             WordLevel::builder()

@@ -149,6 +149,7 @@ impl PendingEntries {
 /// Request Queue
 #[derive(Debug, Clone)]
 pub struct Queue {
+    priority_enabled: bool,
     worker: Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>,
     /// Channel to communicate with the background queue task
     queue_sender: mpsc::Sender<QueueCommand>,
@@ -236,10 +237,15 @@ impl Queue {
         });
 
         Self {
+            priority_enabled: !priority_queue_bonus.is_zero(),
             worker: Arc::new(std::sync::Mutex::new(Some(worker))),
             queue_sender,
             closed,
         }
+    }
+
+    pub(crate) fn priority_enabled(&self) -> bool {
+        self.priority_enabled
     }
 
     pub fn is_closed(&self) -> bool {
@@ -748,6 +754,7 @@ mod tests {
             );
         });
         Queue {
+            priority_enabled: true,
             worker: Arc::new(std::sync::Mutex::new(None)),
             queue_sender,
             closed,
