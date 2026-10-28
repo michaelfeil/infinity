@@ -47,14 +47,14 @@ fn target_for_backlog(
     target.filter(|_| queued_tokens < 20_000usize.saturating_mul(replicas.max(1)))
 }
 
-/// Priority receives a virtual queue-age bonus; flex receives a penalty. Equal virtual times retain admission order.
+/// Priority receives a virtual queue-age bonus; flex receives an offset. Equal virtual times retain admission order. The input alias "auto" selects default.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum ServiceTier {
     #[default]
+    #[serde(alias = "auto")]
     Default,
-    Auto,
     Flex,
     Priority,
 }
@@ -66,7 +66,7 @@ impl ServiceTier {
 
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Default | Self::Auto => "default",
+            Self::Default => "default",
             Self::Priority => "priority",
             Self::Flex => "flex",
         }

@@ -53,7 +53,6 @@ impl Infer {
     /// Resolve request policy once; shared model state is unchanged.
     pub fn with_service_tier(mut self, tier: ServiceTier) -> Self {
         self.service_tier = match tier {
-            ServiceTier::Auto => ServiceTier::Default,
             ServiceTier::Priority if !self.queue.priority_enabled() => ServiceTier::Default,
             ServiceTier::Flex if !self.queue.flex_enabled() => ServiceTier::Default,
             tier => tier,
