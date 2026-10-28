@@ -12,6 +12,7 @@ use ::http::{HeaderMap, HeaderName, HeaderValue};
 mod shutdown;
 
 use anyhow::{anyhow, Context, Result};
+use bigdecimal::{BigDecimal, RoundingMode};
 use hf_hub::api::tokio::ApiBuilder;
 use hf_hub::{Repo, RepoType};
 use infinity_v3_backend::{DType, Pool};
@@ -1352,7 +1353,7 @@ impl From<TextEmbeddingsError> for ErrorResponse {
 struct BillingHeaders {
     input_tokens: HeaderName,
     service_tier: HeaderName,
-    priority_multiplier: Option<f64>,
+    priority_multiplier: Option<BigDecimal>,
 }
 
 static BILLING_HEADERS: OnceLock<Result<Option<BillingHeaders>, String>> = OnceLock::new();
@@ -1371,6 +1372,7 @@ fn billing_headers() -> Result<&'static Option<BillingHeaders>> {
                         .parse::<f64>()
                         .ok()
                         .filter(|value| value.is_finite() && *value > 0.0)
+                        .and_then(|_| value.parse::<BigDecimal>().ok())
                         .ok_or_else(|| format!("{MULTIPLIER_ENV} must be a finite positive float"))
                         .map(Some)?,
                     Err(std::env::VarError::NotPresent) => None,
@@ -1398,6 +1400,17 @@ fn billing_headers() -> Result<&'static Option<BillingHeaders>> {
 
 fn configured_billing_headers() -> Option<&'static BillingHeaders> {
     BILLING_HEADERS.get()?.as_ref().ok()?.as_ref()
+}
+
+fn billing_token_count(tokens: usize, multiplier: Option<&BigDecimal>) -> String {
+    multiplier.map_or_else(
+        || tokens.to_string(),
+        |multiplier| {
+            (BigDecimal::from(tokens as u64) * multiplier)
+                .with_scale_round(0, RoundingMode::Ceiling)
+                .to_string()
+        },
+    )
 }
 
 struct ResponseMetadata {
@@ -1465,13 +1478,17 @@ impl From<ResponseMetadata> for HeaderMap {
         // Headers
         let mut headers = HeaderMap::new();
         if let Some(names) = configured_billing_headers() {
-            let tokens = names
-                .priority_multiplier
-                .filter(|_| value.priority)
-                .map_or(value.compute_tokens, |multiplier| {
-                    (value.compute_tokens as f64 * multiplier).ceil() as usize
-                });
-            headers.insert(names.input_tokens.clone(), HeaderValue::from(tokens));
+            let tokens = billing_token_count(
+                value.compute_tokens,
+                names
+                    .priority_multiplier
+                    .as_ref()
+                    .filter(|_| value.priority),
+            );
+            // Decimal integer text is valid HTTP header text.
+            if let Ok(tokens) = HeaderValue::try_from(tokens) {
+                headers.insert(names.input_tokens.clone(), tokens);
+            }
             headers.insert(
                 names.service_tier.clone(),
                 service_tier_header(value.priority),
@@ -1788,5 +1805,21 @@ mod auto_dtype_tests {
         .unwrap();
         assert_eq!(config.max_position_embeddings, 0);
         assert_eq!(config.text_config.unwrap().max_position_embeddings, 131072);
+    }
+}
+
+#[cfg(test)]
+mod billing_token_tests {
+    use super::*;
+
+    #[test]
+    fn decimal_billing_rounds_up_without_binary_float_overcharges() {
+        for (tokens, multiplier, expected) in
+            [(100, "1.1", "110"), (1900, "1.07", "2033"), (6, "1.2", "8")]
+        {
+            let multiplier: BigDecimal = multiplier.parse().unwrap();
+            assert_eq!(billing_token_count(tokens, Some(&multiplier)), expected);
+        }
+        assert_eq!(billing_token_count(100, None), "100");
     }
 }

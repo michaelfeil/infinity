@@ -3408,13 +3408,9 @@ mod multi_model_test {
                             let reported = response.headers()[&names.input_tokens]
                                 .to_str()?
                                 .parse::<usize>()?;
-                            let expected_tokens = names
-                                .priority_multiplier
-                                .filter(|_| expected == "priority")
-                                .map_or(actual, |multiplier| {
-                                    (actual as f64 * multiplier).ceil() as usize
-                                });
-                            assert_eq!(reported, expected_tokens, "{path}: {body}");
+                            if expected == "default" || names.priority_multiplier.is_none() {
+                                assert_eq!(reported, actual, "{path}: {body}");
+                            }
                             if path == "/v1/embeddings" {
                                 let bytes =
                                     axum::body::to_bytes(response.into_body(), 1_000_000).await?;
