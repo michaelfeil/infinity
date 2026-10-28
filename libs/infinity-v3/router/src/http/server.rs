@@ -13,8 +13,7 @@ use crate::http::types::{
     PredictResponse, PredictTokensRequest, Prediction, Rank, RerankRequest, RerankResponse,
     Sequence, ServiceTier, SimilarityInput, SimilarityParameters, SimilarityRequest,
     SimilarityResponse, SimpleToken, SparseValue, TokenPredictResponse, TokenizeInput,
-    TokenizeRequest, TokenizeResponse, TruncationDirection, VertexPrediction, VertexRequest,
-    VertexResponse,
+    TokenizeRequest, TokenizeResponse, TruncationDirection,
 };
 use crate::model_registry::ModelRegistry;
 use crate::{
@@ -31,7 +30,6 @@ use axum::routing::{get, post};
 use axum::{http, Router};
 use axum_tracing_opentelemetry::middleware::OtelAxumLayer;
 use futures::future::join_all;
-use futures::FutureExt;
 use http::header::AUTHORIZATION;
 use infinity_v3_backend::BackendError;
 use infinity_v3_core::infer::{
@@ -2299,148 +2297,6 @@ async fn decode_inner(
     Ok(Json(DecodeResponse(texts)))
 }
 
-/// Generate embeddings from a Vertex request
-#[utoipa::path(
-post,
-tag = "infinity_v3",
-path = "/vertex",
-request_body = VertexRequest,
-responses(
-(status = 200, description = "Results"),
-(status = 424, description = "Error", body = ErrorResponse,
-example = json ! ({"error": "Inference failed", "error_type": "backend"})),
-(status = 429, description = "Model is overloaded", body = ErrorResponse,
-example = json ! ({"error": "Model is overloaded", "error_type": "overloaded"})),
-(status = 422, description = "Tokenization error", body = ErrorResponse,
-example = json ! ({"error": "Tokenization error", "error_type": "tokenizer"})),
-(status = 400, description = "Batch is empty", body = ErrorResponse,
-example = json ! ({"error": "Batch is empty", "error_type": "empty"})),
-(status = 413, description = "Batch size error", body = ErrorResponse,
-example = json ! ({"error": "Batch size error", "error_type": "validation"})),
-)
-)]
-#[instrument(skip_all)]
-async fn vertex_compatibility(
-    context: Extension<Option<opentelemetry::Context>>,
-    RoutedJson { runtime, value }: RoutedJson<VertexRequest>,
-) -> Response {
-    vertex_compatibility_inner(
-        Extension(runtime.infer.clone()),
-        Extension(runtime.info.clone()),
-        context,
-        Json(value),
-    )
-    .await
-    .into_response()
-}
-
-async fn vertex_compatibility_inner(
-    infer: Extension<Infer>,
-    info: Extension<Info>,
-    context: Extension<Option<opentelemetry::Context>>,
-    Json(req): Json<VertexRequest>,
-) -> Result<(HeaderMap, Json<VertexResponse>), (StatusCode, Json<ErrorResponse>)> {
-    let embed_future = move |infer: Extension<Infer>,
-                             info: Extension<Info>,
-                             context: Extension<Option<opentelemetry::Context>>,
-                             req: EmbedRequest| async move {
-        let result = embed_inner(infer, info, context, Json(req)).await?;
-        Ok((result.0, VertexPrediction::Embed(result.1 .0)))
-    };
-    let embed_sparse_future = move |infer: Extension<Infer>,
-                                    info: Extension<Info>,
-                                    context: Extension<Option<opentelemetry::Context>>,
-                                    req: EmbedSparseRequest| async move {
-        let result = embed_sparse_inner(infer, info, context, Json(req)).await?;
-        Ok((result.0, VertexPrediction::EmbedSparse(result.1 .0)))
-    };
-    let predict_future = move |infer: Extension<Infer>,
-                               info: Extension<Info>,
-                               context: Extension<Option<opentelemetry::Context>>,
-                               req: PredictRequest| async move {
-        let result = predict_inner(infer, info, context, Json(req)).await?;
-        Ok((result.0, VertexPrediction::Predict(result.1 .0)))
-    };
-    let rerank_future = move |infer: Extension<Infer>,
-                              info: Extension<Info>,
-                              context: Extension<Option<opentelemetry::Context>>,
-                              req: RerankRequest| async move {
-        let result = rerank_inner(infer, info, context, Json(req)).await?;
-        Ok((result.0, VertexPrediction::Rerank(result.1 .0)))
-    };
-
-    let mut futures = Vec::with_capacity(req.instances.len());
-    for mut instance in req.instances {
-        if let Some(object) = instance.as_object_mut() {
-            object
-                .entry("service_tier")
-                .or_insert_with(|| serde_json::json!(req.service_tier));
-        }
-        let local_infer = infer.clone();
-        let local_info = info.clone();
-        let local_context = context.clone();
-
-        // Rerank is the only payload that can me matched safely
-        if let Ok(instance) = <RerankRequest as serde::Deserialize>::deserialize(&instance) {
-            futures.push(rerank_future(local_infer, local_info, local_context, instance).boxed());
-            continue;
-        }
-
-        match info.model_type {
-            ModelType::Decision => {
-                return Err(ErrorResponse::from(TextEmbeddingsError::Validation(
-                    "Use /v1/systemone for typed decisions".into(),
-                ))
-                .into())
-            }
-            ModelType::Classifier(_) | ModelType::Reranker(_) => {
-                let instance = serde_json::from_value::<PredictRequest>(instance)
-                    .map_err(ErrorResponse::from)?;
-                futures
-                    .push(predict_future(local_infer, local_info, local_context, instance).boxed());
-            }
-            ModelType::Embedding(_) => {
-                if infer.is_splade() {
-                    let instance = serde_json::from_value::<EmbedSparseRequest>(instance)
-                        .map_err(ErrorResponse::from)?;
-                    futures.push(
-                        embed_sparse_future(local_infer, local_info, local_context, instance)
-                            .boxed(),
-                    );
-                } else {
-                    let instance = serde_json::from_value::<EmbedRequest>(instance)
-                        .map_err(ErrorResponse::from)?;
-                    futures.push(
-                        embed_future(local_infer, local_info, local_context, instance).boxed(),
-                    );
-                }
-            }
-        }
-    }
-
-    let predictions = join_all(futures)
-        .await
-        .into_iter()
-        .collect::<Result<Vec<_>, (StatusCode, Json<ErrorResponse>)>>()?;
-
-    let mut headers = HeaderMap::new();
-    if let Some(names) = crate::configured_billing_headers() {
-        let tier = predictions
-            .first()
-            .and_then(|(headers, _)| headers.get(&names.service_tier))
-            .filter(|tier| {
-                predictions
-                    .iter()
-                    .all(|(headers, _)| headers.get(&names.service_tier) == Some(*tier))
-            })
-            .cloned()
-            .unwrap_or_else(|| crate::service_tier_header(crate::QueueTier::Default));
-        headers.insert(names.service_tier.clone(), tier);
-    }
-    let predictions = predictions.into_iter().map(|(_, value)| value).collect();
-    Ok((headers, Json(VertexResponse { predictions })))
-}
-
 /// Prometheus metrics scrape endpoint
 #[utoipa::path(
 get,
@@ -2557,28 +2413,7 @@ fn api_doc() -> utoipa::openapi::OpenApi {
     )]
     struct ApiDoc;
 
-    // Define VertextApiDoc conditionally only if the "google" feature is enabled
-    let doc = {
-        // avoid `mut` if possible
-        #[cfg(feature = "google")]
-        {
-            #[derive(OpenApi)]
-            #[openapi(
-                paths(vertex_compatibility),
-                components(schemas(VertexRequest, VertexResponse, VertexPrediction))
-            )]
-            struct VertextApiDoc;
-
-            // limiting mutability to the smallest scope necessary
-            let mut doc = ApiDoc::openapi();
-            doc.merge(VertextApiDoc::openapi());
-            doc
-        }
-        #[cfg(not(feature = "google"))]
-        ApiDoc::openapi()
-    };
-
-    let mut doc = doc;
+    let mut doc = ApiDoc::openapi();
     if let Some(operation) = doc.paths.paths.get_mut("/predict").and_then(|path| {
         path.operations
             .get_mut(&utoipa::openapi::path::PathItemType::Post)
@@ -2703,11 +2538,10 @@ fn build_router(
         .route("/v1/embeddings", post(openai_embed))
         .route("/v1/classify", post(classify))
         .route("/v1/systemone", post(super::systemone::systemone))
-        // Vertex compat route
-        .route("/vertex", post(vertex_compatibility));
+        .route("/", post(default_inference))
+        .route("/invocations", post(default_inference));
 
-    #[allow(unused_mut)]
-    let mut public_routes = Router::new()
+    let public_routes = Router::new()
         // Base Health route
         .route("/health", get(health))
         // Inference API health route
@@ -2716,27 +2550,6 @@ fn build_router(
         .route("/ping", get(health))
         // Prometheus metrics route
         .route("/metrics", get(metrics));
-
-    #[cfg(feature = "google")]
-    {
-        tracing::info!("Built with `google` feature");
-
-        if let Ok(env_predict_route) = std::env::var("AIP_PREDICT_ROUTE") {
-            tracing::info!("Serving Vertex compatible route on {env_predict_route}");
-            routes = routes.route(&env_predict_route, post(vertex_compatibility));
-        }
-
-        if let Ok(env_health_route) = std::env::var("AIP_HEALTH_ROUTE") {
-            tracing::info!("Serving Vertex compatible health route on {env_health_route}");
-            public_routes = public_routes.route(&env_health_route, get(health));
-        }
-    }
-    #[cfg(not(feature = "google"))]
-    {
-        routes = routes
-            .route("/", post(default_inference))
-            .route("/invocations", post(default_inference));
-    }
 
     super::response_format::initialize_memory_errors();
     let http_output_limit =
@@ -3340,6 +3153,17 @@ mod multi_model_test {
                 None,
                 None,
             )?;
+            let removed = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("POST")
+                        .uri("/vertex")
+                        .header("content-type", "application/json")
+                        .body(Body::from(r#"{"instances":[{"inputs":"hello"}]}"#))?,
+                )
+                .await?;
+            assert_eq!(removed.status(), StatusCode::NOT_FOUND);
             let (headers, _) = super::super::systemone::systemone_inner(
                 Extension(runtime.infer.clone()),
                 Extension(runtime.info.clone()),
@@ -3362,6 +3186,8 @@ mod multi_model_test {
                 Some("priority"),
             ] {
                 for (path, mut body) in [
+                    ("/", json!({"inputs":"hello"})),
+                    ("/invocations", json!({"inputs":"hello"})),
                     ("/embed", json!({"inputs":"hello"})),
                     ("/embed", json!({"inputs":["hello", "world"]})),
                     ("/v1/embeddings", json!({"input":["hello", "world"]})),
@@ -3371,21 +3197,14 @@ mod multi_model_test {
                         "/similarity",
                         json!({"inputs":{"source_sentence":"hello", "sentences":["world"]}}),
                     ),
-                    ("/vertex", json!({"instances":[{"inputs":"hello"}]})),
-                    (
-                        "/vertex",
-                        json!({"instances":[{"inputs":"hello"}, {"inputs":"world", "service_tier":"default"}]}),
-                    ),
                 ] {
                     if let Some(tier) = tier {
                         body["service_tier"] = json!(tier);
                     }
-                    let mixed =
-                        path == "/vertex" && body["instances"].as_array().unwrap().len() > 1;
                     let preprocessing = path == "/tokenize" || path == "/decode";
                     let expected = match tier {
-                        Some("priority") if bonus != 0 && !mixed && !preprocessing => "priority",
-                        Some("flex") if offset != 0 && !mixed && !preprocessing => "flex",
+                        Some("priority") if bonus != 0 && !preprocessing => "priority",
+                        Some("flex") if offset != 0 && !preprocessing => "flex",
                         _ => "default",
                     };
                     let response = app
@@ -3410,7 +3229,7 @@ mod multi_model_test {
                             response.headers()["access-control-expose-headers"],
                             names.service_tier.as_str()
                         );
-                        if path != "/vertex" && !preprocessing {
+                        if !preprocessing {
                             let actual = response.headers()["x-compute-tokens"]
                                 .to_str()?
                                 .parse::<usize>()?;

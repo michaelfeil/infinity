@@ -919,14 +919,6 @@ pub async fn run_models(
             return Err(error);
         }
     };
-    let port = if cfg!(feature = "google") {
-        std::env::var("AIP_HTTP_PORT")
-            .ok()
-            .and_then(|p| p.parse().ok())
-            .unwrap_or(port)
-    } else {
-        port
-    };
     let ip = hostname
         .unwrap_or_else(|| "0.0.0.0".into())
         .parse()

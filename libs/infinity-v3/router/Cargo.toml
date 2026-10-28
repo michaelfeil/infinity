@@ -91,6 +91,5 @@ libtorch = ["infinity_v3-backend/libtorch"]
 candle-cuda = ["candle", "infinity_v3-backend/flash-attn", "dep:cudarc"]
 static-linking = ["infinity_v3-backend/cuda-static-linking", "cudarc?/static-linking", "intel-mkl-src?/mkl-static-lp64-iomp"]
 dynamic-linking = ["infinity_v3-backend/cuda-dynamic-linking", "cudarc?/dynamic-linking", "intel-mkl-src?/mkl-dynamic-lp64-iomp"]
-google = []
 
 experimental-deberta = ["candle-cuda", "infinity_v3-backend/experimental-deberta"]

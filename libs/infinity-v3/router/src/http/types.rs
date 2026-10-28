@@ -993,29 +993,6 @@ fn default_skip_special_tokens() -> bool {
 #[schema(example = json!(["test"]))]
 pub(crate) struct DecodeResponse(pub Vec<String>);
 
-#[derive(Deserialize, ToSchema)]
-pub(crate) struct VertexRequest {
-    #[serde(default)]
-    pub service_tier: ServiceTier,
-    /// Served model name; required for multi-model deployments.
-    pub model: Option<String>,
-    pub instances: Vec<serde_json::Value>,
-}
-
-#[derive(Serialize, ToSchema)]
-#[serde(untagged)]
-pub(crate) enum VertexPrediction {
-    Embed(EmbedResponse),
-    EmbedSparse(EmbedSparseResponse),
-    Predict(PredictResponse),
-    Rerank(RerankResponse),
-}
-
-#[derive(Serialize, ToSchema)]
-pub(crate) struct VertexResponse {
-    pub predictions: Vec<VertexPrediction>,
-}
-
 #[derive(Serialize, ToSchema, Clone)]
 pub(crate) struct TokenPrediction {
     #[schema(example = "Hello")]
@@ -1094,7 +1071,6 @@ mod service_tier_tests {
             super::super::systemone::SystemOneRequest,
             json!({"state": "hello", "questions": {}})
         );
-        check!(VertexRequest, json!({"instances": [{"inputs": "hello"}]}));
         let request: ClassifyRequest =
             serde_json::from_value(json!({"input":"hello", "service_tier":"priority"})).unwrap();
         assert!(request.into_predict().unwrap().service_tier.is_priority());
@@ -1397,11 +1373,6 @@ impl super::model_routing::RequestedModel for TokenizeRequest {
     }
 }
 impl super::model_routing::RequestedModel for DecodeRequest {
-    fn requested_model(&self) -> Result<Option<&str>, String> {
-        Ok(self.model.as_deref())
-    }
-}
-impl super::model_routing::RequestedModel for VertexRequest {
     fn requested_model(&self) -> Result<Option<&str>, String> {
         Ok(self.model.as_deref())
     }
