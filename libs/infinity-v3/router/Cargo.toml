@@ -58,6 +58,7 @@ utoipa-swagger-ui = { version = "7.1", features = ["axum", "vendored"], optional
 # Optional
 cudarc = { workspace = true, optional = true }
 intel-mkl-src = { workspace = true, optional = true }
+bigdecimal = { version = "0.4", default-features = false, features = ["std"] }
 
 # Malloc trim hack for linux
 [target.'cfg(target_os = "linux")'.dependencies]

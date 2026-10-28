@@ -3402,7 +3402,21 @@ mod multi_model_test {
                             names.service_tier.as_str()
                         );
                         if path != "/vertex" {
-                            assert!(response.headers().contains_key(&names.input_tokens));
+                            let actual = response.headers()["x-compute-tokens"]
+                                .to_str()?
+                                .parse::<usize>()?;
+                            let reported = response.headers()[&names.input_tokens]
+                                .to_str()?
+                                .parse::<usize>()?;
+                            if expected == "default" || names.priority_multiplier.is_none() {
+                                assert_eq!(reported, actual, "{path}: {body}");
+                            }
+                            if path == "/v1/embeddings" {
+                                let bytes =
+                                    axum::body::to_bytes(response.into_body(), 1_000_000).await?;
+                                let body: serde_json::Value = serde_json::from_slice(&bytes)?;
+                                assert_eq!(body["usage"]["prompt_tokens"], actual);
+                            }
                         }
                     } else {
                         assert!(!response.headers().contains_key("x-service-tier"));
