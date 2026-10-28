@@ -60,7 +60,7 @@ pub struct ModelSettings {
     pub pooling: Option<infinity_v3_backend::Pool>,
     pub decision_protocol: Option<DecisionProtocol>,
     pub priority_queue_bonus_ms: u64,
-    pub flex_queue_penalty_ms: u64,
+    pub flex_queue_offset_ms: u64,
     pub max_concurrent_requests: usize,
     pub max_batch_tokens: usize,
     pub max_sequence_length: Option<std::num::NonZeroUsize>,
@@ -143,7 +143,7 @@ pub async fn run(
             pooling,
             decision_protocol,
             priority_queue_bonus_ms: 1000,
-            flex_queue_penalty_ms: 10000,
+            flex_queue_offset_ms: 10000,
             max_concurrent_requests,
             max_batch_tokens,
             max_sequence_length: None,
@@ -192,7 +192,7 @@ async fn initialize_model(
     let frontend_started = std::time::Instant::now();
     let ModelSettings {
         priority_queue_bonus_ms,
-        flex_queue_penalty_ms,
+        flex_queue_offset_ms,
         served_model_name,
         model_id,
         revision,
@@ -800,7 +800,7 @@ async fn initialize_model(
         devices.len(),
         metric_model_name,
         std::time::Duration::from_millis(priority_queue_bonus_ms),
-        std::time::Duration::from_millis(flex_queue_penalty_ms),
+        std::time::Duration::from_millis(flex_queue_offset_ms),
     );
 
     // Create infer task

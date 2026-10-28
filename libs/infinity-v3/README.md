@@ -105,7 +105,7 @@ reranking, classification, and SystemOne decisions:
 ```
 
 Use `"service_tier": "flex"` for lower-priority work. Flex inputs receive a virtual
-queue penalty (ten seconds by default), allowing recent default/priority work to
+queue offset (ten seconds by default), allowing recent default/priority work to
 pass them while preserving aging and FIFO within each tier. This adds no artificial
 wait and does not change billing-token counts. `auto` maps to `default`.
 
@@ -130,7 +130,8 @@ Set `INFINITY_BILLING_HEADERS=x-baseten` to include `x-baseten-input-tokens`
 and `x-baseten-service-tier` response headers. Any valid HTTP header-name prefix
 works; unset or empty disables these headers. The service-tier header contains
 `priority`, `flex`, or `default`, reflecting the queue policy actually applied, and is
-exposed through CORS for browser clients. A zero
+exposed through CORS for browser clients. For example, an effective flex
+request returns `x-baseten-service-tier: flex` with the prefix above. A zero
 queue bonus reports `default` even if the request asked for priority. This reports
 scheduling eligibility, not a guarantee that another request was overtaken.
 Vertex reports a tier only when every instance received it; mixed-tier or empty
@@ -151,8 +152,8 @@ The default is `1000`. `INFINITY_PRIORITY_QUEUE_BONUS_MS` is the environment
 variable. One value applies to all models; semicolon-separated values align
 with `--model-id`.
 
-Set `--flex-queue-penalty-ms 250` or `INFINITY_FLEX_QUEUE_PENALTY_MS` for a
-250 ms flex penalty. The default is `10000`; `0` disables flex scheduling and reports
+Set `--flex-queue-offset-ms 250` or `INFINITY_FLEX_QUEUE_OFFSET_MS` for a
+250 ms flex offset. The default is `10000`; `0` disables flex scheduling and reports
 `default`. As with the priority bonus, semicolon-separated values align with
 `--model-id`. Set both adjustments to `0` for FIFO across all requests.
 

@@ -3300,7 +3300,7 @@ mod multi_model_test {
             pooling: None,
             decision_protocol: None,
             priority_queue_bonus_ms: 1000,
-            flex_queue_penalty_ms: 10000,
+            flex_queue_offset_ms: 10000,
             max_concurrent_requests: 4,
             max_batch_tokens: 128,
             max_sequence_length: None,
@@ -3323,14 +3323,14 @@ mod multi_model_test {
     #[tokio::test]
     #[ignore = "requires MULTI_MODEL_EMBEDDING_DIR (local CPU embedding checkpoint)"]
     async fn service_tier_headers_follow_effective_queue_policy() -> anyhow::Result<()> {
-        for (bonus, penalty) in [(1000, 1000), (0, 1000), (1000, 0), (0, 0)] {
+        for (bonus, offset) in [(1000, 1000), (0, 1000), (1000, 0), (0, 0)] {
             let mut config = settings(
                 std::env::var("MULTI_MODEL_EMBEDDING_DIR")?,
                 "embed",
                 infinity_v3_backend::BackendKind::Candle,
             );
             config.priority_queue_bonus_ms = bonus;
-            config.flex_queue_penalty_ms = penalty;
+            config.flex_queue_offset_ms = offset;
             config.max_sequence_length = std::num::NonZeroUsize::new(128);
             let runtime = Arc::new(initialize_model(config, None, None, &mut None).await?);
             let app = build_router(
@@ -3385,7 +3385,7 @@ mod multi_model_test {
                     let preprocessing = path == "/tokenize" || path == "/decode";
                     let expected = match tier {
                         Some("priority") if bonus != 0 && !mixed && !preprocessing => "priority",
-                        Some("flex") if penalty != 0 && !mixed && !preprocessing => "flex",
+                        Some("flex") if offset != 0 && !mixed && !preprocessing => "flex",
                         _ => "default",
                     };
                     let response = app

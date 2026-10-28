@@ -116,19 +116,19 @@ struct PendingEntries {
     priority: VecDeque<PendingEntry>,
     flex: VecDeque<PendingEntry>,
     bonus: Duration,
-    flex_penalty: Duration,
+    flex_offset: Duration,
     anchor: Instant,
     next_order: u128,
 }
 
 impl PendingEntries {
-    fn new(capacity: usize, bonus: Duration, flex_penalty: Duration) -> Self {
+    fn new(capacity: usize, bonus: Duration, flex_offset: Duration) -> Self {
         Self {
             normal: VecDeque::with_capacity(capacity),
             priority: VecDeque::new(),
             flex: VecDeque::new(),
             bonus,
-            flex_penalty,
+            flex_offset,
             anchor: Instant::now(),
             next_order: 0,
         }
@@ -137,7 +137,7 @@ impl PendingEntries {
     fn tier(&mut self, tier: ServiceTier) -> &mut VecDeque<PendingEntry> {
         match tier {
             ServiceTier::Priority if !self.bonus.is_zero() => &mut self.priority,
-            ServiceTier::Flex if !self.flex_penalty.is_zero() => &mut self.flex,
+            ServiceTier::Flex if !self.flex_offset.is_zero() => &mut self.flex,
             _ => &mut self.normal,
         }
     }
@@ -168,7 +168,7 @@ impl PendingEntries {
             (
                 ServiceTier::Flex,
                 self.flex.front(),
-                self.bonus.saturating_add(self.flex_penalty),
+                self.bonus.saturating_add(self.flex_offset),
             ),
         ]
         .into_iter()
@@ -285,7 +285,7 @@ impl Queue {
         replicas: usize,
         model_name: String,
         priority_queue_bonus: Duration,
-        flex_queue_penalty: Duration,
+        flex_queue_offset: Duration,
     ) -> Self {
         // Validate on the caller's thread before spawning the detached worker.
         let configured_target =
@@ -321,13 +321,13 @@ impl Queue {
                 worker_closed,
                 model_name.into(),
                 priority_queue_bonus,
-                flex_queue_penalty,
+                flex_queue_offset,
             )
         });
 
         Self {
             priority_enabled: !priority_queue_bonus.is_zero(),
-            flex_enabled: !flex_queue_penalty.is_zero(),
+            flex_enabled: !flex_queue_offset.is_zero(),
             worker: Arc::new(std::sync::Mutex::new(Some(worker))),
             queue_sender,
             closed,
@@ -433,7 +433,7 @@ fn queue_blocking_task(
     closed: Arc<AtomicBool>,
     model_name: metrics::SharedString,
     priority_queue_bonus: Duration,
-    flex_queue_penalty: Duration,
+    flex_queue_offset: Duration,
 ) {
     tracing::info!(
         ?early_dispatch_tokens,
@@ -448,7 +448,7 @@ fn queue_blocking_task(
     let mut entries = PendingEntries::new(
         max_concurrent_requests,
         priority_queue_bonus,
-        flex_queue_penalty,
+        flex_queue_offset,
     );
     // Canceled entries stay counted until removal. This may disable a soft
     // dispatch cut, but never bypasses the hard token/request limits.

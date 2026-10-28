@@ -205,9 +205,9 @@ struct Args {
     #[clap(long, default_value = "1000", env = infinity_v3_config::infinity_env!("PRIORITY_QUEUE_BONUS_MS"), value_delimiter = ';')]
     priority_queue_bonus_ms: Vec<u64>,
 
-    /// Virtual queue penalty for flex requests, in milliseconds; zero disables flex scheduling.
-    #[clap(long, default_value = "10000", env = infinity_v3_config::infinity_env!("FLEX_QUEUE_PENALTY_MS"), value_delimiter = ';')]
-    flex_queue_penalty_ms: Vec<u64>,
+    /// Virtual enqueue-time offset for flex requests, in milliseconds; zero disables flex scheduling.
+    #[clap(long, default_value = "10000", env = infinity_v3_config::infinity_env!("FLEX_QUEUE_OFFSET_MS"), value_delimiter = ';')]
+    flex_queue_offset_ms: Vec<u64>,
 
     /// **IMPORTANT** This is one critical control to allow maximum usage
     /// of the available hardware.
@@ -412,8 +412,8 @@ impl Args {
             count,
             "priority-queue-bonus-ms",
         )?;
-        let flex_queue_penalty_ms =
-            expand(&self.flex_queue_penalty_ms, count, "flex-queue-penalty-ms")?;
+        let flex_queue_offset_ms =
+            expand(&self.flex_queue_offset_ms, count, "flex-queue-offset-ms")?;
         let max_concurrent_requests = expand(
             &self.max_concurrent_requests,
             count,
@@ -460,7 +460,7 @@ impl Args {
                     pooling: pooling[i].clone(),
                     decision_protocol: decision_protocol[i].clone(),
                     priority_queue_bonus_ms: priority_queue_bonus_ms[i],
-                    flex_queue_penalty_ms: flex_queue_penalty_ms[i],
+                    flex_queue_offset_ms: flex_queue_offset_ms[i],
                     max_concurrent_requests: max_concurrent_requests[i],
                     max_batch_tokens: max_batch_tokens[i],
                     max_sequence_length: max_sequence_length[i],
@@ -595,8 +595,8 @@ mod tests {
     fn queue_tier_options_default_broadcast_and_validate() {
         let args = Args::try_parse_from(["infinity_v3", "--model-id", "a"]).unwrap();
         assert_eq!(args.models().unwrap()[0].priority_queue_bonus_ms, 1000);
-        assert_eq!(args.models().unwrap()[0].flex_queue_penalty_ms, 10000);
-        for flag in ["--priority-queue-bonus-ms", "--flex-queue-penalty-ms"] {
+        assert_eq!(args.models().unwrap()[0].flex_queue_offset_ms, 10000);
+        for flag in ["--priority-queue-bonus-ms", "--flex-queue-offset-ms"] {
             for (value, expected) in [("250", [250, 250]), ("0;1500", [0, 1500])] {
                 let args = Args::try_parse_from([
                     "infinity_v3",
@@ -614,12 +614,12 @@ mod tests {
                         if flag == "--priority-queue-bonus-ms" {
                             models[0].priority_queue_bonus_ms
                         } else {
-                            models[0].flex_queue_penalty_ms
+                            models[0].flex_queue_offset_ms
                         },
                         if flag == "--priority-queue-bonus-ms" {
                             models[1].priority_queue_bonus_ms
                         } else {
-                            models[1].flex_queue_penalty_ms
+                            models[1].flex_queue_offset_ms
                         }
                     ],
                     expected
