@@ -1405,6 +1405,7 @@ struct BillingHeaders {
     input_tokens: HeaderName,
     service_tier: HeaderName,
     priority_multiplier: Option<BigDecimal>,
+    flex_multiplier: Option<BigDecimal>,
 }
 
 static BILLING_HEADERS: OnceLock<Result<Option<BillingHeaders>, String>> = OnceLock::new();
@@ -1416,21 +1417,14 @@ fn billing_headers() -> Result<&'static Option<BillingHeaders>> {
         .get_or_init(|| match std::env::var(ENV) {
             Ok(prefix) if prefix.is_empty() => Ok(None),
             Ok(prefix) => {
-                const MULTIPLIER_ENV: &str =
-                    infinity_v3_config::infinity_env!("EXPERIMENTAL_MULTIPLIER");
-                let priority_multiplier = match std::env::var(MULTIPLIER_ENV) {
-                    Ok(value) => value
-                        .parse::<f64>()
-                        .ok()
-                        .filter(|value| value.is_finite() && *value > 0.0)
-                        .and_then(|_| value.parse::<BigDecimal>().ok())
-                        .ok_or_else(|| format!("{MULTIPLIER_ENV} must be a finite positive float"))
-                        .map(Some)?,
-                    Err(std::env::VarError::NotPresent) => None,
-                    Err(std::env::VarError::NotUnicode(_)) => {
-                        return Err(format!("{MULTIPLIER_ENV} must be valid Unicode"))
-                    }
-                };
+                let priority_multiplier = billing_multiplier(&[
+                    infinity_v3_config::infinity_env!("EXPERIMENTAL_MULTIPLIER_PRIORITY"),
+                    infinity_v3_config::infinity_env!("EXPERIMENTAL_MULTIPLIER_PRIOIRTY"),
+                    infinity_v3_config::infinity_env!("EXPERIMENTAL_MULTIPLIER"),
+                ])?;
+                let flex_multiplier = billing_multiplier(&[infinity_v3_config::infinity_env!(
+                    "EXPERIMENTAL_MULTIPLIER_FLEX"
+                )])?;
                 let name = |suffix| {
                     HeaderName::from_bytes(format!("{prefix}-{suffix}").as_bytes()).map_err(|_| {
                         format!("{ENV} must be empty or a valid HTTP header-name prefix")
@@ -1440,6 +1434,7 @@ fn billing_headers() -> Result<&'static Option<BillingHeaders>> {
                     input_tokens: name("input-tokens")?,
                     service_tier: name("service-tier")?,
                     priority_multiplier,
+                    flex_multiplier,
                 }))
             }
             Err(std::env::VarError::NotPresent) => Ok(None),
@@ -1447,6 +1442,38 @@ fn billing_headers() -> Result<&'static Option<BillingHeaders>> {
         })
         .as_ref()
         .map_err(|error| anyhow!(error.clone()))
+}
+
+// First configured name wins; invalid values fail startup rather than falling back.
+fn billing_multiplier(names: &[&str]) -> std::result::Result<Option<BigDecimal>, String> {
+    for name in names {
+        match std::env::var(name) {
+            Ok(value) => {
+                return value
+                    .parse::<f64>()
+                    .ok()
+                    .filter(|value| value.is_finite() && *value > 0.0)
+                    .and_then(|_| value.parse::<BigDecimal>().ok())
+                    .ok_or_else(|| format!("{name} must be a finite positive float"))
+                    .map(Some);
+            }
+            Err(std::env::VarError::NotPresent) => continue,
+            Err(std::env::VarError::NotUnicode(_)) => {
+                return Err(format!("{name} must be valid Unicode"));
+            }
+        }
+    }
+    Ok(None)
+}
+
+impl BillingHeaders {
+    fn multiplier(&self, tier: QueueTier) -> Option<&BigDecimal> {
+        match tier {
+            QueueTier::Default => None,
+            QueueTier::Priority => self.priority_multiplier.as_ref(),
+            QueueTier::Flex => self.flex_multiplier.as_ref(),
+        }
+    }
 }
 
 fn configured_billing_headers() -> Option<&'static BillingHeaders> {
@@ -1536,13 +1563,8 @@ impl From<ResponseMetadata> for HeaderMap {
         // Headers
         let mut headers = service_tier_headers(value.service_tier);
         if let Some(names) = configured_billing_headers() {
-            let tokens = billing_token_count(
-                value.compute_tokens,
-                names
-                    .priority_multiplier
-                    .as_ref()
-                    .filter(|_| value.service_tier == QueueTier::Priority),
-            );
+            let tokens =
+                billing_token_count(value.compute_tokens, names.multiplier(value.service_tier));
             // Decimal integer text is valid HTTP header text.
             if let Ok(tokens) = HeaderValue::try_from(tokens) {
                 headers.insert(names.input_tokens.clone(), tokens);
@@ -1868,12 +1890,29 @@ mod billing_token_tests {
 
     #[test]
     fn decimal_billing_rounds_up_without_binary_float_overcharges() {
-        for (tokens, multiplier, expected) in
-            [(100, "1.1", "110"), (1900, "1.07", "2033"), (6, "1.2", "8")]
-        {
+        for (tokens, multiplier, expected) in [
+            (100, "1.1", "110"),
+            (1900, "1.07", "2033"),
+            (6, "1.2", "8"),
+            (8, "0.9", "8"),
+            (100, "0.9", "90"),
+        ] {
             let multiplier: BigDecimal = multiplier.parse().unwrap();
             assert_eq!(billing_token_count(tokens, Some(&multiplier)), expected);
         }
         assert_eq!(billing_token_count(100, None), "100");
+        let headers = BillingHeaders {
+            input_tokens: HeaderName::from_static("x-test-input-tokens"),
+            service_tier: HeaderName::from_static("x-test-service-tier"),
+            priority_multiplier: Some("2.0".parse().unwrap()),
+            flex_multiplier: Some("0.9".parse().unwrap()),
+        };
+        for (tier, expected) in [
+            (QueueTier::Default, "100"),
+            (QueueTier::Priority, "200"),
+            (QueueTier::Flex, "90"),
+        ] {
+            assert_eq!(billing_token_count(100, headers.multiplier(tier)), expected);
+        }
     }
 }

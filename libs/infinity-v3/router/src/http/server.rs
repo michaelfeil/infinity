@@ -3236,9 +3236,16 @@ mod multi_model_test {
                             let reported = response.headers()[&names.input_tokens]
                                 .to_str()?
                                 .parse::<usize>()?;
-                            if expected != "priority" || names.priority_multiplier.is_none() {
-                                assert_eq!(reported, actual, "{path}: {body}");
-                            }
+                            let tier = match expected {
+                                "priority" => crate::QueueTier::Priority,
+                                "flex" => crate::QueueTier::Flex,
+                                _ => crate::QueueTier::Default,
+                            };
+                            assert_eq!(
+                                reported.to_string(),
+                                crate::billing_token_count(actual, names.multiplier(tier)),
+                                "{path}: {body}"
+                            );
                             if path == "/v1/embeddings" {
                                 let bytes =
                                     axum::body::to_bytes(response.into_body(), 1_000_000).await?;
