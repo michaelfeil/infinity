@@ -1511,6 +1511,15 @@ normal work. <code>/tokenize</code> and <code>/decode</code> accept the field fo
 not use the inference queue. Queue latency metrics continue to use real enqueue
 times. Two FIFO buffers compare only their heads: enqueue is O(1) amortized and
 next-input selection is O(1), without sorted middle insertions.</p>
+<p>Set <code>INFINITY_BILLING_HEADERS=x-baseten</code> to include <code>x-baseten-input-tokens</code>
+and <code>x-baseten-service-tier</code> response headers. Any valid HTTP header-name prefix
+works; unset or empty disables these headers. The service-tier header contains
+<code>priority</code> or <code>default</code>, reflecting the queue policy actually applied, and is
+exposed through CORS for browser clients. A zero
+queue bonus reports <code>default</code> even if the request asked for priority. This reports
+scheduling eligibility, not a guarantee that another request was overtaken.
+Vertex reports <code>priority</code> only when every instance received priority treatment;
+mixed-tier or empty batches report <code>default</code>.</p>
 <p>Set <code>--priority-queue-bonus-ms 250</code> for a 250 ms head start, or <code>0</code> for FIFO.
 The default is <code>1000</code>. <code>INFINITY_PRIORITY_QUEUE_BONUS_MS</code> is the environment
 variable. One value applies to all models; semicolon-separated values align
