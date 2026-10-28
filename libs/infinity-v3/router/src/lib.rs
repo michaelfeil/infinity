@@ -1352,7 +1352,7 @@ impl From<TextEmbeddingsError> for ErrorResponse {
 struct BillingHeaders {
     input_tokens: HeaderName,
     service_tier: HeaderName,
-    priority_multiplier: f64,
+    priority_multiplier: Option<f64>,
 }
 
 static BILLING_HEADERS: OnceLock<Result<Option<BillingHeaders>, String>> = OnceLock::new();
@@ -1371,10 +1371,9 @@ fn billing_headers() -> Result<&'static Option<BillingHeaders>> {
                         .parse::<f64>()
                         .ok()
                         .filter(|value| value.is_finite() && *value > 0.0)
-                        .ok_or_else(|| {
-                            format!("{MULTIPLIER_ENV} must be a finite positive float")
-                        })?,
-                    Err(std::env::VarError::NotPresent) => 1.0,
+                        .ok_or_else(|| format!("{MULTIPLIER_ENV} must be a finite positive float"))
+                        .map(Some)?,
+                    Err(std::env::VarError::NotPresent) => None,
                     Err(std::env::VarError::NotUnicode(_)) => {
                         return Err(format!("{MULTIPLIER_ENV} must be valid Unicode"))
                     }
@@ -1466,14 +1465,17 @@ impl From<ResponseMetadata> for HeaderMap {
         // Headers
         let mut headers = HeaderMap::new();
         if let Some(names) = configured_billing_headers() {
-            headers.insert(
-                names.input_tokens.clone(),
-                HeaderValue::from(if value.priority && names.priority_multiplier != 1.0 {
-                    (value.compute_tokens as f64 * names.priority_multiplier).ceil() as usize
-                } else {
-                    value.compute_tokens
-                }),
-            );
+            let tokens = names
+                .priority_multiplier
+                .filter(|_| value.priority)
+                .map_or_else(
+                    || value.compute_tokens.to_string(),
+                    |multiplier| (value.compute_tokens as f64 * multiplier).to_string(),
+                );
+            // Numeric text is valid HTTP header text, including fractional counts.
+            if let Ok(tokens) = HeaderValue::try_from(tokens) {
+                headers.insert(names.input_tokens.clone(), tokens);
+            }
             headers.insert(
                 names.service_tier.clone(),
                 service_tier_header(value.priority),

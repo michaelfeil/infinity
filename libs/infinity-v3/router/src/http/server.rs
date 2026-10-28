@@ -3407,12 +3407,11 @@ mod multi_model_test {
                                 .parse::<usize>()?;
                             let reported = response.headers()[&names.input_tokens]
                                 .to_str()?
-                                .parse::<usize>()?;
-                            let expected_tokens = if expected == "priority" {
-                                (actual as f64 * names.priority_multiplier).ceil() as usize
-                            } else {
-                                actual
-                            };
+                                .parse::<f64>()?;
+                            let expected_tokens = names
+                                .priority_multiplier
+                                .filter(|_| expected == "priority")
+                                .map_or(actual as f64, |multiplier| actual as f64 * multiplier);
                             assert_eq!(reported, expected_tokens, "{path}: {body}");
                             if path == "/v1/embeddings" {
                                 let bytes =
