@@ -801,8 +801,8 @@ pub(crate) async fn systemone_inner(
                 vec![],
             )
         };
-    let infer = infer.with_priority(request.service_tier.is_priority());
-    let priority = infer.is_priority();
+    let infer = infer.with_service_tier(request.service_tier);
+    let service_tier = infer.service_tier();
     let answer_count = request.questions.len();
     let d3_max_len = request.max_len;
     if request.questions.len() > info.max_decision_questions {
@@ -972,7 +972,11 @@ pub(crate) async fn systemone_inner(
         tokenization,
         queue,
         inference,
-        priority && sequences != 0,
+        if sequences == 0 {
+            crate::QueueTier::Default
+        } else {
+            service_tier
+        },
     );
     metadata.record_metrics(&info.model_id);
     metrics::counter!("infinity_request_success", "model" => info.model_id.clone(), "method" => "systemone").increment(1);
@@ -1098,7 +1102,7 @@ pub(crate) mod tests {
             Duration::ZERO,
             Duration::ZERO,
             Duration::ZERO,
-            false,
+            crate::QueueTier::Default,
         )
         .into();
         assert_eq!(headers["x-compute-tokens"], "2000");

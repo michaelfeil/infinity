@@ -1,5 +1,5 @@
 use crate::backend_pool::BackendPool;
-use crate::queue_actor::{prune_canceled_batch, Entry, Metadata, NextBatch, Queue};
+use crate::queue_actor::{prune_canceled_batch, Entry, Metadata, NextBatch, Queue, ServiceTier};
 use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
 use infinity_v3_backend::result_memory::{retain_for_request, HasResultMemory, ResultLease};
@@ -20,7 +20,7 @@ use tracing::instrument;
 /// for a prepared batch. Per-request replies travel through `Metadata` channels.
 #[derive(Debug, Clone)]
 pub struct Infer {
-    priority: bool,
+    service_tier: ServiceTier,
     model_name: metrics::SharedString,
     tokenization: Tokenization,
     queue: Queue,
@@ -50,15 +50,31 @@ impl Drop for BatchPreparation<'_> {
 }
 
 impl Infer {
-    /// Set priority on this request's handle; shared model state is unchanged.
-    pub fn with_priority(mut self, priority: bool) -> Self {
-        self.priority = priority && self.queue.priority_enabled();
+    /// Resolve request policy once; shared model state is unchanged.
+    pub fn with_service_tier(mut self, tier: ServiceTier) -> Self {
+        self.service_tier = match tier {
+            ServiceTier::Auto => ServiceTier::Default,
+            ServiceTier::Priority if !self.queue.priority_enabled() => ServiceTier::Default,
+            ServiceTier::Flex if !self.queue.flex_enabled() => ServiceTier::Default,
+            tier => tier,
+        };
         self
     }
 
-    /// Whether this request uses the queue's priority policy.
+    pub fn with_priority(self, priority: bool) -> Self {
+        self.with_service_tier(if priority {
+            ServiceTier::Priority
+        } else {
+            ServiceTier::Default
+        })
+    }
+
+    pub fn service_tier(&self) -> ServiceTier {
+        self.service_tier
+    }
+
     pub fn is_priority(&self) -> bool {
-        self.priority
+        self.service_tier.is_priority()
     }
 
     pub async fn decide(
@@ -81,7 +97,7 @@ impl Infer {
         self.queue
             .append(Entry {
                 metadata: Metadata {
-                    priority: self.priority,
+                    service_tier: self.service_tier,
                     input_memory: None,
                     client_batch: Some(batch_counter.clone()),
                     response_tx,
@@ -150,7 +166,7 @@ impl Infer {
             shutdown: Mutex::new(()),
         });
         Self {
-            priority: false,
+            service_tier: ServiceTier::Default,
             model_name: backend.model_label(),
             tokenization,
             queue,
@@ -487,7 +503,7 @@ impl Infer {
         self.queue
             .append(Entry {
                 metadata: Metadata {
-                    priority: self.priority,
+                    service_tier: self.service_tier,
                     input_memory: None,
                     client_batch: batch_counter.clone(),
                     response_tx,
@@ -568,7 +584,7 @@ impl Infer {
         self.queue
             .append(Entry {
                 metadata: Metadata {
-                    priority: self.priority,
+                    service_tier: self.service_tier,
                     input_memory: None,
                     client_batch: batch_counter.clone(),
                     response_tx,
@@ -692,7 +708,7 @@ impl Infer {
         self.queue
             .append(Entry {
                 metadata: Metadata {
-                    priority: self.priority,
+                    service_tier: self.service_tier,
                     input_memory: None,
                     client_batch: batch_counter.clone(),
                     response_tx,
@@ -1184,7 +1200,7 @@ mod completion_tests {
                             offsets: vec![],
                         },
                         metadata: Metadata {
-                            priority: false,
+                            service_tier: ServiceTier::Default,
                             input_memory: None,
                             decision: None,
                             client_batch: Some(remaining.clone()),
@@ -1260,7 +1276,7 @@ mod completion_tests {
             outputs.insert(0, vec![vec![0.25, 0.75]]);
             let (response_tx, receiver) = oneshot::channel();
             let entry = Metadata {
-                priority: false,
+                service_tier: ServiceTier::Default,
                 input_memory: None,
                 decision: None,
                 client_batch: None,
@@ -1316,7 +1332,7 @@ mod completion_tests {
             let (response_tx, receiver) = oneshot::channel();
             receivers.push(receiver);
             entries.push(Metadata {
-                priority: false,
+                service_tier: ServiceTier::Default,
                 input_memory: None,
                 decision: None,
                 client_batch: None,

@@ -1,4 +1,4 @@
-//! Two-tier FIFO selection and packed-batch construction on a dedicated thread.
+//! Three-tier FIFO selection and packed-batch construction on a dedicated thread.
 //!
 //! `infer::batching_task` asks for batches; this worker owns the pending entries.
 //! The early-dispatch target is a soft cut, relaxed for unfinished client batches
@@ -47,6 +47,32 @@ fn target_for_backlog(
     target.filter(|_| queued_tokens < 20_000usize.saturating_mul(replicas.max(1)))
 }
 
+/// Priority receives a virtual queue-age bonus; flex receives a penalty. Equal virtual times retain admission order.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "openapi", derive(utoipa::ToSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum ServiceTier {
+    #[default]
+    Default,
+    Auto,
+    Flex,
+    Priority,
+}
+
+impl ServiceTier {
+    pub fn is_priority(self) -> bool {
+        self == Self::Priority
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Default | Self::Auto => "default",
+            Self::Priority => "priority",
+            Self::Flex => "flex",
+        }
+    }
+}
+
 /// Queue entry
 #[derive(Debug)]
 pub struct Entry {
@@ -59,7 +85,7 @@ pub struct Entry {
 /// Entry metadata
 #[derive(Debug)]
 pub struct Metadata {
-    pub(crate) priority: bool,
+    pub(crate) service_tier: ServiceTier,
     /// Retained through queueing, model execution and result delivery.
     pub(crate) input_memory: Option<crate::input_memory::InputMemoryOwner>,
     pub decision: Option<infinity_v3_backend::DecisionInput>,
@@ -78,71 +104,109 @@ pub struct Metadata {
     pub(crate) token_classification: bool,
 }
 
-type PendingEntry = (Instant, Entry);
+struct PendingEntry {
+    queued_at: Instant,
+    order: u128,
+    entry: Entry,
+}
 
-// Monotonic actor admissions keep each tier FIFO; only the two heads compete.
+// Each tier is FIFO. Only three heads compete, with fixed virtual enqueue times.
 struct PendingEntries {
     normal: VecDeque<PendingEntry>,
     priority: VecDeque<PendingEntry>,
+    flex: VecDeque<PendingEntry>,
     bonus: Duration,
+    flex_penalty: Duration,
+    anchor: Instant,
+    next_order: u128,
 }
 
 impl PendingEntries {
-    fn new(capacity: usize, bonus: Duration) -> Self {
+    fn new(capacity: usize, bonus: Duration, flex_penalty: Duration) -> Self {
         Self {
             normal: VecDeque::with_capacity(capacity),
             priority: VecDeque::new(),
+            flex: VecDeque::new(),
             bonus,
+            flex_penalty,
+            anchor: Instant::now(),
+            next_order: 0,
         }
     }
 
-    fn tier(&mut self, priority: bool) -> &mut VecDeque<PendingEntry> {
-        if priority && !self.bonus.is_zero() {
-            &mut self.priority
-        } else {
-            &mut self.normal
+    fn tier(&mut self, tier: ServiceTier) -> &mut VecDeque<PendingEntry> {
+        match tier {
+            ServiceTier::Priority if !self.bonus.is_zero() => &mut self.priority,
+            ServiceTier::Flex if !self.flex_penalty.is_zero() => &mut self.flex,
+            _ => &mut self.normal,
         }
     }
 
     fn push_back(&mut self, entry: Entry, now: Instant) {
-        self.tier(entry.metadata.priority).push_back((now, entry));
+        if self.next_order == 0 {
+            self.anchor = now;
+        }
+        let order = self.next_order;
+        self.next_order = self.next_order.saturating_add(1);
+        self.tier(entry.metadata.service_tier)
+            .push_back(PendingEntry {
+                queued_at: now,
+                order,
+                entry,
+            });
     }
 
     fn push_front(&mut self, pending: PendingEntry) {
-        self.tier(pending.1.metadata.priority).push_front(pending);
+        self.tier(pending.entry.metadata.service_tier)
+            .push_front(pending);
     }
 
     fn pop_front(&mut self) -> Option<PendingEntry> {
-        let normal_first = match (self.normal.front(), self.priority.front()) {
-            (Some((normal, _)), Some((priority, _))) => {
-                priority.saturating_duration_since(*normal) >= self.bonus
-            }
-            (Some(_), None) => true,
-            _ => false,
-        };
-        if normal_first {
-            self.normal.pop_front()
-        } else {
-            self.priority.pop_front()
-        }
+        let tier = [
+            (ServiceTier::Default, self.normal.front(), self.bonus),
+            (ServiceTier::Priority, self.priority.front(), Duration::ZERO),
+            (
+                ServiceTier::Flex,
+                self.flex.front(),
+                self.bonus.saturating_add(self.flex_penalty),
+            ),
+        ]
+        .into_iter()
+        .filter_map(|(tier, entry, offset)| {
+            entry.map(|entry| {
+                (
+                    tier,
+                    entry
+                        .queued_at
+                        .saturating_duration_since(self.anchor)
+                        .saturating_add(offset),
+                    entry.order,
+                )
+            })
+        })
+        .min_by_key(|(_, time, order)| (*time, *order))
+        .map(|(tier, _, _)| tier)?;
+        self.tier(tier).pop_front()
     }
 
     fn iter(&self) -> impl Iterator<Item = &Entry> {
         self.normal
             .iter()
             .chain(self.priority.iter())
-            .map(|(_, entry)| entry)
+            .chain(self.flex.iter())
+            .map(|pending| &pending.entry)
     }
 
     fn drain(&mut self) -> impl Iterator<Item = Entry> + '_ {
         self.normal
             .drain(..)
             .chain(self.priority.drain(..))
-            .map(|(_, entry)| entry)
+            .chain(self.flex.drain(..))
+            .map(|pending| pending.entry)
     }
 
     fn len(&self) -> usize {
-        self.normal.len() + self.priority.len()
+        self.normal.len() + self.priority.len() + self.flex.len()
     }
 }
 
@@ -150,6 +214,7 @@ impl PendingEntries {
 #[derive(Debug, Clone)]
 pub struct Queue {
     priority_enabled: bool,
+    flex_enabled: bool,
     worker: Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>,
     /// Channel to communicate with the background queue task
     queue_sender: mpsc::Sender<QueueCommand>,
@@ -199,6 +264,29 @@ impl Queue {
         model_name: String,
         priority_queue_bonus: Duration,
     ) -> Self {
+        Self::with_service_tiers_named(
+            max_batch_tokens,
+            max_batch_requests,
+            radix_mlp_threshold,
+            max_concurrent_requests,
+            replicas,
+            model_name,
+            priority_queue_bonus,
+            Duration::from_secs(1),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn with_service_tiers_named(
+        max_batch_tokens: usize,
+        max_batch_requests: Option<usize>,
+        radix_mlp_threshold: f32,
+        max_concurrent_requests: usize,
+        replicas: usize,
+        model_name: String,
+        priority_queue_bonus: Duration,
+        flex_queue_penalty: Duration,
+    ) -> Self {
         // Validate on the caller's thread before spawning the detached worker.
         let configured_target =
             match std::env::var(infinity_v3_config::infinity_env!("EARLY_DISPATCH_TOKENS")) {
@@ -233,15 +321,21 @@ impl Queue {
                 worker_closed,
                 model_name.into(),
                 priority_queue_bonus,
+                flex_queue_penalty,
             )
         });
 
         Self {
             priority_enabled: !priority_queue_bonus.is_zero(),
+            flex_enabled: !flex_queue_penalty.is_zero(),
             worker: Arc::new(std::sync::Mutex::new(Some(worker))),
             queue_sender,
             closed,
         }
+    }
+
+    pub(crate) fn flex_enabled(&self) -> bool {
+        self.flex_enabled
     }
 
     pub(crate) fn priority_enabled(&self) -> bool {
@@ -339,6 +433,7 @@ fn queue_blocking_task(
     closed: Arc<AtomicBool>,
     model_name: metrics::SharedString,
     priority_queue_bonus: Duration,
+    flex_queue_penalty: Duration,
 ) {
     tracing::info!(
         ?early_dispatch_tokens,
@@ -350,7 +445,11 @@ fn queue_blocking_task(
         .ok()
         .and_then(|s| s.parse().ok());
 
-    let mut entries = PendingEntries::new(max_concurrent_requests, priority_queue_bonus);
+    let mut entries = PendingEntries::new(
+        max_concurrent_requests,
+        priority_queue_bonus,
+        flex_queue_penalty,
+    );
     // Canceled entries stay counted until removal. This may disable a soft
     // dispatch cut, but never bypasses the hard token/request limits.
     let mut queued_tokens = 0;
@@ -424,7 +523,12 @@ fn queue_blocking_task(
                 // Canceled tails stay counted until popped; only soft cuts can change.
                 let mut pending_clients: Option<HashMap<usize, usize>> = None;
 
-                while let Some((queued_at, entry)) = entries.pop_front() {
+                while let Some(PendingEntry {
+                    queued_at,
+                    order,
+                    entry,
+                }) = entries.pop_front()
+                {
                     if let (Some(clients), Some(client)) =
                         (&mut pending_clients, &entry.metadata.client_batch)
                     {
@@ -478,7 +582,11 @@ fn queue_blocking_task(
                         })
                     };
                     if should_cut(current_tokens, entry_tokens, target) && !unfinished_client() {
-                        entries.push_front((queued_at, entry));
+                        entries.push_front(PendingEntry {
+                            queued_at,
+                            order,
+                            entry,
+                        });
                         break;
                     }
 
@@ -489,7 +597,11 @@ fn queue_blocking_task(
                             entry_tokens <= max_batch_tokens,
                             "Single entry exceeds max batch tokens, leading to stall."
                         );
-                        entries.push_front((queued_at, entry));
+                        entries.push_front(PendingEntry {
+                            queued_at,
+                            order,
+                            entry,
+                        });
                         break;
                     }
 
@@ -751,10 +863,12 @@ mod tests {
                 worker_closed,
                 "test".into(),
                 Duration::from_secs(1),
+                Duration::from_secs(1),
             );
         });
         Queue {
             priority_enabled: true,
+            flex_enabled: true,
             worker: Arc::new(std::sync::Mutex::new(None)),
             queue_sender,
             closed,
@@ -778,7 +892,7 @@ mod tests {
                     offsets: vec![],
                 },
                 metadata: Metadata {
-                    priority: false,
+                    service_tier: ServiceTier::Default,
                     input_memory: None,
                     decision: None,
                     client_batch: None,
@@ -796,7 +910,7 @@ mod tests {
 
     #[test]
     fn priority_gets_one_second_of_virtual_age_without_starving_older_work() {
-        let mut queue = PendingEntries::new(8, Duration::from_secs(1));
+        let mut queue = PendingEntries::new(8, Duration::from_secs(1), Duration::from_secs(1));
         let base = Instant::now() - Duration::from_secs(10);
         let mut responses = Vec::new();
         // Equal virtual times retain append order, including across tiers.
@@ -808,14 +922,18 @@ mod tests {
             (5, true, 2_000),
         ] {
             let (mut entry, response) = test_entry(vec![id; 2], true);
-            entry.metadata.priority = priority;
+            entry.metadata.service_tier = if priority {
+                ServiceTier::Priority
+            } else {
+                ServiceTier::Default
+            };
             entry.metadata.queue_time = base + Duration::from_millis(millis);
             responses.push(response);
             let now = base + Duration::from_millis(millis);
             queue.push_back(entry, now);
         }
         for id in [1, 2, 4, 5] {
-            let (_, entry) = queue.pop_front().unwrap();
+            let PendingEntry { entry, .. } = queue.pop_front().unwrap();
             assert_eq!(entry.encoding.input_ids, [id; 2]);
             if id == 4 {
                 assert_eq!(entry.metadata.queue_time, base + Duration::from_secs(2));
@@ -823,22 +941,58 @@ mod tests {
         }
         // Later priority arrivals cannot keep passing an older normal input.
         let (mut entry, response) = test_entry(vec![6; 2], true);
-        entry.metadata.priority = true;
+        entry.metadata.service_tier = ServiceTier::Priority;
         entry.metadata.queue_time = base + Duration::from_millis(2_501);
         responses.push(response);
         queue.push_back(entry, base + Duration::from_millis(2_501));
         for id in [3, 6] {
-            let (_, entry) = queue.pop_front().unwrap();
+            let PendingEntry { entry, .. } = queue.pop_front().unwrap();
             assert_eq!(entry.encoding.input_ids, [id; 2]);
         }
         assert!(queue.pop_front().is_none());
     }
 
     #[test]
+    fn flex_yields_to_newer_work_but_ages_and_preserves_ties() {
+        for (bonus, penalty, expected) in [
+            (1000, 1000, [3, 2, 1, 4, 5, 6, 7]),
+            (0, 0, [1, 2, 3, 4, 5, 6, 7]),
+        ] {
+            let mut queue = PendingEntries::new(
+                8,
+                Duration::from_millis(bonus),
+                Duration::from_millis(penalty),
+            );
+            let base = Instant::now();
+            for (id, tier, millis) in [
+                (1, ServiceTier::Flex, 0),
+                (2, ServiceTier::Default, 0),
+                (3, ServiceTier::Priority, 0),
+                (4, ServiceTier::Default, 1000),
+                (5, ServiceTier::Priority, 2000),
+                (6, ServiceTier::Default, 2001),
+                (7, ServiceTier::Flex, 2001),
+            ] {
+                let (mut entry, _) = test_entry(vec![id], true);
+                entry.metadata.service_tier = tier;
+                queue.push_back(entry, base + Duration::from_millis(millis));
+            }
+            for id in expected {
+                let pending = queue.pop_front().unwrap();
+                assert_eq!(pending.entry.encoding.input_ids, [id]);
+                queue.push_front(pending);
+                assert_eq!(queue.pop_front().unwrap().entry.encoding.input_ids, [id]);
+            }
+            assert!(queue.pop_front().is_none());
+        }
+    }
+
+    #[test]
     fn configured_bonus_and_zero_fifo_preserve_admission_order() {
         let base = Instant::now();
         for (bonus_ms, expected) in [(0, [1, 2, 3, 4]), (500, [1, 2, 3, 4]), (1000, [2, 1, 4, 3])] {
-            let mut queue = PendingEntries::new(4, Duration::from_millis(bonus_ms));
+            let mut queue =
+                PendingEntries::new(4, Duration::from_millis(bonus_ms), Duration::from_secs(1));
             for (id, priority, millis) in [
                 (1, false, 0),
                 (2, true, 750),
@@ -846,40 +1000,46 @@ mod tests {
                 (4, true, 1500),
             ] {
                 let (mut entry, _) = test_entry(vec![id], true);
-                entry.metadata.priority = priority;
+                entry.metadata.service_tier = if priority {
+                    ServiceTier::Priority
+                } else {
+                    ServiceTier::Default
+                };
                 // Producer timestamps can arrive out of order; scheduling uses actor admission.
                 entry.metadata.queue_time = base + Duration::from_secs(5 - u64::from(id));
                 queue.push_back(entry, base + Duration::from_millis(millis));
             }
             for id in expected {
                 let pending = queue.pop_front().unwrap();
-                assert_eq!(pending.1.encoding.input_ids, [id]);
+                assert_eq!(pending.entry.encoding.input_ids, [id]);
                 // A hard batch cut returns the same head without changing its scheduling time.
                 queue.push_front(pending);
-                assert_eq!(queue.pop_front().unwrap().1.encoding.input_ids, [id]);
+                assert_eq!(queue.pop_front().unwrap().entry.encoding.input_ids, [id]);
             }
             assert!(queue.pop_front().is_none());
         }
     }
 
     #[tokio::test]
-    async fn priority_entries_preserve_hard_cuts_and_cancellation() {
-        let queue = test_queue(3);
-        let mut responses = Vec::new();
-        for id in [1, 2, 3] {
-            let (mut entry, response) = test_entry(vec![id; 2], true);
-            entry.metadata.priority = true;
-            queue.append(entry).await;
-            if id != 1 {
-                responses.push(response);
+    async fn tiered_entries_preserve_hard_cuts_and_cancellation() {
+        for tier in [ServiceTier::Priority, ServiceTier::Flex] {
+            let queue = test_queue(3);
+            let mut responses = Vec::new();
+            for id in [1, 2, 3] {
+                let (mut entry, response) = test_entry(vec![id; 2], true);
+                entry.metadata.service_tier = tier;
+                queue.append(entry).await;
+                if id != 1 {
+                    responses.push(response);
+                }
             }
+            for id in [2, 3] {
+                let (_, batch) = queue.next_batch().await.unwrap();
+                assert_eq!(batch.input_ids, [id; 2]);
+            }
+            assert!(queue.next_batch().await.is_none());
+            queue.shutdown().await;
         }
-        for id in [2, 3] {
-            let (_, batch) = queue.next_batch().await.unwrap();
-            assert_eq!(batch.input_ids, [id; 2]);
-        }
-        assert!(queue.next_batch().await.is_none());
-        queue.shutdown().await;
     }
 
     #[tokio::test]
@@ -1143,7 +1303,7 @@ mod tests {
         let metadata = [canceled, live]
             .into_iter()
             .map(|response_tx| Metadata {
-                priority: false,
+                service_tier: ServiceTier::Default,
                 input_memory: None,
                 client_batch: None,
                 response_tx,
@@ -1222,7 +1382,7 @@ mod tests {
             .into_iter()
             .enumerate()
             .map(|(i, response_tx)| Metadata {
-                priority: false,
+                service_tier: ServiceTier::Default,
                 input_memory: None,
                 client_batch: None,
                 response_tx,
