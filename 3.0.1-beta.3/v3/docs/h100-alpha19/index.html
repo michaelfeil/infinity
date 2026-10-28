@@ -1,0 +1,1586 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://michaelfeil.eu/infinity/3.0.1-beta.3/v3/docs/h100-alpha19/">
+      
+      
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>H100 performance - Infinity</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#h100-performance" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Infinity" class="md-header__button md-logo" aria-label="Infinity" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Infinity
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              H100 performance
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/michaelfeil/infinity/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Infinity" class="md-nav__button md-logo" aria-label="Infinity" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Infinity
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/michaelfeil/infinity/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infinity v3
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Infinity v3
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../cli/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and requests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../supported-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported models and configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../embedding-tensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding formats and clients
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../LICENSING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Licensing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_9" id="__nav_2_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-model-coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-backend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LibTorch backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../build-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-prefix-cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prefix caching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../modernbert-startup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Startup performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CONTRIBUTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python / v2
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python / v2
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli_v2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python_engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../embed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../client_infinity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Client
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../swagger_ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../benchmarking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../telemetry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Telemetry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#text-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Text embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reranking" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reranking
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#image-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Image embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#decision-requests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Decision requests
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#measurement-notes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Measurement notes
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/michaelfeil/infinity/edit/main/libs/infinity-v3/docs/h100-alpha19.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="h100-performance">H100 performance</h1>
+<p>Infinity V3 on <strong>one H100 80 GB</strong>, with eight CPU threads and 64 GiB RAM.
+End-to-end HTTP throughput, request latency and startup time for text embeddings,
+reranking, image embeddings and decision requests. Updated as models are
+rebenchmarked; last updated October 26, 2026. Production latency depends on the
+traffic mix.</p>
+<h2 id="text-embeddings">Text embeddings</h2>
+<p>FP16 unless marked BF16, with the same server CPU allocation. Throughput is
+<strong>input tokens/s</strong> at concurrency 32. Latency is the fastest observed 8-token request;
+startup is the median of three fresh starts with local weights, excluding downloads.
+Comparisons use vLLM 0.32.0 and TEI 1.9.4. Small differences should not be
+treated as decisive; build revisions are recorded in the measurement data.</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Runtime</th>
+<th style="text-align: right;">128 tokens</th>
+<th style="text-align: right;">512 tokens</th>
+<th style="text-align: right;">Min. latency (ms)</th>
+<th style="text-align: right;">Startup (s)</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BGE-small</td>
+<td>Infinity</td>
+<td style="text-align: right;">959,425</td>
+<td style="text-align: right;">2,262,919</td>
+<td style="text-align: right;">0.71</td>
+<td style="text-align: right;">1.41</td>
+</tr>
+<tr>
+<td>BGE-small</td>
+<td>vLLM</td>
+<td style="text-align: right;">108,689</td>
+<td style="text-align: right;">362,949</td>
+<td style="text-align: right;">3.87</td>
+<td style="text-align: right;">32.48</td>
+</tr>
+<tr>
+<td>BGE-small</td>
+<td>TEI</td>
+<td style="text-align: right;">1,058,801</td>
+<td style="text-align: right;">2,292,809</td>
+<td style="text-align: right;">0.91</td>
+<td style="text-align: right;">7.40</td>
+</tr>
+<tr>
+<td>BGE-large</td>
+<td>Infinity</td>
+<td style="text-align: right;">435,406</td>
+<td style="text-align: right;">648,951</td>
+<td style="text-align: right;">1.25</td>
+<td style="text-align: right;">1.42</td>
+</tr>
+<tr>
+<td>BGE-large</td>
+<td>vLLM</td>
+<td style="text-align: right;">91,839</td>
+<td style="text-align: right;">299,205</td>
+<td style="text-align: right;">5.02</td>
+<td style="text-align: right;">34.69</td>
+</tr>
+<tr>
+<td>BGE-large</td>
+<td>TEI</td>
+<td style="text-align: right;">476,558</td>
+<td style="text-align: right;">612,727</td>
+<td style="text-align: right;">1.70</td>
+<td style="text-align: right;">7.80</td>
+</tr>
+<tr>
+<td>ModernBERT-base</td>
+<td>Infinity</td>
+<td style="text-align: right;">578,841</td>
+<td style="text-align: right;">1,153,286</td>
+<td style="text-align: right;">1.12</td>
+<td style="text-align: right;">1.47</td>
+</tr>
+<tr>
+<td>ModernBERT-base</td>
+<td>vLLM</td>
+<td style="text-align: right;">101,425</td>
+<td style="text-align: right;">339,407</td>
+<td style="text-align: right;">4.79</td>
+<td style="text-align: right;">37.48</td>
+</tr>
+<tr>
+<td>ModernBERT-base</td>
+<td>TEI</td>
+<td style="text-align: right;">385,416</td>
+<td style="text-align: right;">551,745</td>
+<td style="text-align: right;">1.90</td>
+<td style="text-align: right;">10.18</td>
+</tr>
+<tr>
+<td>Qwen3-Embedding-0.6B</td>
+<td>Infinity</td>
+<td style="text-align: right;">296,030</td>
+<td style="text-align: right;">423,359</td>
+<td style="text-align: right;">1.49</td>
+<td style="text-align: right;">1.64</td>
+</tr>
+<tr>
+<td>Qwen3-Embedding-0.6B</td>
+<td>Infinity (BF16)</td>
+<td style="text-align: right;">297,720</td>
+<td style="text-align: right;">431,569</td>
+<td style="text-align: right;">1.48</td>
+<td style="text-align: right;">1.58</td>
+</tr>
+<tr>
+<td>Qwen3-Embedding-0.6B</td>
+<td>vLLM</td>
+<td style="text-align: right;">93,012</td>
+<td style="text-align: right;">312,847</td>
+<td style="text-align: right;">6.13</td>
+<td style="text-align: right;">64.66</td>
+</tr>
+<tr>
+<td>Qwen3-Embedding-0.6B</td>
+<td>TEI</td>
+<td style="text-align: right;">166,755</td>
+<td style="text-align: right;">207,355</td>
+<td style="text-align: right;">2.96</td>
+<td style="text-align: right;">9.86</td>
+</tr>
+<tr>
+<td>Qwen3-Embedding-8B</td>
+<td>Infinity</td>
+<td style="text-align: right;">37,724</td>
+<td style="text-align: right;">41,770</td>
+<td style="text-align: right;">6.25</td>
+<td style="text-align: right;">3.31</td>
+</tr>
+<tr>
+<td>Qwen3-Embedding-8B</td>
+<td>Infinity (BF16)</td>
+<td style="text-align: right;">39,424</td>
+<td style="text-align: right;">42,936</td>
+<td style="text-align: right;">6.89</td>
+<td style="text-align: right;">3.00</td>
+</tr>
+<tr>
+<td>Qwen3-Embedding-8B</td>
+<td>vLLM</td>
+<td style="text-align: right;">38,442</td>
+<td style="text-align: right;">41,387</td>
+<td style="text-align: right;">10.80</td>
+<td style="text-align: right;">84.40</td>
+</tr>
+<tr>
+<td>Qwen3-Embedding-8B</td>
+<td>TEI</td>
+<td style="text-align: right;">28,422</td>
+<td style="text-align: right;">30,682</td>
+<td style="text-align: right;">8.46</td>
+<td style="text-align: right;">13.03</td>
+</tr>
+<tr>
+<td>EmbeddingGemma2</td>
+<td>Infinity</td>
+<td style="text-align: right;">241,031</td>
+<td style="text-align: right;">410,507</td>
+<td style="text-align: right;">2.17</td>
+<td style="text-align: right;">2.52</td>
+</tr>
+<tr>
+<td>EmbeddingGemma2</td>
+<td>vLLM</td>
+<td style="text-align: right;">62,830</td>
+<td style="text-align: right;">212,170</td>
+<td style="text-align: right;">28.58</td>
+<td style="text-align: right;">72.14</td>
+</tr>
+<tr>
+<td>pplx-embed-v1-4B</td>
+<td>Infinity</td>
+<td style="text-align: right;">62,968</td>
+<td style="text-align: right;">69,945</td>
+<td style="text-align: right;">4.40</td>
+<td style="text-align: right;">3.15</td>
+</tr>
+<tr>
+<td>pplx-embed-v1-4B</td>
+<td>vLLM</td>
+<td style="text-align: right;">57,574</td>
+<td style="text-align: right;">70,348</td>
+<td style="text-align: right;">7.40</td>
+<td style="text-align: right;">68.65</td>
+</tr>
+<tr>
+<td>UltraBERT-Embed-150M</td>
+<td>Infinity</td>
+<td style="text-align: right;">498,933</td>
+<td style="text-align: right;">1,011,166</td>
+<td style="text-align: right;">1.20</td>
+<td style="text-align: right;">1.45</td>
+</tr>
+</tbody>
+</table>
+<p>Only comparable measurements are shown. TEI’s Perplexity run used FP32 and
+quantized output; EmbeddingGemma2 and UltraBERT could not load in the tested TEI
+image. UltraBERT’s vLLM run failed its numerical check.</p>
+<h2 id="reranking">Reranking</h2>
+<p>Input tokens/s, counting the query, document and special tokens together.</p>
+<table>
+<thead>
+<tr>
+<th>Model</th>
+<th>Precision</th>
+<th style="text-align: right;">128-token pair</th>
+<th style="text-align: right;">512-token pair</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>DeBERTa-v3-base</td>
+<td>FP16</td>
+<td style="text-align: right;">732,448</td>
+<td style="text-align: right;">592,371</td>
+</tr>
+<tr>
+<td>Nemotron 3.5 Rerank 8B</td>
+<td>BF16</td>
+<td style="text-align: right;">40,915</td>
+<td style="text-align: right;">41,564</td>
+</tr>
+</tbody>
+</table>
+<h2 id="image-embeddings">Image embeddings</h2>
+<p>Qwen3-VL-Embedding-8B, one square PNG per request. Images are sent inline,
+so timings exclude external downloads. Token counts include vision placeholders
+and are not directly comparable to text throughput.</p>
+<table>
+<thead>
+<tr>
+<th>Image size</th>
+<th>Input</th>
+<th style="text-align: right;">FP16 images/s</th>
+<th style="text-align: right;">BF16 images/s†</th>
+<th style="text-align: right;">FP16 tokens/s</th>
+<th style="text-align: right;">BF16 tokens/s†</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>256px</td>
+<td>Image</td>
+<td style="text-align: right;">259.99</td>
+<td style="text-align: right;">262.12</td>
+<td style="text-align: right;">22,359</td>
+<td style="text-align: right;">22,542</td>
+</tr>
+<tr>
+<td>256px</td>
+<td>Image + text</td>
+<td style="text-align: right;">244.62</td>
+<td style="text-align: right;">250.13</td>
+<td style="text-align: right;">23,239</td>
+<td style="text-align: right;">23,762</td>
+</tr>
+<tr>
+<td>1024px</td>
+<td>Image</td>
+<td style="text-align: right;">20.80</td>
+<td style="text-align: right;">21.32</td>
+<td style="text-align: right;">21,754</td>
+<td style="text-align: right;">22,299</td>
+</tr>
+<tr>
+<td>1024px</td>
+<td>Image + text</td>
+<td style="text-align: right;">20.91</td>
+<td style="text-align: right;">21.35</td>
+<td style="text-align: right;">22,060</td>
+<td style="text-align: right;">22,522</td>
+</tr>
+</tbody>
+</table>
+<h2 id="decision-requests">Decision requests</h2>
+<p>Elephant with dynamic FP8 linears and a BF16 backbone. Each request shares one
+state across its yes/no questions; state length below is in <strong>words</strong>, not tokens.</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: right;">State words</th>
+<th style="text-align: right;">Questions/request</th>
+<th style="text-align: right;">Requests/s</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: right;">8</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">508.03</td>
+</tr>
+<tr>
+<td style="text-align: right;">128</td>
+<td style="text-align: right;">1</td>
+<td style="text-align: right;">460.94</td>
+</tr>
+<tr>
+<td style="text-align: right;">512</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">210.15</td>
+</tr>
+<tr>
+<td style="text-align: right;">512</td>
+<td style="text-align: right;">12</td>
+<td style="text-align: right;">55.38</td>
+</tr>
+<tr>
+<td style="text-align: right;">2048</td>
+<td style="text-align: right;">3</td>
+<td style="text-align: right;">47.58</td>
+</tr>
+</tbody>
+</table>
+<h2 id="measurement-notes">Measurement notes</h2>
+<p>Throughput uses two five-second windows after warmup (six for Qwen3-8B BF16
+at 128 tokens, including confirmation runs). Reranking, image and
+decision rows report the best median across tested concurrency levels.
+Text embeddings use JSON float outputs, a 16K batch-token budget and no Radix MLP;
+DeBERTa uses 8K. Startup storage caches were uncontrolled.
+<a href="../h100-alpha19.json">Measurement data</a> contains mixed-length workloads, individual
+runs, checkpoint names, commit SHAs and numerical checks.</p>
+<p><strong>Accuracy:</strong> these are timing benchmarks, not task-accuracy evaluations.
+† Qwen3-VL BF16 failed one numerical parity check (0.998545 cosine; threshold
+0.999). Elephant’s sampled choices matched, with probability differences up to
+1.87 percentage points. Numerical checks are included in the data file.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.sections", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
