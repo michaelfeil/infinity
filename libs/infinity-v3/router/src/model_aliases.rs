@@ -25,6 +25,14 @@ pub(crate) fn resolve(
         "d3" | "vllm-sr/d3" => ("vllm-sr/d3", DecisionProtocol::D3),
         "d3-mini" | "vllm-sr/d3-mini" => ("vllm-sr/d3-mini", DecisionProtocol::D3),
         "d3-ultra" | "vllm-sr/d3-ultra" => ("vllm-sr/d3-ultra", DecisionProtocol::D3),
+        "vela3-lite" | "vllm-sr/vela3-lite" => ("vllm-sr/vela3-lite", DecisionProtocol::Vela3),
+        "vela3-fast" | "vllm-sr/vela3-fast" => ("vllm-sr/vela3-fast", DecisionProtocol::Vela3),
+        "vela3-fast-vision" | "vllm-sr/vela3-fast-vision" => {
+            ("vllm-sr/vela3-fast-vision", DecisionProtocol::Vela3)
+        }
+        "vela3-mini" | "vllm-sr/vela3-mini" => ("vllm-sr/vela3-mini", DecisionProtocol::Vela3),
+        "vela3-flash" | "vllm-sr/vela3-flash" => ("vllm-sr/vela3-flash", DecisionProtocol::Vela3),
+        "vela3-turbo" | "vllm-sr/vela3-turbo" => ("vllm-sr/vela3-turbo", DecisionProtocol::Vela3),
         _ => return Ok((model_id, protocol)),
     };
     anyhow::ensure!(

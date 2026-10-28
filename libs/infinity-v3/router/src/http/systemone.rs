@@ -68,7 +68,7 @@ impl<'s> utoipa::ToSchema<'s> for SystemOneRequestBody {
         utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
     ) {
         ("SystemOneRequestBody", serde_json::from_value(json!({
-            "description": "Use the schema for the selected model's decision protocol, not an arbitrary alternative. OneJev (Elephant/Mammoth), Rune, Clef, Laya and Perplexity v1.1 use SystemOneRequest. D3 and Perplexity joint v1.2 use their respective top-level media formats. Model is required when multiple models are loaded.",
+            "description": "Use the schema for the selected model's decision protocol. OneJev (Elephant/Mammoth), Rune, Clef, Laya and Perplexity v1.1 use SystemOneRequest. D3 and Vela3 core decisions use D3SystemOneRequest; Vela3 encoders support choice/noul only, and fast-vision accepts up to three images and no videos. Vela3 task adapters and span extraction are not enabled. Perplexity joint v1.2 uses its top-level media format. Model is required when multiple models are loaded.",
             "anyOf": [
                 {"$ref": "#/components/schemas/SystemOneRequest"},
                 {"$ref": "#/components/schemas/D3SystemOneRequest"},
@@ -156,6 +156,7 @@ mod onejev;
 mod pplx;
 mod pplx_joint;
 mod rune;
+mod vela3;
 
 pub enum SystemOne {
     Laya(Laya),
@@ -165,6 +166,7 @@ pub enum SystemOne {
     Pplx(pplx::Pplx),
     PplxJoint(Box<pplx_joint::PplxJoint>),
     D3(Box<d3::D3>),
+    VelaEncoder(Box<vela3::Encoder>),
 }
 
 impl SystemOne {
@@ -182,6 +184,13 @@ impl SystemOne {
                 onejev::Onejev::load(path, tokenizer, max_input_length)?
                     .with_images(path, multimodal_config)?,
             ))
+        } else if matches!(protocol, Some(crate::DecisionProtocol::Vela3)) {
+            Ok(Self::VelaEncoder(Box::new(vela3::Encoder::load(
+                path,
+                tokenizer,
+                max_input_length,
+                multimodal_config,
+            )?)))
         } else if matches!(protocol, Some(crate::DecisionProtocol::D3)) {
             Ok(Self::D3(Box::new(d3::D3::load(
                 path,
@@ -224,6 +233,7 @@ impl SystemOne {
             Self::Pplx(model) => model.prepare(request),
             Self::PplxJoint(model) => model.prepare(request),
             Self::D3(model) => model.prepare(request),
+            Self::VelaEncoder(model) => model.prepare(request),
         }
     }
 
@@ -241,7 +251,17 @@ impl SystemOne {
             Self::Pplx(model) => model.answer(question, output),
             Self::PplxJoint(model) => model.answer(question, output),
             Self::D3(model) => model.answer(question, output, question_count),
+            Self::VelaEncoder(_) => vela3::answer(question, output),
         }
+    }
+
+    pub(crate) fn with_vela_policy(mut self, policy: Option<crate::vela3::Policy>) -> Self {
+        match &mut self {
+            Self::D3(model) => model.vela_policy = policy,
+            Self::VelaEncoder(model) => model.policy = policy,
+            _ => {}
+        }
+        self
     }
 }
 
@@ -783,24 +803,28 @@ pub(crate) async fn systemone_inner(
             "Loaded model does not support typed decisions",
         )
     })?;
-    let (mut request, d3_images, d3_videos) =
-        if matches!(service.as_ref(), SystemOne::D3(_) | SystemOne::PplxJoint(_)) {
-            let request = serde_json::from_value::<d3::Request>(raw_request)
-                .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?;
-            if matches!(service.as_ref(), SystemOne::PplxJoint(_)) {
-                request.into_pplx_common()
-            } else {
-                request.into_common()
-            }
-            .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?
+    let (mut request, d3_images, d3_videos) = if matches!(
+        service.as_ref(),
+        SystemOne::D3(_) | SystemOne::PplxJoint(_) | SystemOne::VelaEncoder(_)
+    ) {
+        let request = serde_json::from_value::<d3::Request>(raw_request)
+            .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?;
+        if matches!(service.as_ref(), SystemOne::VelaEncoder(_)) {
+            request.into_vela_common()
+        } else if matches!(service.as_ref(), SystemOne::PplxJoint(_)) {
+            request.into_pplx_common()
         } else {
-            (
-                serde_json::from_value::<SystemOneRequest>(raw_request)
-                    .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?,
-                vec![],
-                vec![],
-            )
-        };
+            request.into_common()
+        }
+        .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?
+    } else {
+        (
+            serde_json::from_value::<SystemOneRequest>(raw_request)
+                .map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?,
+            vec![],
+            vec![],
+        )
+    };
     let infer = infer.with_service_tier(request.service_tier);
     let service_tier = infer.service_tier();
     let answer_count = request.questions.len();
@@ -885,6 +909,10 @@ pub(crate) async fn systemone_inner(
                 let media = model.prepare_media(d3_images).await.map_err(media_error)?;
                 model.attach_media(&mut questions, media, d3_max_len)
             }
+            SystemOne::VelaEncoder(model) => model
+                .attach_images(&mut questions, d3_images, d3_videos, d3_max_len)
+                .await
+                .map_err(media_error)?,
             _ => unreachable!(),
         };
         attached.map_err(|e| error(StatusCode::UNPROCESSABLE_ENTITY, e))?;

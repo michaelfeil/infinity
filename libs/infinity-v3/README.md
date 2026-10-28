@@ -411,6 +411,7 @@ Supported model families and protocols (LibTorch):
 - **Rune**: Gemma4-based decision checkpoints using `--decision-protocol rune`.
 - **Clef**: dense Qwen3.5 checkpoints with `joint_head_config.json`, using `--decision-protocol clef`.
 - **D3**: [vllm-sr/d3](https://huggingface.co/vllm-sr/d3), [vllm-sr/d3-mini](https://huggingface.co/vllm-sr/d3-mini), and [vllm-sr/d3-ultra](https://huggingface.co/vllm-sr/d3-ultra), dense Qwen3.5 decision models with code-readout heads. Their short aliases select `--decision-protocol d3` automatically. D3 Ultra supports choice, yes/no, and score decisions with shared text/images/video; see the [model catalog](docs/supported-models.md#typed-decisions) for its supported inputs.
+- **Vela3 core decisions**: `vela3-fast`, `vela3-fast-vision`, `vela3-lite`, `vela3-mini`, `vela3-flash` and `vela3-turbo`, using native UltraBERT/UltraVBERT or the checkpoint's pinned D3 base. General decisions are supported; task adapters and span extraction are not enabled. See the [capability table](docs/supported-models.md#vela3-core-decisions).
 
 For example:
 

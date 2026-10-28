@@ -70,6 +70,27 @@ pub struct Request {
 }
 
 impl Request {
+    pub(super) fn into_vela_common(
+        self,
+    ) -> Result<(SystemOneRequest, Vec<String>, Vec<String>), String> {
+        let state = match self.state {
+            Value::String(text) => text,
+            Value::Null => String::new(),
+            value => super::vela3::text(&value),
+        };
+        Ok((
+            SystemOneRequest {
+                service_tier: self.service_tier,
+                state: ModelInput::Text(state),
+                questions: self.questions,
+                model: self.model,
+                max_len: self.max_len,
+                head_max_len: self.head_max_len,
+            },
+            self.images,
+            self.videos,
+        ))
+    }
     pub(super) fn into_common(
         self,
     ) -> Result<(SystemOneRequest, Vec<String>, Vec<String>), String> {
@@ -112,6 +133,7 @@ pub struct D3 {
     config: Config,
     max_input_length: usize,
     media: D3MediaProcessor,
+    pub(super) vela_policy: Option<crate::vela3::Policy>,
 }
 
 impl D3 {
@@ -191,6 +213,7 @@ impl D3 {
         let media = D3MediaProcessor::load(path, media_config)
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(Self {
+            vela_policy: None,
             tokenizer,
             chat,
             config,
@@ -215,6 +238,9 @@ impl D3 {
         request: SystemOneRequest,
         with_header: bool,
     ) -> Result<Vec<Question>, String> {
+        if let Some(policy) = &self.vela_policy {
+            policy.validate(&request.questions)?;
+        }
         if request.head_max_len.is_some() {
             return Err("head_max_len is specific to Laya".into());
         }

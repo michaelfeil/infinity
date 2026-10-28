@@ -730,6 +730,109 @@ struct ClefHead final : DecisionHead {
     return result;
   }
 };
+
+// UltraBERT's distilled decision readout: cosine of projected option/question and
+// mean state, plus the learned option MLP. The encoder and this head keep their
+// separately trained parameters; an embedding pooling head cannot substitute.
+class VelaVisionHead final : public DecisionHead {
+  Linear first, last;
+  Norm norm;
+
+public:
+  VelaVisionHead(const Weights& weights, int64_t hidden)
+      : first(weights, "head.net.0", hidden, hidden), last(weights, "head.net.3", hidden, 1),
+        norm(weights, "head.net.2", hidden) {}
+
+  int64_t output_count(const DecisionRequest& request) const override {
+    if (request.kind == DecisionRequest::Kind::Warmup)
+      return 1;
+    TORCH_CHECK(request.kind == DecisionRequest::Kind::Clef && request.fields.size() == 1 &&
+                    !request.fields[0].options.empty(),
+                "Vela vision requires option token intervals");
+    return request.fields[0].options.size();
+  }
+
+  std::vector<DecisionResult> forward(const at::Tensor& hidden,
+                                      const PackedInput& input,
+                                      const std::vector<DecisionRequest>& requests) const override {
+    validate(hidden, input, requests);
+    std::vector<DecisionResult> results;
+    for (int64_t i = 0; i < input.batch; ++i) {
+      output_count(requests[i]);
+      auto length = input.offsets[i + 1] - input.offsets[i];
+      auto spans = requests[i].kind == DecisionRequest::Kind::Warmup
+                       ? std::vector<std::pair<int64_t, int64_t>>{{0, length}}
+                       : requests[i].fields[0].options;
+      std::vector<at::Tensor> rows;
+      for (auto [start, end] : spans) {
+        TORCH_CHECK(start >= 0 && end > start && end <= length,
+                    "Invalid Vela option token interval");
+        // Upstream reduces BF16 hidden rows before converting the pooled states to FP32.
+        rows.push_back(hidden.narrow(0, input.offsets[i] + start, end - start).mean(0));
+      }
+      auto x = at::stack(rows).to(at::kFloat);
+      results.push_back(
+          {last(norm(at::gelu(first(x), "none"))).squeeze(-1), at::ones({}, x.options())});
+    }
+    return results;
+  }
+};
+
+class VelaEncoderHead final : public DecisionHead {
+  Norm norm;
+  Linear option, question, state, first, last;
+  at::Tensor tau;
+
+public:
+  VelaEncoderHead(const Weights& weights, int64_t hidden, int64_t projection)
+      : norm(weights, "norm", hidden), option(weights, "w_o", hidden, projection),
+        question(weights, "w_q", hidden, projection), state(weights, "w_p", hidden, projection),
+        first(weights, "cls_mlp.0", hidden, 2 * hidden), last(weights, "cls_mlp.3", 2 * hidden, 1),
+        tau(weight(weights, "log_tau").exp()) {
+    TORCH_CHECK(tau.numel() == 1 && at::isfinite(tau).all().item<bool>() && tau.item<float>() > 0,
+                "Invalid Vela decision temperature");
+  }
+
+  int64_t output_count(const DecisionRequest& request) const override {
+    if (request.kind == DecisionRequest::Kind::Warmup)
+      return 1;
+    TORCH_CHECK(request.kind == DecisionRequest::Kind::Laya && request.markers.size() >= 4,
+                "Vela encoder requires question, state interval and option markers");
+    return request.markers.size() - 3;
+  }
+
+  std::vector<DecisionResult> forward(const at::Tensor& hidden,
+                                      const PackedInput& input,
+                                      const std::vector<DecisionRequest>& requests) const override {
+    validate(hidden, input, requests);
+    std::vector<DecisionResult> results;
+    auto normalized = [](const at::Tensor& x) { return x / x.norm(2, -1, true).clamp_min(1e-12); };
+    for (int64_t i = 0; i < input.batch; ++i) {
+      const auto length = input.offsets[i + 1] - input.offsets[i];
+      const auto& request = requests[i];
+      output_count(request);
+      auto markers = request.kind == DecisionRequest::Kind::Warmup
+                         ? std::vector<int64_t>{0, 0, length, 0}
+                         : request.markers;
+      TORCH_CHECK(markers[0] >= 0 && markers[0] < length && markers[1] >= 0 &&
+                      markers[2] > markers[1] && markers[2] <= length,
+                  "Invalid Vela state interval");
+      auto h = hidden.narrow(0, input.offsets[i], length).to(at::kFloat);
+      std::vector<at::Tensor> options;
+      for (size_t j = 3; j < markers.size(); ++j) {
+        TORCH_CHECK(markers[j] >= 0 && markers[j] < length, "Invalid Vela option marker");
+        options.push_back(h.select(0, markers[j]));
+      }
+      auto ho = at::stack(options);
+      auto pooled = h.narrow(0, markers[1], markers[2] - markers[1]).mean(0);
+      auto v = normalized(state(norm(pooled)));
+      auto u = normalized(option(norm(ho)) + question(norm(h.select(0, markers[0]))));
+      auto logits = (u * v).sum(-1) / tau + last(at::relu(first(ho))).squeeze(-1);
+      results.push_back({logits, at::ones({}, h.options())});
+    }
+    return results;
+  }
+};
 } // namespace
 
 std::unique_ptr<DecisionHead> create_decision_head(const std::string& kind,
@@ -741,6 +844,11 @@ std::unique_ptr<DecisionHead> create_decision_head(const std::string& kind,
   TORCH_CHECK(hidden > 0, "Decision backbone hidden_size is missing");
   if (kind == "laya")
     return std::make_unique<LayaHead>(head, weights, hidden);
+  if (kind == "vela3_encoder")
+    return std::make_unique<VelaEncoderHead>(
+        weights, hidden, head.integer("decision.proj_dim", 256));
+  if (kind == "vela3_vision")
+    return std::make_unique<VelaVisionHead>(weights, hidden);
   if (kind == "clef")
     return std::make_unique<ClefHead>(head, backbone, weights, backbone_weights, hidden);
   if (kind == "d3") {

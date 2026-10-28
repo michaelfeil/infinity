@@ -38,6 +38,7 @@ pub use logging::init_logging;
 
 mod model_aliases;
 pub mod model_registry;
+mod vela3;
 
 #[derive(Debug, Clone, PartialEq, Eq, clap::ValueEnum)]
 pub enum DecisionProtocol {
@@ -46,6 +47,7 @@ pub enum DecisionProtocol {
     Clef,
     Pplx,
     D3,
+    Vela3,
 }
 
 /// Settings for one resident model. Server settings are shared across models.
@@ -219,21 +221,21 @@ async fn initialize_model(
         torch_device,
         multimodal_config,
     } = config;
-    let (model_id, decision_protocol) =
+    let (model_id, mut decision_protocol) =
         model_aliases::resolve(model_id, decision_protocol, pooling.as_ref())?;
     let metric_model_name = served_model_name
         .clone()
         .unwrap_or_else(|| model_id.clone());
     let model_id_path = Path::new(&model_id);
-    let (model_root, api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
+    let (mut model_root, mut api_repo) = if model_id_path.exists() && model_id_path.is_dir() {
         // Using a local model
         (model_id_path.to_path_buf(), None)
     } else {
         let mut builder = ApiBuilder::from_env()
             .with_progress(false)
-            .with_token(hf_token);
+            .with_token(hf_token.clone());
 
-        if let Some(cache_dir) = huggingface_hub_cache {
+        if let Some(cache_dir) = huggingface_hub_cache.clone() {
             builder = builder.with_cache_dir(cache_dir.into());
         }
 
@@ -249,12 +251,45 @@ async fn initialize_model(
         ));
 
         // Download model from the Hub
-        (
+        let model_root = if matches!(decision_protocol, Some(DecisionProtocol::Vela3)) {
+            vela3::download_artifacts(&api_repo, pooling.is_none()).await
+        } else {
             download_artifacts(&api_repo, pooling.is_none())
                 .await
-                .context("Could not download model artifacts")?,
-            Some(api_repo),
-        )
+                .map_err(Into::into)
+        }
+        .context("Could not download model artifacts")?;
+        (model_root, Some(api_repo))
+    };
+
+    let vela_policy = if matches!(decision_protocol, Some(DecisionProtocol::Vela3)) {
+        let policy = vela3::Policy::load(&model_root)?;
+        if let Some(base) = policy.base() {
+            let mut builder = ApiBuilder::from_env()
+                .with_progress(false)
+                .with_token(hf_token);
+            if let Some(cache) = huggingface_hub_cache {
+                builder = builder.with_cache_dir(cache.into());
+            }
+            let repo = builder.build()?.repo(Repo::with_revision(
+                base.repo_id.clone(),
+                RepoType::Model,
+                base.revision.clone(),
+            ));
+            model_root = download_artifacts(&repo, false)
+                .await
+                .context("Could not download the Vela3 checkpoint's pinned D3 base")?;
+            anyhow::ensure!(
+                !model_root.join("vela3_config.json").exists(),
+                "Nested Vela3 bases are unsupported"
+            );
+            api_repo = Some(repo);
+            decision_protocol = Some(DecisionProtocol::D3);
+        }
+        tracing::warn!("Vela3 core decisions enabled; task adapters, router signals and span extraction are not enabled");
+        Some(policy)
+    } else {
+        None
     };
 
     // Load config
@@ -268,7 +303,12 @@ async fn initialize_model(
         !d3 || backend_kind == infinity_v3_backend::BackendKind::Libtorch,
         "D3 requires --backend libtorch"
     );
-    let decoder_decision = rune || onejev || clef || pplx || d3;
+    let vela_encoder = matches!(decision_protocol, Some(DecisionProtocol::Vela3));
+    anyhow::ensure!(
+        !vela_encoder || backend_kind == infinity_v3_backend::BackendKind::Libtorch,
+        "Vela3 requires --backend libtorch"
+    );
+    let decoder_decision = rune || onejev || clef || pplx || d3 || vela_encoder;
     let readout = model_root.join("decision_config.json").exists();
     anyhow::ensure!(
         !(pplx || d3) || (readout && model_root.join("readout.safetensors").exists()),
@@ -499,7 +539,14 @@ async fn initialize_model(
     } else if decoder_decision {
         // Decision prompts cannot be truncated: reject over-budget requests in
         // the formatter, with the queue capacity as the configured input limit.
-        config.max_position_embeddings.min(max_batch_tokens)
+        config
+            .max_position_embeddings
+            .min(max_batch_tokens)
+            .min(if vela_policy.is_some() {
+                32768
+            } else {
+                usize::MAX
+            })
     } else {
         match st_config {
             Some(config) => config.max_seq_length,
@@ -567,13 +614,16 @@ async fn initialize_model(
 
     #[cfg(feature = "http")]
     let systemone = if laya || decoder_decision {
-        Some(std::sync::Arc::new(http::systemone::SystemOne::load(
-            &model_root,
-            tokenizer.clone(),
-            max_input_length,
-            multimodal_config.clone(),
-            decision_protocol,
-        )?))
+        Some(std::sync::Arc::new(
+            http::systemone::SystemOne::load(
+                &model_root,
+                tokenizer.clone(),
+                max_input_length,
+                multimodal_config.clone(),
+                decision_protocol,
+            )?
+            .with_vela_policy(vela_policy),
+        ))
     } else {
         None
     };
@@ -674,7 +724,11 @@ async fn initialize_model(
     // All models must pass validation before any checkpoint weights are loaded.
     finish_startup_validation(validation).await?;
     let torch_device = backend_kind.resolve_device(torch_device)?;
-    let model_dtype = config.dtype.as_deref().or(config.torch_dtype.as_deref());
+    let model_dtype = if vela_encoder {
+        Some("bfloat16")
+    } else {
+        config.dtype.as_deref().or(config.torch_dtype.as_deref())
+    };
     let dtype = match backend_kind {
         infinity_v3_backend::BackendKind::Libtorch => resolve_libtorch_dtype(
             dtype,
@@ -1149,6 +1203,7 @@ impl ModelConfig {
                 | "qwen3_5_text"
                 | "qwen3_vl"
                 | "mistral3"
+                | "ultravbert"
         ) {
             if self.max_position_embeddings == 0 {
                 self.max_position_embeddings = self

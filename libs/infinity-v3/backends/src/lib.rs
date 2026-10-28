@@ -520,7 +520,17 @@ async fn init_backend(
                 let paths = download_dense_modules(repo, dense_path)
                     .await
                     .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
-                if download_safetensors(repo.clone()).await.is_err() {
+                if model_type == ModelType::Decision
+                    && model_path.join("vela3v_config.json").exists()
+                {
+                    // The raw model.safetensors belongs to the span task. Core
+                    // decisions use this separate, decision-trained backbone.
+                    for file in ["backbone_h2.safetensors", "decision_adapter.safetensors"] {
+                        repo.get(file)
+                            .await
+                            .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
+                    }
+                } else if download_safetensors(repo.clone()).await.is_err() {
                     download_file(repo, "pytorch_model.bin")
                         .await
                         .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
