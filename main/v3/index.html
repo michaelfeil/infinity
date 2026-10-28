@@ -1520,6 +1520,14 @@ queue bonus reports <code>default</code> even if the request asked for priority.
 scheduling eligibility, not a guarantee that another request was overtaken.
 Vertex reports <code>priority</code> only when every instance received priority treatment;
 mixed-tier or empty batches report <code>default</code>.</p>
+<p>Set <code>INFINITY_EXPERIMENTAL_MULTIPLIER=2.0</code> to report twice the input tokens in
+<code>&lt;prefix&gt;-input-tokens</code> for effective priority requests. This optional float is unset
+by default, skipping multiplication. When set, it must be finite and positive;
+fractional token counts round up to whole tokens (for example, <code>7.2</code> becomes <code>8</code>).
+The configured decimal is evaluated exactly, so <code>100 * 1.1</code> reports <code>110</code>.
+Default-tier requests (including priority requests with a zero queue bonus) keep
+unmodified counts. <code>x-compute-tokens</code>, response-body usage and scheduling are
+unchanged. The multiplier applies only when billing headers are enabled.</p>
 <p>Set <code>--priority-queue-bonus-ms 250</code> for a 250 ms head start, or <code>0</code> for FIFO.
 The default is <code>1000</code>. <code>INFINITY_PRIORITY_QUEUE_BONUS_MS</code> is the environment
 variable. One value applies to all models; semicolon-separated values align
