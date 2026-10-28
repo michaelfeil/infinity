@@ -143,7 +143,7 @@ pub async fn run(
             pooling,
             decision_protocol,
             priority_queue_bonus_ms: 1000,
-            flex_queue_penalty_ms: 1000,
+            flex_queue_penalty_ms: 10000,
             max_concurrent_requests,
             max_batch_tokens,
             max_sequence_length: None,

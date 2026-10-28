@@ -105,7 +105,7 @@ reranking, classification, and SystemOne decisions:
 ```
 
 Use `"service_tier": "flex"` for lower-priority work. Flex inputs receive a virtual
-queue penalty (one second by default), allowing recent default/priority work to
+queue penalty (ten seconds by default), allowing recent default/priority work to
 pass them while preserving aging and FIFO within each tier. This adds no artificial
 wait and does not change billing-token counts. `auto` maps to `default`.
 
@@ -152,7 +152,7 @@ variable. One value applies to all models; semicolon-separated values align
 with `--model-id`.
 
 Set `--flex-queue-penalty-ms 250` or `INFINITY_FLEX_QUEUE_PENALTY_MS` for a
-250 ms flex penalty. The default is `1000`; `0` disables flex scheduling and reports
+250 ms flex penalty. The default is `10000`; `0` disables flex scheduling and reports
 `default`. As with the priority bonus, semicolon-separated values align with
 `--model-id`. Set both adjustments to `0` for FIFO across all requests.
 

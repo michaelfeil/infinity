@@ -49,7 +49,7 @@ alternative. One value applies to all models; semicolon-separated values align
 with `--model-id`. Negative and fractional millisecond values are rejected.
 
 `--flex-queue-penalty-ms` / `INFINITY_FLEX_QUEUE_PENALTY_MS` adds a virtual queue
-penalty for `"service_tier": "flex"` (default `1000` ms). Flex yields to recent
+penalty for `"service_tier": "flex"` (default `10000` ms). Flex yields to recent
 work but ages, so later arrivals cannot starve it indefinitely. `0` disables flex
 scheduling; set both adjustments to `0` for FIFO. Values broadcast or align with
 `--model-id`, just like the priority bonus. Billing is unchanged for flex.

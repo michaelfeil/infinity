@@ -272,7 +272,7 @@ impl Queue {
             replicas,
             model_name,
             priority_queue_bonus,
-            Duration::from_secs(1),
+            Duration::from_secs(10),
         )
     }
 
@@ -955,7 +955,7 @@ mod tests {
     #[test]
     fn flex_yields_to_newer_work_but_ages_and_preserves_ties() {
         for (bonus, penalty, expected) in [
-            (1000, 1000, [3, 2, 1, 4, 5, 6, 7]),
+            (1000, 10000, [3, 2, 1, 4, 5, 6, 7]),
             (0, 0, [1, 2, 3, 4, 5, 6, 7]),
         ] {
             let mut queue = PendingEntries::new(
@@ -968,10 +968,10 @@ mod tests {
                 (1, ServiceTier::Flex, 0),
                 (2, ServiceTier::Default, 0),
                 (3, ServiceTier::Priority, 0),
-                (4, ServiceTier::Default, 1000),
-                (5, ServiceTier::Priority, 2000),
-                (6, ServiceTier::Default, 2001),
-                (7, ServiceTier::Flex, 2001),
+                (4, ServiceTier::Default, 10000),
+                (5, ServiceTier::Priority, 11000),
+                (6, ServiceTier::Default, 11001),
+                (7, ServiceTier::Flex, 11001),
             ] {
                 let (mut entry, _) = test_entry(vec![id], true);
                 entry.metadata.service_tier = tier;

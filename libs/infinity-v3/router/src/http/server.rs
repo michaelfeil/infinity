@@ -3300,7 +3300,7 @@ mod multi_model_test {
             pooling: None,
             decision_protocol: None,
             priority_queue_bonus_ms: 1000,
-            flex_queue_penalty_ms: 1000,
+            flex_queue_penalty_ms: 10000,
             max_concurrent_requests: 4,
             max_batch_tokens: 128,
             max_sequence_length: None,

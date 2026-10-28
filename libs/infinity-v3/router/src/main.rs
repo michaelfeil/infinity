@@ -206,7 +206,7 @@ struct Args {
     priority_queue_bonus_ms: Vec<u64>,
 
     /// Virtual queue penalty for flex requests, in milliseconds; zero disables flex scheduling.
-    #[clap(long, default_value = "1000", env = infinity_v3_config::infinity_env!("FLEX_QUEUE_PENALTY_MS"), value_delimiter = ';')]
+    #[clap(long, default_value = "10000", env = infinity_v3_config::infinity_env!("FLEX_QUEUE_PENALTY_MS"), value_delimiter = ';')]
     flex_queue_penalty_ms: Vec<u64>,
 
     /// **IMPORTANT** This is one critical control to allow maximum usage
@@ -595,7 +595,7 @@ mod tests {
     fn queue_tier_options_default_broadcast_and_validate() {
         let args = Args::try_parse_from(["infinity_v3", "--model-id", "a"]).unwrap();
         assert_eq!(args.models().unwrap()[0].priority_queue_bonus_ms, 1000);
-        assert_eq!(args.models().unwrap()[0].flex_queue_penalty_ms, 1000);
+        assert_eq!(args.models().unwrap()[0].flex_queue_penalty_ms, 10000);
         for flag in ["--priority-queue-bonus-ms", "--flex-queue-penalty-ms"] {
             for (value, expected) in [("250", [250, 250]), ("0;1500", [0, 1500])] {
                 let args = Args::try_parse_from([
