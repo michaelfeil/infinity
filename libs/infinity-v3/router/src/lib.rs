@@ -1352,6 +1352,7 @@ impl From<TextEmbeddingsError> for ErrorResponse {
 struct BillingHeaders {
     input_tokens: HeaderName,
     service_tier: HeaderName,
+    priority_multiplier: f64,
 }
 
 static BILLING_HEADERS: OnceLock<Result<Option<BillingHeaders>, String>> = OnceLock::new();
@@ -1363,6 +1364,21 @@ fn billing_headers() -> Result<&'static Option<BillingHeaders>> {
         .get_or_init(|| match std::env::var(ENV) {
             Ok(prefix) if prefix.is_empty() => Ok(None),
             Ok(prefix) => {
+                const MULTIPLIER_ENV: &str =
+                    infinity_v3_config::infinity_env!("EXPERIMENTAL_MULTIPLIER");
+                let priority_multiplier = match std::env::var(MULTIPLIER_ENV) {
+                    Ok(value) => value
+                        .parse::<f64>()
+                        .ok()
+                        .filter(|value| value.is_finite() && *value > 0.0)
+                        .ok_or_else(|| {
+                            format!("{MULTIPLIER_ENV} must be a finite positive float")
+                        })?,
+                    Err(std::env::VarError::NotPresent) => 1.0,
+                    Err(std::env::VarError::NotUnicode(_)) => {
+                        return Err(format!("{MULTIPLIER_ENV} must be valid Unicode"))
+                    }
+                };
                 let name = |suffix| {
                     HeaderName::from_bytes(format!("{prefix}-{suffix}").as_bytes()).map_err(|_| {
                         format!("{ENV} must be empty or a valid HTTP header-name prefix")
@@ -1371,6 +1387,7 @@ fn billing_headers() -> Result<&'static Option<BillingHeaders>> {
                 Ok(Some(BillingHeaders {
                     input_tokens: name("input-tokens")?,
                     service_tier: name("service-tier")?,
+                    priority_multiplier,
                 }))
             }
             Err(std::env::VarError::NotPresent) => Ok(None),
@@ -1451,7 +1468,11 @@ impl From<ResponseMetadata> for HeaderMap {
         if let Some(names) = configured_billing_headers() {
             headers.insert(
                 names.input_tokens.clone(),
-                HeaderValue::from(value.compute_tokens),
+                HeaderValue::from(if value.priority && names.priority_multiplier != 1.0 {
+                    (value.compute_tokens as f64 * names.priority_multiplier).ceil() as usize
+                } else {
+                    value.compute_tokens
+                }),
             );
             headers.insert(
                 names.service_tier.clone(),
