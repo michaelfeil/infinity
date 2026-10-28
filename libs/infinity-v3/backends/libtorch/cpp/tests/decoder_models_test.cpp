@@ -703,6 +703,55 @@ void selected_classifier_rows_test() {
     }
 }
 
+void selected_embedding_rows_test(c10::Device device, at::ScalarType dtype) {
+  for (auto family : {"qwen2", "qwen3"})
+    for (bool causal : {false, true}) {
+      auto cfg = config(family);
+      cfg.values["use_bidirectional_attention"] = causal ? "false" : "true";
+      cfg.values["num_attention_heads"] = "2";
+      cfg.values["num_key_value_heads"] = "1";
+      cfg.values["head_dim"] = "8";
+      cfg.values["pad_token_id"] = "0";
+      cfg.values["use_linear_output_projection"] = "true";
+      cfg.values["linear_output_size"] = "5";
+      auto tensors = weights(cfg);
+      tensors["model.linear_output_projection.weight"] = at::arange(80, at::kFloat).view({5, 16}) * .001;
+      tensors["model.linear_output_projection.bias"] = at::arange(5, at::kFloat) * .01;
+      if (std::string(family) == "qwen3")
+        for (int layer = 0; layer < 2; ++layer)
+          for (auto norm : {"q_norm", "k_norm"})
+            tensors["model.layers." + std::to_string(layer) + ".self_attn." + norm + ".weight"] =
+                at::ones({8});
+      for (auto& [name, value] : tensors)
+        value = value.to(device, dtype);
+      auto model = create_decoder(cfg, tensors, device, dtype);
+      model->ready();
+      std::vector<int32_t> offsets{0, 1, 4, 9, 16};
+      auto opts = at::TensorOptions().device(device).dtype(at::kLong);
+      PackedInput input{at::tensor({0, 3, 4, 5, 0, 0, 0, 0, 0, 3, 6, 7, 8, 0, 0, 0}, opts),
+                        at::zeros({16}, opts),
+                        at::tensor({0, 0, 1, 2, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 6}, opts),
+                        at::tensor(offsets, opts.dtype(at::kInt)),
+                        offsets.data(),
+                        4,
+                        7};
+      auto rows = at::tensor({0, 3, 8, 15}, opts);
+      CudaGraphCache graphs(4, 64, 1, 64 << 20, 8);
+      for (int step = 0; step < 4; ++step) {
+        // Last-token embedding pooling includes trailing pad IDs, unlike classification.
+        auto full = model->forward(input);
+        check_close(model->forward_last(input), full.index_select(0, rows));
+        check_close(graphs.forward(*model, input, 3), full.index_select(0, rows));
+        // A token-output graph must not reuse the compact pooled-output entry.
+        check_close(graphs.forward(*model, input, 0), full);
+        input.ids = (input.ids + 1).remainder(16);
+      }
+      if (device.is_cuda())
+        TORCH_CHECK(graphs.stats().captures >= 2 && graphs.stats().hits >= 2,
+                    "Last-token and full-output CUDA graphs did not capture and replay");
+    }
+}
+
 void bidirectional_classifier_test(c10::Device device, at::ScalarType dtype) {
   auto cfg = config("llama");
   cfg.values["architectures.0"] = "LlamaBidirectionalForSequenceClassification";
@@ -2826,6 +2875,13 @@ int main(int argc, char** argv) {
   c10::InferenceMode inference;
   at::set_num_threads(1);
 #ifdef TEI_TORCH_CUDA_KERNELS
+  if (argc > 1 && std::string(argv[1]) == "last-token-cuda") {
+    selected_embedding_rows_test(c10::Device("cpu"), at::kFloat);
+    selected_classifier_rows_test();
+    selected_embedding_rows_test(c10::Device("cuda:0"), at::kHalf);
+    selected_embedding_rows_test(c10::Device("cuda:0"), at::kBFloat16);
+    return 0;
+  }
   if (argc > 1 && std::string(argv[1]) == "native-stream-cuda") {
     native_engine_stream_test(c10::Device("cuda:0"));
     return 0;
@@ -2899,10 +2955,13 @@ int main(int argc, char** argv) {
       }
     }
   }
+  selected_embedding_rows_test(c10::Device("cpu"), at::kFloat);
   bidirectional_classifier_test(c10::Device("cpu"), at::kFloat);
   decoder_token_classifier_test(c10::Device("cpu"), at::kFloat);
   if (argc > 1) {
     selected_classifier_rows_test();
+    selected_embedding_rows_test(c10::Device(argv[1]), at::kHalf);
+    selected_embedding_rows_test(c10::Device(argv[1]), at::kBFloat16);
     bidirectional_classifier_test(c10::Device(argv[1]), at::kBFloat16);
     decoder_token_classifier_test(c10::Device(argv[1]), at::kBFloat16);
   }

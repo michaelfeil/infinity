@@ -70,6 +70,17 @@ public:
   /// boundaries come from PackedInput, rather than padding between sequences.
   virtual at::Tensor forward(const PackedInput&) const = 0;
 
+  /// Whether pooled-only last-token requests can skip unused final-layer rows.
+  virtual bool supports_last_token(const PackedInput&) const {
+    return false;
+  }
+
+  virtual at::Tensor forward_last(const PackedInput& input) const {
+    auto hidden = forward(input);
+    auto rows = input.cumulative.narrow(0, 1, input.batch).to(at::kLong) - 1;
+    return hidden.index_select(0, rows);
+  }
+
   // Per-sequence embedding mean; preserve the bridge's F32 default unless a
   // model has independently qualified model-dtype reduction semantics.
   virtual at::Tensor mean_pool(const at::Tensor& value) const {

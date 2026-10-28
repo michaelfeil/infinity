@@ -1,6 +1,6 @@
 /// \file
 /// Interface and counters for the bounded native CUDA graph cache.
-/// Model execution is captured separately from pooling and host transfers.
+/// Model execution and supported readouts are captured separately from host transfers.
 
 #pragma once
 #include <memory>
@@ -9,7 +9,7 @@
 
 namespace infinity {
 // The caller serializes model inference and orders CUDA streams. Graphs cache exact packed shapes only;
-// pooling and all transfers remain outside capture. Outputs are overwritten by
+// Caller output ordering and all transfers remain outside capture. Outputs are overwritten by
 // the next replay of the same entry, so consume them before another inference.
 class CudaGraphCache {
   struct Impl;
@@ -33,7 +33,8 @@ public:
   ~CudaGraphCache();
   CudaGraphCache(const CudaGraphCache&) = delete;
   CudaGraphCache& operator=(const CudaGraphCache&) = delete;
-  // operation: 0 hidden states, 1 sequence classification, 2 token classification.
+  // operation: 0 hidden states, 1 sequence classification, 2 token classification,
+  // 3 last-token embeddings.
   /// Execute or replay an exact-shape entry; returned graph outputs
   /// may be overwritten by its next replay.
   at::Tensor forward(const Model&, const PackedInput&, int operation = 0);
