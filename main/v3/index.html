@@ -401,10 +401,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#request-priority" class="md-nav__link">
+  <a href="#request-service-tiers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Request priority
+        Request service tiers
       
     </span>
   </a>
@@ -1297,10 +1297,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#request-priority" class="md-nav__link">
+  <a href="#request-service-tiers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Request priority
+        Request service tiers
       
     </span>
   </a>
@@ -1491,16 +1491,20 @@ remain opt-in with <code>INFINITY_TORCH_CUDA_GRAPHS=1</code>.</p>
 on the running server for the interactive API, or <code>/api-doc/openapi.json</code> for
 its OpenAPI schema. See <a href="docs/cli/">running the server</a> and
 <a href="CONTRIBUTING/#working-in-the-infinity-monorepo">building Infinity V3</a>.</p>
-<h3 id="request-priority">Request priority</h3>
+<h3 id="request-service-tiers">Request service tiers</h3>
 <p>Add <code>"service_tier": "priority"</code> to any inference request, including embeddings,
 reranking, classification, and SystemOne decisions:</p>
 <div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span><span class="nt">"input"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"first text"</span><span class="p">,</span><span class="w"> </span><span class="s2">"second text"</span><span class="p">],</span><span class="w"> </span><span class="nt">"service_tier"</span><span class="p">:</span><span class="w"> </span><span class="s2">"priority"</span><span class="p">}</span>
 </span></code></pre></div>
+<p>Use <code>"service_tier": "flex"</code> for lower-priority work. Flex inputs receive a virtual
+queue offset (ten seconds by default), allowing recent default/priority work to
+pass them while preserving aging and FIFO within each tier. This adds no artificial
+wait and does not change billing-token counts. <code>auto</code> maps to <code>default</code>.</p>
 <p>Each model's existing queue orders inputs by queue-worker admission time, subtracting
 a configurable bonus for <code>priority</code> requests (one second by default). With the
 default bonus, a priority input passes normal inputs admitted less than one second
 earlier, but stays behind older work. Equal virtual enqueue times
-retain queue insertion order. Omitted tiers, <code>default</code>, <code>auto</code>, and <code>flex</code> use
+retain queue insertion order. Omitted tiers, <code>default</code>, and <code>auto</code> use
 real enqueue time. Every input in a client batch inherits its request tier;
 response ordering is unchanged. Vertex instances inherit the envelope tier
 unless they specify their own.</p>
@@ -1508,18 +1512,20 @@ unless they specify their own.</p>
 It does not preempt dispatched batches or reorder image downloads, tokenization,
 or admission limits. Later priority arrivals cannot indefinitely overtake older
 normal work. <code>/tokenize</code> and <code>/decode</code> accept the field for compatibility but do
-not use the inference queue. Queue latency metrics continue to use real enqueue
-times. Two FIFO buffers compare only their heads: enqueue is O(1) amortized and
+not use the inference queue and report <code>default</code> in the service-tier header. Queue latency metrics continue to use real enqueue
+times. Three FIFO buffers compare only their heads: enqueue is O(1) amortized and
 next-input selection is O(1), without sorted middle insertions.</p>
 <p>Set <code>INFINITY_BILLING_HEADERS=x-baseten</code> to include <code>x-baseten-input-tokens</code>
 and <code>x-baseten-service-tier</code> response headers. Any valid HTTP header-name prefix
 works; unset or empty disables these headers. The service-tier header contains
-<code>priority</code> or <code>default</code>, reflecting the queue policy actually applied, and is
-exposed through CORS for browser clients. A zero
+<code>priority</code>, <code>flex</code>, or <code>default</code>, reflecting the queue policy actually applied, and is
+exposed through CORS for browser clients. For example, an effective flex
+request returns <code>x-baseten-service-tier: flex</code> with the prefix above. A zero
 queue bonus reports <code>default</code> even if the request asked for priority. This reports
 scheduling eligibility, not a guarantee that another request was overtaken.
-Vertex reports <code>priority</code> only when every instance received priority treatment;
-mixed-tier or empty batches report <code>default</code>.</p>
+Vertex reports a tier only when every instance received it; mixed-tier or empty
+batches report <code>default</code>. Setting either tier's queue adjustment to zero reports
+<code>default</code> for that disabled tier.</p>
 <p>Set <code>INFINITY_EXPERIMENTAL_MULTIPLIER=2.0</code> to report twice the input tokens in
 <code>&lt;prefix&gt;-input-tokens</code> for effective priority requests. This optional float is unset
 by default, skipping multiplication. When set, it must be finite and positive;
@@ -1528,10 +1534,14 @@ The configured decimal is evaluated exactly, so <code>100 * 1.1</code> reports <
 Default-tier requests (including priority requests with a zero queue bonus) keep
 unmodified counts. <code>x-compute-tokens</code>, response-body usage and scheduling are
 unchanged. The multiplier applies only when billing headers are enabled.</p>
-<p>Set <code>--priority-queue-bonus-ms 250</code> for a 250 ms head start, or <code>0</code> for FIFO.
+<p>Set <code>--priority-queue-bonus-ms 250</code> for a 250 ms head start, or <code>0</code> to disable priority scheduling.
 The default is <code>1000</code>. <code>INFINITY_PRIORITY_QUEUE_BONUS_MS</code> is the environment
 variable. One value applies to all models; semicolon-separated values align
 with <code>--model-id</code>.</p>
+<p>Set <code>--flex-queue-offset-ms 250</code> or <code>INFINITY_FLEX_QUEUE_OFFSET_MS</code> for a
+250 ms flex offset. The default is <code>10000</code>; <code>0</code> disables flex scheduling and reports
+<code>default</code>. As with the priority bonus, semicolon-separated values align with
+<code>--model-id</code>. Set both adjustments to <code>0</code> for FIFO across all requests.</p>
 <h3 id="cli-overview">CLI overview</h3>
 <p>Serve an embedding model on one NVIDIA GPU:</p>
 <div class="language-bash highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>infinity_v3<span class="w"> </span><span class="se">\</span>

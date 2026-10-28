@@ -423,10 +423,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#request-priority" class="md-nav__link">
+  <a href="#request-service-tiers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Request priority
+        Request service tiers
       
     </span>
   </a>
@@ -1213,10 +1213,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#request-priority" class="md-nav__link">
+  <a href="#request-service-tiers" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Request priority
+        Request service tiers
       
     </span>
   </a>
@@ -1308,15 +1308,21 @@ image; startup errors list the compiled choices.</p>
 schema is available at <code>/api-doc/openapi.json</code>.</p>
 <p>CUDA inference requires SM80 (Ampere) or newer in both backends. SM75/Turing
 is unsupported; use a CPU build on hosts without a supported GPU.</p>
-<h2 id="request-priority">Request priority</h2>
+<h2 id="request-service-tiers">Request service tiers</h2>
 <p><code>--priority-queue-bonus-ms</code> sets the virtual queue age bonus for requests carrying
-<code>"service_tier": "priority"</code>. It defaults to <code>1000</code> ms; <code>0</code> uses FIFO across tiers.
+<code>"service_tier": "priority"</code>. It defaults to <code>1000</code> ms; <code>0</code> disables priority scheduling.
 Only inputs waiting for model batching are reordered, without adding a delay.</p>
-<div class="language-sh highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>/path/to/model<span class="w"> </span>--priority-queue-bonus-ms<span class="w"> </span><span class="m">250</span>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>/path/to/model<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--priority-queue-bonus-ms<span class="w"> </span><span class="m">1000</span><span class="w"> </span>--flex-queue-offset-ms<span class="w"> </span><span class="m">10000</span>
 </span></code></pre></div>
 <p><code>INFINITY_PRIORITY_QUEUE_BONUS_MS</code> (or <code>PRIORITY_QUEUE_BONUS_MS</code>) is the environment
 alternative. One value applies to all models; semicolon-separated values align
 with <code>--model-id</code>. Negative and fractional millisecond values are rejected.</p>
+<p><code>--flex-queue-offset-ms</code> / <code>INFINITY_FLEX_QUEUE_OFFSET_MS</code> adds a virtual enqueue-time
+offset for <code>"service_tier": "flex"</code> (default <code>10000</code> ms). Flex yields to recent
+work but ages, so later arrivals cannot starve it indefinitely. <code>0</code> disables flex
+scheduling; set both adjustments to <code>0</code> for FIFO. Values broadcast or align with
+<code>--model-id</code>, just like the priority bonus. Billing is unchanged for flex.</p>
 <h2 id="sequence-length-and-batch-capacity">Sequence length and batch capacity</h2>
 <p>Use <code>--max-sequence-length</code> to cap tokens per sequence independently of the
 batch's total token budget:</p>

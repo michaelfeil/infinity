@@ -3549,10 +3549,9 @@
       },
       "ServiceTier": {
         "type": "string",
-        "description": "Priority requests receive a configurable virtual queue age bonus (default one second); equal virtual times retain queue order.",
+        "description": "Priority receives a virtual queue-age bonus; flex receives an offset. Equal virtual times retain admission order. The input alias \"auto\" selects default.",
         "enum": [
           "default",
-          "auto",
           "flex",
           "priority"
         ]
