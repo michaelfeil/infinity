@@ -134,7 +134,7 @@ mixed-tier or empty batches report `default`.
 Set `INFINITY_EXPERIMENTAL_MULTIPLIER=2.0` to report twice the input tokens in
 `<prefix>-input-tokens` for effective priority requests. This optional float is unset
 by default, skipping multiplication. When set, it must be finite and positive;
-fractional token counts are returned without rounding.
+fractional token counts round up to whole tokens (for example, `7.2` becomes `8`).
 Default-tier requests (including priority requests with a zero queue bonus) keep
 unmodified counts. `x-compute-tokens`, response-body usage and scheduling are
 unchanged. The multiplier applies only when billing headers are enabled.

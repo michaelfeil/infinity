@@ -1468,14 +1468,10 @@ impl From<ResponseMetadata> for HeaderMap {
             let tokens = names
                 .priority_multiplier
                 .filter(|_| value.priority)
-                .map_or_else(
-                    || value.compute_tokens.to_string(),
-                    |multiplier| (value.compute_tokens as f64 * multiplier).to_string(),
-                );
-            // Numeric text is valid HTTP header text, including fractional counts.
-            if let Ok(tokens) = HeaderValue::try_from(tokens) {
-                headers.insert(names.input_tokens.clone(), tokens);
-            }
+                .map_or(value.compute_tokens, |multiplier| {
+                    (value.compute_tokens as f64 * multiplier).ceil() as usize
+                });
+            headers.insert(names.input_tokens.clone(), HeaderValue::from(tokens));
             headers.insert(
                 names.service_tier.clone(),
                 service_tier_header(value.priority),
