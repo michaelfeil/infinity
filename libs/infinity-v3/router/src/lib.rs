@@ -393,7 +393,7 @@ async fn initialize_model(
         "Clef, Pplx and D3 require a dense Qwen3.5 model"
     );
     anyhow::ensure!(
-        !matches!(config.model_type.as_str(), "qwen3_vl" | "mistral3")
+        config.model_type != "qwen3_vl"
             || (default_prompt.is_none() && default_prompt_name.is_none()),
         "This multimodal model uses its native chat template; default prompt overrides are unsupported"
     );
@@ -664,6 +664,8 @@ async fn initialize_model(
                 tokenizer.clone(),
                 max_input_length,
                 multimodal_config.clone(),
+                prompts.clone(),
+                default_prompt.clone(),
             )
             .map_err(|e| anyhow!(e.to_string()))?,
         )

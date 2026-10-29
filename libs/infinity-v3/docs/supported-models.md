@@ -95,6 +95,8 @@ Perplexity Embed v1 supports floating-point output only; contextual variants are
 unsupported. BGE-M3 here provides dense embeddings. Nemotron Embed 3 supports
 text; 3.5 additionally supports document images. Use their query/document
 instructions and checkpoint formatting; they are separate from Nemotron ColEmbed.
+See [Nemotron embedding configuration](nemotron-embeddings.md) for named prefixes
+and text/image request formats.
 
 | Checkpoint | Native implementation / support basis | Additional launch settings |
 | --- | --- | --- |

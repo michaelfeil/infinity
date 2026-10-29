@@ -83,7 +83,15 @@ fn mistral3_packed_hidden_states_match_transformers() {
                 cursor = start + (h / 2) * (w / 2 + 1);
             }
         }
-        let positions = (0..ids.len() as u32).collect::<Vec<_>>();
+        let positions = tensors
+            .tensor("positions")
+            .map(|tensor| {
+                i64_values(tensor)
+                    .into_iter()
+                    .map(|value| value as u32)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_else(|_| (0..ids.len() as u32).collect());
         batch.multimodal.push(Some(Arc::new(MultimodalEncoding {
             images,
             audios: vec![],
@@ -115,20 +123,26 @@ fn mistral3_packed_hidden_states_match_transformers() {
         );
         expected.push((shape, values));
     }
-    let mut invalid = batch.clone();
-    let media = invalid.multimodal[1].as_ref().unwrap();
-    let (_, image) = &media.images[0];
-    // Feature rows still fit, but the interleaved row-break/end tokens do not.
-    invalid.multimodal[1] = Some(Arc::new(MultimodalEncoding {
-        images: vec![(expected[1].0[0] - image.token_count(), image.clone())],
-        audios: vec![],
-        position_ids: media.position_ids.clone(),
-        memory: None,
-    }));
-    assert!(
-        backend.embed(invalid).is_err(),
-        "Image rows must not cross a packed sequence boundary"
-    );
+    if let Some(row) = batch
+        .multimodal
+        .iter()
+        .position(|media| media.as_ref().is_some_and(|media| !media.images.is_empty()))
+    {
+        let mut invalid = batch.clone();
+        let media = invalid.multimodal[row].as_ref().unwrap();
+        let (_, image) = &media.images[0];
+        // Feature rows still fit, but the interleaved row-break/end tokens do not.
+        invalid.multimodal[row] = Some(Arc::new(MultimodalEncoding {
+            images: vec![(expected[row].0[0] - image.token_count(), image.clone())],
+            audios: vec![],
+            position_ids: media.position_ids.clone(),
+            memory: None,
+        }));
+        assert!(
+            backend.embed(invalid).is_err(),
+            "Image rows must not cross a packed sequence boundary"
+        );
+    }
     let mut pooled_batch = batch.clone();
     pooled_batch.pooled_indices = pooled_batch.raw_indices.iter().rev().copied().collect();
     pooled_batch.raw_indices.clear();

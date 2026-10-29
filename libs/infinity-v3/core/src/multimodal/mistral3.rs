@@ -13,7 +13,7 @@ use crate::{
 };
 use image::ImageDecoder;
 use infinity_v3_backend::{ImagePatches, MultimodalEncoding};
-use std::{path::Path, sync::Arc};
+use std::{collections::HashMap, path::Path, sync::Arc};
 use tokenizers::{Tokenizer, TruncationDirection};
 use tokio::sync::Semaphore;
 
@@ -46,6 +46,8 @@ struct State {
     std: [f32; 3],
     scale: f32,
     ids: [u32; 3],
+    prompts: Option<HashMap<String, String>>,
+    default_prompt: Option<String>,
 }
 impl Mistral3Processor {
     pub fn load(
@@ -53,6 +55,8 @@ impl Mistral3Processor {
         mut tokenizer: Tokenizer,
         max_tokens: usize,
         config: MultimodalConfig,
+        prompts: Option<HashMap<String, String>>,
+        default_prompt: Option<String>,
     ) -> Result<Self> {
         let read = |name: &str| -> Result<serde_json::Value> {
             serde_json::from_slice(
@@ -61,6 +65,14 @@ impl Mistral3Processor {
             .map_err(|e| invalid(e.to_string()))
         };
         let model = read("config.json")?;
+        // Retrieval checkpoints render prefixes as a system message, without
+        // instruction-model BOS/EOS wrappers. Keep instruction models unchanged.
+        let retrieval = model["is_causal"] == false && model["pooling"] == "avg";
+        if !retrieval && default_prompt.is_some() {
+            return Err(invalid(
+                "Mistral3 instruction models do not support default prompt overrides",
+            ));
+        }
         let processor = read("processor_config.json")?;
         let image = &processor["image_processor"];
         let patch = model["vision_config"]["patch_size"].as_u64().unwrap_or(0) as usize;
@@ -169,6 +181,8 @@ impl Mistral3Processor {
                 std,
                 scale,
                 ids,
+                prompts: retrieval.then(|| prompts.unwrap_or_default()),
+                default_prompt,
             }),
             resolver,
             workers,
@@ -181,14 +195,23 @@ impl Mistral3Processor {
         direction: TruncationDirection,
         prompt_name: Option<String>,
     ) -> Result<PreparedMultimodal> {
-        if prompt_name.is_some() {
-            return Err(invalid(
-                "Mistral3 uses its native chat template; prompt_name is unsupported",
-            ));
-        }
+        let prefix = match prompt_name {
+            Some(name) => Some(
+                self.state
+                    .prompts
+                    .as_ref()
+                    .ok_or_else(|| {
+                        invalid("Mistral3 instruction models do not support prompt_name")
+                    })?
+                    .get(&name)
+                    .cloned()
+                    .ok_or_else(|| invalid(format!("Unknown prompt_name: {name}")))?,
+            ),
+            None => self.state.default_prompt.clone(),
+        };
         tokio::time::timeout(
             self.state.config.timeout,
-            self.prepare_inner(input, truncate, direction),
+            self.prepare_inner(input, truncate, direction, prefix),
         )
         .await
         .map_err(|_| invalid("Mistral3 preprocessing timed out"))?
@@ -198,6 +221,7 @@ impl Mistral3Processor {
         input: EncodingInput,
         truncate: bool,
         direction: TruncationDirection,
+        prefix: Option<String>,
     ) -> Result<PreparedMultimodal> {
         if input.count_chars() > self.state.max_tokens.saturating_mul(250) {
             return Err(invalid("Conversation exceeds the character limit"));
@@ -220,6 +244,9 @@ impl Mistral3Processor {
             EncodingInput::Messages(m) => m,
             _ => return Err(invalid("Mistral3 accepts text or native messages")),
         };
+        if let Some(prefix) = prefix {
+            prepend_retrieval_prefix(&mut messages, prefix)?;
+        }
         validate(&messages, self.state.config.max_images)?;
         let mut resolved = Vec::new();
         for message in &mut messages {
@@ -251,6 +278,20 @@ impl Mistral3Processor {
         });
         rx.await.map_err(|_| invalid("Image worker failed"))?
     }
+}
+
+fn prepend_retrieval_prefix(messages: &mut Vec<Message>, prefix: String) -> Result<()> {
+    if messages.len() != 1 || !matches!(messages[0].role, MessageRole::User) {
+        return Err(invalid("Retrieval prompt_name/default prompt requires one user message; use an explicit system message for a custom prefix"));
+    }
+    messages.insert(
+        0,
+        Message {
+            role: MessageRole::System,
+            content: MessageContent::Text(prefix),
+        },
+    );
+    Ok(())
 }
 fn validate(messages: &[Message], max_images: usize) -> Result<()> {
     if messages.is_empty() {
@@ -465,6 +506,121 @@ impl State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    #[ignore = "Generate scripts/nemotron-embed-parity.py fixtures and set NEMOTRON_REFERENCE and NEMOTRON_MODEL"]
+    async fn nemotron_preparation_matches_transformers() {
+        let root = std::path::PathBuf::from(std::env::var("NEMOTRON_REFERENCE").unwrap());
+        let model = std::path::PathBuf::from(std::env::var("NEMOTRON_MODEL").unwrap());
+        let prompts: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(model.join("config_sentence_transformers.json")).unwrap(),
+        )
+        .unwrap();
+        let load = |default| {
+            Mistral3Processor::load(
+                &model,
+                Tokenizer::from_file(model.join("tokenizer.json")).unwrap(),
+                2048,
+                MultimodalConfig::default(),
+                Some(serde_json::from_value(prompts["prompts"].clone()).unwrap()),
+                default,
+            )
+            .unwrap()
+        };
+        let processor = load(None);
+        let cases: Vec<serde_json::Value> =
+            serde_json::from_slice(&std::fs::read(root.join("reference.json")).unwrap()).unwrap();
+        for case in &cases {
+            let input = if let Some(text) = case["input"].as_str() {
+                EncodingInput::Single(text.into())
+            } else {
+                EncodingInput::Messages(serde_json::from_value(case["input"].clone()).unwrap())
+            };
+            let prepared = processor
+                .prepare(
+                    input,
+                    false,
+                    TruncationDirection::Right,
+                    case["prompt_name"].as_str().map(str::to_owned),
+                )
+                .await
+                .unwrap();
+            let ids: Vec<u32> = serde_json::from_value(case["input_ids"].clone()).unwrap();
+            assert_eq!(prepared.input_ids, ids, "{} tokens", case["name"]);
+            assert_eq!(
+                prepared.media.images.len(),
+                case["pixels"].as_array().unwrap().len()
+            );
+            for ((_, image), pixels) in prepared
+                .media
+                .images
+                .iter()
+                .zip(case["pixels"].as_array().unwrap())
+            {
+                let expected: Vec<f32> = serde_json::from_value(pixels.clone()).unwrap();
+                assert_eq!(image.pixels.len(), expected.len());
+                let error = image
+                    .pixels
+                    .iter()
+                    .zip(expected)
+                    .map(|(a, b)| (a - b).abs())
+                    .fold(0f32, f32::max);
+                assert!(error < 1e-5, "{} pixels: {error}", case["name"]);
+            }
+        }
+        // A configured default prefix must produce the same tokens as an
+        // explicit per-request name; explicit system prefixes stay unambiguous.
+        let query = cases.iter().find(|case| case["name"] == "query").unwrap();
+        let default = load(Some("query: ".into()));
+        let prepared = default
+            .prepare(
+                EncodingInput::Single(query["input"].as_str().unwrap().into()),
+                false,
+                TruncationDirection::Right,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::to_value(prepared.input_ids).unwrap(),
+            query["input_ids"]
+        );
+        assert!(processor
+            .prepare(
+                EncodingInput::Single("hello".into()),
+                false,
+                TruncationDirection::Right,
+                Some("missing".into())
+            )
+            .await
+            .is_err());
+    }
+    #[test]
+    fn retrieval_prefix_preserves_content_and_rejects_ambiguous_roles() {
+        let content = serde_json::json!([
+            {"type":"text","text":"a document"},
+            {"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}
+        ]);
+        let mut messages: Vec<Message> = serde_json::from_value(serde_json::json!([
+            {"role":"user","content":content}
+        ]))
+        .unwrap();
+        prepend_retrieval_prefix(&mut messages, "passage: ".into()).unwrap();
+        assert!(matches!(messages[0].role, MessageRole::System));
+        assert_eq!(
+            serde_json::to_value(&messages[1]).unwrap()["content"],
+            content
+        );
+        // A prefix must not replace an explicit system prefix or turn a
+        // reranking pair into an embedding conversation.
+        for json in [
+            serde_json::json!([]),
+            serde_json::json!([{"role":"system","content":"custom"},{"role":"user","content":"a"}]),
+            serde_json::json!([{"role":"query","content":"a"},{"role":"document","content":"b"}]),
+        ] {
+            let mut messages: Vec<Message> = serde_json::from_value(json).unwrap();
+            assert!(prepend_retrieval_prefix(&mut messages, "query: ".into()).is_err());
+        }
+    }
     #[test]
     fn pixtral_resize_ceil_and_budget_validation() {
         assert_eq!(dimensions(37, 65, 1540, 28).unwrap(), (56, 84));

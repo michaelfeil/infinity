@@ -1071,6 +1071,18 @@ public:
     return bytes;
   }
 
+  bool model_dtype_mean_pool() const override {
+    return family == "mistral" && options.string("pooling", "") == "avg";
+  }
+
+  at::Tensor mean_pool(const at::Tensor& value) const override {
+    // Nemotron 3 uses the same model-dtype sum/divide as its frozen encoder
+    // inside Nemotron 3.5, before converting to FP32 for normalization.
+    if (model_dtype_mean_pool())
+      return (value.sum(0, true) / value.size(0)).to(at::kFloat);
+    return Model::mean_pool(value);
+  }
+
   int64_t output_width() const override {
     return projection.defined() ? projection.size(0) : hidden;
   }
