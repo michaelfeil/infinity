@@ -79,12 +79,13 @@ metadata automatically; the examples omit redundant overrides. Keep the saved
 `--pooling splade` selects the sparse task described below.
 
 For Nomic v1.5, prefix retrieval queries with `search_query: ` and documents with
-`search_document: `. It returns 768 dimensions by default. Qwen3 and Harrier
-queries use the checkpoint's instruction format (`Instruct: ...\nQuery: ...`);
-documents use their ordinary text. E5 v2 and non-instruct multilingual E5 use
-`query: ` and `passage: ` prefixes, including for non-English text. E5-Mistral,
-multilingual E5 large instruct and GTE-Qwen2 use their model-card
-instruction/query formats.
+`search_document: `. It returns 768 dimensions by default. Qwen3 queries use the
+checkpoint's instruction format (`Instruct: ...\nQuery: ...`); documents use their
+ordinary text. E5 v2 and non-instruct multilingual E5 use `query: ` and
+`passage: ` prefixes, including for non-English text. E5-Mistral, multilingual
+E5 large instruct and GTE-Qwen2 use their model-card instruction/query formats.
+Harrier queries also use the `Instruct: ...\nQuery: ...` format; documents use
+their ordinary text.
 Jina code models distinguish code and text retrieval tasks through their trained
 prompts. Nomic v1 uses the same task-prefix convention as v1.5.
 GTE, BGE, Snowflake and Mixedbread also have model-specific
