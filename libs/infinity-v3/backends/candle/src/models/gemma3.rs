@@ -1,5 +1,34 @@
 use crate::layers::HiddenAct;
+use candle::{Device, Result, Tensor};
 use serde::Deserialize;
+
+#[derive(Debug, Clone, PartialEq, Deserialize)]
+pub struct Gemma3RopeScaling {
+    #[serde(alias = "type")]
+    pub rope_type: String,
+    #[serde(default = "default_rope_factor")]
+    pub factor: f32,
+}
+
+fn default_rope_factor() -> f32 {
+    1.0
+}
+
+impl Gemma3RopeScaling {
+    #[cfg_attr(not(feature = "flash-attn"), allow(dead_code))]
+    fn factor(&self) -> Result<Option<f32>> {
+        match self.rope_type.as_str() {
+            "default" => Ok(None),
+            "linear" => {
+                if !self.factor.is_finite() || self.factor <= 0.0 {
+                    candle::bail!("Gemma3 linear RoPE scaling factor must be positive");
+                }
+                Ok(Some(self.factor))
+            }
+            other => candle::bail!("Unsupported Gemma3 RoPE scaling type `{other}`"),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Deserialize)]
 pub struct Gemma3Config {
@@ -18,6 +47,8 @@ pub struct Gemma3Config {
     pub query_pre_attn_scalar: usize,
     pub rms_norm_eps: f32,
     pub rope_local_base_freq: f32,
+    #[serde(default)]
+    pub rope_scaling: Option<Gemma3RopeScaling>,
     pub rope_theta: f32,
     pub sliding_window: Option<usize>,
     #[serde(rename(deserialize = "_sliding_window_pattern"))]
@@ -25,12 +56,27 @@ pub struct Gemma3Config {
     pub vocab_size: usize,
 }
 
+#[cfg_attr(not(feature = "flash-attn"), allow(dead_code))]
+fn global_inv_freqs(config: &Gemma3Config, dim: usize, device: &Device) -> Result<Tensor> {
+    let inv_freqs = crate::layers::get_inv_freqs(dim, config.rope_theta, device, None)?;
+    match config
+        .rope_scaling
+        .as_ref()
+        .map(Gemma3RopeScaling::factor)
+        .transpose()?
+        .flatten()
+    {
+        Some(factor) => Ok((inv_freqs / factor as f64)?),
+        None => Ok(inv_freqs),
+    }
+}
+
 #[cfg(feature = "flash-attn")]
 mod packed {
     use super::*;
     use crate::layers::{get_cos_sin, get_inv_freqs, Linear};
     use crate::models::Model;
-    use candle::{DType, Device, Result, Tensor};
+    use candle::DType;
     use candle_nn::{Embedding, Module, VarBuilder};
     use infinity_v3_backend_core::{Batch, ModelType, Pool};
     #[derive(Debug)]
@@ -406,6 +452,7 @@ mod packed {
         rotary_cache: (Tensor, Tensor),
         rotary_cache_local_attention: (Tensor, Tensor),
         rotary_dim: usize,
+        pool: Pool,
 
         device: Device,
 
@@ -440,13 +487,15 @@ mod packed {
             } else {
                 vb
             };
-            match model_type {
+            let pool = match model_type {
                 ModelType::Decision => candle::bail!("Typed decisions require a Laya checkpoint"),
                 ModelType::Classifier => {
                     candle::bail!("`classifier` model type is not supported for Gemma3")
                 }
-                ModelType::Embedding(Pool::Mean) => {}
-                ModelType::Embedding(_) => candle::bail!("Gemma3 embeddings require mean pooling"),
+                ModelType::Embedding(Pool::Splade) => {
+                    candle::bail!("SPLADE pooling is not supported for Gemma3")
+                }
+                ModelType::Embedding(pool) => pool,
             };
 
             let embed_tokens = Gemma3Embedding::load(vb.pp("embed_tokens"), config)?;
@@ -467,7 +516,7 @@ mod packed {
                 .head_dim
                 .unwrap_or(config.hidden_size / config.num_attention_heads);
 
-            let inv_freqs = get_inv_freqs(rotary_dim, config.rope_theta, vb.device(), None)?;
+            let inv_freqs = global_inv_freqs(config, rotary_dim, vb.device())?;
             let rotary_cache = get_cos_sin(
                 config.max_position_embeddings,
                 &inv_freqs,
@@ -491,6 +540,7 @@ mod packed {
                 rotary_cache,
                 rotary_cache_local_attention,
                 rotary_dim,
+                pool,
                 device: vb.device().clone(),
                 span: tracing::span!(tracing::Level::TRACE, "model"),
             })
@@ -543,12 +593,27 @@ mod packed {
             let (outputs, _) = self.norm.forward(&states, None)?;
             let pooled = if batch.pooled_indices.is_empty() {
                 None
-            } else {
+            } else if self.pool == Pool::Mean {
                 Some(crate::layers::mean_pool(
                     &outputs,
                     &batch.cumulative_seq_lengths,
                     &batch.pooled_indices,
                 )?)
+            } else {
+                let rows = batch
+                    .pooled_indices
+                    .iter()
+                    .map(|&index| {
+                        let start = batch.cumulative_seq_lengths[index as usize] as usize;
+                        let end = batch.cumulative_seq_lengths[index as usize + 1] as usize;
+                        match self.pool {
+                            Pool::Cls => outputs.narrow(0, start, 1),
+                            Pool::LastToken => outputs.narrow(0, end - 1, 1),
+                            Pool::Mean | Pool::Splade => unreachable!("mean handled above"),
+                        }
+                    })
+                    .collect::<Result<Vec<_>>>()?;
+                Some(Tensor::cat(&rows, 0)?)
             };
             let raw = if batch.raw_indices.is_empty() {
                 None
@@ -578,3 +643,54 @@ mod packed {
 
 #[cfg(feature = "flash-attn")]
 pub use packed::Gemma3Model;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn config(rope_scaling: serde_json::Value) -> Gemma3Config {
+        serde_json::from_value(json!({
+            "attention_bias": false,
+            "pad_token_id": 0,
+            "head_dim": 256,
+            "hidden_activation": "gelu_pytorch_tanh",
+            "hidden_size": 3840,
+            "intermediate_size": 15360,
+            "max_position_embeddings": 131072,
+            "num_attention_heads": 16,
+            "num_hidden_layers": 48,
+            "num_key_value_heads": 8,
+            "query_pre_attn_scalar": 256,
+            "rms_norm_eps": 1e-6,
+            "rope_local_base_freq": 10000.0,
+            "rope_scaling": rope_scaling,
+            "rope_theta": 1000000.0,
+            "sliding_window": 1024,
+            "_sliding_window_pattern": 6,
+            "vocab_size": 262208
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn kalm_linear_rope_scaling_divides_inverse_frequencies() {
+        let config = config(json!({"factor": 8.0, "rope_type": "linear"}));
+        let frequencies = global_inv_freqs(&config, 256, &Device::Cpu)
+            .unwrap()
+            .flatten_all()
+            .unwrap()
+            .to_vec1::<f32>()
+            .unwrap();
+        for (index, actual) in frequencies.into_iter().enumerate() {
+            let expected = (1.0 / 1_000_000f32.powf(2.0 * index as f32 / 256.0)) / 8.0;
+            assert!((actual - expected).abs() <= expected.abs() * 1e-6);
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_gemma3_rope_scaling() {
+        let config = config(json!({"factor": 8.0, "rope_type": "yarn"}));
+        assert!(global_inv_freqs(&config, 256, &Device::Cpu).is_err());
+    }
+}

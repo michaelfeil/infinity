@@ -165,6 +165,7 @@ and text/image request formats.
 | [Snowflake/snowflake-arctic-embed-m-v2.0](https://huggingface.co/Snowflake/snowflake-arctic-embed-m-v2.0) | GTE rotary encoder + sentence pooling | `--max-batch-tokens 8192` |
 | [Snowflake/snowflake-arctic-embed-s](https://huggingface.co/Snowflake/snowflake-arctic-embed-s) | BERT + sentence pooling | `--max-batch-tokens 8192` |
 | [Snowflake/snowflake-arctic-embed-xs](https://huggingface.co/Snowflake/snowflake-arctic-embed-xs) | BERT + sentence pooling | `--max-batch-tokens 8192` |
+| [tencent/KaLM-Embedding-Gemma3-12B-2511](https://huggingface.co/tencent/KaLM-Embedding-Gemma3-12B-2511) | Gemma3 text + last-token pooling; [community license, not for EU use](#model-licenses) | `--max-batch-tokens 8192` |
 | [thenlper/gte-base](https://huggingface.co/thenlper/gte-base) | BERT + sentence pooling | `--max-batch-tokens 8192` |
 | [thenlper/gte-large](https://huggingface.co/thenlper/gte-large) | BERT + sentence pooling | `--max-batch-tokens 8192` |
 | [thenlper/gte-small](https://huggingface.co/thenlper/gte-small) | BERT + sentence pooling | `--max-batch-tokens 8192` |
@@ -511,6 +512,7 @@ This is not an exhaustive license table for the catalog.
 | `jinaai/jina-code-embeddings-0.5b` | [CC-BY-NC-4.0](https://huggingface.co/jinaai/jina-code-embeddings-0.5b/blob/main/README.md) | Code/text embeddings |
 | `jinaai/jina-code-embeddings-1.5b` | [CC-BY-NC-4.0](https://huggingface.co/jinaai/jina-code-embeddings-1.5b/blob/main/README.md) | Code/text embeddings |
 | `Babelscape/wikineural-multilingual-ner` | [CC-BY-NC-SA-4.0](https://huggingface.co/Babelscape/wikineural-multilingual-ner/blob/main/README.md) | Multilingual NER |
+| `tencent/KaLM-Embedding-Gemma3-12B-2511` | [Tencent KaLM-Embedding community license](https://huggingface.co/tencent/KaLM-Embedding-Gemma3-12B-2511/blob/main/LICENSE.txt), not intended for use within the EU | Text embeddings |
 
 Nomic Embed v1, v1.5 and v2 MoE publish Apache-2.0 model licenses. Jina's
 license varies by checkpoint: the v2 text/code encoder family and the Qwen2
