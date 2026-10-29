@@ -1307,6 +1307,18 @@ public:
   /// Block-attention checkpoints use their dedicated path; causal
   /// compact/prefix paths restore logical rows.
   at::Tensor forward(const PackedInput& input) const override {
+    return forward_impl(input);
+  }
+
+  at::Tensor forward_pooled(const PackedInput& input, bool last) const override {
+    if (radix_enabled(input) || input.prefix || input.capture_prefix)
+      return {};
+    if (!device.is_cuda() || block_attention())
+      return Model::forward_pooled(input, last);
+    return forward_impl(input, pooled_token_rows(input, last));
+  }
+
+  at::Tensor forward_impl(const PackedInput& input, const at::Tensor& output_rows = {}) const {
     if (block_attention()) {
       auto prepared = input;
       prepare_input(prepared);
@@ -1327,6 +1339,8 @@ public:
                         ? delta_attention(normalized, p + "linear_attn.", input, nullptr, false, i)
                         : full_attention(normalized, p + "self_attn.", input, nullptr, false, i);
       states = states + output;
+      if (output_rows.defined() && i + 1 == layer_count)
+        states = states.index_select(0, output_rows);
       normalized = norm(states, p + "post_attention_layernorm");
       states = states + feed_forward(normalized, i, input);
     }

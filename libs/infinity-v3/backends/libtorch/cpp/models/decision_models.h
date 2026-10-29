@@ -47,6 +47,17 @@ public:
   virtual ~DecisionHead() = default;
   /// Validate head-specific request metadata and report the number of option logits to reserve.
   virtual int64_t output_count(const DecisionRequest&) const = 0;
+
+  /// Whether every request consumes only its final token. Warmup stays full-token.
+  virtual bool last_token_only(const PackedInput&, const std::vector<DecisionRequest>&) const {
+    return false;
+  }
+
+  virtual std::vector<DecisionResult>
+  forward_pooled(const at::Tensor&, const PackedInput&, const std::vector<DecisionRequest>&) const {
+    TORCH_CHECK(false, "Decision head requires complete token states");
+  }
+
   /// Read packed [tokens, hidden] states and return one result per decision request. Token spans
   /// and marker positions refer to each request's sequence, not the whole packed batch.
   virtual std::vector<DecisionResult> forward(const at::Tensor& packed_hidden,

@@ -407,6 +407,9 @@ int main(int argc, char** argv) {
   TORCH_CHECK(at::isfinite(full_model->forward(make({1, 2, 3, 4, 5}, offsets))).all().item<bool>(),
               "Full-attention Qwen3.5 profile must preserve valid packed inference");
   auto output = model->forward(make({1, 2, 3, 4, 5}, offsets));
+  TORCH_CHECK(at::equal(model->forward_pooled(make({1, 2, 3, 4, 5}, offsets), true),
+                        output.index_select(0, at::tensor({2, 4}, at::kLong))),
+              "Qwen3.5 last-token readout omitted a packed sequence");
   check_prefix_cache(*model, make({1, 2, 3, 4, 5}, offsets));
   auto independent =
       at::cat({model->forward(make({1, 2, 3}, one)), model->forward(make({4, 5}, two))}, 0);
@@ -654,6 +657,11 @@ int main(int argc, char** argv) {
     dev.cumulative = host.cumulative.to(device);
     auto reference = cpu->forward(host).to(at::kFloat),
          actual = cuda->forward(dev).cpu().to(at::kFloat);
+    TORCH_CHECK(at::allclose(cuda->forward_pooled(dev, true).cpu().to(at::kFloat),
+                             actual.index_select(0, at::tensor({2, 4}, at::kLong)),
+                             .02,
+                             .02),
+                "Qwen3.5 selected last-token rows changed");
     check_prefix_cache(*cuda, dev, 0, .01, .02);
     TORCH_CHECK(at::allclose(reference, actual, .025, .025),
                 "Qwen3.5 native CUDA DeltaNet disagrees with CPU recurrence, maxabs=",

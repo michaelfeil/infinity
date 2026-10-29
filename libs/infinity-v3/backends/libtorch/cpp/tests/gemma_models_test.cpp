@@ -719,6 +719,10 @@ int main(int argc, char** argv) {
     auto dense_model = create_gemma(dense_metadata, f.weights, c10::Device("cpu"), at::kFloat);
     dense_model->ready();
     auto output = model->forward(input(packed, po));
+    TORCH_CHECK(at::equal(model->forward_pooled(input(packed, po), true),
+                          output.index_select(0, at::tensor({4, 6}, at::kLong))),
+                family,
+                " last-token readout omitted a packed sequence");
     if (f.legacy) {
       auto with_vision = f.cfg;
       with_vision.values["vision_config.hidden_size"] = "8";
@@ -1240,6 +1244,14 @@ int main(int argc, char** argv) {
           dev.cumulative = host.cumulative.to(device);
           auto reference = cpu->forward(host).to(at::kFloat),
                actual = gpu->forward(dev).cpu().to(at::kFloat);
+          auto last = gpu->forward_pooled(dev, true).cpu().to(at::kFloat);
+          TORCH_CHECK(
+              at::allclose(last,
+                           actual.index_select(0, at::tensor({length - 1, length + 1}, at::kLong)),
+                           dtype == at::kHalf ? .005 : .04,
+                           dtype == at::kHalf ? .005 : .04),
+              family,
+              " selected last-token rows changed");
           check_prefix_cache(*gpu, dev, 0, .01, .02);
           if (std::string(family) == "gemma4") {
             auto causal_cfg = f.cfg;

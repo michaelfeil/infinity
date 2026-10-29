@@ -172,8 +172,9 @@ at::Tensor lexical(const Options& cfg, const Weights& weights) {
 /// Require one decision request per nonempty packed sequence and matching hidden token-row count.
 void validate(const at::Tensor& hidden,
               const PackedInput& input,
-              const std::vector<DecisionRequest>& requests) {
-  TORCH_CHECK(hidden.dim() == 2 && hidden.size(0) == input.ids.numel() &&
+              const std::vector<DecisionRequest>& requests,
+              bool pooled = false) {
+  TORCH_CHECK(hidden.dim() == 2 && hidden.size(0) == (pooled ? input.batch : input.ids.numel()) &&
                   int64_t(requests.size()) == input.batch,
               "Decision metadata count or hidden geometry does not match packed batch");
   for (int64_t i = 0; i < input.batch; ++i)
@@ -186,6 +187,23 @@ struct OptionHead final : DecisionHead {
   at::Tensor weights;
   bool external, qwen, d3;
   double cap;
+
+  bool last_token_only(const PackedInput& input,
+                       const std::vector<DecisionRequest>& requests) const override {
+    if (requests.size() != size_t(input.batch))
+      return false;
+    for (int64_t i = 0; i < input.batch; ++i) {
+      const auto& request = requests[i];
+      if (request.kind == DecisionRequest::Kind::OptionTokens)
+        continue;
+      if (external && !d3 && request.kind == DecisionRequest::Kind::InlineOptions &&
+          request.markers.size() == 1 &&
+          request.markers[0] == input.offsets[i + 1] - input.offsets[i] - 1)
+        continue;
+      return false;
+    }
+    return true;
+  }
 
   /// Resolve a vocabulary or external 255-row readout matrix without moving checkpoint tensors.
   /// External D3 weights require FP32, while Perplexity readout weights require BF16.
@@ -238,7 +256,23 @@ struct OptionHead final : DecisionHead {
   std::vector<DecisionResult> forward(const at::Tensor& hidden,
                                       const PackedInput& input,
                                       const std::vector<DecisionRequest>& requests) const override {
-    validate(hidden, input, requests);
+    return readout(hidden, input, requests, false);
+  }
+
+  std::vector<DecisionResult>
+  forward_pooled(const at::Tensor& hidden,
+                 const PackedInput& input,
+                 const std::vector<DecisionRequest>& requests) const override {
+    return readout(hidden, input, requests, true);
+  }
+
+  std::vector<DecisionResult> readout(const at::Tensor& hidden,
+                                      const PackedInput& input,
+                                      const std::vector<DecisionRequest>& requests,
+                                      bool pooled) const {
+    validate(hidden, input, requests, pooled);
+    TORCH_CHECK(!pooled || last_token_only(input, requests),
+                "Pooled decisions require last-token-only requests");
     TORCH_CHECK(hidden.size(1) == weights.size(1), "Decision hidden width mismatch");
     std::vector<DecisionResult> result;
     for (int64_t i = 0; i < input.batch; ++i) {
@@ -248,8 +282,9 @@ struct OptionHead final : DecisionHead {
         output_count(request);
         TORCH_CHECK(request.markers.back() < input.offsets[i + 1] - input.offsets[i],
                     "Inline readout marker outside sequence");
-        auto index =
-            at::tensor(request.markers, hidden.options().dtype(at::kLong)) + input.offsets[i];
+        auto index = pooled ? at::tensor({i}, hidden.options().dtype(at::kLong))
+                            : at::tensor(request.markers, hidden.options().dtype(at::kLong)) +
+                                  input.offsets[i];
         // Inline decisions score every marker against the full external readout, then retain each
         // marker's declared option count. Concatenation preserves marker order and row
         // order within each marker.
@@ -272,7 +307,7 @@ struct OptionHead final : DecisionHead {
                     "Invalid option-token/readout-row metadata");
       // Ordinary option decisions read the last real token in each packed sequence. The selected
       // rows and projection dtype below belong to that head's checkpoint contract.
-      auto last = hidden.select(0, input.offsets[i + 1] - 1).unsqueeze(0);
+      auto last = hidden.select(0, pooled ? i : input.offsets[i + 1] - 1).unsqueeze(0);
       auto index = at::tensor(ids, hidden.options().dtype(at::kLong));
       auto selected = weights.index_select(0, index);
       at::Tensor logits;

@@ -10,6 +10,12 @@
 #include "batching/packed_input.h"
 
 namespace infinity {
+/// Literal first/last packed token rows; classifier PAD handling is separate.
+inline at::Tensor pooled_token_rows(const PackedInput& input, bool last) {
+  auto rows = input.cumulative.narrow(0, last ? 1 : 0, input.batch).to(at::kLong);
+  return last ? rows - 1 : rows;
+}
+
 // Saturating estimates reject impossible admissions instead of overflowing a
 // configured byte budget. Adapters report owned tensor payloads, not scratch.
 inline uint64_t prefix_storage_bytes(uint64_t rows, uint64_t width, uint64_t element_size) {
@@ -69,6 +75,12 @@ public:
   /// Evaluate packed sequences and return token rows in the adapter's output space. Sequence
   /// boundaries come from PackedInput, rather than padding between sequences.
   virtual at::Tensor forward(const PackedInput&) const = 0;
+
+  /// One CLS/last-token row per sequence. Adapters can skip unused final-layer rows;
+  /// the default preserves full-backbone arithmetic. Undefined requests bridge fallback.
+  virtual at::Tensor forward_pooled(const PackedInput& input, bool last) const {
+    return forward(input).index_select(0, pooled_token_rows(input, last));
+  }
 
   // Per-sequence embedding mean; preserve the bridge's F32 default unless a
   // model has independently qualified model-dtype reduction semantics.

@@ -1261,11 +1261,20 @@ int32_t tei_decide_radix(void* handle,
     auto prepared_decision = engine.decision->prepare(packed, converted);
     if (cached || !use_graph)
       engine.model->prepare_input(packed);
-    auto hidden = cached ? engine.prefix->run(
-                               *engine.model, packed, 0, use_graph ? engine.graphs.get() : nullptr)
-                  : use_graph ? engine.graphs->forward(*engine.model, packed)
-                              : engine.model->forward(packed);
-    auto results = engine.decision->forward_prepared(hidden, packed, converted, prepared_decision);
+    at::Tensor hidden;
+    // The head decides which requests need token spans; warmup remains complete.
+    if (!cached && !use_graph && engine.decision->last_token_only(packed, converted))
+      hidden = engine.model->forward_pooled(packed, true);
+    const bool pooled_decision = hidden.defined();
+    if (!pooled_decision)
+      hidden = cached ? engine.prefix->run(
+                            *engine.model, packed, 0, use_graph ? engine.graphs.get() : nullptr)
+               : use_graph ? engine.graphs->forward(*engine.model, packed)
+                           : engine.model->forward(packed);
+    auto results =
+        pooled_decision
+            ? engine.decision->forward_pooled(hidden, packed, converted)
+            : engine.decision->forward_prepared(hidden, packed, converted, prepared_decision);
     TORCH_CHECK(results.size() == size_t(batch), "Decision head output count mismatch");
     std::vector<at::Tensor> values;
     for (size_t i = 0; i < results.size(); ++i) {
@@ -1433,13 +1442,18 @@ static int32_t forward_radix(void* handle,
         (model.media_graphs || (!image_count && !audio_count && !media_positions));
     if (cached || !graph_eligible)
       model.model->prepare_input(packed);
-    auto h =
-        cached ? model.prefix->run(
-                     *model.model, packed, operation, graph_eligible ? model.graphs.get() : nullptr)
-        : graph_eligible
-            ? model.graphs->forward(*model.model, packed, pool >= 4 ? (pool == 5 ? 2 : 1) : 0)
-        : pool >= 4 ? model.model->predict(packed, pool == 5)
-                    : model.model->forward(packed);
+    at::Tensor h;
+    if (!cached && !graph_eligible && pooled_count && !raw_count && (pool == 0 || pool == 2))
+      h = model.model->forward_pooled(packed, pool == 2);
+    const bool selected_rows = h.defined();
+    if (!selected_rows)
+      h = cached
+              ? model.prefix->run(
+                    *model.model, packed, operation, graph_eligible ? model.graphs.get() : nullptr)
+          : graph_eligible
+              ? model.graphs->forward(*model.model, packed, pool >= 4 ? (pool == 5 ? 2 : 1) : 0)
+          : pool >= 4 ? model.model->predict(packed, pool == 5)
+                      : model.model->forward(packed);
     // Project only requested real token spans once. Offsets below preserve
     // caller order, repeated requests and mixed pooled/raw output semantics.
     at::Tensor sparse_scores;
@@ -1477,7 +1491,7 @@ static int32_t forward_radix(void* handle,
     for (size_t i = 0; i < pooled_count && !mean_pooled; ++i) {
       const auto row = pooled[i];
       const auto start = cumulative[row], length = cumulative[row + 1] - start;
-      if (pool == 4)
+      if (pool == 4 || selected_rows)
         outputs.push_back(h.narrow(0, row, 1));
       else if (pool == 3)
         outputs.push_back(
