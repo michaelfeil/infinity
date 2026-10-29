@@ -1235,7 +1235,7 @@ exact-length biased attention without padded token activations.</p>
 </tr>
 <tr>
 <td>Gemma3 text</td>
-<td>Packed local/global attention, Gemma norm semantics</td>
+<td>Packed local/global attention, Gemma norm semantics, linear full-attention RoPE scaling; sentence or last-token pooling</td>
 </tr>
 <tr>
 <td>NVIDIA Nemotron ColEmbed V2 4B / 8B</td>
@@ -1279,7 +1279,11 @@ calibrated answers and question splitting on <code>/v1/systemone</code>. Start w
 Unknown custom checkpoint modules and incomplete or ambiguous media towers are
 rejected. Gemma3 is text-only; EmbeddingGemma2 includes image/audio towers when
 present. The official Gemma4 checkpoint has no audio tower. Qwen3-VL requires
-last-token pooling.</p>
+last-token pooling. Gemma3 embedding checkpoints that use last-token pooling,
+such as <code>tencent/KaLM-Embedding-Gemma3-12B-2511</code>, are served through the same
+text path; its <a href="https://huggingface.co/tencent/KaLM-Embedding-Gemma3-12B-2511/blob/main/LICENSE.txt">Tencent KaLM community license</a>
+is not intended for use within the European Union, so review the checkpoint's
+license before deployment.</p>
 <p>ColBERT checkpoints declaring <code>HF_ColBERT</code> return one matrix per input on
 <code>/embeddings</code>, <code>/v1/embeddings</code>, <code>/embed</code>, and <code>/embed_all</code>. Rows contain token
 vectors, not a pooled sentence embedding. Float, base64-per-row, and tensor
