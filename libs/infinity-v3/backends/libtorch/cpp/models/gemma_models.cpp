@@ -1530,9 +1530,22 @@ public:
     return forward_impl(input, causal);
   }
 
+  at::Tensor forward_pooled(const PackedInput& input, bool last) const override {
+    if (radix_enabled(input) || input.prefix || input.capture_prefix)
+      return {};
+    // Publisher sequence heads require their original full-token BF16 geometry.
+    if (!device.is_cuda() || publisher_sequence)
+      return Model::forward_pooled(input, last);
+    return forward_impl(input, causal, pooled_token_rows(input, last));
+  }
+
   at::Tensor predict(const PackedInput& input, bool tokens) const override {
     TORCH_CHECK(classification_width() > 0, "Gemma classifier score head is missing");
     TORCH_CHECK(!tokens, "Gemma4 classifier supports sequence logits only");
+    if (device.is_cuda() && !publisher_sequence && !radix_enabled(input) && !input.prefix &&
+        !input.capture_prefix)
+      return at::linear(forward_impl(input, true, pooled_token_rows(input, true)),
+                        weight(weights, "score.weight"));
     return classify_hidden(input, forward_impl(input, true));
   }
 
@@ -1571,7 +1584,8 @@ public:
   /// Inject media and per-layer embeddings, then run local/global transformer blocks with explicit
   /// residuals. Causal Gemma4 may compact identical prefixes; restored rows
   /// retain the caller's full logical order.
-  at::Tensor forward_impl(const PackedInput& input, bool is_causal) const {
+  at::Tensor
+  forward_impl(const PackedInput& input, bool is_causal, const at::Tensor& output_rows = {}) const {
 #ifdef TEI_TORCH_CUDA_KERNELS
     // The synchronous call owns the device guard; the session owns no guard.
     c10::cuda::OptionalCUDAGuard ordinary_guard;
@@ -1763,6 +1777,12 @@ public:
               input)
               .reshape({tokens, heads * layer.dim});
 
+      if (output_rows.defined() && i + 1 == layers) {
+        output = output.index_select(0, output_rows);
+        states = states.index_select(0, output_rows);
+        if (ple.defined())
+          ple = ple.index_select(0, output_rows);
+      }
       output = radix_enabled(input) ? linear_radix_projection(output, p + "self_attn.o_proj", input)
                                     : prefix_projection(output, p + "self_attn.o_proj", input);
       bool fused_residual_prenorm = false;

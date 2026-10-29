@@ -342,6 +342,48 @@ void output_capacity_bridge_test() {
   // A one-byte cap rejected this same forward before the heuristic was removed.
   int64_t ids[] = {3, 4, 5, 6}, types[4]{}, positions[] = {0, 1, 0, 1}, pooled = 0;
   int32_t cumulative[] = {0, 2, 4};
+  // Preserve subset order, duplicate selections, mean pooling and mixed raw output.
+  auto readout = [&](int pool, std::vector<int64_t> selected, std::vector<int64_t> raw) {
+    std::vector<float> result(16 * (selected.size() + 2 * raw.size()));
+    TORCH_CHECK(tei_forward(handle,
+                            ids,
+                            types,
+                            positions,
+                            cumulative,
+                            2,
+                            2,
+                            pool,
+                            selected.data(),
+                            selected.size(),
+                            raw.data(),
+                            raw.size(),
+                            result.data(),
+                            result.size(),
+                            nullptr,
+                            nullptr,
+                            0,
+                            nullptr,
+                            0) == 0,
+                tei_error());
+    return result;
+  };
+  auto full = readout(2, {}, {0, 1});
+  for (int pool : {0, 1, 2})
+    for (bool mixed : {false, true}) {
+      auto result =
+          readout(pool, {1, 0, 1}, mixed ? std::vector<int64_t>{0} : std::vector<int64_t>{});
+      for (int i = 0; i < 3; ++i)
+        for (int col = 0; col < 16; ++col) {
+          const int start = (i == 1 ? 0 : 2) * 16 + col;
+          const float expected =
+              pool == 1 ? (full[start] + full[start + 16]) / 2 : full[start + (pool == 2 ? 16 : 0)];
+          TORCH_CHECK(std::abs(result[i * 16 + col] - expected) < 1e-6,
+                      "Pooled subset order, repeated row or mean changed");
+        }
+      if (mixed)
+        TORCH_CHECK(std::equal(full.begin(), full.begin() + 32, result.begin() + 48),
+                    "Mixed raw tokens changed");
+    }
   int64_t option_ids[] = {1, 2};
   TeiDecision valid_head[2]{};
   valid_head[0].kind = 1;
@@ -661,46 +703,75 @@ void check_close(const at::Tensor& a, const at::Tensor& b) {
   TORCH_CHECK(error < 2e-5, "Decoder parity error ", error);
 }
 
-void selected_classifier_rows_test() {
-  for (auto family : {"qwen2", "qwen3"})
-    for (bool padding : {false, true}) {
-      auto cfg = config(family);
-      cfg.values["architectures.0"] = std::string(family) == "qwen2"
-                                          ? "Qwen2ForSequenceClassification"
-                                          : "Qwen3ForSequenceClassification";
-      cfg.values["use_bidirectional_attention"] = "true";
-      cfg.values["num_labels"] = "3";
-      cfg.values["num_attention_heads"] = "2";
-      cfg.values["num_key_value_heads"] = "1";
-      cfg.values["head_dim"] = "8";
-      if (padding)
-        cfg.values["pad_token_id"] = "0";
-      auto tensors = weights(cfg);
-      tensors["score.weight"] = at::arange(48, at::kFloat).view({3, 16}) * .013;
-      tensors["score.bias"] = at::tensor({.1f, -.2f, .3f});
-      if (std::string(family) == "qwen3")
-        for (int layer = 0; layer < 2; ++layer)
-          for (auto norm : {"q_norm", "k_norm"})
-            tensors["model.layers." + std::to_string(layer) + ".self_attn." + norm + ".weight"] =
-                at::ones({8});
-      for (auto& [name, value] : tensors)
-        value = value.to(at::kCUDA, at::kBFloat16);
-      auto model = create_decoder(cfg, tensors, c10::Device("cuda:0"), at::kBFloat16);
-      model->ready();
-      // Ragged lengths, an all-padding sequence and trailing padding in the last row.
-      std::vector<int32_t> offsets{0, 1, 4, 9, 16};
-      auto opts = at::TensorOptions().device(at::kCUDA).dtype(at::kLong);
-      PackedInput input{at::tensor({0, 3, 4, 5, 0, 0, 0, 0, 0, 3, 6, 7, 8, 0, 0, 0}, opts),
-                        at::zeros({16}, opts),
-                        at::tensor({0, 0, 1, 2, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 6}, opts),
-                        at::tensor(offsets, opts.dtype(at::kInt)),
-                        offsets.data(),
-                        4,
-                        7};
-      auto expected = model->classify_hidden(input, model->forward(input));
-      auto actual = model->predict(input, false);
-      check_close(actual, expected);
-    }
+void selected_classifier_rows_test(c10::Device device, at::ScalarType dtype) {
+  for (auto family : {"llama", "mistral", "qwen2", "qwen3", "qwen3_moe"})
+    for (bool padding : {false, true})
+      for (bool causal : {false, true})
+        for (auto scope : {"", "mlp", "all"}) {
+          const bool fp8 = *scope != '\0';
+          const bool moe = std::string(family) == "qwen3_moe";
+          if (fp8 && (!device.is_cuda() || moe))
+            continue;
+          auto cfg = config(family, moe);
+          cfg.values["architectures.0"] =
+              std::string(family) == "llama"     ? "LlamaForSequenceClassification"
+              : std::string(family) == "mistral" ? "MistralModel"
+              : std::string(family) == "qwen2"   ? "Qwen2ForSequenceClassification"
+              : moe                              ? "Qwen3MoeForSequenceClassification"
+                                                 : "Qwen3ForSequenceClassification";
+          cfg.values["is_causal"] = causal ? "true" : "false";
+          cfg.values["intermediate_size"] = "32";
+          cfg.values["_fp8_dynamic"] = fp8 ? "true" : "false";
+          cfg.values["_fp8_scope"] = fp8 ? scope : "mlp";
+          cfg.values["num_labels"] = "3";
+          cfg.values["num_attention_heads"] = "2";
+          cfg.values["num_key_value_heads"] = "1";
+          cfg.values["head_dim"] = "8";
+          if (padding)
+            cfg.values["pad_token_id"] = "0";
+          auto tensors = weights(cfg);
+          tensors["score.weight"] = at::arange(48, at::kFloat).view({3, 16}) * .013;
+          tensors["score.bias"] = at::tensor({.1f, -.2f, .3f});
+          if (std::string(family) == "qwen3" || moe)
+            for (int layer = 0; layer < 2; ++layer)
+              for (auto norm : {"q_norm", "k_norm"})
+                tensors["model.layers." + std::to_string(layer) + ".self_attn." + norm +
+                        ".weight"] = at::ones({8});
+          for (auto& [name, value] : tensors)
+            value = value.to(device, dtype);
+          auto model = create_decoder(cfg, tensors, device, dtype);
+          model->ready();
+          // Ragged lengths, an all-padding sequence and trailing padding in the last row.
+          std::vector<int32_t> offsets{0, 1, 4, 9, 16};
+          auto opts = at::TensorOptions().device(device).dtype(at::kLong);
+          PackedInput input{at::tensor({0, 3, 4, 5, 0, 0, 0, 0, 0, 3, 6, 7, 8, 0, 0, 0}, opts),
+                            at::zeros({16}, opts),
+                            at::tensor({0, 0, 1, 2, 0, 1, 2, 3, 4, 0, 1, 2, 3, 4, 5, 6}, opts),
+                            at::tensor(offsets, opts.dtype(at::kInt)),
+                            offsets.data(),
+                            4,
+                            7};
+          const double tolerance = dtype == at::kHalf                        ? .002
+                                   : dtype == at::kFloat || device.is_cuda() ? 2e-5
+                                                                             : .02;
+          if (std::string(family) != "mistral") {
+            auto expected = model->classify_hidden(input, model->forward(input));
+            auto actual = model->predict(input, false);
+            TORCH_CHECK(at::allclose(actual, expected, tolerance, tolerance),
+                        "Selected classifier rows changed logits");
+          }
+          // Embedding readout uses literal CLS/last rows, including trailing PAD tokens.
+          auto complete = model->forward(input);
+          for (bool last : {false, true}) {
+            auto indices = last ? input.cumulative.narrow(0, 1, input.batch).to(at::kLong) - 1
+                                : input.cumulative.narrow(0, 0, input.batch).to(at::kLong);
+            TORCH_CHECK(at::allclose(model->forward_pooled(input, last),
+                                     complete.index_select(0, indices),
+                                     tolerance,
+                                     tolerance),
+                        "Selected embedding rows changed CLS/last output");
+          }
+        }
 }
 
 void bidirectional_classifier_test(c10::Device device, at::ScalarType dtype) {
@@ -2764,6 +2835,9 @@ void ultrabert_test() {
         auto cumulative = at::tensor(offsets, opts.dtype(at::kInt));
         PackedInput input{ids, at::zeros({7}, opts), positions, cumulative, offsets.data(), 2, 4};
         auto starts = at::tensor({0, 3}, opts);
+        for (bool last : {false, true})
+          check_close(model->forward_pooled(input, last),
+                      expected.index_select(0, last ? at::tensor({2, 6}, opts) : starts));
         check_close(model->predict(input, false),
                     at::linear(expected.index_select(0, starts), score, bias));
         if (std::string(arch) == "UltrabertForTokenClassification")
@@ -2901,8 +2975,11 @@ int main(int argc, char** argv) {
   }
   bidirectional_classifier_test(c10::Device("cpu"), at::kFloat);
   decoder_token_classifier_test(c10::Device("cpu"), at::kFloat);
+  for (auto dtype : {at::kFloat, at::kHalf, at::kBFloat16})
+    selected_classifier_rows_test(c10::Device("cpu"), dtype);
   if (argc > 1) {
-    selected_classifier_rows_test();
+    for (auto dtype : {at::kHalf, at::kBFloat16})
+      selected_classifier_rows_test(c10::Device(argv[1]), dtype);
     bidirectional_classifier_test(c10::Device(argv[1]), at::kBFloat16);
     decoder_token_classifier_test(c10::Device(argv[1]), at::kBFloat16);
   }

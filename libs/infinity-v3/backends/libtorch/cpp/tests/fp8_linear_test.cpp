@@ -261,18 +261,25 @@ int main() {
                   "Fused MLP changed output or bias rounding");
     }
     if (dtype == at::kBFloat16) {
-      auto input = at::randn({17, 4096}, options), weight = at::randn({4096}, options);
-      for (bool add : {false, true})
-        for (double epsilon : {1e-6, 1e-5}) {
-          auto residual = add ? at::randn_like(input) : at::Tensor();
-          auto norm = infinity::fused_add_rms_norm(input, residual, weight, epsilon);
-          auto reference = infinity::fp8_quantize_rows(norm.first);
-          auto [quantized, summed, scales] =
-              infinity::fp8_add_rms_quantize(input, residual, weight, epsilon);
-          TORCH_CHECK(at::equal(quantized.view(at::kByte), reference.first.view(at::kByte)) &&
-                          at::equal(scales, reference.second) && at::equal(summed, norm.second),
-                      "Fused RMS changed FP8 bytes, scales or residual rounding");
-        }
+      for (int64_t width : {768, 896, 2560, 4096, 5120, 8192})
+        for (int64_t rows : {1, 17})
+          for (bool aligned_weight : {false, true}) {
+            auto input = at::randn({rows, width}, options);
+            auto storage = at::randn({width + 1}, options);
+            auto weight = storage.narrow(0, aligned_weight ? 0 : 1, width);
+            for (bool add : {false, true})
+              for (double epsilon : {1e-6, 1e-5}) {
+                auto residual = add ? at::randn_like(input) : at::Tensor();
+                auto norm = infinity::fused_add_rms_norm(input, residual, weight.clone(), epsilon);
+                auto reference = infinity::fp8_quantize_rows(norm.first);
+                auto [quantized, summed, scales] =
+                    infinity::fp8_add_rms_quantize(input, residual, weight, epsilon);
+                TORCH_CHECK(at::equal(quantized.view(at::kByte), reference.first.view(at::kByte)) &&
+                                at::equal(scales, reference.second) &&
+                                at::equal(summed, norm.second),
+                            "Fused RMS changed FP8 bytes, scales or residual rounding");
+              }
+          }
     }
     std::cout << "FP8 row-scale/bytes, odd real rows, model-dtype GEMM and bias: " << dtype
               << " passed\n";

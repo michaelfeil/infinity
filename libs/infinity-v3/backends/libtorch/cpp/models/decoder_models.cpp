@@ -1079,6 +1079,32 @@ public:
     return score.defined() ? score.size(0) : 0;
   }
 
+  bool can_select_rows(const PackedInput& input) const {
+    return !radix_enabled(input) && !input.prefix && !input.capture_prefix;
+  }
+
+  at::Tensor selected_states(const PackedInput& input, const at::Tensor& rows) const {
+    // CPU GEMM reduction can depend on row count. Preserve cache-on/off rounding.
+    if (!device.is_cuda())
+      return forward(input).index_select(0, rows);
+    return forward_states(
+        input,
+        at::embedding(embedding, input.ids),
+        family == "ultrabert" ? at::Tensor()
+                              : cos_cache.index_select(0, input.positions).unsqueeze(1),
+        family == "ultrabert" ? at::Tensor()
+                              : sin_cache.index_select(0, input.positions).unsqueeze(1),
+        {},
+        {},
+        rows);
+  }
+
+  at::Tensor forward_pooled(const PackedInput& input, bool last) const override {
+    if (!can_select_rows(input))
+      return {};
+    return selected_states(input, pooled_token_rows(input, last));
+  }
+
   at::Tensor predict(const PackedInput& input, bool tokenwise) const override {
     TORCH_CHECK(!tokenwise || token_classifier,
                 "Decoder sequence classifier does not implement token classification");
@@ -1089,15 +1115,12 @@ public:
     if (tokenwise)
       return at::linear(forward(input), score, score_bias);
     // After the final attention operation, remaining computation is token-wise.
-    // Sequence classification needs only the last non-padding row of each input.
-    if (!causal && !token_classifier && !bidirectional_classifier && device.is_cuda() &&
-        dtype == at::kBFloat16 && !fp8_dynamic && family != "ultrabert" &&
-        options.integer("num_experts", 0) == 0 && !radix_enabled(input) && !input.prefix &&
-        !input.capture_prefix) {
+    // Sequence heads select CLS or the last non-padding row of each input.
+    if (!token_classifier && !bidirectional_classifier && can_select_rows(input)) {
       auto starts = input.cumulative.narrow(0, 0, input.batch).to(at::kLong);
       auto ends = input.cumulative.narrow(0, 1, input.batch).to(at::kLong) - 1;
-      at::Tensor selected = ends;
-      if (options.values.count("pad_token_id")) {
+      at::Tensor selected = family == "ultrabert" ? starts : ends;
+      if (family != "ultrabert" && options.values.count("pad_token_id")) {
         auto rows = at::repeat_interleave(
             at::arange(input.batch, input.ids.options()), ends - starts + 1, 0, input.ids.numel());
         auto positions = at::arange(input.ids.numel(), input.ids.options());
@@ -1106,14 +1129,7 @@ public:
         selected.scatter_reduce_(0, rows, candidates, "amax", true);
         selected = at::where(selected < 0, starts, selected);
       }
-      auto h = forward_states(input,
-                              at::embedding(embedding, input.ids),
-                              cos_cache.index_select(0, input.positions).unsqueeze(1),
-                              sin_cache.index_select(0, input.positions).unsqueeze(1),
-                              {},
-                              {},
-                              selected);
-      return at::linear(h, score, score_bias);
+      return at::linear(selected_states(input, selected), score, score_bias);
     }
     return classify_hidden(input, forward(input));
   }
@@ -1264,7 +1280,7 @@ public:
                             const at::Tensor& sine,
                             const at::Tensor& visual_indices = at::Tensor(),
                             const std::vector<at::Tensor>& deepstack = {},
-                            const at::Tensor& classification_rows = {}) const {
+                            const at::Tensor& output_rows = {}) const {
     // CUDA fused norms carry the accumulated residual separately from h, which holds the latest
     // branch. The composed path instead materializes each residual addition directly in h.
     at::Tensor residual;
@@ -1284,8 +1300,9 @@ public:
       at::Tensor normalized, normalized_scales;
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
-        if (layer.fp8_qkv && dtype == at::kBFloat16 && hidden == 4096 && !exact_decoder_math() &&
-            h.is_contiguous() && (!residual.defined() || residual.is_contiguous())) {
+        if (layer.fp8_qkv && dtype == at::kBFloat16 && hidden <= 8192 && hidden % 256 == 0 &&
+            !exact_decoder_math() && h.is_contiguous() &&
+            (!residual.defined() || residual.is_contiguous())) {
           auto [quantized, summed, scales] =
               fp8_add_rms_quantize(h, residual, layer.input_norm, epsilon);
           normalized = std::move(quantized);
@@ -1402,11 +1419,11 @@ public:
       auto attended = attend(q, k, v, input, layer_index, layer)
                           .contiguous()
                           .view({h.size(0), heads * head_dim});
-      if (classification_rows.defined() && layer_index + 1 == layers.size()) {
-        attended = attended.index_select(0, classification_rows);
-        h = h.index_select(0, classification_rows);
+      if (output_rows.defined() && layer_index + 1 == layers.size()) {
+        attended = attended.index_select(0, output_rows);
+        h = h.index_select(0, output_rows);
         if (residual.defined())
-          residual = residual.index_select(0, classification_rows);
+          residual = residual.index_select(0, output_rows);
       }
       at::Tensor projected;
 #ifdef TEI_TORCH_CUDA_KERNELS
@@ -1417,8 +1434,8 @@ public:
         projected = cached_prefix_linear(attended, layer.out, layer.out_bias, input);
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
-        if (layer.dense_mlp.fp8() && dtype == at::kBFloat16 && hidden == 4096 &&
-            !exact_decoder_math() && projected.is_contiguous() &&
+        if (layer.dense_mlp.fp8() && dtype == at::kBFloat16 && hidden <= 8192 &&
+            hidden % 256 == 0 && !exact_decoder_math() && projected.is_contiguous() &&
             (!residual.defined() || residual.is_contiguous())) {
           auto [quantized, summed, scales] =
               fp8_add_rms_quantize(projected, residual, layer.post_norm, epsilon);

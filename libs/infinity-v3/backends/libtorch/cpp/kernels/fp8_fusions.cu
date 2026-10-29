@@ -176,60 +176,76 @@ __global__ void rms_quant_kernel(const __nv_bfloat16* x,
 
 // Transpose through shared memory to keep the old scalar reduction order while
 // issuing vector global loads/stores. The reduction contract remains unchanged.
-__global__ void rms_quant_vector4096(const __nv_bfloat16* x,
-                                     const __nv_bfloat16* residual,
-                                     const __nv_bfloat16* weight,
-                                     __nv_fp8_e4m3* out,
-                                     __nv_bfloat16* summed,
-                                     float* scales,
-                                     float epsilon) {
-  __shared__ float values[4096];
+template <int Groups>
+__global__ void rms_quant_vector(const __nv_bfloat16* x,
+                                 const __nv_bfloat16* residual,
+                                 const __nv_bfloat16* weight,
+                                 __nv_fp8_e4m3* out,
+                                 __nv_bfloat16* summed,
+                                 float* scales,
+                                 int width,
+                                 float epsilon) {
+  __shared__ float original[Groups * 2048];
+  float values[Groups][8];
   const int64_t row = blockIdx.x;
+  const int stride = width / 8;
 #pragma unroll
-  for (int j = 0; j < 2; ++j) {
-    int group = threadIdx.x + j * 256;
-    auto input = reinterpret_cast<const Packed<__nv_bfloat16, 8>*>(x)[row * 512 + group];
+  for (int group = 0; group < Groups; ++group) {
+    int col = threadIdx.x + group * 256;
+    if (col >= stride)
+      continue;
+    auto input = reinterpret_cast<const Packed<__nv_bfloat16, 8>*>(x)[row * stride + col];
     Packed<__nv_bfloat16, 8> previous{}, result;
     if (residual)
-      previous = reinterpret_cast<const Packed<__nv_bfloat16, 8>*>(residual)[row * 512 + group];
+      previous = reinterpret_cast<const Packed<__nv_bfloat16, 8>*>(residual)[row * stride + col];
 #pragma unroll
     for (int lane = 0; lane < 8; ++lane) {
       float value = float(input.value[lane]);
       if (residual)
         value += float(previous.value[lane]);
-      values[group * 8 + lane] = value;
+      values[group][lane] = value;
+      original[col * 8 + lane] = value;
       result.value[lane] = __nv_bfloat16(value);
     }
     if (residual)
-      reinterpret_cast<Packed<__nv_bfloat16, 8>*>(summed)[row * 512 + group] = result;
+      reinterpret_cast<Packed<__nv_bfloat16, 8>*>(summed)[row * stride + col] = result;
   }
   __syncthreads();
   float variance = 0;
-#pragma unroll
-  for (int j = 0; j < 16; ++j) {
-    float value = values[threadIdx.x + j * 256];
+  // Preserve the strided reduction order while keeping other values in registers.
+  for (int j = 0; j < width / 256; ++j) {
+    float value = original[threadIdx.x + j * 256];
     variance += value * value;
   }
-  float inverse = rsqrtf(sum256(variance) / 4096 + epsilon), amax = 0;
+  float inverse = rsqrtf(sum256(variance) / width + epsilon), amax = 0;
 #pragma unroll
-  for (int j = 0; j < 16; ++j) {
-    int col = threadIdx.x + j * 256;
-    float value = float(__nv_bfloat16((values[col] * inverse) * float(weight[col])));
-    values[col] = value;
-    amax = fmaxf(amax, fabsf(value));
+  for (int group = 0; group < Groups; ++group) {
+    int col = threadIdx.x + group * 256;
+    if (col >= stride)
+      continue;
+    auto weights = reinterpret_cast<const Packed<__nv_bfloat16, 8>*>(weight)[col];
+#pragma unroll
+    for (int lane = 0; lane < 8; ++lane) {
+      float value =
+          float(__nv_bfloat16((values[group][lane] * inverse) * float(weights.value[lane])));
+      values[group][lane] = value;
+      amax = fmaxf(amax, fabsf(value));
+    }
   }
   float scale = row_scale(amax);
-
   if (!threadIdx.x)
     scales[row] = scale;
 #pragma unroll
-  for (int j = 0; j < 2; ++j) {
-    int group = threadIdx.x + j * 256;
-    Packed<__nv_fp8_e4m3, 8> result;
+  for (int group = 0; group < Groups; ++group) {
+    int col = threadIdx.x + group * 256;
+    if (col >= stride)
+      continue;
+    Packed<__nv_fp8x2_e4m3, 4> result;
 #pragma unroll
-    for (int lane = 0; lane < 8; ++lane)
-      result.value[lane] = __nv_fp8_e4m3(__fdiv_rn(values[group * 8 + lane], scale));
-    reinterpret_cast<Packed<__nv_fp8_e4m3, 8>*>(out)[row * 512 + group] = result;
+    for (int lane = 0; lane < 4; ++lane)
+      result.value[lane] =
+          fp8_quantize_pair(values[group][2 * lane], values[group][2 * lane + 1], scale);
+    reinterpret_cast<Packed<__nv_fp8x2_e4m3, 4>*>(out)[row * stride + col] = result;
   }
 }
 
@@ -335,16 +351,29 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> fp8_add_rms_quantize(const at::Te
     auto ptr = [](const at::Tensor& t) {
       return reinterpret_cast<const __nv_bfloat16*>(t.const_data_ptr());
     };
-    if (x.size(1) == 4096 && reinterpret_cast<uintptr_t>(ptr(x)) % 16 == 0 &&
+    if (x.size(1) % 256 == 0 && reinterpret_cast<uintptr_t>(ptr(x)) % 16 == 0 &&
+        reinterpret_cast<uintptr_t>(ptr(weight)) % 16 == 0 &&
         (!residual.defined() || reinterpret_cast<uintptr_t>(ptr(residual)) % 16 == 0)) {
-      rms_quant_vector4096<<<x.size(0), 256, 0, stream>>>(
-          ptr(x),
-          residual.defined() ? ptr(residual) : nullptr,
-          ptr(weight),
-          reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr()),
-          reinterpret_cast<__nv_bfloat16*>(summed.mutable_data_ptr()),
-          scales.data_ptr<float>(),
-          epsilon);
+#define RUN_VECTOR(G)                                                                              \
+  rms_quant_vector<G>                                                                              \
+      <<<x.size(0), 256, 0, stream>>>(ptr(x),                                                      \
+                                      residual.defined() ? ptr(residual) : nullptr,                \
+                                      ptr(weight),                                                 \
+                                      reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr()), \
+                                      reinterpret_cast<__nv_bfloat16*>(summed.mutable_data_ptr()), \
+                                      scales.data_ptr<float>(),                                    \
+                                      x.size(1),                                                   \
+                                      epsilon)
+      if (x.size(1) <= 2048) {
+        RUN_VECTOR(1);
+      } else if (x.size(1) <= 4096) {
+        RUN_VECTOR(2);
+      } else if (x.size(1) <= 6144) {
+        RUN_VECTOR(3);
+      } else {
+        RUN_VECTOR(4);
+      }
+#undef RUN_VECTOR
       C10_CUDA_KERNEL_LAUNCH_CHECK();
       return {output, summed, scales};
     }

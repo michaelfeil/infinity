@@ -76,6 +76,12 @@ void options_test() {
   TORCH_CHECK(head->output_count(first) == 2 && head->output_count(second) == 1,
               "Incorrect option-token output count");
   close(result[0].action_probability, at::ones({}));
+  auto last_rows = hidden.index_select(0, at::tensor({2, 4}, at::kLong));
+  auto pooled_result = head->forward_pooled(last_rows, in.input, {first, first});
+  auto full_result = head->forward(hidden, in.input, {first, first});
+  for (size_t i = 0; i < full_result.size(); ++i)
+    close(pooled_result[i].logits, full_result[i].logits);
+  reject([&] { head->forward_pooled(last_rows, in.input, {first, second}); });
   first.token_ids = {8};
   reject([&] { head->output_count(first); });
   cfg.values["model_type"] = "gemma4";
@@ -92,11 +98,24 @@ void options_test() {
   auto pplx = create_decision_head("pplx", {}, cfg, readout, {});
   first.token_ids = {0, 1};
   auto values = pplx->forward(hidden, in.input, {first, second});
+  auto pooled_values = pplx->forward_pooled(last_rows, in.input, {first, first});
+  auto full_values = pplx->forward(hidden, in.input, {first, first});
+  for (size_t i = 0; i < full_values.size(); ++i)
+    close(pooled_values[i].logits, full_values[i].logits);
   close(values[0].logits,
         at::linear(hidden[2].to(at::kBFloat16).unsqueeze(0), readout["weight"].narrow(0, 0, 2))
             .flatten()
             .to(at::kFloat));
   DecisionRequest joint{DecisionRequest::Kind::InlineOptions};
+  joint.markers = {2};
+  joint.token_ids = {3};
+  TORCH_CHECK(pplx->last_token_only(in.input, {joint, first}) &&
+                  !pplx->last_token_only(in.input, {joint, second}),
+              "Last-marker decision eligibility changed warmup execution");
+  auto pooled_joint = pplx->forward_pooled(last_rows, in.input, {joint, first});
+  auto full_joint = pplx->forward(hidden, in.input, {joint, first});
+  for (size_t i = 0; i < full_joint.size(); ++i)
+    close(pooled_joint[i].logits, full_joint[i].logits);
   joint.markers = {0, 1};
   joint.token_ids = {2, 3};
   auto joint_logits = pplx->forward(hidden, in.input, {joint, second})[0].logits;
@@ -456,6 +475,11 @@ void d3_test() {
   first.token_ids = {0, 1, 2};
   auto result = head->forward(hidden, in.input, {first, second});
   auto block_result = block_head->forward(hidden, in.input, {first, second});
+  auto pooled = head->forward_pooled(
+      hidden.index_select(0, at::tensor({2, 4}, at::kLong)), in.input, {first, first});
+  auto complete = head->forward(hidden, in.input, {first, first});
+  for (size_t i = 0; i < complete.size(); ++i)
+    close(pooled[i].logits, complete[i].logits);
   close(block_result[0].logits, result[0].logits);
   close(block_result[1].logits, result[1].logits);
   auto full = at::linear(hidden[2].to(at::kFloat).unsqueeze(0), readout["weight"]);
