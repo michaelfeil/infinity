@@ -1,5 +1,6 @@
 #include "helpers/fp8_linear.h"
 #include "kernels/fp8_fusions.h"
+#include "kernels/decoder_norm.h"
 #include "kernels/fast_kernels.h"
 #include "helpers/workspace_admission.h"
 #include <ATen/cuda/CUDAContext.h>
@@ -281,6 +282,35 @@ int main() {
               }
           }
     }
+    if (dtype == at::kBFloat16)
+      for (int64_t rows : {0, 17, 127, 128, 129, 4000})
+        for (bool aligned : {false, true})
+          for (bool add : {false, true}) {
+            auto input = at::randn({rows * 4096 + 1}, options)
+                             .narrow(0, aligned ? 0 : 1, rows * 4096)
+                             .view({rows, 4096});
+            auto weight = at::randn({4097}, options).narrow(0, aligned ? 0 : 1, 4096);
+            auto residual = add ? at::randn_like(input) : at::Tensor();
+            if (rows) {
+              input.select(0, 0).zero_();
+              if (add)
+                residual.select(0, 0).zero_();
+            }
+            auto norm = infinity::decoder_exact_rms_norm(input, residual, weight, 1e-5);
+            auto reference = infinity::fp8_quantize_rows(norm.first);
+            at::Tensor scales;
+            auto fused = infinity::decoder_exact_rms_norm(input, residual, weight, 1e-5, &scales);
+            TORCH_CHECK(add || fused.second.is_alias_of(input),
+                        "Plain RMS lost its input residual alias");
+            auto quantized = scales.defined() ? std::make_pair(fused.first, scales)
+                                              : infinity::fp8_quantize_rows(fused.first);
+            TORCH_CHECK(scales.defined() == (rows >= 128), "Exact RMS fusion dispatch changed");
+            TORCH_CHECK(
+                at::equal(quantized.first.view(at::kByte), reference.first.view(at::kByte)) &&
+                    at::equal(quantized.second, reference.second) &&
+                    at::equal(fused.second, norm.second),
+                "Exact RMS fusion changed FP8 bytes, scales or residual rounding");
+          }
     std::cout << "FP8 row-scale/bytes, odd real rows, model-dtype GEMM and bias: " << dtype
               << " passed\n";
   }
