@@ -1832,6 +1832,8 @@ checkpoint's instruction format (<code>Instruct: ...\nQuery: ...</code>); docume
 ordinary text. E5 v2 and non-instruct multilingual E5 use <code>query:</code> and
 <code>passage:</code> prefixes, including for non-English text. E5-Mistral, multilingual
 E5 large instruct and GTE-Qwen2 use their model-card instruction/query formats.
+Harrier queries also use the <code>Instruct: ...\nQuery: ...</code> format; documents use
+their ordinary text.
 Jina code models distinguish code and text retrieval tasks through their trained
 prompts. Nomic v1 uses the same task-prefix convention as v1.5.
 GTE, BGE, Snowflake and Mixedbread also have model-specific
@@ -1981,6 +1983,21 @@ and text/image request formats.</p>
 <tr>
 <td><a href="https://huggingface.co/jinaai/jina-embeddings-v2-small-en">jinaai/jina-embeddings-v2-small-en</a></td>
 <td>Jina BERT/ALiBi + sentence pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/microsoft/harrier-oss-v1-270m">microsoft/harrier-oss-v1-270m</a></td>
+<td>Gemma3 text + last-token pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/microsoft/harrier-oss-v1-0.6b">microsoft/harrier-oss-v1-0.6b</a></td>
+<td>Qwen3 + last-token pooling</td>
+<td><code>--max-batch-tokens 8192</code></td>
+</tr>
+<tr>
+<td><a href="https://huggingface.co/microsoft/harrier-oss-v1-27b">microsoft/harrier-oss-v1-27b</a></td>
+<td>Gemma3 text + last-token pooling, linear RoPE scaling</td>
 <td><code>--max-batch-tokens 8192</code></td>
 </tr>
 <tr>
