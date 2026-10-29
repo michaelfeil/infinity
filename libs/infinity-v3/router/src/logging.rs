@@ -7,6 +7,8 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{EnvFilter, Layer};
 
+mod customization;
+
 #[cfg(feature = "http")]
 pub mod http {
     use axum::{extract::Request, middleware::Next, response::Response};
@@ -86,10 +88,14 @@ pub fn init_logging(
         true => fmt_layer
             .json()
             .flatten_event(true)
+            .with_target(matches!(customization::LOG_PREFIX, None | Some("infinity")))
             .with_current_span(!disable_spans)
             .with_span_list(!disable_spans)
+            .map_event_format(customization::LogFormat::json)
             .boxed(),
-        false => fmt_layer.boxed(),
+        false => fmt_layer
+            .map_event_format(customization::LogFormat::text)
+            .boxed(),
     };
     layers.push(fmt_layer);
 
