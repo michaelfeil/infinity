@@ -1362,6 +1362,19 @@ conversation format and retain its validation; Laya rejects native messages.
 D3 retains its separate JSON-state and media contract.</p>
 <p><code>model</code> is optional with one loaded model and required with multiple models.
 Model routing and backend response extensions retain their existing behavior.</p>
+<p>Native message content also accepts OpenAI-style aliases:</p>
+<ul>
+<li><code>{"type":"input_text","text":"Inspect this photo."}</code> normalizes to <code>text</code>.</li>
+<li><code>{"type":"input_image","image_url":"data:image/png;base64,..."}</code> normalizes
+  to <code>{"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}</code>.</li>
+</ul>
+<p>An optional <code>detail</code> on <code>input_image</code> is preserved inside <code>image_url</code> and checked
+by the model adapter (OneJev accepts only omitted detail or <code>auto</code>). URL loading,
+image limits and supported roles remain model-specific. Unsupported fields such
+as <code>file_id</code> are rejected. These aliases apply to the shared message content
+parser, including <code>state.messages[].content</code>; they do not add a top-level <code>input</code>
+alias, image interpretation of plain <code>state</code> arrays, or OpenAI Decisions question
+and response formats. Existing content parts retain their canonical serialization.</p>
 
 
 
