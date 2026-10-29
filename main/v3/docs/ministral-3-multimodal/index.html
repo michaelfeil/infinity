@@ -1179,7 +1179,9 @@ automatically.</p>
 <p>Last-token pooling is the default for this family; mean pooling can be selected
 explicitly. Attention follows the checkpoint's text configuration. Text and
 image messages use the checkpoint's native chat template, including system and
-turn markers. Prompt overrides are unsupported.</p>
+turn markers. Instruction models do not support prompt overrides. Retrieval
+checkpoints such as <a href="../nemotron-embeddings/">Nemotron 3.5 Embed</a> use their saved
+mean pooling and accept named retrieval prefixes.</p>
 <p>Send a conversation to <code>/v1/embeddings</code>:</p>
 <div class="language-json highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
 </span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"model"</span><span class="p">:</span><span class="w"> </span><span class="s2">"mistralai/Ministral-3-3B-Instruct-2512-BF16"</span><span class="p">,</span>
