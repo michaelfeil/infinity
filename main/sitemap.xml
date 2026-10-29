@@ -2,130 +2,130 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
     <url>
          <loc>https://michaelfeil.eu/infinity/main/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/benchmarking/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/cli_v2/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/client_infinity/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/contribution/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/deploy/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/embed/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/integrations/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/python_engine/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/swagger_ui/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/telemetry/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/CODE_OF_CONDUCT/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/CONTRIBUTING/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/LICENSING/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/THIRD_PARTY_NOTICES/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/api/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/quickstart/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/LICENSES/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/build-configuration/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/cli/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/embedding-tensors/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/h100-alpha19/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/libtorch-backend/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/libtorch-cache-references/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/libtorch-model-coverage/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/libtorch-prefix-cache/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/ministral-3-multimodal/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/modernbert-startup/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/performance/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
     <url>
          <loc>https://michaelfeil.eu/infinity/main/v3/docs/supported-models/</loc>
-         <lastmod>2026-10-28</lastmod>
+         <lastmod>2026-10-29</lastmod>
     </url>
 </urlset>
