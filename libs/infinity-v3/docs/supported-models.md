@@ -84,6 +84,8 @@ checkpoint's instruction format (`Instruct: ...\nQuery: ...`); documents use the
 ordinary text. E5 v2 and non-instruct multilingual E5 use `query: ` and
 `passage: ` prefixes, including for non-English text. E5-Mistral, multilingual
 E5 large instruct and GTE-Qwen2 use their model-card instruction/query formats.
+Harrier queries also use the `Instruct: ...\nQuery: ...` format; documents use
+their ordinary text.
 Jina code models distinguish code and text retrieval tasks through their trained
 prompts. Nomic v1 uses the same task-prefix convention as v1.5.
 GTE, BGE, Snowflake and Mixedbread also have model-specific
@@ -126,6 +128,9 @@ and text/image request formats.
 | [jinaai/jina-embeddings-v2-base-code](https://huggingface.co/jinaai/jina-embeddings-v2-base-code) | JinaCode encoder + sentence pooling | `--max-batch-tokens 8192` |
 | [jinaai/jina-embeddings-v2-base-en](https://huggingface.co/jinaai/jina-embeddings-v2-base-en) | Jina BERT/ALiBi + sentence pooling | `--max-batch-tokens 2048` |
 | [jinaai/jina-embeddings-v2-small-en](https://huggingface.co/jinaai/jina-embeddings-v2-small-en) | Jina BERT/ALiBi + sentence pooling | `--max-batch-tokens 8192` |
+| [microsoft/harrier-oss-v1-270m](https://huggingface.co/microsoft/harrier-oss-v1-270m) | Gemma3 text + last-token pooling | `--max-batch-tokens 8192` |
+| [microsoft/harrier-oss-v1-0.6b](https://huggingface.co/microsoft/harrier-oss-v1-0.6b) | Qwen3 + last-token pooling | `--max-batch-tokens 8192` |
+| [microsoft/harrier-oss-v1-27b](https://huggingface.co/microsoft/harrier-oss-v1-27b) | Gemma3 text + last-token pooling, linear RoPE scaling | `--max-batch-tokens 8192` |
 | [mixedbread-ai/mxbai-embed-large-v1](https://huggingface.co/mixedbread-ai/mxbai-embed-large-v1) | BERT + sentence pooling | `--max-batch-tokens 8192` |
 | [nomic-ai/modernbert-embed-base](https://huggingface.co/nomic-ai/modernbert-embed-base) | ModernBERT + sentence pooling | `--max-batch-tokens 8192` |
 | [nomic-ai/nomic-embed-text-v1](https://huggingface.co/nomic-ai/nomic-embed-text-v1) | Nomic BERT + sentence pooling | `--max-batch-tokens 8192` |
