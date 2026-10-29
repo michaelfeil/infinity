@@ -107,3 +107,17 @@ D3 retains its separate JSON-state and media contract.
 
 `model` is optional with one loaded model and required with multiple models.
 Model routing and backend response extensions retain their existing behavior.
+
+Native message content also accepts OpenAI-style aliases:
+
+- `{"type":"input_text","text":"Inspect this photo."}` normalizes to `text`.
+- `{"type":"input_image","image_url":"data:image/png;base64,..."}` normalizes
+  to `{"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}`.
+
+An optional `detail` on `input_image` is preserved inside `image_url` and checked
+by the model adapter (OneJev accepts only omitted detail or `auto`). URL loading,
+image limits and supported roles remain model-specific. Unsupported fields such
+as `file_id` are rejected. These aliases apply to the shared message content
+parser, including `state.messages[].content`; they do not add a top-level `input`
+alias, image interpretation of plain `state` arrays, or OpenAI Decisions question
+and response formats. Existing content parts retain their canonical serialization.

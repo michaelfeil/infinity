@@ -2692,6 +2692,24 @@
           {
             "type": "object",
             "required": [
+              "text",
+              "type"
+            ],
+            "properties": {
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "input_text"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
               "image_url",
               "type"
             ],
@@ -2703,6 +2721,32 @@
                 "type": "string",
                 "enum": [
                   "image_url"
+                ]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "required": [
+              "image_url",
+              "type"
+            ],
+            "properties": {
+              "detail": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/ImageDetail"
+                  }
+                ],
+                "nullable": true
+              },
+              "image_url": {
+                "type": "string"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "input_image"
                 ]
               }
             }
@@ -2744,7 +2788,7 @@
             }
           }
         ],
-        "description": "Ordered wire content, independent of a particular model's tensor format.\nThese types describe inputs; the loaded adapter must explicitly support each\nmodality. VideoUrl is an extension following the vLLM message convention.",
+        "description": "Accepted wire spellings normalize before model validation and rendering.\nSerialization continues to use the existing ContentPart spellings.",
         "discriminator": {
           "propertyName": "type"
         }
