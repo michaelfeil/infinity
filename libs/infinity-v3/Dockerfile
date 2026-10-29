@@ -26,6 +26,7 @@ RUN cargo chef prepare  --recipe-path recipe.json
 FROM chef AS builder
 
 ARG ENV_VAR_BASE=INFINITY
+ARG INFINITY_LOG_PREFIX=infinity
 
 # sccache specific variables
 ARG SCCACHE_GHA_ENABLED

@@ -112,6 +112,7 @@ RUN sh scripts/collect-license-notices.sh /usr/src/distribution-licenses
 FROM builder AS http-builder
 
 ARG ENV_VAR_BASE=INFINITY
+ARG INFINITY_LOG_PREFIX=infinity
 ARG GIT_SHA
 ARG DOCKER_LABEL
 
