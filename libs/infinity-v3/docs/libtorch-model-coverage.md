@@ -27,7 +27,7 @@ exact-length biased attention without padded token activations.
 | Qwen2 | Packed GQA with projection biases, sequence/token classification heads |
 | Perplexity `pplx-embed-v1-0.6b` / `pplx-embed-v1-4b` | Bidirectional Qwen3, mean pooling; floating-point output only |
 | Qwen3 / Qwen3 MoE | Packed Q/K norm, GQA, dense/routed MLP and optional projection; sequence heads and dense Qwen3 token classification |
-| Gemma3 text | Packed local/global attention, Gemma norm semantics |
+| Gemma3 text | Packed local/global attention, Gemma norm semantics, linear full-attention RoPE scaling; sentence or last-token pooling |
 | NVIDIA Nemotron ColEmbed V2 4B / 8B | Bidirectional Qwen3-VL, pre-final-norm token states, normalized multi-vector text/image outputs |
 | ColQwen3 (TomoroAI 4B) | Qwen3-VL backbone, learned 320-wide token projection, normalized multi-vector text/image outputs |
 | EmbeddingGemma2 | Packed text model, shared KV, PLE, embedding projection and image/audio towers |
@@ -45,7 +45,11 @@ calibrated answers and question splitting on `/v1/systemone`. Start with
 Unknown custom checkpoint modules and incomplete or ambiguous media towers are
 rejected. Gemma3 is text-only; EmbeddingGemma2 includes image/audio towers when
 present. The official Gemma4 checkpoint has no audio tower. Qwen3-VL requires
-last-token pooling.
+last-token pooling. Gemma3 embedding checkpoints that use last-token pooling,
+such as `tencent/KaLM-Embedding-Gemma3-12B-2511`, are served through the same
+text path; its [Tencent KaLM community license](https://huggingface.co/tencent/KaLM-Embedding-Gemma3-12B-2511/blob/main/LICENSE.txt)
+is not intended for use within the European Union, so review the checkpoint's
+license before deployment.
 
 ColBERT checkpoints declaring `HF_ColBERT` return one matrix per input on
 `/embeddings`, `/v1/embeddings`, `/embed`, and `/embed_all`. Rows contain token

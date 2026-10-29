@@ -1406,6 +1406,11 @@ public:
     TORCH_CHECK(first_shared >= 0, "Gemma shared KV layer count exceeds layer count");
     auto pattern = integer("_sliding_window_pattern", integer("sliding_window_pattern", 6));
     TORCH_CHECK(pattern > 0, "Gemma3 sliding pattern must be positive");
+    const auto rope_type = legacy ? string("rope_scaling.rope_type", string("rope_scaling.type", "default")) : "default";
+    TORCH_CHECK(!legacy || rope_type == "default" || rope_type == "linear",
+      "Unsupported Gemma3 RoPE scaling type ", rope_type);
+    const auto rope_factor = legacy && rope_type == "linear" ? real("rope_scaling.factor", 1.) : 1.;
+    TORCH_CHECK(std::isfinite(rope_factor) && rope_factor > 0., "Gemma3 RoPE scaling factor must be positive");
     for (int64_t i = 0; i < layers; ++i) {
       Layer layer;
       layer.p = "layers." + std::to_string(i) + ".";
@@ -1496,8 +1501,10 @@ public:
       auto pairs = layer.dim / 2;
       // Match Candle's host FP32 powf frequency construction exactly.
       std::vector<float> inverse(pairs);
+      const auto linear_factor = legacy && !layer.sliding ? float(rope_factor) : 1.f;
       for (int64_t j = 0; j < pairs; ++j)
-        inverse[j] = 1.f / std::pow(float(theta), float(2 * j) / float(layer.dim));
+        inverse[j] =
+            1.f / std::pow(float(theta), float(2 * j) / float(layer.dim)) / linear_factor;
       auto freq = at::from_blob(inverse.data(), {pairs}, at::TensorOptions().dtype(at::kFloat))
                       .clone()
                       .to(device);
