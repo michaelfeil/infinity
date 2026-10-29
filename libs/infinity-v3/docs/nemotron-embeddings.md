@@ -59,9 +59,12 @@ The 3.5 models retain the frozen Nemotron 3 text encoder. Ordinary text with the
 same prefix shares its embedding space; 3.5's template additionally escapes user
 control markers. Source weights retain their [OpenMDW-1.1 license](https://huggingface.co/nvidia/Nemotron-3.5-Embed-1B-BF16).
 
-Standalone Nemotron 3 text models also accept `--enable-fp8-dynamic true` on
-supported CUDA GPUs. FP8 keeps the native quantized arithmetic path; the reference
-parity checks below use unquantized weights.
+Nemotron 3 text models and the frozen text encoder inside the 3.5 checkpoints
+accept `--enable-fp8-dynamic true` on supported CUDA GPUs; the 3.5 vision tower
+stays BF16. FP8 keeps the native quantized arithmetic path, so on 3.5 it bypasses
+the Transformers-compatible rounding used by the unquantized path. Expect lower
+cosine agreement with the BF16 reference and verify accuracy on your task before
+enabling it. The reference parity checks below use unquantized weights.
 
 ## Verification
 

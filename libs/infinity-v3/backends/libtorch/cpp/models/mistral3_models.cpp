@@ -214,14 +214,21 @@ public:
     }
     source.clear();
     Options tc;
-    for (const auto& [k, v] : c.values)
+    const bool fp8 = c.boolean("_fp8_dynamic", false);
+    for (const auto& [k, v] : c.values) {
       if (k.starts_with("text_config."))
         tc.values[k.substr(12)] = v;
+      // Quantization applies to the frozen text encoder; the vision tower stays BF16.
+      else if (k == "_fp8_dynamic" || k == "_fp8_scope")
+        tc.values[k] = v;
+    }
     TORCH_CHECK(tc.string("model_type") == "ministral3" || tc.string("model_type") == "mistral",
                 "Mistral3 requires a Mistral/Ministral3 text model");
     // This wrapper follows Transformers rounding boundaries, independently
-    // of the legacy Candle-compatible Mistral kernel contracts.
-    tc.values["_transformers_math"] = "true";
+    // of the legacy Candle-compatible Mistral kernel contracts. Dynamic FP8
+    // keeps the native quantized arithmetic path.
+    if (!fp8)
+      tc.values["_transformers_math"] = "true";
     text = create_decoder(tc, tw, device, dtype);
     hidden = cfg.integer("vision_config.hidden_size");
     heads = cfg.integer("vision_config.num_attention_heads");
