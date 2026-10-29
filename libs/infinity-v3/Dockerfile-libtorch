@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
-FROM nvidia/cuda:13.0.2-devel-ubuntu24.04 AS builder
+FROM nvidia/cuda:13.2.1-devel-ubuntu24.04 AS builder
 ENV DEBIAN_FRONTEND=noninteractive \
     CARGO_HOME=/usr/local/cargo \
     RUSTUP_HOME=/usr/local/rustup \
@@ -16,7 +16,7 @@ COPY rust-toolchain.toml ./
 RUN rustup show
 RUN --mount=type=cache,target=/root/.cache/pip \
     python3 -m venv /opt/torch-sdk && \
-    /opt/torch-sdk/bin/pip install torch==2.14.1
+    /opt/torch-sdk/bin/pip install torch==2.15.0
 ENV LIBTORCH=/opt/torch-sdk/lib/python3.12/site-packages/torch \
     RUSTFLAGS="-C target-cpu=x86-64"
 ARG LIBTORCH_CUDA_ARCHITECTURES="80;86;89;90;100;120"
@@ -54,7 +54,7 @@ sh scripts/collect-license-notices.sh /opt/infinity/licenses
 python3 scripts/collect-cargo-notices.py /tmp/cargo-build.jsonl /opt/infinity/licenses/cargo
 BUILD
 
-FROM nvidia/cuda:13.0.2-base-ubuntu24.04 AS runtime
+FROM nvidia/cuda:13.2.1-base-ubuntu24.04 AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates libgomp1 libssl3t64 libstdc++6 zlib1g \
     && rm -rf /var/lib/apt/lists/*

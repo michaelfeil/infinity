@@ -37,7 +37,7 @@ foreach(arch IN LISTS CMAKE_CUDA_ARCHITECTURES)
 endforeach()
 list(REMOVE_DUPLICATES TORCH_CUDA_ARCH_LIST)
 set(TEI_REQUESTED_CUDA_ARCHITECTURES "${CMAKE_CUDA_ARCHITECTURES}")
-find_package(Torch 2.14.1 EXACT REQUIRED)
+find_package(Torch 2.15.0 EXACT REQUIRED)
 # Torch appends its own gencode flags and disables CMake architecture selection.
 # Honor the caller's architectures for our kernels, retaining other Torch flags.
 if(TARGET torch_cuda AND TEI_REQUESTED_CUDA_ARCHITECTURES)

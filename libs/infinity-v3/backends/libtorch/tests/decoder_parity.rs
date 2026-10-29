@@ -208,7 +208,7 @@ fn compare_dtype(path: &Path, pool: Pool, dtype: &str) {
     }
 }
 #[test]
-#[ignore = "requires two CUDA GPUs and LibTorch 2.14.1"]
+#[ignore = "requires two CUDA GPUs and LibTorch 2.15.0"]
 fn candle_decoder_parity() {
     for kind in ["llama", "mistral", "qwen2", "qwen3", "qwen3_moe"] {
         for bidirectional in [false, true] {
@@ -231,7 +231,7 @@ fn candle_decoder_parity() {
 }
 
 #[test]
-#[ignore = "requires two CUDA GPUs and LibTorch 2.14.1"]
+#[ignore = "requires two CUDA GPUs and LibTorch 2.15.0"]
 fn candle_decoder_rope_and_windows_parity() {
     for (kind, variant) in [
         ("llama", "llama3"),
@@ -268,7 +268,7 @@ fn candle_decoder_rope_and_windows_parity() {
 }
 
 #[test]
-#[ignore = "requires two CUDA GPUs and LibTorch 2.14.1"]
+#[ignore = "requires two CUDA GPUs and LibTorch 2.15.0"]
 fn candle_decoder_classifier_parity() {
     for (kind, architecture) in [
         ("llama", "LlamaForSequenceClassification"),

@@ -526,7 +526,7 @@ impl LibtorchBackend {
         enable_fp8_dynamic: bool,
     ) -> Result<Self, BackendError> {
         if device != "cpu" && device != "auto" && !device.starts_with("cuda:") {
-            return Err(start("LibTorch 2.14.1 varlen attention requires CUDA; only CPU reference and CUDA are supported"));
+            return Err(start("LibTorch 2.15.0 varlen attention requires CUDA; only CPU reference and CUDA are supported"));
         }
         if device.starts_with("cuda:") && !matches!(dtype, "float16" | "bfloat16") {
             return Err(start("CUDA varlen attention requires float16 or bfloat16"));
@@ -2572,7 +2572,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires an NVIDIA GPU and CUDA LibTorch 2.14.1"]
+    #[ignore = "Requires an NVIDIA GPU and CUDA LibTorch 2.15.0"]
     fn cuda_bulk_completion_preserves_mixed_projection_widths() {
         let (fixture, _) = dense_fixture();
         let mut gpu = LibtorchBackend::new(
@@ -2634,7 +2634,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires an NVIDIA GPU and CUDA LibTorch 2.14.1"]
+    #[ignore = "Requires an NVIDIA GPU and CUDA LibTorch 2.15.0"]
     fn cuda_dense_chain_matches_cpu_with_mixed_widths() {
         let (fixture, _) = dense_fixture();
         for pool in [Pool::Cls, Pool::Mean, Pool::LastToken] {
@@ -2989,7 +2989,7 @@ mod tests {
         }
     }
     #[test]
-    #[ignore = "Requires an NVIDIA GPU and CUDA LibTorch 2.14.1"]
+    #[ignore = "Requires an NVIDIA GPU and CUDA LibTorch 2.15.0"]
     fn cuda_varlen_matches_cpu_for_ragged_outputs() {
         let fixture = fixture("", false);
         let mut config: serde_json::Value =
@@ -3106,7 +3106,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "Requires an FP8-capable NVIDIA GPU and CUDA LibTorch 2.14.1"]
+    #[ignore = "Requires an FP8-capable NVIDIA GPU and CUDA LibTorch 2.15.0"]
     fn cuda_dynamic_fp8_bert_preserves_ragged_outputs_and_heads() {
         let fixture = fixture_with_intermediate("", false, 32);
         for dtype in ["float16", "bfloat16"] {

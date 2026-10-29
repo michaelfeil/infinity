@@ -40,7 +40,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake
           python -m pip install clang-tidy==20.1.0
-          python -m pip install torch==2.14.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install torch==2.15.0+cpu --index-url https://download.pytorch.org/whl/cpu
       - name: Configure CPU LibTorch compilation database
         run: |
           cmake -S backends/libtorch/cpp -B build/native-tidy \

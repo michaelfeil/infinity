@@ -292,7 +292,7 @@ struct Bert : infinity::Model {
   void ready() override {
     TORCH_CHECK(
         device.is_cpu() || device.is_cuda(),
-        "LibTorch 2.14.1 varlen Flash Attention requires CUDA. CPU supports an unpadded reference path; MPS/XPU are not implemented.");
+        "LibTorch 2.15.0 varlen Flash Attention requires CUDA. CPU supports an unpadded reference path; MPS/XPU are not implemented.");
     if (device.is_cuda()) {
       TORCH_CHECK(dtype == at::kHalf || dtype == at::kBFloat16,
                   "CUDA varlen attention requires float16 or bfloat16");

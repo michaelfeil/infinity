@@ -24,7 +24,7 @@ fn main() {
     println!("cargo:rerun-if-changed=../candle/extensions/candle-gemma4-moe/kernels");
     println!("cargo:rerun-if-env-changed=ENV_VAR_BASE");
     let torch = PathBuf::from(env::var_os("LIBTORCH").expect(
-        "Set LIBTORCH to the root of a LibTorch 2.14.1 C++ distribution (include/, lib/, share/)",
+        "Set LIBTORCH to the root of a LibTorch 2.15.0 C++ distribution (include/, lib/, share/)",
     ));
     let mut config = cmake::Config::new("cpp");
     config.define("CMAKE_PREFIX_PATH", &torch);

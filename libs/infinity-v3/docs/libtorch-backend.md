@@ -84,8 +84,8 @@ for the effect of local storage and cache state.
 
 ## Build from source
 
-Run from `libs/infinity-v3` with LibTorch 2.14.1, CMake 3.25+, a C++20 compiler
-and, for CUDA builds, a compatible CUDA toolkit:
+Run from `libs/infinity-v3` with LibTorch 2.15.0, CMake 3.25+, a C++20 compiler
+and, for CUDA builds, CUDA 13.2 (matching the PyTorch CUDA distribution):
 
 ```bash
 export LIBTORCH=/opt/libtorch
