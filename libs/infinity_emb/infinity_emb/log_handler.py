@@ -2,20 +2,39 @@
 # Copyright (c) 2023-now michaelfeil
 
 import logging
+import os
 import sys
 from enum import Enum
 from typing import Any
 
+from infinity_emb.env import MANAGER
+
 logging.getLogger().handlers.clear()
 
-handlers: list[Any] = []
-try:
-    from rich.console import Console
-    from rich.logging import RichHandler
+def configure_log_handlers() -> list[Any]:
+    """Configure and return logging handlers based on environment settings."""
+    handlers = []
 
-    handlers.append(RichHandler(console=Console(stderr=True), show_time=False))
-except ImportError:
+    # Determine the appropriate handler
+    if not MANAGER.disable_rich_handler:
+        try:
+            from rich.console import Console
+            from rich.logging import RichHandler
+            handlers.append(RichHandler(
+                console=Console(stderr=True),
+                show_time=False,
+                markup=True
+            ))
+            return handlers
+        except ImportError:
+            pass  # Fall through to default handler
+
+    # Default handler (used when Rich is disabled or not available)
     handlers.append(logging.StreamHandler(sys.stderr))
+    return handlers
+
+
+handlers = configure_log_handlers()
 
 LOG_LEVELS: dict[str, int] = {
     "critical": logging.CRITICAL,
@@ -26,7 +45,7 @@ LOG_LEVELS: dict[str, int] = {
     "trace": 5,
 }
 
-FORMAT = "%(asctime)s %(name)s %(levelname)s: %(message)s"
+FORMAT = MANAGER.log_format
 logging.basicConfig(
     level="INFO",
     format=FORMAT,
