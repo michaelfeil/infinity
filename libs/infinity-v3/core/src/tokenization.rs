@@ -176,20 +176,30 @@ impl Tokenization {
         truncation_direction: TruncationDirection,
         prompt_name: Option<String>,
     ) -> Result<ValidEncoding, TextEmbeddingsError> {
-        // Classification pairs and native messages use the existing multimodal path.
-        if self.mistral3.is_some()
-            && matches!(inputs, EncodingInput::Dual(..) | EncodingInput::Messages(_))
-        {
-            return self
-                .encode_embedding(inputs, truncate, truncation_direction, prompt_name)
-                .await;
-        }
-        self.encode_request(
+        self.encode_with_mode(
             inputs,
             truncate,
             truncation_direction,
             prompt_name,
             EncodeMode::Aligned,
+        )
+        .await
+    }
+
+    /// Sequence classification needs model inputs, not token text or source offsets.
+    #[instrument(skip_all)]
+    pub async fn encode_classification(
+        &self,
+        inputs: EncodingInput,
+        truncate: bool,
+        truncation_direction: TruncationDirection,
+    ) -> Result<ValidEncoding, TextEmbeddingsError> {
+        self.encode_with_mode(
+            inputs,
+            truncate,
+            truncation_direction,
+            None,
+            EncodeMode::IdsOnly,
         )
         .await
     }
@@ -251,7 +261,7 @@ impl Tokenization {
                         truncate,
                         truncation_direction,
                         prompt_name,
-                        EncodeMode::Embedding,
+                        EncodeMode::IdsOnly,
                     )
                     .await;
             }
@@ -278,9 +288,29 @@ impl Tokenization {
             truncate,
             truncation_direction,
             prompt_name,
-            EncodeMode::Embedding,
+            EncodeMode::IdsOnly,
         )
         .await
+    }
+
+    async fn encode_with_mode(
+        &self,
+        inputs: EncodingInput,
+        truncate: bool,
+        truncation_direction: TruncationDirection,
+        prompt_name: Option<String>,
+        mode: EncodeMode,
+    ) -> Result<ValidEncoding, TextEmbeddingsError> {
+        // Classification pairs and native messages retain their multimodal processing.
+        if self.mistral3.is_some()
+            && matches!(inputs, EncodingInput::Dual(..) | EncodingInput::Messages(_))
+        {
+            return self
+                .encode_embedding(inputs, truncate, truncation_direction, prompt_name)
+                .await;
+        }
+        self.encode_request(inputs, truncate, truncation_direction, prompt_name, mode)
+            .await
     }
 
     async fn encode_request(
@@ -485,7 +515,7 @@ fn tokenizer_worker(
                             prompt_name,
                             prompts.as_ref(),
                             &mut tokenizer,
-                            if matches!(mode, EncodeMode::Embedding) {
+                            if matches!(mode, EncodeMode::IdsOnly) {
                                 fast_tokenizer.as_deref()
                             } else {
                                 None
@@ -849,7 +879,7 @@ impl From<(String, String)> for EncodingInput {
 
 #[derive(Clone, Copy)]
 enum EncodeMode {
-    Embedding,
+    IdsOnly,
     Aligned,
 }
 
@@ -1304,6 +1334,74 @@ mod fast_embedding_tests {
             assert!(embedding.tokens.is_empty());
             assert!(embedding.offsets.is_empty());
         }
+    }
+
+    #[test]
+    fn sequence_classification_preserves_ids_and_types_without_alignment() {
+        let mut hf = crate::fast_tokenization::test_tokenizer();
+        hf.with_post_processor(Some(
+            tokenizers::processors::template::TemplateProcessing::builder()
+                .try_single("$A:2")
+                .unwrap()
+                .try_pair("$A:2 $B:3")
+                .unwrap()
+                .build()
+                .unwrap(),
+        ));
+        let tokenizer = Tokenization::new(2, hf, 32, 2, None, None, None);
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            for direction in [TruncationDirection::Left, TruncationDirection::Right] {
+                for pair in [false, true] {
+                    let input = || {
+                        if pair {
+                            EncodingInput::Dual("query 東京".into(), "a longer document 👩🏽‍💻".into())
+                        } else {
+                            EncodingInput::Single("hello 東京 👩🏽‍💻 longer text".into())
+                        }
+                    };
+                    let aligned = tokenizer
+                        .encode(input(), true, direction, None)
+                        .await
+                        .unwrap();
+                    let classification = tokenizer
+                        .encode_classification(input(), true, direction)
+                        .await
+                        .unwrap();
+                    assert_eq!(classification.input_ids, aligned.input_ids);
+                    assert_eq!(classification.token_type_ids, aligned.token_type_ids);
+                    assert_eq!(classification.position_ids, aligned.position_ids);
+                    assert!(classification.tokens.is_empty() && classification.offsets.is_empty());
+                    assert!(!aligned.tokens.is_empty() && !aligned.offsets.is_empty());
+                }
+            }
+        });
+    }
+
+    #[test]
+    #[ignore = "requires TOKENIZATION_CHECKPOINT and TOKENIZATION_INPUTS fixtures"]
+    fn sequence_classification_checkpoint_id_parity() {
+        let root = std::path::PathBuf::from(std::env::var("TOKENIZATION_CHECKPOINT").unwrap());
+        let hf = Tokenizer::from_file(root.join("tokenizer.json")).unwrap();
+        let mut inputs: Vec<String> = serde_json::from_slice(
+            &std::fs::read(std::env::var("TOKENIZATION_INPUTS").unwrap()).unwrap(),
+        )
+        .unwrap();
+        inputs.extend([
+            "你好 Café 👩🏽‍💻\n<|im_start|>user\n<|im_end|>".into(),
+            "Naïve\u{a0}café e\u{301}\n  tabs\tcode".into(),
+        ]);
+        let tokenizer = Tokenization::new(4, hf.clone(), 8192, 0, None, None, None);
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            for text in inputs {
+                let expected = hf.encode(text.as_str(), true).unwrap();
+                let actual = tokenizer
+                    .encode_classification(text.into(), false, TruncationDirection::Right)
+                    .await
+                    .unwrap();
+                assert_eq!(actual.input_ids, expected.get_ids());
+                assert_eq!(actual.token_type_ids, expected.get_type_ids());
+            }
+        });
     }
 
     #[test]
