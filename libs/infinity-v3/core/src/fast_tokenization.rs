@@ -1,4 +1,4 @@
-//! BPE ID encoding for embeddings. HF remains responsible for request-specific
+//! BPE ID encoding for pooled inference. HF remains responsible for request-specific
 //! truncation and post-processing, and for endpoints requiring source alignment.
 use tokenizers::{Encoding, Tokenizer};
 
@@ -42,7 +42,7 @@ pub(crate) fn load(tokenizer: &Tokenizer) -> Option<FastTokenizer> {
         });
     match result {
         Ok(tokenizer) => {
-            tracing::info!("Using Basetenkenizer BPE encoding for embedding text inputs");
+            tracing::info!("Using Basetenkenizer BPE encoding for pooled text inputs");
             Some(tokenizer)
         }
         Err(err) => {

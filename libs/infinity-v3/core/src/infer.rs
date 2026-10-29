@@ -567,7 +567,7 @@ impl Infer {
         // Tokenization
         let encoding = self
             .tokenization
-            .encode(inputs.into(), truncate, truncation_direction, None)
+            .encode_classification(inputs.into(), truncate, truncation_direction)
             .await
             .map_err(|err| {
                 let counter = metrics::counter!("infinity_request_failure", "model" => self.model_name.clone(), "err" => "tokenization");
