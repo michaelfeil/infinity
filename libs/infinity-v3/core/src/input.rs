@@ -136,7 +136,19 @@ impl<'s> ToSchema<'s> for ContentPart {
         &'s str,
         utoipa::openapi::RefOr<utoipa::openapi::schema::Schema>,
     ) {
-        ("ContentPart", ContentPartInput::schema().1)
+        use utoipa::openapi::{schema::AdditionalProperties, RefOr, Schema};
+
+        let mut schema = ContentPartInput::schema().1;
+        // Utoipa 4 does not propagate deny_unknown_fields to tagged variants.
+        if let RefOr::T(Schema::OneOf(one_of)) = &mut schema {
+            for variant in &mut one_of.items {
+                if let RefOr::T(Schema::Object(object)) = variant {
+                    object.additional_properties =
+                        Some(Box::new(AdditionalProperties::FreeForm(false)));
+                }
+            }
+        }
+        ("ContentPart", schema)
     }
 }
 
@@ -257,6 +269,30 @@ mod tests {
             serde_json::to_value(ContentPart::schema().1).unwrap(),
             checked_in["components"]["schemas"]["ContentPart"]
         );
+        let variants = checked_in["components"]["schemas"]["ContentPart"]["oneOf"]
+            .as_array()
+            .unwrap();
+        assert!(!variants.is_empty());
+        for variant in variants {
+            assert_eq!(variant["type"], "object");
+            assert_eq!(variant["additionalProperties"], false, "{variant}");
+        }
+        // Every published variant accepts its valid shape but rejects extra keys.
+        for mut part in [
+            json!({"type": "text", "text": "x"}),
+            json!({"type": "input_text", "text": "x"}),
+            json!({"type": "image_url", "image_url": {"url": "x"}}),
+            json!({"type": "input_image", "image_url": "x"}),
+            json!({"type": "input_audio", "input_audio": {"data": "AA==", "format": "wav"}}),
+            json!({"type": "video_url", "video_url": {"url": "x"}}),
+        ] {
+            assert!(serde_json::from_value::<ContentPart>(part.clone()).is_ok());
+            part["file_id"] = json!("file-123");
+            assert!(
+                serde_json::from_value::<ContentPart>(part.clone()).is_err(),
+                "{part}"
+            );
+        }
     }
 
     #[test]
