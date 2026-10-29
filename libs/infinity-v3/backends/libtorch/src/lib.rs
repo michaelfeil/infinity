@@ -313,7 +313,7 @@ fn resolve_fp8_scope(
 ) -> Result<String, BackendError> {
     let dense_decoder = matches!(
         family,
-        "llama" | "mistral" | "qwen2" | "qwen3" | "qwen3_5" | "qwen3_5_text"
+        "llama" | "mistral" | "mistral3" | "qwen2" | "qwen3" | "qwen3_5" | "qwen3_5_text"
     );
     let scope = requested.unwrap_or(if enabled && dense_decoder {
         "all"
@@ -723,6 +723,7 @@ impl LibtorchBackend {
                         | "modernbert"
                         | "llama"
                         | "mistral"
+                        | "mistral3"
                         | "qwen2"
                         | "qwen3"
                         | "qwen3_5"
