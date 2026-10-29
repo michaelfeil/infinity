@@ -892,21 +892,39 @@ async fn backend_task(
         if backend.is_closed() {
             break;
         }
+        // The pending GPU token forecast decides whether this busy replica
+        // may prefetch; otherwise leave the prepared batch shared for idle replicas.
+        if backend
+            .wait_to_dequeue(replica, &mut changed)
+            .await
+            .is_err()
+        {
+            break;
+        }
         let next = async { receiver.lock().await.recv().await };
         let mut dispatched = tokio::select! {
             batch = next => match batch { Some(b) => b, None => break },
             _ = changed.changed() => { if backend.is_closed() { break; } continue; }
         };
-        let execution = match backend.acquire_replica(replica).await {
+        // Prune before forecasting, retaining the reply guard while waiting for the lease.
+        dispatched.0 = prune_canceled_batch(dispatched.0.take().unwrap());
+        let Some((_, batch)) = dispatched.0.as_ref() else {
+            continue;
+        };
+        let execution = match backend
+            .acquire_replica(replica, batch.input_ids.len())
+            .await
+        {
             Ok(execution) => execution,
             Err(_) => break,
         };
-        let Some(batch) = prune_canceled_batch(dispatched.0.take().unwrap()) else {
-            continue;
-        };
         // Keep request metadata alive until completion, even after an early
         // model-lease release. Other backends keep their lease until results are ready.
-        completions.spawn(complete_batch(execution, backend.model_type.clone(), batch));
+        completions.spawn(complete_batch(
+            execution,
+            backend.model_type.clone(),
+            dispatched.0.take().unwrap(),
+        ));
         while completions.try_join_next().is_some() {}
     }
     while completions.join_next().await.is_some() {}
