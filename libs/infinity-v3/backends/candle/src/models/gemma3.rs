@@ -603,13 +603,24 @@ mod packed {
                 let rows = batch
                     .pooled_indices
                     .iter()
-                    .map(|&index| {
-                        let start = batch.cumulative_seq_lengths[index as usize] as usize;
-                        let end = batch.cumulative_seq_lengths[index as usize + 1] as usize;
+                    .map(|&index| -> Result<Tensor> {
+                        let index = index as usize;
+                        let (Some(&start), Some(&end)) = (
+                            batch.cumulative_seq_lengths.get(index),
+                            batch.cumulative_seq_lengths.get(index + 1),
+                        ) else {
+                            candle::bail!("Gemma3 pooling sequence index out of range");
+                        };
+                        let (start, end) = (start as usize, end as usize);
+                        if end <= start {
+                            candle::bail!("Gemma3 pooling requires nonempty, in-bounds sequences");
+                        }
                         match self.pool {
                             Pool::Cls => outputs.narrow(0, start, 1),
                             Pool::LastToken => outputs.narrow(0, end - 1, 1),
-                            Pool::Mean | Pool::Splade => unreachable!("mean handled above"),
+                            Pool::Mean | Pool::Splade => {
+                                candle::bail!("Unsupported Gemma3 row pooling mode")
+                            }
                         }
                     })
                     .collect::<Result<Vec<_>>>()?;
