@@ -874,7 +874,7 @@ class Qwen35 final : public Model {
   /// Execute distinct bidirectional prefixes once and route each suffix to its representative
   /// prefix state. Host metadata separates real prefix/suffix rows; output
   /// reconstruction restores every logical sequence.
-  at::Tensor block_forward(const PackedInput& input) const {
+  at::Tensor block_forward(const PackedInput& input, std::optional<bool> pooled = {}) const {
     TORCH_CHECK(input.audios.empty() && !radix_enabled(input) &&
                     input.block_prefix_lengths.size() == size_t(input.batch) &&
                     input.block_prefix_sources.size() == size_t(input.batch),
@@ -1071,9 +1071,21 @@ class Qwen35 final : public Model {
     size_t suffix_row = 0;
     for (int64_t row = 0; row < input.batch; ++row) {
       const auto source = source_index[input.block_prefix_sources[row]];
+      const bool row_has_suffix = suffix_row < suffix_rows.size() && suffix_rows[suffix_row] == row;
+      if (pooled.has_value()) {
+        // Decision readout only needs one row per question. Select it directly
+        // from compact execution storage, without reconstructing repeated states.
+        const auto selected = *pooled && row_has_suffix
+                                  ? prefix_tokens + suffix_offsets[suffix_row + 1] - 1
+                                  : (*pooled ? prefix_offsets[source + 1] - 1
+                                             : prefix_offsets[source]);
+        results.push_back(hidden.narrow(0, selected, 1));
+        suffix_row += row_has_suffix;
+        continue;
+      }
       auto prefix = prefix_hidden.narrow(
           0, prefix_offsets[source], prefix_offsets[source + 1] - prefix_offsets[source]);
-      if (suffix_row < suffix_rows.size() && suffix_rows[suffix_row] == row) {
+      if (row_has_suffix) {
         results.push_back(at::cat(
             {prefix,
              suffix_hidden.narrow(0,
@@ -1376,7 +1388,12 @@ public:
   at::Tensor forward_pooled(const PackedInput& input, bool last) const override {
     if (radix_enabled(input) || input.prefix || input.capture_prefix)
       return {};
-    if (!device.is_cuda() || block_attention())
+    if (block_attention()) {
+      auto prepared = input;
+      prepare_input(prepared);
+      return block_forward(prepared, last);
+    }
+    if (!device.is_cuda())
       return Model::forward_pooled(input, last);
     return forward_impl(input, pooled_token_rows(input, last));
   }
