@@ -13,7 +13,7 @@ CUDA libraries, model weights, or container base images.
 | Adapted Candle CPU operators | [Apache text](LICENSES/Apache-2.0.txt) and source attribution in [ModernBERT CPU math](backends/libtorch/cpp/helpers/modern_cpu_math.cpp), based on Candle revision `036f39e`. |
 | Candle CUDA activation kernel | [MIT text](backends/libtorch/cpp/vendor/candle_kernels/kernels/LICENSE.candle-MIT) and [kernel notices](backends/libtorch/cpp/kernels/fast_kernels.cu). |
 | Native prefix Q/K normalization and rotary kernel | Derived from [Candle Q/K normalization](backends/libtorch/cpp/vendor/candle_kernels/kernels/qk_norm_rope.cu), with the MIT permission notice retained in [the derived kernel](backends/libtorch/cpp/kernels/prefix_qkv_norm_rope.cuh). |
-| Candle cuBLASLt extension | [Apache text](backends/libtorch/cpp/vendor/candle_kernels/notices/LICENSE-APACHE) and [MIT text](backends/libtorch/cpp/vendor/candle_kernels/LICENSE.cublaslt-MIT). |
+| Candle-derived native FP8 arithmetic | [Apache text](backends/libtorch/cpp/vendor/candle_kernels/notices/LICENSE-APACHE) and [MIT text](backends/libtorch/cpp/vendor/candle_kernels/LICENSE.cublaslt-MIT). |
 | Candle layer-norm extension | [Apache text](backends/libtorch/cpp/vendor/candle_kernels/layer_norm/LICENSE-APACHE), [MIT text](backends/libtorch/cpp/vendor/candle_kernels/layer_norm/LICENSE-MIT), and [BSD text](backends/libtorch/cpp/vendor/candle_kernels/layer_norm/LICENSE). |
 | RadixMLP-derived layers | MIT attribution retained in [native RadixMLP](backends/libtorch/cpp/batching/radix.cpp). |
 | CUTLASS-derived Gemma4 and Nomic MoE kernels | [BSD-3-Clause text](backends/libtorch/cpp/vendor/candle_kernels/moe/LICENSE.cutlass). |

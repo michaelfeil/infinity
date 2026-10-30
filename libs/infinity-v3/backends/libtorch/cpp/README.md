@@ -14,7 +14,7 @@ belongs to `batching/packed_input.h`, options and checkpoint weights to
 `helpers/options.h`, and shared attention composition to `helpers/attention.h`.
 
 The CMake target and test names remain stable. CUDA sources keep their original
-compile flags and licensed Candle includes. BERT's existing implementation is
+compile flags and vendored kernel includes. BERT's existing implementation is
 in `models/bert_model.h`; its public configuration remains `TeiConfig` from the
 C ABI.
 
@@ -23,7 +23,7 @@ C ABI.
 - **Adding a model:** read [Model](models/model.h), then the family selection in
   `Engine::ready` in [bridge.cpp](bridge.cpp). Configuration and checkpoint loading
   start in [the Rust adapter](../src/lib.rs). The existing
-  [encoder](../tests/encoder_parity.rs) and [decoder](../tests/decoder_parity.rs)
+  [encoder](../tests/encoder_parity.rs) and [decoder](tests/decoder_models_test.cpp)
   parity fixtures exercise that loading path as well as inference.
 - **Changing batching:** start with [core's queue actor](../../../core/src/queue_actor.rs)
   and its inline tests for client grouping, limits and cancellation. Then follow

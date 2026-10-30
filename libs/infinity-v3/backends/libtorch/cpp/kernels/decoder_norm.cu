@@ -31,7 +31,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 */
 
 // This adapter retains and invokes the fork's BSD-3-Clause Candle kernel.
-// Private kernel names prevent preemption of Candle's own CUDA registration.
+// Private kernel names isolate these instantiations from other CUDA registrations.
 /// \file
 /// CUDA decoder RMS normalization with reference residual and reduction semantics.
 /// Dispatches the registered row-width and dtype specializations.

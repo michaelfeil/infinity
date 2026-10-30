@@ -431,7 +431,7 @@ struct Encoder final : Model {
     if (family == Family::Nomic) {
       TORCH_CHECK(!o.boolean("prenorm", false) && o.real("rotary_emb_fraction", 1.0) == 1.0 &&
                       !o.boolean("rotary_emb_interleaved", false),
-                  "Nomic supports postnorm, full noninterleaved rotary (same as Candle)");
+                  "Nomic supports postnorm, full noninterleaved rotary");
       if (o.integer("moe_every_n_layers", 0) > 0) {
         TORCH_CHECK(o.integer("num_experts", 0) > 0 && o.integer("moe_top_k", 0) > 0 &&
                         o.integer("moe_top_k", 0) <= o.integer("num_experts", 0),
@@ -470,7 +470,7 @@ struct Encoder final : Model {
                   "GTE packed model supports rotary positions only");
       TORCH_CHECK(!o.boolean("logn_attention_scale", false) &&
                       !o.boolean("logn_attention_clip1", false),
-                  "GTE logn attention is not supported by Candle packed model");
+                  "GTE logn attention is not supported");
       rotary_cache(o.real("rope_theta", 10000), global_cos, global_sin);
     }
     w(family == Family::Modern ? "embeddings.tok_embeddings.weight"
@@ -986,9 +986,8 @@ struct Encoder final : Model {
 
   at::Tensor predict(const PackedInput& input, bool tokenwise) const override {
     TORCH_CHECK(family == Family::Modern || family == Family::Gte || family == Family::Jina,
-                "This encoder does not support classification (same as Candle)");
-    TORCH_CHECK(!tokenwise || family != Family::Gte,
-                "GTE does not support token classification (same as Candle)");
+                "This encoder does not support classification");
+    TORCH_CHECK(!tokenwise || family != Family::Gte, "GTE does not support token classification");
     auto h = forward(input);
     if (tokenwise)
       return root_linear(h, "classifier");

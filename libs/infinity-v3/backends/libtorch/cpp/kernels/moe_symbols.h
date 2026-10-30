@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-// Private names avoid symbol interposition with the Candle backend.
+// Private names isolate the retained kernel implementations.
 #pragma once
 #define gemma4_grouped_gemm_bf16 tei_gemma4_grouped_gemm_bf16
 #define gemma4_moe_assign tei_gemma4_moe_assign
