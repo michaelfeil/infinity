@@ -103,7 +103,7 @@ the triggering release tag independently of V3 tags.
    A tag push alone builds images; publishing the release publishes its docs.
 
 Stable image tags update `*-latest`; main builds update `*-main`. Prerelease
-tags do not move stable aliases. The published CPU image uses CPU LibTorch; the native
+tags do not move stable aliases. CPU builds use LibTorch; the native
 LibTorch model catalog applies to the NVIDIA image and LibTorch source builds.
 Python/v2 releases update `latest-v2` documentation independently of v3.
 

@@ -30,10 +30,19 @@ for reproducible deployments.
 
 ## CPU deployments
 
-The published `cpu-3.0.0` image uses Candle, with its own model coverage. The
-native LibTorch model catalog does not imply identical support in that image.
-For native LibTorch CPU inference, build the [LibTorch backend](docs/libtorch-backend.md#build-from-source)
-and use `--torch-device cpu --dtype float32`.
+CPU builds from current `main` use LibTorch. The `cpu-main` development image
+runs the same native backend on CPU:
+
+```bash
+docker run --rm -p 8000:8000 -v infinity-cache:/data \
+  ghcr.io/michaelfeil/infinity_v3:cpu-main \
+  --model-id sentence-transformers/all-MiniLM-L6-v2 \
+  --torch-device cpu --dtype float32 \
+  --hostname 0.0.0.0 --port 8000
+```
+
+For release images, use documentation matching that release. To build locally,
+follow the [LibTorch source instructions](docs/libtorch-backend.md#build-from-source).
 
 ## Send an embedding request
 

@@ -764,9 +764,9 @@ public:
     if (family == "qwen3_moe")
       for (const auto& [key, value] : options.values)
         TORCH_CHECK(key != "rope_scaling" && key.rfind("rope_scaling.", 0) != 0,
-                    "Scaled Qwen3 MoE RoPE is unsupported by Candle and this backend");
+                    "Scaled Qwen3 MoE RoPE is unsupported");
     TORCH_CHECK(!options.boolean("use_sliding_window", false) || family == "mistral",
-                "Qwen sliding-window configuration is unsupported by Candle and this backend");
+                "Qwen sliding-window configuration is unsupported");
 #ifdef TEI_TORCH_CUDA_KERNELS
     if (device.is_cuda()) {
       const auto* properties = at::cuda::getDeviceProperties(device.index());

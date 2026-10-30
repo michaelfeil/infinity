@@ -375,8 +375,7 @@ fn splade_selected_spans_preserve_mixed_raw_order() {
 
 #[test]
 fn mpnet_cuda_varlen_matches_cpu() {
-    // MPNet has no packed Candle implementation, so compare the native GPU
-    // memory-efficient varlen operator to its independent CPU SDPA path.
+    // Compare the native GPU varlen operator to the independent CPU SDPA path.
     if std::env::var_os("INFINITY_TEST_CUDA").is_none() {
         return;
     }
