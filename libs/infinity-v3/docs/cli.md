@@ -98,6 +98,15 @@ need a larger expanded limit for requests that previously spanned batches.
 Measure peak GPU memory before raising it: backend K/V storage still expands
 across questions, and startup warmup does not validate this fanout shape.
 
+For roughly 13K prefix tokens and 256 suffixes of 185 tokens, the budgets grow
+to about 60.4K compute tokens and 3.39M expanded tokens. With paged attention
+enabled (`INFINITY_TORCH_BLOCK_PAGED=1`), a validation configuration is
+`--max-batch-tokens 65536 --max-batch-expanded-tokens 3500000`, with the
+per-sequence limit kept at `--max-sequence-length 16000`. Set
+`--max-decision-questions` and any `--max-batch-requests` to at least 256.
+OneJev's separate 512-option limit caps all-yes/no requests at 256 questions;
+questions with more answer options reach that limit earlier.
+
 Suffix attention assembles K/V in whole-question chunks targeting 500,000
 expanded tokens, reusing the prefix without another prefill. Set
 `INFINITY_TORCH_BLOCK_KV_CHUNK_TOKENS` to a positive integer to tune this target;
