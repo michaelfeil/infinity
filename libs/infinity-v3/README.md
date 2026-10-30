@@ -417,7 +417,7 @@ These checkpoints require their trained decision heads and protocol metadata.
 Supported model families and protocols (LibTorch):
 
 - **Laya**: ModernBERT-based decision checkpoints with `rl_agent_config.json` and trained decision heads. Accepts text or structured state; native conversations are unsupported.
-- **OneJev**, including **Elephant and Mammoth**: Qwen3.5 dense/MoE decision checkpoints using `--decision-protocol onejev`. Supports block-attention question batches and image inputs when the checkpoint includes its vision tower.
+- **OneJev**, including **Elephant, Joey and Mammoth**: Qwen3.5 dense/MoE decision checkpoints using `--decision-protocol onejev`. Supports block-attention question batches and image inputs when the checkpoint includes its vision tower.
 - **Perplexity Decider / Pplx**: [v1.1-27b](https://huggingface.co/perplexity-ai/pplx-decider-v1.1-27b) and [flash-v1.2](https://huggingface.co/perplexity-ai/pplx-decider-flash-v1.2). Flash v1.2 supports shared text/images, joint question readouts and calibrated answers. The short model aliases select the protocol automatically.
 - **Rune**: Gemma4-based decision checkpoints using `--decision-protocol rune`.
 - **Clef**: dense Qwen3.5 checkpoints with `joint_head_config.json`, using `--decision-protocol clef`.

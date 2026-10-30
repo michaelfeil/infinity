@@ -328,6 +328,7 @@ server's `/docs` for the selected protocol.
 | Checkpoint | Native implementation / support basis | Additional launch settings |
 | --- | --- | --- |
 | [baselabs/elephant-1](https://huggingface.co/baselabs/elephant-1) | Qwen3.5 dense/MoE + OneJev decision head | `--decision-protocol onejev` |
+| [baselabs/joey-1](https://huggingface.co/baselabs/joey-1) | Qwen3.5 dense/MoE + OneJev decision head | `--decision-protocol onejev` |
 | [baselabs/mammoth-1](https://huggingface.co/baselabs/mammoth-1) | Qwen3.5 dense/MoE + OneJev decision head | `--decision-protocol onejev` |
 | [Cloudflare/clef](https://huggingface.co/Cloudflare/clef) | Qwen3.5 + Clef joint head | `--decision-protocol clef --max-batch-tokens 8192` |
 | [Cloudflare/clef-flash](https://huggingface.co/Cloudflare/clef-flash) | Qwen3.5 + Clef joint head | `--decision-protocol clef --max-batch-tokens 16384` |
