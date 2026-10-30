@@ -36,7 +36,7 @@ def needed(path):
     return re.findall(r"\(NEEDED\).*?\[(.*?)\]", elf)
 
 
-def runtime_libraries(roots, site_packages):
+def runtime_libraries(roots, site_packages, *, cuda=True):
     candidates = {}
     for path in sorted([*[lib for root in roots for lib in root.parent.glob("*.so*")],
                         *(site_packages / "torch/lib").glob("*.so*"),
@@ -67,7 +67,7 @@ def runtime_libraries(roots, site_packages):
                 if dependency.is_file():
                     selected[name] = dependency
                     pending.append(dependency)
-    for pattern in LAZY_LIBRARIES:
+    for pattern in LAZY_LIBRARIES if cuda else ():
         matches = fnmatch.filter(candidates, pattern)
         if not matches:
             raise RuntimeError(f"Missing runtime-loaded SDK library: {pattern}")
@@ -129,20 +129,24 @@ def package_fa4(root, output, expected):
 
 def package(native, site_packages, output):
     bridge = native / "lib/libtei_torch.so"
-    elf = subprocess.check_output(["cuobjdump", "--list-elf", str(bridge)], text=True)
-    actual = set(re.findall(r"\.sm_(\d+[a-z]?)\.", elf))
+    cuda = (site_packages / "torch/lib/libtorch_cuda.so").is_file()
+    architectures = os.environ["LIBTORCH_CUDA_ARCHITECTURES"] if cuda else ""
     expected = {
         re.sub(r"-(real|virtual)$", "", arch)
-        for arch in os.environ["LIBTORCH_CUDA_ARCHITECTURES"].split(";")
-        if not arch.endswith("-virtual")
+        for arch in architectures.split(";")
+        if arch and not arch.endswith("-virtual")
     }
+    actual = set()
+    if cuda:
+        elf = subprocess.check_output(["cuobjdump", "--list-elf", str(bridge)], text=True)
+        actual = set(re.findall(r"\.sm_(\d+[a-z]?)\.", elf))
     if not expected <= actual:
         raise RuntimeError(f"Native bridge lacks CUDA targets: {expected - actual}")
     for directory in ["bin", "lib", "licenses"]:
         (output / directory).mkdir(parents=True, exist_ok=True)
     server = Path("target/release/infinity_v3")
     fa4 = package_fa4(native / "lib/infinityfa4", output / "lib/infinityfa4", expected)
-    libraries = runtime_libraries([server, bridge, *fa4], site_packages)
+    libraries = runtime_libraries([server, bridge, *fa4], site_packages, cuda=cuda)
     shutil.copy2(server, output / "bin/infinity_v3")
     for source in [bridge, *libraries]:
         destination = output / "lib" / source.name

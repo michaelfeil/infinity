@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
 
-#[cfg(any(feature = "candle", feature = "libtorch"))]
+#[cfg(feature = "libtorch")]
 use serde::Deserialize;
 
 pub use crate::dtype::DType;
@@ -37,39 +37,23 @@ impl<T> Submission<T> {
     }
 }
 
-#[cfg(feature = "candle")]
-use infinity_v3_backend_candle::CandleBackend;
-
-/// Select an inference runtime explicitly when more than one is compiled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Inference runtime name retained for existing CLI configurations.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum BackendKind {
-    Candle,
+    #[default]
     Libtorch,
-}
-
-impl Default for BackendKind {
-    fn default() -> Self {
-        // Prefer LibTorch when available; Candle-only builds still select Candle.
-        if cfg!(feature = "libtorch") {
-            Self::Libtorch
-        } else {
-            Self::Candle
-        }
-    }
 }
 
 impl BackendKind {
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::Candle => "candle",
             Self::Libtorch => "libtorch",
         }
     }
 
     pub const fn is_compiled(self) -> bool {
         match self {
-            Self::Candle => cfg!(feature = "candle"),
             Self::Libtorch => cfg!(feature = "libtorch"),
         }
     }
@@ -78,22 +62,14 @@ impl BackendKind {
         if self.is_compiled() {
             return Ok(());
         }
-        let available = [Self::Candle, Self::Libtorch]
-            .into_iter()
-            .filter(|kind| kind.is_compiled())
-            .map(Self::as_str)
-            .collect::<Vec<_>>();
-        Err(BackendError::Start(format!(
-            "Requested backend '{}' was not compiled into this binary; compiled backends: {}. Use an image/build containing the requested backend or omit --backend to use the build default.",
-            self.as_str(),
-            if available.is_empty() { "none".into() } else { available.join(", ") }
-        )))
+        Err(BackendError::Start(
+            "LibTorch was not compiled; build with --features libtorch".into(),
+        ))
     }
 
     /// Resolve accelerator selection once before choosing dtype or replica devices.
     pub fn resolve_device(self, torch: TorchDevice) -> Result<TorchDevice, BackendError> {
         match self {
-            Self::Candle => Ok(torch),
             Self::Libtorch => torch.resolved(),
         }
     }
@@ -101,7 +77,6 @@ impl BackendKind {
     /// Whether the selected runtime and accelerator can host GPU replicas.
     pub fn supports_replication(self, torch: TorchDevice) -> bool {
         match self {
-            Self::Candle => supports_device_replication(),
             Self::Libtorch => torch == TorchDevice::Cuda,
         }
     }
@@ -109,7 +84,6 @@ impl BackendKind {
     /// Query the selected runtime rather than another backend's CUDA installation.
     pub fn visible_device_count(self, torch: TorchDevice) -> Result<usize, BackendError> {
         match self {
-            Self::Candle => visible_cuda_device_count(),
             Self::Libtorch => torch.count(),
         }
     }
@@ -248,12 +222,6 @@ impl Backend {
         torch_device: TorchDevice,
     ) -> Result<Self, BackendError> {
         kind.ensure_compiled()?;
-        if kind == BackendKind::Candle {
-            tracing::warn!(
-                model = %model_path.display(),
-                "Candle backend is deprecated; use a LibTorch build/image for supported models"
-            );
-        }
         let (backend_sender, backend_receiver) = mpsc::channel(8);
 
         let backend = init_backend(
@@ -264,7 +232,6 @@ impl Backend {
             dense_path,
             device_id,
             enable_fp8_dynamic,
-            kind,
             torch_device,
         )
         .await?;
@@ -502,7 +469,6 @@ async fn init_backend(
     dense_path: Option<String>,
     device_id: usize,
     enable_fp8_dynamic: bool,
-    kind: BackendKind,
     torch_device: TorchDevice,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     if model_type == ModelType::Decision {
@@ -512,184 +478,75 @@ async fn init_backend(
                 .map_err(|error| BackendError::WeightsNotFound(error.to_string()))?;
         }
     }
-    if kind == BackendKind::Libtorch {
-        #[cfg(feature = "libtorch")]
-        {
-            let dense_paths = if let Some(repo) = api_repo.as_ref() {
-                let explicit_dense = dense_path.is_some();
-                let paths = download_dense_modules(repo, dense_path)
-                    .await
-                    .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
-                if model_type == ModelType::Decision
-                    && model_path.join("vela3v_config.json").exists()
-                {
-                    // The raw model.safetensors belongs to the span task. Core
-                    // decisions use this separate, decision-trained backbone.
-                    for file in ["backbone_h2.safetensors", "decision_adapter.safetensors"] {
-                        repo.get(file)
-                            .await
-                            .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
-                    }
-                } else if download_safetensors(repo.clone()).await.is_err() {
-                    download_file(repo, "pytorch_model.bin")
+    #[cfg(feature = "libtorch")]
+    {
+        let dense_paths = if let Some(repo) = api_repo.as_ref() {
+            let explicit_dense = dense_path.is_some();
+            let paths = download_dense_modules(repo, dense_path)
+                .await
+                .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
+            if model_type == ModelType::Decision && model_path.join("vela3v_config.json").exists() {
+                // The raw model.safetensors belongs to the span task. Core
+                // decisions use this separate, decision-trained backbone.
+                for file in ["backbone_h2.safetensors", "decision_adapter.safetensors"] {
+                    repo.get(file)
                         .await
                         .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
                 }
-                // Discovered Dense modules are not an override for classifiers: the
-                // backend decides from modules.json whether the checkpoint needs them.
-                if model_type == ModelType::Classifier && !explicit_dense {
-                    None
-                } else {
+            } else if download_safetensors(repo.clone()).await.is_err() {
+                download_file(repo, "pytorch_model.bin")
+                    .await
+                    .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
+            }
+            // Discovered Dense modules are not an override for classifiers: the
+            // backend decides from modules.json whether the checkpoint needs them.
+            if model_type == ModelType::Classifier && !explicit_dense {
+                None
+            } else {
+                Some(paths)
+            }
+        } else if let Some(override_path) = dense_path {
+            let modules = model_path.join("modules.json");
+            if modules.exists() {
+                let paths = parse_dense_paths_from_modules(&modules)
+                    .await
+                    .map_err(|e| BackendError::Start(e.to_string()))?;
+                if paths.len() > 1 {
                     Some(paths)
-                }
-            } else if let Some(override_path) = dense_path {
-                let modules = model_path.join("modules.json");
-                if modules.exists() {
-                    let paths = parse_dense_paths_from_modules(&modules)
-                        .await
-                        .map_err(|e| BackendError::Start(e.to_string()))?;
-                    if paths.len() > 1 {
-                        Some(paths)
-                    } else {
-                        Some(vec![override_path])
-                    }
                 } else {
                     Some(vec![override_path])
                 }
             } else {
-                None
-            };
-            let device = torch_device.resolved()?.name(device_id);
-            let startup_span = Span::current();
-            let model = tokio::task::spawn_blocking(move || {
-                startup_span.in_scope(|| {
-                    infinity_backend_libtorch::LibtorchBackend::new_with_dense_paths_and_fp8(
-                        &model_path,
-                        &dtype.to_string(),
-                        model_type,
-                        &device,
-                        dense_paths,
-                        enable_fp8_dynamic,
-                    )
-                })
-            })
-            .await
-            .map_err(|e| {
-                BackendError::Start(format!("LibTorch initialization worker failed: {e}"))
-            })??;
-            return Ok(Box::new(model));
-        }
-        #[cfg(not(feature = "libtorch"))]
-        return Err(BackendError::Start(
-            "LibTorch was not compiled; build with --features libtorch".into(),
-        ));
-    }
-    if enable_fp8_dynamic && !cfg!(feature = "experimental-fp8") {
-        return Err(BackendError::Start(
-            "Dynamic FP8 requires an experimental-fp8 build".into(),
-        ));
-    }
-    let mut backend_start_failed = false;
-
-    if let Some(api_repo) = api_repo.as_ref() {
-        if cfg!(feature = "candle") {
-            let start = std::time::Instant::now();
-            if download_safetensors(api_repo.clone()).await.is_err() {
-                tracing::warn!("safetensors weights not found. Using `pytorch_model.bin` instead. Model loading will be significantly slower.");
-                tracing::info!("Downloading `pytorch_model.bin`");
-                api_repo
-                    .get("pytorch_model.bin")
-                    .await
-                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
+                Some(vec![override_path])
             }
-
-            tracing::info!("Model weights downloaded in {:?}", start.elapsed());
-        }
-    }
-
-    if cfg!(feature = "candle") {
-        #[cfg(feature = "candle")]
-        {
-            let dense_paths = if let Some(api_repo) = api_repo.as_ref() {
-                let start = std::time::Instant::now();
-                let dense_paths = download_dense_modules(api_repo, dense_path)
-                    .await
-                    .map_err(|err| BackendError::WeightsNotFound(err.to_string()))?;
-                tracing::info!("Dense modules downloaded in {:?}", start.elapsed());
-                Some(dense_paths)
-            } else {
-                // TODO(alvarobartt): eventually detach the Sentence Transformers module handling
-                // to prevent from duplicated code here and there
-                // For local models, try to parse modules.json and handle dense_path logic
-                let modules_json_path = model_path.join("modules.json");
-                if modules_json_path.exists() {
-                    match parse_dense_paths_from_modules(&modules_json_path).await {
-                        Ok(module_paths) => match module_paths.len() {
-                            0 => Some(vec![]),
-                            1 => {
-                                let path_to_use = if let Some(ref user_path) = dense_path {
-                                    if user_path != &module_paths[0] {
-                                        tracing::info!("`{}` found in `modules.json`, but using provided `--dense-path={user_path}` instead", module_paths[0]);
-                                    }
-                                    user_path.clone()
-                                } else {
-                                    module_paths[0].clone()
-                                };
-                                Some(vec![path_to_use])
-                            }
-                            _ => {
-                                if dense_path.is_some() {
-                                    tracing::warn!("A value for `--dense-path` was provided, but since there's more than one subsequent Dense module, then the provided value will be ignored.");
-                                }
-                                Some(module_paths)
-                            }
-                        },
-                        Err(err) => {
-                            tracing::warn!("Failed to parse local modules.json: {err}");
-                            None
-                        }
-                    }
-                } else {
-                    None
-                }
-            };
-
-            let path = model_path.clone();
-            let candle_dtype = dtype.to_string();
-            let candle_model_type = model_type.clone();
-            let backend = tokio::task::spawn_blocking(move || {
-                CandleBackend::new_with_fp8(
-                    &path,
-                    candle_dtype,
-                    candle_model_type,
+        } else {
+            None
+        };
+        let device = torch_device.resolved()?.name(device_id);
+        let startup_span = Span::current();
+        let model = tokio::task::spawn_blocking(move || {
+            startup_span.in_scope(|| {
+                infinity_backend_libtorch::LibtorchBackend::new_with_dense_paths_and_fp8(
+                    &model_path,
+                    &dtype.to_string(),
+                    model_type,
+                    &device,
                     dense_paths,
-                    device_id,
                     enable_fp8_dynamic,
                 )
             })
-            .await
-            .map_err(|err| {
-                BackendError::Start(format!("Candle initialization worker failed: {err}"))
-            })?;
-            match backend {
-                Ok(b) => return Ok(Box::new(b)),
-                Err(err) => {
-                    if enable_fp8_dynamic {
-                        return Err(err);
-                    }
-                    tracing::error!("Could not start Candle backend: {err}");
-                    backend_start_failed = true;
-                }
-            }
-        }
+        })
+        .await
+        .map_err(|e| {
+            BackendError::Start(format!("LibTorch initialization worker failed: {e}"))
+        })??;
+        Ok(Box::new(model))
     }
-
-    if backend_start_failed {
+    #[cfg(not(feature = "libtorch"))]
+    {
         Err(BackendError::Start(
-            "Could not start a suitable backend".to_string(),
+            "LibTorch was not compiled; build with --features libtorch".into(),
         ))
-    } else {
-        Err(BackendError::NoBackend)
     }
 }
 
@@ -954,7 +811,7 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     Ok(safetensors_files)
 }
 
-#[cfg(any(feature = "candle", feature = "libtorch"))]
+#[cfg(feature = "libtorch")]
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 enum ModuleType {
     // Output quantization is omitted when serving floating-point embeddings.
@@ -986,7 +843,7 @@ enum ModuleType {
     Transformer,
 }
 
-#[cfg(any(feature = "candle", feature = "libtorch"))]
+#[cfg(feature = "libtorch")]
 #[derive(Debug, Clone, Deserialize)]
 struct ModuleConfig {
     #[allow(dead_code)]
@@ -1000,13 +857,13 @@ struct ModuleConfig {
     module_type: ModuleType,
 }
 
-#[cfg(any(feature = "candle", feature = "libtorch"))]
+#[cfg(feature = "libtorch")]
 async fn download_file(api: &ApiRepo, file_path: &str) -> Result<PathBuf, ApiError> {
     tracing::info!("Downloading `{}`", file_path);
     api.get(file_path).await
 }
 
-#[cfg(any(feature = "candle", feature = "libtorch"))]
+#[cfg(feature = "libtorch")]
 async fn parse_dense_paths_from_modules(
     modules_path: &PathBuf,
 ) -> Result<Vec<String>, std::io::Error> {
@@ -1021,7 +878,7 @@ async fn parse_dense_paths_from_modules(
         .collect::<Vec<String>>())
 }
 
-#[cfg(any(feature = "candle", feature = "libtorch"))]
+#[cfg(feature = "libtorch")]
 #[instrument(skip_all)]
 pub async fn download_dense_modules(
     api: &ApiRepo,
@@ -1101,7 +958,7 @@ pub async fn download_dense_modules(
     }
 }
 
-#[cfg(any(feature = "candle", feature = "libtorch"))]
+#[cfg(feature = "libtorch")]
 async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
     // Download `config.json` for the Dense module
     let config_file = format!("{}/config.json", dense_path);
@@ -1126,61 +983,6 @@ async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBu
     }
 
     Ok(config_path.parent().unwrap().to_path_buf())
-}
-
-pub fn supports_device_replication() -> bool {
-    cfg!(all(
-        feature = "candle",
-        any(feature = "cuda", feature = "flash-attn")
-    ))
-}
-
-pub fn visible_cuda_device_count() -> Result<usize, BackendError> {
-    #[cfg(all(feature = "candle", any(feature = "cuda", feature = "flash-attn")))]
-    {
-        infinity_v3_backend_candle::visible_cuda_device_count()
-    }
-    #[cfg(not(all(feature = "candle", any(feature = "cuda", feature = "flash-attn"))))]
-    {
-        Err(BackendError::Start(
-            "GPU replicas require the Candle CUDA backend".into(),
-        ))
-    }
-}
-
-#[cfg(test)]
-mod backend_selection_tests {
-    use super::*;
-
-    #[test]
-    fn default_uses_compiled_backend() {
-        let default = BackendKind::default();
-        match (cfg!(feature = "candle"), cfg!(feature = "libtorch")) {
-            (_, true) => assert_eq!(default, BackendKind::Libtorch),
-            (true, false) => assert_eq!(default, BackendKind::Candle),
-            (false, false) => assert!(default.ensure_compiled().is_err()),
-        }
-    }
-
-    #[test]
-    fn unavailable_backend_reports_compiled_choices() {
-        for kind in [BackendKind::Candle, BackendKind::Libtorch] {
-            let result = kind.ensure_compiled();
-            if kind.is_compiled() {
-                assert!(result.is_ok());
-            } else {
-                let error = result.unwrap_err().to_string();
-                assert!(error.contains(&format!("Requested backend '{}'", kind.as_str())));
-                let choices = match (cfg!(feature = "candle"), cfg!(feature = "libtorch")) {
-                    (true, true) => "candle, libtorch",
-                    (true, false) => "candle",
-                    (false, true) => "libtorch",
-                    (false, false) => "none",
-                };
-                assert!(error.contains(&format!("compiled backends: {choices}.")));
-            }
-        }
-    }
 }
 
 #[cfg(test)]

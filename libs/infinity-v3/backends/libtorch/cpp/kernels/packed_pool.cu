@@ -8,7 +8,7 @@
 #include <stdint.h>
 extern "C" __global__ void
 packed_mean_pool_bf16(const __nv_bfloat16*, const uint32_t*, __nv_bfloat16*, uint32_t);
-#include "../../../candle/src/pooling_kernels/mean_pool.cu"
+#include "vendor/candle_kernels/pooling/mean_pool.cu"
 
 namespace {
 // Same model-dtype tree as Candle, reading existing cumulative offsets.

@@ -89,8 +89,14 @@ jobs:
           # Cached proc-macros run on different GitHub runner CPUs. Override
           # the project's native CPU flags so cached artifacts remain portable.
           rustflags: '-C target-cpu=x86-64'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Install build dependencies
-        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libssl-dev pkg-config
+        run: |
+          sudo apt-get update && sudo apt-get install -y cmake protobuf-compiler libssl-dev pkg-config
+          python -m pip install torch==2.14.1+cpu --index-url https://download.pytorch.org/whl/cpu
+          python -c 'import torch; from pathlib import Path; print("LIBTORCH=" + str(Path(torch.__file__).parent))' >> "$GITHUB_ENV"
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Check native runtime packaging
@@ -100,7 +106,7 @@ jobs:
       - name: Build default CPU server
         run: cargo build --locked
       - name: Build without default features
-        run: cargo build --locked --no-default-features --features candle,http
+        run: cargo build --locked --no-default-features --features libtorch,http
       - name: Compile CPU integration tests
         run: cargo test --locked --no-run
       - name: Run CPU unit tests

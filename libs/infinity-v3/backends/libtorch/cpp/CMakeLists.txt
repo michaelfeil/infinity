@@ -212,13 +212,13 @@ if(TARGET torch_cuda)
     DESTINATION share/licenses/tei_torch/pytorch_cublaslt)
   install(FILES vendor/torch_flash_attention/LICENSE vendor/torch_flash_attention/AUTHORS
     vendor/torch_flash_attention/provenance.json DESTINATION share/licenses/tei_torch/torch_flash_attention)
-  install(FILES ../../candle/extensions/candle-layer-norm/LICENSE
+  install(FILES vendor/candle_kernels/layer_norm/LICENSE
     DESTINATION share/licenses/tei_torch/candle-layer-norm)
-  install(FILES ../../candle/src/kernels/LICENSE.candle-MIT
+  install(FILES vendor/candle_kernels/kernels/LICENSE.candle-MIT
     DESTINATION share/licenses/tei_torch/candle-kernels)
-  install(FILES ../../candle/extensions/candle-cublaslt/LICENSE-MIT
+  install(FILES vendor/candle_kernels/LICENSE.cublaslt-MIT
     DESTINATION share/licenses/tei_torch/candle-cublaslt)
-  target_include_directories(tei_torch PRIVATE ../../candle/extensions/candle-layer-norm/kernels)
+  target_include_directories(tei_torch PRIVATE vendor/candle_kernels/layer_norm)
   find_package(CUDAToolkit REQUIRED)
   target_link_directories(tei_torch PRIVATE "${CUDAToolkit_LIBRARY_DIR}")
   target_compile_definitions(tei_torch PRIVATE TEI_TORCH_CUDA_KERNELS)
@@ -244,7 +244,7 @@ if(TARGET torch_cuda)
   set_source_files_properties(kernels/nomic_moe.cu PROPERTIES COMPILE_OPTIONS "--expt-relaxed-constexpr")
   target_include_directories(tei_torch PRIVATE "${CUTLASS_ROOT}/include" "${CUTLASS_ROOT}/tools/util/include")
   target_compile_definitions(tei_torch PRIVATE TEI_TORCH_MOE_KERNELS)
-  install(FILES ../../candle/extensions/candle-gemma4-moe/LICENSE.cutlass
+  install(FILES vendor/candle_kernels/moe/LICENSE.cutlass
     DESTINATION share/licenses/tei_torch)
   set_source_files_properties(kernels/moe_portable.cu PROPERTIES COMPILE_OPTIONS "--expt-relaxed-constexpr")
   if("90" IN_LIST TEI_REQUESTED_CUDA_ARCHITECTURES OR "90a" IN_LIST TEI_REQUESTED_CUDA_ARCHITECTURES OR CMAKE_CUDA_FLAGS MATCHES "compute_90[, ]")

@@ -104,7 +104,6 @@ async fn models(Extension(registry): Extension<ModelRegistry>) -> Json<ServedMod
             object: "model",
             checkpoint_id: model.checkpoint_id.clone(),
             backend: match model.backend_kind {
-                infinity_v3_backend::BackendKind::Candle => "candle",
                 infinity_v3_backend::BackendKind::Libtorch => "libtorch",
             },
             capabilities: match &model.info.model_type {
@@ -3085,7 +3084,7 @@ mod classify_tests {
     }
 }
 
-#[cfg(all(test, feature = "candle"))]
+#[cfg(all(test, feature = "libtorch"))]
 mod multi_model_test {
     use super::*;
     use crate::{initialize_model, ModelSettings};
@@ -3140,7 +3139,7 @@ mod multi_model_test {
             let mut config = settings(
                 std::env::var("MULTI_MODEL_EMBEDDING_DIR")?,
                 "embed",
-                infinity_v3_backend::BackendKind::Candle,
+                infinity_v3_backend::BackendKind::Libtorch,
             );
             config.priority_queue_bonus_ms = bonus;
             config.flex_queue_offset_ms = offset;
@@ -3301,7 +3300,7 @@ mod multi_model_test {
         let a = settings(
             std::env::var("MULTI_MODEL_EMBEDDING_DIR")?,
             "embed",
-            BackendKind::Candle,
+            BackendKind::Libtorch,
         );
         let b = settings(
             std::env::var("MULTI_MODEL_RERANK_DIR")?,
@@ -3344,7 +3343,7 @@ mod multi_model_test {
         assert_eq!(request(&app, "/health", None).await.0, StatusCode::OK);
         let catalog = request(&app, "/v1/models", None).await.1;
         assert_eq!(catalog["data"][0]["id"], "embed");
-        assert_eq!(catalog["data"][0]["backend"], "candle");
+        assert_eq!(catalog["data"][0]["backend"], "libtorch");
         assert_eq!(catalog["data"][1]["id"], "rerank");
         assert_eq!(catalog["data"][1]["backend"], "libtorch");
         assert_eq!(

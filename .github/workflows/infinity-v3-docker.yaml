@@ -127,8 +127,6 @@ jobs:
           load: true
           platforms: linux/amd64
           build-args: |
-            SCCACHE_GHA_ENABLED=false
-            CUDA_COMPUTE_CAP=${{ matrix.cudaComputeCap }}
             GIT_SHA=${{ github.sha }}
             DOCKER_LABEL=${{ github.ref_type == 'tag' && github.ref_name || format('sha-{0}', github.sha) }}
             ${{ matrix.extraBuildArgs }}

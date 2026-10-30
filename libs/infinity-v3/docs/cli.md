@@ -10,9 +10,9 @@ cargo run --locked --bin infinity_v3 -- --model-id /path/to/local/model
 ```
 
 The project pins its Rust toolchain. Run commands from `libs/infinity-v3` so
-Cargo loads the project build configuration. The default build uses the Candle
-CPU backend; CUDA and native LibTorch require their additional build features
-and SDKs. See the [contributor guide](../CONTRIBUTING.md) and
+Cargo loads the project build configuration. The default build uses LibTorch
+and requires its SDK through `LIBTORCH`; use a CPU or CUDA distribution for the
+desired accelerator. See the [contributor guide](../CONTRIBUTING.md) and
 [LibTorch build instructions](libtorch-backend.md) for those configurations.
 
 `--help` lists the flags and `INFINITY_*` environment variables supported by the
@@ -21,17 +21,13 @@ Use a local model directory or a compatible Hugging Face model ID. Model
 availability, access credentials, pooling and supported inputs depend on the
 checkpoint and selected backend.
 
-The backend is normally determined when the binary or container image is built,
-so most deployments should omit `--backend`. A single-backend build selects its
-compiled backend automatically. Builds containing both prefer LibTorch; use
-`--backend candle` (or `INFINITY_BACKEND=candle`) as an advanced override when
-Candle is needed. The flag cannot enable a backend missing from the
-image; startup errors list the compiled choices.
+LibTorch is the only inference backend. Most deployments should omit
+`--backend`; `--backend libtorch` remains accepted for existing configurations.
 
 Open `/docs` on the running server for interactive API documentation. The API
 schema is available at `/api-doc/openapi.json`.
 
-CUDA inference requires SM80 (Ampere) or newer in both backends. SM75/Turing
+CUDA inference requires SM80 (Ampere) or newer. SM75/Turing
 is unsupported; use a CPU build on hosts without a supported GPU.
 
 ## Request service tiers
@@ -76,7 +72,7 @@ values align with `--model-id`, and `none` leaves a model's limit unchanged.
 
 ## UltraBERT embeddings
 
-`dmis-lab/UltraBERT-Embed-150M` supports native LibTorch and Candle and produces
+`dmis-lab/UltraBERT-Embed-150M` supports native LibTorch and produces
 768-dimensional CLS embeddings with a 32,768-token context. For the native
 LibTorch GPU image:
 

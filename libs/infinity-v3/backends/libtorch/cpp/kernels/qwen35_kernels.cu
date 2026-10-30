@@ -12,8 +12,8 @@
 #include <type_traits>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
-#include "../../../candle/src/kernels/qwen35_gdn.cu"
-#include "../../../candle/src/kernels/gemma_rms_norm.cu"
+#include "vendor/candle_kernels/kernels/qwen35_gdn.cu"
+#include "vendor/candle_kernels/kernels/gemma_rms_norm.cu"
 
 namespace infinity {
 namespace {

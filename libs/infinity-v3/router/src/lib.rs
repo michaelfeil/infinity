@@ -738,9 +738,6 @@ async fn initialize_model(
             &config.model_type,
             torch_device == infinity_v3_backend::TorchDevice::Cpu,
         ),
-        infinity_v3_backend::BackendKind::Candle => {
-            resolve_dtype(dtype, model_dtype, &config.model_type)
-        }
     };
 
     anyhow::ensure!(
@@ -1097,24 +1094,6 @@ fn resolve_libtorch_dtype(
             } else {
                 DType::Float16
             }
-        }
-        Some(dtype) => dtype,
-    }
-}
-
-fn resolve_dtype(requested: Option<DType>, model_dtype: Option<&str>, model_type: &str) -> DType {
-    match requested {
-        None | Some(DType::Auto) => {
-            // EmbeddingGemma activations require BF16; FP16 is not supported.
-            if matches!(model_type, "gemma3_text" | "embedding_gemma2") {
-                return DType::Bfloat16;
-            }
-            #[cfg(all(feature = "candle", not(any(feature = "mkl", feature = "accelerate"))))]
-            if model_dtype == Some("bfloat16") {
-                return DType::Bfloat16;
-            }
-            let _ = model_dtype;
-            DType::default()
         }
         Some(dtype) => dtype,
     }
@@ -1719,11 +1698,7 @@ mod libtorch_auto_dtype_tests {
     }
 }
 
-#[cfg(all(
-    test,
-    feature = "candle",
-    not(any(feature = "mkl", feature = "accelerate"))
-))]
+#[cfg(test)]
 mod auto_dtype_tests {
     use super::*;
 
@@ -1785,10 +1760,11 @@ mod auto_dtype_tests {
 
     fn from_config(json: &str, requested: Option<DType>) -> DType {
         let config: ModelConfig = serde_json::from_str(json).unwrap();
-        resolve_dtype(
+        resolve_libtorch_dtype(
             requested,
             config.dtype.as_deref().or(config.torch_dtype.as_deref()),
             &config.model_type,
+            false,
         )
     }
 
@@ -1808,16 +1784,16 @@ mod auto_dtype_tests {
     #[test]
     fn embeddinggemma_defaults_to_bf16_even_for_fp32_checkpoint() {
         assert_eq!(
-            resolve_dtype(None, Some("float32"), "gemma3_text"),
+            resolve_libtorch_dtype(None, Some("float32"), "gemma3_text", false),
             DType::Bfloat16
         );
         assert_eq!(
-            resolve_dtype(Some(DType::Auto), Some("float32"), "gemma3_text"),
+            resolve_libtorch_dtype(Some(DType::Auto), Some("float32"), "gemma3_text", false),
             DType::Bfloat16
         );
         // An explicit unsupported precision is rejected by the model loader.
         assert_eq!(
-            resolve_dtype(Some(DType::Float32), None, "gemma3_text"),
+            resolve_libtorch_dtype(Some(DType::Float32), None, "gemma3_text", false),
             DType::Float32
         );
     }
@@ -1831,7 +1807,7 @@ mod auto_dtype_tests {
         config.resolve_text_config().unwrap();
         assert_eq!(config.max_position_embeddings, 262144);
         assert_eq!(
-            resolve_dtype(None, None, "embedding_gemma2"),
+            resolve_libtorch_dtype(None, None, "embedding_gemma2", false),
             DType::Bfloat16
         );
         for value in [

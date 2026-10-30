@@ -27,8 +27,8 @@ docker run --rm --gpus all -p 8000:8000 -v infinity-cache:/data \
 Choose a version from the [container registry](https://github.com/michaelfeil/infinity/pkgs/container/infinity_v3).
 Use `--device-id 0` for one GPU; otherwise each visible GPU runs a complete replica.
 For native LibTorch CPU builds, use `--torch-device cpu --dtype float32`.
-The published `cpu-*` image uses Candle rather than LibTorch; its model coverage
-is separate from the native LibTorch catalog.
+The published `cpu-*` image uses CPU LibTorch. Dynamic FP8 and CUDA-only kernels
+require the NVIDIA image.
 
 ## Optional dynamic FP8
 

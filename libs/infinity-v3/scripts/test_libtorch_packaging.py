@@ -50,6 +50,24 @@ class PackagingTests(unittest.TestCase):
             "libtorch_cuda_linalg.so", "libnvrtc-builtins.so.13.0",
         })
 
+    def test_cpu_sdk_does_not_require_cuda_libraries(self):
+        for pattern in packager.LAZY_LIBRARIES:
+            for path in self.lib.glob(pattern):
+                path.unlink()
+        selected = packager.runtime_libraries([self.server], self.sdk, cuda=False)
+        self.assertEqual({path.name for path in selected}, {"libinner.so", "libouter.so"})
+
+    def test_virtual_only_cuda_build_still_requires_lazy_gpu_libraries(self):
+        self.compile("libtorch_cuda.so", "int cuda_sdk(void) { return 1; }")
+        (self.lib / "libnvrtc-builtins.so.13.0").unlink()
+        native = self.root / "native"
+        (native / "lib").mkdir(parents=True)
+        shutil.copy2(self.server, native / "lib/libtei_torch.so")
+        with patch.dict(os.environ, {"LIBTORCH_CUDA_ARCHITECTURES": "90-virtual"}), \
+                patch.object(packager.subprocess, "check_output", return_value=""):
+            with self.assertRaisesRegex(RuntimeError, "Missing runtime-loaded SDK library"):
+                packager.package(native, self.sdk, self.root / "runtime")
+
     def test_missing_dependency_is_not_hidden_by_sdk_stubs(self):
         stubs = self.sdk / "nvidia/stubs"
         stubs.mkdir(parents=True)

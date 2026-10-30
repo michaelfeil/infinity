@@ -43,7 +43,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <vector>
 #include <cstdint>
 #define layer_norm tei_decoder_exact_norm
-#include "../../../candle/extensions/candle-layer-norm/kernels/ln_fwd_kernels.cuh"
+#include "vendor/candle_kernels/layer_norm/ln_fwd_kernels.cuh"
 #undef layer_norm
 
 namespace infinity {
