@@ -280,6 +280,34 @@ impl Mistral3Processor {
     }
 }
 
+/// Normalize one patch row into the checkpoint's patch-major pixel layout.
+#[allow(clippy::too_many_arguments)]
+fn fill_patch_row(
+    row: &mut [f32],
+    rgb: &[u8],
+    y: usize,
+    gw: usize,
+    patch: usize,
+    stride: usize,
+    scale: f32,
+    mean: &[f32; 3],
+    std: &[f32; 3],
+) {
+    for x in 0..gw {
+        let base = x * 3 * patch * patch;
+        for py in 0..patch {
+            let start = (y * patch + py) * stride + x * patch * 3;
+            let source = &rgb[start..start + patch * 3];
+            for (px, value) in source.chunks_exact(3).enumerate() {
+                for channel in 0..3 {
+                    row[base + channel * patch * patch + py * patch + px] =
+                        (f32::from(value[channel]) * scale - mean[channel]) / std[channel];
+                }
+            }
+        }
+    }
+}
+
 fn prepend_retrieval_prefix(messages: &mut Vec<Message>, prefix: String) -> Result<()> {
     if messages.len() != 1 || !matches!(messages[0].role, MessageRole::User) {
         return Err(invalid("Retrieval prompt_name/default prompt requires one user message; use an explicit system message for a custom prefix"));
@@ -438,22 +466,48 @@ impl State {
             .map_err(invalid)?;
             let gh = h as usize / self.patch;
             let gw = w as usize / self.patch;
-            let mut pixels = Vec::with_capacity(gh * gw * 3 * self.patch * self.patch);
-            for y in 0..gh {
-                for x in 0..gw {
-                    for c in 0..3 {
-                        for py in 0..self.patch {
-                            for px in 0..self.patch {
-                                let index =
-                                    ((y * self.patch + py) * w as usize + x * self.patch + px) * 3
-                                        + c;
-                                pixels.push(
-                                    (rgb[index] as f32 * self.scale - self.mean[c]) / self.std[c],
+            let patch = self.patch;
+            let row_len = gw * 3 * patch * patch;
+            let stride = w as usize * 3;
+            let mean = self.mean;
+            let std = self.std;
+            let rgb = rgb.as_slice();
+            let mut pixels = vec![0f32; gh * row_len];
+            let threads = if gh * row_len >= 1 << 18 {
+                std::thread::available_parallelism()
+                    .map(|count| count.get())
+                    .unwrap_or(1)
+                    .clamp(1, 4)
+                    .min(gh)
+            } else {
+                1
+            };
+            if threads <= 1 {
+                for (y, row) in pixels.chunks_mut(row_len).enumerate() {
+                    fill_patch_row(row, rgb, y, gw, patch, stride, self.scale, &mean, &std);
+                }
+            } else {
+                let rows_per_thread = gh.div_ceil(threads);
+                std::thread::scope(|scope| {
+                    for (index, chunk) in pixels.chunks_mut(rows_per_thread * row_len).enumerate() {
+                        let first = index * rows_per_thread;
+                        scope.spawn(move || {
+                            for (offset, row) in chunk.chunks_mut(row_len).enumerate() {
+                                fill_patch_row(
+                                    row,
+                                    rgb,
+                                    first + offset,
+                                    gw,
+                                    patch,
+                                    stride,
+                                    self.scale,
+                                    &mean,
+                                    &std,
                                 );
                             }
-                        }
+                        });
                     }
-                }
+                });
             }
             spans.push((
                 ids.len(),

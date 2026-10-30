@@ -338,23 +338,37 @@ fn resize_rgb_with_orientation(
         fast_image_resize::PixelType::U8x3,
     )
     .map_err(|_| "Invalid RGB image")?;
-    let mut intermediate =
-        fast_image_resize::images::Image::new(w, src.height(), fast_image_resize::PixelType::U8x3);
-    let mut output =
-        fast_image_resize::images::Image::new(w, h, fast_image_resize::PixelType::U8x3);
+    if src.width() == w && src.height() == h {
+        return Ok(src.into_vec());
+    }
     let options = fast_image_resize::ResizeOptions::new().resize_alg(
         fast_image_resize::ResizeAlg::Convolution(fast_image_resize::FilterType::CatmullRom),
     );
     let mut resizer = fast_image_resize::Resizer::new();
     // Uint8 rounding/clipping makes order observable. The library's default 2D
     // operation is vertical-first; Torchvision performs horizontal-first.
-    resizer
-        .resize(&src, &mut intermediate, &options)
-        .map_err(|_| "Image resize failed")?;
-    resizer
-        .resize(&intermediate, &mut output, &options)
-        .map_err(|_| "Image resize failed")?;
-    Ok(output.into_vec())
+    // An unchanged axis needs no pass: the kernel degenerates to a copy.
+    let mut current = src;
+    if current.width() != w {
+        let mut intermediate = fast_image_resize::images::Image::new(
+            w,
+            current.height(),
+            fast_image_resize::PixelType::U8x3,
+        );
+        resizer
+            .resize(&current, &mut intermediate, &options)
+            .map_err(|_| "Image resize failed")?;
+        current = intermediate;
+    }
+    if current.height() != h {
+        let mut output =
+            fast_image_resize::images::Image::new(w, h, fast_image_resize::PixelType::U8x3);
+        resizer
+            .resize(&current, &mut output, &options)
+            .map_err(|_| "Image resize failed")?;
+        current = output;
+    }
+    Ok(current.into_vec())
 }
 
 // image-webp's EXIF reader does not inherit ImageReader's allocation limit.
