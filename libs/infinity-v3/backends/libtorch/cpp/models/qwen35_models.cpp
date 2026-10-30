@@ -19,6 +19,8 @@
 #include "kernels/moe_kernels.h"
 #include <ATen/ops/_efficient_attention_forward.h>
 #include <ATen/ops/_flash_attention_forward.h>
+#include <charconv>
+#include <cstring>
 #include <cmath>
 #include <cstdlib>
 #include <string_view>
@@ -70,6 +72,7 @@ class Qwen35 final : public Model {
   std::string prefix;
   int64_t hidden, heads, kv_heads, dim, layer_count, rotary;
   double epsilon;
+  int64_t block_kv_chunk_tokens = 500000;
   bool delta_prefill = false, delta_suffix_prefill = false;
   at::Tensor cos_cache, sin_cache;
 
@@ -478,6 +481,81 @@ class Qwen35 final : public Model {
     return {project(p + "q_proj"), project(p + "k_proj"), project(p + "v_proj")};
   }
 
+  /// Bound temporary expanded K/V without recomputing the representative prefix.
+  /// Each chunk contains whole questions; only the much smaller suffix outputs
+  /// survive the loop. Device boundary slices also remain valid under graph capture.
+  at::Tensor block_suffix_attention(const at::Tensor& q,
+                                    const at::Tensor& k,
+                                    const at::Tensor& v,
+                                    const PackedInput& input,
+                                    BlockCache& cache) const {
+    std::vector<int32_t> kv_offsets{0};
+    for (int64_t row = 0; row < input.batch; ++row) {
+      const auto source = input.block_prefix_sources[row];
+      kv_offsets.push_back(kv_offsets.back() + cache.offsets[source + 1] - cache.offsets[source] +
+                           input.offsets[row + 1] - input.offsets[row]);
+    }
+    if (device.is_cuda() && !cache.metadata.kv_cumulative.defined())
+      cache.metadata.kv_cumulative = at::tensor(kv_offsets, input.cumulative.options());
+    std::vector<at::Tensor> outputs;
+    for (int64_t first = 0; first < input.batch;) {
+      int64_t last = first, max_q = 0, max_k = 0;
+      std::vector<at::Tensor> keys, values;
+      while (last < input.batch) {
+        const auto length = kv_offsets[last + 1] - kv_offsets[last];
+        // A single question cannot be split across calls: its suffix is bidirectional.
+        if (last > first &&
+            int64_t(kv_offsets[last + 1]) - kv_offsets[first] > block_kv_chunk_tokens)
+          break;
+        const auto source = input.block_prefix_sources[last];
+        const auto start = cache.offsets[source], prefix = cache.offsets[source + 1] - start;
+        const auto suffix_start = input.offsets[last],
+                   suffix = input.offsets[last + 1] - suffix_start;
+        keys.insert(keys.end(),
+                    {cache.key.narrow(0, start, prefix), k.narrow(0, suffix_start, suffix)});
+        values.insert(values.end(),
+                      {cache.value.narrow(0, start, prefix), v.narrow(0, suffix_start, suffix)});
+        max_q = std::max(max_q, int64_t(suffix));
+        max_k = std::max(max_k, int64_t(length));
+        ++last;
+      }
+      auto keys_packed = at::cat(keys, 0), values_packed = at::cat(values, 0);
+      if (device.is_cuda()) {
+        auto cuq = input.cumulative.narrow(0, first, last - first + 1) - input.offsets[first];
+        auto cuk =
+            cache.metadata.kv_cumulative.narrow(0, first, last - first + 1) - kv_offsets[first];
+        outputs.push_back(packed_cuda_attention(
+            q.narrow(0, input.offsets[first], input.offsets[last] - input.offsets[first]),
+            keys_packed,
+            values_packed,
+            cuq,
+            cuk,
+            max_q,
+            max_k,
+            1. / std::sqrt(double(dim))));
+      } else {
+        for (int64_t row = first; row < last; ++row) {
+          auto qq = q.narrow(0, input.offsets[row], input.offsets[row + 1] - input.offsets[row])
+                        .transpose(0, 1)
+                        .unsqueeze(0);
+          const auto start = kv_offsets[row] - kv_offsets[first],
+                     length = kv_offsets[row + 1] - kv_offsets[row];
+          auto kk = at::repeat_interleave(keys_packed.narrow(0, start, length), heads / kv_heads, 1)
+                        .transpose(0, 1)
+                        .unsqueeze(0);
+          auto vv =
+              at::repeat_interleave(values_packed.narrow(0, start, length), heads / kv_heads, 1)
+                  .transpose(0, 1)
+                  .unsqueeze(0);
+          outputs.push_back(
+              at::scaled_dot_product_attention(qq, kk, vv).squeeze(0).transpose(0, 1).contiguous());
+        }
+      }
+      first = last;
+    }
+    return at::cat(outputs, 0);
+  }
+
   /// Run a full-attention layer, combining retained block/prefix K/V with
   /// the current query rows when supplied.
   at::Tensor full_attention(const at::Tensor& x,
@@ -506,47 +584,23 @@ class Qwen35 final : public Model {
     const bool reference =
         integer("num_experts", 0) > 0 && device.is_cuda() && dtype == at::kBFloat16;
     at::Tensor attention;
-    if (cache) {
-      std::vector<int32_t> kv_offsets{0};
-      int64_t max_kv = input.max_sequence;
-      if (prefill) {
-        cache->key = k;
-        cache->value = v;
-      } else {
-        std::vector<at::Tensor> keys, values;
-        for (int64_t row = 0; row < input.batch; ++row) {
-          const auto source = input.block_prefix_sources[row];
-          const auto start = cache->offsets[source], length = cache->offsets[source + 1] - start;
-          const auto suffix_start = input.offsets[row],
-                     suffix_length = input.offsets[row + 1] - suffix_start;
-          keys.insert(
-              keys.end(),
-              {cache->key.narrow(0, start, length), k.narrow(0, suffix_start, suffix_length)});
-          values.insert(
-              values.end(),
-              {cache->value.narrow(0, start, length), v.narrow(0, suffix_start, suffix_length)});
-          kv_offsets.push_back(kv_offsets.back() + length + suffix_length);
-          max_kv = std::max(max_kv, int64_t(length + suffix_length));
-        }
-        k = at::cat(keys, 0);
-        v = at::cat(values, 0);
-      }
+    if (cache && !prefill) {
+      attention = block_suffix_attention(q, k, v, input, *cache);
+    } else if (cache) {
+      cache->key = k;
+      cache->value = v;
       if (device.is_cuda()) {
-        auto& cached = cache->metadata.kv_cumulative;
-        if (!prefill && !cached.defined())
-          cached = at::tensor(kv_offsets, input.cumulative.options());
-        auto cuk = prefill ? input.cumulative : cached;
         attention = packed_cuda_attention(q,
                                           k,
                                           v,
                                           input.cumulative,
-                                          cuk,
+                                          input.cumulative,
                                           input.max_sequence,
-                                          max_kv,
+                                          input.max_sequence,
                                           1. / std::sqrt(double(dim)));
       } else {
         std::vector<at::Tensor> rows;
-        const auto* offsets = prefill ? input.offsets : kv_offsets.data();
+        const auto* offsets = input.offsets;
         for (int64_t row = 0; row < input.batch; ++row) {
           auto qq = q.narrow(0, input.offsets[row], input.offsets[row + 1] - input.offsets[row])
                         .transpose(0, 1)
@@ -1033,6 +1087,12 @@ class Qwen35 final : public Model {
 public:
   Qwen35(const Options& config, Weights& tensors, c10::Device dev, at::ScalarType type)
       : cfg(config), weights(std::move(tensors)), device(dev), dtype(type) {
+    if (const auto* value = std::getenv(INFINITY_ENV("TORCH_BLOCK_KV_CHUNK_TOKENS"))) {
+      const auto* end = value + std::strlen(value);
+      const auto parsed = std::from_chars(value, end, block_kv_chunk_tokens);
+      TORCH_CHECK(parsed.ec == std::errc{} && parsed.ptr == end && block_kv_chunk_tokens > 0,
+                  "TORCH_BLOCK_KV_CHUNK_TOKENS must be a positive integer");
+    }
     hidden = integer("hidden_size");
     heads = integer("num_attention_heads");
     kv_heads = integer("num_key_value_heads");
