@@ -56,8 +56,6 @@ utoipa = { version = "4.2", features = ["axum_extras"], optional = true }
 utoipa-swagger-ui = { version = "7.1", features = ["axum", "vendored"], optional = true }
 
 # Optional
-cudarc = { workspace = true, optional = true }
-intel-mkl-src = { workspace = true, optional = true }
 bigdecimal = { version = "0.4", default-features = false, features = ["std"] }
 
 # Malloc trim hack for linux
@@ -78,18 +76,6 @@ serial_test = { workspace = true }
 vergen = { version = "8.0.0", features = ["build", "git", "gitcl"] }
 
 [features]
-experimental-fp8 = ["candle-cuda", "infinity_v3-backend/experimental-fp8"]
-experimental-fa4 = ["fa4"]
-fa4 = ["candle-cuda", "infinity_v3-backend/fa4"]
-default = ["candle", "http", "dynamic-linking"]
+default = ["libtorch", "http"]
 http = ["infinity_v3-core/openapi", "dep:axum", "dep:http-body", "dep:axum-tracing-opentelemetry", "dep:base64", "dep:rmp-serde", "dep:tower-http", "dep:utoipa", "dep:utoipa-swagger-ui"]
-metal = ["infinity_v3-backend/metal"]
-mkl = ["infinity_v3-backend/mkl", "dep:intel-mkl-src"]
-accelerate = ["infinity_v3-backend/accelerate"]
-candle = ["infinity_v3-backend/candle"]
 libtorch = ["infinity_v3-backend/libtorch"]
-candle-cuda = ["candle", "infinity_v3-backend/flash-attn", "dep:cudarc"]
-static-linking = ["infinity_v3-backend/cuda-static-linking", "cudarc?/static-linking", "intel-mkl-src?/mkl-static-lp64-iomp"]
-dynamic-linking = ["infinity_v3-backend/cuda-dynamic-linking", "cudarc?/dynamic-linking", "intel-mkl-src?/mkl-dynamic-lp64-iomp"]
-
-experimental-deberta = ["candle-cuda", "infinity_v3-backend/experimental-deberta"]

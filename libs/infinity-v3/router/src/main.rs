@@ -238,7 +238,7 @@ struct Args {
     max_batch_requests: Vec<Optional<usize>>,
 
     /// Experimental calibration-free FP8 projections (Ada/Hopper/Blackwell FP16/BF16 dense decoder and BERT/ModernBERT encoders).
-    /// LibTorch dense decoders default to all-linear FP8; set TORCH_FP8_SCOPE=mlp with the configured environment prefix for MLP-only. Candle and encoders remain MLP-only.
+    /// LibTorch dense decoders default to all-linear FP8; set TORCH_FP8_SCOPE=mlp with the configured environment prefix for MLP-only. Encoders remain MLP-only.
     /// Bundled in official SM89/90/100/120 images; disabled by default. May change embedding, reranking, and decision accuracy.
     #[clap(long, env = infinity_v3_config::infinity_env!("ENABLE_FP8_DYNAMIC"), action = clap::ArgAction::Append, num_args = 0..=1, default_missing_value = "true", default_value = "false", value_delimiter = ';')]
     enable_fp8_dynamic: Vec<bool>,
@@ -311,8 +311,7 @@ struct Args {
     /// https://huggingface.co/NovaSearch/stella_en_400M_v5.
     ///
     /// Note that this argument is optional, only required to be set if there is no `modules.json`
-    /// file or when you want to override a single Dense module path, only when running with the
-    /// `candle` backend.
+    /// file or when you want to override a single Dense module path.
     #[clap(long, env = infinity_v3_config::infinity_env!("DENSE_PATH"), value_parser = optional_string, value_delimiter = ';')]
     dense_path: Vec<Optional<String>>,
 
@@ -775,18 +774,14 @@ mod tests {
             .unwrap()
             .models()
             .unwrap();
-        let expected = if cfg!(feature = "libtorch") {
-            infinity_v3_backend::BackendKind::Libtorch
-        } else {
-            infinity_v3_backend::BackendKind::Candle
-        };
+        let expected = infinity_v3_backend::BackendKind::Libtorch;
         assert!(models.iter().all(|m| m.backend_kind == expected));
         let models = Args::try_parse_from([
             "infinity_v3",
             "--model-id",
             "a;b",
             "--backend",
-            "libtorch;candle",
+            "libtorch;libtorch",
         ])
         .unwrap()
         .models()
@@ -797,7 +792,7 @@ mod tests {
         );
         assert_eq!(
             models[1].backend_kind,
-            infinity_v3_backend::BackendKind::Candle
+            infinity_v3_backend::BackendKind::Libtorch
         );
         std::env::set_var(backend_env, "libtorch");
         let models = Args::try_parse_from(["infinity_v3", "--model-id", "a;b"])

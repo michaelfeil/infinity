@@ -1,62 +1,12 @@
 [
   {
-    "name": "ampere",
-    "imageNamePrefix": "",
-    "sccache": true,
-    "cudaComputeCap": 80,
-    "dockerfile": "libs/infinity-v3/Dockerfile-cuda"
-  },
-  {
-    "name": "a10",
-    "imageNamePrefix": "86-",
-    "sccache": true,
-    "cudaComputeCap": 86,
-    "dockerfile": "libs/infinity-v3/Dockerfile-cuda"
-  },
-  {
-    "name": "RTX 4000",
-    "imageNamePrefix": "89-",
-    "sccache": true,
-    "cudaComputeCap": 89,
-    "dockerfile": "libs/infinity-v3/Dockerfile-cuda"
-  },
-  {
-    "name": "Hopper",
-    "imageNamePrefix": "hopper-",
-    "sccache": true,
-    "cudaComputeCap": 90,
-    "dockerfile": "libs/infinity-v3/Dockerfile-cuda"
-  },
-  {
-    "name": "Blackwell",
-    "imageNamePrefix": "blackwell-",
-    "sccache": true,
-    "cudaComputeCap": 100,
-    "dockerfile": "libs/infinity-v3/Dockerfile-cuda"
-  },
-  {
-    "name": "RTX Blackwell",
-    "imageNamePrefix": "sm120-",
-    "sccache": true,
-    "cudaComputeCap": 120,
-    "dockerfile": "libs/infinity-v3/Dockerfile-cuda"
-  },
-  {
-    "name": "All",
-    "imageNamePrefix": "cuda-",
-    "sccache": false,
-    "dockerfile": "libs/infinity-v3/Dockerfile-cuda-all"
-  },
-  {
     "name": "nvidia",
     "imageNamePrefix": "nvidia-",
-    "sccache": false,
     "dockerfile": "libs/infinity-v3/Dockerfile-libtorch"
   },
   {
     "name": "cpu",
     "imageNamePrefix": "cpu-",
-    "sccache": true,
     "dockerfile": "libs/infinity-v3/Dockerfile"
   }
 ]

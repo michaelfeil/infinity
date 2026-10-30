@@ -41,7 +41,7 @@ DEALINGS IN THE SOFTWARE.
 #define qwen35_gdn_prepare tei_reference_qwen35_gdn_prepare
 #define qwen35_gdn_recurrent tei_reference_qwen35_gdn_recurrent
 #define qwen35_gdn_norm tei_reference_qwen35_gdn_norm
-#include "../../../candle/src/kernels/qwen35_gdn.cu"
+#include "vendor/candle_kernels/kernels/qwen35_gdn.cu"
 #undef gdn_sum
 #undef qwen35_conv_bf16
 #undef qwen35_gdn_prepare

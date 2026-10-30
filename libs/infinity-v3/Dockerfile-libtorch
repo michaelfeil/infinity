@@ -41,7 +41,7 @@ ARG DOCKER_LABEL
 COPY . .
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \
-    --mount=type=cache,target=/usr/src/infinity-v3/target \
+    --mount=type=cache,id=infinity-v3-libtorch-cuda-target,target=/usr/src/infinity-v3/target \
     <<'BUILD'
 set -eu
 export LD_LIBRARY_PATH="$(find /opt/torch-sdk/lib/python3.12/site-packages/nvidia -type d -name lib -printf '%p:')$LIBTORCH/lib:/usr/local/cuda/lib64"

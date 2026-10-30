@@ -69,10 +69,8 @@ CUDA attention requires FP16 or BF16; CPU uses FP32. MPS and XPU are not support
 GPU replicas each load a complete model; they do not shard its weights.
 
 Synthetic native and Rust fixtures exercise model paths, heads and sequence
-isolation. Some Candle model/head combinations cannot execute the corresponding
-packed request, so a direct Candle comparison is unavailable for those cases.
-The latency target remains within 5% of Candle for comparable workloads; this PR
-does not claim that target for every model, checkpoint, precision or GPU.
+isolation. Independent Transformers references cover supported numerical paths;
+latency depends on the model, checkpoint, precision and GPU.
 
 ColQwen3 uses the same matrix response formats as ColBERT. Supply the trained
 query suffix (ten `<|endoftext|>` tokens) in text inputs. For image documents, use

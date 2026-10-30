@@ -298,41 +298,6 @@ fn decision_startup_ragged_outputs_and_recovery_cpu() {
         }
     }
 }
-#[cfg(feature = "benchmark-cuda")]
-#[test]
-#[ignore = "Requires two CUDA GPUs; synthetic Candle parity, not trained qualification"]
-fn decision_cuda_matches_candle() {
-    use text_embeddings_backend_candle::CandleBackend;
-    for (kind, noncausal) in [
-        ("laya", false),
-        ("option_tokens", false),
-        ("pplx", false),
-        ("pplx", true),
-        ("clef", false),
-    ] {
-        let f = fixture(kind, noncausal);
-        let torch = LibtorchBackend::new(&f.0, "bfloat16", ModelType::Decision, "cuda:0").unwrap();
-        let candle =
-            CandleBackend::new(&f.0, "bfloat16".into(), ModelType::Decision, None, 1).unwrap();
-        let actual = torch.decide(batch(), requests(kind)).unwrap();
-        let expected = candle.decide(batch(), requests(kind)).unwrap();
-        for (a, e) in actual.iter().zip(expected) {
-            assert_eq!(a.logits.len(), e.logits.len());
-            let max = a
-                .logits
-                .iter()
-                .zip(&e.logits)
-                .map(|(a, b)| (a - b).abs())
-                .fold(0f32, f32::max);
-            println!(
-                "{kind} noncausal={noncausal} maxabs={max}, action_diff={}",
-                (a.action_probability - e.action_probability).abs()
-            );
-            assert!(max < 0.006, "{kind} decision mismatch {max}");
-            assert!((a.action_probability - e.action_probability).abs() < 0.001);
-        }
-    }
-}
 
 #[test]
 fn qwen35_explicit_head_dimension_preserves_independent_attention_width() {
@@ -365,29 +330,4 @@ fn qwen35_explicit_head_dimension_preserves_independent_attention_width() {
         ModelType::Embedding(text_embeddings_backend_core::Pool::Cls),
         "float32",
     );
-}
-#[cfg(feature = "benchmark-cuda")]
-#[test]
-#[ignore = "Requires two CUDA GPUs: independent Candle reference for Q width != hidden width"]
-fn qwen35_independent_attention_width_matches_candle() {
-    use text_embeddings_backend_candle::CandleBackend;
-    let f = fixture_with_heads("pplx", true, 3);
-    let torch = LibtorchBackend::new(&f.0, "bfloat16", ModelType::Decision, "cuda:0").unwrap();
-    let candle = CandleBackend::new(&f.0, "bfloat16".into(), ModelType::Decision, None, 1).unwrap();
-    let actual = torch.decide(batch(), requests("pplx")).unwrap();
-    let expected = candle.decide(batch(), requests("pplx")).unwrap();
-    for (a, b) in actual.iter().zip(expected) {
-        assert_eq!(a.logits.len(), b.logits.len());
-        let maximum = a
-            .logits
-            .iter()
-            .zip(b.logits)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0f32, f32::max);
-        assert!(
-            maximum < 0.006,
-            "Independent Qwen3.5 attention width mismatch {maximum}"
-        );
-        assert!((a.action_probability - b.action_probability).abs() < 0.001);
-    }
 }

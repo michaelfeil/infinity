@@ -47,7 +47,7 @@ and client. Run Rust commands from that directory so Cargo also loads its
 ```sh
 cd libs/infinity-v3
 cargo build --locked
-cargo build --locked --no-default-features --features candle,http
+cargo build --locked --no-default-features --features libtorch,http
 cargo test --locked --no-run
 cargo test --locked --lib
 cargo fmt --all -- --check
@@ -56,10 +56,10 @@ cargo run --locked --bin infinity_v3 -- --help
 ```
 
 CPU builds require a C/C++ compiler, pkg-config, OpenSSL development headers,
-and protobuf-compiler. On Debian or Ubuntu, install `build-essential pkg-config
-libssl-dev protobuf-compiler`. CUDA and LibTorch builds additionally require
-their SDKs; LibTorch is an optional workspace member and requires `LIBTORCH`.
-The default workspace builds the Candle CPU server without either SDK.
+protobuf-compiler, CMake, and the LibTorch 2.14.1 SDK. Set `LIBTORCH` to its root
+(or a matching Torch installation's `torch` directory). Use a CPU SDK for CPU
+builds or the CUDA SDK for NVIDIA builds. On Debian or Ubuntu, install
+`build-essential cmake pkg-config libssl-dev protobuf-compiler`.
 
 To run the optional pre-commit hooks, invoke them from the repository root:
 
@@ -74,7 +74,7 @@ Docker context:
 docker build -f libs/infinity-v3/Dockerfile libs/infinity-v3
 ```
 
-Use the same context for `Dockerfile-cuda` and `Dockerfile-cuda-all`. Run
+Use the same context for `Dockerfile-libtorch`. Run
 `push-docker-images.sh` from `libs/infinity-v3` for local multi-variant builds.
 
 V3 CI and Docker workflows live in the repository's root `.github/workflows`,
@@ -103,7 +103,7 @@ the triggering release tag independently of V3 tags.
    A tag push alone builds images; publishing the release publishes its docs.
 
 Stable image tags update `*-latest`; main builds update `*-main`. Prerelease
-tags do not move stable aliases. The published CPU image uses Candle; the native
+tags do not move stable aliases. The published CPU image uses CPU LibTorch; the native
 LibTorch model catalog applies to the NVIDIA image and LibTorch source builds.
 Python/v2 releases update `latest-v2` documentation independently of v3.
 

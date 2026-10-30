@@ -12,14 +12,10 @@ REGISTRIES=(
     "${IMAGE_REPOSITORY:-baseten/infinity_v3}"
 )
 
-# Matrix configurations: prefix:compute_cap:dockerfile:sccache:extra_args
+# Matrix configurations: prefix -> Dockerfile
 declare -A IMAGES=(
-    ["ampere-"]="80:Dockerfile-cuda:true:"
-    ["86-"]="86:Dockerfile-cuda:true:"
-    ["89-"]="89:Dockerfile-cuda:true:"
-    ["hopper-"]="90:Dockerfile-cuda:true:"
-    ["blackwell-"]="100:Dockerfile-cuda:true:"
-    ["sm120-"]="120:Dockerfile-cuda:true:"
+    ["nvidia-"]="Dockerfile-libtorch"
+    ["cpu-"]="Dockerfile"
 )
 
 # Colors for output
@@ -66,36 +62,21 @@ check_prerequisites() {
 # Build and push image for a specific variant
 build_and_push_variant() {
     local prefix="$1"
-    local config="$2"
+    local dockerfile="$2"
 
-    IFS=':' read -r compute_cap dockerfile sccache extra_args <<< "$config"
-
-    log_info "Building variant: ${prefix}sm${compute_cap}"
+    log_info "Building variant: ${prefix%-}"
 
     # Build arguments
     local build_args=(
-        "--build-arg" "CUDA_COMPUTE_CAP=${compute_cap}"
         "--build-arg" "GIT_SHA=$(git rev-parse --short HEAD)"
         "--build-arg" "DOCKER_LABEL=sha-$(git rev-parse --short HEAD)"
-        "--build-arg" "SCCACHE_GHA_ENABLED=false"
-        "--build-arg" "CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-8}"
-        "--build-arg" "RAYON_NUM_THREADS=${RAYON_NUM_THREADS:-8}"
+        "--build-arg" "BUILD_JOBS=${CARGO_BUILD_JOBS:-8}"
     )
 
-    # Add extra build args if specified
-    if [[ -n "$extra_args" ]]; then
-        IFS=',' read -ra args <<< "$extra_args"
-        for arg in "${args[@]}"; do
-            build_args+=("--build-arg" "$arg")
-        done
-    fi
-
-    # Separate cache manifests prevent parallel architectures overwriting
-    # each other. Registry cache preserves intermediate layers on fresh builders;
-    # the sccache mount itself remains local to the BuildKit builder.
+    # Keep CPU and NVIDIA build caches separate.
     local cache_args=()
     if [[ -n "${BUILD_CACHE_REPO:-}" ]]; then
-        local cache_ref="${BUILD_CACHE_REPO}:cuda12.9-sm${compute_cap}"
+        local cache_ref="${BUILD_CACHE_REPO}:${prefix}native"
         cache_args=(--cache-from "type=registry,ref=${cache_ref}-http"
                     --cache-to "type=registry,ref=${cache_ref}-http,mode=max")
     fi
@@ -108,7 +89,7 @@ build_and_push_variant() {
     done
 
     # Build standard image
-    log_info "Building standard image for ${prefix}sm${compute_cap}..."
+    log_info "Building standard image for ${prefix%-}..."
     docker buildx build \
         --platform linux/amd64 \
         --file "${dockerfile}" \
@@ -118,7 +99,7 @@ build_and_push_variant() {
         --push \
         .
 
-    log_success "Completed variant: ${prefix}sm${compute_cap}"
+    log_success "Completed variant: ${prefix%-}"
 }
 
 # Build all variants in parallel
@@ -132,7 +113,6 @@ build_all_variants() {
     # Build each variant
     for prefix_config in "${!IMAGES[@]}"; do
         local actual_prefix="$prefix_config"
-        [[ "$actual_prefix" == "ampere-" ]] && actual_prefix=""
         (
             build_and_push_variant "$actual_prefix" "${IMAGES[$prefix_config]}"
         ) &
@@ -162,9 +142,8 @@ verify_images() {
 
     local failed=0
     for prefix_config in "${!IMAGES[@]}"; do
-        IFS=':' read -r compute_cap dockerfile sccache extra_args <<< "${IMAGES[$prefix_config]}"
+        dockerfile="${IMAGES[$prefix_config]}"
         local actual_prefix="$prefix_config"
-        [[ "$actual_prefix" == "ampere-" ]] && actual_prefix=""
 
         for registry in "${REGISTRIES[@]}"; do
             # Check standard image
@@ -202,10 +181,9 @@ show_usage() {
     echo ""
     echo "Supported Variants:"
     for prefix_config in "${!IMAGES[@]}"; do
-        IFS=':' read -r compute_cap dockerfile sccache extra_args <<< "${IMAGES[$prefix_config]}"
+        dockerfile="${IMAGES[$prefix_config]}"
         local display_prefix="$prefix_config"
-        [[ "$display_prefix" == "ampere-" ]] && display_prefix=""
-        echo "  ${display_prefix}sm${compute_cap} (${dockerfile})"
+        echo "  ${display_prefix%-} (${dockerfile})"
     done
 }
 
@@ -255,10 +233,9 @@ main() {
     if [[ "$dry_run" == "true" ]]; then
         log_info "DRY RUN - Would build the following images:"
         for prefix_config in "${!IMAGES[@]}"; do
-            IFS=':' read -r compute_cap dockerfile sccache extra_args <<< "${IMAGES[$prefix_config]}"
+            dockerfile="${IMAGES[$prefix_config]}"
             local display_prefix="$prefix_config"
-            [[ "$display_prefix" == "ampere-" ]] && display_prefix=""
-            echo "  ${display_prefix}sm${compute_cap} (${dockerfile})"
+            echo "  ${display_prefix%-} (${dockerfile})"
         done
         exit 0
     fi
@@ -274,7 +251,6 @@ main() {
     else
         for prefix_config in "${!IMAGES[@]}"; do
             actual_prefix="$prefix_config"
-            [[ "$actual_prefix" == "ampere-" ]] && actual_prefix=""
             build_and_push_variant "$actual_prefix" "${IMAGES[$prefix_config]}"
         done
     fi

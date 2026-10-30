@@ -1,5 +1,0 @@
----
-source: backends/candle/tests/test_jina.rs
-expression: predictions
----
-- - -0.6045344

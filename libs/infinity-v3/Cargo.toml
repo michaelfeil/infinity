@@ -2,8 +2,6 @@
 members = [
     "config",
     "backends",
-    "backends/candle",
-    "backends/candle-bench",
     "backends/core",
     "backends/libtorch",
     "core",
@@ -11,8 +9,8 @@ members = [
 ]
 default-members = [
     "backends",
-    "backends/candle",
     "backends/core",
+    "backends/libtorch",
     "core",
     "router",
 ]
@@ -42,26 +40,8 @@ serde_json = "1.0"
 thiserror = "1.0"
 rand = "0.9"
 serial_test = "2.0.0"
-cudarc = { version = "=0.19.8", features = ["cuda-version-from-build-system"], default-features = false }
-intel-mkl-src = { version = "0.8", default-features = false }
-candle = { version = "0.11", package = "candle-core" }
-candle-nn = { version = "0.11" }
-candle-transformers = { version = "0.11" }
-candle-flash-attn = { version = "0.11" }
-# CUDA extensions ported from huggingface/candle-extensions at
-# e287dd09535ab5d7631c0f2ae0a93d7ec168cb86; upstream licenses are retained.
-candle-cublaslt = { path = "backends/candle/extensions/candle-cublaslt" }
-candle-layer-norm = { path = "backends/candle/extensions/candle-layer-norm" }
-candle-index-select-cu = { path = "backends/candle/extensions/candle-index-select-cu" }
-candle-rotary = { path = "backends/candle/extensions/candle-rotary" }
 half = { version = "2.3.1", features = ["num-traits"] }
 radix_mlp = { version = "0.0.2" }
-
-[patch.crates-io]
-candle = { git = "https://github.com/michaelfeil/candle", rev = "036f39e44015e78ba18d716d73dfdc2e78730c44", package = "candle-core" }
-candle-nn = { git = "https://github.com/michaelfeil/candle", rev = "036f39e44015e78ba18d716d73dfdc2e78730c44", package = "candle-nn" }
-candle-transformers = { git = "https://github.com/michaelfeil/candle", rev = "036f39e44015e78ba18d716d73dfdc2e78730c44", package = "candle-transformers" }
-candle-flash-attn = { git = "https://github.com/michaelfeil/candle", rev = "036f39e44015e78ba18d716d73dfdc2e78730c44", package = "candle-flash-attn" }
 
 [profile.release]
 debug = 0

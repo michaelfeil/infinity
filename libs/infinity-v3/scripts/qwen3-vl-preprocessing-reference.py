@@ -6,7 +6,7 @@ at revision 9f2f7e710d6d81056aa5c0a4f04764fec6bb7bda.
 
 python scripts/qwen3-vl-preprocessing-reference.py CHECKPOINT OUTPUT
 QWEN3_VL_CHECKPOINT=CHECKPOINT QWEN3_VL_FIXTURES=OUTPUT \
-  cargo test -p infinity_v3-core --lib --features infinity_v3-backend/candle \
+  cargo test -p infinity_v3-core --lib --features infinity_v3-backend/libtorch \
   native_processor_matches_reference -- --ignored
 """
 import hashlib, json, types

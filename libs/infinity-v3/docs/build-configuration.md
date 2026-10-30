@@ -5,7 +5,7 @@ binary with a different base, set `ENV_VAR_BASE` when invoking Cargo:
 
 ```sh
 cd libs/infinity-v3
-ENV_VAR_BASE=ACME cargo build --locked --release --no-default-features --features candle,http
+ENV_VAR_BASE=ACME cargo build --locked --release --no-default-features --features libtorch,http
 ACME_MODEL_ID=BAAI/bge-small-en-v1.5 ./target/release/infinity_v3
 ```
 

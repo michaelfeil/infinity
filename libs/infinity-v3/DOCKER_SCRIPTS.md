@@ -33,19 +33,15 @@ Full-featured script with error handling, parallel builds, and verification.
 ./push-docker-images.sh --help
 ```
 
-CUDA inference in both Candle and LibTorch requires SM80 (Ampere) or newer.
+CUDA inference in LibTorch requires SM80 (Ampere) or newer.
 SM75/Turing images are no longer built or supported. CPU builds are unaffected.
 
 ## Supported Variants
 
 | Prefix | Architecture | Compute Cap | Dockerfile |
 |--------|--------------|-------------|------------|
-| (none) | Ampere | sm80 | Dockerfile-cuda |
-| `86-` | A10 | sm86 | Dockerfile-cuda |
-| `89-` | RTX 4000 | sm89 | Dockerfile-cuda |
-| `hopper-` | Hopper | sm90 | Dockerfile-cuda |
-| `blackwell-` | Datacenter Blackwell | sm100 | Dockerfile-cuda |
-| `sm120-` | RTX Blackwell | sm120 | Dockerfile-cuda |
+| `nvidia-` | Ampere through Blackwell | sm80, sm86, sm89, sm90, sm100, sm120 | Dockerfile-libtorch |
+| `cpu-` | CPU | n/a | Dockerfile |
 
 ## Image Naming Convention
 
@@ -53,13 +49,12 @@ Images are tagged following the GitHub Actions conventions:
 
 **Standard Images:**
 - `{prefix}latest` - Latest version
-- `{prefix}1.8.4` - Full version
-- `{prefix}1.8` - Major.minor version
+- `{prefix}3.0.1` - Full version
+- `{prefix}3.0` - Major.minor version
 
 **Examples:**
-- `baseten/infinity_v3:latest` (sm80)
-- `baseten/infinity_v3:blackwell-latest` (sm100)
-- `baseten/infinity_v3:sm120-latest` (sm120)
+- `baseten/infinity_v3:nvidia-latest` (all supported GPUs)
+- `baseten/infinity_v3:cpu-latest` (CPU)
 
 ## Registries
 
@@ -104,9 +99,9 @@ export BUILDKIT_INLINE_CACHE=1
 ## Build Configuration
 
 **Common Build Args:**
-- `CUDA_COMPUTE_CAP` - Target compute capability
+- `LIBTORCH_CUDA_ARCHITECTURES` - NVIDIA targets (defaults to all supported architectures)
 - `GIT_SHA` - Git commit SHA
-- `SCCACHE_GHA_ENABLED` - Enable sccache caching
+- `BUILD_JOBS` - Compiler parallelism
 
 **Platform:**
 - `linux/amd64` - All images built for this platform
@@ -118,7 +113,7 @@ export BUILDKIT_INLINE_CACHE=1
 
 1. **Permission Denied:**
    ```bash
-   chmod +x push-docker-images.sh quick-docker-build.sh
+   chmod +x push-docker-images.sh
    ```
 
 2. **Registry Login:**
@@ -147,13 +142,13 @@ docker buildx build --progress=plain ...
 
 ## Version Information
 
-- **Current Version:** 1.8.4
+- **Current Version:** 3.0.1
 - **Git SHA:** `git rev-parse --short HEAD`
-- **Matrix Config:** `.github/workflows/matrix.json`
+- **Matrix Config:** `.github/infinity-v3-matrix.json`
 
 ## Integration with CI/CD
 
-These scripts follow the same patterns as the GitHub Actions workflow in `.github/workflows/build.yaml`. They can be used for:
+These scripts follow the same patterns as the GitHub Actions workflow in `.github/workflows/infinity-v3-docker.yaml`. They can be used for:
 
 - Local testing before CI runs
 - Manual image builds for specific variants
@@ -162,10 +157,9 @@ These scripts follow the same patterns as the GitHub Actions workflow in `.githu
 
 ## Performance Tips
 
-1. **Use sccache:** Enabled by default for faster compilation
 2. **Parallel builds:** Use `--parallel` flag for multiple variants
 3. **Build caching:** Inline cache enabled by default
-4. **Selective builds:** Build only needed variants with quick script
+4. **Selective builds:** Build the CPU or NVIDIA Dockerfile directly
 
 ## Security Notes
 

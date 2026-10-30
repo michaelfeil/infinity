@@ -14,7 +14,7 @@
 #include <cstdint>
 #include <cmath>
 #include <type_traits>
-#include "../../../candle/extensions/candle-layer-norm/kernels/ln_fwd_kernels.cuh"
+#include "vendor/candle_kernels/layer_norm/ln_fwd_kernels.cuh"
 // Candle emits PTX directly and guards its BF16 kernel by __CUDA_ARCH__.
 // LibTorch builds a host CUDA translation unit, which also needs the declaration.
 extern "C" __global__ void qk_norm_rope_bf16(const __nv_bfloat16*,
@@ -30,7 +30,7 @@ extern "C" __global__ void qk_norm_rope_bf16(const __nv_bfloat16*,
                                              int,
                                              int,
                                              float);
-#include "../../../candle/src/kernels/qk_norm_rope.cu"
+#include "vendor/candle_kernels/kernels/qk_norm_rope.cu"
 
 namespace infinity {
 namespace {

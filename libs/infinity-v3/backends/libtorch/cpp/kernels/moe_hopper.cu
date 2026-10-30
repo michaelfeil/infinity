@@ -4,4 +4,4 @@
 /// Native symbol-scoped instantiation of the Hopper grouped-expert kernels.
 
 #include "kernels/moe_symbols.h"
-#include "../../../candle/extensions/candle-gemma4-moe/kernels/grouped_gemm_hopper.cu"
+#include "vendor/candle_kernels/moe/grouped_gemm_hopper.cu"

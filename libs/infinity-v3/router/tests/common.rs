@@ -74,7 +74,7 @@ pub async fn start_server(model_id: String, revision: Option<String>, dtype: DTy
             None,
             Some(0), // device_id
             None,    // backend device IDs
-            infinity_v3_backend::BackendKind::Candle,
+            infinity_v3_backend::BackendKind::Libtorch,
             infinity_v3_backend::TorchDevice::Auto,
             Default::default(), // multimodal configuration
         )

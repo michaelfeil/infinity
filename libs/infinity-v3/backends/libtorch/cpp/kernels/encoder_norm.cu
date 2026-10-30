@@ -41,7 +41,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
 #include <vector>
-#include "../../../candle/extensions/candle-layer-norm/kernels/ln_fwd_kernels.cuh"
+#include "vendor/candle_kernels/layer_norm/ln_fwd_kernels.cuh"
 #include "kernels/encoder_embedding_norm.cuh"
 
 namespace infinity {

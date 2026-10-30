@@ -49,7 +49,7 @@ same flags to `infinity_v3`. Tables use BF16 compute unless a row specifies a
 different `--dtype`; replace the common dtype flag in that case. Checkpoint
 storage precision does not set compute precision.
 For CPU, use a LibTorch CPU build, `--torch-device cpu` and `--dtype float32`.
-The published `cpu-*` image uses Candle and has different model coverage.
+The published `cpu-*` image uses CPU LibTorch; CUDA-only kernels and dynamic FP8 require the NVIDIA image.
 
 `--max-batch-tokens` is the total batch capacity, not a model's context length or
 a memory guarantee. These are starting configurations: lower the budget for
