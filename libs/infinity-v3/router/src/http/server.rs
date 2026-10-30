@@ -3115,6 +3115,7 @@ mod multi_model_test {
             flex_queue_offset_ms: 10000,
             max_concurrent_requests: 4,
             max_batch_tokens: 128,
+            max_batch_expanded_tokens: None,
             max_sequence_length: None,
             max_batch_requests: Some(4),
             radix_mlp_threshold: 0.,
@@ -3290,6 +3291,24 @@ mod multi_model_test {
                 serde_json::from_slice(&bytes).unwrap()
             },
         )
+    }
+
+    #[test]
+    fn expanded_batch_limit_is_validated_before_model_loading() {
+        let mut config = settings(
+            "/local/model".into(),
+            "model",
+            infinity_v3_backend::BackendKind::Libtorch,
+        );
+        for limit in [None, Some(128), Some(512)] {
+            config.max_batch_expanded_tokens = limit;
+            assert!(crate::model_registry::validate_configs(&[config.clone()]).is_ok());
+        }
+        for limit in [0, 127, i32::MAX as usize + 1] {
+            config.max_batch_expanded_tokens = Some(limit);
+            let error = crate::model_registry::validate_configs(&[config.clone()]).unwrap_err();
+            assert!(error.to_string().contains("max-batch-expanded-tokens"));
+        }
     }
 
     #[cfg(feature = "libtorch")]

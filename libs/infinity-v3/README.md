@@ -205,6 +205,7 @@ GPUs as replicas; each GPU loads a complete model, rather than a shard.
 | Option | Purpose |
 | --- | --- |
 | `--max-batch-tokens` | Total token budget per batch; defaults to `16384`. Larger batches need more memory. |
+| `--max-batch-expanded-tokens` | Optional expanded-storage ceiling for block-attention fanout; defaults to the batch token budget. |
 | `--max-sequence-length` | Token limit for one sequence, including prompts and image tokens; bounded by the model and batch limits. |
 | `--max-batch-requests` | Optional maximum number of individual requests in a batch. |
 | `--max-concurrent-requests` | Admission limit per model; defaults to `512`. |

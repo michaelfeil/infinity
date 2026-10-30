@@ -65,5 +65,9 @@ pub(crate) fn prometheus_builer(
         .set_buckets_for_metric(input_length_matcher, &input_length_buckets)?
         .set_buckets_for_metric(batch_size_matcher, &batch_size_buckets)?
         .set_buckets_for_metric(batch_tokens_matcher, &batch_tokens_buckets)?
+        .set_buckets_for_metric(
+            Matcher::Full(String::from("infinity_batch_next_compute_tokens")),
+            &batch_tokens_buckets,
+        )?
         .set_buckets_for_metric(compression_ratio_matcher, &compression_ratio_buckets)
 }
