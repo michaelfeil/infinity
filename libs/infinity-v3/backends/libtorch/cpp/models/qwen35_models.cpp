@@ -484,6 +484,9 @@ class Qwen35 final : public Model {
   /// Bound temporary expanded K/V without recomputing the representative prefix.
   /// Each chunk contains whole questions; only the much smaller suffix outputs
   /// survive the loop. Device boundary slices also remain valid under graph capture.
+  // TODO: Evaluate FlashInfer cascade attention to share prefix K/V without the
+  // per-question copies below. Preserve block-bidirectional suffix masks and
+  // validate ragged multi-prefix output parity and CUDA graph replay.
   at::Tensor block_suffix_attention(const at::Tensor& q,
                                     const at::Tensor& k,
                                     const at::Tensor& v,
