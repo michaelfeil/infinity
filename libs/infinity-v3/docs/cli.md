@@ -77,6 +77,10 @@ prefix prefill per request to match input-token billing. Requests exceeding the
 compute, expanded-token, or request-count limit return HTTP 422 before inference.
 They are never split into repeated prefills. Other protocols retain their batching.
 
+Several complete requests can share a batch when their combined compute,
+expanded-token and question counts fit. Each request is charged independently;
+additional prefix sharing across requests does not enlarge the admission budget.
+
 `--max-batch-expanded-tokens` defaults to `--max-batch-tokens`. Raising it lets
 `--max-batch-tokens` count matching prefixes once plus every question suffix,
 while bounding the sum of full sequence lengths separately:
