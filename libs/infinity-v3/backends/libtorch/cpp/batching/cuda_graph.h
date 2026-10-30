@@ -33,7 +33,8 @@ public:
   ~CudaGraphCache();
   CudaGraphCache(const CudaGraphCache&) = delete;
   CudaGraphCache& operator=(const CudaGraphCache&) = delete;
-  // operation: 0 hidden states, 1 sequence classification, 2 token classification.
+  // operation: 0 hidden states, 1 sequence classification, 2 token classification,
+  // 3 last-token hidden states (requires forward_pooled support).
   /// Execute or replay an exact-shape entry; returned graph outputs
   /// may be overwritten by its next replay.
   at::Tensor forward(const Model&, const PackedInput&, int operation = 0);

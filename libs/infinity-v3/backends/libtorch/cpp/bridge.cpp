@@ -1264,8 +1264,9 @@ int32_t tei_decide_radix(void* handle,
       engine.model->prepare_input(packed);
     at::Tensor hidden;
     // The head decides which requests need token spans; warmup remains complete.
-    if (!cached && !use_graph && engine.decision->last_token_only(packed, converted))
-      hidden = engine.model->forward_pooled(packed, true);
+    if (!cached && (!use_graph || blocks) && engine.decision->last_token_only(packed, converted))
+      hidden = use_graph ? engine.graphs->forward(*engine.model, packed, 3)
+                         : engine.model->forward_pooled(packed, true);
     const bool pooled_decision = hidden.defined();
     if (!pooled_decision)
       hidden = cached ? engine.prefix->run(

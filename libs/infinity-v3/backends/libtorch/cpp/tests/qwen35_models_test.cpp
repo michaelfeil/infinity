@@ -547,6 +547,10 @@ int main(int argc, char** argv) {
       mixed.block_prefix_sources = {0, 0, 2, 3, 0};
       to_device(mixed);
       auto mixed_hidden = blocks->forward(mixed);
+      for (bool last : {false, true})
+        TORCH_CHECK(at::equal(blocks->forward_pooled(mixed, last),
+                              mixed_hidden.index_select(0, pooled_token_rows(mixed, last))),
+                    "Compact block readout changed shared, ragged or prefix-only rows");
       for (size_t row = 0; row + 1 < mixed_ends.size(); ++row) {
         std::vector<int32_t> single_ends{0, mixed_ends[row + 1] - mixed_ends[row]};
         auto single = make(std::vector<int64_t>(mixed_ids.begin() + mixed_ends[row],
@@ -606,6 +610,17 @@ int main(int argc, char** argv) {
                     graphs.stats().hits,
                     " attempts=",
                     graphs.stats().attempts);
+        // Pooled and full outputs need distinct graph keys; replay must also
+        // select fresh suffix rows and a shared prefix-only row correctly.
+        for (int iteration = 0; iteration < 3; ++iteration) {
+          auto replay = mixed;
+          replay.ids = (mixed.ids + iteration).remainder(32);
+          auto expected = blocks->forward(replay).index_select(0, pooled_token_rows(replay, true));
+          TORCH_CHECK(at::allclose(expected, graphs.forward(*blocks, replay, 3), 1e-2, 1e-2),
+                      "Compact block graph replay changed selected rows");
+        }
+        TORCH_CHECK(graphs.stats().captures == 5 && graphs.stats().hits >= 10,
+                    "Compact block outputs did not use a separate captured graph");
       }
       bool missing = false;
       try {
