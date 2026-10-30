@@ -409,6 +409,66 @@ mod tests {
     fn processor() -> QwenImageProcessor {
         serde_json::from_str(r#"{"patch_size":16,"temporal_patch_size":2,"merge_size":2,"min_pixels":4096,"max_pixels":1310720,"image_mean":[0.5,0.5,0.5],"image_std":[0.5,0.5,0.5],"rescale_factor":0.00392156862745098,"resample":3,"do_resize":true,"do_rescale":true,"do_normalize":true,"do_convert_rgb":true}"#).unwrap()
     }
+    fn encode_png(width: u32, height: u32) -> Vec<u8> {
+        let pixels: Vec<u8> = (0..width as usize * height as usize)
+            .flat_map(|i| {
+                [
+                    (i * 7 % 251) as u8,
+                    (i * 13 % 241) as u8,
+                    (i * 29 % 239) as u8,
+                ]
+            })
+            .collect();
+        let image = image::RgbImage::from_raw(width, height, pixels).unwrap();
+        let mut png = Vec::new();
+        image
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        png
+    }
+
+    /// Reference path that always runs both separable passes.
+    fn resize_two_pass(bytes: &[u8], w: u32, h: u32) -> Vec<u8> {
+        let decoder = QwenImageProcessor::decoder(bytes, 1_000_000).unwrap();
+        let mut decoded = DynamicImage::from_decoder(decoder).unwrap();
+        decoded.apply_orientation(image::metadata::Orientation::NoTransforms);
+        let rgb = decoded.into_rgb8();
+        let src = fast_image_resize::images::Image::from_vec_u8(
+            rgb.width(),
+            rgb.height(),
+            rgb.into_raw(),
+            fast_image_resize::PixelType::U8x3,
+        )
+        .unwrap();
+        let mut intermediate = fast_image_resize::images::Image::new(
+            w,
+            src.height(),
+            fast_image_resize::PixelType::U8x3,
+        );
+        let mut output =
+            fast_image_resize::images::Image::new(w, h, fast_image_resize::PixelType::U8x3);
+        let options = fast_image_resize::ResizeOptions::new().resize_alg(
+            fast_image_resize::ResizeAlg::Convolution(fast_image_resize::FilterType::CatmullRom),
+        );
+        let mut resizer = fast_image_resize::Resizer::new();
+        resizer.resize(&src, &mut intermediate, &options).unwrap();
+        resizer
+            .resize(&intermediate, &mut output, &options)
+            .unwrap();
+        output.into_vec()
+    }
+
+    #[test]
+    fn resize_skips_only_unchanged_axes() {
+        let png = encode_png(64, 48);
+        // identical, width only, height only, and both axes
+        for (w, h) in [(64, 48), (32, 48), (64, 24), (32, 24)] {
+            let optimized = resize_rgb_with_orientation(&png, w, h, 1_000_000, false).unwrap();
+            let reference = resize_two_pass(&png, w, h);
+            assert_eq!(optimized, reference, "{w}x{h}");
+        }
+    }
+
     #[test]
     fn d3_keeps_encoded_pixels_without_exif_rotation() {
         let pixels = vec![120u8; 128 * 64 * 3];

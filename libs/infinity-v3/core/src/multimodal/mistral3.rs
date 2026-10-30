@@ -281,6 +281,9 @@ impl Mistral3Processor {
 }
 
 /// Normalize one patch row into the checkpoint's patch-major pixel layout.
+///
+/// Writes go through iterator chunks so a decoder that disagrees with the planned grid can
+/// only skip work, never abort the request.
 #[allow(clippy::too_many_arguments)]
 fn fill_patch_row(
     row: &mut [f32],
@@ -293,17 +296,76 @@ fn fill_patch_row(
     mean: &[f32; 3],
     std: &[f32; 3],
 ) {
-    for x in 0..gw {
-        let base = x * 3 * patch * patch;
-        for py in 0..patch {
-            let start = (y * patch + py) * stride + x * patch * 3;
-            let source = &rgb[start..start + patch * 3];
-            for (px, value) in source.chunks_exact(3).enumerate() {
-                for channel in 0..3 {
-                    row[base + channel * patch * patch + py * patch + px] =
-                        (f32::from(value[channel]) * scale - mean[channel]) / std[channel];
+    for (x, block) in row.chunks_exact_mut(3 * patch * patch).enumerate().take(gw) {
+        for (channel, plane) in block.chunks_exact_mut(patch * patch).take(3).enumerate() {
+            for (py, target) in plane.chunks_exact_mut(patch).enumerate() {
+                let offset = (y * patch + py) * stride + x * patch * 3;
+                let Some(source) = rgb.get(offset..offset.saturating_add(patch * 3)) else {
+                    continue;
+                };
+                for (slot, value) in target.iter_mut().zip(source.chunks_exact(3)) {
+                    let Some(sample) = value.get(channel) else {
+                        continue;
+                    };
+                    *slot = (f32::from(*sample) * scale - mean[channel]) / std[channel];
                 }
             }
+        }
+    }
+}
+
+/// Fill `pixels` with `gh` patch rows, using at most `threads` workers.
+#[allow(clippy::too_many_arguments)]
+fn fill_patches(
+    pixels: &mut [f32],
+    rgb: &[u8],
+    gh: usize,
+    gw: usize,
+    patch: usize,
+    stride: usize,
+    scale: f32,
+    mean: &[f32; 3],
+    std: &[f32; 3],
+    threads: usize,
+) {
+    let row_len = gw * 3 * patch * patch;
+    let mut threaded = false;
+    if threads > 1 {
+        let failed = std::sync::atomic::AtomicBool::new(false);
+        let rows_per_thread = gh.div_ceil(threads);
+        std::thread::scope(|scope| {
+            for (index, chunk) in pixels.chunks_mut(rows_per_thread * row_len).enumerate() {
+                let first = index * rows_per_thread;
+                let task = move || {
+                    for (offset, row) in chunk.chunks_exact_mut(row_len).enumerate() {
+                        fill_patch_row(
+                            row,
+                            rgb,
+                            first + offset,
+                            gw,
+                            patch,
+                            stride,
+                            scale,
+                            mean,
+                            std,
+                        );
+                    }
+                };
+                // Thread creation can fail under load; retry serially instead of aborting.
+                if std::thread::Builder::new()
+                    .spawn_scoped(scope, task)
+                    .is_err()
+                {
+                    failed.store(true, std::sync::atomic::Ordering::Relaxed);
+                    break;
+                }
+            }
+        });
+        threaded = !failed.load(std::sync::atomic::Ordering::Relaxed);
+    }
+    if !threaded {
+        for (y, row) in pixels.chunks_exact_mut(row_len).enumerate().take(gh) {
+            fill_patch_row(row, rgb, y, gw, patch, stride, scale, mean, std);
         }
     }
 }
@@ -467,11 +529,19 @@ impl State {
             let gh = h as usize / self.patch;
             let gw = w as usize / self.patch;
             let patch = self.patch;
-            let row_len = gw * 3 * patch * patch;
             let stride = w as usize * 3;
+            let expected = (w as usize)
+                .checked_mul(h as usize)
+                .and_then(|pixels| pixels.checked_mul(3))
+                .ok_or_else(|| invalid("Resized image dimensions overflow"))?;
+            if rgb.len() != expected {
+                return Err(invalid(
+                    "Resized image length does not match its dimensions",
+                ));
+            }
             let mean = self.mean;
             let std = self.std;
-            let rgb = rgb.as_slice();
+            let row_len = gw * 3 * patch * patch;
             let mut pixels = vec![0f32; gh * row_len];
             let threads = if gh * row_len >= 1 << 18 {
                 std::thread::available_parallelism()
@@ -482,33 +552,18 @@ impl State {
             } else {
                 1
             };
-            if threads <= 1 {
-                for (y, row) in pixels.chunks_mut(row_len).enumerate() {
-                    fill_patch_row(row, rgb, y, gw, patch, stride, self.scale, &mean, &std);
-                }
-            } else {
-                let rows_per_thread = gh.div_ceil(threads);
-                std::thread::scope(|scope| {
-                    for (index, chunk) in pixels.chunks_mut(rows_per_thread * row_len).enumerate() {
-                        let first = index * rows_per_thread;
-                        scope.spawn(move || {
-                            for (offset, row) in chunk.chunks_mut(row_len).enumerate() {
-                                fill_patch_row(
-                                    row,
-                                    rgb,
-                                    first + offset,
-                                    gw,
-                                    patch,
-                                    stride,
-                                    self.scale,
-                                    &mean,
-                                    &std,
-                                );
-                            }
-                        });
-                    }
-                });
-            }
+            fill_patches(
+                &mut pixels,
+                rgb.as_slice(),
+                gh,
+                gw,
+                patch,
+                stride,
+                self.scale,
+                &mean,
+                &std,
+                threads,
+            );
             spans.push((
                 ids.len(),
                 Arc::new(ImagePatches {
@@ -648,6 +703,50 @@ mod tests {
             .await
             .is_err());
     }
+    #[test]
+    fn patch_rows_match_serial_layout() {
+        let patch = 2usize;
+        let gw = 3usize;
+        let gh = 5usize;
+        let w = gw * patch;
+        let h = gh * patch;
+        let rgb: Vec<u8> = (0..w * h * 3).map(|i| (i * 37 % 251) as u8).collect();
+        let scale = 0.00392156862745098f32;
+        let mean = [0.5f32, 0.5, 0.5];
+        let std = [0.5f32, 0.5, 0.5];
+        let row_len = gw * 3 * patch * patch;
+        let mut expected = vec![0f32; gh * row_len];
+        for y in 0..gh {
+            for x in 0..gw {
+                for c in 0..3 {
+                    for py in 0..patch {
+                        for px in 0..patch {
+                            let index = ((y * patch + py) * w + x * patch + px) * 3 + c;
+                            expected[y * row_len + (x * 3 + c) * patch * patch + py * patch + px] =
+                                (rgb[index] as f32 * scale - mean[c]) / std[c];
+                        }
+                    }
+                }
+            }
+        }
+        for threads in 1..=4 {
+            let mut pixels = vec![0f32; gh * row_len];
+            fill_patches(
+                &mut pixels,
+                &rgb,
+                gh,
+                gw,
+                patch,
+                w * 3,
+                scale,
+                &mean,
+                &std,
+                threads,
+            );
+            assert_eq!(pixels, expected, "threads={threads}");
+        }
+    }
+
     #[test]
     fn retrieval_prefix_preserves_content_and_rejects_ambiguous_roles() {
         let content = serde_json::json!([
