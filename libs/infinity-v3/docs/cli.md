@@ -100,6 +100,11 @@ expanded tokens, reusing the prefix without another prefill. Set
 a single question may exceed it. This bounds temporary K/V copies, not weights,
 hidden states, or total GPU memory.
 
+Last-token decisions select their final hidden rows directly from shared
+execution storage, including during CUDA graph replay. They do not reconstruct
+the prefix's hidden states for every question. Full-token outputs still require
+the expanded layout.
+
 `INFINITY_MAX_BATCH_EXPANDED_TOKENS` is the environment alternative. Values
 broadcast or align with models; `none` uses the compute limit. An explicit limit
 must be at least `--max-batch-tokens` and fit signed 32-bit offsets.
