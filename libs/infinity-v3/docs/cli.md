@@ -119,8 +119,10 @@ hardware and workload coverage is expanded.
 For one shared prefix of length P and suffix lengths S, row-local work scales
 with P + sum(S), but full attention still evaluates P² + sum(S × (P + S)) pairs.
 Unique-token counts therefore do not measure all attention work or GPU memory.
-Paging also leaves request preparation unchanged: the adapter currently renders
-and tokenizes each question's complete prompt.
+For the verified Qwen tokenizer used by Elephant and Mammoth, multi-question
+preparation tokenizes the first full prompt and reuses its prefix for subsequent
+questions with identical rendered prefix text. Each template is still rendered
+in full; other tokenizer configurations retain full-prompt tokenization.
 
 `INFINITY_MAX_BATCH_EXPANDED_TOKENS` is the environment alternative. Values
 broadcast or align with models; `none` uses the compute limit. An explicit limit

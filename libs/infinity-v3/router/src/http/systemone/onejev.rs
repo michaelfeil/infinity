@@ -1,4 +1,6 @@
 //! OneJev's qev-labels-v2 text/image protocol, using the shared decision queue.
+mod prefix;
+
 use super::super::result_value::{AnswerError, ResultValue};
 use super::*;
 use infinity_v3_core::{
@@ -21,6 +23,7 @@ pub struct Onejev {
     max_input_length: usize,
     images: Option<Qwen3VlProcessor>,
     block_attention: bool,
+    reuse_prefix: bool,
 }
 
 impl Onejev {
@@ -79,6 +82,7 @@ impl Onejev {
             .take(codes.len())
             .map(Option::unwrap)
             .collect();
+        let reuse_prefix = prefix::supported(&tokenizer);
         Ok(Self {
             tokenizer,
             chat,
@@ -87,6 +91,7 @@ impl Onejev {
             max_input_length,
             images: None,
             block_attention,
+            reuse_prefix,
         })
     }
 
@@ -289,6 +294,10 @@ impl Onejev {
             .unwrap_or(self.max_input_length)
             .min(self.max_input_length);
         let mut total_options = 0;
+        let mut tokenizer = prefix::PromptTokenizer::new(
+            &self.tokenizer,
+            self.reuse_prefix && request.questions.len() > 1,
+        );
         request.questions.into_iter().map(|(id, spec)| {
             let spec = spec.as_object().ok_or("Question must be an object")?;
             if spec.keys().any(|key| !matches!(key.as_str(), "type" | "instructions" | "criteria")) { return Err("OneJev question supports only type, instructions and criteria".into()); }
@@ -336,17 +345,12 @@ impl Onejev {
             for i in 1..=image_count {
                 prompt = prompt.replace(&format!("<image:{i}>"), "<|vision_start|><|image_pad|><|vision_end|>");
             }
-            let encoded = self.tokenizer.encode(prompt.as_str(), false).map_err(|e| e.to_string())?;
-            let ids = encoded.get_ids().to_vec();
-            let prefix_length = if self.block_attention {
-                // Derive the boundary in the fully rendered prompt; do not tokenize a
-                // separate prefix, since a BPE token can straddle the block boundary.
+            let boundary = if self.block_attention {
                 let suffix = format!("{header} {instructions}\n\nOptions:\n{options}\n\nAnswer with one {word}: {}.", self.codes[..n].join(", "));
-                let boundary = prompt.rfind(&suffix).ok_or("OneJev question missing from rendered template")?;
-                let prefix = encoded.get_offsets().iter().take_while(|(_, end)| *end <= boundary).count();
-                if prefix == 0 || prefix >= ids.len() { return Err("Invalid OneJev prefix boundary".into()); }
-                prefix
-            } else { 0 };
+                Some(prompt.rfind(&suffix).ok_or("OneJev question missing from rendered template")?)
+            } else { None };
+            let (ids, prefix_length) = tokenizer.encode(&prompt, boundary)?;
+            if self.block_attention && (prefix_length == 0 || prefix_length >= ids.len()) { return Err("Invalid OneJev prefix boundary".into()); }
             if ids.is_empty() || ids.len() > limit { return Err(format!("OneJev prompt has {} tokens, exceeding max_len {limit}; prompts are never truncated", ids.len())); }
             let length = ids.len();
             Ok(Question { id, kind: kind.into(), labels, criteria, compute_chars: prompt.chars().count(),
@@ -384,6 +388,144 @@ pub(super) fn answer(
 mod tests {
     use super::*;
 
+    fn compare_preparation(model: &mut Onejev, request: Value) -> anyhow::Result<()> {
+        model.reuse_prefix = true;
+        let actual = model
+            .prepare(serde_json::from_value(request.clone())?)
+            .map_err(anyhow::Error::msg)?;
+        model.reuse_prefix = false;
+        let expected = model
+            .prepare(serde_json::from_value(request)?)
+            .map_err(anyhow::Error::msg)?;
+        assert_eq!(
+            super::input_token_count(&actual),
+            super::input_token_count(&expected)
+        );
+        assert_eq!(actual.len(), expected.len());
+        for (actual, expected) in actual.iter().zip(&expected) {
+            assert_eq!(
+                actual.encoding.input_ids, expected.encoding.input_ids,
+                "{}",
+                actual.id
+            );
+            assert_eq!(actual.encoding.position_ids, expected.encoding.position_ids);
+            assert_eq!(
+                actual.encoding.token_type_ids,
+                expected.encoding.token_type_ids
+            );
+            assert_eq!(actual.compute_chars, expected.compute_chars);
+            let block = |q: &Question| match &q.input {
+                DecisionInput::BlockOptionTokens {
+                    token_ids,
+                    prefix_length,
+                } => (token_ids.clone(), *prefix_length),
+                _ => panic!("Missing block metadata"),
+            };
+            assert_eq!(block(actual), block(expected));
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn cached_preparation_preserves_prompts_limits_and_image_markers() -> anyhow::Result<()> {
+        let path = std::env::temp_dir().join(format!("onejev-prefix-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&path)?;
+        // A content-dependent template must still be rendered per question.
+        std::fs::write(path.join("chat_template.jinja"),
+            "{% if 'Rate the state:' in messages[1].content %}Rating!{% endif %}{{ messages[0].content }}\n{{ messages[1].content }}<|im_end|>")?;
+        let chat = ChatProcessor::load(&path)
+            .map_err(anyhow::Error::msg)?
+            .unwrap();
+        std::fs::remove_dir_all(&path)?;
+        let tokenizer = prefix::tests::tokenizer();
+        assert!(prefix::supported(&tokenizer));
+        let mut model = Onejev {
+            tokenizer,
+            chat,
+            codes: vec!["A".into(), "B".into()],
+            token_ids: vec![1, 2],
+            max_input_length: 32768,
+            images: None,
+            block_attention: true,
+            reuse_prefix: true,
+        };
+        let mut request = json!({"state": "cafe\u{301} 東京\n\nQuestion: yes?", "questions": {
+            "noul": {"type":"noul"},
+            "choice": {"type":"choice", "criteria":{"one":"first", "two":"second"}},
+            "score": {"type":"score", "criteria":["good", "bad"]},
+            "last": {"type":"noul", "instructions":"Is the state empty?"}
+        }});
+        compare_preparation(&mut model, request.clone())?;
+        request["state"] = json!({"messages":[{"role":"user", "content":[
+            {"type":"text", "text":"Before cafe\u{301}"},
+            {"type":"image_url", "image_url":{"url":"https://example.com/image.png"}},
+            {"type":"text", "text":"Between 東京"},
+            {"type":"image_url", "image_url":{"url":"https://example.com/second.png"}}
+        ]}]});
+        let mut with_images: SystemOneRequest = serde_json::from_value(request.clone())?;
+        assert_eq!(Onejev::image_sources(&mut with_images, 2).unwrap().len(), 2);
+        request["state"] = serde_json::to_value(with_images.state)?;
+        compare_preparation(&mut model, request.clone())?;
+        for reuse in [true, false] {
+            model.reuse_prefix = reuse;
+            let prepared = model
+                .prepare(serde_json::from_value(request.clone())?)
+                .unwrap();
+            let max_len = prepared
+                .iter()
+                .map(|q| q.encoding.input_ids.len())
+                .max()
+                .unwrap();
+            request["max_len"] = json!(max_len);
+            assert!(model
+                .prepare(serde_json::from_value(request.clone())?)
+                .is_ok());
+            request["max_len"] = json!(max_len - 1);
+            assert!(model
+                .prepare(serde_json::from_value(request.clone())?)
+                .err()
+                .unwrap()
+                .contains("never truncated"));
+            request.as_object_mut().unwrap().remove("max_len");
+        }
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "requires ONEJEV_CHECKPOINT_DIR; verifies and times 13k-state fanout preparation"]
+    fn checkpoint_prefix_cache_matches_full_preparation() -> anyhow::Result<()> {
+        let path = std::env::var("ONEJEV_CHECKPOINT_DIR")?;
+        let tokenizer = Tokenizer::from_file(Path::new(&path).join("tokenizer.json"))
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let mut model = Onejev::load(Path::new(&path), tokenizer, 32768)?;
+        assert!(model.block_attention && model.reuse_prefix);
+        for count in [1, 50, 100] {
+            let questions: serde_json::Map<String, Value> = (0..count).map(|i| (format!("q{i:03}"), match i % 3 {
+                0 => json!({"type":"noul", "instructions":format!("Item {i}: cafe\u{301} 東京 {}", "reference ".repeat(120))}),
+                1 => json!({"type":"choice", "criteria":{"one":"first", "two":"second"}}),
+                _ => json!({"type":"score", "criteria":["good", "bad"]}),
+            })).collect();
+            let request = json!({"state":" ledger".repeat(13000), "questions":questions});
+            compare_preparation(&mut model, request.clone())?;
+            for reuse in [false, true] {
+                model.reuse_prefix = reuse;
+                let start = std::time::Instant::now();
+                for _ in 0..3 {
+                    std::hint::black_box(
+                        model
+                            .prepare(serde_json::from_value(request.clone())?)
+                            .map_err(anyhow::Error::msg)?,
+                    );
+                }
+                eprintln!(
+                    "{count} questions, reuse={reuse}: {:.2} ms/request",
+                    start.elapsed().as_secs_f64() * 1000.0 / 3.0
+                );
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn empty_noul_criteria_use_defaults_in_mixed_requests() -> anyhow::Result<()> {
         let path = std::env::temp_dir().join(format!("onejev-criteria-{}", uuid::Uuid::new_v4()));
@@ -418,6 +560,7 @@ mod tests {
             max_input_length: 2048,
             images: None,
             block_attention: true,
+            reuse_prefix: false,
         };
         let prepare = |criteria: Option<Value>| {
             let mut request = json!({
@@ -511,6 +654,7 @@ mod tests {
             max_input_length: 64,
             images: None,
             block_attention: true,
+            reuse_prefix: false,
         };
         let image = |width| {
             Arc::new(ImagePatches {
