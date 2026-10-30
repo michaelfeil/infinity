@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <algorithm>
 #include <memory>
+#include "kernels/block_paged.h"
 
 namespace infinity {
 // Native images are contiguous F32 matrices. Admission and the upload cache
@@ -182,6 +183,7 @@ struct AudioInput {
 struct BlockLayout {
   at::Tensor prefix_cumulative, suffix_cumulative, kv_cumulative, history_cumulative, cache_sources;
   std::vector<int32_t> history_offsets;
+  BlockPages pages;
 };
 
 // Packed token rows, without padding. For sequence lengths [3, 2], cumulative
