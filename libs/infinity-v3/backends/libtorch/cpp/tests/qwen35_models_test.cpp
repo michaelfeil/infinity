@@ -1,3 +1,4 @@
+#include "env_config.h"
 #include "prefix_cache_test.h"
 #include "bridge.h"
 #include "models/qwen35_models.h"
@@ -564,6 +565,20 @@ int main(int argc, char** argv) {
                     " row=",
                     row);
       }
+      // Force ragged whole-question chunks, including a row larger than the
+      // target. Compare against the unchunked model before exercising graph replay.
+      setenv(INFINITY_ENV("TORCH_BLOCK_KV_CHUNK_TOKENS"), "4", 1);
+      auto chunked = build(block_cfg,
+                           device_weights,
+                           block_device,
+                           block_device.is_cpu() ? at::kFloat : at::kBFloat16);
+      unsetenv(INFINITY_ENV("TORCH_BLOCK_KV_CHUNK_TOKENS"));
+      chunked->ready();
+      const auto chunk_tolerance = block_device.is_cpu() ? 1e-5 : 1e-2;
+      TORCH_CHECK(
+          at::allclose(mixed_hidden, chunked->forward(mixed), chunk_tolerance, chunk_tolerance),
+          "Chunked block K/V changed ragged multi-prefix outputs");
+      blocks = std::move(chunked);
       if (block_device.is_cuda()) {
         CudaGraphCache graphs(8, 4096, 1);
         auto shared = packed;
