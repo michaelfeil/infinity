@@ -1289,24 +1289,20 @@
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>cargo<span class="w"> </span>run<span class="w"> </span>--locked<span class="w"> </span>--bin<span class="w"> </span>infinity_v3<span class="w"> </span>--<span class="w"> </span>--model-id<span class="w"> </span>/path/to/local/model
 </span></code></pre></div>
 <p>The project pins its Rust toolchain. Run commands from <code>libs/infinity-v3</code> so
-Cargo loads the project build configuration. The default build uses the Candle
-CPU backend; CUDA and native LibTorch require their additional build features
-and SDKs. See the <a href="../../CONTRIBUTING/">contributor guide</a> and
+Cargo loads the project build configuration. The default build uses LibTorch
+and requires its SDK through <code>LIBTORCH</code>; use a CPU or CUDA distribution for the
+desired accelerator. See the <a href="../../CONTRIBUTING/">contributor guide</a> and
 <a href="../libtorch-backend/">LibTorch build instructions</a> for those configurations.</p>
 <p><code>--help</code> lists the flags and <code>INFINITY_*</code> environment variables supported by the
 current binary. This avoids maintaining a stale copy of generated CLI help.
 Use a local model directory or a compatible Hugging Face model ID. Model
 availability, access credentials, pooling and supported inputs depend on the
 checkpoint and selected backend.</p>
-<p>The backend is normally determined when the binary or container image is built,
-so most deployments should omit <code>--backend</code>. A single-backend build selects its
-compiled backend automatically. Builds containing both prefer LibTorch; use
-<code>--backend candle</code> (or <code>INFINITY_BACKEND=candle</code>) as an advanced override when
-Candle is needed. The flag cannot enable a backend missing from the
-image; startup errors list the compiled choices.</p>
+<p>LibTorch is the only inference backend. Most deployments should omit
+<code>--backend</code>; <code>--backend libtorch</code> remains accepted for existing configurations.</p>
 <p>Open <code>/docs</code> on the running server for interactive API documentation. The API
 schema is available at <code>/api-doc/openapi.json</code>.</p>
-<p>CUDA inference requires SM80 (Ampere) or newer in both backends. SM75/Turing
+<p>CUDA inference requires SM80 (Ampere) or newer. SM75/Turing
 is unsupported; use a CPU build on hosts without a supported GPU.</p>
 <h2 id="request-service-tiers">Request service tiers</h2>
 <p><code>--priority-queue-bonus-ms</code> sets the virtual queue age bonus for requests carrying
@@ -1338,7 +1334,7 @@ Set <code>INFINITY_MAX_SEQUENCE_LENGTH</code> (or <code>MAX_SEQUENCE_LENGTH</cod
 Like other model settings, one value applies to all models; semicolon-separated
 values align with <code>--model-id</code>, and <code>none</code> leaves a model's limit unchanged.</p>
 <h2 id="ultrabert-embeddings">UltraBERT embeddings</h2>
-<p><code>dmis-lab/UltraBERT-Embed-150M</code> supports native LibTorch and Candle and produces
+<p><code>dmis-lab/UltraBERT-Embed-150M</code> supports native LibTorch and produces
 768-dimensional CLS embeddings with a 32,768-token context. For the native
 LibTorch GPU image:</p>
 <div class="language-sh highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>dmis-lab/UltraBERT-Embed-150M<span class="w"> </span><span class="se">\</span>

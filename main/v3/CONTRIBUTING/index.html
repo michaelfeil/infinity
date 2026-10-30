@@ -1467,7 +1467,7 @@ and client. Run Rust commands from that directory so Cargo also loads its
 <code>.cargo/config.toml</code> and pinned <code>rust-toolchain.toml</code>:</p>
 <div class="language-sh highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">cd</span><span class="w"> </span>libs/infinity-v3
 </span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>cargo<span class="w"> </span>build<span class="w"> </span>--locked
-</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>cargo<span class="w"> </span>build<span class="w"> </span>--locked<span class="w"> </span>--no-default-features<span class="w"> </span>--features<span class="w"> </span>candle,http
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>cargo<span class="w"> </span>build<span class="w"> </span>--locked<span class="w"> </span>--no-default-features<span class="w"> </span>--features<span class="w"> </span>libtorch,http
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--locked<span class="w"> </span>--no-run
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a>cargo<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--locked<span class="w"> </span>--lib
 </span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a>cargo<span class="w"> </span>fmt<span class="w"> </span>--all<span class="w"> </span>--<span class="w"> </span>--check
@@ -1475,10 +1475,10 @@ and client. Run Rust commands from that directory so Cargo also loads its
 </span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a>cargo<span class="w"> </span>run<span class="w"> </span>--locked<span class="w"> </span>--bin<span class="w"> </span>infinity_v3<span class="w"> </span>--<span class="w"> </span>--help
 </span></code></pre></div>
 <p>CPU builds require a C/C++ compiler, pkg-config, OpenSSL development headers,
-and protobuf-compiler. On Debian or Ubuntu, install <code>build-essential pkg-config
-libssl-dev protobuf-compiler</code>. CUDA and LibTorch builds additionally require
-their SDKs; LibTorch is an optional workspace member and requires <code>LIBTORCH</code>.
-The default workspace builds the Candle CPU server without either SDK.</p>
+protobuf-compiler, CMake, and the LibTorch 2.14.1 SDK. Set <code>LIBTORCH</code> to its root
+(or a matching Torch installation's <code>torch</code> directory). Use a CPU SDK for CPU
+builds or the CUDA SDK for NVIDIA builds. On Debian or Ubuntu, install
+<code>build-essential cmake pkg-config libssl-dev protobuf-compiler</code>.</p>
 <p>To run the optional pre-commit hooks, invoke them from the repository root:</p>
 <div class="language-sh highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>pre-commit<span class="w"> </span>run<span class="w"> </span>--config<span class="w"> </span>libs/infinity-v3/.pre-commit-config.yaml<span class="w"> </span>--all-files
 </span></code></pre></div>
@@ -1486,7 +1486,7 @@ The default workspace builds the Candle CPU server without either SDK.</p>
 Docker context:</p>
 <div class="language-sh highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>docker<span class="w"> </span>build<span class="w"> </span>-f<span class="w"> </span>libs/infinity-v3/Dockerfile<span class="w"> </span>libs/infinity-v3
 </span></code></pre></div>
-<p>Use the same context for <code>Dockerfile-cuda</code> and <code>Dockerfile-cuda-all</code>. Run
+<p>Use the same context for <code>Dockerfile-libtorch</code>. Run
 <code>push-docker-images.sh</code> from <code>libs/infinity-v3</code> for local multi-variant builds.</p>
 <p>V3 CI and Docker workflows live in the repository's root <code>.github/workflows</code>,
 with V3 path filters and independent names. CPU unit tests run on pull requests
@@ -1513,7 +1513,7 @@ the triggering release tag independently of V3 tags.</p>
    A tag push alone builds images; publishing the release publishes its docs.</li>
 </ol>
 <p>Stable image tags update <code>*-latest</code>; main builds update <code>*-main</code>. Prerelease
-tags do not move stable aliases. The published CPU image uses Candle; the native
+tags do not move stable aliases. The published CPU image uses CPU LibTorch; the native
 LibTorch model catalog applies to the NVIDIA image and LibTorch source builds.
 Python/v2 releases update <code>latest-v2</code> documentation independently of v3.</p>
 <h2 id="ways-to-contribute">Ways to contribute</h2>

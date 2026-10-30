@@ -1155,7 +1155,7 @@ CUDA libraries, model weights, or container base images.</p>
 </tr>
 <tr>
 <td>Vendored TEI regression-test snapshots</td>
-<td>Apache-2.0 comparison baselines; <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/tests/snapshots/NOTICE">Candle snapshot provenance</a> and <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/router/tests/snapshots/NOTICE">router snapshot provenance</a> list the fixtures, full Git blob hashes, and pinned upstream revisions.</td>
+<td>Apache-2.0 comparison baselines; <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/router/tests/snapshots/NOTICE">router snapshot provenance</a> list the fixtures, full Git blob hashes, and pinned upstream revisions.</td>
 </tr>
 <tr>
 <td>Adapted Candle CPU operators</td>
@@ -1163,43 +1163,31 @@ CUDA libraries, model weights, or container base images.</p>
 </tr>
 <tr>
 <td>Candle CUDA activation kernel</td>
-<td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/src/kernels/LICENSE.candle-MIT">MIT text</a> and <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/src/kernels/gated_activation.cu">kernel notices</a>.</td>
+<td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/kernels/LICENSE.candle-MIT">MIT text</a> and <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/kernels/fast_kernels.cu">kernel notices</a>.</td>
 </tr>
 <tr>
 <td>Native prefix Q/K normalization and rotary kernel</td>
-<td>Derived from <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/src/kernels/qk_norm_rope.cu">Candle Q/K normalization</a>, with the MIT permission notice retained in <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/kernels/prefix_qkv_norm_rope.cuh">the derived kernel</a>.</td>
+<td>Derived from <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/kernels/qk_norm_rope.cu">Candle Q/K normalization</a>, with the MIT permission notice retained in <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/kernels/prefix_qkv_norm_rope.cuh">the derived kernel</a>.</td>
 </tr>
 <tr>
 <td>Candle cuBLASLt extension</td>
-<td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/extensions/candle-cublaslt/LICENSE-APACHE">Apache text</a> and <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/extensions/candle-cublaslt/LICENSE-MIT">MIT text</a>.</td>
-</tr>
-<tr>
-<td>Candle index-select extension</td>
-<td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/extensions/candle-index-select-cu/LICENSE-APACHE">Apache text</a>, <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/extensions/candle-index-select-cu/LICENSE-MIT">MIT text</a>, and file headers.</td>
+<td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/notices/LICENSE-APACHE">Apache text</a> and <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/LICENSE.cublaslt-MIT">MIT text</a>.</td>
 </tr>
 <tr>
 <td>Candle layer-norm extension</td>
-<td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/extensions/candle-layer-norm/LICENSE-APACHE">Apache text</a>, <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/extensions/candle-layer-norm/LICENSE-MIT">MIT text</a>, and <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/extensions/candle-layer-norm/LICENSE">BSD text</a>.</td>
-</tr>
-<tr>
-<td>Candle rotary extension</td>
-<td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/extensions/candle-rotary/LICENSE-APACHE">Apache text</a> and <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/extensions/candle-rotary/LICENSE-MIT">MIT text</a>.</td>
+<td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/layer_norm/LICENSE-APACHE">Apache text</a>, <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/layer_norm/LICENSE-MIT">MIT text</a>, and <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/layer_norm/LICENSE">BSD text</a>.</td>
 </tr>
 <tr>
 <td>RadixMLP-derived layers</td>
-<td>MIT attribution in <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/src/layers/index_select.rs">index-select</a> and <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/src/layers/radix_mlp.rs">RadixMLP</a> source headers.</td>
+<td>MIT attribution retained in <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/batching/radix.cpp">native RadixMLP</a>.</td>
 </tr>
 <tr>
 <td>CUTLASS-derived Gemma4 and Nomic MoE kernels</td>
-<td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/extensions/candle-gemma4-moe/LICENSE.cutlass">BSD-3-Clause text</a>.</td>
+<td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/moe/LICENSE.cutlass">BSD-3-Clause text</a>.</td>
 </tr>
 <tr>
 <td>xxHash prefix fingerprints</td>
 <td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/vendor/xxhash/LICENSE">BSD-2-Clause text</a>, upstream header notices, and <a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/libtorch/cpp/vendor/xxhash/provenance.json">pinned source provenance</a>.</td>
-</tr>
-<tr>
-<td>ALiBi implementation</td>
-<td><a href="https://github.com/michaelfeil/infinity/blob/main/libs/infinity-v3/backends/candle/src/alibi.rs">Source notices</a> for Google AI Language Team, Hugging Face, and Jina AI.</td>
 </tr>
 </tbody>
 </table>

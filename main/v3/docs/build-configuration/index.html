@@ -1221,7 +1221,7 @@
 <p>Infinity v3 defaults to the <code>INFINITY</code> environment-variable base. To build a
 binary with a different base, set <code>ENV_VAR_BASE</code> when invoking Cargo:</p>
 <div class="language-sh highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">cd</span><span class="w"> </span>libs/infinity-v3
-</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nv">ENV_VAR_BASE</span><span class="o">=</span>ACME<span class="w"> </span>cargo<span class="w"> </span>build<span class="w"> </span>--locked<span class="w"> </span>--release<span class="w"> </span>--no-default-features<span class="w"> </span>--features<span class="w"> </span>candle,http
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nv">ENV_VAR_BASE</span><span class="o">=</span>ACME<span class="w"> </span>cargo<span class="w"> </span>build<span class="w"> </span>--locked<span class="w"> </span>--release<span class="w"> </span>--no-default-features<span class="w"> </span>--features<span class="w"> </span>libtorch,http
 </span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nv">ACME_MODEL_ID</span><span class="o">=</span>BAAI/bge-small-en-v1.5<span class="w"> </span>./target/release/infinity_v3
 </span></code></pre></div>
 <p>The resulting binary reads <code>ACME_MODEL_ID</code>, <code>ACME_PORT</code>,
