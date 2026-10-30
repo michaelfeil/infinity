@@ -109,6 +109,19 @@ execution storage, including during CUDA graph replay. They do not reconstruct
 the prefix's hidden states for every question. Full-token outputs still require
 the expanded layout.
 
+`INFINITY_TORCH_BLOCK_PAGED=1` opts into shared prefix pages for CUDA suffix
+attention. Complete prefix pages are stored once; each question owns only its
+suffix, the incomplete prefix tail, and page padding. The attention operator
+reads those pages with one softmax over prefix plus suffix. Small, unshared or
+unsupported layouts retain the chunked path. This is disabled by default while
+hardware and workload coverage is expanded.
+
+For one shared prefix of length P and suffix lengths S, row-local work scales
+with P + sum(S), but full attention still evaluates P² + sum(S × (P + S)) pairs.
+Unique-token counts therefore do not measure all attention work or GPU memory.
+Paging also leaves request preparation unchanged: the adapter currently renders
+and tokenizes each question's complete prompt.
+
 `INFINITY_MAX_BATCH_EXPANDED_TOKENS` is the environment alternative. Values
 broadcast or align with models; `none` uses the compute limit. An explicit limit
 must be at least `--max-batch-tokens` and fit signed 32-bit offsets.
