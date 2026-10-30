@@ -223,6 +223,35 @@ impl PendingEntries {
     }
 }
 
+fn unfinished_client(
+    selected: &[Entry],
+    next: &Entry,
+    pending: &PendingEntries,
+    clients: &mut Option<HashMap<usize, usize>>,
+) -> bool {
+    selected.iter().any(|entry| {
+        entry.metadata.client_batch.as_ref().is_some_and(|client| {
+            client.load(Ordering::SeqCst) != 0
+                || next
+                    .metadata
+                    .client_batch
+                    .as_ref()
+                    .is_some_and(|next| Arc::ptr_eq(client, next))
+                || clients
+                    .get_or_insert_with(|| {
+                        let mut counts = HashMap::new();
+                        for entry in pending.iter() {
+                            if let Some(client) = &entry.metadata.client_batch {
+                                *counts.entry(Arc::as_ptr(client) as usize).or_default() += 1;
+                            }
+                        }
+                        counts
+                    })
+                    .contains_key(&(Arc::as_ptr(client) as usize))
+        })
+    })
+}
+
 /// Request Queue
 #[derive(Debug, Clone)]
 pub struct Queue {
@@ -690,12 +719,11 @@ fn queue_blocking_task(
 
                 while let Some(pending) = entries.pop_front() {
                     if !pending.siblings.is_empty() {
-                        // Keep each ready block request intact and in its service-tier
-                        // position. A preceding partial batch must dispatch first.
-                        if !selected.is_empty() {
-                            entries.push_front(pending);
-                            break;
-                        }
+                        // A request is indivisible, but several whole requests
+                        // can share one batch. Charge each request independently;
+                        // extra native sharing across requests is only a bonus.
+                        let queued_at = pending.queued_at;
+                        let order = pending.order;
                         let mut group: Vec<_> = std::iter::once(pending.entry)
                             .chain(pending.siblings)
                             .collect();
@@ -704,9 +732,12 @@ fn queue_blocking_task(
                             .map(|e| e.encoding.input_ids.len())
                             .sum::<usize>();
                         group.retain(|entry| !entry.metadata.response_tx.is_closed());
-                        if group.is_empty() {
+                        // Filtering a group can remove queued client entries;
+                        // rebuild soft-cut lookahead from the remaining queue.
+                        pending_clients = None;
+                        let Some(first) = group.first() else {
                             continue;
-                        }
+                        };
                         let limits = GroupLimits {
                             compute: max_batch_tokens,
                             expanded: max_batch_expanded_tokens,
@@ -714,14 +745,39 @@ fn queue_blocking_task(
                             prefix_aware: max_batch_expanded_tokens > max_batch_tokens
                                 && radix_mlp_threshold == 0.0,
                         };
-                        (current_tokens, expanded_tokens) = limits.charge(&group);
+                        let (compute, expanded) = limits.charge(&group);
+                        let soft_cut = should_cut(current_tokens, compute, target)
+                            && !unfinished_client(&selected, first, &entries, &mut pending_clients);
+                        if soft_cut
+                            || current_tokens.saturating_add(compute) > max_batch_tokens
+                            || expanded_tokens.saturating_add(expanded) > max_batch_expanded_tokens
+                            || max_batch_requests
+                                .is_some_and(|max| selected.len() + group.len() > max)
+                        {
+                            queued_tokens += expanded;
+                            let mut group = group.into_iter();
+                            if let Some(entry) = group.next() {
+                                entries.push_front(PendingEntry {
+                                    siblings: group.collect(),
+                                    queued_at,
+                                    order,
+                                    entry,
+                                });
+                            }
+                            break;
+                        }
+                        current_tokens += compute;
+                        expanded_tokens += expanded;
                         for entry in group {
                             pooled_count += usize::from(entry.metadata.pooling);
                             token_count += entry.encoding.tokens.len();
                             offset_count += entry.encoding.offsets.len();
                             selected.push(entry);
                         }
-                        break;
+                        if Some(selected.len()) == max_batch_requests {
+                            break;
+                        }
+                        continue;
                     }
                     let PendingEntry {
                         queued_at,
@@ -749,38 +805,9 @@ fn queue_blocking_task(
 
                     let entry_tokens = entry.encoding.input_ids.len();
                     // Soft limit: always allow one input, even if it exceeds the target.
-                    let mut unfinished_client = || {
-                        selected.iter().any(|selected| {
-                            selected
-                                .metadata
-                                .client_batch
-                                .as_ref()
-                                .is_some_and(|client| {
-                                    client.load(Ordering::SeqCst) != 0
-                                        || entry
-                                            .metadata
-                                            .client_batch
-                                            .as_ref()
-                                            .is_some_and(|next| Arc::ptr_eq(client, next))
-                                        || pending_clients
-                                            .get_or_insert_with(|| {
-                                                let mut clients = HashMap::new();
-                                                for pending in entries.iter() {
-                                                    if let Some(client) =
-                                                        &pending.metadata.client_batch
-                                                    {
-                                                        *clients
-                                                            .entry(Arc::as_ptr(client) as usize)
-                                                            .or_default() += 1;
-                                                    }
-                                                }
-                                                clients
-                                            })
-                                            .contains_key(&(Arc::as_ptr(client) as usize))
-                                })
-                        })
-                    };
-                    if should_cut(current_tokens, entry_tokens, target) && !unfinished_client() {
+                    if should_cut(current_tokens, entry_tokens, target)
+                        && !unfinished_client(&selected, &entry, &entries, &mut pending_clients)
+                    {
                         entries.push_front(PendingEntry {
                             siblings: Vec::new(),
                             queued_at,
@@ -792,7 +819,9 @@ fn queue_blocking_task(
 
                     let total_tokens = current_tokens + entry_tokens;
 
-                    if total_tokens > max_batch_tokens {
+                    if total_tokens > max_batch_tokens
+                        || expanded_tokens.saturating_add(entry_tokens) > max_batch_expanded_tokens
+                    {
                         debug_assert!(
                             entry_tokens <= max_batch_tokens,
                             "Single entry exceeds max batch tokens, leading to stall."
@@ -1175,6 +1204,69 @@ mod tests {
                 assert!(queue.next_batch().await.is_none());
             }
             queue.shutdown().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn whole_requests_share_batches_without_cross_request_discounts_or_splits() {
+        // Each request costs 6 prefix + 2*2 suffix = 10 compute / 16 expanded.
+        // Identical prefixes in different requests still receive separate charges.
+        for (compute, expanded, requests, target, expected) in [
+            (20, 40, None, None, vec![4]),
+            (19, 40, None, None, vec![2, 2]),
+            (20, 31, None, None, vec![2, 2]),
+            (20, 40, Some(3), None, vec![2, 2]),
+            (20, 40, None, Some(15), vec![2, 2]),
+        ] {
+            let queue = test_queue_with_expanded_limit(compute, requests, target, expanded);
+            let mut responses = Vec::new();
+            for request in 0..2 {
+                let mut group = Vec::new();
+                for question in 0..2 {
+                    let (mut entry, response) = block_entry(6, 2);
+                    entry.encoding.input_ids[6..].fill(10 + request * 2 + question);
+                    group.push(entry);
+                    responses.push(response);
+                }
+                queue.append_group(group).await.unwrap();
+            }
+            let mut observed = Vec::new();
+            for count in expected {
+                let (metadata, batch) = queue.next_batch().await.unwrap();
+                assert_eq!(metadata.len(), count);
+                observed.extend(batch.input_ids.chunks_exact(8).map(|row| row[7]));
+            }
+            assert_eq!(observed, [10, 11, 12, 13]);
+            assert!(queue.next_batch().await.is_none());
+            queue.shutdown().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn regular_rows_respect_expanded_limit_around_atomic_groups() {
+        for group_first in [false, true] {
+            for expanded in [23, 24] {
+                let queue = test_queue_with_expanded_limit(20, None, None, expanded);
+                let (single, _single_rx) = block_entry(6, 2);
+                let (a, _a_rx) = block_entry(6, 2);
+                let (b, _b_rx) = block_entry(6, 2);
+                if group_first {
+                    queue.append_group(vec![a, b]).await.unwrap();
+                    queue.append(single).await;
+                } else {
+                    queue.append(single).await;
+                    queue.append_group(vec![a, b]).await.unwrap();
+                }
+                if expanded == 24 {
+                    assert_eq!(queue.next_batch().await.unwrap().0.len(), 3);
+                } else {
+                    let first = if group_first { 2 } else { 1 };
+                    assert_eq!(queue.next_batch().await.unwrap().0.len(), first);
+                    assert_eq!(queue.next_batch().await.unwrap().0.len(), 3 - first);
+                }
+                assert!(queue.next_batch().await.is_none());
+                queue.shutdown().await;
+            }
         }
     }
 
