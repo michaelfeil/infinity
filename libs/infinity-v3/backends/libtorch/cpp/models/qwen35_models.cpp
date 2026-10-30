@@ -976,17 +976,37 @@ class Qwen35 final : public Model {
                                         slice.first.defined() ? &slice : nullptr)
                       : full_attention(x, ap, part, &cache, prefill, -1, &block);
       };
-      auto prefix_attention = attention(prefixes, true);
       at::Tensor attended;
-      if (output_rows.first.defined()) {
-        if (has_suffix)
-          attention(suffixes, false);
-        attended =
-            output_projection->second->forward_quantized(output_rows.first, output_rows.second);
+      if (linear && input.batch == 1 && integer("linear_num_value_heads") >= 32) {
+        // A single row has no prefix-sharing partner: scan its prefix and question once.
+        // Recurrent checkpoints still land on the prefix boundary. Narrow GDN
+        // layouts retain the split path, where the recurrent suffix is faster.
+        QuantizedRows full;
+        if (output_rows.first.defined())
+          full = output_rows;
+        auto projected = delta_attention(normalized,
+                                         ap,
+                                         input,
+                                         &cache,
+                                         true,
+                                         -1,
+                                         &projections,
+                                         full.first.defined() ? &full : nullptr);
+        attended = full.first.defined()
+                       ? output_projection->second->forward_quantized(full.first, full.second)
+                       : prefix_projection(projected, output_name, input);
       } else {
-        attended = has_suffix ? at::cat({prefix_attention, attention(suffixes, false)}, 0)
-                              : prefix_attention;
-        attended = prefix_projection(attended, output_name, input);
+        auto prefix_attention = attention(prefixes, true);
+        if (output_rows.first.defined()) {
+          if (has_suffix)
+            attention(suffixes, false);
+          attended =
+              output_projection->second->forward_quantized(output_rows.first, output_rows.second);
+        } else {
+          attended = has_suffix ? at::cat({prefix_attention, attention(suffixes, false)}, 0)
+                                : prefix_attention;
+          attended = prefix_projection(attended, output_name, input);
+        }
       }
       QuantizedRows mlp_rows;
       auto post = residual_norm(hidden,

@@ -489,6 +489,7 @@ int main(int argc, char** argv) {
   {
     auto block_cfg = cfg;
     block_cfg.values["_decision_attention_mode"] = "block_bidirectional";
+    block_cfg.values["max_position_embeddings"] = "1024";
     block_cfg.values["num_hidden_layers"] = "4";
     block_cfg.values["layer_types.2"] = "linear_attention";
     block_cfg.values["layer_types.3"] = "full_attention";
@@ -541,9 +542,13 @@ int main(int argc, char** argv) {
       // convolution history, and a row with no suffix all coexist in one batch.
       std::vector<int32_t> mixed_ends{0, 5, 9, 11, 16, 18};
       std::vector<int64_t> mixed_ids{1, 2, 3, 4, 5, 1, 2, 7, 8, 9, 10, 6, 7, 8, 9, 10, 1, 2};
+      // A single row crosses the prefill cutoff while its split prefix does not.
+      for (int i = 0; i < 257; ++i)
+        mixed_ids.push_back(i % 31 + 1);
+      mixed_ends.push_back(mixed_ids.size());
       auto mixed = make(mixed_ids, mixed_ends);
-      mixed.block_prefix_lengths = {2, 2, 1, 3, 2};
-      mixed.block_prefix_sources = {0, 0, 2, 3, 0};
+      mixed.block_prefix_lengths = {2, 2, 1, 3, 2, 196};
+      mixed.block_prefix_sources = {0, 0, 2, 3, 0, 5};
       to_device(mixed);
       auto mixed_hidden = blocks->forward(mixed);
       for (size_t row = 0; row + 1 < mixed_ends.size(); ++row) {
@@ -554,7 +559,8 @@ int main(int argc, char** argv) {
         single.block_prefix_lengths = {mixed.block_prefix_lengths[row]};
         single.block_prefix_sources = {0};
         to_device(single);
-        const auto tolerance = block_device.is_cpu() ? 1e-5 : 1e-2;
+        // Crossing the Hopper prefill cutoff changes BF16 accumulation order.
+        const auto tolerance = block_device.is_cpu() ? 1e-5 : (single_ends[1] >= 256 ? .025 : .01);
         TORCH_CHECK(at::allclose(mixed_hidden.narrow(0, mixed_ends[row], single_ends[1]),
                                  blocks->forward(single),
                                  tolerance,
@@ -563,6 +569,54 @@ int main(int argc, char** argv) {
                     block_device,
                     " row=",
                     row);
+      }
+      {
+        // Wide GDN layouts take the single-row scan; compare it with the packed split path.
+        auto wide_cfg = block_cfg;
+        wide_cfg.values["linear_num_value_heads"] = "32";
+        auto wide_weights = block_weights;
+        for (int layer : {0, 2}) {
+          auto p = "model.layers." + std::to_string(layer) + ".linear_attn.";
+          wide_weights[p + "in_proj_qkv.weight"] = at::randn({4352, 16}) * .05;
+          wide_weights[p + "in_proj_z.weight"] = at::randn({4096, 16}) * .05;
+          wide_weights[p + "in_proj_a.weight"] = at::randn({32, 16}) * .05;
+          wide_weights[p + "in_proj_b.weight"] = at::randn({32, 16}) * .05;
+          wide_weights[p + "conv1d.weight"] = at::randn({4352, 1, 4}) * .05;
+          wide_weights[p + "A_log"] = at::randn({32}) * .05;
+          wide_weights[p + "dt_bias"] = at::randn({32}) * .05;
+          wide_weights[p + "out_proj.weight"] = at::randn({16, 4096}) * .05;
+        }
+        for (auto& [name, value] : wide_weights)
+          value = value.to(block_device, block_device.is_cpu() ? at::kFloat : at::kBFloat16);
+        auto wide_blocks = build(wide_cfg,
+                                 wide_weights,
+                                 block_device,
+                                 block_device.is_cpu() ? at::kFloat : at::kBFloat16);
+        wide_blocks->ready();
+        std::vector<int64_t> wide_ids;
+        for (int i = 0; i < 64; ++i)
+          wide_ids.push_back(i % 31 + 1);
+        std::vector<int32_t> single_ends{0, 64};
+        auto wide_single = make(wide_ids, single_ends);
+        wide_single.block_prefix_lengths = {32};
+        wide_single.block_prefix_sources = {0};
+        to_device(wide_single);
+        auto wide_single_hidden = wide_blocks->forward(wide_single);
+        auto pair_ids = wide_ids;
+        pair_ids.insert(pair_ids.end(), wide_ids.begin(), wide_ids.end());
+        std::vector<int32_t> pair_ends{0, 64, 128};
+        auto wide_pair = make(pair_ids, pair_ends);
+        wide_pair.block_prefix_lengths = {32, 32};
+        wide_pair.block_prefix_sources = {0, 0};
+        to_device(wide_pair);
+        auto wide_pair_hidden = wide_blocks->forward(wide_pair);
+        const auto wide_tolerance = block_device.is_cpu() ? 1e-4 : 2e-2;
+        TORCH_CHECK(at::allclose(wide_single_hidden,
+                                 wide_pair_hidden.narrow(0, 0, 64),
+                                 wide_tolerance,
+                                 block_device.is_cpu() ? 1e-5 : wide_tolerance),
+                    "Wide single-row GDN scan diverged from the packed split path on ",
+                    block_device);
       }
       if (block_device.is_cuda()) {
         CudaGraphCache graphs(8, 4096, 1);
