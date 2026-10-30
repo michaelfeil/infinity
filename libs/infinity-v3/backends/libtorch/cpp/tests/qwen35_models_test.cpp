@@ -7,9 +7,11 @@
 #include "helpers/workspace_admission.h"
 #include "batching/cuda_graph.h"
 #include <ATen/ops/_flash_attention_forward.h>
+#include "kernels/block_cascade.h"
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/cuda/CUDAGraph.h>
+#include <c10/cuda/CUDAGuard.h>
 #endif
 #include <iostream>
 using namespace infinity;
@@ -375,11 +377,99 @@ void paged_block_test(const c10::Device& device) {
 #endif
 }
 
+#ifdef TEI_TORCH_CUDA_KERNELS
+void cascade_test(const c10::Device& device) {
+  at::manual_seed(1452);
+  c10::cuda::CUDAGuard device_guard(device);
+  auto stream = at::cuda::getStreamFromPool(false, device.index());
+  c10::cuda::CUDAStreamGuard stream_guard(stream);
+  for (auto dtype : {at::kHalf, at::kBFloat16}) {
+    for (const int64_t heads : {16, 24}) {
+      for (const int64_t dim : {64, 128, 256}) {
+        for (const auto& sources : std::vector<std::vector<int64_t>>{{0, 0, 1, 0}, {0, 0, 0, 0}}) {
+          auto options = at::TensorOptions().device(device).dtype(dtype);
+          // Include ragged suffixes, shared siblings, and an interleaved prefix reuse.
+          const std::vector<int32_t> ends{0, 3, 8, 10, 14}, prefixes{0, 11, 18};
+          auto cu = at::tensor(ends, options.dtype(at::kInt));
+          auto q = (at::randn({14, heads, 2 * dim}, options) * 3).narrow(2, 0, dim);
+          auto k = at::randn({14, 4, dim}, options) * 3, v = at::randn({14, 4, dim}, options);
+          auto pk = at::randn({18, 4, dim}, options) * 3, pv = at::randn({18, 4, dim}, options);
+          auto run = [&] {
+            return block_cascade_attention(q,
+                                           k,
+                                           v,
+                                           pk,
+                                           pv,
+                                           cu,
+                                           ends.data(),
+                                           prefixes,
+                                           sources,
+                                           5,
+                                           1. / std::sqrt(double(dim)));
+          };
+          auto reference = [&] {
+            std::vector<at::Tensor> rows;
+            for (size_t row = 0; row < sources.size(); ++row) {
+              auto source = sources[row];
+              auto length = ends[row + 1] - ends[row];
+              auto keys =
+                  at::cat({pk.narrow(0, prefixes[source], prefixes[source + 1] - prefixes[source]),
+                           k.narrow(0, ends[row], length)},
+                          0);
+              auto values =
+                  at::cat({pv.narrow(0, prefixes[source], prefixes[source + 1] - prefixes[source]),
+                           v.narrow(0, ends[row], length)},
+                          0);
+              auto qq = q.narrow(0, ends[row], length).to(at::kFloat).transpose(0, 1).unsqueeze(0);
+              auto kk = at::repeat_interleave(keys.to(at::kFloat), heads / 4, 1)
+                            .transpose(0, 1)
+                            .unsqueeze(0);
+              auto vv = at::repeat_interleave(values.to(at::kFloat), heads / 4, 1)
+                            .transpose(0, 1)
+                            .unsqueeze(0);
+              rows.push_back(
+                  at::scaled_dot_product_attention(qq, kk, vv).squeeze(0).transpose(0, 1));
+            }
+            return at::cat(rows, 0);
+          };
+          TORCH_CHECK(block_cascade_supported(q), "Cascade test unexpectedly bypassed");
+          auto expected = reference();
+          auto actual = run();
+          auto tolerance = dtype == at::kHalf ? .003 : .025;
+          TORCH_CHECK(at::allclose(actual.to(at::kFloat), expected, tolerance, tolerance),
+                      "Cascade differs from independent FP32 block-mask reference: ",
+                      (actual.to(at::kFloat) - expected).abs().max().item<float>());
+          stream.synchronize();
+          at::cuda::CUDAGraph graph;
+          graph.capture_begin();
+          auto captured = run();
+          graph.capture_end();
+          q.mul_(.5);
+          pk.mul_(2.);
+          graph.replay();
+          auto replay_expected = reference();
+          TORCH_CHECK(at::allclose(captured.to(at::kFloat), replay_expected, tolerance, tolerance),
+                      "Cascade graph replay reused stale attention state");
+          std::cout << "Cascade ragged prefixes, masks, LSE base and graph replay passed heads="
+                    << heads << " dtype=" << dtype << " dim=" << dim << "\n";
+        }
+      }
+    }
+  }
+}
+#endif
+
 int main(int argc, char** argv) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+  if (argc > 1)
+    cascade_test(c10::Device(argv[1]));
+#endif
   std::vector<int32_t> fanout_suffixes{0};
   for (int i = 0; i < 50; ++i)
     fanout_suffixes.push_back(fanout_suffixes.back() + 185);
-  auto pages = prepare_block_pages({0, 13045}, fanout_suffixes, std::vector<int64_t>(50, 0),
+  auto pages = prepare_block_pages({0, 13045},
+                                   fanout_suffixes,
+                                   std::vector<int64_t>(50, 0),
                                    at::TensorOptions().dtype(at::kLong));
   TORCH_CHECK(pages.gather.numel() < 50000,
               "13K/50-question paged storage expanded the shared prefix");

@@ -43,7 +43,8 @@ The packed CUDA Gated DeltaNet chunkwise transform is adapted from
 Hugging Face Transformers 5.19.0 (Apache-2.0). The retained license, source hash,
 and adaptation notice are in `backends/libtorch/cpp/vendor/transformers_gdn/`.
 
-Hopper Gated DeltaNet prefill uses FlashInfer 0.6.13 at revision
+Hopper Gated DeltaNet prefill and optional CUDA block cascade attention use
+FlashInfer 0.6.13 at revision
 `57ba7eeb7ea3003a2d6ad5d9a057c4f952709bac` (Apache-2.0). Its LICENSE, NOTICE,
 and third-party license texts are installed under `share/licenses/tei_torch/flashinfer/`.
 Its device launcher is locally patched to initialize shared-memory opt-in on each CUDA device/context.

@@ -17,6 +17,7 @@
 #include "kernels/qwen35_reference.h"
 #include "kernels/torch_flash_fma.h"
 #include "kernels/moe_kernels.h"
+#include "kernels/block_cascade.h"
 #include <ATen/ops/_efficient_attention_forward.h>
 #include <ATen/ops/_flash_attention_forward.h>
 #include <charconv>
@@ -75,6 +76,7 @@ class Qwen35 final : public Model {
   double epsilon;
   int64_t block_kv_chunk_tokens = 500000;
   bool block_paged = false;
+  bool block_cascade = false;
   bool delta_prefill = false, delta_suffix_prefill = false;
   at::Tensor cos_cache, sin_cache;
 
@@ -494,6 +496,12 @@ class Qwen35 final : public Model {
                                     const at::Tensor& v,
                                     const PackedInput& input,
                                     BlockCache& cache) const {
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if (block_cascade && block_cascade_supported(q))
+      return block_cascade_attention(q, k, v, cache.key, cache.value, input.cumulative,
+                                     input.offsets, cache.offsets, input.block_prefix_sources,
+                                     input.max_sequence, 1. / std::sqrt(double(dim)));
+#endif
     if (cache.metadata.pages && cache.metadata.pages->gather.defined() && block_paged_supported(q))
       return block_paged_attention(q, k, v, cache.key, cache.value, input.cumulative,
                                    cache.metadata.kv_cumulative, *cache.metadata.pages,
@@ -1114,6 +1122,13 @@ public:
                   "TORCH_BLOCK_PAGED must be 0 or 1");
       block_paged = std::string_view(value) == "1";
     }
+    if (const auto* value = std::getenv(INFINITY_ENV("TORCH_BLOCK_CASCADE"))) {
+      TORCH_CHECK(std::string_view(value) == "0" || std::string_view(value) == "1",
+                  "TORCH_BLOCK_CASCADE must be 0 or 1");
+      block_cascade = std::string_view(value) == "1";
+    }
+    TORCH_CHECK(!(block_paged && block_cascade),
+                "Select only one of TORCH_BLOCK_PAGED and TORCH_BLOCK_CASCADE");
     if (const auto* value = std::getenv(INFINITY_ENV("TORCH_BLOCK_KV_CHUNK_TOKENS"))) {
       const auto* end = value + std::strlen(value);
       const auto parsed = std::from_chars(value, end, block_kv_chunk_tokens);

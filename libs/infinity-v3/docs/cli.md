@@ -116,6 +116,13 @@ reads those pages with one softmax over prefix plus suffix. Small, unshared or
 unsupported layouts retain the chunked path. This is disabled by default while
 hardware and workload coverage is expanded.
 
+The experimental `INFINITY_TORCH_BLOCK_CASCADE=1` alternative attends to the shared
+prefix and each question's suffix separately, then merges their softmax states
+with FlashInfer. Use it instead of `INFINITY_TORCH_BLOCK_PAGED`, not together.
+FP16/BF16 partial outputs introduce small numerical differences. Comparison on
+H100 with Elephant and Mammoth through 256 questions found similar latency and
+memory to paging; this is not an additional capacity increase.
+
 For one shared prefix of length P and suffix lengths S, row-local work scales
 with P + sum(S), but full attention still evaluates P² + sum(S × (P + S)) pairs.
 Unique-token counts therefore do not measure all attention work or GPU memory.
