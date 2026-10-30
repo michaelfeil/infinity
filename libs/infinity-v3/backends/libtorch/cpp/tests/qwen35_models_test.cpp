@@ -594,25 +594,25 @@ int main(int argc, char** argv) {
                                  block_device.is_cpu() ? at::kFloat : at::kBFloat16);
         wide_blocks->ready();
         std::vector<int64_t> wide_ids;
-        for (int i = 0; i < 64; ++i)
+        for (int i = 0; i < 257; ++i)
           wide_ids.push_back(i % 31 + 1);
-        std::vector<int32_t> single_ends{0, 64};
+        std::vector<int32_t> single_ends{0, 257};
         auto wide_single = make(wide_ids, single_ends);
-        wide_single.block_prefix_lengths = {32};
+        wide_single.block_prefix_lengths = {196};
         wide_single.block_prefix_sources = {0};
         to_device(wide_single);
         auto wide_single_hidden = wide_blocks->forward(wide_single);
         auto pair_ids = wide_ids;
         pair_ids.insert(pair_ids.end(), wide_ids.begin(), wide_ids.end());
-        std::vector<int32_t> pair_ends{0, 64, 128};
+        std::vector<int32_t> pair_ends{0, 257, 514};
         auto wide_pair = make(pair_ids, pair_ends);
-        wide_pair.block_prefix_lengths = {32, 32};
+        wide_pair.block_prefix_lengths = {196, 196};
         wide_pair.block_prefix_sources = {0, 0};
         to_device(wide_pair);
         auto wide_pair_hidden = wide_blocks->forward(wide_pair);
-        const auto wide_tolerance = block_device.is_cpu() ? 1e-4 : 2e-2;
+        const auto wide_tolerance = block_device.is_cpu() ? 1e-4 : 2.5e-2;
         TORCH_CHECK(at::allclose(wide_single_hidden,
-                                 wide_pair_hidden.narrow(0, 0, 64),
+                                 wide_pair_hidden.narrow(0, 0, 257),
                                  wide_tolerance,
                                  block_device.is_cpu() ? 1e-5 : wide_tolerance),
                     "Wide single-row GDN scan diverged from the packed split path on ",

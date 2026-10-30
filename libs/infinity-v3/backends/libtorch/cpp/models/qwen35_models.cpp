@@ -978,9 +978,11 @@ class Qwen35 final : public Model {
       };
       at::Tensor attended;
       if (linear && input.batch == 1 && integer("linear_num_value_heads") >= 32) {
-        // A single row has no prefix-sharing partner: scan its prefix and question once.
-        // Recurrent checkpoints still land on the prefix boundary. Narrow GDN
-        // layouts retain the split path, where the recurrent suffix is faster.
+        // Keep using the shared delta_attention provider dispatch; only avoid the
+        // redundant second scan. A single row has no prefix-sharing partner, so its
+        // prefix and question can share one pass. Recurrent checkpoints still land
+        // on the prefix boundary. Narrow GDN layouts retain the split path, where
+        // the recurrent suffix is faster.
         QuantizedRows full;
         if (output_rows.first.defined())
           full = output_rows;
