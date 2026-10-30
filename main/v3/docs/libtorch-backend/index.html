@@ -1384,7 +1384,7 @@ NVIDIA Container Toolkit:</p>
 <p>Choose a version from the <a href="https://github.com/michaelfeil/infinity/pkgs/container/infinity_v3">container registry</a>.
 Use <code>--device-id 0</code> for one GPU; otherwise each visible GPU runs a complete replica.
 For native LibTorch CPU builds, use <code>--torch-device cpu --dtype float32</code>.
-The published <code>cpu-*</code> image uses CPU LibTorch. Dynamic FP8 and CUDA-only kernels
+CPU builds from current <code>main</code> use LibTorch. Dynamic FP8 and CUDA-only kernels
 require the NVIDIA image.</p>
 <h2 id="optional-dynamic-fp8">Optional dynamic FP8</h2>
 <p>Add <code>--enable-fp8-dynamic</code> to enable FP8 projections on supported models and GPUs:</p>
