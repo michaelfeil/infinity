@@ -159,6 +159,77 @@ __global__ void exact_ln_kernel(const __half* x,
 }
 
 namespace infinity {
+namespace {
+template <typename Input, typename Output>
+__global__ void vision_rotary_kernel(const Input* qkv,
+                                     const float* cosine,
+                                     const float* sine,
+                                     Output* output,
+                                     int count,
+                                     int heads,
+                                     int dim) {
+  const int index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= count)
+    return;
+  const int lane = index % dim, row = index / dim, token = row / heads;
+  const int half = dim / 2, pair = lane % half;
+  const int source = token * 3 * heads * dim + (row % heads) * dim;
+  const float c = cosine[token * half + pair], s = sine[token * half + pair];
+  for (int projection = 0; projection < 2; ++projection) {
+    const int start = source + projection * heads * dim;
+    const float a = float(qkv[start + pair]), b = float(qkv[start + pair + half]);
+    // Match the separate FP32 tensor products before the final model-dtype cast.
+    const float value = lane < half ? __fsub_rn(__fmul_rn(a, c), __fmul_rn(b, s))
+                                    : __fadd_rn(__fmul_rn(b, c), __fmul_rn(a, s));
+    output[projection * count + index] = Output(value);
+  }
+  output[2 * count + index] = Output(qkv[source + 2 * heads * dim + lane]);
+}
+}
+
+at::Tensor vision_rotary_qkv(const at::Tensor& qkv,
+                             const at::Tensor& cosine,
+                             const at::Tensor& sine,
+                             at::ScalarType output_type) {
+  TORCH_CHECK(qkv.is_cuda() && qkv.is_contiguous() && qkv.dim() == 4 && qkv.size(1) == 3 &&
+                  qkv.size(2) > 0 && qkv.size(3) > 0 && qkv.size(3) % 2 == 0 &&
+                  qkv.numel() <= INT_MAX &&
+                  (qkv.scalar_type() == at::kHalf || qkv.scalar_type() == at::kBFloat16 ||
+                   qkv.scalar_type() == at::kFloat) &&
+                  (output_type == qkv.scalar_type() || output_type == at::kFloat),
+              "Invalid vision rotary QKV geometry or dtype");
+  for (const auto& phase : {cosine, sine})
+    TORCH_CHECK(phase.device() == qkv.device() && phase.scalar_type() == at::kFloat &&
+                    phase.is_contiguous() &&
+                    phase.sizes() == at::IntArrayRef({qkv.size(0), 1, qkv.size(3) / 2}),
+                "Invalid vision rotary phases");
+  c10::cuda::CUDAGuard guard(qkv.device());
+  auto output =
+      at::empty({3, qkv.size(0), qkv.size(2), qkv.size(3)}, qkv.options().dtype(output_type));
+  const int count = qkv.numel() / 3;
+  if (count == 0)
+    return output;
+  auto launch = [&]<typename Input, typename Output>() {
+    vision_rotary_kernel<<<(count + 255) / 256, 256, 0, at::cuda::getCurrentCUDAStream()>>>(
+        qkv.const_data_ptr<Input>(),
+        cosine.const_data_ptr<float>(),
+        sine.const_data_ptr<float>(),
+        output.mutable_data_ptr<Output>(),
+        count,
+        int(qkv.size(2)),
+        int(qkv.size(3)));
+  };
+  AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::kHalf, at::kBFloat16, qkv.scalar_type(), "vision_rotary_qkv", [&] {
+        if (output_type == at::kFloat)
+          launch.template operator()<scalar_t, float>();
+        else
+          launch.template operator()<scalar_t, scalar_t>();
+      });
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return output;
+}
+
 /// Apply the reference warp softmax to actual last-dimension rows without padding scores.
 at::Tensor qwen35_vision_softmax(const at::Tensor& x) {
   TORCH_CHECK(x.is_cuda() && x.scalar_type() == at::kFloat && x.is_contiguous(),

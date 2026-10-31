@@ -8,10 +8,35 @@
 #include <ATen/Parallel.h>
 #include <iostream>
 #ifdef TEI_TORCH_CUDA_KERNELS
+#include "kernels/qwen35_vision.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #endif
 using namespace infinity;
+
+#ifdef TEI_TORCH_CUDA_KERNELS
+void vision_rotary_test(const c10::Device& device) {
+  for (auto dtype : {at::kHalf, at::kBFloat16, at::kFloat})
+    for (int64_t dim : {8, 64, 72, 128}) {
+      auto options = at::TensorOptions().device(device).dtype(dtype);
+      auto qkv = at::randn({7, 3, 3, dim}, options);
+      auto phase = at::randn({7, 1, dim / 2}, options.dtype(at::kFloat));
+      auto cosine = phase.cos(), sine = phase.sin();
+      auto rotate = [&](const at::Tensor& x) {
+        auto fp32 = x.to(at::kFloat);
+        auto a = fp32.narrow(-1, 0, dim / 2), b = fp32.narrow(-1, dim / 2, dim / 2);
+        return at::cat({a * cosine - b * sine, b * cosine + a * sine}, -1);
+      };
+      for (auto output_type : {dtype, at::kFloat}) {
+        auto expected = at::stack({rotate(qkv.select(1, 0)).to(output_type),
+                                   rotate(qkv.select(1, 1)).to(output_type),
+                                   qkv.select(1, 2).to(output_type)});
+        TORCH_CHECK(at::equal(vision_rotary_qkv(qkv, cosine, sine, output_type), expected),
+                    "Fused vision rotary changed reference arithmetic or QKV layout");
+      }
+    }
+}
+#endif
 
 void batched_tower_test(Qwen3VL& tower, const at::Tensor& pixels) {
   std::vector<ImageInput> images{{pixels.repeat({2, 1}), {1, 2, 4}, 2, 0, 2, 0},
@@ -364,6 +389,9 @@ int main(int argc, char** argv) {
   std::cout << "Qwen3.5 FP16 vision, BF16-compatible injection and mRoPE packed isolation passed\n";
   if (argc > 1) {
     c10::Device device(argv[1]);
+#ifdef TEI_TORCH_CUDA_KERNELS
+    vision_rotary_test(device);
+#endif
     Weights hw, cw;
     for (const auto& [name, value] : weights) {
       hw[name] = value.to(at::kHalf);
