@@ -367,6 +367,7 @@ struct Work {
     pooled: ManuallyDrop<DeviceBuffer<f32>>,
 }
 struct LinearPlans {
+    tokens: usize,
     qkv: LinearPlan<Bf16>,
     attention: LinearPlan<Bf16>,
     intermediate: LinearPlan<Bf16>,
@@ -376,6 +377,7 @@ impl LinearPlans {
     fn new(tokens: usize, c: &BertConfig) -> Result<Self, BackendError> {
         let h = c.hidden_size;
         Ok(Self {
+            tokens,
             qkv: LinearPlan::contiguous(tokens, h, product(h, 3)?).map_err(infer)?,
             attention: LinearPlan::contiguous(tokens, h, h).map_err(infer)?,
             intermediate: LinearPlan::contiguous(tokens, h, c.intermediate_size).map_err(infer)?,
@@ -596,21 +598,27 @@ impl Engine {
             .workspace
             .as_mut()
             .ok_or_else(|| infer("Missing oxide workspace"))?;
+        let tokens = b.input_ids.len();
+        if w.linear.tokens != tokens {
+            // Capacity reuse does not change logical tensor extents. Prepare
+            // exact-row plans once per changed batch, outside the layer loop.
+            w.linear = LinearPlans::new(tokens, c)?;
+        }
         w.stage(b)?;
         let s = &*self.stream;
         // Ordinary ordered-stream dispatch; plans are prepared with the arena.
         w.upload()?;
         let k = &self.kernels;
         let weights = &self.weights;
-        let (tokens, h) = (w.tokens, c.hidden_size);
+        let h = c.hidden_size;
         let (mut t, mut width) = (u32_size(tokens)?, u32_size(h)?);
         let base = w.input.cu_deviceptr();
         let (mut ids, mut pos, mut types) = (
             base,
-            base + product(tokens, 4)? as u64,
-            base + product(tokens, 8)? as u64,
+            base + product(w.tokens, 4)? as u64,
+            base + product(w.tokens, 8)? as u64,
         );
-        let boundaries = base + product(tokens, 12)? as u64;
+        let boundaries = base + product(w.tokens, 12)? as u64;
         let selected = boundaries + product(b.cumulative_seq_lengths.len(), 4)? as u64;
         let (mut word, mut position, mut type_weight) = (
             weights.word.cu_deviceptr(),
@@ -711,14 +719,14 @@ impl Engine {
                     boundaries,
                     tokens,
                     b.cumulative_seq_lengths.len() - 1,
-                    w.max_length,
+                    max_length,
                 )?;
             } else {
                 launch(
                     &k.attention,
                     s,
-                    (u32_size(w.max_length)?, heads, count),
-                    u32_size(product(w.max_length, 4)?)?,
+                    (u32_size(max_length)?, heads, count),
+                    u32_size(product(max_length, 4)?)?,
                     &mut [
                         arg(&mut q),
                         arg(&mut key),
@@ -1159,6 +1167,24 @@ mod tests {
             &selected,
         )
         .is_err());
+    }
+    #[test]
+    fn allocation_rounding_does_not_expand_linear_rows() {
+        let b = batch();
+        let c = config();
+        let capacity = work_key(&b, 2).unwrap();
+        assert_eq!(capacity.0, 32);
+        let plans = LinearPlans::new(b.input_ids.len(), &c).unwrap();
+        for plan in [
+            &plans.qkv,
+            &plans.attention,
+            &plans.intermediate,
+            &plans.output,
+        ] {
+            assert_eq!(plan.arguments(0, 0, 0).rows, 3);
+            assert_eq!(plan.input_layout().shape()[0], 3);
+            assert_eq!(plan.output_layout().shape()[0], 3);
+        }
     }
     #[test]
     fn rejects_bucket_and_capacity_overflow() {

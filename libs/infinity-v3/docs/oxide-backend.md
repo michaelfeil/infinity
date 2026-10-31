@@ -33,8 +33,10 @@ MiniLM geometry. The model executor retains at most eight geometry workspaces:
 one active plus up to seven inactive device and pinned-host arenas. The reuse key
 rounds token count and maximum sequence length up to 32-token boundaries while
 keeping sequence-boundary and pooled-selection counts exact. Actual sequence
-lengths and selected indices remain authoritative; only unused token capacity is
-zero-padded. Inactive workspaces are evicted LRU under the count limit and a
+lengths, token counts and selected indices remain authoritative. Rounding is
+only an allocation/cache policy: GEMM, attention and custom kernels execute on
+the actual dimensions. Unused staging capacity is initialized but is not a model
+sequence. Inactive workspaces are evicted LRU under the count limit and a
 256 MiB budget covering active plus cached arena buffers. Model weights and
 driver/provider metadata sit outside that budget. One active request may exceed the
 budget; doing so empties the inactive cache.
@@ -45,6 +47,14 @@ allocations, the primary context, and streams remain owned until outstanding
 work drains, including on errors. An uncached geometry prepares its matrix
 plans and workspace once. Without an explicitly selected AOT provider, attention
 uses the Rust SIMT kernel. PDL is not implemented yet.
+
+PDL is the intended optional scheduling extension. Enable it only for qualified
+producer/consumer pairs with explicit dependency synchronization, checked native
+artifacts and measured gains; opaque provider calls keep ordinary stream
+ordering until their launch contract is verified. Correctness must hold without
+overlap. PDL does not eliminate host launch calls, so fusion and prepared dispatch
+remain separate optimizations. It introduces no capture/replay or fixed-shape
+requirement. See [NVIDIA's PDL contract](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/programmatic-dependent-launch.html).
 
 ## Tensor and matrix foundations
 
