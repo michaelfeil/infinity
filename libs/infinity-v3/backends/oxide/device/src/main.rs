@@ -6,6 +6,7 @@
 //! Row kernels launch exactly 256 threads; scalar kernels use a 1D grid.
 
 use cuda_device::{DynamicSharedArray, SharedArray, convert, cuda_module, kernel, thread, warp};
+mod norm384;
 
 /// Interpret one BF16 storage element without numerical conversion error.
 /// The upper16 bits are the exponent, sign and significant FP32 bits.
@@ -122,6 +123,92 @@ unsafe fn embedding_value(
 #[cuda_module]
 mod kernels {
     use super::*;
+
+    /// Register-cached single-warp specialization, grid=(tokens,1,1), block=32.
+    #[kernel]
+    pub unsafe fn infinity_embedding_norm_384(
+        ids: *const u32,
+        positions: *const u32,
+        types: *const u32,
+        word: *const u16,
+        position: *const u16,
+        token_type: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm384::embedding_norm_384(
+                ids, positions, types, word, position, token_type, gamma, beta, out, tokens, eps,
+            )
+        };
+    }
+
+    /// Register-cached single-warp specialization, grid=(rows,1,1), block=32.
+    #[kernel]
+    pub unsafe fn infinity_layer_norm_384(
+        input: *const u16,
+        residual: *const u16,
+        bias: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm384::layer_norm_384(input, residual, bias, gamma, beta, out, rows, eps)
+        };
+    }
+
+    /// Eight warps split token reduction for each 32-column output tile.
+    /// Grid=(selected sequences,ceil(hidden/32),1), block=256.
+    #[kernel]
+    pub unsafe fn infinity_mean_pool(
+        input: *const u16,
+        cu_seqlens: *const u32,
+        selected: *const u32,
+        out: *mut f32,
+        count: u32,
+        hidden: u32,
+    ) {
+        let row = thread::blockIdx_x() as usize;
+        if row >= count as usize {
+            return;
+        }
+        let tid = thread::threadIdx_x() as usize;
+        let lane = tid & 31;
+        let column = thread::blockIdx_y() as usize * 32 + lane;
+        let sequence = unsafe { *selected.add(row) } as usize;
+        let start = unsafe { *cu_seqlens.add(sequence) } as usize;
+        let end = unsafe { *cu_seqlens.add(sequence + 1) } as usize;
+        if end <= start {
+            return;
+        }
+        let mut token = start + (tid >> 5);
+        let mut total = 0.0;
+        if column < hidden as usize {
+            while token < end {
+                total += unsafe { read(input, token * hidden as usize + column) };
+                token += 8;
+            }
+        }
+        static mut PARTIALS: SharedArray<f32, 256> = SharedArray::UNINIT;
+        let scratch = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PARTIALS) };
+        unsafe { *scratch.add(tid) = total };
+        thread::sync_threads();
+        if tid < 32 && column < hidden as usize {
+            total = 0.0;
+            let mut warp_index = 0;
+            while warp_index < 8 {
+                total += unsafe { *scratch.add(warp_index * 32 + lane) };
+                warp_index += 1;
+            }
+            unsafe { *out.add(row * hidden as usize + column) = total / (end - start) as f32 };
+        }
+    }
 
     /// Fuse embedding gathers with affine LayerNorm, retaining FP32 position statistics.
     /// Grid=(tokens,1,1), block=(256,1,1); no dynamic shared memory is required.

@@ -22,8 +22,9 @@ toolkit = os.environ.get("CUDA_TOOLKIT_PATH", os.environ.get("CUDA_HOME"))
 ptxas = os.environ.get("PTXAS", str(Path(toolkit) / "bin/ptxas") if toolkit else "ptxas")
 cuobjdump = os.environ.get("CUOBJDUMP", str(Path(toolkit) / "bin/cuobjdump") if toolkit else "cuobjdump")
 environment = dict(os.environ, RUSTUP_TOOLCHAIN="1.99.1", RUSTC_BOOTSTRAP="1")
-symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_gelu_bias",
-                  "infinity_layer_norm", "infinity_pool", "infinity_qkv"])
+symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_embedding_norm_384",
+                  "infinity_gelu_bias", "infinity_layer_norm", "infinity_layer_norm_384",
+                  "infinity_mean_pool", "infinity_pool", "infinity_qkv"])
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -43,7 +44,7 @@ manifest = {
     "compute_dtype": "bfloat16",
     "output_dtype": "float32",
     "sources": {name: digest(root / name) for name in
-                ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs"]},
+                ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs", "src/norm384.rs"]},
     "kernels": symbols,
     "qualification": "Every architecture is independently compiled from Rust and assembled to a native cubin; hardware runtime validation is separate.",
     "architectures": [],
@@ -80,5 +81,5 @@ for arch, hardware in [("sm_90", "H100"), ("sm_100", "B200"),
         "symbols_verified": native_entries,
     })
     (output / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    print(f"{arch} ({hardware}): all six Rust kernels compiled and assembled", flush=True)
+    print(f"{arch} ({hardware}): all {len(symbols)} Rust kernels compiled and assembled", flush=True)
 PY

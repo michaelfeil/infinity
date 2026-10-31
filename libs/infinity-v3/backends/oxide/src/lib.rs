@@ -1,5 +1,6 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 //! BERT executor with oxide-compiled Rust kernels and BF16 cuBLAS projections.
+mod cache;
 mod cublas;
 mod fa4;
 mod graph;
@@ -117,11 +118,14 @@ impl Layer {
 
 struct Kernels {
     embedding: Function,
+    embedding_384: Function,
     norm: Function,
+    norm_384: Function,
     qkv: Function,
     gelu: Function,
     attention: Function,
     pool: Function,
+    mean_pool: Function,
 }
 impl Kernels {
     fn load(ctx: &Arc<Context>) -> Result<Self, BackendError> {
@@ -143,6 +147,13 @@ impl Kernels {
         let module = ctx.load_module_from_image(&data).map_err(start)?;
         let pool = module.load_function("infinity_pool").map_err(start)?;
         Ok(Self {
+            embedding_384: module
+                .load_function("infinity_embedding_norm_384")
+                .map_err(start)?,
+            norm_384: module
+                .load_function("infinity_layer_norm_384")
+                .map_err(start)?,
+            mean_pool: module.load_function("infinity_mean_pool").map_err(start)?,
             embedding: module
                 .load_function("infinity_embedding_norm")
                 .map_err(start)?,
@@ -166,16 +177,26 @@ fn launch(
     shared: u32,
     args: &mut [*mut c_void],
 ) -> Result<(), BackendError> {
-    // SAFETY: all six kernels have fixed ABI signatures, validated dimensions,
-    // retained modules and buffers, and exactly 256 threads per block.
-    unsafe { launch_kernel_on_stream(k, grid, (256, 1, 1), shared, s, args) }.map_err(infer)
+    launch_threads(k, s, grid, 256, shared, args)
+}
+fn launch_threads(
+    k: &Function,
+    s: &Stream,
+    grid: (u32, u32, u32),
+    threads: u32,
+    shared: u32,
+    args: &mut [*mut c_void],
+) -> Result<(), BackendError> {
+    // SAFETY: fixed ABI signatures and validated dimensions; arenas and modules
+    // stay retained. Only the explicitly named 384-wide kernels use 32 threads.
+    unsafe { launch_kernel_on_stream(k, grid, (threads, 1, 1), shared, s, args) }.map_err(infer)
 }
 fn blocks(elements: usize) -> Result<(u32, u32, u32), BackendError> {
     Ok((u32_size(elements.div_ceil(256))?, 1, 1))
 }
 #[allow(clippy::too_many_arguments)]
 fn norm(
-    k: &Function,
+    k: &Kernels,
     s: &Stream,
     mut input: u64,
     mut residual: u64,
@@ -188,8 +209,27 @@ fn norm(
     mut eps: f32,
 ) -> Result<(), BackendError> {
     let (mut gamma, mut beta) = (gamma.cu_deviceptr(), beta.cu_deviceptr());
+    if width == 384 {
+        return launch_threads(
+            &k.norm_384,
+            s,
+            (rows, 1, 1),
+            32,
+            0,
+            &mut [
+                arg(&mut input),
+                arg(&mut residual),
+                arg(&mut bias),
+                arg(&mut gamma),
+                arg(&mut beta),
+                arg(&mut out),
+                arg(&mut rows),
+                arg(&mut eps),
+            ],
+        );
+    }
     launch(
-        k,
+        &k.norm,
         s,
         (rows, 1, 1),
         0,
@@ -238,6 +278,7 @@ struct Engine {
     context: Arc<Context>,
     stream: Arc<Stream>,
     workspace: Option<Work>,
+    cached: cache::WorkspaceCache<WorkKey, Work>,
     failed: bool,
     graphs_enabled: bool,
     fa4: Option<fa4::Fa4>,
@@ -248,9 +289,11 @@ impl Drop for Engine {
         // Destroy graph executables before their CUDA modules or BLAS/provider
         // libraries are unloaded by the remaining fields.
         self.workspace.take();
+        drop(self.cached.drain());
     }
 }
 /// Stable device and pinned-host arenas; raw launches retain all allocations.
+type WorkKey = (usize, usize, usize, usize);
 struct Work {
     graph: Option<graph::GraphExec>,
     warmed: bool,
@@ -259,6 +302,7 @@ struct Work {
     sequences: usize,
     selections: usize,
     max_length: usize,
+    bytes: usize,
     input: DeviceBuffer<u32>,
     host_input: PinnedHostBuffer<u32>,
     host_output: PinnedHostBuffer<f32>,
@@ -278,6 +322,30 @@ impl Drop for Work {
     }
 }
 impl Work {
+    fn key(&self) -> WorkKey {
+        (
+            self.tokens,
+            self.sequences,
+            self.selections,
+            self.max_length,
+        )
+    }
+    fn allocation_bytes(b: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
+        let input = product(b.input_ids.len(), 3)?
+            .checked_add(b.cumulative_seq_lengths.len())
+            .and_then(|n| n.checked_add(b.pooled_indices.len()))
+            .ok_or_else(|| infer("Input arena overflow"))?;
+        // Device+host input/output staging and nine BF16 hidden-sized buffers
+        // (including the packed QKV projection) plus the intermediate tensor.
+        let output = product(product(b.pooled_indices.len(), c.hidden_size)?, 8)?;
+        let hidden = product(product(b.input_ids.len(), c.hidden_size)?, 18)?;
+        let intermediate = product(product(b.input_ids.len(), c.intermediate_size)?, 2)?;
+        product(input, 8)?
+            .checked_add(output)
+            .and_then(|n| n.checked_add(hidden))
+            .and_then(|n| n.checked_add(intermediate))
+            .ok_or_else(|| infer("Workspace arena overflow"))
+    }
     fn matches(&self, b: &Batch, max_length: usize) -> bool {
         self.max_length == max_length
             && self.tokens == b.input_ids.len()
@@ -304,6 +372,7 @@ impl Work {
             sequences: b.cumulative_seq_lengths.len(),
             selections: b.pooled_indices.len(),
             max_length,
+            bytes: Self::allocation_bytes(b, c)?,
             input: DeviceBuffer::zeroed(&s, input_len).map_err(infer)?,
             host_input: PinnedHostBuffer::zeroed(s.context(), input_len).map_err(infer)?,
             host_output: PinnedHostBuffer::zeroed(s.context(), output).map_err(infer)?,
@@ -320,7 +389,7 @@ impl Work {
             stream: s,
         })
     }
-    fn upload(&mut self, b: &Batch) -> Result<(), BackendError> {
+    fn stage(&mut self, b: &Batch) {
         let values = b
             .input_ids
             .iter()
@@ -331,6 +400,8 @@ impl Work {
         for (out, &value) in self.host_input.as_mut_slice().iter_mut().zip(values) {
             *out = value;
         }
+    }
+    fn upload(&self) -> Result<(), BackendError> {
         // SAFETY: pinned staging and destination are retained in this workspace;
         // no host edits occur before the final drain, including error paths.
         unsafe {
@@ -343,7 +414,7 @@ impl Work {
         }
         .map_err(infer)
     }
-    fn complete(&mut self) -> Result<Vec<f32>, BackendError> {
+    fn download(&mut self) -> Result<(), BackendError> {
         // SAFETY: output sizes agree; pinned staging stays owned by Engine even
         // if synchronization fails. Engine leaks a failed arena rather than
         // freeing host memory still potentially being written by CUDA.
@@ -355,7 +426,9 @@ impl Work {
                 self.stream.cu_stream(),
             )
         }
-        .map_err(infer)?;
+        .map_err(infer)
+    }
+    fn complete(&self) -> Result<Vec<f32>, BackendError> {
         self.stream.synchronize().map_err(infer)?;
         Ok(self.host_output.as_slice().to_vec())
     }
@@ -395,13 +468,30 @@ impl Engine {
             .as_ref()
             .is_some_and(|w| w.matches(b, max_length))
         {
-            self.workspace = Some(Work::new(self.stream.clone(), b, c, max_length)?);
+            let key = (
+                b.input_ids.len(),
+                b.cumulative_seq_lengths.len(),
+                b.pooled_indices.len(),
+                max_length,
+            );
+            let next = self.cached.take(&key);
+            // Reserve the next active arena before retaining the previous one.
+            // Oversized active requests empty the inactive cache.
+            drop(self.cached.reserve(Work::allocation_bytes(b, c)?));
+            if let Some(previous) = self.workspace.take() {
+                let (key, bytes) = (previous.key(), previous.bytes);
+                drop(self.cached.put(key, previous, bytes));
+            }
+            self.workspace = Some(match next {
+                Some(work) => work,
+                None => Work::new(self.stream.clone(), b, c, max_length)?,
+            });
         }
         let w = self
             .workspace
             .as_mut()
             .ok_or_else(|| infer("Missing oxide workspace"))?;
-        w.upload(b)?;
+        w.stage(b);
         let s = &*self.stream;
         if let Some(graph) = w.graph.as_ref() {
             graph.launch(s)?;
@@ -412,6 +502,9 @@ impl Engine {
         } else {
             None
         };
+        // The pinned staging addresses stay fixed for the workspace lifetime.
+        // Capture transfers together with compute so replay needs one enqueue.
+        w.upload()?;
         let k = &self.kernels;
         let weights = &self.weights;
         let (tokens, h) = (b.input_ids.len(), c.hidden_size);
@@ -431,26 +524,49 @@ impl Engine {
         );
         let (mut gamma, mut beta) = (weights.gamma.cu_deviceptr(), weights.beta.cu_deviceptr());
         let (mut x, mut eps) = (w.x.cu_deviceptr(), c.layer_norm_eps as f32);
-        launch(
-            &k.embedding,
-            s,
-            (t, 1, 1),
-            0,
-            &mut [
-                arg(&mut ids),
-                arg(&mut pos),
-                arg(&mut types),
-                arg(&mut word),
-                arg(&mut position),
-                arg(&mut type_weight),
-                arg(&mut gamma),
-                arg(&mut beta),
-                arg(&mut x),
-                arg(&mut t),
-                arg(&mut width),
-                arg(&mut eps),
-            ],
-        )?;
+        if h == 384 {
+            launch_threads(
+                &k.embedding_384,
+                s,
+                (t, 1, 1),
+                32,
+                0,
+                &mut [
+                    arg(&mut ids),
+                    arg(&mut pos),
+                    arg(&mut types),
+                    arg(&mut word),
+                    arg(&mut position),
+                    arg(&mut type_weight),
+                    arg(&mut gamma),
+                    arg(&mut beta),
+                    arg(&mut x),
+                    arg(&mut t),
+                    arg(&mut eps),
+                ],
+            )?;
+        } else {
+            launch(
+                &k.embedding,
+                s,
+                (t, 1, 1),
+                0,
+                &mut [
+                    arg(&mut ids),
+                    arg(&mut pos),
+                    arg(&mut types),
+                    arg(&mut word),
+                    arg(&mut position),
+                    arg(&mut type_weight),
+                    arg(&mut gamma),
+                    arg(&mut beta),
+                    arg(&mut x),
+                    arg(&mut t),
+                    arg(&mut width),
+                    arg(&mut eps),
+                ],
+            )?;
+        }
         for layer in &weights.layers {
             let mut qkv = w.qkv.cu_deviceptr();
             self.blas.linear(
@@ -532,7 +648,7 @@ impl Engine {
                 h,
             )?;
             norm(
-                &k.norm,
+                k,
                 s,
                 temp,
                 x,
@@ -571,7 +687,7 @@ impl Engine {
                 h,
             )?;
             norm(
-                &k.norm,
+                k,
                 s,
                 temp,
                 x,
@@ -592,21 +708,39 @@ impl Engine {
             Pool::LastToken => 2,
             Pool::Splade => return Err(infer("Oxide SPLADE unsupported")),
         };
-        launch(
-            &k.pool,
-            s,
-            blocks(product(count as usize, h)?)?,
-            0,
-            &mut [
-                arg(&mut x),
-                arg(&mut bounds),
-                arg(&mut indices),
-                arg(&mut out),
-                arg(&mut count),
-                arg(&mut width),
-                arg(&mut mode),
-            ],
-        )?;
+        if mode == 1 {
+            launch(
+                &k.mean_pool,
+                s,
+                (count, u32_size(h.div_ceil(32))?, 1),
+                0,
+                &mut [
+                    arg(&mut x),
+                    arg(&mut bounds),
+                    arg(&mut indices),
+                    arg(&mut out),
+                    arg(&mut count),
+                    arg(&mut width),
+                ],
+            )?;
+        } else {
+            launch(
+                &k.pool,
+                s,
+                blocks(product(count as usize, h)?)?,
+                0,
+                &mut [
+                    arg(&mut x),
+                    arg(&mut bounds),
+                    arg(&mut indices),
+                    arg(&mut out),
+                    arg(&mut count),
+                    arg(&mut width),
+                    arg(&mut mode),
+                ],
+            )?;
+        }
+        w.download()?;
         if let Some(capture) = capture {
             let graph = capture.finish()?;
             graph.launch(s)?;
@@ -698,6 +832,7 @@ impl OxideBackend {
                 context,
                 stream,
                 workspace: None,
+                cached: cache::WorkspaceCache::new(),
                 failed: false,
                 fa4,
                 graphs_enabled: match std::env::var(infinity_v3_config::infinity_env!(
