@@ -1,0 +1,14 @@
+Infinity oxide backend
+
+Covered original model-executor and kernel contributions are licensed under
+Infinity Restricted MIT License 1.0, in the workspace LICENSE.
+
+The host runtime and compiled device kernels use NVIDIA CUDA Rust, pinned at
+999094fe568fc3080f80d49e9c44e3680ad1c968:
+https://github.com/NVIDIA/cuda-rust
+Copyright (c) 2021-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+Licensed under Apache License 2.0; see LICENSES/Apache-2.0.txt in the workspace.
+Retain the dependency license notices when packaging native kernel artifacts.
+
+The kernel producer also uses libm under its published MIT OR Apache-2.0
+license. CUDA, cuBLAS, and optional attention providers retain their own terms.

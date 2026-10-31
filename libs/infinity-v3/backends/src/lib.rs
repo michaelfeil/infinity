@@ -37,24 +37,36 @@ impl<T> Submission<T> {
     }
 }
 
-/// Inference runtime name retained for existing CLI configurations.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// Select an inference runtime independently of its accelerator installation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum BackendKind {
-    #[default]
     Libtorch,
+    Oxide,
+}
+
+impl Default for BackendKind {
+    fn default() -> Self {
+        if cfg!(feature = "libtorch") || !cfg!(feature = "oxide") {
+            Self::Libtorch
+        } else {
+            Self::Oxide
+        }
+    }
 }
 
 impl BackendKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Libtorch => "libtorch",
+            Self::Oxide => "oxide",
         }
     }
 
     pub const fn is_compiled(self) -> bool {
         match self {
             Self::Libtorch => cfg!(feature = "libtorch"),
+            Self::Oxide => cfg!(feature = "oxide"),
         }
     }
 
@@ -62,15 +74,36 @@ impl BackendKind {
         if self.is_compiled() {
             return Ok(());
         }
-        Err(BackendError::Start(
-            "LibTorch was not compiled; build with --features libtorch".into(),
-        ))
+        let available = [Self::Libtorch, Self::Oxide]
+            .into_iter()
+            .filter(|kind| kind.is_compiled())
+            .map(Self::as_str)
+            .collect::<Vec<_>>();
+        Err(BackendError::Start(format!(
+            "Backend '{}' was not compiled; compiled backends: {}. Build with --features {}",
+            self.as_str(),
+            if available.is_empty() {
+                "none".into()
+            } else {
+                available.join(", ")
+            },
+            match self {
+                Self::Libtorch => "libtorch",
+                Self::Oxide => "oxide",
+            },
+        )))
     }
 
     /// Resolve accelerator selection once before choosing dtype or replica devices.
     pub fn resolve_device(self, torch: TorchDevice) -> Result<TorchDevice, BackendError> {
         match self {
             Self::Libtorch => torch.resolved(),
+            Self::Oxide => match torch {
+                TorchDevice::Auto | TorchDevice::Cuda => Ok(TorchDevice::Cuda),
+                TorchDevice::Cpu => Err(BackendError::Start(
+                    "The plain CUDA backend requires a CUDA device; --torch-device cpu is unsupported".into(),
+                )),
+            },
         }
     }
 
@@ -78,6 +111,7 @@ impl BackendKind {
     pub fn supports_replication(self, torch: TorchDevice) -> bool {
         match self {
             Self::Libtorch => torch == TorchDevice::Cuda,
+            Self::Oxide => torch == TorchDevice::Cuda,
         }
     }
 
@@ -85,6 +119,19 @@ impl BackendKind {
     pub fn visible_device_count(self, torch: TorchDevice) -> Result<usize, BackendError> {
         match self {
             Self::Libtorch => torch.count(),
+            Self::Oxide => {
+                self.resolve_device(torch)?;
+                #[cfg(feature = "oxide")]
+                {
+                    infinity_backend_oxide::device_count()
+                }
+                #[cfg(not(feature = "oxide"))]
+                {
+                    Err(BackendError::Start(
+                        "Plain CUDA was not compiled; build with --features oxide".into(),
+                    ))
+                }
+            }
         }
     }
 }
@@ -232,6 +279,7 @@ impl Backend {
             dense_path,
             device_id,
             enable_fp8_dynamic,
+            kind,
             torch_device,
         )
         .await?;
@@ -462,6 +510,95 @@ impl Backend {
 
 #[allow(unused, clippy::too_many_arguments)]
 async fn init_backend(
+    model_path: PathBuf,
+    api_repo: Option<Arc<ApiRepo>>,
+    dtype: DType,
+    model_type: ModelType,
+    dense_path: Option<String>,
+    device_id: usize,
+    enable_fp8_dynamic: bool,
+    kind: BackendKind,
+    torch_device: TorchDevice,
+) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
+    if kind == BackendKind::Libtorch {
+        return init_libtorch_backend(
+            model_path,
+            api_repo,
+            dtype,
+            model_type,
+            dense_path,
+            device_id,
+            enable_fp8_dynamic,
+            torch_device,
+        )
+        .await;
+    }
+    kind.resolve_device(torch_device)?;
+    #[cfg(feature = "oxide")]
+    {
+        if enable_fp8_dynamic {
+            return Err(BackendError::Start(
+                "The plain CUDA backend does not yet support dynamic FP8".into(),
+            ));
+        }
+        if dense_path.is_some() {
+            return Err(BackendError::Start(
+                "The plain CUDA backend does not yet support Dense projection modules".into(),
+            ));
+        }
+        let dtype = match dtype {
+            DType::Auto | DType::Bfloat16 => "bfloat16",
+            _ => {
+                return Err(BackendError::Start(
+                    "The oxide backend currently supports only --dtype bfloat16".into(),
+                ))
+            }
+        };
+        if !matches!(
+            &model_type,
+            ModelType::Embedding(Pool::Cls | Pool::Mean | Pool::LastToken)
+        ) {
+            return Err(BackendError::Start(
+                "The plain CUDA backend currently supports pooled BERT embeddings only".into(),
+            ));
+        }
+        if let Some(repo) = api_repo.as_ref() {
+            // Preserve task metadata so the backend can reject unsupported
+            // projection/custom modules instead of silently skipping them.
+            match repo.get("modules.json").await {
+                Ok(_) => {}
+                Err(ApiError::RequestError(error))
+                    if error.status().is_some_and(|status| status.as_u16() == 404) => {}
+                Err(error) => {
+                    return Err(BackendError::Start(format!(
+                        "Could not download Sentence Transformers module metadata: {error}"
+                    )))
+                }
+            }
+            download_safetensors(Arc::clone(repo))
+                .await
+                .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
+        }
+        let startup_span = Span::current();
+        let model = tokio::task::spawn_blocking(move || {
+            startup_span.in_scope(|| {
+                infinity_backend_oxide::OxideBackend::new(&model_path, dtype, model_type, device_id)
+            })
+        })
+        .await
+        .map_err(|e| BackendError::Start(format!("CUDA initialization worker failed: {e}")))??;
+        Ok(Box::new(model))
+    }
+    #[cfg(not(feature = "oxide"))]
+    {
+        Err(BackendError::Start(
+            "Plain CUDA was not compiled; build with --features oxide".into(),
+        ))
+    }
+}
+
+#[allow(unused, clippy::too_many_arguments)]
+async fn init_libtorch_backend(
     model_path: PathBuf,
     api_repo: Option<Arc<ApiRepo>>,
     dtype: DType,
@@ -772,22 +909,8 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     // Download and parse index file
     tracing::info!("Downloading `model.safetensors.index.json`");
     let index_file = api.get("model.safetensors.index.json").await?;
-    let index_file_string: String =
-        std::fs::read_to_string(index_file).expect("model.safetensors.index.json is corrupted");
-    let json: serde_json::Value = serde_json::from_str(&index_file_string)
-        .expect("model.safetensors.index.json is corrupted");
-
-    let weight_map = match json.get("weight_map") {
-        Some(serde_json::Value::Object(map)) => map,
-        _ => panic!("model.safetensors.index.json is corrupted"),
-    };
-
-    let mut safetensors_filenames = std::collections::HashSet::new();
-    for value in weight_map.values() {
-        if let Some(file) = value.as_str() {
-            safetensors_filenames.insert(file.to_string());
-        }
-    }
+    let index_file_string = std::fs::read_to_string(index_file)?;
+    let safetensors_filenames = safetensor_shards(&index_file_string)?;
 
     // Download weight files
     let handles: Vec<_> = safetensors_filenames
@@ -809,6 +932,128 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     }
 
     Ok(safetensors_files)
+}
+
+fn safetensor_shards(index: &str) -> Result<Vec<String>, std::io::Error> {
+    use std::{collections::BTreeSet, io, path::Component};
+    let invalid = || {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            "Invalid safetensors weight index",
+        )
+    };
+    let json: serde_json::Value = serde_json::from_str(index).map_err(|_| invalid())?;
+    let map = json
+        .get("weight_map")
+        .and_then(serde_json::Value::as_object)
+        .filter(|map| !map.is_empty())
+        .ok_or_else(invalid)?;
+    let mut shards = BTreeSet::new();
+    for value in map.values() {
+        let file = value.as_str().ok_or_else(invalid)?;
+        if !file.ends_with(".safetensors")
+            || file.contains(['\\', '\0'])
+            || !std::path::Path::new(file)
+                .components()
+                .all(|component| matches!(component, Component::Normal(_)))
+        {
+            return Err(invalid());
+        }
+        shards.insert(file.to_owned());
+    }
+    Ok(shards.into_iter().collect())
+}
+
+#[cfg(test)]
+mod startup_tests {
+    use super::*;
+
+    #[test]
+    fn invalid_weight_indexes_fail_without_panicking_or_following_parent_paths() {
+        for index in [
+            "not JSON",
+            r#"{}"#,
+            r#"{"weight_map":{}}"#,
+            r#"{"weight_map":{"a":3}}"#,
+            r#"{"weight_map":{"a":"../outside.safetensors"}}"#,
+            r#"{"weight_map":{"a":"/outside.safetensors"}}"#,
+            r#"{"weight_map":{"a":"weights.bin"}}"#,
+        ] {
+            assert!(safetensor_shards(index).is_err(), "{index}");
+        }
+        assert_eq!(
+            safetensor_shards(
+                r#"{"weight_map":{"a":"b.safetensors","b":"a.safetensors","c":"b.safetensors"}}"#
+            )
+            .unwrap(),
+            ["a.safetensors", "b.safetensors"]
+        );
+    }
+
+    #[cfg(feature = "oxide")]
+    #[test]
+    fn oxide_rejects_unsupported_options_before_loading_checkpoint_or_driver() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        for (dtype, model_type, dense, fp8, device, diagnostic) in [
+            (
+                DType::Bfloat16,
+                ModelType::Embedding(Pool::Mean),
+                None,
+                false,
+                TorchDevice::Cpu,
+                "requires a CUDA device",
+            ),
+            (
+                DType::Bfloat16,
+                ModelType::Embedding(Pool::Mean),
+                None,
+                true,
+                TorchDevice::Cuda,
+                "dynamic FP8",
+            ),
+            (
+                DType::Bfloat16,
+                ModelType::Embedding(Pool::Mean),
+                Some("dense".into()),
+                false,
+                TorchDevice::Cuda,
+                "Dense projection",
+            ),
+            (
+                DType::Float16,
+                ModelType::Embedding(Pool::Mean),
+                None,
+                false,
+                TorchDevice::Cuda,
+                "bfloat16",
+            ),
+            (
+                DType::Bfloat16,
+                ModelType::Classifier,
+                None,
+                false,
+                TorchDevice::Cuda,
+                "pooled BERT embeddings",
+            ),
+        ] {
+            let result = runtime.block_on(init_backend(
+                PathBuf::from("missing-checkpoint"),
+                None,
+                dtype,
+                model_type,
+                dense,
+                0,
+                fp8,
+                BackendKind::Oxide,
+                device,
+            ));
+            let error = result.err().expect("unsupported options must fail");
+            assert!(matches!(error, BackendError::Start(_)));
+            assert!(error.to_string().contains(diagnostic), "{error}");
+        }
+    }
 }
 
 #[cfg(feature = "libtorch")]

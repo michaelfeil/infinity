@@ -7,6 +7,7 @@ CUDA libraries, model weights, or container base images.
 
 | Component | Retained license and attribution locations |
 | --- | --- |
+| NVIDIA CUDA Rust runtime and oxide device code | Apache-2.0, pinned at `999094fe568fc3080f80d49e9c44e3680ad1c968`; [component notice](backends/oxide/NOTICE) and [license text](LICENSES/Apache-2.0.txt). The device crate has its own pinned lockfile and compiler toolchain. |
 | fastsafetensors non-GDS reader | Apache-2.0; [license](backends/libtorch/cpp/vendor/fastsafetensors/LICENSE) and [pinned source/adaptation provenance](backends/libtorch/cpp/vendor/fastsafetensors/provenance.json). Only the native worker reader is bundled; no Python, GDS, libaio, io_uring or NUMA dependency. |
 | Hugging Face Text Embeddings Inference | [LICENSE](LICENSE), [NOTICE](NOTICE), and inherited file headers. |
 | Vendored TEI regression-test snapshots | Apache-2.0 comparison baselines; [router snapshot provenance](router/tests/snapshots/NOTICE) list the fixtures, full Git blob hashes, and pinned upstream revisions. |

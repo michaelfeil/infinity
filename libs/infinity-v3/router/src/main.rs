@@ -602,6 +602,30 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn oxide_cli_selects_backend_without_overwriting_explicit_options() {
+        let args = Args::try_parse_from([
+            "infinity_v3",
+            "--model-id",
+            "bert",
+            "--backend",
+            "oxide",
+            "--dtype",
+            "bfloat16",
+            "--torch-device",
+            "cuda",
+            "--device-id",
+            "2",
+        ])
+        .unwrap();
+        let models = args.models().unwrap();
+        let model = models.first().unwrap();
+        assert_eq!(model.backend_kind, infinity_v3_backend::BackendKind::Oxide);
+        assert_eq!(model.dtype, Some(DType::Bfloat16));
+        assert_eq!(model.torch_device, infinity_v3_backend::TorchDevice::Cuda);
+        assert_eq!(model.device_id, Some(2));
+    }
     #[test]
     fn queue_tier_options_default_broadcast_and_validate() {
         let args = Args::try_parse_from(["infinity_v3", "--model-id", "a"]).unwrap();
@@ -790,7 +814,7 @@ mod tests {
             .unwrap()
             .models()
             .unwrap();
-        let expected = infinity_v3_backend::BackendKind::Libtorch;
+        let expected = infinity_v3_backend::BackendKind::default();
         assert!(models.iter().all(|m| m.backend_kind == expected));
         let models = Args::try_parse_from([
             "infinity_v3",

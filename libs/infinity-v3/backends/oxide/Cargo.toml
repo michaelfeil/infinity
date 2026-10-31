@@ -1,0 +1,17 @@
+[package]
+name = "infinity-backend-oxide"
+version.workspace = true
+edition.workspace = true
+license-file.workspace = true
+authors.workspace = true
+
+[dependencies]
+infinity-v3-config = { workspace = true }
+infinity_v3-backend-core = { path = "../core" }
+cuda-core = { git = "https://github.com/NVIDIA/cuda-rust", rev = "999094fe568fc3080f80d49e9c44e3680ad1c968" }
+libloading = "0.8"
+safetensors = "0.8"
+half = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+

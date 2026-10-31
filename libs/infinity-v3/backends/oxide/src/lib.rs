@@ -1,0 +1,883 @@
+// Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
+//! BERT executor with oxide-compiled Rust kernels and BF16 cuBLAS projections.
+mod cublas;
+mod fa4;
+mod graph;
+mod model;
+
+use cuda_core::{
+    launch_kernel_on_stream, Context, DeviceBuffer, Function, PinnedHostBuffer, Stream,
+};
+use infinity_v3_backend_core::{
+    result_memory, Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
+    Predictions, TokenPredictions,
+};
+use model::{BertConfig, BertWeights, LayerWeights, LinearWeights};
+use std::{
+    ffi::c_void,
+    path::Path,
+    sync::{Arc, Mutex},
+};
+
+fn start(error: impl std::fmt::Display) -> BackendError {
+    BackendError::Start(error.to_string())
+}
+fn infer(error: impl std::fmt::Display) -> BackendError {
+    BackendError::Inference(error.to_string())
+}
+fn product(a: usize, b: usize) -> Result<usize, BackendError> {
+    a.checked_mul(b)
+        .ok_or_else(|| infer("CUDA tensor size overflow"))
+}
+fn u32_size(value: usize) -> Result<u32, BackendError> {
+    u32::try_from(value).map_err(infer)
+}
+
+pub fn device_count() -> Result<usize, BackendError> {
+    // Check the shared library before upstream's lazy CUDA symbol loader.
+    let _driver = unsafe { libloading::Library::new("libcuda.so.1") }.map_err(start)?;
+    usize::try_from(Context::device_count().map_err(start)?).map_err(start)
+}
+
+struct Linear {
+    weight: DeviceBuffer<u16>,
+    bias: DeviceBuffer<u16>,
+}
+struct Layer {
+    qkv: Linear,
+    attention: Linear,
+    intermediate: Linear,
+    output: Linear,
+    attention_gamma: DeviceBuffer<u16>,
+    attention_beta: DeviceBuffer<u16>,
+    output_gamma: DeviceBuffer<u16>,
+    output_beta: DeviceBuffer<u16>,
+}
+struct Weights {
+    word: DeviceBuffer<u16>,
+    position: DeviceBuffer<u16>,
+    token_type: DeviceBuffer<u16>,
+    gamma: DeviceBuffer<u16>,
+    beta: DeviceBuffer<u16>,
+    layers: Vec<Layer>,
+}
+fn upload(stream: &Stream, data: &[f32]) -> Result<DeviceBuffer<u16>, BackendError> {
+    let data: Vec<u16> = data
+        .iter()
+        .map(|&v| half::bf16::from_f32(v).to_bits())
+        .collect();
+    if data.iter().any(|&v| !half::bf16::from_bits(v).is_finite()) {
+        return Err(start("Checkpoint weight is not finite in BF16"));
+    }
+    DeviceBuffer::from_host(stream, &data).map_err(start)
+}
+impl Linear {
+    fn upload(s: &Stream, w: &LinearWeights) -> Result<Self, BackendError> {
+        Ok(Self {
+            weight: upload(s, &w.weight)?,
+            bias: upload(s, &w.bias)?,
+        })
+    }
+}
+impl Layer {
+    fn upload(s: &Stream, w: &LayerWeights) -> Result<Self, BackendError> {
+        Ok(Self {
+            qkv: Linear {
+                weight: upload(
+                    s,
+                    &w.query
+                        .weight
+                        .iter()
+                        .chain(&w.key.weight)
+                        .chain(&w.value.weight)
+                        .copied()
+                        .collect::<Vec<_>>(),
+                )?,
+                bias: upload(
+                    s,
+                    &w.query
+                        .bias
+                        .iter()
+                        .chain(&w.key.bias)
+                        .chain(&w.value.bias)
+                        .copied()
+                        .collect::<Vec<_>>(),
+                )?,
+            },
+            attention: Linear::upload(s, &w.attention)?,
+            intermediate: Linear::upload(s, &w.intermediate)?,
+            output: Linear::upload(s, &w.output)?,
+            attention_gamma: upload(s, &w.attention_gamma)?,
+            attention_beta: upload(s, &w.attention_beta)?,
+            output_gamma: upload(s, &w.output_gamma)?,
+            output_beta: upload(s, &w.output_beta)?,
+        })
+    }
+}
+
+struct Kernels {
+    embedding: Function,
+    norm: Function,
+    qkv: Function,
+    gelu: Function,
+    attention: Function,
+    pool: Function,
+}
+impl Kernels {
+    fn load(ctx: &Arc<Context>) -> Result<Self, BackendError> {
+        let path = std::env::var_os(infinity_v3_config::infinity_env!("OXIDE_KERNEL_MODULE"))
+            .ok_or_else(|| {
+                start(
+                    "Set INFINITY_OXIDE_KERNEL_MODULE to the BERT artifact compiled by cargo oxide",
+                )
+            })?;
+        let path = std::path::PathBuf::from(path);
+        let path = if path.is_dir() {
+            let (major, minor) = ctx.compute_capability().map_err(start)?;
+            path.join(format!("sm_{major}{minor}"))
+                .join("kernels.cubin")
+        } else {
+            path
+        };
+        let data = std::fs::read(&path).map_err(|e| start(format!("{}: {e}", path.display())))?;
+        let module = ctx.load_module_from_image(&data).map_err(start)?;
+        let pool = module.load_function("infinity_pool").map_err(start)?;
+        Ok(Self {
+            embedding: module
+                .load_function("infinity_embedding_norm")
+                .map_err(start)?,
+            norm: module.load_function("infinity_layer_norm").map_err(start)?,
+            qkv: module.load_function("infinity_qkv").map_err(start)?,
+            gelu: module.load_function("infinity_gelu_bias").map_err(start)?,
+            attention: module.load_function("infinity_attention").map_err(start)?,
+            pool,
+        })
+    }
+}
+// Driver launch parameters are pointers to host scalar values copied at launch.
+// The Work owner below retains every device allocation until the stream drains.
+fn arg<T>(value: &mut T) -> *mut c_void {
+    (value as *mut T).cast()
+}
+fn launch(
+    k: &Function,
+    s: &Stream,
+    grid: (u32, u32, u32),
+    shared: u32,
+    args: &mut [*mut c_void],
+) -> Result<(), BackendError> {
+    // SAFETY: all six kernels have fixed ABI signatures, validated dimensions,
+    // retained modules and buffers, and exactly 256 threads per block.
+    unsafe { launch_kernel_on_stream(k, grid, (256, 1, 1), shared, s, args) }.map_err(infer)
+}
+fn blocks(elements: usize) -> Result<(u32, u32, u32), BackendError> {
+    Ok((u32_size(elements.div_ceil(256))?, 1, 1))
+}
+#[allow(clippy::too_many_arguments)]
+fn norm(
+    k: &Function,
+    s: &Stream,
+    mut input: u64,
+    mut residual: u64,
+    mut bias: u64,
+    gamma: &DeviceBuffer<u16>,
+    beta: &DeviceBuffer<u16>,
+    mut out: u64,
+    mut rows: u32,
+    mut width: u32,
+    mut eps: f32,
+) -> Result<(), BackendError> {
+    let (mut gamma, mut beta) = (gamma.cu_deviceptr(), beta.cu_deviceptr());
+    launch(
+        k,
+        s,
+        (rows, 1, 1),
+        0,
+        &mut [
+            arg(&mut input),
+            arg(&mut residual),
+            arg(&mut bias),
+            arg(&mut gamma),
+            arg(&mut beta),
+            arg(&mut out),
+            arg(&mut rows),
+            arg(&mut width),
+            arg(&mut eps),
+        ],
+    )
+}
+fn bias(
+    k: &Function,
+    s: &Stream,
+    mut input: u64,
+    b: &DeviceBuffer<u16>,
+    mut out: u64,
+    elements: usize,
+    mut width: u32,
+) -> Result<(), BackendError> {
+    let (mut b, mut n) = (b.cu_deviceptr(), u32_size(elements)?);
+    launch(
+        k,
+        s,
+        blocks(elements)?,
+        0,
+        &mut [
+            arg(&mut input),
+            arg(&mut b),
+            arg(&mut out),
+            arg(&mut n),
+            arg(&mut width),
+        ],
+    )
+}
+
+struct Engine {
+    blas: cublas::Blas,
+    kernels: Kernels,
+    weights: Weights,
+    context: Arc<Context>,
+    stream: Arc<Stream>,
+    workspace: Option<Work>,
+    failed: bool,
+    graphs_enabled: bool,
+    fa4: Option<fa4::Fa4>,
+}
+impl Drop for Engine {
+    fn drop(&mut self) {
+        let _ = self.stream.synchronize();
+        // Destroy graph executables before their CUDA modules or BLAS/provider
+        // libraries are unloaded by the remaining fields.
+        self.workspace.take();
+    }
+}
+/// Stable device and pinned-host arenas; raw launches retain all allocations.
+struct Work {
+    graph: Option<graph::GraphExec>,
+    warmed: bool,
+    stream: Arc<Stream>,
+    tokens: usize,
+    sequences: usize,
+    selections: usize,
+    max_length: usize,
+    input: DeviceBuffer<u32>,
+    host_input: PinnedHostBuffer<u32>,
+    host_output: PinnedHostBuffer<f32>,
+    x: DeviceBuffer<u16>,
+    temp: DeviceBuffer<u16>,
+    qkv: DeviceBuffer<u16>,
+    query: DeviceBuffer<u16>,
+    key: DeviceBuffer<u16>,
+    value: DeviceBuffer<u16>,
+    attention: DeviceBuffer<u16>,
+    intermediate: DeviceBuffer<u16>,
+    pooled: DeviceBuffer<f32>,
+}
+impl Drop for Work {
+    fn drop(&mut self) {
+        let _ = self.stream.synchronize();
+    }
+}
+impl Work {
+    fn matches(&self, b: &Batch, max_length: usize) -> bool {
+        self.max_length == max_length
+            && self.tokens == b.input_ids.len()
+            && self.sequences == b.cumulative_seq_lengths.len()
+            && self.selections == b.pooled_indices.len()
+    }
+    fn new(
+        s: Arc<Stream>,
+        b: &Batch,
+        c: &BertConfig,
+        max_length: usize,
+    ) -> Result<Self, BackendError> {
+        let tokens = b.input_ids.len();
+        let hidden = product(tokens, c.hidden_size)?;
+        let input_len = product(tokens, 3)?
+            .checked_add(b.cumulative_seq_lengths.len())
+            .and_then(|n| n.checked_add(b.pooled_indices.len()))
+            .ok_or_else(|| infer("Input arena overflow"))?;
+        let output = product(b.pooled_indices.len(), c.hidden_size)?;
+        Ok(Self {
+            graph: None,
+            warmed: false,
+            tokens,
+            sequences: b.cumulative_seq_lengths.len(),
+            selections: b.pooled_indices.len(),
+            max_length,
+            input: DeviceBuffer::zeroed(&s, input_len).map_err(infer)?,
+            host_input: PinnedHostBuffer::zeroed(s.context(), input_len).map_err(infer)?,
+            host_output: PinnedHostBuffer::zeroed(s.context(), output).map_err(infer)?,
+            x: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
+            temp: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
+            qkv: DeviceBuffer::zeroed(&s, product(hidden, 3)?).map_err(infer)?,
+            query: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
+            key: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
+            value: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
+            attention: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
+            intermediate: DeviceBuffer::zeroed(&s, product(tokens, c.intermediate_size)?)
+                .map_err(infer)?,
+            pooled: DeviceBuffer::zeroed(&s, output).map_err(infer)?,
+            stream: s,
+        })
+    }
+    fn upload(&mut self, b: &Batch) -> Result<(), BackendError> {
+        let values = b
+            .input_ids
+            .iter()
+            .chain(&b.position_ids)
+            .chain(&b.token_type_ids)
+            .chain(&b.cumulative_seq_lengths)
+            .chain(&b.pooled_indices);
+        for (out, &value) in self.host_input.as_mut_slice().iter_mut().zip(values) {
+            *out = value;
+        }
+        // SAFETY: pinned staging and destination are retained in this workspace;
+        // no host edits occur before the final drain, including error paths.
+        unsafe {
+            cuda_core::memory::memcpy_htod_async(
+                self.input.cu_deviceptr(),
+                self.host_input.as_ptr(),
+                self.input.num_bytes(),
+                self.stream.cu_stream(),
+            )
+        }
+        .map_err(infer)
+    }
+    fn complete(&mut self) -> Result<Vec<f32>, BackendError> {
+        // SAFETY: output sizes agree; pinned staging stays owned by Engine even
+        // if synchronization fails. Engine leaks a failed arena rather than
+        // freeing host memory still potentially being written by CUDA.
+        unsafe {
+            cuda_core::memory::memcpy_dtoh_async(
+                self.host_output.as_mut_ptr(),
+                self.pooled.cu_deviceptr(),
+                self.pooled.num_bytes(),
+                self.stream.cu_stream(),
+            )
+        }
+        .map_err(infer)?;
+        self.stream.synchronize().map_err(infer)?;
+        Ok(self.host_output.as_slice().to_vec())
+    }
+}
+impl Engine {
+    fn forward(
+        &mut self,
+        b: &Batch,
+        c: &BertConfig,
+        pool: &Pool,
+        max_length: usize,
+    ) -> Result<Vec<f32>, BackendError> {
+        if self.failed {
+            return Err(BackendError::Unhealthy);
+        }
+        let result = self.forward_inner(b, c, pool, max_length);
+        if result.is_err() {
+            self.failed = true;
+            if self.stream.synchronize().is_err() {
+                if let Some(work) = self.workspace.take() {
+                    std::mem::forget(work);
+                }
+            }
+        }
+        result
+    }
+    fn forward_inner(
+        &mut self,
+        b: &Batch,
+        c: &BertConfig,
+        pool: &Pool,
+        max_length: usize,
+    ) -> Result<Vec<f32>, BackendError> {
+        self.context.bind_to_thread().map_err(infer)?;
+        if !self
+            .workspace
+            .as_ref()
+            .is_some_and(|w| w.matches(b, max_length))
+        {
+            self.workspace = Some(Work::new(self.stream.clone(), b, c, max_length)?);
+        }
+        let w = self
+            .workspace
+            .as_mut()
+            .ok_or_else(|| infer("Missing oxide workspace"))?;
+        w.upload(b)?;
+        let s = &*self.stream;
+        if let Some(graph) = w.graph.as_ref() {
+            graph.launch(s)?;
+            return w.complete();
+        }
+        let capture = if self.graphs_enabled && w.warmed {
+            Some(graph::Capture::begin(self.stream.clone())?)
+        } else {
+            None
+        };
+        let k = &self.kernels;
+        let weights = &self.weights;
+        let (tokens, h) = (b.input_ids.len(), c.hidden_size);
+        let (mut t, mut width) = (u32_size(tokens)?, u32_size(h)?);
+        let base = w.input.cu_deviceptr();
+        let (mut ids, mut pos, mut types) = (
+            base,
+            base + product(tokens, 4)? as u64,
+            base + product(tokens, 8)? as u64,
+        );
+        let boundaries = base + product(tokens, 12)? as u64;
+        let selected = boundaries + product(b.cumulative_seq_lengths.len(), 4)? as u64;
+        let (mut word, mut position, mut type_weight) = (
+            weights.word.cu_deviceptr(),
+            weights.position.cu_deviceptr(),
+            weights.token_type.cu_deviceptr(),
+        );
+        let (mut gamma, mut beta) = (weights.gamma.cu_deviceptr(), weights.beta.cu_deviceptr());
+        let (mut x, mut eps) = (w.x.cu_deviceptr(), c.layer_norm_eps as f32);
+        launch(
+            &k.embedding,
+            s,
+            (t, 1, 1),
+            0,
+            &mut [
+                arg(&mut ids),
+                arg(&mut pos),
+                arg(&mut types),
+                arg(&mut word),
+                arg(&mut position),
+                arg(&mut type_weight),
+                arg(&mut gamma),
+                arg(&mut beta),
+                arg(&mut x),
+                arg(&mut t),
+                arg(&mut width),
+                arg(&mut eps),
+            ],
+        )?;
+        for layer in &weights.layers {
+            let mut qkv = w.qkv.cu_deviceptr();
+            self.blas.linear(
+                x,
+                layer.qkv.weight.cu_deviceptr(),
+                qkv,
+                tokens,
+                h,
+                product(h, 3)?,
+            )?;
+            let (mut q, mut key, mut v) = (
+                w.query.cu_deviceptr(),
+                w.key.cu_deviceptr(),
+                w.value.cu_deviceptr(),
+            );
+            let (mut qkv_bias, mut n) = (
+                layer.qkv.bias.cu_deviceptr(),
+                u32_size(product(tokens, h)?)?,
+            );
+            launch(
+                &k.qkv,
+                s,
+                blocks(product(tokens, h)?)?,
+                0,
+                &mut [
+                    arg(&mut qkv),
+                    arg(&mut qkv_bias),
+                    arg(&mut q),
+                    arg(&mut key),
+                    arg(&mut v),
+                    arg(&mut n),
+                    arg(&mut width),
+                ],
+            )?;
+            let (mut bounds, mut attn) = (boundaries, w.attention.cu_deviceptr());
+            let (mut count, mut heads, mut dim) = (
+                u32_size(b.cumulative_seq_lengths.len() - 1)?,
+                u32_size(c.num_attention_heads)?,
+                u32_size(h / c.num_attention_heads)?,
+            );
+            if let Some(provider) = self.fa4.as_ref() {
+                provider.forward(
+                    s,
+                    q,
+                    key,
+                    v,
+                    attn,
+                    boundaries,
+                    tokens,
+                    b.cumulative_seq_lengths.len() - 1,
+                    max_length,
+                )?;
+            } else {
+                launch(
+                    &k.attention,
+                    s,
+                    (u32_size(max_length)?, heads, count),
+                    u32_size(product(max_length, 4)?)?,
+                    &mut [
+                        arg(&mut q),
+                        arg(&mut key),
+                        arg(&mut v),
+                        arg(&mut bounds),
+                        arg(&mut attn),
+                        arg(&mut count),
+                        arg(&mut heads),
+                        arg(&mut dim),
+                        arg(&mut width),
+                    ],
+                )?;
+            }
+            let temp = w.temp.cu_deviceptr();
+            self.blas.linear(
+                attn,
+                layer.attention.weight.cu_deviceptr(),
+                temp,
+                tokens,
+                h,
+                h,
+            )?;
+            norm(
+                &k.norm,
+                s,
+                temp,
+                x,
+                layer.attention.bias.cu_deviceptr(),
+                &layer.attention_gamma,
+                &layer.attention_beta,
+                x,
+                t,
+                width,
+                eps,
+            )?;
+            let intermediate = w.intermediate.cu_deviceptr();
+            self.blas.linear(
+                x,
+                layer.intermediate.weight.cu_deviceptr(),
+                intermediate,
+                tokens,
+                h,
+                c.intermediate_size,
+            )?;
+            bias(
+                &k.gelu,
+                s,
+                intermediate,
+                &layer.intermediate.bias,
+                intermediate,
+                product(tokens, c.intermediate_size)?,
+                u32_size(c.intermediate_size)?,
+            )?;
+            self.blas.linear(
+                intermediate,
+                layer.output.weight.cu_deviceptr(),
+                temp,
+                tokens,
+                c.intermediate_size,
+                h,
+            )?;
+            norm(
+                &k.norm,
+                s,
+                temp,
+                x,
+                layer.output.bias.cu_deviceptr(),
+                &layer.output_gamma,
+                &layer.output_beta,
+                x,
+                t,
+                width,
+                eps,
+            )?;
+        }
+        let (mut bounds, mut indices, mut out) = (boundaries, selected, w.pooled.cu_deviceptr());
+        let mut count = u32_size(b.pooled_indices.len())?;
+        let mut mode = match pool {
+            Pool::Cls => 0u32,
+            Pool::Mean => 1,
+            Pool::LastToken => 2,
+            Pool::Splade => return Err(infer("Oxide SPLADE unsupported")),
+        };
+        launch(
+            &k.pool,
+            s,
+            blocks(product(count as usize, h)?)?,
+            0,
+            &mut [
+                arg(&mut x),
+                arg(&mut bounds),
+                arg(&mut indices),
+                arg(&mut out),
+                arg(&mut count),
+                arg(&mut width),
+                arg(&mut mode),
+            ],
+        )?;
+        if let Some(capture) = capture {
+            let graph = capture.finish()?;
+            graph.launch(s)?;
+            w.graph = Some(graph);
+        }
+        w.warmed = true;
+        w.complete()
+    }
+}
+
+pub struct OxideBackend {
+    config: BertConfig,
+    pool: Pool,
+    engine: Mutex<Engine>,
+}
+impl OxideBackend {
+    pub fn new(
+        path: &Path,
+        dtype: &str,
+        model_type: ModelType,
+        device_id: usize,
+    ) -> Result<Self, BackendError> {
+        if dtype != "bfloat16" {
+            return Err(start("Oxide currently requires --dtype bfloat16"));
+        }
+        let pool = match model_type {
+            ModelType::Embedding(p @ (Pool::Cls | Pool::Mean | Pool::LastToken)) => p,
+            _ => {
+                return Err(start(
+                    "Oxide currently supports BERT pooled embeddings only",
+                ))
+            }
+        };
+        let host = BertWeights::load(path)?;
+        let config = host.config.clone();
+        if device_id >= device_count()? {
+            return Err(start("CUDA device ordinal is not visible"));
+        }
+        let context = Context::new(device_id).map_err(start)?;
+        let stream = context.new_stream().map_err(start)?;
+        let attention_mode = std::env::var(infinity_v3_config::infinity_env!("OXIDE_ATTENTION"))
+            .unwrap_or_else(|_| "auto".into());
+        let fa4_root = std::env::var_os(infinity_v3_config::infinity_env!("FA4_ROOT"));
+        let fa4 = match attention_mode.as_str() {
+            "fa4" => Some(fa4::Fa4::new(
+                context.clone(),
+                Path::new(
+                    &fa4_root.ok_or_else(|| start("FA4 attention requires INFINITY_FA4_ROOT"))?,
+                ),
+                config.num_attention_heads,
+                config.hidden_size / config.num_attention_heads,
+            )?),
+            "auto"
+                if fa4_root.is_some()
+                    && config.num_attention_heads == 12
+                    && config.hidden_size == 384 =>
+            {
+                Some(fa4::Fa4::new(
+                    context.clone(),
+                    Path::new(&fa4_root.ok_or_else(|| start("Missing FA4 root"))?),
+                    12,
+                    32,
+                )?)
+            }
+            "auto" | "simt" => None,
+            _ => return Err(start("INFINITY_OXIDE_ATTENTION must be auto,simt or fa4")),
+        };
+        let kernels = Kernels::load(&context)?;
+        let blas = cublas::Blas::new(context.clone(), stream.clone())?;
+        let weights = Weights {
+            word: upload(&stream, &host.word)?,
+            position: upload(&stream, &host.position)?,
+            token_type: upload(&stream, &host.token_type)?,
+            gamma: upload(&stream, &host.gamma)?,
+            beta: upload(&stream, &host.beta)?,
+            layers: host
+                .layers
+                .iter()
+                .map(|l| Layer::upload(&stream, l))
+                .collect::<Result<_, _>>()?,
+        };
+        Ok(Self {
+            config,
+            pool,
+            engine: Mutex::new(Engine {
+                blas,
+                kernels,
+                weights,
+                context,
+                stream,
+                workspace: None,
+                failed: false,
+                fa4,
+                graphs_enabled: match std::env::var(infinity_v3_config::infinity_env!(
+                    "OXIDE_CUDA_GRAPHS"
+                ))
+                .as_deref()
+                {
+                    Ok("0" | "false") => false,
+                    Err(std::env::VarError::NotPresent) | Ok("1" | "true") => true,
+                    _ => {
+                        return Err(start(
+                            "INFINITY_OXIDE_CUDA_GRAPHS must be 0,1,false or true",
+                        ))
+                    }
+                },
+            }),
+        })
+    }
+}
+
+fn validate(batch: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
+    let fail = || infer("Invalid or unsupported packed oxide BERT batch");
+    let tokens = batch.input_ids.len();
+    let sequences = batch
+        .cumulative_seq_lengths
+        .len()
+        .checked_sub(1)
+        .filter(|n| *n > 0)
+        .ok_or_else(fail)?;
+    if tokens == 0
+        || batch.cumulative_seq_lengths.first() != Some(&0)
+        || batch
+            .cumulative_seq_lengths
+            .last()
+            .copied()
+            .map(|n| n as usize)
+            != Some(tokens)
+        || batch.position_ids.len() != tokens
+        || batch.token_type_ids.len() != tokens
+        || !batch.raw_indices.is_empty()
+        || batch.multimodal.iter().any(Option::is_some)
+        || batch.compact_input_ids.is_some()
+        || batch.compact_position_ids.is_some()
+        || batch.scatter_unfold.is_some()
+        || batch.fold_gather.is_some()
+    {
+        return Err(fail());
+    }
+    let mut max_length = 0;
+    for pair in batch.cumulative_seq_lengths.windows(2) {
+        let (Some(&start), Some(&end)) = (pair.first(), pair.get(1)) else {
+            return Err(fail());
+        };
+        let length = end.checked_sub(start).filter(|n| *n > 0).ok_or_else(fail)? as usize;
+        if length > c.max_position_embeddings {
+            return Err(fail());
+        }
+        max_length = max_length.max(length);
+    }
+    if sequences > 65535
+        || batch
+            .pooled_indices
+            .iter()
+            .any(|&i| i as usize >= sequences)
+        || batch.input_ids.iter().any(|&i| i as usize >= c.vocab_size)
+        || batch
+            .token_type_ids
+            .iter()
+            .any(|&i| i as usize >= c.type_vocab_size)
+        || batch
+            .position_ids
+            .iter()
+            .any(|&i| i as usize >= c.max_position_embeddings)
+    {
+        return Err(fail());
+    }
+    u32_size(product(tokens, c.intermediate_size)?)?;
+    u32_size(product(tokens, c.hidden_size)?)?;
+    Ok(max_length)
+}
+impl Backend for OxideBackend {
+    fn health(&self) -> Result<(), BackendError> {
+        let engine = self.engine.lock().map_err(|_| BackendError::Unhealthy)?;
+        if engine.failed {
+            return Err(BackendError::Unhealthy);
+        }
+        engine.stream.synchronize().map_err(infer)
+    }
+    fn embed(&self, batch: Batch) -> Result<Embeddings, BackendError> {
+        let max_length = validate(&batch, &self.config)?;
+        if batch.pooled_indices.is_empty() {
+            return Ok(Embeddings::default());
+        }
+        let elements = product(batch.pooled_indices.len(), self.config.hidden_size)?;
+        // Account for the D2H staging vector and the simultaneously owned rows.
+        let memory = result_memory::global_pool()?.reserve(product(elements, 8)?)?;
+        let output = self
+            .engine
+            .lock()
+            .map_err(|_| BackendError::Unhealthy)?
+            .forward(&batch, &self.config, &self.pool, max_length)?;
+        if output.len() != elements || output.iter().any(|v| !v.is_finite()) {
+            return Err(infer("Invalid oxide embedding output"));
+        }
+        let mut result = Embeddings::default();
+        result.memory = Some(memory);
+        for (&index, row) in batch
+            .pooled_indices
+            .iter()
+            .zip(output.chunks_exact(self.config.hidden_size))
+        {
+            result.insert(index as usize, Embedding::Pooled(row.to_vec()));
+        }
+        Ok(result)
+    }
+    fn predict(&self, _: Batch) -> Result<Predictions, BackendError> {
+        Err(infer("Oxide classifiers are not implemented"))
+    }
+    fn predict_tokens(&self, _: Batch) -> Result<TokenPredictions, BackendError> {
+        Err(infer("Oxide token predictions are not implemented"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn config() -> BertConfig {
+        serde_json::from_value(serde_json::json!({"model_type":"bert","hidden_size":4,
+            "intermediate_size":8,"num_attention_heads":2,"num_hidden_layers":1,
+            "max_position_embeddings":8,"vocab_size":4,"type_vocab_size":2}))
+        .unwrap()
+    }
+    fn batch() -> Batch {
+        Batch {
+            input_ids: vec![1, 2, 3],
+            position_ids: vec![0, 0, 1],
+            token_type_ids: vec![0, 0, 0],
+            cumulative_seq_lengths: vec![0, 1, 3],
+            pooled_indices: vec![0, 1],
+            max_length: 2,
+            multimodal: vec![],
+            raw_indices: vec![],
+            compact_input_ids: None,
+            compact_position_ids: None,
+            scatter_unfold: None,
+            fold_gather: None,
+            tokens: vec![],
+            offsets: vec![],
+        }
+    }
+    #[test]
+    fn rejects_bad_ragged_boundaries_and_lookup_ids_before_device_access() {
+        let c = config();
+        assert_eq!(validate(&batch(), &c).unwrap(), 2);
+        for lengths in [
+            vec![],
+            vec![0],
+            vec![0, 2, 1, 3],
+            vec![0, 0, 3],
+            vec![1, 3],
+            vec![0, 4],
+        ] {
+            let mut b = batch();
+            b.cumulative_seq_lengths = lengths;
+            assert!(validate(&b, &c).is_err());
+        }
+        let mut b = batch();
+        b.input_ids = vec![4, 2, 3];
+        assert!(validate(&b, &c).is_err());
+        let mut b = batch();
+        b.pooled_indices = vec![2];
+        assert!(validate(&b, &c).is_err());
+        let mut b = batch();
+        b.position_ids = vec![8, 0, 1];
+        assert!(validate(&b, &c).is_err());
+        let mut b = batch();
+        b.token_type_ids = vec![2, 0, 0];
+        assert!(validate(&b, &c).is_err());
+        let mut b = batch();
+        b.raw_indices = vec![0];
+        assert!(validate(&b, &c).is_err());
+    }
+}

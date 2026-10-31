@@ -15,6 +15,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 infinity_v3-backend-core = { path = "core" }
 infinity-backend-libtorch = { path = "libtorch", optional = true }
+infinity-backend-oxide = { path = "oxide", optional = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 
@@ -22,3 +23,4 @@ tracing = { workspace = true }
 default = ["libtorch"]
 clap = ["dep:clap", "infinity_v3-backend-core/clap"]
 libtorch = ["dep:infinity-backend-libtorch"]
+oxide = ["dep:infinity-backend-oxide"]
