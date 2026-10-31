@@ -94,6 +94,12 @@ need a larger expanded limit for requests that previously spanned batches.
 Measure peak GPU memory before raising it: backend K/V storage still expands
 across questions, and startup warmup does not validate this fanout shape.
 
+Suffix attention assembles K/V in whole-question chunks targeting 500,000
+expanded tokens, reusing the prefix without another prefill. Set
+`INFINITY_TORCH_BLOCK_KV_CHUNK_TOKENS` to a positive integer to tune this target;
+a single question may exceed it. This bounds temporary K/V copies, not weights,
+hidden states, or total GPU memory.
+
 `INFINITY_MAX_BATCH_EXPANDED_TOKENS` is the environment alternative. Values
 broadcast or align with models; `none` uses the compute limit. An explicit limit
 must be at least `--max-batch-tokens` and fit signed 32-bit offsets.
