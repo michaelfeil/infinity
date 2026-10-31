@@ -591,6 +591,24 @@
         
       
       
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture coverage
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
       <a href="./" class="md-nav__link md-nav__link--active">
         
   
@@ -607,6 +625,36 @@
   
 
       </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#dynamic-fp8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamic FP8
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
       
     </li>
   
@@ -1127,6 +1175,25 @@
     
   
   
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#dynamic-fp8" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dynamic FP8
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
 </nav>
                   </div>
                 </div>
@@ -1271,6 +1338,54 @@ exact-length biased attention without padded token activations.</p>
 </tr>
 </tbody>
 </table>
+<h2 id="dynamic-fp8">Dynamic FP8</h2>
+<p>Use <code>--enable-fp8-dynamic</code> with CUDA and <code>--dtype float16</code> or <code>--dtype bfloat16</code>.
+Dense floating-point checkpoints are quantized during initialization. The native
+FP8 kernels require SM89, SM90, SM100 or SM120 and projection widths divisible
+by 16. CPU inference and already-quantized checkpoints are not supported by this
+option. FP8 remains opt-in and can change model outputs.</p>
+<table>
+<thead>
+<tr>
+<th>Backbone</th>
+<th>FP8 projections</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>BERT, RoBERTa, XLM-RoBERTa, CamemBERT</td>
+<td>MLP</td>
+</tr>
+<tr>
+<td>DistilBERT, ModernBERT, dense Nomic BERT, GTE/New, Jina BERT/JinaCode, MPNet, DeBERTa-v2/v3</td>
+<td>MLP</td>
+</tr>
+<tr>
+<td>Dense Llama, Mistral/Ministral3, Qwen2, Qwen3, UltraBERT</td>
+<td>MLP and attention projections; all-linear scope is the default when FP8 is enabled</td>
+</tr>
+<tr>
+<td>Dense Qwen3.5</td>
+<td>MLP and attention projections, with BF16 activations</td>
+</tr>
+<tr>
+<td>Gemma3 text, dense Gemma4, EmbeddingGemma2</td>
+<td>MLP</td>
+</tr>
+<tr>
+<td>Mistral3 multimodal</td>
+<td>Text decoder MLP and attention projections</td>
+</tr>
+<tr>
+<td>Qwen3-VL (including ColQwen3 and Nemotron ColEmbed) and UltraVBERT</td>
+<td>Text backbone MLP and attention projections</td>
+</tr>
+</tbody>
+</table>
+<p>Attention calculations, normalization, embedding/output heads and media towers
+retain their existing precision. Routed-expert/MoE variants are excluded. Set
+<code>INFINITY_TORCH_FP8_SCOPE=mlp</code> to limit eligible decoders to feed-forward
+projections; <code>all</code> is accepted only for the listed dense decoder families.</p>
 <p>Classifier and SPLADE heads are architecture-specific. Typed decisions support
 Laya, Clef, Pplx and option-token contracts, with checkpoint sidecar loading.
 <code>pplx-decider-flash-v1.2</code> selects Perplexity’s joint marker readouts, shared text/images,
