@@ -2,6 +2,11 @@
 // downloaded checkpoint. Run with --cuda to exercise Torch varlen FlashAttention.
 #include "models/encoder_models.h"
 #include "helpers/modern_cpu_math.h"
+#include "helpers/fp8_linear.h"
+#include "batching/cuda_graph.h"
+#ifdef TEI_TORCH_CUDA_KERNELS
+#include <ATen/cuda/CUDAContext.h>
+#endif
 #include <ATen/Parallel.h>
 #include <c10/core/InferenceMode.h>
 #include <iostream>
@@ -85,7 +90,7 @@ infinity::Weights weights(const std::string& type, c10::Device d, at::ScalarType
        type != "modernbert");
   if (type != "modernbert" && type != "distilbert")
     add(w, "embeddings.token_type_embeddings.weight", {2, H}, d, dt);
-  if (type == "distilbert" || type == "mpnet")
+  if (type == "distilbert" || type == "mpnet" || type == "deberta-v2")
     add(w, "embeddings.position_embeddings.weight", {32, H}, d, dt);
   if (type == "mpnet")
     add(w, "encoder.relative_attention_bias.weight", {32, 4}, d, dt);
@@ -95,7 +100,15 @@ infinity::Weights weights(const std::string& type, c10::Device d, at::ScalarType
                      : type == "distilbert" ? "transformer.layer."
                                             : "encoder.layer.") +
                     std::to_string(i) + ".";
-    if (type == "mpnet") {
+    if (type == "deberta-v2") {
+      for (auto q : {"query_proj", "key_proj", "value_proj"})
+        linear(w, p + "attention.self." + q, H, H, d, dt);
+      linear(w, p + "attention.output.dense", H, H, d, dt);
+      norm(w, p + "attention.output.LayerNorm", d, dt);
+      norm(w, p + "output.LayerNorm", d, dt);
+      linear(w, p + "intermediate.dense", I, H, d, dt);
+      linear(w, p + "output.dense", H, I, d, dt);
+    } else if (type == "mpnet") {
       for (auto q : {"q", "k", "v", "o"})
         linear(w, p + "attention.attn." + q, H, H, d, dt);
       norm(w, p + "attention.LayerNorm", d, dt);
@@ -153,6 +166,48 @@ infinity::Weights weights(const std::string& type, c10::Device d, at::ScalarType
   if (type == "modernbert")
     norm(w, "final_norm", d, dt, false);
   return w;
+}
+
+void fp8_encoder(const infinity::Options& options,
+                 const infinity::Weights& checkpoint,
+                 const infinity::PackedInput& input) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+  const auto device = input.ids.device();
+  if (!infinity::fp8_device_supported(device))
+    return;
+  for (auto dtype : {at::kHalf, at::kBFloat16}) {
+    infinity::Weights reference_weights, quantized_weights;
+    for (const auto& [name, value] : checkpoint)
+      reference_weights[name] = quantized_weights[name] = value.to(dtype);
+    auto reference = infinity::create_encoder(options, reference_weights, device, dtype);
+    reference->ready();
+    auto quantized_options = options;
+    quantized_options.values["_fp8_dynamic"] = "true";
+    auto quantized = infinity::create_encoder(quantized_options, quantized_weights, device, dtype);
+    quantized->ready();
+    TORCH_CHECK(quantized_weights.size() < reference_weights.size(),
+                "Encoder FP8 retained original MLP matrices");
+    infinity::CudaGraphCache graphs(1, 4096, 1);
+    for (int repeat = 0; repeat < 3; ++repeat) {
+      auto replay = input;
+      replay.ids = (input.ids + repeat).remainder(64);
+      auto expected = reference->forward(replay).to(at::kFloat);
+      auto actual = quantized->forward(replay).to(at::kFloat);
+      const auto error = ((actual - expected).norm() / expected.norm()).item<double>();
+      TORCH_CHECK(at::isfinite(actual).all().item<bool>() && error < .03,
+                  "Encoder FP8 numerical regression: ",
+                  options.string("model_type"),
+                  " relative L2=",
+                  error);
+      TORCH_CHECK(at::allclose(actual, graphs.forward(*quantized, replay).to(at::kFloat), .01, .01),
+                  "Encoder FP8 graph replay changed outputs");
+    }
+    TORCH_CHECK(graphs.stats().captures == 1 && graphs.stats().hits >= 2,
+                "Encoder FP8 graph was not captured and replayed");
+    std::cout << options.string("model_type") << " FP8 parity, released weights and graphs passed "
+              << dtype << "\n";
+  }
+#endif
 }
 
 void nomic_expert_shape_validation(c10::Device device, at::ScalarType dtype) {
@@ -319,13 +374,20 @@ int main(int argc, char** argv) {
     TORCH_CHECK(at::equal(baseline.narrow(0, 3, 5), changed.narrow(0, 3, 5)),
                 "Distil token-type change contaminated another packed request");
   }
-  for (auto type :
-       {"distilbert", "modernbert", "nomic_bert", "new", "jina", "jina-code", "mpnet"}) {
+  for (auto type : {"distilbert",
+                    "modernbert",
+                    "nomic_bert",
+                    "new",
+                    "jina",
+                    "jina-code",
+                    "mpnet",
+                    "deberta-v2"}) {
     auto o = config(type);
     auto w = weights(type, device, dtype);
     auto model = infinity::create_encoder(o, w, device, dtype);
     model->ready();
     auto packed = model->forward({ids, types, positions, cu, offsets, 2, 5});
+    fp8_encoder(o, w, {ids, types, positions, cu, offsets, 2, 5});
     TORCH_CHECK(
         !model->classify_hidden({ids, types, positions, cu, offsets, 2, 5}, packed).defined(),
         "Embedding-only encoder must not expose a classifier readout");
@@ -354,6 +416,29 @@ int main(int argc, char** argv) {
                 "Unqualified encoder geometry changed default embedding mean pooling for ",
                 type);
     if (std::string(type) == "nomic_bert") {
+      auto gated_options = o;
+      gated_options.values["activation_function"] = "swiglu";
+      auto gated_weights = w;
+      for (int i = 0; i < 2; ++i) {
+        const auto p = "encoder.layers." + std::to_string(i) + ".mlp.";
+        for (const auto* name : {"fc11", "fc12"})
+          linear(gated_weights, p + name, I, H, device, dtype);
+        gated_weights.erase(p + "fc1.weight");
+        gated_weights.erase(p + "fc1.bias");
+      }
+      fp8_encoder(gated_options, gated_weights, {ids, types, positions, cu, offsets, 2, 5});
+      auto routed_options = o;
+      routed_options.values["_fp8_dynamic"] = "true";
+      routed_options.values["num_experts"] = "8";
+      routed_options.values["moe_every_n_layers"] = "2";
+      bool fp8_rejected = false;
+      try {
+        infinity::create_encoder(routed_options, w, device, dtype);
+      } catch (const c10::Error& error) {
+        fp8_rejected =
+            std::string(error.what()).find("routed experts are unsupported") != std::string::npos;
+      }
+      TORCH_CHECK(fp8_rejected, "Nomic MoE silently accepted dense-only FP8");
       auto alias = o;
       alias.values["activation_function"] = "gelu_pytorch_tanh";
       auto alias_model = infinity::create_encoder(alias, w, device, dtype);
@@ -373,6 +458,7 @@ int main(int argc, char** argv) {
         auto actual = dense_model->forward({ids, types, positions, cu, offsets, 2, 5});
         TORCH_CHECK(actual.sizes() == packed.sizes() && at::isfinite(actual).all().item<bool>(),
                     "Dense Nomic expert metadata rejected valid inference");
+        fp8_encoder(dense, w, {ids, types, positions, cu, offsets, 2, 5});
       }
     }
     if (std::string(type) == "new" || std::string(type) == "jina") {

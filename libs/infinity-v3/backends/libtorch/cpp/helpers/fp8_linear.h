@@ -8,6 +8,9 @@
 #include <memory>
 
 namespace infinity {
+/// Whether this native build and GPU support FP8 projections.
+bool fp8_device_supported(const c10::Device& device);
+
 // Real rows only: the first dimension is never aligned or padded.
 /// Return dynamically quantized activation rows and their per-row scale tensor. The non-CUDA
 /// implementation throws; callers must select an eligible execution path first.

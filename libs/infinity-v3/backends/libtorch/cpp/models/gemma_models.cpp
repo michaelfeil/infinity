@@ -1260,8 +1260,8 @@ public:
     const auto fp8 = cfg.boolean("_fp8_dynamic", false);
     TORCH_CHECK(cfg.string("_fp8_scope", "mlp") == "mlp", "Gemma FP8 supports MLP scope only");
     if (fp8) {
-      TORCH_CHECK(!legacy && !embedding2 && !boolean("enable_moe_block", false),
-                  "Dynamic FP8 Gemma currently requires dense Gemma4");
+      TORCH_CHECK(!boolean("enable_moe_block", false),
+                  "Dynamic FP8 Gemma requires a dense checkpoint; routed experts are unsupported");
       TORCH_CHECK(device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16),
                   "Dynamic FP8 Gemma requires CUDA float16/bfloat16");
       for (const auto& [name, value] : cfg.values)

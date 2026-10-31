@@ -37,6 +37,29 @@ exact-length biased attention without padded token activations.
 | MPNet | Native exact-length relative-biased attention |
 | DeBERTa-v2/v3 (experimental) | Native disentangled relative attention, convolution and classifier |
 
+## Dynamic FP8
+
+Use `--enable-fp8-dynamic` with CUDA and `--dtype float16` or `--dtype bfloat16`.
+Dense floating-point checkpoints are quantized during initialization. The native
+FP8 kernels require SM89, SM90, SM100 or SM120 and projection widths divisible
+by 16. CPU inference and already-quantized checkpoints are not supported by this
+option. FP8 remains opt-in and can change model outputs.
+
+| Backbone | FP8 projections |
+| --- | --- |
+| BERT, RoBERTa, XLM-RoBERTa, CamemBERT | MLP |
+| DistilBERT, ModernBERT, dense Nomic BERT, GTE/New, Jina BERT/JinaCode, MPNet, DeBERTa-v2/v3 | MLP |
+| Dense Llama, Mistral/Ministral3, Qwen2, Qwen3, UltraBERT | MLP and attention projections; all-linear scope is the default when FP8 is enabled |
+| Dense Qwen3.5 | MLP and attention projections, with BF16 activations |
+| Gemma3 text, dense Gemma4, EmbeddingGemma2 | MLP |
+| Mistral3 multimodal | Text decoder MLP and attention projections |
+| Qwen3-VL (including ColQwen3 and Nemotron ColEmbed) and UltraVBERT | Text backbone MLP and attention projections |
+
+Attention calculations, normalization, embedding/output heads and media towers
+retain their existing precision. Routed-expert/MoE variants are excluded. Set
+`INFINITY_TORCH_FP8_SCOPE=mlp` to limit eligible decoders to feed-forward
+projections; `all` is accepted only for the listed dense decoder families.
+
 Classifier and SPLADE heads are architecture-specific. Typed decisions support
 Laya, Clef, Pplx and option-token contracts, with checkpoint sidecar loading.
 `pplx-decider-flash-v1.2` selects Perplexity’s joint marker readouts, shared text/images,

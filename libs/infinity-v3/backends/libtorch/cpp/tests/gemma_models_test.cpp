@@ -1,4 +1,5 @@
 #include "prefix_cache_test.h"
+#include "helpers/fp8_linear.h"
 // Packed sequence isolation and geometry tests for native Gemma implementations.
 #include "models/gemma_models.h"
 #include "batching/radix.h"
@@ -332,7 +333,8 @@ struct Fixture {
           int64_t head_dim = 8,
           int64_t layer_count = 4,
           int64_t shared_count = 2)
-      : legacy(family == "gemma3"), embedding2(family == "embedding_gemma2") {
+      : legacy(family == "gemma3" || family == "gemma3_text"),
+        embedding2(family == "embedding_gemma2") {
     cfg.values = {{"model_type", family},
                   {"hidden_size", "16"},
                   {"num_attention_heads", "2"},
@@ -424,13 +426,11 @@ PackedInput input(const std::vector<int64_t>& ids, const std::vector<int32_t>& o
           maximum};
 }
 #ifdef TEI_TORCH_CUDA_KERNELS
-void dynamic_fp8(const c10::Device& device) {
-  const auto* props = at::cuda::getDeviceProperties(device.index());
-  const int sm = props->major * 10 + props->minor;
-  if (sm != 89 && sm != 90 && sm != 100 && sm != 120)
+void dynamic_fp8(const c10::Device& device, const std::string& family) {
+  if (!fp8_device_supported(device))
     return;
   at::manual_seed(418);
-  Fixture f("gemma4", 8, 2, 0);
+  Fixture f(family, 8, 2, 0);
   f.cfg.values["_decision.kind"] = "option_tokens";
   for (int i = 0; i < 2; ++i) {
     const auto p = "layers." + std::to_string(i) + ".mlp.";
@@ -695,7 +695,8 @@ int main(int argc, char** argv) {
 #ifdef TEI_TORCH_CUDA_KERNELS
   if (argc > 1) {
     gemma_low_precision_pointwise(c10::Device(argv[1]));
-    dynamic_fp8(c10::Device(argv[1]));
+    for (const auto* family : {"gemma3", "gemma3_text", "gemma4", "embedding_gemma2"})
+      dynamic_fp8(c10::Device(argv[1]), family);
     feature_cache_stream_lifetime(c10::Device(argv[1]));
     publisher_bf16_score_readout(c10::Device(argv[1]));
   }
