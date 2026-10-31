@@ -1619,6 +1619,10 @@ GPUs as replicas; each GPU loads a complete model, rather than a shard.</p>
 <td>Total token budget per batch; defaults to <code>16384</code>. Larger batches need more memory.</td>
 </tr>
 <tr>
+<td><code>--max-batch-expanded-tokens</code></td>
+<td>Optional expanded-storage ceiling for block-attention fanout; defaults to the batch token budget.</td>
+</tr>
+<tr>
 <td><code>--max-sequence-length</code></td>
 <td>Token limit for one sequence, including prompts and image tokens; bounded by the model and batch limits.</td>
 </tr>

@@ -442,6 +442,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Sequence length and batch capacity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#onejev-block-attention-fanout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OneJev block-attention fanout
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1232,6 +1249,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Sequence length and batch capacity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#onejev-block-attention-fanout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OneJev block-attention fanout
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1333,12 +1367,35 @@ lower its limit further.
 Set <code>INFINITY_MAX_SEQUENCE_LENGTH</code> (or <code>MAX_SEQUENCE_LENGTH</code>) instead of the flag.
 Like other model settings, one value applies to all models; semicolon-separated
 values align with <code>--model-id</code>, and <code>none</code> leaves a model's limit unchanged.</p>
+<h3 id="onejev-block-attention-fanout">OneJev block-attention fanout</h3>
+<p>Block-attention questions from one request execute in one batch, preserving one
+prefix prefill per request to match input-token billing. Requests exceeding the
+compute, expanded-token, or request-count limit return HTTP 422 before inference.
+They are never split into repeated prefills. Other protocols retain their batching.</p>
+<p><code>--max-batch-expanded-tokens</code> defaults to <code>--max-batch-tokens</code>. Raising it lets
+<code>--max-batch-tokens</code> count matching prefixes once plus every question suffix,
+while bounding the sum of full sequence lengths separately:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>/path/to/elephant<span class="w"> </span>--decision-protocol<span class="w"> </span>onejev<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span><span class="w"> </span>--max-batch-expanded-tokens<span class="w"> </span><span class="m">700000</span>
+</span></code></pre></div>
+<p>A 13,000-token prefix plus fifty 150-token suffixes costs 20,500 compute tokens
+and 657,500 expanded tokens. Template and image tokens also count. Prefixes must
+match IDs, types, positions and prepared image identity; independent image
+allocations are conservatively charged separately. Existing deployments may
+need a larger expanded limit for requests that previously spanned batches.
+Measure peak GPU memory before raising it: backend K/V storage still expands
+across questions, and startup warmup does not validate this fanout shape.</p>
+<p><code>INFINITY_MAX_BATCH_EXPANDED_TOKENS</code> is the environment alternative. Values
+broadcast or align with models; <code>none</code> uses the compute limit. An explicit limit
+must be at least <code>--max-batch-tokens</code> and fit signed 32-bit offsets.
+<code>infinity_batch_next_tokens</code> reports expanded tokens; the new
+<code>infinity_batch_next_compute_tokens</code> reports the conservative compute charge.</p>
 <h2 id="ultrabert-embeddings">UltraBERT embeddings</h2>
 <p><code>dmis-lab/UltraBERT-Embed-150M</code> supports native LibTorch and produces
 768-dimensional CLS embeddings with a 32,768-token context. For the native
 LibTorch GPU image:</p>
-<div class="language-sh highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>dmis-lab/UltraBERT-Embed-150M<span class="w"> </span><span class="se">\</span>
-</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>dmis-lab/UltraBERT-Embed-150M<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span>
 </span></code></pre></div>
 <p>Use <code>prompt_name: "query"</code> for retrieval queries; documents use the empty
 <code>document</code> prompt. Mean and last-token pooling overrides and raw token
