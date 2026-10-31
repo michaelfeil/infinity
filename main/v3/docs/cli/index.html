@@ -1422,6 +1422,14 @@ allocations are conservatively charged separately. Existing deployments may
 need a larger expanded limit for requests that previously spanned batches.
 Measure peak GPU memory before raising it: unsupported layouts still expand
 K/V across questions, and startup warmup does not validate this fanout shape.</p>
+<p>For roughly 13K prefix tokens and 256 suffixes of 185 tokens, the budgets grow
+to about 60.4K compute tokens and 3.39M expanded tokens. With the default
+paged attention path, a validation configuration is
+<code>--max-batch-tokens 65536 --max-batch-expanded-tokens 3500000</code>, with the
+per-sequence limit kept at <code>--max-sequence-length 16000</code>. Set
+<code>--max-decision-questions</code> and any <code>--max-batch-requests</code> to at least 256.
+OneJev's separate 512-option limit caps all-yes/no requests at 256 questions;
+questions with more answer options reach that limit earlier.</p>
 <p>Suffix attention assembles K/V in whole-question chunks targeting 500,000
 expanded tokens, reusing the prefix without another prefill. Set
 <code>INFINITY_TORCH_BLOCK_KV_CHUNK_TOKENS</code> to a positive integer to tune this target;
@@ -1439,8 +1447,10 @@ unsupported layouts retain the chunked path.</p>
 <p>For one shared prefix of length P and suffix lengths S, row-local work scales
 with P + sum(S), but full attention still evaluates P² + sum(S × (P + S)) pairs.
 Unique-token counts therefore do not measure all attention work or GPU memory.
-Paging also leaves request preparation unchanged: the adapter currently renders
-and tokenizes each question's complete prompt.</p>
+For the verified Qwen tokenizer used by Elephant and Mammoth, multi-question
+preparation tokenizes the first full prompt and reuses its prefix for subsequent
+questions with identical rendered prefix text. Each template is still rendered
+in full; other tokenizer configurations retain full-prompt tokenization.</p>
 <p><code>INFINITY_MAX_BATCH_EXPANDED_TOKENS</code> is the environment alternative. Values
 broadcast or align with models; <code>none</code> uses the compute limit. An explicit limit
 must be at least <code>--max-batch-tokens</code> and fit signed 32-bit offsets.
