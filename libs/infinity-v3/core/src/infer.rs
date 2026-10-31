@@ -120,6 +120,70 @@ impl Infer {
         }
     }
 
+    pub async fn decide_group(
+        &self,
+        inputs: Vec<(
+            crate::tokenization::ValidEncoding,
+            infinity_v3_backend::DecisionInput,
+        )>,
+        tokenization: Duration,
+    ) -> Result<Vec<DecisionInferResponse>, TextEmbeddingsError> {
+        if self.backend.model_type != ModelType::Decision
+            || inputs.iter().any(|(_, input)| {
+                !matches!(
+                    input,
+                    infinity_v3_backend::DecisionInput::BlockOptionTokens { .. }
+                )
+            })
+        {
+            return Err(TextEmbeddingsError::Validation(
+                "Atomic decision groups require block attention".into(),
+            ));
+        }
+        let mut group = Vec::with_capacity(inputs.len());
+        let mut responses = Vec::with_capacity(inputs.len());
+        for (encoding, input) in inputs {
+            let (response_tx, response_rx) = oneshot::channel();
+            group.push(Entry {
+                metadata: Metadata {
+                    service_tier: self.service_tier,
+                    input_memory: None,
+                    client_batch: None,
+                    response_tx,
+                    tokenization,
+                    queue_time: Instant::now(),
+                    prompt_tokens: encoding.input_ids.len(),
+                    pooling: false,
+                    token_classification: false,
+                    decision: Some(input),
+                },
+                encoding,
+            });
+            responses.push(response_rx);
+        }
+        let preparation = BatchPreparation {
+            remaining: None,
+            notify: &self.notify_batching_task,
+        };
+        self.queue.append_group(group).await?;
+        drop(preparation);
+        let mut outputs = Vec::with_capacity(responses.len());
+        for response in responses {
+            match response.await.map_err(|_| BackendError::Unhealthy)?? {
+                InferResult::Decision(output) => {
+                    retain_for_request(output.metadata.memory.clone());
+                    outputs.push(output);
+                }
+                _ => {
+                    return Err(
+                        BackendError::Inference("Unexpected decision response".into()).into(),
+                    )
+                }
+            }
+        }
+        Ok(outputs)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         tokenization: Tokenization,

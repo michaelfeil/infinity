@@ -228,6 +228,12 @@ struct Args {
     )]
     max_batch_tokens: Vec<usize>,
 
+    /// Expanded token ceiling for block-attention question fanout. Defaults to
+    /// --max-batch-tokens. A larger value budgets shared prefixes once for compute,
+    /// while bounding expanded input and attention K/V storage separately.
+    #[clap(long, env = infinity_v3_config::infinity_env!("MAX_BATCH_EXPANDED_TOKENS"), value_parser = optional_usize, value_delimiter = ';')]
+    max_batch_expanded_tokens: Vec<Optional<usize>>,
+
     /// Maximum tokens per sequence, including formatted prompts and image tokens.
     /// Defaults to the model limit, bounded by --max-batch-tokens.
     #[clap(long, env = infinity_v3_config::infinity_env!("MAX_SEQUENCE_LENGTH"), value_parser = optional::<std::num::NonZeroUsize>, value_delimiter = ';')]
@@ -419,6 +425,11 @@ impl Args {
             "max-concurrent-requests",
         )?;
         let max_batch_tokens = expand(&self.max_batch_tokens, count, "max-batch-tokens")?;
+        let max_batch_expanded_tokens = expand_optional(
+            &self.max_batch_expanded_tokens,
+            count,
+            "max-batch-expanded-tokens",
+        )?;
         let max_sequence_length =
             expand_optional(&self.max_sequence_length, count, "max-sequence-length")?;
         let radix_mlp_threshold = expand(&self.radix_mlp_threshold, count, "radix-mlp-threshold")?;
@@ -462,6 +473,7 @@ impl Args {
                     flex_queue_offset_ms: flex_queue_offset_ms[i],
                     max_concurrent_requests: max_concurrent_requests[i],
                     max_batch_tokens: max_batch_tokens[i],
+                    max_batch_expanded_tokens: max_batch_expanded_tokens[i],
                     max_sequence_length: max_sequence_length[i],
                     max_batch_requests: max_batch_requests[i],
                     radix_mlp_threshold: radix_mlp_threshold[i],
@@ -689,6 +701,8 @@ mod tests {
             "cpu",
             "--max-batch-tokens",
             "100;200",
+            "--max-batch-expanded-tokens",
+            "none;800",
             "--max-sequence-length",
             "64;none",
             "--revision",
@@ -707,6 +721,8 @@ mod tests {
         assert_eq!(models[1].served_model_name.as_deref(), Some("rerank"));
         assert_eq!(models[0].max_batch_tokens, 100);
         assert_eq!(models[1].max_batch_tokens, 200);
+        assert_eq!(models[0].max_batch_expanded_tokens, None);
+        assert_eq!(models[1].max_batch_expanded_tokens, Some(800));
         assert_eq!(models[0].max_sequence_length.unwrap().get(), 64);
         assert_eq!(models[1].max_sequence_length, None);
         assert_eq!(models[0].revision, None);

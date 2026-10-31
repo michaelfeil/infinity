@@ -10,7 +10,7 @@ use crate::log_response_dropped_after;
 use crate::tokenization::ValidEncoding;
 use infinity_v3_backend::{BackendError, Batch};
 use std::cmp::max;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::{
     atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
@@ -105,6 +105,7 @@ pub struct Metadata {
 }
 
 struct PendingEntry {
+    siblings: Vec<Entry>,
     queued_at: Instant,
     order: u128,
     entry: Entry,
@@ -119,6 +120,7 @@ struct PendingEntries {
     flex_offset: Duration,
     anchor: Instant,
     next_order: u128,
+    len: usize,
 }
 
 impl PendingEntries {
@@ -131,6 +133,7 @@ impl PendingEntries {
             flex_offset,
             anchor: Instant::now(),
             next_order: 0,
+            len: 0,
         }
     }
 
@@ -143,6 +146,11 @@ impl PendingEntries {
     }
 
     fn push_back(&mut self, entry: Entry, now: Instant) {
+        self.push_group(entry, Vec::new(), now);
+    }
+
+    fn push_group(&mut self, entry: Entry, siblings: Vec<Entry>, now: Instant) {
+        self.len += 1 + siblings.len();
         if self.next_order == 0 {
             self.anchor = now;
         }
@@ -150,6 +158,7 @@ impl PendingEntries {
         self.next_order = self.next_order.saturating_add(1);
         self.tier(entry.metadata.service_tier)
             .push_back(PendingEntry {
+                siblings,
                 queued_at: now,
                 order,
                 entry,
@@ -157,6 +166,7 @@ impl PendingEntries {
     }
 
     fn push_front(&mut self, pending: PendingEntry) {
+        self.len += 1 + pending.siblings.len();
         self.tier(pending.entry.metadata.service_tier)
             .push_front(pending);
     }
@@ -186,7 +196,9 @@ impl PendingEntries {
         })
         .min_by_key(|(_, time, order)| (*time, *order))
         .map(|(tier, _, _)| tier)?;
-        self.tier(tier).pop_front()
+        let pending = self.tier(tier).pop_front()?;
+        self.len -= 1 + pending.siblings.len();
+        Some(pending)
     }
 
     fn iter(&self) -> impl Iterator<Item = &Entry> {
@@ -194,25 +206,27 @@ impl PendingEntries {
             .iter()
             .chain(self.priority.iter())
             .chain(self.flex.iter())
-            .map(|pending| &pending.entry)
+            .flat_map(|pending| std::iter::once(&pending.entry).chain(&pending.siblings))
     }
 
     fn drain(&mut self) -> impl Iterator<Item = Entry> + '_ {
+        self.len = 0;
         self.normal
             .drain(..)
             .chain(self.priority.drain(..))
             .chain(self.flex.drain(..))
-            .map(|pending| pending.entry)
+            .flat_map(|pending| std::iter::once(pending.entry).chain(pending.siblings))
     }
 
     fn len(&self) -> usize {
-        self.normal.len() + self.priority.len() + self.flex.len()
+        self.len
     }
 }
 
 /// Request Queue
 #[derive(Debug, Clone)]
 pub struct Queue {
+    group_limits: GroupLimits,
     priority_enabled: bool,
     flex_enabled: bool,
     worker: Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>,
@@ -273,6 +287,7 @@ impl Queue {
             model_name,
             priority_queue_bonus,
             Duration::from_secs(10),
+            None,
         )
     }
 
@@ -286,6 +301,7 @@ impl Queue {
         model_name: String,
         priority_queue_bonus: Duration,
         flex_queue_offset: Duration,
+        max_batch_expanded_tokens: Option<usize>,
     ) -> Self {
         // Validate on the caller's thread before spawning the detached worker.
         let configured_target =
@@ -322,10 +338,19 @@ impl Queue {
                 model_name.into(),
                 priority_queue_bonus,
                 flex_queue_offset,
+                max_batch_expanded_tokens.unwrap_or(max_batch_tokens),
             )
         });
 
         Self {
+            group_limits: GroupLimits {
+                compute: max_batch_tokens,
+                expanded: max_batch_expanded_tokens.unwrap_or(max_batch_tokens),
+                requests: max_batch_requests,
+                prefix_aware: max_batch_expanded_tokens.unwrap_or(max_batch_tokens)
+                    > max_batch_tokens
+                    && radix_mlp_threshold == 0.0,
+            },
             priority_enabled: !priority_queue_bonus.is_zero(),
             flex_enabled: !flex_queue_offset.is_zero(),
             worker: Arc::new(std::sync::Mutex::new(Some(worker))),
@@ -388,6 +413,37 @@ impl Queue {
         }
     }
 
+    /// Enqueue an already-prepared block request atomically. Never partially
+    /// execute a request whose deduplicated billing assumes one prefix prefill.
+    pub async fn append_group(
+        &self,
+        mut group: Vec<Entry>,
+    ) -> Result<(), crate::TextEmbeddingsError> {
+        let (compute, expanded) = self.group_limits.charge(&group);
+        if compute > self.group_limits.compute
+            || expanded > self.group_limits.expanded
+            || self
+                .group_limits
+                .requests
+                .is_some_and(|limit| group.len() > limit)
+        {
+            return Err(crate::TextEmbeddingsError::Validation(format!(
+                "Block-attention request must fit one batch: {compute} compute tokens, {expanded} expanded tokens, {} questions; limits are {}, {}, {:?}",
+                group.len(), self.group_limits.compute, self.group_limits.expanded, self.group_limits.requests
+            )));
+        }
+        for entry in &mut group {
+            entry.metadata.input_memory = crate::input_memory::current();
+        }
+        if self.is_closed() {
+            return Err(BackendError::Unhealthy.into());
+        }
+        self.queue_sender
+            .send(QueueCommand::AppendGroup(group, Span::current()))
+            .await
+            .map_err(|_| crate::TextEmbeddingsError::Backend(BackendError::Unhealthy))
+    }
+
     /// Get the next batch from the queue
     #[instrument(skip(self))]
     pub async fn next_batch(&self) -> Option<NextBatch> {
@@ -420,7 +476,91 @@ impl Queue {
     }
 }
 
-// Background task responsible of the queue state
+#[derive(Debug, Clone, Copy)]
+struct GroupLimits {
+    compute: usize,
+    expanded: usize,
+    requests: Option<usize>,
+    prefix_aware: bool,
+}
+
+impl GroupLimits {
+    fn charge(&self, entries: &[Entry]) -> (usize, usize) {
+        let mut prefixes = HashSet::new();
+        let mut compute = 0usize;
+        let mut expanded = 0usize;
+        for entry in entries {
+            let len = entry.encoding.input_ids.len();
+            let prefix = self
+                .prefix_aware
+                .then(|| BlockPrefix::from_entry(entry))
+                .flatten();
+            let saved = prefix.map_or(0, |prefix| {
+                let length = prefix.ids.len();
+                if prefixes.insert(prefix) {
+                    0
+                } else {
+                    length
+                }
+            });
+            compute = compute.saturating_add(len - saved);
+            expanded = expanded.saturating_add(len);
+        }
+        (compute, expanded)
+    }
+}
+
+/// Conservative subset of the native `same_block_prefix` identity. Images
+/// share only when they reuse the same prepared patches; equal independent
+/// allocations are charged in full. The group retains those Arcs during
+/// accounting, so pointer reuse cannot create a match.
+#[derive(PartialEq, Eq, Hash)]
+struct BlockPrefix<'a> {
+    ids: &'a [u32],
+    types: &'a [u32],
+    positions: &'a [u32],
+    axes: Option<[&'a [u32]; 3]>,
+    images: Vec<(usize, usize)>,
+}
+
+impl<'a> BlockPrefix<'a> {
+    fn from_entry(entry: &'a Entry) -> Option<Self> {
+        let infinity_v3_backend::DecisionInput::BlockOptionTokens { prefix_length, .. } =
+            entry.metadata.decision.as_ref()?
+        else {
+            return None;
+        };
+        let len = *prefix_length;
+        if len == 0 {
+            return None;
+        }
+        let encoding = &entry.encoding;
+        let mut prefix = Self {
+            ids: encoding.input_ids.get(..len)?,
+            types: encoding.token_type_ids.get(..len)?,
+            positions: encoding.position_ids.get(..len)?,
+            axes: None,
+            images: Vec::new(),
+        };
+        if let Some(media) = &encoding.multimodal {
+            // Native block attention rejects audio and images crossing boundaries.
+            // Be conservative for suffix images as well; no discount is necessary.
+            if !media.audios.is_empty() || media.radix_prefix_len()? > len {
+                return None;
+            }
+            let [a, b, c] = &media.position_ids;
+            prefix.axes = Some([a.get(..len)?, b.get(..len)?, c.get(..len)?]);
+            prefix.images = media
+                .images
+                .iter()
+                .map(|(start, patches)| (*start, Arc::as_ptr(patches) as usize))
+                .collect();
+        }
+        Some(prefix)
+    }
+}
+
+// Background task responsible for the queue state.
 #[allow(clippy::too_many_arguments)]
 fn queue_blocking_task(
     max_batch_tokens: usize,
@@ -434,9 +574,12 @@ fn queue_blocking_task(
     model_name: metrics::SharedString,
     priority_queue_bonus: Duration,
     flex_queue_offset: Duration,
+    max_batch_expanded_tokens: usize,
 ) {
     tracing::info!(
         ?early_dispatch_tokens,
+        max_batch_tokens,
+        max_batch_expanded_tokens,
         replicas,
         full_batch_backlog_tokens = 20_000usize.saturating_mul(replicas.max(1)),
         "Early dispatch token target"
@@ -480,6 +623,14 @@ fn queue_blocking_task(
             queued_tokens = 0;
             metrics::gauge!("infinity_queue_size", "model" => model_name.clone()).set(0.0);
             match cmd {
+                QueueCommand::AppendGroup(group, _) => {
+                    for entry in group {
+                        let _ = entry
+                            .metadata
+                            .response_tx
+                            .send(Err(BackendError::Unhealthy));
+                    }
+                }
                 QueueCommand::Append(entry, _) => {
                     let _ = entry
                         .metadata
@@ -497,6 +648,19 @@ fn queue_blocking_task(
         }
         match cmd {
             QueueCommand::Close => {}
+            QueueCommand::AppendGroup(group, span) => {
+                let _span = span.entered();
+                queued_tokens += group
+                    .iter()
+                    .map(|e| e.encoding.input_ids.len())
+                    .sum::<usize>();
+                metrics::gauge!("infinity_queue_size", "model" => model_name.clone())
+                    .increment(group.len() as f64);
+                let mut group = group.into_iter();
+                if let Some(first) = group.next() {
+                    entries.push_group(first, group.collect(), Instant::now());
+                }
+            }
             QueueCommand::Append(entry, span) => {
                 let _span = span.entered();
                 queued_tokens += entry.encoding.input_ids.len();
@@ -514,7 +678,8 @@ fn queue_blocking_task(
                 // Draining a busy queue must not enable the cut midway through this batch.
                 let target = target_for_backlog(queued_tokens, early_dispatch_tokens, replicas);
 
-                let mut current_tokens = 0;
+                let mut current_tokens = 0usize;
+                let mut expanded_tokens = 0usize;
                 let mut pooled_count = 0;
                 let mut token_count = 0;
                 let mut offset_count = 0;
@@ -523,12 +688,47 @@ fn queue_blocking_task(
                 // Canceled tails stay counted until popped; only soft cuts can change.
                 let mut pending_clients: Option<HashMap<usize, usize>> = None;
 
-                while let Some(PendingEntry {
-                    queued_at,
-                    order,
-                    entry,
-                }) = entries.pop_front()
-                {
+                while let Some(pending) = entries.pop_front() {
+                    if !pending.siblings.is_empty() {
+                        // Keep each ready block request intact and in its service-tier
+                        // position. A preceding partial batch must dispatch first.
+                        if !selected.is_empty() {
+                            entries.push_front(pending);
+                            break;
+                        }
+                        let mut group: Vec<_> = std::iter::once(pending.entry)
+                            .chain(pending.siblings)
+                            .collect();
+                        queued_tokens -= group
+                            .iter()
+                            .map(|e| e.encoding.input_ids.len())
+                            .sum::<usize>();
+                        group.retain(|entry| !entry.metadata.response_tx.is_closed());
+                        if group.is_empty() {
+                            continue;
+                        }
+                        let limits = GroupLimits {
+                            compute: max_batch_tokens,
+                            expanded: max_batch_expanded_tokens,
+                            requests: max_batch_requests,
+                            prefix_aware: max_batch_expanded_tokens > max_batch_tokens
+                                && radix_mlp_threshold == 0.0,
+                        };
+                        (current_tokens, expanded_tokens) = limits.charge(&group);
+                        for entry in group {
+                            pooled_count += usize::from(entry.metadata.pooling);
+                            token_count += entry.encoding.tokens.len();
+                            offset_count += entry.encoding.offsets.len();
+                            selected.push(entry);
+                        }
+                        break;
+                    }
+                    let PendingEntry {
+                        queued_at,
+                        order,
+                        entry,
+                        ..
+                    } = pending;
                     if let (Some(clients), Some(client)) =
                         (&mut pending_clients, &entry.metadata.client_batch)
                     {
@@ -548,7 +748,6 @@ fn queue_blocking_task(
                     }
 
                     let entry_tokens = entry.encoding.input_ids.len();
-
                     // Soft limit: always allow one input, even if it exceeds the target.
                     let mut unfinished_client = || {
                         selected.iter().any(|selected| {
@@ -583,6 +782,7 @@ fn queue_blocking_task(
                     };
                     if should_cut(current_tokens, entry_tokens, target) && !unfinished_client() {
                         entries.push_front(PendingEntry {
+                            siblings: Vec::new(),
                             queued_at,
                             order,
                             entry,
@@ -598,6 +798,7 @@ fn queue_blocking_task(
                             "Single entry exceeds max batch tokens, leading to stall."
                         );
                         entries.push_front(PendingEntry {
+                            siblings: Vec::new(),
                             queued_at,
                             order,
                             entry,
@@ -607,6 +808,7 @@ fn queue_blocking_task(
 
                     queued_tokens -= entry_tokens;
                     current_tokens = total_tokens;
+                    expanded_tokens += entry_tokens;
                     pooled_count += usize::from(entry.metadata.pooling);
                     token_count += entry.encoding.tokens.len();
                     offset_count += entry.encoding.offsets.len();
@@ -752,7 +954,9 @@ fn queue_blocking_task(
                     metrics::histogram!("infinity_batch_next_size", "model" => model_name.clone());
                 histogram.record(batch_size as f64);
                 let histogram = metrics::histogram!("infinity_batch_next_tokens", "model" => model_name.clone());
-                histogram.record(current_tokens as f64);
+                histogram.record(expanded_tokens as f64);
+                metrics::histogram!("infinity_batch_next_compute_tokens", "model" => model_name.clone())
+                    .record(current_tokens as f64);
                 let gauge = metrics::gauge!("infinity_queue_size", "model" => model_name.clone());
                 gauge.set(entries.len() as f64)
             }
@@ -766,6 +970,7 @@ pub type NextBatch = (Vec<Metadata>, Batch);
 enum QueueCommand {
     Close,
     Append(Box<Entry>, Span),
+    AppendGroup(Vec<Entry>, Span),
     NextBatch {
         response_sender: oneshot::Sender<Option<NextBatch>>,
         span: Span,
@@ -848,6 +1053,15 @@ mod tests {
         max_requests: Option<usize>,
         target: Option<usize>,
     ) -> Queue {
+        test_queue_with_expanded_limit(max_tokens, max_requests, target, max_tokens)
+    }
+
+    fn test_queue_with_expanded_limit(
+        max_tokens: usize,
+        max_requests: Option<usize>,
+        target: Option<usize>,
+        max_expanded_tokens: usize,
+    ) -> Queue {
         let (queue_sender, queue_receiver) = mpsc::channel(32);
         let closed = Arc::new(AtomicBool::new(false));
         let worker_closed = closed.clone();
@@ -864,9 +1078,16 @@ mod tests {
                 "test".into(),
                 Duration::from_secs(1),
                 Duration::from_secs(1),
+                max_expanded_tokens,
             );
         });
         Queue {
+            group_limits: GroupLimits {
+                compute: max_tokens,
+                expanded: max_expanded_tokens,
+                requests: max_requests,
+                prefix_aware: max_expanded_tokens > max_tokens,
+            },
             priority_enabled: true,
             flex_enabled: true,
             worker: Arc::new(std::sync::Mutex::new(None)),
@@ -906,6 +1127,158 @@ mod tests {
             },
             response_rx,
         )
+    }
+
+    fn block_entry(
+        prefix: usize,
+        suffix: usize,
+    ) -> (Entry, oneshot::Receiver<Result<InferResult, BackendError>>) {
+        let (mut entry, response) = test_entry(vec![1; prefix + suffix], false);
+        entry.metadata.decision = Some(infinity_v3_backend::DecisionInput::BlockOptionTokens {
+            token_ids: vec![7, 8],
+            prefix_length: prefix,
+        });
+        (entry, response)
+    }
+
+    #[tokio::test]
+    async fn thirteen_k_state_and_fifty_questions_are_atomic_or_rejected() {
+        for expanded_limit in [524_288, 700_000] {
+            let queue = test_queue_with_expanded_limit(32_768, None, Some(5_000), expanded_limit);
+            let mut responses = Vec::new();
+            let mut group = Vec::new();
+            for question in 0..50 {
+                let (mut entry, response) = block_entry(13_000, 150);
+                entry.encoding.input_ids[13_000..].fill(100 + question);
+                responses.push(response);
+                group.push(entry);
+            }
+            if expanded_limit == 524_288 {
+                assert!(matches!(
+                    queue.append_group(group).await,
+                    Err(crate::TextEmbeddingsError::Validation(_))
+                ));
+                assert!(queue.next_batch().await.is_none());
+            } else {
+                // Work already queued must not consume part of this request's budget.
+                let (earlier, response) = block_entry(20_000, 100);
+                responses.push(response);
+                queue.append(earlier).await;
+                queue.append_group(group).await.unwrap();
+                assert_eq!(queue.next_batch().await.unwrap().0.len(), 1);
+                let (metadata, batch) = queue.next_batch().await.unwrap();
+                assert_eq!(metadata.len(), 50);
+                assert_eq!(batch.input_ids.len(), 657_500);
+                for (question, ids) in batch.input_ids.chunks_exact(13_150).enumerate() {
+                    assert!(ids[13_000..].iter().all(|id| *id == 100 + question as u32));
+                }
+                assert!(queue.next_batch().await.is_none());
+            }
+            queue.shutdown().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn atomic_groups_reject_compute_and_request_overflow_and_release_cancellation() {
+        for (compute, requests) in [(9, None), (10, Some(1))] {
+            let queue = test_queue_with_expanded_limit(compute, requests, None, 100);
+            let (a, _a_response) = block_entry(6, 2);
+            let (b, _b_response) = block_entry(6, 2);
+            assert!(queue.append_group(vec![a, b]).await.is_err());
+            assert!(queue.next_batch().await.is_none());
+            queue.shutdown().await;
+        }
+        let queue = test_queue_with_expanded_limit(10, None, None, 100);
+        let (a, a_response) = block_entry(6, 2);
+        let (b, b_response) = block_entry(6, 2);
+        queue.append_group(vec![a, b]).await.unwrap();
+        drop((a_response, b_response));
+        assert!(queue.next_batch().await.is_none());
+        let (live, _response) = block_entry(6, 2);
+        queue.append(live).await;
+        assert_eq!(queue.next_batch().await.unwrap().0.len(), 1);
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn block_groups_do_not_discount_unrelated_prefixes() {
+        for difference in 0..5 {
+            let queue = test_queue_with_expanded_limit(10, None, None, 100);
+            let (first, first_response) = block_entry(6, 2);
+            let (mut second, second_response) = block_entry(6, 2);
+            match difference {
+                0 => second.encoding.input_ids[0] = 2,
+                1 => second.encoding.token_type_ids[0] = 1,
+                2 => second.encoding.position_ids[0] = 1,
+                3 => {
+                    second.metadata.decision =
+                        Some(infinity_v3_backend::DecisionInput::OptionTokens {
+                            token_ids: vec![7, 8],
+                        })
+                }
+                _ => {
+                    second.metadata.decision =
+                        Some(infinity_v3_backend::DecisionInput::BlockOptionTokens {
+                            token_ids: vec![7, 8],
+                            prefix_length: 5,
+                        })
+                }
+            }
+            assert!(queue.append_group(vec![first, second]).await.is_err());
+            assert!(queue.next_batch().await.is_none());
+            drop((first_response, second_response));
+            queue.shutdown().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn block_budget_requires_shared_image_patches_and_matching_positions() {
+        use infinity_v3_backend::{ImagePatches, MultimodalEncoding};
+        let patches = Arc::new(ImagePatches {
+            pixels: vec![1.0],
+            grid_thw: [1, 1, 1],
+            patch_dim: 1,
+            merge_size: 1,
+        });
+        for difference in 0..4 {
+            let queue = test_queue_with_expanded_limit(10, None, None, 100);
+            let mut responses = Vec::new();
+            let mut group = Vec::new();
+            for row in 0..2 {
+                let (mut entry, response) = block_entry(6, 2);
+                let mut media = MultimodalEncoding {
+                    images: vec![(1, patches.clone())],
+                    audios: vec![],
+                    position_ids: std::array::from_fn(|_| (0..8).collect()),
+                    memory: None,
+                };
+                if row == 1 {
+                    match difference {
+                        1 => {
+                            media.images[0].1 = Arc::new(ImagePatches {
+                                pixels: vec![2.0],
+                                ..(*patches).clone()
+                            })
+                        }
+                        2 => media.position_ids[1][5] = 99,
+                        3 => media.images[0].0 = 2,
+                        _ => {}
+                    }
+                }
+                entry.encoding.multimodal = Some(Arc::new(media));
+                responses.push(response);
+                group.push(entry);
+            }
+            let result = queue.append_group(group).await;
+            if difference == 0 {
+                result.unwrap();
+                assert_eq!(queue.next_batch().await.unwrap().0.len(), 2);
+            } else {
+                assert!(result.is_err());
+                assert!(queue.next_batch().await.is_none());
+            }
+            queue.shutdown().await;
+        }
     }
 
     #[test]

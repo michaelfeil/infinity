@@ -65,6 +65,7 @@ pub struct ModelSettings {
     pub flex_queue_offset_ms: u64,
     pub max_concurrent_requests: usize,
     pub max_batch_tokens: usize,
+    pub max_batch_expanded_tokens: Option<usize>,
     pub max_sequence_length: Option<std::num::NonZeroUsize>,
     pub max_batch_requests: Option<usize>,
     pub radix_mlp_threshold: f32,
@@ -148,6 +149,7 @@ pub async fn run(
             flex_queue_offset_ms: 10000,
             max_concurrent_requests,
             max_batch_tokens,
+            max_batch_expanded_tokens: None,
             max_sequence_length: None,
             max_batch_requests,
             radix_mlp_threshold,
@@ -205,6 +207,7 @@ async fn initialize_model(
         decision_protocol,
         max_concurrent_requests,
         max_batch_tokens,
+        max_batch_expanded_tokens,
         max_sequence_length,
         max_batch_requests,
         radix_mlp_threshold,
@@ -854,6 +857,7 @@ async fn initialize_model(
         metric_model_name,
         std::time::Duration::from_millis(priority_queue_bonus_ms),
         std::time::Duration::from_millis(flex_queue_offset_ms),
+        max_batch_expanded_tokens,
     );
 
     // Create infer task
