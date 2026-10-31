@@ -208,12 +208,21 @@ class Decoder final : public Model {
   /// Return normalized rows and the residual stream used by the next sublayer. Select the
   /// Transformers, exact Candle, or ordinary fused recipe without changing its
   /// residual-rounding boundary.
-  std::pair<at::Tensor, at::Tensor>
-  residual_norm(const at::Tensor& x, const at::Tensor& residual, const at::Tensor& weight) const {
+  std::pair<at::Tensor, at::Tensor> residual_norm(const at::Tensor& x,
+                                                  const at::Tensor& residual,
+                                                  const at::Tensor& weight,
+                                                  at::Tensor* scales = nullptr) const {
+    if (scales && dtype == at::kBFloat16 && hidden <= 8192 && hidden % 256 == 0 &&
+        !exact_decoder_math() && x.is_contiguous() &&
+        (!residual.defined() || residual.is_contiguous())) {
+      auto [quantized, summed, row_scales] = fp8_add_rms_quantize(x, residual, weight, epsilon);
+      *scales = std::move(row_scales);
+      return {quantized, summed};
+    }
     if (transformers_fused_norm)
       return transformers_rms_norm(x, residual, weight, epsilon);
     if (exact_decoder_math())
-      return decoder_exact_rms_norm(x, residual, weight, epsilon);
+      return decoder_exact_rms_norm(x, residual, weight, epsilon, scales);
     return fused_add_rms_norm(x, residual, weight, epsilon);
   }
 #endif
@@ -1312,19 +1321,10 @@ public:
       at::Tensor normalized, normalized_scales;
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
-        if (layer.fp8_qkv && dtype == at::kBFloat16 && hidden <= 8192 && hidden % 256 == 0 &&
-            !exact_decoder_math() && h.is_contiguous() &&
-            (!residual.defined() || residual.is_contiguous())) {
-          auto [quantized, summed, scales] =
-              fp8_add_rms_quantize(h, residual, layer.input_norm, epsilon);
-          normalized = std::move(quantized);
-          residual = std::move(summed);
-          normalized_scales = std::move(scales);
-        } else {
-          auto pair = residual_norm(h, residual, layer.input_norm);
-          normalized = pair.first;
-          residual = pair.second;
-        }
+        auto pair = residual_norm(
+            h, residual, layer.input_norm, layer.fp8_qkv ? &normalized_scales : nullptr);
+        normalized = pair.first;
+        residual = pair.second;
       } else
 #endif
         normalized = norm(h, layer.input_norm);
@@ -1446,18 +1446,11 @@ public:
         projected = cached_prefix_linear(attended, layer.out, layer.out_bias, input);
 #ifdef TEI_TORCH_CUDA_KERNELS
       if (h.is_cuda() && (!transformers_math() || transformers_fused_norm)) {
-        if (layer.dense_mlp.fp8() && dtype == at::kBFloat16 && hidden <= 8192 &&
-            hidden % 256 == 0 && !exact_decoder_math() && projected.is_contiguous() &&
-            (!residual.defined() || residual.is_contiguous())) {
-          auto [quantized, summed, scales] =
-              fp8_add_rms_quantize(projected, residual, layer.post_norm, epsilon);
-          residual = std::move(summed);
-          h = mlp(quantized, layer, input, scales);
-        } else {
-          auto pair = residual_norm(projected, residual, layer.post_norm);
-          residual = pair.second;
-          h = mlp(pair.first, layer, input);
-        }
+        at::Tensor scales;
+        auto pair = residual_norm(
+            projected, residual, layer.post_norm, layer.dense_mlp.fp8() ? &scales : nullptr);
+        residual = pair.second;
+        h = mlp(pair.first, layer, input, scales);
       } else
 #endif
       {
