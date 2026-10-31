@@ -215,15 +215,18 @@ requires Tile IR **13.3 for Hopper**. The current CUDA 13.1 compiler environment
 does not provide that producer, so cuTile is optional and does not determine
 this backend's runtime baseline.
 
-The repository's FA4 provider has native ABI 1/export ABI 7 profiles for 19 exact
-geometries in both F16 and BF16. The optional adapter uses its raw C ABI, passing
+The repository's FA4 provider has 19 compile profiles in both F16 and BF16,
+using native ABI 1/export ABI 7. The optional adapter uses its raw C ABI, passing
 device pointers, tensor strides, packed sequence boundaries, and the same CUDA
 stream without ATen or a LibTorch model call. It selects a profile only from the
-exact tuple of query heads, KV heads, head width, causality, and window, and
-validates the manifest's dtype, symbol, geometry, window, and export order at
-load. Geometry is not inferred from a family name or a Q/KV ratio.
+GQA ratio, head width, causality, and exact window. It validates the manifest's dtype, symbol, geometry, window, and export order at
+load. Absolute head counts are runtime dimensions: the manifest counts are
+compile exemplars. The pinned provider specializes on the GQA ratio and dynamic
+tensor layouts, as does the existing native selector. Family names alone do not
+establish compatibility. See the pinned [FA4 specialization key](https://github.com/Dao-AILab/flash-attention/blob/e9cf2c1651d2303191eb40a739a3c135fda00999/flash_attn/cute/interface.py#L1125)
+and [dynamic tensor layouts](https://github.com/Dao-AILab/flash-attention/blob/e9cf2c1651d2303191eb40a739a3c135fda00999/flash_attn/cute/cute_dsl_utils.py#L131).
 
-| Export | Q heads | KV heads | Width | Causal | Window |
+| Export | Example Q heads | Example KV heads | Width | Causal | Window |
 | --- | ---: | ---: | ---: | --- | --- |
 | `bert` | 16 | 16 | 64 | No | Global |
 | `modern_local` | 12 | 12 | 64 | No | Local 64/64 |
@@ -255,18 +258,20 @@ require shared boundaries; other exported profiles accept them.
 
 The pooled BF16 BERT executor supplies query heads equal to KV heads, head width
 `hidden_size / num_attention_heads`, noncausal global attention, and
-`1 / sqrt(head_dim)` scaling. It can use FA4 only when that tuple is one of the 19
-exports (`mha32` for MiniLM). Coverage of every export is operator coverage, not
+`1 / sqrt(head_dim)` scaling. It can use FA4 only when its ratio, width, and mask
+match one of the 19 profiles (`mha32` for MiniLM, `bert` for standard width-64 MHA). For example,
+12/12 and 24/24 heads can use the width-64 global MHA export compiled with
+16/16 heads. Coverage of every export is operator coverage, not
 new model-family execution: the pooled BF16 BERT executor remains the only model
 executor, and end-to-end FP16 serving is not implemented.
 
 When configured, this is a hybrid executor: oxide-authored Rust kernels plus
 cuBLAS and AOT FA4 attention; it is not a claim that FA4 attention was rewritten
 in Rust. `INFINITY_OXIDE_ATTENTION=auto` is the default. It selects FA4 when
-`INFINITY_FA4_ROOT=/path/to/infinityfa4` is present and the BERT geometry is one
-of the exported tuples; other geometries use oxide SIMT attention. `simt`
-explicitly selects the Rust attention kernel. `fa4` requires the provider and an
-exact exported geometry, and rejects unsupported models instead of silently
+`INFINITY_FA4_ROOT=/path/to/infinityfa4` is present and the BERT geometry
+matches a compiled profile; other geometries use oxide SIMT attention. `simt`
+explicitly selects the Rust attention kernel. `fa4` requires the provider and a
+matching compiled profile, and rejects unsupported models instead of silently
 changing implementations. The per-SM directory must contain the native ABI
 1/export ABI 7 manifest, portable-host marker, matching compute capability and
 an advertised mode for the selected export. A selected provider's load or launch
@@ -283,16 +288,22 @@ are ignored by default, and load every export in both dtypes, compare every
 export on small ragged packed batches against a CPU reference, exercise the
 shared-boundary wrapper, and exercise separate Q/K boundaries on non-d256
 profiles; the SM100 d256 boundary guard is covered by unit validation.
+Additional H100 numerical and memory checks cover runtime head counts in both
+dtypes, contiguous and padded rows, and ragged lengths 3/130. The tested
+geometries include 12/12 and 24/24 heads at width 64, 32/32 heads at width 128,
+and GQA with runtime 24/12, 16/4, and 6/1 head counts. This validates operator
+geometry; each new model still needs checkpoint-level parity and performance.
 
 FA4 is the target production attention provider as model coverage expands; an
 FA2 compatibility backend is outside the oxide roadmap. The pinned provider
 declares the 19 profile cases above spanning causal/noncausal, global/local and
 MHA/GQA attention at widths 32, 64, 72, 128, and 256. The adapter now selects
-every exact export, but operator coverage is not by itself model or end-to-end
-qualification. Exported head counts, windows, score modifications, and separate
-Q/K boundaries remain explicit capabilities, rather than assumptions based on a
-family name or GQA ratio. Keep SIMT useful for reference and bring-up; extend
-FA4 exports for required model semantics where practical.
+every compiled profile, including runtime head-count variations, but operator
+coverage is not by itself model or end-to-end qualification. Windows,
+score modifications, and separate
+Q/K boundaries remain explicit capabilities. Runtime head-count matching uses
+validated ratios; the remaining semantics are checked independently. Keep SIMT
+useful for reference and bring-up; extend FA4 exports for required model semantics where practical.
 
 The existing GDN provider also exposes reusable AOT kernels, but GDN/Qwen3.5
 model execution is not implemented by this initial backend.

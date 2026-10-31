@@ -4,7 +4,8 @@
 //! Profile order and exported windows mirror the repository's ABI7
 //! `vendor/infinity_fa4/profiles.inc` and `build.py`. A bundle is accepted only
 //! when its manifest exports that known mode order exactly for the selected
-//! dtype; no geometry is inferred from a Q/KV ratio at call time.
+//! dtype. Absolute head counts are runtime tensor dimensions; selection uses
+//! the exported Q/KV grouping with the exact dimension and mask.
 //!
 //! Softcap, relative-bias and DeBERTa score modifiers are not represented by
 //! [`AttentionSpec`], so they fail selection at load instead of falling back to
@@ -147,7 +148,17 @@ impl Profile {
     }
 
     fn matches(&self, spec: &AttentionSpec) -> bool {
-        (self.heads, self.kv_heads, self.head_dim) == (spec.heads, spec.kv_heads, spec.head_dim)
+        if spec.heads == 0 || spec.kv_heads == 0 {
+            return false;
+        }
+        let (Some(export_group), Some(request_group)) = (
+            self.heads.checked_mul(spec.kv_heads),
+            spec.heads.checked_mul(self.kv_heads),
+        ) else {
+            return false;
+        };
+        export_group == request_group
+            && self.head_dim == spec.head_dim
             && self.causal == spec.causal
             && self.window == spec.window
     }
@@ -287,8 +298,9 @@ fn select_profile(
     manifest: &serde_json::Value,
     spec: &AttentionSpec,
 ) -> Result<usize, BackendError> {
-    let mode = profile_index(spec)
-        .ok_or_else(|| start("selected attention geometry is not a declared ABI7 export"))?;
+    let mode = profile_index(spec).ok_or_else(|| {
+        start("selected attention grouping, dimension or mask has no ABI7 export")
+    })?;
     validate_profile_order(manifest, spec.dtype)?;
     Ok(mode)
 }
@@ -695,6 +707,48 @@ mod tests {
     }
 
     #[test]
+    fn selects_runtime_head_counts_with_original_manifest_exemplars() {
+        let manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        for dtype in [DType::F16, DType::Bf16] {
+            for (mode, heads, kv_heads) in [
+                (0, 12, 12),
+                (0, 24, 24),
+                (9, 32, 32),
+                (3, 24, 12),
+                (2, 16, 4),
+                (4, 6, 1),
+            ] {
+                let mut spec = spec_for(&PROFILES[mode], dtype);
+                spec.heads = heads;
+                spec.kv_heads = kv_heads;
+                assert_eq!(select_profile(&manifest, &spec).ok(), Some(mode));
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_runtime_head_grouping() {
+        let manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        for dtype in [DType::F16, DType::Bf16] {
+            let base = spec_for(&mha32(), dtype);
+            for (heads, kv_heads) in [
+                (0, 0),
+                (0, 12),
+                (12, 0),
+                (13, 12),
+                (12, 13),
+                (24, 12),
+                (usize::MAX, usize::MAX),
+            ] {
+                let mut spec = base;
+                spec.heads = heads;
+                spec.kv_heads = kv_heads;
+                assert!(select_profile(&manifest, &spec).is_err());
+            }
+        }
+    }
+
+    #[test]
     fn rejects_reordered_export_order() {
         let mut manifest = manifest_for(&[DType::F16, DType::Bf16]);
         let kernels = manifest["kernels"]
@@ -1075,6 +1129,34 @@ mod tests {
                 4,
                 false,
             );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires INFINITY_FA4_ROOT and a matching CUDA device"]
+    fn gpu_runtime_head_counts_match_cpu_reference() {
+        let (root, context, stream) = gpu_setup();
+        let offsets = [0i32, 3, 133];
+        for (mode, heads, kv_heads) in [
+            (0, 12, 12),
+            (0, 24, 24),
+            (9, 32, 32),
+            (3, 24, 12),
+            (2, 16, 4),
+            (4, 6, 1),
+        ] {
+            for wrapper in [true, false] {
+                let mut spec = spec_for(&PROFILES[mode], DType::F16);
+                spec.heads = heads;
+                spec.kv_heads = kv_heads;
+                run_case::<f16>(
+                    &context, &root, &stream, spec, &offsets, &offsets, 130, wrapper,
+                );
+                spec.dtype = DType::Bf16;
+                run_case::<bf16>(
+                    &context, &root, &stream, spec, &offsets, &offsets, 130, wrapper,
+                );
+            }
         }
     }
 
