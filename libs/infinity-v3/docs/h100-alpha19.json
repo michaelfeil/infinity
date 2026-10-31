@@ -464,7 +464,7 @@
     "same_device_control": {
       "model": "ultrabert",
       "reference_image_id": "sha256:6bb5cd0e2104414b1d5820bac74c8e2f1870944634f2aa1921eafbf7187fe5f1",
-      "scope": "Same GPU4 and local CPU placement; ratios compare the current release to the previous image, not the historical table.",
+      "scope": "Same GPU4 and CPUs24-31 (remote NUMA placement) for candidate and control, verified with Docker inspect; ratios compare the current release to the previous image, not the historical table.",
       "candidate_to_control_tokens_s": {
         "128": 0.9890568366936283,
         "512": 0.9944371742488768
@@ -482,7 +482,12 @@
         126
       ],
       "gpu4_idle_resident_memory_mib": 8292,
-      "concurrent_gpu_work": "Overlapping runs were discarded and repeated. Inactive resident process retained."
+      "concurrent_gpu_work": "Overlapping runs were discarded and repeated. Inactive resident process retained.",
+      "gpu4_server_cpu_exceptions": {
+        "pplx-4b": "24-31",
+        "ultrabert": "24-31",
+        "ultrabert_control": "24-31"
+      }
     }
   },
   "measurements": {
@@ -3469,7 +3474,7 @@
         "docker",
         "run",
         "--cpuset-cpus",
-        "128-135",
+        "24-31",
         "-d",
         "--name",
         "v301-repeat-pplx-4b-v301-1793394453",
@@ -3477,8 +3482,6 @@
         "device=4",
         "--cpus",
         "8",
-        "--cpuset-cpus",
-        "24-31",
         "--memory",
         "64g",
         "--shm-size",
@@ -3754,7 +3757,7 @@
           "p95_ms": 205.31021105125546
         }
       ],
-      "method": "Sequential fresh containers, local weights, uncontrolled filesystem cache; fixed H100 GPU4 and CPUs128-135. JSON float output. Two repeated five-second windows per workload. No cross-request cache reuse intended.",
+      "method": "Sequential fresh containers, local weights, uncontrolled filesystem cache; fixed H100 GPU4 and CPUs24-31. JSON float output. Two repeated five-second windows per workload. No cross-request cache reuse intended.",
       "token_usage_checks": [
         {
           "shape": "8",
@@ -3819,7 +3822,12 @@
             "total_tokens": 1432
           }
         }
-      ]
+      ],
+      "original_cpuset_arguments": [
+        "128-135",
+        "24-31"
+      ],
+      "cpu_affinity_note": "Command normalized to the effective CPU set. Docker inspect confirms 24-31; the final duplicate option overrode 128-135. GPU4 is on the other NUMA node."
     },
     "ultrabert-v301-repeat.json": {
       "source": "ultrabert-v301.json",
@@ -3827,7 +3835,7 @@
         "docker",
         "run",
         "--cpuset-cpus",
-        "128-135",
+        "24-31",
         "-d",
         "--name",
         "v301-repeat-ultrabert-v301-1793394552",
@@ -3835,8 +3843,6 @@
         "device=4",
         "--cpus",
         "8",
-        "--cpuset-cpus",
-        "24-31",
         "--memory",
         "64g",
         "--shm-size",
@@ -4112,7 +4118,7 @@
           "p95_ms": 17.500927206128836
         }
       ],
-      "method": "Sequential fresh containers, local weights, uncontrolled filesystem cache; fixed H100 GPU4 and CPUs128-135. JSON float output. Two repeated five-second windows per workload. No cross-request cache reuse intended.",
+      "method": "Sequential fresh containers, local weights, uncontrolled filesystem cache; fixed H100 GPU4 and CPUs24-31. JSON float output. Two repeated five-second windows per workload. No cross-request cache reuse intended.",
       "token_usage_checks": [
         {
           "shape": "8",
@@ -4177,7 +4183,12 @@
             "total_tokens": 1432
           }
         }
-      ]
+      ],
+      "original_cpuset_arguments": [
+        "128-135",
+        "24-31"
+      ],
+      "cpu_affinity_note": "Command normalized to the effective CPU set. Docker inspect confirms 24-31; the final duplicate option overrode 128-135. GPU4 is on the other NUMA node."
     },
     "deberta-v3-results.json": {
       "engine": "v3",

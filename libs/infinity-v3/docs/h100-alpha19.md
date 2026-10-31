@@ -90,7 +90,8 @@ Throughput uses two five-second windows after warmup. Reranking, image and
 decision rows report the best median across tested concurrency levels.
 Text embeddings use CUDA graphs, JSON float outputs, a 16K batch-token budget
 and no Radix MLP; DeBERTa uses 8K. Startup storage caches were uncontrolled.
-Qwen3-8B FP16 starts ranged from 3.4 to 24.6 seconds. GPU placement is recorded in the measurement data.
+Qwen3-8B FP16 starts ranged from 3.4 to 24.6 seconds. Perplexity and UltraBERT used CPUs on a different NUMA node from GPU4;
+other GPU4 runs used local CPUs. Exact placement is recorded in the measurement data.
 [Measurement data](h100-alpha19.json) contains mixed-length workloads, individual
 runs, checkpoint names, commit SHAs and numerical checks.
 
