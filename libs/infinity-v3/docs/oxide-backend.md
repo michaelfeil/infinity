@@ -216,6 +216,17 @@ and `sm_120` were previously compiled and audited against the current bridge
 and profiles. This is separate from the fresh Rust-kernel builds, and does not
 establish runtime qualification on B200 or RTX hardware.
 
+FA4 is the target production attention provider as model coverage expands; an
+FA2 compatibility backend is outside the oxide roadmap. The pinned provider
+already declares 19 profile cases spanning causal/noncausal, global/local and
+MHA/GQA attention at widths 32, 64, 72, 128 and 256. The current Rust adapter
+selects only the MiniLM case. Generalize that adapter and qualify the declared
+exports before adding another attention implementation. Exported head counts,
+windows, score modifications and separate Q/K boundaries remain explicit
+capabilities, rather than assumptions based on a family name or GQA ratio.
+Keep SIMT useful for reference and bring-up; extend FA4 exports for required
+model semantics where practical.
+
 The existing GDN provider also exposes reusable AOT kernels, but GDN/Qwen3.5
 model execution is not implemented by this initial backend.
 
