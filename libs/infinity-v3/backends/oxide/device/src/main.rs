@@ -124,7 +124,7 @@ unsafe fn embedding_value(
 mod kernels {
     use super::*;
 
-    /// Register-cached single-warp specialization, grid=(tokens,1,1), block=32.
+    /// Register-cached specialization, grid=(tokens,1,1), block=256.
     #[kernel]
     pub unsafe fn infinity_embedding_norm_384(
         ids: *const u32,
@@ -146,7 +146,7 @@ mod kernels {
         };
     }
 
-    /// Register-cached single-warp specialization, grid=(rows,1,1), block=32.
+    /// Register-cached specialization, grid=(rows,1,1), block=256.
     #[kernel]
     pub unsafe fn infinity_layer_norm_384(
         input: *const u16,

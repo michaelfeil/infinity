@@ -188,7 +188,7 @@ fn launch_threads(
     args: &mut [*mut c_void],
 ) -> Result<(), BackendError> {
     // SAFETY: fixed ABI signatures and validated dimensions; arenas and modules
-    // stay retained. Only the explicitly named 384-wide kernels use 32 threads.
+    // stay retained. Every entry currently uses 256 threads per block.
     unsafe { launch_kernel_on_stream(k, grid, (threads, 1, 1), shared, s, args) }.map_err(infer)
 }
 fn blocks(elements: usize) -> Result<(u32, u32, u32), BackendError> {
@@ -214,7 +214,7 @@ fn norm(
             &k.norm_384,
             s,
             (rows, 1, 1),
-            32,
+            256,
             0,
             &mut [
                 arg(&mut input),
@@ -529,7 +529,7 @@ impl Engine {
                 &k.embedding_384,
                 s,
                 (t, 1, 1),
-                32,
+                256,
                 0,
                 &mut [
                     arg(&mut ids),

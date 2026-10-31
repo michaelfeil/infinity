@@ -1,23 +1,20 @@
 // Copyright Infinity Core Contributors.
 // Licensed under the Infinity Restricted MIT License 1.0; see the repository LICENSE.
-//! Single-warp specializations for the 384-wide BERT LayerNorm layers.
+//! Register-cached specializations for the 384-wide BERT LayerNorm layers.
 //!
-//! Each block handles one row with all 32 lanes active. Every lane stages its
-//! twelve FP32 values in registers before reduction, so the input may alias
-//! the output. Arithmetic and BF16 rounding boundaries match `main.rs`. The
-//! reduction tree differs from the generic 256-thread kernels, so outputs need
-//! not be bitwise identical even though the elementwise operations are.
+//! Each 256-thread block handles one row. Values are loaded once into registers
+//! before reduction, permitting input/output aliasing. The original reduction
+//! tree and BF16 rounding boundaries are preserved.
 
-use cuda_device::{float, thread, warp};
+use cuda_device::{SharedArray, float, thread};
 
-use crate::{embedding_value, norm_value, read, write};
+use crate::{block_sum, embedding_value, norm_value, read, write};
 
 const WIDTH: usize = 384;
-const LANES: usize = 32;
-const PER_LANE: usize = WIDTH / LANES;
+const LANES: usize = 256;
+const PER_LANE: usize = 2;
 
-/// Normalize twelve cached values per lane, then write the affine result.
-/// The two full-warp reductions synchronize every lane before any write.
+/// Normalize the cached values, using the generic kernel's reduction tree.
 #[inline(always)]
 unsafe fn normalize_384(
     values: [f32; PER_LANE],
@@ -28,33 +25,40 @@ unsafe fn normalize_384(
     eps: f32,
 ) {
     let lane = thread::threadIdx_x() as usize;
+    static mut SCRATCH: SharedArray<f32, 8> = SharedArray::UNINIT;
+    let scratch = unsafe { SharedArray::as_raw_mut_ptr(&raw mut SCRATCH) };
     let mut i = 0;
     let mut sum = 0.0;
     while i < PER_LANE {
         sum += values[i];
         i += 1;
     }
-    let mean = warp::reduce_sum_f32(sum) / WIDTH as f32;
+    let mean = unsafe { block_sum(sum, scratch) } / WIDTH as f32;
     i = 0;
     let mut variance = 0.0;
     while i < PER_LANE {
-        let centered = values[i] - mean;
-        variance = float::fma_rn_f32(centered, centered, variance);
+        if lane + i * LANES < WIDTH {
+            let centered = values[i] - mean;
+            variance = float::fma_rn_f32(centered, centered, variance);
+        }
         i += 1;
     }
-    let inv = 1.0 / float::sqrt_rn_f32(warp::reduce_sum_f32(variance) / WIDTH as f32 + eps);
+    let inv =
+        1.0 / float::sqrt_rn_f32(unsafe { block_sum(variance, scratch) } / WIDTH as f32 + eps);
     i = 0;
     while i < PER_LANE {
         let column = lane + i * LANES;
-        let value = (values[i] - mean) * inv * unsafe { read(gamma, column) }
-            + unsafe { read(beta, column) };
-        unsafe { write(out, offset + column, value) };
+        if column < WIDTH {
+            let value = (values[i] - mean) * inv * unsafe { read(gamma, column) }
+                + unsafe { read(beta, column) };
+            unsafe { write(out, offset + column, value) };
+        }
         i += 1;
     }
 }
 
 /// Affine LayerNorm over optional projection-bias/residual additions.
-/// Grid=(rows,1,1), block=(32,1,1); the width is fixed at 384.
+/// Grid=(rows,1,1), block=(256,1,1); the width is fixed at 384.
 #[inline(always)]
 pub(crate) unsafe fn layer_norm_384(
     input: *const u16,
@@ -76,14 +80,16 @@ pub(crate) unsafe fn layer_norm_384(
     let mut i = 0;
     while i < PER_LANE {
         let column = lane + i * LANES;
-        values[i] = unsafe { norm_value(input, residual, bias, offset + column, column) };
+        if column < WIDTH {
+            values[i] = unsafe { norm_value(input, residual, bias, offset + column, column) };
+        }
         i += 1;
     }
     unsafe { normalize_384(values, offset, gamma, beta, out, eps) };
 }
 
 /// Fuse embedding gathers with affine LayerNorm, retaining FP32 position statistics.
-/// Grid=(tokens,1,1), block=(32,1,1); the width is fixed at 384.
+/// Grid=(tokens,1,1), block=(256,1,1); the width is fixed at 384.
 #[inline(always)]
 pub(crate) unsafe fn embedding_norm_384(
     ids: *const u32,
@@ -107,11 +113,13 @@ pub(crate) unsafe fn embedding_norm_384(
     let mut i = 0;
     while i < PER_LANE {
         let column = lane + i * LANES;
-        values[i] = unsafe {
-            embedding_value(
-                ids, positions, types, word, position, token_type, row, column, WIDTH,
-            )
-        };
+        if column < WIDTH {
+            values[i] = unsafe {
+                embedding_value(
+                    ids, positions, types, word, position, token_type, row, column, WIDTH,
+                )
+            };
+        }
         i += 1;
     }
     unsafe { normalize_384(values, row * WIDTH, gamma, beta, out, eps) };
