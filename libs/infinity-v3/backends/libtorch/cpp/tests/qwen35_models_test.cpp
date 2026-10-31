@@ -407,16 +407,20 @@ void paged_model_test(Options cfg, Weights weights, const c10::Device& device) {
     return model;
   };
   unsetenv(INFINITY_ENV("TORCH_BLOCK_PAGED"));
+  unsetenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
   auto paged = build();
+  setenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"), "1", 1);
+  auto explicit_prefill = build();
+  unsetenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
   setenv(INFINITY_ENV("TORCH_BLOCK_PAGED"), "0", 1);
   auto packed = build();
   unsetenv(INFINITY_ENV("TORCH_BLOCK_PAGED"));
 
   // Three ragged suffixes share two full pages and an incomplete prefix tail.
-  const std::vector<int32_t> ends{0, 516, 1036, 1550};
+  const std::vector<int32_t> ends{0, 609, 1219, 1830};
   auto options = at::TensorOptions().device(device).dtype(at::kLong);
   auto positions =
-      at::cat({at::arange(516, options), at::arange(520, options), at::arange(514, options)});
+      at::cat({at::arange(609, options), at::arange(610, options), at::arange(611, options)});
   auto ids = positions.remainder(32);
   PackedInput input{ids,
                     at::zeros_like(ids),
@@ -424,7 +428,7 @@ void paged_model_test(Options cfg, Weights weights, const c10::Device& device) {
                     at::tensor(ends, options.dtype(at::kInt)),
                     ends.data(),
                     3,
-                    520};
+                    611};
   input.block_prefix_lengths = {513, 513, 513};
   input.block_prefix_sources = {0, 0, 0};
   auto prepared = input, disabled = input;
@@ -435,6 +439,8 @@ void paged_model_test(Options cfg, Weights weights, const c10::Device& device) {
               "Default paging or its disable override did not select the expected model path");
   TORCH_CHECK(at::allclose(packed->forward(input), paged->forward(input), 1e-2, 1e-2),
               "Model paging changed ragged shared-prefix outputs");
+  TORCH_CHECK(at::equal(paged->forward(input), explicit_prefill->forward(input)),
+              "Default cached suffix prefill differs from explicit opt-in");
   CudaGraphCache graphs(2, 4096, 1);
   for (int operation : {0, 3})
     for (int iteration = 0; iteration < 3; ++iteration) {
