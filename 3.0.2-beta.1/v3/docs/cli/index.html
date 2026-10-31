@@ -1,0 +1,1585 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+      
+      
+        <link rel="canonical" href="https://michaelfeil.eu/infinity/3.0.2-beta.1/v3/docs/cli/">
+      
+      
+        <link rel="prev" href="../../quickstart/">
+      
+      
+        <link rel="next" href="../supported-models/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>CLI and requests - Infinity</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#running-infinity-v3" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="Infinity" class="md-header__button md-logo" aria-label="Infinity" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            Infinity
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              CLI and requests
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/michaelfeil/infinity/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="Infinity" class="md-nav__button md-logo" aria-label="Infinity" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    Infinity
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/michaelfeil/infinity/" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Infinity v3
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Infinity v3
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Quickstart
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and requests
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI and requests
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#request-service-tiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request service tiers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sequence-length-and-batch-capacity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sequence length and batch capacity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sequence length and batch capacity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#onejev-block-attention-fanout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OneJev block-attention fanout
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ultrabert-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UltraBERT embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#structured-decision-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Structured decision inputs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Structured decision inputs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#shared-queue-token-admission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared queue token admission
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../supported-models/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Supported models and configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../performance/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../embedding-tensors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embedding formats and clients
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../LICENSING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Licensing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_2_9" id="__nav_2_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Internals
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_2_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Internals
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-model-coverage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture coverage
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-backend/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LibTorch backend
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../build-configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Build configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../libtorch-prefix-cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Prefix caching
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../modernbert-startup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Startup performance
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../CONTRIBUTING/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Development
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python / v2
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Python / v2
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../deploy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../cli_v2/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../python_engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Python engine
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../embed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Embeddings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../client_infinity/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Client
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../swagger_ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../integrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Integrations
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../benchmarking/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Benchmarks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../telemetry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Telemetry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../contribution/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contributing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#request-service-tiers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Request service tiers
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#sequence-length-and-batch-capacity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Sequence length and batch capacity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Sequence length and batch capacity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#onejev-block-attention-fanout" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        OneJev block-attention fanout
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ultrabert-embeddings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        UltraBERT embeddings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#structured-decision-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Structured decision inputs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Structured decision inputs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#shared-queue-token-admission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared queue token admission
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+    <a href="https://github.com/michaelfeil/infinity/edit/main/libs/infinity-v3/docs/cli.md" title="Edit this page" class="md-content__button md-icon" rel="edit">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M10 20H6V4h7v5h5v3.1l2-2V8l-6-6H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h4zm10.2-7c.1 0 .3.1.4.2l1.3 1.3c.2.2.2.6 0 .8l-1 1-2.1-2.1 1-1c.1-.1.2-.2.4-.2m0 3.9L14.1 23H12v-2.1l6.1-6.1z"/></svg>
+    </a>
+  
+  
+
+
+<h1 id="running-infinity-v3">Running Infinity v3</h1>
+<p>From the repository root:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nb">cd</span><span class="w"> </span>libs/infinity-v3
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a>cargo<span class="w"> </span>build<span class="w"> </span>--locked
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a>cargo<span class="w"> </span>run<span class="w"> </span>--locked<span class="w"> </span>--bin<span class="w"> </span>infinity_v3<span class="w"> </span>--<span class="w"> </span>--help
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>cargo<span class="w"> </span>run<span class="w"> </span>--locked<span class="w"> </span>--bin<span class="w"> </span>infinity_v3<span class="w"> </span>--<span class="w"> </span>--model-id<span class="w"> </span>/path/to/local/model
+</span></code></pre></div>
+<p>The project pins its Rust toolchain. Run commands from <code>libs/infinity-v3</code> so
+Cargo loads the project build configuration. The default build uses LibTorch
+and requires its SDK through <code>LIBTORCH</code>; use a CPU or CUDA distribution for the
+desired accelerator. See the <a href="../../CONTRIBUTING/">contributor guide</a> and
+<a href="../libtorch-backend/">LibTorch build instructions</a> for those configurations.</p>
+<p><code>--help</code> lists the flags and <code>INFINITY_*</code> environment variables supported by the
+current binary. This avoids maintaining a stale copy of generated CLI help.
+Use a local model directory or a compatible Hugging Face model ID. Model
+availability, access credentials, pooling and supported inputs depend on the
+checkpoint and selected backend.</p>
+<p>LibTorch is the only inference backend. Most deployments should omit
+<code>--backend</code>; <code>--backend libtorch</code> remains accepted for existing configurations.</p>
+<p>Open <code>/docs</code> on the running server for interactive API documentation. The API
+schema is available at <code>/api-doc/openapi.json</code>.</p>
+<p>CUDA inference requires SM80 (Ampere) or newer. SM75/Turing
+is unsupported; use a CPU build on hosts without a supported GPU.</p>
+<h2 id="request-service-tiers">Request service tiers</h2>
+<p><code>--priority-queue-bonus-ms</code> sets the virtual queue age bonus for requests carrying
+<code>"service_tier": "priority"</code>. It defaults to <code>1000</code> ms; <code>0</code> disables priority scheduling.
+Only inputs waiting for model batching are reordered, without adding a delay.</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>/path/to/model<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-1-2"><a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span>--priority-queue-bonus-ms<span class="w"> </span><span class="m">1000</span><span class="w"> </span>--flex-queue-offset-ms<span class="w"> </span><span class="m">10000</span>
+</span></code></pre></div>
+<p><code>INFINITY_PRIORITY_QUEUE_BONUS_MS</code> (or <code>PRIORITY_QUEUE_BONUS_MS</code>) is the environment
+alternative. One value applies to all models; semicolon-separated values align
+with <code>--model-id</code>. Negative and fractional millisecond values are rejected.</p>
+<p><code>--flex-queue-offset-ms</code> / <code>INFINITY_FLEX_QUEUE_OFFSET_MS</code> adds a virtual enqueue-time
+offset for <code>"service_tier": "flex"</code> (default <code>10000</code> ms). Flex yields to recent
+work but ages, so later arrivals cannot starve it indefinitely. <code>0</code> disables flex
+scheduling; set both adjustments to <code>0</code> for FIFO. Values broadcast or align with
+<code>--model-id</code>, just like the priority bonus. Billing is unchanged for flex.</p>
+<h2 id="sequence-length-and-batch-capacity">Sequence length and batch capacity</h2>
+<p>Use <code>--max-sequence-length</code> to cap tokens per sequence independently of the
+batch's total token budget:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>/path/to/model<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span>--max-sequence-length<span class="w"> </span><span class="m">8192</span><span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span>
+</span></code></pre></div>
+<p>The cap includes formatted prompts and image tokens, and cannot exceed the
+model's supported input length or the batch token budget. When omitted, existing
+model and batch limits apply. Inputs follow the endpoint's existing truncation
+policy; OneJev rejects oversized prompts. <code>/v1/systemone</code> request <code>max_len</code> can
+lower its limit further.
+Set <code>INFINITY_MAX_SEQUENCE_LENGTH</code> (or <code>MAX_SEQUENCE_LENGTH</code>) instead of the flag.
+Like other model settings, one value applies to all models; semicolon-separated
+values align with <code>--model-id</code>, and <code>none</code> leaves a model's limit unchanged.</p>
+<h3 id="onejev-block-attention-fanout">OneJev block-attention fanout</h3>
+<p>Block-attention questions from one request execute in one batch, preserving one
+prefix prefill per request to match input-token billing. Requests exceeding the
+compute, expanded-token, or request-count limit return HTTP 422 before inference.
+They are never split into repeated prefills. Other protocols retain their batching.</p>
+<p>Several complete requests can share a batch when their combined compute,
+expanded-token and question counts fit. Each request is charged independently;
+additional prefix sharing across requests does not enlarge the admission budget.</p>
+<p><code>--max-batch-expanded-tokens</code> defaults to <code>--max-batch-tokens</code>. Raising it lets
+<code>--max-batch-tokens</code> count matching prefixes once plus every question suffix,
+while bounding the sum of full sequence lengths separately:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-3-1"><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>/path/to/elephant<span class="w"> </span>--decision-protocol<span class="w"> </span>onejev<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a><span class="w">  </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span><span class="w"> </span>--max-batch-expanded-tokens<span class="w"> </span><span class="m">700000</span>
+</span></code></pre></div>
+<p>A 13,000-token prefix plus fifty 150-token suffixes costs 20,500 compute tokens
+and 657,500 expanded tokens. Template and image tokens also count. Prefixes must
+match IDs, types, positions and prepared image identity; independent image
+allocations are conservatively charged separately. Existing deployments may
+need a larger expanded limit for requests that previously spanned batches.
+Measure peak GPU memory before raising it: unsupported layouts still expand
+K/V across questions, and startup warmup does not validate this fanout shape.</p>
+<p>For roughly 13K prefix tokens and 256 suffixes of 185 tokens, the budgets grow
+to about 60.4K compute tokens and 3.39M expanded tokens. With the default
+paged attention path, a validation configuration is
+<code>--max-batch-tokens 65536 --max-batch-expanded-tokens 3500000</code>, with the
+per-sequence limit kept at <code>--max-sequence-length 16000</code>. Set
+<code>--max-decision-questions</code> and any <code>--max-batch-requests</code> to at least 256.
+OneJev's separate 512-option limit caps all-yes/no requests at 256 questions;
+questions with more answer options reach that limit earlier.</p>
+<p>Suffix attention assembles K/V in whole-question chunks targeting 500,000
+expanded tokens, reusing the prefix without another prefill. Set
+<code>INFINITY_TORCH_BLOCK_KV_CHUNK_TOKENS</code> to a positive integer to tune this target;
+a single question may exceed it. This bounds temporary K/V copies, not weights,
+hidden states, or total GPU memory.</p>
+<p>Last-token decisions select their final hidden rows directly from shared
+execution storage, including during CUDA graph replay. They do not reconstruct
+the prefix's hidden states for every question. Full-token outputs still require
+the expanded layout.</p>
+<p>CUDA suffix attention uses shared prefix pages by default when supported.
+Set <code>INFINITY_TORCH_BLOCK_PAGED=0</code> to disable paging. Complete prefix pages are stored once; each question owns only its
+suffix, the incomplete prefix tail, and page padding. The attention operator
+reads those pages with one softmax over prefix plus suffix. Small, unshared or
+unsupported layouts retain the chunked path.</p>
+<p>For one shared prefix of length P and suffix lengths S, row-local work scales
+with P + sum(S), but full attention still evaluates P² + sum(S × (P + S)) pairs.
+Unique-token counts therefore do not measure all attention work or GPU memory.
+For the verified Qwen tokenizer used by Elephant and Mammoth, multi-question
+preparation tokenizes the first full prompt and reuses its prefix for subsequent
+questions with identical rendered prefix text. Each template is still rendered
+in full; other tokenizer configurations retain full-prompt tokenization.</p>
+<p><code>INFINITY_MAX_BATCH_EXPANDED_TOKENS</code> is the environment alternative. Values
+broadcast or align with models; <code>none</code> uses the compute limit. An explicit limit
+must be at least <code>--max-batch-tokens</code> and fit signed 32-bit offsets.
+<code>infinity_batch_next_tokens</code> reports expanded tokens; the new
+<code>infinity_batch_next_compute_tokens</code> reports the conservative compute charge.</p>
+<h2 id="ultrabert-embeddings">UltraBERT embeddings</h2>
+<p><code>dmis-lab/UltraBERT-Embed-150M</code> supports native LibTorch and produces
+768-dimensional CLS embeddings with a 32,768-token context. For the native
+LibTorch GPU image:</p>
+<div class="language-sh highlight"><pre><span></span><code><span id="__span-4-1"><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>infinity_v3<span class="w"> </span>--model-id<span class="w"> </span>dmis-lab/UltraBERT-Embed-150M<span class="w"> </span><span class="se">\</span>
+</span><span id="__span-4-2"><a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span>--torch-device<span class="w"> </span>cuda<span class="w"> </span>--dtype<span class="w"> </span>bfloat16<span class="w"> </span>--max-batch-tokens<span class="w"> </span><span class="m">32768</span>
+</span></code></pre></div>
+<p>Use <code>prompt_name: "query"</code> for retrieval queries; documents use the empty
+<code>document</code> prompt. Mean and last-token pooling overrides and raw token
+embeddings are supported. Native LibTorch uses FP32 on CPU and FP16/BF16 on
+CUDA SM80+. See <a href="../libtorch-model-coverage/">native model coverage</a> for backend
+limitations and the <a href="../supported-models/">model catalog</a> for other checkpoints.</p>
+<p>UltraBERT sequence classification checkpoints with a saved trained classifier
+head use <code>/predict</code>; trained single-label rerankers also use <code>/rerank</code>.
+<code>UltrabertForTokenClassification</code> checkpoints use <code>/predict_tokens</code>. These
+heads share the embedding encoder's CPU and CUDA support. Base masked-LM
+weights require a fine-tuned classifier head before serving classification.</p>
+<h2 id="structured-decision-inputs">Structured decision inputs</h2>
+<p><code>/v1/systemone</code> accepts text, JSON objects, or arrays in <code>state</code>. Laya question
+<code>instructions</code> accepts the same forms. Ordinary structured content is rendered
+as JSON before tokenization. Objects containing <code>messages</code> use the native
+conversation format and retain its validation; Laya rejects native messages.
+D3 retains its separate JSON-state and media contract.</p>
+<p><code>model</code> is optional with one loaded model and required with multiple models.
+Model routing and backend response extensions retain their existing behavior.</p>
+<p>Native message content also accepts OpenAI-style aliases:</p>
+<ul>
+<li><code>{"type":"input_text","text":"Inspect this photo."}</code> normalizes to <code>text</code>.</li>
+<li><code>{"type":"input_image","image_url":"data:image/png;base64,..."}</code> normalizes
+  to <code>{"type":"image_url","image_url":{"url":"data:image/png;base64,..."}}</code>.</li>
+</ul>
+<p>An optional <code>detail</code> on <code>input_image</code> is preserved inside <code>image_url</code> and checked
+by the model adapter (OneJev accepts only omitted detail or <code>auto</code>). URL loading,
+image limits and supported roles remain model-specific. Unsupported fields such
+as <code>file_id</code> are rejected. These aliases apply to the shared message content
+parser, including <code>state.messages[].content</code>; they do not add a top-level <code>input</code>
+alias, image interpretation of plain <code>state</code> arrays, or OpenAI Decisions question
+and response formats. Existing content parts retain their canonical serialization.</p>
+<h3 id="shared-queue-token-admission">Shared queue token admission</h3>
+<p>Set <code>INFINITY_QUEUE_TOKEN_LIMITS_K="5000,10000,12000"</code> to cap queued compute
+work at 5M tokens for incoming flex requests, 10M for default, and 12M for
+priority. Values are <strong>thousands of tokens</strong>, ordered <code>flex,default,priority</code>;
+they must be nonnegative integers in ascending order. Zero rejects positive-token
+work for that tier. Unset leaves token admission unlimited.</p>
+<p>All tiers contribute to one atomic total per model queue, shared across that
+model's replicas. The same configured limits apply separately to each model in
+this process, not across processes or deployments. Admission checks the total
+<strong>including</strong> the incoming work and returns HTTP 429 if its tier's ceiling would
+be exceeded. Queue-full responses include <code>available_tiers</code> with higher tiers
+that could admit this work at rejection time (or <code>[]</code> if none). This is a hint,
+not reserved capacity; clients must explicitly retry with a different tier.
+Responses expose no token counts or configured queue limits.
+Existing admitted work is not evicted. Scheduling still uses the
+existing priority bonus and flex age offset; these limits do not add preemption
+or a strict priority scheduler.</p>
+<p>An owned reservation charges prepared inputs before sending them to the queue actor,
+including blocked channel senders and batches waiting for a replica. Tokens
+are returned when execution starts, or when the request is canceled or
+fails to enqueue. Whole OneJev block requests reserve atomically using the same
+compute charge as batch admission: shared prefix once plus suffixes when
+prefix-aware batching is enabled. Ordinary batched inputs reserve per input at
+their full encoded length. Tokenization and media preparation happen before token admission;
+existing HTTP concurrency and memory limits still apply and can reject any tier.</p>
+<p>Read the authoritative total through <code>Queue::queued_compute_tokens()</code> or observe
+<code>infinity_queue_compute_tokens{model="..."}</code> in Prometheus. Admission and release
+use signed atomics without locks. Reservation ownership pairs each admission with
+exactly one subtraction, including when dispatch and cancellation race. Metrics
+use matching deltas; concurrent scrapes can briefly lag the authoritative total.
+The batch token limit remains a separate memory guard. Queue limits do not
+guarantee a latency deadline; size them from measured service time and replica capacity.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.sections", "content.code.copy", "content.code.select", "content.action.edit"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
