@@ -174,3 +174,40 @@ as `file_id` are rejected. These aliases apply to the shared message content
 parser, including `state.messages[].content`; they do not add a top-level `input`
 alias, image interpretation of plain `state` arrays, or OpenAI Decisions question
 and response formats. Existing content parts retain their canonical serialization.
+
+### Shared queue token admission
+
+Set `INFINITY_QUEUE_TOKEN_LIMITS_K="5000,10000,12000"` to cap queued compute
+work at 5M tokens for incoming flex requests, 10M for default, and 12M for
+priority. Values are **thousands of tokens**, ordered `flex,default,priority`;
+they must be nonnegative integers in ascending order. Zero rejects positive-token
+work for that tier. Unset leaves token admission unlimited.
+
+All tiers contribute to one atomic total per model queue, shared across that
+model's replicas. The same configured limits apply separately to each model in
+this process, not across processes or deployments. Admission checks the total
+**including** the incoming work and returns HTTP 429 if its tier's ceiling would
+be exceeded. Queue-full responses include `available_tiers` with higher tiers
+that could admit this work at rejection time (or `[]` if none). This is a hint,
+not reserved capacity; clients must explicitly retry with a different tier.
+Responses expose no token counts or configured queue limits.
+Existing admitted work is not evicted. Scheduling still uses the
+existing priority bonus and flex age offset; these limits do not add preemption
+or a strict priority scheduler.
+
+An owned reservation charges prepared inputs before sending them to the queue actor,
+including blocked channel senders and batches waiting for a replica. Tokens
+are returned when execution starts, or when the request is canceled or
+fails to enqueue. Whole OneJev block requests reserve atomically using the same
+compute charge as batch admission: shared prefix once plus suffixes when
+prefix-aware batching is enabled. Ordinary batched inputs reserve per input at
+their full encoded length. Tokenization and media preparation happen before token admission;
+existing HTTP concurrency and memory limits still apply and can reject any tier.
+
+Read the authoritative total through `Queue::queued_compute_tokens()` or observe
+`infinity_queue_compute_tokens{model="..."}` in Prometheus. Admission and release
+use signed atomics without locks. Reservation ownership pairs each admission with
+exactly one subtraction, including when dispatch and cancellation race. Metrics
+use matching deltas; concurrent scrapes can briefly lag the authoritative total.
+The batch token limit remains a separate memory guard. Queue limits do not
+guarantee a latency deadline; size them from measured service time and replica capacity.

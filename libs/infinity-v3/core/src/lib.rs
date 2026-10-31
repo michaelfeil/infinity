@@ -14,6 +14,7 @@ pub mod input;
 pub mod input_memory;
 pub mod multimodal;
 pub mod queue_actor;
+pub mod queue_budget;
 mod radix;
 pub mod tokenization;
 
@@ -29,6 +30,11 @@ pub enum TextEmbeddingsError {
     Validation(String),
     #[error("Input validation error: {0}")]
     Empty(String),
+    #[error("Queue is full for the {tier} tier")]
+    QueueFull {
+        tier: &'static str,
+        available_tiers: Vec<queue_actor::ServiceTier>,
+    },
     #[error("Model is overloaded")]
     Overloaded(#[from] TryAcquireError),
     #[error("Backend error: {0}")]
