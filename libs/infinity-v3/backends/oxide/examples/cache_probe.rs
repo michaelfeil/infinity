@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: LicenseRef-Infinity-Restricted-MIT-1.0
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
-//! Finite native workspace-cache and CUDA-graph replay validator.
+//! Finite native workspace-cache and ordered-stream repeatability validator.
 use infinity_backend_oxide::OxideBackend;
 use infinity_v3_backend_core::{Backend, Batch, Embedding, ModelType, Pool};
 use std::{error::Error, path::Path};
@@ -85,12 +85,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = std::env::args().collect::<Vec<_>>();
     let path = args
         .get(1)
-        .ok_or("usage: cache_probe MODEL_PATH [DEVICE_ID]")?;
+        .ok_or("usage: cache_probe MODEL_PATH [DEVICE_ID] [--quick]")?;
     let device_id = match args.get(2) {
         Some(value) => value.parse::<usize>()?,
         None => 0,
     };
-    // OxideBackend::new inherits INFINITY_OXIDE_ATTENTION and graph settings.
+    // OxideBackend::new inherits INFINITY_OXIDE_ATTENTION.
     let backend = OxideBackend::new(
         Path::new(path),
         "bfloat16",
@@ -111,6 +111,12 @@ fn main() -> Result<(), Box<dyn Error>> {
     ] {
         cases.push((name.into(), lengths));
     }
+    // A small initialization-check pass still covers padding, bucket changes,
+    // and ragged sequences; the default keeps the full 22-shape sweep.
+    if args.get(3).is_some_and(|flag| flag == "--quick") {
+        cases.retain(|(name, _)| matches!(name.as_str(), "single_1" | "single_31" | "single_33"));
+        cases.push(("ragged_short".into(), vec![1, 7, 31, 33]));
+    }
     let mut baselines: Vec<Rows> = Vec::new();
     let mut replay_checks = 0usize;
     for (name, lengths) in &cases {
@@ -125,7 +131,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             }
             let restored = run(&backend, &base)?;
             if max_abs_diff(&baseline, &restored)? > TOLERANCE {
-                return Err(format!("{name} graph replay mismatch").into());
+                return Err(format!("{name} repeatability mismatch").into());
             }
             replay_checks = replay_checks.checked_add(2).ok_or("check count overflow")?;
         }

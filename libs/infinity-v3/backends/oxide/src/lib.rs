@@ -3,22 +3,26 @@
 mod cache;
 mod cublas;
 mod fa4;
-mod graph;
+pub mod math;
 mod model;
+pub mod tensor;
+mod upload;
 
-use cuda_core::{
-    launch_kernel_on_stream, Context, DeviceBuffer, Function, PinnedHostBuffer, Stream,
-};
+use cuda_core::{launch_kernel, Context, DeviceBuffer, Function, PinnedHostBuffer, Stream};
 use infinity_v3_backend_core::{
     result_memory, Backend, BackendError, Batch, Embedding, Embeddings, ModelType, Pool,
     Predictions, TokenPredictions,
 };
+use math::LinearPlan;
 use model::{BertConfig, BertWeights, LayerWeights, LinearWeights};
 use std::{
     ffi::c_void,
+    mem::ManuallyDrop,
     path::Path,
     sync::{Arc, Mutex},
 };
+use tensor::Bf16;
+use upload::WeightUploader;
 
 fn start(error: impl std::fmt::Display) -> BackendError {
     BackendError::Start(error.to_string())
@@ -41,77 +45,49 @@ pub fn device_count() -> Result<usize, BackendError> {
 }
 
 struct Linear {
-    weight: DeviceBuffer<u16>,
-    bias: DeviceBuffer<u16>,
+    weight: DeviceBuffer<Bf16>,
+    bias: DeviceBuffer<Bf16>,
 }
 struct Layer {
     qkv: Linear,
     attention: Linear,
     intermediate: Linear,
     output: Linear,
-    attention_gamma: DeviceBuffer<u16>,
-    attention_beta: DeviceBuffer<u16>,
-    output_gamma: DeviceBuffer<u16>,
-    output_beta: DeviceBuffer<u16>,
+    attention_gamma: DeviceBuffer<Bf16>,
+    attention_beta: DeviceBuffer<Bf16>,
+    output_gamma: DeviceBuffer<Bf16>,
+    output_beta: DeviceBuffer<Bf16>,
 }
 struct Weights {
-    word: DeviceBuffer<u16>,
-    position: DeviceBuffer<u16>,
-    token_type: DeviceBuffer<u16>,
-    gamma: DeviceBuffer<u16>,
-    beta: DeviceBuffer<u16>,
+    word: DeviceBuffer<Bf16>,
+    position: DeviceBuffer<Bf16>,
+    token_type: DeviceBuffer<Bf16>,
+    gamma: DeviceBuffer<Bf16>,
+    beta: DeviceBuffer<Bf16>,
     layers: Vec<Layer>,
 }
-fn upload(stream: &Stream, data: &[f32]) -> Result<DeviceBuffer<u16>, BackendError> {
-    let data: Vec<u16> = data
-        .iter()
-        .map(|&v| half::bf16::from_f32(v).to_bits())
-        .collect();
-    if data.iter().any(|&v| !half::bf16::from_bits(v).is_finite()) {
-        return Err(start("Checkpoint weight is not finite in BF16"));
-    }
-    DeviceBuffer::from_host(stream, &data).map_err(start)
-}
 impl Linear {
-    fn upload(s: &Stream, w: &LinearWeights) -> Result<Self, BackendError> {
+    fn upload(u: &mut WeightUploader, w: &LinearWeights) -> Result<Self, BackendError> {
         Ok(Self {
-            weight: upload(s, &w.weight)?,
-            bias: upload(s, &w.bias)?,
+            weight: u.upload(&[&w.weight])?,
+            bias: u.upload(&[&w.bias])?,
         })
     }
 }
 impl Layer {
-    fn upload(s: &Stream, w: &LayerWeights) -> Result<Self, BackendError> {
+    fn upload(u: &mut WeightUploader, w: &LayerWeights) -> Result<Self, BackendError> {
         Ok(Self {
             qkv: Linear {
-                weight: upload(
-                    s,
-                    &w.query
-                        .weight
-                        .iter()
-                        .chain(&w.key.weight)
-                        .chain(&w.value.weight)
-                        .copied()
-                        .collect::<Vec<_>>(),
-                )?,
-                bias: upload(
-                    s,
-                    &w.query
-                        .bias
-                        .iter()
-                        .chain(&w.key.bias)
-                        .chain(&w.value.bias)
-                        .copied()
-                        .collect::<Vec<_>>(),
-                )?,
+                weight: u.upload(&[&w.query.weight, &w.key.weight, &w.value.weight])?,
+                bias: u.upload(&[&w.query.bias, &w.key.bias, &w.value.bias])?,
             },
-            attention: Linear::upload(s, &w.attention)?,
-            intermediate: Linear::upload(s, &w.intermediate)?,
-            output: Linear::upload(s, &w.output)?,
-            attention_gamma: upload(s, &w.attention_gamma)?,
-            attention_beta: upload(s, &w.attention_beta)?,
-            output_gamma: upload(s, &w.output_gamma)?,
-            output_beta: upload(s, &w.output_beta)?,
+            attention: Linear::upload(u, &w.attention)?,
+            intermediate: Linear::upload(u, &w.intermediate)?,
+            output: Linear::upload(u, &w.output)?,
+            attention_gamma: u.upload(&[&w.attention_gamma])?,
+            attention_beta: u.upload(&[&w.attention_beta])?,
+            output_gamma: u.upload(&[&w.output_gamma])?,
+            output_beta: u.upload(&[&w.output_beta])?,
         })
     }
 }
@@ -189,7 +165,17 @@ fn launch_threads(
 ) -> Result<(), BackendError> {
     // SAFETY: fixed ABI signatures and validated dimensions; arenas and modules
     // stay retained. Every entry currently uses 256 threads per block.
-    unsafe { launch_kernel_on_stream(k, grid, (threads, 1, 1), shared, s, args) }.map_err(infer)
+    unsafe {
+        launch_kernel(
+            k.cu_function(),
+            grid,
+            (threads, 1, 1),
+            shared,
+            s.cu_stream(),
+            args,
+        )
+    }
+    .map_err(infer)
 }
 fn blocks(elements: usize) -> Result<(u32, u32, u32), BackendError> {
     Ok((u32_size(elements.div_ceil(256))?, 1, 1))
@@ -201,8 +187,8 @@ fn norm(
     mut input: u64,
     mut residual: u64,
     mut bias: u64,
-    gamma: &DeviceBuffer<u16>,
-    beta: &DeviceBuffer<u16>,
+    gamma: &DeviceBuffer<Bf16>,
+    beta: &DeviceBuffer<Bf16>,
     mut out: u64,
     mut rows: u32,
     mut width: u32,
@@ -250,7 +236,7 @@ fn bias(
     k: &Function,
     s: &Stream,
     mut input: u64,
-    b: &DeviceBuffer<u16>,
+    b: &DeviceBuffer<Bf16>,
     mut out: u64,
     elements: usize,
     mut width: u32,
@@ -272,24 +258,32 @@ fn bias(
 }
 
 struct Engine {
-    blas: cublas::Blas,
-    kernels: Kernels,
-    weights: Weights,
+    blas: ManuallyDrop<cublas::Blas>,
+    kernels: ManuallyDrop<Kernels>,
+    weights: ManuallyDrop<Weights>,
     context: Arc<Context>,
     stream: Arc<Stream>,
     workspace: Option<Work>,
     cached: cache::WorkspaceCache<WorkKey, Work>,
     failed: bool,
-    graphs_enabled: bool,
-    fa4: Option<fa4::Fa4>,
+    fa4: ManuallyDrop<Option<fa4::Fa4>>,
 }
 impl Drop for Engine {
     fn drop(&mut self) {
-        let _ = self.stream.synchronize();
-        // Destroy graph executables before their CUDA modules or BLAS/provider
-        // libraries are unloaded by the remaining fields.
+        let complete = self.stream.synchronize().is_ok();
         self.workspace.take();
         drop(self.cached.drain());
+        if complete {
+            // SAFETY: Engine is dropped once, and all GPU uses have finished.
+            // If drain fails, retaining these owners also retains their CUDA
+            // context/modules/libraries while completion is uncertain.
+            unsafe {
+                ManuallyDrop::drop(&mut self.blas);
+                ManuallyDrop::drop(&mut self.kernels);
+                ManuallyDrop::drop(&mut self.weights);
+                ManuallyDrop::drop(&mut self.fa4);
+            }
+        }
     }
 }
 /// Stable device and pinned-host arenas; raw launches retain all allocations.
@@ -352,30 +346,63 @@ fn pack_input(
     Ok(())
 }
 struct Work {
-    graph: Option<graph::GraphExec>,
-    warmed: bool,
+    linear: LinearPlans,
     stream: Arc<Stream>,
     tokens: usize,
     sequences: usize,
     selections: usize,
     max_length: usize,
     bytes: usize,
-    input: DeviceBuffer<u32>,
-    host_input: PinnedHostBuffer<u32>,
-    host_output: PinnedHostBuffer<f32>,
-    x: DeviceBuffer<u16>,
-    temp: DeviceBuffer<u16>,
-    qkv: DeviceBuffer<u16>,
-    query: DeviceBuffer<u16>,
-    key: DeviceBuffer<u16>,
-    value: DeviceBuffer<u16>,
-    attention: DeviceBuffer<u16>,
-    intermediate: DeviceBuffer<u16>,
-    pooled: DeviceBuffer<f32>,
+    input: ManuallyDrop<DeviceBuffer<u32>>,
+    host_input: ManuallyDrop<PinnedHostBuffer<u32>>,
+    host_output: ManuallyDrop<PinnedHostBuffer<f32>>,
+    x: ManuallyDrop<DeviceBuffer<Bf16>>,
+    temp: ManuallyDrop<DeviceBuffer<Bf16>>,
+    qkv: ManuallyDrop<DeviceBuffer<Bf16>>,
+    query: ManuallyDrop<DeviceBuffer<Bf16>>,
+    key: ManuallyDrop<DeviceBuffer<Bf16>>,
+    value: ManuallyDrop<DeviceBuffer<Bf16>>,
+    attention: ManuallyDrop<DeviceBuffer<Bf16>>,
+    intermediate: ManuallyDrop<DeviceBuffer<Bf16>>,
+    pooled: ManuallyDrop<DeviceBuffer<f32>>,
+}
+struct LinearPlans {
+    qkv: LinearPlan<Bf16>,
+    attention: LinearPlan<Bf16>,
+    intermediate: LinearPlan<Bf16>,
+    output: LinearPlan<Bf16>,
+}
+impl LinearPlans {
+    fn new(tokens: usize, c: &BertConfig) -> Result<Self, BackendError> {
+        let h = c.hidden_size;
+        Ok(Self {
+            qkv: LinearPlan::contiguous(tokens, h, product(h, 3)?).map_err(infer)?,
+            attention: LinearPlan::contiguous(tokens, h, h).map_err(infer)?,
+            intermediate: LinearPlan::contiguous(tokens, h, c.intermediate_size).map_err(infer)?,
+            output: LinearPlan::contiguous(tokens, c.intermediate_size, h).map_err(infer)?,
+        })
+    }
 }
 impl Drop for Work {
     fn drop(&mut self) {
-        let _ = self.stream.synchronize();
+        if self.stream.synchronize().is_ok() {
+            // SAFETY: every field is dropped once after completion. Failed
+            // drains deliberately retain device and pinned allocations.
+            unsafe {
+                ManuallyDrop::drop(&mut self.input);
+                ManuallyDrop::drop(&mut self.host_input);
+                ManuallyDrop::drop(&mut self.host_output);
+                ManuallyDrop::drop(&mut self.x);
+                ManuallyDrop::drop(&mut self.temp);
+                ManuallyDrop::drop(&mut self.qkv);
+                ManuallyDrop::drop(&mut self.query);
+                ManuallyDrop::drop(&mut self.key);
+                ManuallyDrop::drop(&mut self.value);
+                ManuallyDrop::drop(&mut self.attention);
+                ManuallyDrop::drop(&mut self.intermediate);
+                ManuallyDrop::drop(&mut self.pooled);
+            }
+        }
     }
 }
 impl Work {
@@ -420,27 +447,60 @@ impl Work {
             .and_then(|n| n.checked_add(selections))
             .ok_or_else(|| infer("Input arena overflow"))?;
         let output = product(selections, c.hidden_size)?;
+        let linear = LinearPlans::new(tokens, c)?;
+        let alloc = |len| {
+            // Initialize scratch/padding once, without a host drain per buffer.
+            // SAFETY: private allocation; initialization precedes every use on
+            // this stream, including vectorized library reads of scratch.
+            let buffer =
+                unsafe { DeviceBuffer::<Bf16>::uninitialized_async(&s, len) }.map_err(infer)?;
+            unsafe {
+                cuda_core::memory::memset_d8_async(
+                    buffer.cu_deviceptr(),
+                    0,
+                    buffer.num_bytes(),
+                    s.cu_stream(),
+                )
+            }
+            .map_err(infer)?;
+            Ok::<_, BackendError>(buffer)
+        };
+        // Stage fallible construction in ordinary owners before transferring
+        // to ManuallyDrop, so allocation failures still clean up prior owners.
+        let input =
+            unsafe { DeviceBuffer::<u32>::uninitialized_async(&s, input_len) }.map_err(infer)?;
+        let host_input = PinnedHostBuffer::zeroed(s.context(), input_len).map_err(infer)?;
+        let host_output = PinnedHostBuffer::zeroed(s.context(), output).map_err(infer)?;
+        let x = alloc(hidden)?;
+        let temp = alloc(hidden)?;
+        let qkv = alloc(product(hidden, 3)?)?;
+        let query = alloc(hidden)?;
+        let key_buffer = alloc(hidden)?;
+        let value = alloc(hidden)?;
+        let attention = alloc(hidden)?;
+        let intermediate = alloc(product(tokens, c.intermediate_size)?)?;
+        // SAFETY: the pooling kernel writes every element before D2H.
+        let pooled =
+            unsafe { DeviceBuffer::<f32>::uninitialized_async(&s, output) }.map_err(infer)?;
         Ok(Self {
-            graph: None,
-            warmed: false,
+            linear,
             tokens,
             sequences,
             selections,
             max_length,
             bytes,
-            input: DeviceBuffer::zeroed(&s, input_len).map_err(infer)?,
-            host_input: PinnedHostBuffer::zeroed(s.context(), input_len).map_err(infer)?,
-            host_output: PinnedHostBuffer::zeroed(s.context(), output).map_err(infer)?,
-            x: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
-            temp: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
-            qkv: DeviceBuffer::zeroed(&s, product(hidden, 3)?).map_err(infer)?,
-            query: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
-            key: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
-            value: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
-            attention: DeviceBuffer::zeroed(&s, hidden).map_err(infer)?,
-            intermediate: DeviceBuffer::zeroed(&s, product(tokens, c.intermediate_size)?)
-                .map_err(infer)?,
-            pooled: DeviceBuffer::zeroed(&s, output).map_err(infer)?,
+            input: ManuallyDrop::new(input),
+            host_input: ManuallyDrop::new(host_input),
+            host_output: ManuallyDrop::new(host_output),
+            x: ManuallyDrop::new(x),
+            temp: ManuallyDrop::new(temp),
+            qkv: ManuallyDrop::new(qkv),
+            query: ManuallyDrop::new(query),
+            key: ManuallyDrop::new(key_buffer),
+            value: ManuallyDrop::new(value),
+            attention: ManuallyDrop::new(attention),
+            intermediate: ManuallyDrop::new(intermediate),
+            pooled: ManuallyDrop::new(pooled),
             stream: s,
         })
     }
@@ -538,17 +598,7 @@ impl Engine {
             .ok_or_else(|| infer("Missing oxide workspace"))?;
         w.stage(b)?;
         let s = &*self.stream;
-        if let Some(graph) = w.graph.as_ref() {
-            graph.launch(s)?;
-            return w.complete();
-        }
-        let capture = if self.graphs_enabled && w.warmed {
-            Some(graph::Capture::begin(self.stream.clone())?)
-        } else {
-            None
-        };
-        // The pinned staging addresses stay fixed for the workspace lifetime.
-        // Capture transfers together with compute so replay needs one enqueue.
+        // Ordinary ordered-stream dispatch; plans are prepared with the arena.
         w.upload()?;
         let k = &self.kernels;
         let weights = &self.weights;
@@ -614,14 +664,13 @@ impl Engine {
         }
         for layer in &weights.layers {
             let mut qkv = w.qkv.cu_deviceptr();
-            self.blas.linear(
-                x,
-                layer.qkv.weight.cu_deviceptr(),
-                qkv,
-                tokens,
-                h,
-                product(h, 3)?,
-            )?;
+            // SAFETY: this thread bound the engine context once above. The
+            // engine retains all buffers until stream completion/error drain;
+            // input/output buffers are distinct and access is stream-ordered.
+            unsafe {
+                self.blas
+                    .linear(&w.linear.qkv, &w.x, &layer.qkv.weight, &mut w.qkv)?;
+            }
             let (mut q, mut key, mut v) = (
                 w.query.cu_deviceptr(),
                 w.key.cu_deviceptr(),
@@ -684,14 +733,15 @@ impl Engine {
                 )?;
             }
             let temp = w.temp.cu_deviceptr();
-            self.blas.linear(
-                attn,
-                layer.attention.weight.cu_deviceptr(),
-                temp,
-                tokens,
-                h,
-                h,
-            )?;
+            // SAFETY: same retained-buffer/context contract as the QKV call.
+            unsafe {
+                self.blas.linear(
+                    &w.linear.attention,
+                    &w.attention,
+                    &layer.attention.weight,
+                    &mut w.temp,
+                )?;
+            }
             norm(
                 k,
                 s,
@@ -706,14 +756,15 @@ impl Engine {
                 eps,
             )?;
             let intermediate = w.intermediate.cu_deviceptr();
-            self.blas.linear(
-                x,
-                layer.intermediate.weight.cu_deviceptr(),
-                intermediate,
-                tokens,
-                h,
-                c.intermediate_size,
-            )?;
+            // SAFETY: same retained-buffer/context contract as the QKV call.
+            unsafe {
+                self.blas.linear(
+                    &w.linear.intermediate,
+                    &w.x,
+                    &layer.intermediate.weight,
+                    &mut w.intermediate,
+                )?;
+            }
             bias(
                 &k.gelu,
                 s,
@@ -723,14 +774,15 @@ impl Engine {
                 product(tokens, c.intermediate_size)?,
                 u32_size(c.intermediate_size)?,
             )?;
-            self.blas.linear(
-                intermediate,
-                layer.output.weight.cu_deviceptr(),
-                temp,
-                tokens,
-                c.intermediate_size,
-                h,
-            )?;
+            // SAFETY: same retained-buffer/context contract as the QKV call.
+            unsafe {
+                self.blas.linear(
+                    &w.linear.output,
+                    &w.intermediate,
+                    &layer.output.weight,
+                    &mut w.temp,
+                )?;
+            }
             norm(
                 k,
                 s,
@@ -786,12 +838,6 @@ impl Engine {
             )?;
         }
         w.download()?;
-        if let Some(capture) = capture {
-            let graph = capture.finish()?;
-            graph.launch(s)?;
-            w.graph = Some(graph);
-        }
-        w.warmed = true;
         w.complete()
     }
 }
@@ -855,44 +901,33 @@ impl OxideBackend {
         };
         let kernels = Kernels::load(&context)?;
         let blas = cublas::Blas::new(context.clone(), stream.clone())?;
+        let mut uploader = WeightUploader::new(stream.clone())?;
         let weights = Weights {
-            word: upload(&stream, &host.word)?,
-            position: upload(&stream, &host.position)?,
-            token_type: upload(&stream, &host.token_type)?,
-            gamma: upload(&stream, &host.gamma)?,
-            beta: upload(&stream, &host.beta)?,
+            word: uploader.upload(&[&host.word])?,
+            position: uploader.upload(&[&host.position])?,
+            token_type: uploader.upload(&[&host.token_type])?,
+            gamma: uploader.upload(&[&host.gamma])?,
+            beta: uploader.upload(&[&host.beta])?,
             layers: host
                 .layers
                 .iter()
-                .map(|l| Layer::upload(&stream, l))
+                .map(|l| Layer::upload(&mut uploader, l))
                 .collect::<Result<_, _>>()?,
         };
+        uploader.finish()?;
         Ok(Self {
             config,
             pool,
             engine: Mutex::new(Engine {
-                blas,
-                kernels,
-                weights,
+                blas: ManuallyDrop::new(blas),
+                kernels: ManuallyDrop::new(kernels),
+                weights: ManuallyDrop::new(weights),
                 context,
                 stream,
                 workspace: None,
                 cached: cache::WorkspaceCache::new(),
                 failed: false,
-                fa4,
-                graphs_enabled: match std::env::var(infinity_v3_config::infinity_env!(
-                    "OXIDE_CUDA_GRAPHS"
-                ))
-                .as_deref()
-                {
-                    Ok("0" | "false") => false,
-                    Err(std::env::VarError::NotPresent) | Ok("1" | "true") => true,
-                    _ => {
-                        return Err(start(
-                            "INFINITY_OXIDE_CUDA_GRAPHS must be 0,1,false or true",
-                        ))
-                    }
-                },
+                fa4: ManuallyDrop::new(fa4),
             }),
         })
     }

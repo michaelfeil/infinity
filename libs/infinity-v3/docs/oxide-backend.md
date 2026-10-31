@@ -36,21 +36,53 @@ keeping sequence-boundary and pooled-selection counts exact. Actual sequence
 lengths and selected indices remain authoritative; only unused token capacity is
 zero-padded. Inactive workspaces are evicted LRU under the count limit and a
 256 MiB budget covering active plus cached arena buffers. Model weights and
-driver graph metadata sit outside that budget. One active request may exceed the
+driver/provider metadata sit outside that budget. One active request may exceed the
 budget; doing so empties the inactive cache.
 
-For a warmed workspace, capture includes H2D upload, kernel/cuBLAS work, and D2H
-download around stable pinned staging addresses. Replay is one graph enqueue
-followed by a final stream synchronization. An uncached geometry still requires
-preparation and warmup. This reuse remains experimental and does not promise
-gains for all models or traffic patterns.
+Execution uses ordinary ordered CUDA streams. CUDA graph capture, replay, and
+the `INFINITY_OXIDE_CUDA_GRAPHS` setting have been removed. Kernel modules,
+allocations, the primary context, and streams remain owned until outstanding
+work drains, including on errors. An uncached geometry prepares its matrix
+plans and workspace once. Without an explicitly selected AOT provider, attention
+uses the Rust SIMT kernel. PDL is not implemented yet.
 
-`INFINITY_OXIDE_CUDA_GRAPHS=0` disables graph capture for controls and debugging;
-`1` enables it and is the default. Kernel modules, captured allocations, the
-primary context, and streams remain owned until outstanding work drains,
-including on errors. Without an explicitly selected AOT provider, attention uses
-the Rust SIMT kernel. The pure oxide and hybrid AOT configurations must be
-measured separately.
+## Tensor and matrix foundations
+
+`tensor` provides checked fixed-rank layouts and borrowed `TensorRef`/`TensorMut`
+views. Shape, stride, span, offset, and storage arithmetic are checked; mutable
+views reject overlapping or broadcast writes. Views allocate nothing, clone no
+owners, and make no CUDA calls. They describe a borrow rather than ownership of
+unfinished GPU work; enqueue boundaries remain unsafe and the engine retains
+all buffers until completion. There is no dynamic operator dispatcher.
+
+`math::LinearPlan` prepares row-major `X W^T` geometry and cuBLAS parameters once
+per workspace, including optional row padding. BF16, FP16 and FP32 matrix methods
+accumulate in FP32; the BERT model still runs only in BF16. The backend binds its
+context once per forward, rather than once per matrix operation. FP8/FP4 enum
+variants describe storage sizes only and do not enable arithmetic or quantized
+checkpoint loading. Packed scales and quantization schemes need separate methods.
+
+The `dispatch_bench` example measures raw argument assembly versus the actual
+checked tensor binding on the host, with allocated GPU buffers but no CUDA calls
+inside timed loops. It verifies zero heap allocations during dispatch. These
+numbers exclude driver enqueue and GPU execution time.
+
+## Weight loading
+
+Loading reads safetensors headers first and keeps validated opened shard files.
+Payload reads use at most 64 KiB of conversion scratch. Two reusable pinned
+buffers total 1 MiB; completion events prevent their reuse before H2D finishes.
+Weights go into final device allocations, including Q/K/V ranges within one
+fused destination. The loader retains neither whole shards nor an FP32 copy of
+the model. BF16 bytes are preserved; F16/F32 conversion keeps the original BF16
+rounding and nonfinite-value checks. Startup waits for every upload before the
+backend becomes ready. Model metadata, device weights, and request workspaces
+are separate from the transient staging budget.
+
+Checkpoint path, shard-index, expected shape, missing/duplicate tensor and exact
+file-length checks remain required. Read/copy failures prevent readiness and
+drain outstanding work before resources are released. Native packed-weight
+caching and general tied-weight or quantized-model loading are not implemented.
 
 ## Separate compiler and serving toolchains
 
@@ -166,7 +198,7 @@ The per-SM directory must contain the native ABI 1/export ABI 7 manifest,
 portable-host marker, matching compute capability and advertised mode 7. A
 selected provider's load or launch failure is an error rather than a retry
 through another attention path.
-Warm up provider initialization before graph capture. Preserve its adjacent
+Warm up provider initialization before serving requests. Preserve its adjacent
 `libcute_dsl_runtime.so`, `libtvm_ffi.so`, license files and provenance.
 The provider contains a native C++ ABI shim and CuTe-generated GPU kernels;
 the model executor remains Rust. Existing FA4 artifacts for `sm_90`, `sm_100`
@@ -177,7 +209,12 @@ establish runtime qualification on B200 or RTX hardware.
 The existing GDN provider also exposes reusable AOT kernels, but GDN/Qwen3.5
 model execution is not implemented by this initial backend.
 
-## Measured MiniLM results
+## Historical MiniLM results before graph-free execution
+
+The results below describe commit `e78c3b3`, before the tensor, loading and
+graph-free execution changes. They do not establish the performance of the
+current stream-based backend; qualify it separately against the best LibTorch
+configuration.
 
 On H100, `sentence-transformers/all-MiniLM-L6-v2` with BF16 and mean pooling
 was faster through the hybrid FA4 path. These are HTTP measurements from the
@@ -233,7 +270,7 @@ coverage grows:
 1. Establish BERT quality and repeated throughput/latency controls against
    LibTorch, including graph-enabled controls and variable sequence lengths.
 2. Refine arena reuse, asynchronous completion, BF16/cuBLASLt projection
-   dispatch, and graph preparation using measured bottlenecks.
+   dispatch, and matrix preparation using measured bottlenecks.
 3. Qualify the hybrid AOT attention path where its measured benefit warrants
    the additional provider. Avoid a device-to-host copy between kernels.
 4. Add Qwen RMSNorm, RoPE, grouped-query attention, gated MLPs and readouts.
