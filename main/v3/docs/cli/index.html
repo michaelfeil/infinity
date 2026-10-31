@@ -1390,6 +1390,10 @@ expanded tokens, reusing the prefix without another prefill. Set
 <code>INFINITY_TORCH_BLOCK_KV_CHUNK_TOKENS</code> to a positive integer to tune this target;
 a single question may exceed it. This bounds temporary K/V copies, not weights,
 hidden states, or total GPU memory.</p>
+<p>Last-token decisions select their final hidden rows directly from shared
+execution storage, including during CUDA graph replay. They do not reconstruct
+the prefix's hidden states for every question. Full-token outputs still require
+the expanded layout.</p>
 <p><code>INFINITY_MAX_BATCH_EXPANDED_TOKENS</code> is the environment alternative. Values
 broadcast or align with models; <code>none</code> uses the compute limit. An explicit limit
 must be at least <code>--max-batch-tokens</code> and fit signed 32-bit offsets.
