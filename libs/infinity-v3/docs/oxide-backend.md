@@ -27,13 +27,23 @@ remain necessary.
   encodings, and request-controlled normalization. Unsupported model families,
   trained Dense projections, module pipelines, dtypes, and tasks fail explicitly.
 
-The Rust kernels fuse embedding normalization and QKV preparation. The model
-executor reuses device and pinned-host arenas. For a warmed compatible shape,
-it captures kernel/cuBLAS work in a CUDA graph and replays that graph; input
-uploads and output downloads remain outside capture. A different workspace shape
-requires preparation and warmup. The reuse key includes token count, sequence
-boundary count, pooled selection count, and maximum sequence length. This is
-bounded workspace reuse, not an unbounded cache of every request shape.
+The Rust kernels fuse embedding normalization and QKV preparation; register-cached
+384-wide normalization specializations and a parallel mean-pool kernel cover the
+MiniLM geometry. The model executor retains at most eight geometry workspaces:
+one active plus up to seven inactive device and pinned-host arenas. The reuse key
+rounds token count and maximum sequence length up to 32-token boundaries while
+keeping sequence-boundary and pooled-selection counts exact. Actual sequence
+lengths and selected indices remain authoritative; only unused token capacity is
+zero-padded. Inactive workspaces are evicted LRU under the count limit and a
+256 MiB budget covering active plus cached arena buffers. Model weights and
+driver graph metadata sit outside that budget. One active request may exceed the
+budget; doing so empties the inactive cache.
+
+For a warmed workspace, capture includes H2D upload, kernel/cuBLAS work, and D2H
+download around stable pinned staging addresses. Replay is one graph enqueue
+followed by a final stream synchronization. An uncached geometry still requires
+preparation and warmup. This reuse remains experimental and does not promise
+gains for all models or traffic patterns.
 
 `INFINITY_OXIDE_CUDA_GRAPHS=0` disables graph capture for controls and debugging;
 `1` enables it and is the default. Kernel modules, captured allocations, the
@@ -48,8 +58,9 @@ NVIDIA CUDA Rust is pinned at
 [`999094fe568fc3080f80d49e9c44e3680ad1c968`](https://github.com/NVIDIA/cuda-rust/tree/999094fe568fc3080f80d49e9c44e3680ad1c968).
 The Infinity host builds with the repository's Rust **1.93.1** toolchain;
 `cuda-core` requires Rust 1.89 or newer. The separate device package pins
-**1.99.1**, `rustc-dev`, Rust sources, and LLVM tools for cuda-oxide. Serving does
-not load the Rust compiler or compile kernels on a request.
+**1.99.1**, `rustc-dev`, Rust sources, and LLVM tools for cuda-oxide and the
+nine-kernel bundle. Serving does not load the Rust compiler or compile kernels on
+a request.
 
 The compiler bootstrap was exercised with CUDA **13.1**, Rust's bundled
 LLVM **23**, and Clang **18** development headers. Its environment checker and
@@ -97,11 +108,15 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles Rust separately for `sm_90`, `sm_100`, and `sm_120`,
-assembles each PTX artifact to a cubin, verifies entry symbols, and writes a
-manifest recording source/artifact hashes, target, compiler revision, and
-commands. These are independent target builds; changing a label in a manifest
-is not an architecture build.
+`device/build.sh` compiles all nine Rust kernels separately for `sm_90`,
+`sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
+symbols, and writes a manifest recording source/artifact hashes, target,
+compiler revision, and commands. Every architecture is natively compiled from
+Rust for all nine exports. The fresh set adds register-cached 384-wide
+embedding/LayerNorm kernels and a parallel mean-pool kernel; the earlier bundle
+exported six. A bundle with these required new entrypoints must be rebuilt, and
+the old six-export bundle fails startup. These are independent target builds;
+changing a label in a manifest is not an architecture build.
 
 | Target | Deployment family | Qualification |
 | --- | --- | --- |
@@ -174,21 +189,33 @@ requests. One client sent requests sequentially.
 
 | Tokens / batch | LibTorch p50 ms | Oxide p50 ms | Throughput change | 95% interval |
 | --- | ---: | ---: | ---: | ---: |
-| 128 / 1 | 1.006 | 0.907 | +11.39% | +8.75% to +13.91% |
-| 128 / 8 | 1.274 | 1.216 | +5.00% | +2.68% to +7.63% |
-| 256 / 1 | 1.012 | 0.938 | +8.24% | +7.34% to +9.12% |
-| Variable length, up to 256 / 8 | 1.284 | 1.258 | +1.99% | +0.09% to +3.84% |
+| 128 / 1 | 0.992 | 0.910 | +8.09% | +3.52% to +11.82% |
+| 128 / 8 | 1.251 | 1.196 | +4.82% | +2.57% to +6.84% |
+| 256 / 1 | 1.016 | 0.929 | +9.63% | +7.39% to +12.02% |
+| Variable length, up to 256 / 8 | 1.303 | 1.244 | +4.50% | +0.44% to +8.36% |
 
-The variable-length batch benefit is small and less consistent: an earlier
-four-process comparison included zero in its interval. Latency and throughput
-are measured separately; the throughput percentages are not ratios of p50 latency.
-The GPU also held an idle foreign service; its jobs and clocks were unchanged.
-The LibTorch baseline used the existing 2.14 native library after verifying that
-its relevant BERT kernel sources matched this checkout. This is a single-H100,
-warm, fixed-geometry comparison. Only one workspace is retained; alternating
-request geometries reallocate and warm up again. These measurements do not
-establish a gain for mixed-shape production traffic or other BERT checkpoints.
-The pure Rust SIMT attention path was slower than LibTorch in the initial pilot.
+Latency and throughput are measured separately; throughput percentages are not
+ratios of p50 latency. The shared GPU held an idle resident service; its jobs and
+clocks were unchanged. The LibTorch baseline reused the existing 2.14 native
+library after verifying 16 relevant BERT/kernel source blobs matched main
+`c95009f`. Both selected backends used the same release executable.
+
+Changing shapes were also measured with four fresh processes per runtime,
+64 warmup requests per case, and at least 300 measured requests and five seconds
+per case. Token IDs changed between cycles. This table compares the final
+bucketed backend with LibTorch and the original single-workspace oxide build.
+
+| Changing-shape cycle | LibTorch p50 ms | Oxide p50 ms | Throughput vs LibTorch | 95% interval | Throughput vs original oxide |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 8 single-input lengths | 1.310 | 0.901 | +45.07% | +36.53% to +51.66% | +51.66% |
+| 32 single-input lengths (8–256 tokens) | 1.306 | 0.898 | +46.07% | +40.10% to +52.27% | +53.40% |
+| 4 length patterns, batch 8 | 1.468 | 1.164 | +28.54% | +18.93% to +38.72% | +86.36% |
+
+These are finite repeating geometry sets after warmup, not a claim about every
+arrival pattern, cold start or model. The 32-length cycle exercises reuse within
+buckets and exceeds the eight-entry cache if exact lengths are used. Pure Rust
+SIMT attention was slower than LibTorch in the initial pilot; these throughput
+results use hybrid FA4 attention.
 
 For 64 SciFact queries and 256 documents (320 raw embedding vectors), minimum
 cosine similarity to LibTorch was **0.999952** and maximum relative L2 error was
