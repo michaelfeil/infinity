@@ -95,8 +95,8 @@ and 657,500 expanded tokens. Template and image tokens also count. Prefixes must
 match IDs, types, positions and prepared image identity; independent image
 allocations are conservatively charged separately. Existing deployments may
 need a larger expanded limit for requests that previously spanned batches.
-Measure peak GPU memory before raising it: backend K/V storage still expands
-across questions, and startup warmup does not validate this fanout shape.
+Measure peak GPU memory before raising it: unsupported layouts still expand
+K/V across questions, and startup warmup does not validate this fanout shape.
 
 Suffix attention assembles K/V in whole-question chunks targeting 500,000
 expanded tokens, reusing the prefix without another prefill. Set
@@ -108,6 +108,18 @@ Last-token decisions select their final hidden rows directly from shared
 execution storage, including during CUDA graph replay. They do not reconstruct
 the prefix's hidden states for every question. Full-token outputs still require
 the expanded layout.
+
+CUDA suffix attention uses shared prefix pages by default when supported.
+Set `INFINITY_TORCH_BLOCK_PAGED=0` to disable paging. Complete prefix pages are stored once; each question owns only its
+suffix, the incomplete prefix tail, and page padding. The attention operator
+reads those pages with one softmax over prefix plus suffix. Small, unshared or
+unsupported layouts retain the chunked path.
+
+For one shared prefix of length P and suffix lengths S, row-local work scales
+with P + sum(S), but full attention still evaluates P² + sum(S × (P + S)) pairs.
+Unique-token counts therefore do not measure all attention work or GPU memory.
+Paging also leaves request preparation unchanged: the adapter currently renders
+and tokenizes each question's complete prompt.
 
 `INFINITY_MAX_BATCH_EXPANDED_TOKENS` is the environment alternative. Values
 broadcast or align with models; `none` uses the compute limit. An explicit limit

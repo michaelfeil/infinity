@@ -45,6 +45,7 @@ class Qwen35 final : public Model {
     /// avoids repeated uploads when the request's block layout is unchanged.
     at::Tensor kv_cumulative, history_cumulative;
     std::vector<int32_t> history_offsets;
+    const BlockPages* pages = nullptr;
   };
 
   /// Per-block attention and recurrent buffers paired with their packed boundaries.
@@ -73,6 +74,7 @@ class Qwen35 final : public Model {
   int64_t hidden, heads, kv_heads, dim, layer_count, rotary;
   double epsilon;
   int64_t block_kv_chunk_tokens = 500000;
+  bool block_paged = true;
   bool delta_prefill = false, delta_suffix_prefill = false;
   at::Tensor cos_cache, sin_cache;
 
@@ -492,6 +494,17 @@ class Qwen35 final : public Model {
                                     const at::Tensor& v,
                                     const PackedInput& input,
                                     BlockCache& cache) const {
+    if (cache.metadata.pages && cache.metadata.pages->gather.defined() && block_paged_supported(q))
+      return block_paged_attention(q,
+                                   k,
+                                   v,
+                                   cache.key,
+                                   cache.value,
+                                   input.cumulative,
+                                   cache.metadata.kv_cumulative,
+                                   *cache.metadata.pages,
+                                   input.max_sequence,
+                                   1. / std::sqrt(double(dim)));
     std::vector<int32_t> kv_offsets{0};
     for (int64_t row = 0; row < input.batch; ++row) {
       const auto source = input.block_prefix_sources[row];
@@ -985,7 +998,8 @@ class Qwen35 final : public Model {
     // These sequence boundaries are shared by all layers of this request.
     BlockMetadata metadata{input.block_layout->kv_cumulative,
                            input.block_layout->history_cumulative,
-                           input.block_layout->history_offsets};
+                           input.block_layout->history_offsets,
+                           &input.block_layout->pages};
     auto normalized = norm(hidden, "layers.0.input_layernorm");
     QuantizedRows attention_rows;
     for (int64_t layer = 0; layer < layer_count; ++layer) {
@@ -1102,6 +1116,11 @@ class Qwen35 final : public Model {
 public:
   Qwen35(const Options& config, Weights& tensors, c10::Device dev, at::ScalarType type)
       : cfg(config), weights(std::move(tensors)), device(dev), dtype(type) {
+    if (const auto* value = std::getenv(INFINITY_ENV("TORCH_BLOCK_PAGED"))) {
+      TORCH_CHECK(std::string_view(value) == "0" || std::string_view(value) == "1",
+                  "TORCH_BLOCK_PAGED must be 0 or 1");
+      block_paged = std::string_view(value) == "1";
+    }
     if (const auto* value = std::getenv(INFINITY_ENV("TORCH_BLOCK_KV_CHUNK_TOKENS"))) {
       const auto* end = value + std::strlen(value);
       const auto parsed = std::from_chars(value, end, block_kv_chunk_tokens);
@@ -1375,6 +1394,8 @@ public:
     layout->kv_cumulative = at::tensor(kv, input.cumulative.options());
     layout->history_cumulative = at::tensor(layout->history_offsets, input.cumulative.options());
     layout->cache_sources = at::tensor(sources, input.ids.options());
+    if (block_paged && device.is_cuda() && !sources.empty())
+      layout->pages = prepare_block_pages(prefixes, suffixes, sources, input.ids.options());
     input.block_layout = std::move(layout);
   }
 
