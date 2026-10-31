@@ -1155,7 +1155,7 @@ public:
     // Let the native provider select supported GPU families and GDN layouts.
     delta_prefill = device.is_cuda() && !cfg.boolean("_fp8_dynamic", false);
     const auto* suffix_policy = std::getenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
-    delta_suffix_prefill = suffix_policy && std::string_view(suffix_policy) == "1";
+    delta_suffix_prefill = !suffix_policy || std::string_view(suffix_policy) == "1";
     const auto fp8 = cfg.boolean("_fp8_dynamic", false);
     const auto scope = cfg.string("_fp8_scope", fp8 ? "all" : "mlp");
     TORCH_CHECK(scope == "mlp" || scope == "all", "FP8 scope must be mlp or all");
