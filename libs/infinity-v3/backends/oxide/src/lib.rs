@@ -294,6 +294,63 @@ impl Drop for Engine {
 }
 /// Stable device and pinned-host arenas; raw launches retain all allocations.
 type WorkKey = (usize, usize, usize, usize);
+const BUCKET: usize = 32;
+fn bucketed(value: usize) -> Result<usize, BackendError> {
+    value
+        .checked_add(BUCKET - 1)
+        .map(|rounded| rounded / BUCKET * BUCKET)
+        .ok_or_else(|| infer("Batch bucket capacity overflow"))
+}
+fn work_key(b: &Batch, max_length: usize) -> Result<WorkKey, BackendError> {
+    Ok((
+        bucketed(b.input_ids.len())?,
+        b.cumulative_seq_lengths.len(),
+        b.pooled_indices.len(),
+        bucketed(max_length)?,
+    ))
+}
+fn pack_input(
+    out: &mut [u32],
+    tokens: usize,
+    input_ids: &[u32],
+    position_ids: &[u32],
+    token_type_ids: &[u32],
+    boundaries: &[u32],
+    selected: &[u32],
+) -> Result<(), BackendError> {
+    let layout = product(tokens, 3)?
+        .checked_add(boundaries.len())
+        .and_then(|n| n.checked_add(selected.len()))
+        .ok_or_else(|| infer("Input staging layout overflow"))?;
+    if out.len() != layout
+        || input_ids.len() > tokens
+        || position_ids.len() > tokens
+        || token_type_ids.len() > tokens
+    {
+        return Err(infer("Invalid input staging layout"));
+    }
+    let mut rest = out;
+    for source in [input_ids, position_ids, token_type_ids] {
+        let (row, tail) = rest
+            .split_at_mut_checked(tokens)
+            .ok_or_else(|| infer("Invalid input staging layout"))?;
+        row.fill(0);
+        let (head, _) = row
+            .split_at_mut_checked(source.len())
+            .ok_or_else(|| infer("Invalid input staging layout"))?;
+        head.copy_from_slice(source);
+        rest = tail;
+    }
+    let (boundary_rows, selection_rows) = rest
+        .split_at_mut_checked(boundaries.len())
+        .ok_or_else(|| infer("Invalid input staging layout"))?;
+    if selection_rows.len() != selected.len() {
+        return Err(infer("Invalid input staging layout"));
+    }
+    boundary_rows.copy_from_slice(boundaries);
+    selection_rows.copy_from_slice(selected);
+    Ok(())
+}
 struct Work {
     graph: Option<graph::GraphExec>,
     warmed: bool,
@@ -330,49 +387,47 @@ impl Work {
             self.max_length,
         )
     }
-    fn allocation_bytes(b: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
-        let input = product(b.input_ids.len(), 3)?
-            .checked_add(b.cumulative_seq_lengths.len())
-            .and_then(|n| n.checked_add(b.pooled_indices.len()))
+    fn allocation_bytes(key: WorkKey, c: &BertConfig) -> Result<usize, BackendError> {
+        let (tokens, sequences, selections, max_length) = key;
+        i32::try_from(tokens).map_err(infer)?;
+        u32_size(product(tokens, c.hidden_size)?)?;
+        u32_size(product(tokens, c.intermediate_size)?)?;
+        u32_size(product(max_length, 4)?)?;
+        let input = product(tokens, 3)?
+            .checked_add(sequences)
+            .and_then(|n| n.checked_add(selections))
             .ok_or_else(|| infer("Input arena overflow"))?;
         // Device+host input/output staging and nine BF16 hidden-sized buffers
         // (including the packed QKV projection) plus the intermediate tensor.
-        let output = product(product(b.pooled_indices.len(), c.hidden_size)?, 8)?;
-        let hidden = product(product(b.input_ids.len(), c.hidden_size)?, 18)?;
-        let intermediate = product(product(b.input_ids.len(), c.intermediate_size)?, 2)?;
+        let output = product(product(selections, c.hidden_size)?, 8)?;
+        let hidden = product(product(tokens, c.hidden_size)?, 18)?;
+        let intermediate = product(product(tokens, c.intermediate_size)?, 2)?;
         product(input, 8)?
             .checked_add(output)
             .and_then(|n| n.checked_add(hidden))
             .and_then(|n| n.checked_add(intermediate))
             .ok_or_else(|| infer("Workspace arena overflow"))
     }
-    fn matches(&self, b: &Batch, max_length: usize) -> bool {
-        self.max_length == max_length
-            && self.tokens == b.input_ids.len()
-            && self.sequences == b.cumulative_seq_lengths.len()
-            && self.selections == b.pooled_indices.len()
+    fn matches(&self, key: &WorkKey) -> bool {
+        self.key() == *key
     }
-    fn new(
-        s: Arc<Stream>,
-        b: &Batch,
-        c: &BertConfig,
-        max_length: usize,
-    ) -> Result<Self, BackendError> {
-        let tokens = b.input_ids.len();
+    fn new(s: Arc<Stream>, c: &BertConfig, key: WorkKey) -> Result<Self, BackendError> {
+        let bytes = Self::allocation_bytes(key, c)?;
+        let (tokens, sequences, selections, max_length) = key;
         let hidden = product(tokens, c.hidden_size)?;
         let input_len = product(tokens, 3)?
-            .checked_add(b.cumulative_seq_lengths.len())
-            .and_then(|n| n.checked_add(b.pooled_indices.len()))
+            .checked_add(sequences)
+            .and_then(|n| n.checked_add(selections))
             .ok_or_else(|| infer("Input arena overflow"))?;
-        let output = product(b.pooled_indices.len(), c.hidden_size)?;
+        let output = product(selections, c.hidden_size)?;
         Ok(Self {
             graph: None,
             warmed: false,
             tokens,
-            sequences: b.cumulative_seq_lengths.len(),
-            selections: b.pooled_indices.len(),
+            sequences,
+            selections,
             max_length,
-            bytes: Self::allocation_bytes(b, c)?,
+            bytes,
             input: DeviceBuffer::zeroed(&s, input_len).map_err(infer)?,
             host_input: PinnedHostBuffer::zeroed(s.context(), input_len).map_err(infer)?,
             host_output: PinnedHostBuffer::zeroed(s.context(), output).map_err(infer)?,
@@ -389,17 +444,16 @@ impl Work {
             stream: s,
         })
     }
-    fn stage(&mut self, b: &Batch) {
-        let values = b
-            .input_ids
-            .iter()
-            .chain(&b.position_ids)
-            .chain(&b.token_type_ids)
-            .chain(&b.cumulative_seq_lengths)
-            .chain(&b.pooled_indices);
-        for (out, &value) in self.host_input.as_mut_slice().iter_mut().zip(values) {
-            *out = value;
-        }
+    fn stage(&mut self, b: &Batch) -> Result<(), BackendError> {
+        pack_input(
+            self.host_input.as_mut_slice(),
+            self.tokens,
+            &b.input_ids,
+            &b.position_ids,
+            &b.token_type_ids,
+            &b.cumulative_seq_lengths,
+            &b.pooled_indices,
+        )
     }
     fn upload(&self) -> Result<(), BackendError> {
         // SAFETY: pinned staging and destination are retained in this workspace;
@@ -463,35 +517,26 @@ impl Engine {
         max_length: usize,
     ) -> Result<Vec<f32>, BackendError> {
         self.context.bind_to_thread().map_err(infer)?;
-        if !self
-            .workspace
-            .as_ref()
-            .is_some_and(|w| w.matches(b, max_length))
-        {
-            let key = (
-                b.input_ids.len(),
-                b.cumulative_seq_lengths.len(),
-                b.pooled_indices.len(),
-                max_length,
-            );
-            let next = self.cached.take(&key);
+        let plan = work_key(b, max_length)?;
+        if !self.workspace.as_ref().is_some_and(|w| w.matches(&plan)) {
+            let next = self.cached.take(&plan);
             // Reserve the next active arena before retaining the previous one.
             // Oversized active requests empty the inactive cache.
-            drop(self.cached.reserve(Work::allocation_bytes(b, c)?));
+            drop(self.cached.reserve(Work::allocation_bytes(plan, c)?));
             if let Some(previous) = self.workspace.take() {
                 let (key, bytes) = (previous.key(), previous.bytes);
                 drop(self.cached.put(key, previous, bytes));
             }
             self.workspace = Some(match next {
                 Some(work) => work,
-                None => Work::new(self.stream.clone(), b, c, max_length)?,
+                None => Work::new(self.stream.clone(), c, plan)?,
             });
         }
         let w = self
             .workspace
             .as_mut()
             .ok_or_else(|| infer("Missing oxide workspace"))?;
-        w.stage(b);
+        w.stage(b)?;
         let s = &*self.stream;
         if let Some(graph) = w.graph.as_ref() {
             graph.launch(s)?;
@@ -507,7 +552,7 @@ impl Engine {
         w.upload()?;
         let k = &self.kernels;
         let weights = &self.weights;
-        let (tokens, h) = (b.input_ids.len(), c.hidden_size);
+        let (tokens, h) = (w.tokens, c.hidden_size);
         let (mut t, mut width) = (u32_size(tokens)?, u32_size(h)?);
         let base = w.input.cu_deviceptr();
         let (mut ids, mut pos, mut types) = (
@@ -617,14 +662,14 @@ impl Engine {
                     boundaries,
                     tokens,
                     b.cumulative_seq_lengths.len() - 1,
-                    max_length,
+                    w.max_length,
                 )?;
             } else {
                 launch(
                     &k.attention,
                     s,
-                    (u32_size(max_length)?, heads, count),
-                    u32_size(product(max_length, 4)?)?,
+                    (u32_size(w.max_length)?, heads, count),
+                    u32_size(product(w.max_length, 4)?)?,
                     &mut [
                         arg(&mut q),
                         arg(&mut key),
@@ -1014,5 +1059,79 @@ mod tests {
         let mut b = batch();
         b.raw_indices = vec![0];
         assert!(validate(&b, &c).is_err());
+    }
+    #[test]
+    fn buckets_token_and_length_capacities_to_round_up_32() {
+        fn keyed(tokens: usize, max_length: usize) -> WorkKey {
+            let mut b = batch();
+            b.input_ids = vec![1; tokens];
+            b.position_ids = vec![0; tokens];
+            b.token_type_ids = vec![0; tokens];
+            b.cumulative_seq_lengths = vec![0, tokens as u32];
+            work_key(&b, max_length).unwrap()
+        }
+        assert_eq!(keyed(31, 31), keyed(32, 32));
+        assert_ne!(keyed(32, 32), keyed(33, 33));
+        assert_eq!(keyed(33, 33), keyed(64, 64));
+        assert_ne!(keyed(64, 64), keyed(65, 65));
+        assert_eq!(keyed(31, 64), keyed(32, 64));
+        assert_ne!(keyed(32, 32), keyed(32, 33));
+    }
+    #[test]
+    fn stages_actual_metadata_into_padded_sections() {
+        let tokens = 64;
+        let boundaries = [0, 1, 3];
+        let selected = [1];
+        let mut out = vec![u32::MAX; tokens * 3 + boundaries.len() + selected.len()];
+        pack_input(
+            &mut out,
+            tokens,
+            &[7, 8, 9],
+            &[0, 1],
+            &[1],
+            &boundaries,
+            &selected,
+        )
+        .unwrap();
+        assert_eq!(&out[..3], &[7, 8, 9]);
+        assert!(out[3..tokens].iter().all(|&value| value == 0));
+        assert_eq!(&out[tokens..tokens + 2], &[0, 1]);
+        assert!(out[tokens + 2..tokens * 2].iter().all(|&value| value == 0));
+        assert_eq!(&out[tokens * 2..tokens * 2 + 1], &[1]);
+        assert!(out[tokens * 2 + 1..tokens * 3]
+            .iter()
+            .all(|&value| value == 0));
+        assert_eq!(&out[tokens * 3..], &[0, 1, 3, 1]);
+        let mut short = vec![0; tokens * 3 + boundaries.len()];
+        assert!(pack_input(
+            &mut short,
+            tokens,
+            &[7, 8, 9],
+            &[0, 1],
+            &[1],
+            &boundaries,
+            &selected,
+        )
+        .is_err());
+        let mut long = vec![0; tokens * 3 + boundaries.len() + selected.len()];
+        assert!(pack_input(
+            &mut long,
+            tokens,
+            &vec![7; tokens + 1],
+            &[0, 1],
+            &[1],
+            &boundaries,
+            &selected,
+        )
+        .is_err());
+    }
+    #[test]
+    fn rejects_bucket_and_capacity_overflow() {
+        assert!(bucketed(usize::MAX).is_err());
+        assert!(work_key(&batch(), usize::MAX).is_err());
+        let c = config();
+        let oversized = u32::MAX as usize + 1;
+        assert!(Work::allocation_bytes((oversized, 2, 1, BUCKET), &c).is_err());
+        assert!(Work::allocation_bytes((usize::MAX, 2, 1, BUCKET), &c).is_err());
     }
 }
