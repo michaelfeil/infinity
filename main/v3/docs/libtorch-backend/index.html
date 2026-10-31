@@ -1406,11 +1406,11 @@ cross-request cache.</p>
 <p>For dense Qwen3.5, <code>--enable-fp8-dynamic</code> uses all-linear dynamic FP8 by
 default and enables the FP8 optimizations automatically. GDN activations remain
 BF16 and stored recurrent states remain FP32.</p>
-<p><code>INFINITY_TORCH_GDN_SUFFIX_PREFILL=1</code> separately opts cached GDN suffixes into
-the existing tensor-core prefill kernels. Batch geometry is selected automatically.
-This setting is off by default because BF16 normalized Q/K and chunk arithmetic
-can change probabilities and selected answers, including with FP8 enabled.
-Validate those changes on your workload before enabling it. The GDN provider and native
+<p>Eligible cached GDN suffixes use the existing tensor-core prefill kernels by
+default. Batch geometry and provider support are selected automatically; other
+layouts retain recurrent execution. Set <code>INFINITY_TORCH_GDN_SUFFIX_PREFILL=0</code>
+to disable suffix prefill. BF16 normalized Q/K and chunk arithmetic can change
+probabilities and selected answers, including with FP8 enabled. The GDN provider and native
 backend must be rebuilt together for provider ABI 2; old provider bundles are
 rejected during configuration.</p>
 <p>Send requests to <code>/v1/systemone</code>. See <a href="../cli/#structured-decision-inputs">decision inputs</a>
