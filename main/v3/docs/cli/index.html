@@ -481,6 +481,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Structured decision inputs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#shared-queue-token-admission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared queue token admission
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1288,6 +1305,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Structured decision inputs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#shared-queue-token-admission" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Shared queue token admission
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
     </ul>
@@ -1450,6 +1484,38 @@ as <code>file_id</code> are rejected. These aliases apply to the shared message 
 parser, including <code>state.messages[].content</code>; they do not add a top-level <code>input</code>
 alias, image interpretation of plain <code>state</code> arrays, or OpenAI Decisions question
 and response formats. Existing content parts retain their canonical serialization.</p>
+<h3 id="shared-queue-token-admission">Shared queue token admission</h3>
+<p>Set <code>INFINITY_QUEUE_TOKEN_LIMITS_K="5000,10000,12000"</code> to cap queued compute
+work at 5M tokens for incoming flex requests, 10M for default, and 12M for
+priority. Values are <strong>thousands of tokens</strong>, ordered <code>flex,default,priority</code>;
+they must be nonnegative integers in ascending order. Zero rejects positive-token
+work for that tier. Unset leaves token admission unlimited.</p>
+<p>All tiers contribute to one atomic total per model queue, shared across that
+model's replicas. The same configured limits apply separately to each model in
+this process, not across processes or deployments. Admission checks the total
+<strong>including</strong> the incoming work and returns HTTP 429 if its tier's ceiling would
+be exceeded. Queue-full responses include <code>available_tiers</code> with higher tiers
+that could admit this work at rejection time (or <code>[]</code> if none). This is a hint,
+not reserved capacity; clients must explicitly retry with a different tier.
+Responses expose no token counts or configured queue limits.
+Existing admitted work is not evicted. Scheduling still uses the
+existing priority bonus and flex age offset; these limits do not add preemption
+or a strict priority scheduler.</p>
+<p>An owned reservation charges prepared inputs before sending them to the queue actor,
+including blocked channel senders and batches waiting for a replica. Tokens
+are returned when execution starts, or when the request is canceled or
+fails to enqueue. Whole OneJev block requests reserve atomically using the same
+compute charge as batch admission: shared prefix once plus suffixes when
+prefix-aware batching is enabled. Ordinary batched inputs reserve per input at
+their full encoded length. Tokenization and media preparation happen before token admission;
+existing HTTP concurrency and memory limits still apply and can reject any tier.</p>
+<p>Read the authoritative total through <code>Queue::queued_compute_tokens()</code> or observe
+<code>infinity_queue_compute_tokens{model="..."}</code> in Prometheus. Admission and release
+use signed atomics without locks. Reservation ownership pairs each admission with
+exactly one subtraction, including when dispatch and cancellation race. Metrics
+use matching deltas; concurrent scrapes can briefly lag the authoritative total.
+The batch token limit remains a separate memory guard. Queue limits do not
+guarantee a latency deadline; size them from measured service time and replica capacity.</p>
 
 
 
