@@ -186,15 +186,21 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     auto p = "blocks." + std::to_string(layer) + ".";
     auto normalized = ln(states, p + "norm1");
     auto qkv = linear(normalized, p + "attn.qkv").view({states.size(0), 3, heads, dim});
-    auto q = rotate(qkv.select(1, 0)), k = rotate(qkv.select(1, 1)),
-         v = qkv.select(1, 2).to(at::kFloat);
-
-    // Preserve the vision fallback's operand precision and frame grouping.
-    auto aq = q, ak = k, av = v;
-    if (device.is_cuda() && (multi_vector || dtype == at::kBFloat16)) {
-      aq = q.to(dtype).contiguous();
-      ak = k.to(dtype).contiguous();
-      av = v.to(dtype).contiguous();
+    at::Tensor q, k, v;
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if (device.is_cuda()) {
+      // Preserve the attention provider's operand precision while fusing FP32 rotation and casts.
+      auto packed = vision_rotary_qkv(
+          qkv, cos, sin, multi_vector || dtype == at::kBFloat16 ? dtype : at::kFloat);
+      q = packed.select(0, 0);
+      k = packed.select(0, 1);
+      v = packed.select(0, 2);
+    } else
+#endif
+    {
+      q = rotate(qkv.select(1, 0));
+      k = rotate(qkv.select(1, 1));
+      v = qkv.select(1, 2).to(at::kFloat);
     }
     auto fallback = [&]() -> at::Tensor {
       if (multi_vector) {
@@ -209,9 +215,9 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
               rows.push_back(x.narrow(0, offsets[frame], length));
             return at::stack(rows, 0).transpose(1, 2).to(dtype);
           };
-          auto result = at::scaled_dot_product_attention(group(aq),
-                                                         group(ak),
-                                                         group(av),
+          auto result = at::scaled_dot_product_attention(group(q),
+                                                         group(k),
+                                                         group(v),
                                                          std::nullopt,
                                                          0.,
                                                          false,
@@ -225,15 +231,8 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
         return at::cat(outputs, 0);
       }
       if (device.is_cuda())
-        return packed_aten_attention(dtype == at::kBFloat16 ? aq : q,
-                                     dtype == at::kBFloat16 ? ak : k,
-                                     dtype == at::kBFloat16 ? av : v,
-                                     cu,
-                                     cu,
-                                     max_frame,
-                                     max_frame,
-                                     1. / std::sqrt(double(dim)),
-                                     false);
+        return packed_aten_attention(
+            q, k, v, cu, cu, max_frame, max_frame, 1. / std::sqrt(double(dim)), false);
       std::vector<at::Tensor> outputs;
       for (size_t t = 0; t + 1 < offsets.size(); ++t) {
         auto slice = [&](const at::Tensor& x) {
@@ -247,9 +246,9 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
       }
       return at::cat(outputs, 0);
     };
-    auto attention = device.is_cuda() ? packed_cuda_attention(aq,
-                                                              ak,
-                                                              av,
+    auto attention = device.is_cuda() ? packed_cuda_attention(q,
+                                                              k,
+                                                              v,
                                                               cu,
                                                               cu,
                                                               max_frame,
