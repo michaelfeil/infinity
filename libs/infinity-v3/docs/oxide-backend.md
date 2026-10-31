@@ -264,6 +264,37 @@ not a full MTEB evaluation or a general accuracy guarantee.
 
 ## Extending model coverage
 
+The compatibility floor is every model family and task currently supported by
+Infinity's LibTorch backend, including its checkpoint aliases, module chains,
+precision policies, and state/media behavior. Pooled BF16 BERT is the first
+vertical, not the intended coverage limit. Broader model support can extend this
+catalog; a family name alone is not evidence that all its variants work.
+Keep this catalog synchronized as LibTorch gains families and tasks.
+
+| Coverage track | Families and contracts to port |
+| --- | --- |
+| Encoders | BERT/RoBERTa/XLM-R/CamemBERT, DistilBERT, ModernBERT, GTE, Nomic, Jina/JinaCode, MPNet and DeBERTa |
+| Dense decoders | Llama, Mistral/Ministral, Qwen2/Qwen3 and UltraBERT variants |
+| Hybrid and MoE | Qwen3.5 recurrent/convolution history, Qwen3/Qwen3.5/Gemma4 experts, routing and prefix/state reuse |
+| Gemma | Gemma3, Gemma4 and EmbeddingGemma2 normalization, position, shared-KV and readout variants |
+| Media and multi-vector | Qwen-VL, Pixtral/Mistral3, UltraVBERT/SigLIP and Gemma towers, where their checkpoints support image/video/audio; ColBERT/ColQwen wrappers |
+| Task heads | Pooled/raw embeddings, Dense/projection chains, classification/NER, SPLADE, reranking, multi-vector and learned decision readouts |
+
+Keep tensor storage, layout, accumulation, and quantization contracts independent
+of the BERT recipe. The next shared operations are LayerNorm/RMSNorm, positional
+transforms, attention masks/windows/GQA, activation variants, gated MLPs, reductions, gather/
+scatter and task readouts. Add recurrent state, expert routing and media
+operators with their first family. Methods and provider capabilities are
+resolved at load/workspace preparation; forward uses concrete operations and
+borrowed views without a dynamic operator registry on each call.
+
+Track qualification by family, task, precision, device and provider, using exact
+checkpoint fixtures and LibTorch parity, quality, latency/throughput, memory and
+failure checks. Retiring a model is a separate product decision and does not
+count as implementing compatibility. GPU migration can proceed per family;
+LibTorch CPU remains during the transition until the CPU strategy is resolved.
+Full LibTorch replacement requires resolving that CPU dependency as well.
+
 Preserve checkpoint, pooling, HTTP, precision, and error-isolation contracts as
 coverage grows:
 
