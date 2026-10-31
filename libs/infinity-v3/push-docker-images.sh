@@ -7,7 +7,7 @@
 set -euo pipefail
 
 # Configuration
-VERSION="3.0.1"
+VERSION="3.0.2-beta.1"
 REGISTRIES=(
     "${IMAGE_REPOSITORY:-baseten/infinity_v3}"
 )
