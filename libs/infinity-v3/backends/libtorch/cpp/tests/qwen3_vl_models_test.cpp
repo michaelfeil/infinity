@@ -2,6 +2,7 @@
 // Native actual-length image/deepstack regression; no Python or token padding.
 #include "models/qwen3_vl_models.h"
 #include "helpers/vision_batch.h"
+#include "helpers/fp8_linear.h"
 #include "models/qwen35_models.h"
 #include <c10/core/InferenceMode.h>
 #include <ATen/Parallel.h>
@@ -384,6 +385,36 @@ int main(int argc, char** argv) {
     packed_images_test(*native, dev);
     auto expected = reference->forward(host).to(at::kFloat),
          actual = native->forward(dev).cpu().to(at::kFloat);
+    if (fp8_device_supported(device)) {
+      auto fp8_config = cfg;
+      fp8_config.values["text_config.intermediate_size"] = "32";
+      Weights checkpoint;
+      for (const auto& [name, value] : weights)
+        checkpoint[name] = value.to(device, at::kHalf);
+      for (int i = 0; i < 2; ++i) {
+        auto p = "model.language_model.layers." + std::to_string(i) + ".mlp.";
+        for (const auto* name : {"gate_proj", "up_proj"})
+          checkpoint[p + name + ".weight"] =
+              at::randn({32, 16}, checkpoint.begin()->second.options()) * .05;
+        checkpoint[p + "down_proj.weight"] =
+            at::randn({16, 32}, checkpoint.begin()->second.options()) * .05;
+      }
+      auto reference_weights = checkpoint;
+      auto baseline = create_qwen3_vl(fp8_config, reference_weights, device, at::kHalf);
+      baseline->ready();
+      fp8_config.values["_fp8_dynamic"] = "true";
+      auto quantized = create_qwen3_vl(fp8_config, checkpoint, device, at::kHalf);
+      quantized->ready();
+      TORCH_CHECK(checkpoint.empty(), "Qwen3-VL retained redundant text checkpoint weights");
+      auto expected_fp8 = baseline->forward(dev).to(at::kFloat);
+      auto actual_fp8 = quantized->forward(dev).to(at::kFloat);
+      TORCH_CHECK(at::isfinite(actual_fp8).all().item<bool>() &&
+                      ((actual_fp8 - expected_fp8).norm() / expected_fp8.norm()).item<double>() <
+                          .08,
+                  "Qwen3-VL FP8 text MLPs changed image outputs beyond tolerance");
+      check_prefix_cache(*quantized, dev, 0, .01, .02);
+      std::cout << "Qwen3-VL FP8 image inference, released weights and prefix cache passed\n";
+    }
     check_prefix_cache(*native, dev, 0, .003, .003);
     PrefixCache context_cache(1 << 20, 64, 8);
     context_cache.run(*native, dev, 0);
