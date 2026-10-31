@@ -3,7 +3,7 @@ use crate::queue_actor::{prune_canceled_batch, Entry, Metadata, NextBatch, Queue
 use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
 use infinity_v3_backend::result_memory::{retain_for_request, HasResultMemory, ResultLease};
-use infinity_v3_backend::{Backend, BackendError, Embedding, ModelType};
+use infinity_v3_backend::{Backend, BackendError, Embedding, ModelType, SharedF32};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -481,11 +481,11 @@ impl Infer {
         }
 
         if normalize {
-            // Normalize embedding
-            // TODO: Should this be normalized with a background thread etc. instead of doing it synchronously here?
+            // Normalize embedding. This is the only pooling post-process that
+            // mutates the values; copy shared storage only when needed.
+            let results = response.results.make_mut();
             let scale = (1.0
-                / response
-                    .results
+                / results
                     .iter()
                     .map(|v| {
                         let v = *v as f64;
@@ -493,7 +493,7 @@ impl Infer {
                     })
                     .sum::<f64>()
                     .sqrt()) as f32;
-            for v in response.results.iter_mut() {
+            for v in results.iter_mut() {
                 *v *= scale;
             }
         }
@@ -1085,11 +1085,23 @@ async fn complete_batch(
                 {
                     Embedding::Pooled(results) => {
                         InferResult::PooledEmbedding(PooledEmbeddingsInferResponse {
+                            results: results.into(),
+                            metadata,
+                        })
+                    }
+                    Embedding::Shared(results) => {
+                        InferResult::PooledEmbedding(PooledEmbeddingsInferResponse {
                             results,
                             metadata,
                         })
                     }
                     Embedding::All(results) => {
+                        InferResult::AllEmbedding(AllEmbeddingsInferResponse {
+                            results: results.into_iter().map(SharedF32::from).collect(),
+                            metadata,
+                        })
+                    }
+                    Embedding::SharedAll(results) => {
                         InferResult::AllEmbedding(AllEmbeddingsInferResponse { results, metadata })
                     }
                 },
@@ -1198,13 +1210,13 @@ pub struct TokenClassificationInferResponse {
 
 #[derive(Debug)]
 pub struct PooledEmbeddingsInferResponse {
-    pub results: Vec<f32>,
+    pub results: SharedF32,
     pub metadata: InferMetadata,
 }
 
 #[derive(Debug)]
 pub struct AllEmbeddingsInferResponse {
-    pub results: Vec<Vec<f32>>,
+    pub results: Vec<SharedF32>,
     pub metadata: InferMetadata,
 }
 

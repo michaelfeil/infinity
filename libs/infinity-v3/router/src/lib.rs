@@ -80,6 +80,7 @@ pub struct ModelSettings {
     pub backend_device_ids: Option<String>,
     pub backend_kind: infinity_v3_backend::BackendKind,
     pub torch_device: infinity_v3_backend::TorchDevice,
+    pub python_config: Option<String>,
     pub multimodal_config: infinity_v3_core::multimodal::MultimodalConfig,
 }
 
@@ -133,6 +134,7 @@ pub async fn run(
     backend_device_ids: Option<String>,
     backend_kind: infinity_v3_backend::BackendKind,
     torch_device: infinity_v3_backend::TorchDevice,
+    python_config: Option<String>,
     multimodal_config: infinity_v3_core::multimodal::MultimodalConfig,
 ) -> Result<()> {
     run_models(
@@ -164,6 +166,7 @@ pub async fn run(
             backend_device_ids,
             backend_kind,
             torch_device,
+            python_config,
             multimodal_config,
         }],
         hf_token,
@@ -222,6 +225,7 @@ async fn initialize_model(
         backend_device_ids,
         backend_kind,
         torch_device,
+        python_config,
         multimodal_config,
     } = config;
     let (model_id, mut decision_protocol) =
@@ -729,6 +733,9 @@ async fn initialize_model(
     // All models must pass validation before any checkpoint weights are loaded.
     finish_startup_validation(validation).await?;
     let torch_device = backend_kind.resolve_device(torch_device)?;
+    let python_backend_config = infinity_v3_backend::PythonBackendConfig {
+        config: python_config.clone(),
+    };
     let model_dtype = if vela_encoder {
         Some("bfloat16")
     } else {
@@ -741,6 +748,7 @@ async fn initialize_model(
             &config.model_type,
             torch_device == infinity_v3_backend::TorchDevice::Cpu,
         ),
+        infinity_v3_backend::BackendKind::PythonBackend => resolve_python_dtype(dtype, model_dtype),
     };
 
     anyhow::ensure!(
@@ -763,6 +771,7 @@ async fn initialize_model(
         let dtype = dtype.clone();
         let backend_model_type = backend_model_type.clone();
         let dense_path = dense_path.clone();
+        let python_backend_config = python_backend_config.clone();
         let startup_span = tracing::info_span!(
             "backend_startup", model = %model_root.display(), replica, device,
             pid = std::process::id()
@@ -780,6 +789,7 @@ async fn initialize_model(
                 enable_fp8_dynamic,
                 backend_kind,
                 torch_device,
+                python_backend_config,
             )
             .await
             .inspect_err(|error| {
@@ -1082,6 +1092,17 @@ fn get_backend_model_type(
 }
 
 // Resolve Auto before passing a concrete dtype to the backend or reporting /info.
+fn resolve_python_dtype(requested: Option<DType>, model_dtype: Option<&str>) -> DType {
+    match requested {
+        None | Some(DType::Auto) => match model_dtype {
+            Some("bfloat16") => DType::Bfloat16,
+            Some("float16") => DType::Float16,
+            _ => DType::Float32,
+        },
+        Some(dtype) => dtype,
+    }
+}
+
 fn resolve_libtorch_dtype(
     requested: Option<DType>,
     model_dtype: Option<&str>,

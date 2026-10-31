@@ -41,7 +41,7 @@ fn resolve_devices_with(
     if !replication {
         ensure!(
             value.is_none(),
-            "backend-device-ids requires a CUDA backend"
+            "backend-device-ids requires a replicated backend"
         );
         return Ok(vec![device.unwrap_or(0)]);
     }
@@ -62,15 +62,15 @@ fn parse_devices(value: &str, count: usize) -> Result<Vec<usize>> {
             .map(|s| s.trim().parse::<usize>())
             .collect::<Result<Vec<_>, _>>()?
     };
-    ensure!(!devices.is_empty(), "No visible CUDA devices selected");
+    ensure!(!devices.is_empty(), "No visible devices selected");
     let mut seen = HashSet::new();
     for &device in &devices {
         ensure!(
             device < count,
-            "CUDA device {device} is not visible (visible device count: {count})"
+            "Device {device} is not visible (visible device count: {count})"
         );
         if !seen.insert(device) {
-            bail!("Duplicate CUDA device {device}");
+            bail!("Duplicate device {device}");
         }
     }
     Ok(devices)

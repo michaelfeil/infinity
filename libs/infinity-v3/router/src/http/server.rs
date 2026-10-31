@@ -103,9 +103,7 @@ async fn models(Extension(registry): Extension<ModelRegistry>) -> Json<ServedMod
             id: model.info.model_id.clone(),
             object: "model",
             checkpoint_id: model.checkpoint_id.clone(),
-            backend: match model.backend_kind {
-                infinity_v3_backend::BackendKind::Libtorch => "libtorch",
-            },
+            backend: model.backend_kind.as_str(),
             capabilities: match &model.info.model_type {
                 ModelType::Embedding(model) if model.pooling == "splade" => {
                     vec!["embed_sparse", "tokenize", "decode"]
@@ -1157,7 +1155,7 @@ async fn similarity_inner(
             let Embedding::Float(candidate) = &embeddings[i] else {
                 unreachable!("similarity requests float embeddings");
             };
-            1.0 - f32::cosine(source, candidate).unwrap() as f32
+            1.0 - f32::cosine(source.as_ref(), candidate.as_ref()).unwrap() as f32
         })
         .collect();
 
@@ -1456,10 +1454,10 @@ async fn embed_sparse_inner(
 
     let start_time = Instant::now();
 
-    let sparsify = |values: Vec<f32>| -> Result<Vec<SparseValue>, TextEmbeddingsError> {
+    let sparsify = |values: &[f32]| -> Result<Vec<SparseValue>, TextEmbeddingsError> {
         reserve_result_allocation::<SparseValue>(values.len())?;
         let mut sparse_values = Vec::with_capacity(values.len());
-        for (index, value) in values.into_iter().enumerate() {
+        for (index, value) in values.iter().copied().enumerate() {
             if value != 0.0 {
                 sparse_values.push(SparseValue { index, value });
             }
@@ -1491,7 +1489,7 @@ async fn embed_sparse_inner(
 
             (
                 EmbedSparseResponse(vec![
-                    sparsify(response.results).map_err(ErrorResponse::from)?
+                    sparsify(&response.results).map_err(ErrorResponse::from)?
                 ]),
                 ResponseMetadata::new(
                     compute_chars,
@@ -1562,7 +1560,7 @@ async fn embed_sparse_inner(
                             local_batch_counter,
                         )
                         .await?;
-                    Ok((sparsify(response.results)?, response.metadata))
+                    Ok((sparsify(&response.results)?, response.metadata))
                 })
             }
             let results = join_all(futures)
@@ -1915,8 +1913,9 @@ async fn openai_embed_inner(
             }),
         ));
     }
-    let encode_embedding =
-        |array: Vec<f32>| encode_vector(array, req.encoding_format).map_err(ErrorResponse::from);
+    let encode_embedding = |array: infinity_v3_backend::SharedF32| {
+        encode_vector(array, req.encoding_format).map_err(ErrorResponse::from)
+    };
 
     let span = tracing::Span::current();
     if let Some(context) = context {
@@ -3130,6 +3129,7 @@ mod multi_model_test {
             backend_device_ids: None,
             backend_kind,
             torch_device: infinity_v3_backend::TorchDevice::Cpu,
+            python_config: None,
             multimodal_config: Default::default(),
         }
     }

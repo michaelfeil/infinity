@@ -21,7 +21,7 @@ async-channel = "^2.3"
 hf-hub = { workspace = true }
 metrics = { workspace = true }
 serde_json = { workspace = true }
-infinity_v3-backend = { path = "../backends" }
+infinity_v3-backend = { path = "../backends", default-features = false }
 thiserror = { workspace = true }
 tokenizers = { workspace = true }
 basetenkenizer = { version = "=0.2.9", default-features = false }

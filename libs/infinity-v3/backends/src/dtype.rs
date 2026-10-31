@@ -7,11 +7,11 @@ use clap::ValueEnum;
 #[cfg_attr(feature = "clap", derive(Clone, ValueEnum))]
 pub enum DType {
     Auto,
-    #[cfg(feature = "libtorch")]
+    #[cfg(any(feature = "libtorch", feature = "python-backend"))]
     Float16,
-    #[cfg(feature = "libtorch")]
+    #[cfg(any(feature = "libtorch", feature = "python-backend"))]
     Float32,
-    #[cfg(feature = "libtorch")]
+    #[cfg(any(feature = "libtorch", feature = "python-backend"))]
     Bfloat16,
 }
 
@@ -19,11 +19,11 @@ impl fmt::Display for DType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             DType::Auto => write!(f, "auto"),
-            #[cfg(feature = "libtorch")]
+            #[cfg(any(feature = "libtorch", feature = "python-backend"))]
             DType::Float16 => write!(f, "float16"),
-            #[cfg(feature = "libtorch")]
+            #[cfg(any(feature = "libtorch", feature = "python-backend"))]
             DType::Float32 => write!(f, "float32"),
-            #[cfg(feature = "libtorch")]
+            #[cfg(any(feature = "libtorch", feature = "python-backend"))]
             DType::Bfloat16 => write!(f, "bfloat16"),
         }
     }
@@ -36,7 +36,11 @@ impl Default for DType {
         {
             DType::Float32
         }
-        #[cfg(not(feature = "libtorch"))]
+        #[cfg(all(feature = "python-backend", not(feature = "libtorch")))]
+        {
+            DType::Float32
+        }
+        #[cfg(not(any(feature = "libtorch", feature = "python-backend")))]
         {
             DType::Auto
         }

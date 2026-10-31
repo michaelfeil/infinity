@@ -6,6 +6,7 @@ use clap::ValueEnum;
 pub use multimodal::{AudioFeatures, ImagePatches, MultimodalEncoding};
 use serde::Deserialize;
 use std::fmt;
+use std::ops::Deref;
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -37,9 +38,92 @@ impl Batch {
     }
 }
 
+/// Float data that is either owned by Rust or shared from an external owner.
+#[derive(Clone)]
+pub enum SharedF32 {
+    Owned(Vec<f32>),
+    Shared {
+        bytes: bytes::Bytes,
+        offset: usize,
+        len: usize,
+    },
+}
+
+impl SharedF32 {
+    pub fn shared(bytes: bytes::Bytes, offset: usize, len: usize) -> Result<Self, &'static str> {
+        let byte_len = len
+            .checked_mul(std::mem::size_of::<f32>())
+            .ok_or("float size overflow")?;
+        let end = offset.checked_add(byte_len).ok_or("float range overflow")?;
+        if !offset.is_multiple_of(std::mem::size_of::<f32>()) || end > bytes.len() {
+            return Err("invalid float byte range");
+        }
+        Ok(Self::Shared { bytes, offset, len })
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        if len >= self.len() {
+            return;
+        }
+        match self {
+            Self::Owned(values) => values.truncate(len),
+            Self::Shared { len: current, .. } => *current = len,
+        }
+    }
+
+    pub fn make_mut(&mut self) -> &mut Vec<f32> {
+        if matches!(self, Self::Shared { .. }) {
+            *self = Self::Owned(self.as_slice().to_vec());
+        }
+        match self {
+            Self::Owned(values) => values,
+            Self::Shared { .. } => unreachable!("shared storage was replaced"),
+        }
+    }
+
+    pub fn as_slice(&self) -> &[f32] {
+        match self {
+            Self::Owned(values) => values,
+            Self::Shared { bytes, offset, len } => {
+                let raw = &bytes[*offset..*offset + *len * std::mem::size_of::<f32>()];
+                debug_assert_eq!(raw.as_ptr().align_offset(std::mem::align_of::<f32>()), 0);
+                unsafe { std::slice::from_raw_parts(raw.as_ptr().cast::<f32>(), *len) }
+            }
+        }
+    }
+}
+
+impl Deref for SharedF32 {
+    type Target = [f32];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl AsRef<[f32]> for SharedF32 {
+    fn as_ref(&self) -> &[f32] {
+        self.as_slice()
+    }
+}
+
+impl From<Vec<f32>> for SharedF32 {
+    fn from(values: Vec<f32>) -> Self {
+        Self::Owned(values)
+    }
+}
+
+impl fmt::Debug for SharedF32 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_list().entries(self.as_slice()).finish()
+    }
+}
+
 pub enum Embedding {
     Pooled(Vec<f32>),
+    Shared(SharedF32),
     All(Vec<Vec<f32>>),
+    SharedAll(Vec<SharedF32>),
 }
 
 pub type Embeddings = result_memory::ResultMap<Embedding>;
@@ -166,6 +250,8 @@ pub trait Backend {
         ))
     }
     fn health(&self) -> Result<(), BackendError>;
+    /// Stop runtime-owned workers before the model is dropped.
+    fn shutdown(&self) {}
     fn max_batch_size(&self) -> Option<usize> {
         None
     }

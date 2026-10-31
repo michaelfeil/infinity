@@ -21,8 +21,14 @@ Use a local model directory or a compatible Hugging Face model ID. Model
 availability, access credentials, pooling and supported inputs depend on the
 checkpoint and selected backend.
 
-LibTorch is the only inference backend. Most deployments should omit
+LibTorch is the default when it is compiled. Single-backend builds select their
+only compiled backend automatically, and most deployments should omit
 `--backend`; `--backend libtorch` remains accepted for existing configurations.
+Builds that compile the Python backend can select it with `--backend python-backend`
+and pass a JSON configuration object with `--python-config`; see the
+[Python backend](python-backend.md) guide for reserved keys and plugin
+selection. The flag cannot enable a backend
+missing from the image; startup errors list the compiled choices.
 
 Open `/docs` on the running server for interactive API documentation. The API
 schema is available at `/api-doc/openapi.json`.
