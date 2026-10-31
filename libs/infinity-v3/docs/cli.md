@@ -70,6 +70,36 @@ Set `INFINITY_MAX_SEQUENCE_LENGTH` (or `MAX_SEQUENCE_LENGTH`) instead of the fla
 Like other model settings, one value applies to all models; semicolon-separated
 values align with `--model-id`, and `none` leaves a model's limit unchanged.
 
+### OneJev block-attention fanout
+
+Block-attention questions from one request execute in one batch, preserving one
+prefix prefill per request to match input-token billing. Requests exceeding the
+compute, expanded-token, or request-count limit return HTTP 422 before inference.
+They are never split into repeated prefills. Other protocols retain their batching.
+
+`--max-batch-expanded-tokens` defaults to `--max-batch-tokens`. Raising it lets
+`--max-batch-tokens` count matching prefixes once plus every question suffix,
+while bounding the sum of full sequence lengths separately:
+
+```sh
+infinity_v3 --model-id /path/to/elephant --decision-protocol onejev \
+  --max-batch-tokens 32768 --max-batch-expanded-tokens 700000
+```
+
+A 13,000-token prefix plus fifty 150-token suffixes costs 20,500 compute tokens
+and 657,500 expanded tokens. Template and image tokens also count. Prefixes must
+match IDs, types, positions and prepared image identity; independent image
+allocations are conservatively charged separately. Existing deployments may
+need a larger expanded limit for requests that previously spanned batches.
+Measure peak GPU memory before raising it: backend K/V storage still expands
+across questions, and startup warmup does not validate this fanout shape.
+
+`INFINITY_MAX_BATCH_EXPANDED_TOKENS` is the environment alternative. Values
+broadcast or align with models; `none` uses the compute limit. An explicit limit
+must be at least `--max-batch-tokens` and fit signed 32-bit offsets.
+`infinity_batch_next_tokens` reports expanded tokens; the new
+`infinity_batch_next_compute_tokens` reports the conservative compute charge.
+
 ## UltraBERT embeddings
 
 `dmis-lab/UltraBERT-Embed-150M` supports native LibTorch and produces

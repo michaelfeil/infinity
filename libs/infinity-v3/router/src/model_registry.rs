@@ -47,6 +47,11 @@ pub(crate) fn validate_configs(configs: &[ModelSettings]) -> Result<()> {
             "Model {name}: request and token limits must be positive"
         );
         ensure!(
+            config.max_batch_expanded_tokens.is_none_or(|limit|
+                limit >= config.max_batch_tokens && limit <= i32::MAX as usize),
+            "Model {name}: max-batch-expanded-tokens must be at least max-batch-tokens and fit signed 32-bit offsets"
+        );
+        ensure!(
             config.max_batch_requests != Some(0),
             "Model {name}: max-batch-requests must be positive"
         );

@@ -935,7 +935,52 @@ pub(crate) async fn systemone_inner(
     } else {
         "laya-rl-agent"
     };
+    let mut questions = questions;
+    let grouped_outputs = if questions.len() > 1
+        && questions.iter().all(|q| {
+            matches!(
+                q.input,
+                infinity_v3_backend::DecisionInput::BlockOptionTokens { .. }
+            )
+        }) {
+        let inputs = questions
+            .iter_mut()
+            .map(|q| {
+                let encoding = std::mem::replace(
+                    &mut q.encoding,
+                    ValidEncoding {
+                        multimodal: None,
+                        input_ids: vec![],
+                        token_type_ids: vec![],
+                        position_ids: vec![],
+                        tokens: vec![],
+                        offsets: vec![],
+                    },
+                );
+                (encoding, q.input.clone())
+            })
+            .collect();
+        infer
+            .decide_group(inputs, tokenization)
+            .await
+            .map_err(|e| {
+                let status = match &e {
+                    infinity_v3_core::TextEmbeddingsError::Validation(_) => {
+                        StatusCode::UNPROCESSABLE_ENTITY
+                    }
+                    infinity_v3_core::TextEmbeddingsError::Backend(
+                        infinity_v3_backend::BackendError::Overloaded(_),
+                    ) => StatusCode::TOO_MANY_REQUESTS,
+                    _ => StatusCode::INTERNAL_SERVER_ERROR,
+                };
+                error(status, e)
+            })?
+    } else {
+        Vec::new()
+    };
+    let mut grouped_outputs = grouped_outputs.into_iter();
     let answers = futures::future::try_join_all(questions.into_iter().map(|mut question| {
+        let grouped_output = grouped_outputs.next();
         let infer = infer.clone();
         let service = service.clone();
         let batch_counter = batch_counter.clone();
@@ -951,27 +996,31 @@ pub(crate) async fn systemone_inner(
                     offsets: vec![],
                 },
             );
-            let output = infer
-                .decide(
-                    encoding,
-                    question.input.clone(),
-                    tokenization,
-                    batch_counter,
-                )
-                .await
-                .map_err(|e| {
-                    let status = if matches!(
-                        e,
-                        infinity_v3_core::TextEmbeddingsError::Backend(
-                            infinity_v3_backend::BackendError::Overloaded(_)
-                        )
-                    ) {
-                        StatusCode::TOO_MANY_REQUESTS
-                    } else {
-                        StatusCode::INTERNAL_SERVER_ERROR
-                    };
-                    error(status, e)
-                })?;
+            let output = if let Some(output) = grouped_output {
+                output
+            } else {
+                infer
+                    .decide(
+                        encoding,
+                        question.input.clone(),
+                        tokenization,
+                        batch_counter,
+                    )
+                    .await
+                    .map_err(|e| {
+                        let status = if matches!(
+                            e,
+                            infinity_v3_core::TextEmbeddingsError::Backend(
+                                infinity_v3_backend::BackendError::Overloaded(_)
+                            )
+                        ) {
+                            StatusCode::TOO_MANY_REQUESTS
+                        } else {
+                            StatusCode::INTERNAL_SERVER_ERROR
+                        };
+                        error(status, e)
+                    })?
+            };
             let answer = service
                 .answer(&question, output.results, sequences)
                 .map_err(|e| {
