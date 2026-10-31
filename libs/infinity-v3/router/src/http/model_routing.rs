@@ -50,6 +50,7 @@ impl IntoResponse for RoutingRejection {
                 status,
             } => {
                 let error = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: if status == StatusCode::SERVICE_UNAVAILABLE {
                         ErrorType::Unhealthy
@@ -61,6 +62,7 @@ impl IntoResponse for RoutingRejection {
                     (
                         status,
                         Json(OpenAICompatErrorResponse {
+                            available_tiers: error.available_tiers,
                             message: error.error,
                             code: status.as_u16(),
                             error_type: error.error_type,

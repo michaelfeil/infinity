@@ -67,6 +67,7 @@ async fn get_model_info(
         Err(message) => (
             StatusCode::BAD_REQUEST,
             Json(ErrorResponse {
+                available_tiers: None,
                 error: message,
                 error_type: ErrorType::Empty,
             }),
@@ -145,6 +146,7 @@ async fn health(
         false => Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {
+                available_tiers: None,
                 error: "One or more deployed models are unhealthy".to_string(),
                 error_type: ErrorType::Unhealthy,
             }),
@@ -235,6 +237,7 @@ fn classifier_labels(
             Ok(classifier.id2label.clone())
         }
         _ => Err(ErrorResponse {
+            available_tiers: None,
             error: "Model is not a classifier model".into(),
             error_type: ErrorType::Backend,
         }),
@@ -281,6 +284,7 @@ async fn run_classification(
 
         if response.results.is_empty() || response.results.iter().any(|score| !score.is_finite()) {
             return Err(ErrorResponse {
+                available_tiers: None,
                 error: "Classifier returned empty or non-finite scores".into(),
                 error_type: ErrorType::Backend,
             });
@@ -330,6 +334,7 @@ async fn run_classification(
             let batch_size = inputs.len();
             if batch_size == 0 {
                 return Err(ErrorResponse {
+                    available_tiers: None,
                     error: "Input cannot be empty".into(),
                     error_type: ErrorType::Empty,
                 });
@@ -341,6 +346,7 @@ async fn run_classification(
                 );
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Validation,
                 };
@@ -556,6 +562,7 @@ fn classify_error(
     (
         status,
         Json(ClassifyErrorResponse {
+            available_tiers: None,
             object: "error",
             message,
             error_type: error_type.into(),
@@ -576,7 +583,9 @@ pub(crate) fn classify_inference_error(
         | StatusCode::PAYLOAD_TOO_LARGE => "invalid_request_error",
         _ => "server_error",
     };
-    classify_error(status, error.error, error_type)
+    let (status, Json(mut response)) = classify_error(status, error.error, error_type);
+    response.available_tiers = error.available_tiers;
+    (status, Json(response))
 }
 
 async fn deprecate_predict(mut response: axum::response::Response) -> axum::response::Response {
@@ -657,6 +666,7 @@ async fn predict_tokens_inner(
             );
             tracing::warn!("{message}");
             let err = ErrorResponse {
+                available_tiers: None,
                 error: message,
                 error_type: ErrorType::Validation,
             };
@@ -728,6 +738,7 @@ async fn predict_tokens_inner(
                     return Err((
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(ErrorResponse {
+                            available_tiers: None,
                             error: "score is NaN".to_string(),
                             error_type: ErrorType::Backend,
                         }),
@@ -880,6 +891,7 @@ async fn rerank_inner(
         let message = "`texts` cannot be empty".to_string();
         tracing::warn!("{message}");
         let err = ErrorResponse {
+            available_tiers: None,
             error: message,
             error_type: ErrorType::Empty,
         };
@@ -949,6 +961,7 @@ async fn rerank_inner(
             );
             tracing::warn!("{message}");
             let err = ErrorResponse {
+                available_tiers: None,
                 error: message,
                 error_type: ErrorType::Validation,
             };
@@ -1004,6 +1017,7 @@ async fn rerank_inner(
             // Check that s is not NaN or the partial_cmp below will panic
             if score.is_nan() {
                 Err(ErrorResponse {
+                    available_tiers: None,
                     error: "score is NaN".to_string(),
                     error_type: ErrorType::Backend,
                 })?;
@@ -1091,6 +1105,7 @@ async fn similarity_inner(
 ) -> Result<(HeaderMap, Json<SimilarityResponse>), (StatusCode, Json<ErrorResponse>)> {
     if info.is_multi_vector() {
         return Err(ErrorResponse {
+            available_tiers: None,
             error: "Multi-vector embeddings require late-interaction scoring".into(),
             error_type: ErrorType::Validation,
         }
@@ -1100,6 +1115,7 @@ async fn similarity_inner(
         let message = "`inputs.sentences` cannot be empty".to_string();
         tracing::warn!("{message}");
         let err = ErrorResponse {
+            available_tiers: None,
             error: message,
             error_type: ErrorType::Empty,
         };
@@ -1116,6 +1132,7 @@ async fn similarity_inner(
         );
         tracing::warn!("{message}");
         let err = ErrorResponse {
+            available_tiers: None,
             error: message,
             error_type: ErrorType::Validation,
         };
@@ -1213,6 +1230,7 @@ async fn embed_inner(
     if info.is_multi_vector() {
         if req.dimensions.is_some() {
             return Err(ErrorResponse {
+                available_tiers: None,
                 error: "Multi-vector embeddings do not support dimensions".into(),
                 error_type: ErrorType::Validation,
             }
@@ -1293,6 +1311,7 @@ async fn embed_inner(
                 let message = "`inputs` cannot be empty".to_string();
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Empty,
                 };
@@ -1309,6 +1328,7 @@ async fn embed_inner(
                 );
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Validation,
                 };
@@ -1512,6 +1532,7 @@ async fn embed_sparse_inner(
                 let message = "`inputs` cannot be empty".to_string();
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Empty,
                 };
@@ -1528,6 +1549,7 @@ async fn embed_sparse_inner(
                 );
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Validation,
                 };
@@ -1712,6 +1734,7 @@ async fn embed_all_inner(
                 let message = "`inputs` cannot be empty".to_string();
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Empty,
                 };
@@ -1728,6 +1751,7 @@ async fn embed_all_inner(
                 );
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Validation,
                 };
@@ -1976,6 +2000,7 @@ async fn openai_embed_inner(
                 let message = "`inputs` cannot be empty".to_string();
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Empty,
                 };
@@ -1992,6 +2017,7 @@ async fn openai_embed_inner(
                 );
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Validation,
                 };
@@ -2167,6 +2193,7 @@ async fn tokenize_inner(
                 let message = "`inputs` cannot be empty".to_string();
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Empty,
                 };
@@ -2183,6 +2210,7 @@ async fn tokenize_inner(
                 );
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Validation,
                 };
@@ -2258,6 +2286,7 @@ async fn decode_inner(
                 let message = "`ids` cannot be empty".to_string();
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Empty,
                 };
@@ -2274,6 +2303,7 @@ async fn decode_inner(
                 );
                 tracing::warn!("{message}");
                 let err = ErrorResponse {
+                    available_tiers: None,
                     error: message,
                     error_type: ErrorType::Validation,
                 };
@@ -2648,6 +2678,7 @@ impl From<&ErrorType> for StatusCode {
 impl From<ErrorResponse> for OpenAICompatErrorResponse {
     fn from(value: ErrorResponse) -> Self {
         OpenAICompatErrorResponse {
+            available_tiers: value.available_tiers,
             message: value.error,
             code: StatusCode::from(&value.error_type).as_u16(),
             error_type: value.error_type,
@@ -2670,6 +2701,7 @@ async fn default_inference(
                 Err(error) => (
                     StatusCode::UNPROCESSABLE_ENTITY,
                     Json(ErrorResponse {
+                        available_tiers: None,
                         error: error.to_string(),
                         error_type: ErrorType::Empty,
                     }),
@@ -2718,6 +2750,7 @@ impl From<ErrorResponse> for (StatusCode, Json<OpenAICompatErrorResponse>) {
 impl From<serde_json::Error> for ErrorResponse {
     fn from(err: serde_json::Error) -> Self {
         ErrorResponse {
+            available_tiers: None,
             error: err.to_string(),
             error_type: ErrorType::Validation,
         }
@@ -2871,11 +2904,27 @@ mod classify_tests {
             json!({"object":"error","message":"bad input","type":"invalid_request_error","param":null,"code":400})
         );
         let (status, Json(error)) = classify_inference_error(ErrorResponse {
+            available_tiers: None,
             error: "busy".into(),
             error_type: ErrorType::Overloaded,
         });
         assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
         assert_eq!(error.code, 429);
+        let full = || {
+            ErrorResponse::from(infinity_v3_core::TextEmbeddingsError::QueueFull {
+                tier: "default",
+                available_tiers: vec![ServiceTier::Priority],
+            })
+        };
+        let (status, Json(classify)) = classify_inference_error(full());
+        let openai = OpenAICompatErrorResponse::from(full());
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        for response in [
+            serde_json::to_value(classify).unwrap(),
+            serde_json::to_value(openai).unwrap(),
+        ] {
+            assert_eq!(response["available_tiers"], json!(["priority"]));
+        }
     }
 
     #[tokio::test]
@@ -2950,6 +2999,21 @@ mod classify_tests {
                 doc["components"]["schemas"][name], saved["components"]["schemas"][name],
                 "{name}"
             );
+        }
+        for name in [
+            "ErrorResponse",
+            "ClassifyErrorResponse",
+            "OpenAICompatErrorResponse",
+        ] {
+            let schema = &doc["components"]["schemas"][name];
+            assert_eq!(
+                schema["properties"]["available_tiers"],
+                saved["components"]["schemas"][name]["properties"]["available_tiers"]
+            );
+            assert!(!schema["required"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("available_tiers")));
         }
         for name in [
             "SystemOneRequest",

@@ -7,6 +7,7 @@
 
 use crate::infer::InferResult;
 use crate::log_response_dropped_after;
+use crate::queue_budget::{QueueBudget, QueueLease, QueueTokenLimits};
 use crate::tokenization::ValidEncoding;
 use infinity_v3_backend::{BackendError, Batch};
 use std::cmp::max;
@@ -85,6 +86,7 @@ pub struct Entry {
 /// Entry metadata
 #[derive(Debug)]
 pub struct Metadata {
+    pub(crate) queue_reservation: Option<Arc<QueueLease>>,
     pub(crate) service_tier: ServiceTier,
     /// Retained through queueing, model execution and result delivery.
     pub(crate) input_memory: Option<crate::input_memory::InputMemoryOwner>,
@@ -102,6 +104,14 @@ pub struct Metadata {
     /// Pooled embedding
     pub(crate) pooling: bool,
     pub(crate) token_classification: bool,
+}
+
+impl Metadata {
+    pub(crate) fn mark_dispatched(&self) {
+        if let Some(reservation) = &self.queue_reservation {
+            reservation.release();
+        }
+    }
 }
 
 struct PendingEntry {
@@ -227,6 +237,8 @@ impl PendingEntries {
 #[derive(Debug, Clone)]
 pub struct Queue {
     group_limits: GroupLimits,
+    budget: Arc<QueueBudget>,
+    token_limits: Option<QueueTokenLimits>,
     priority_enabled: bool,
     flex_enabled: bool,
     worker: Arc<std::sync::Mutex<Option<std::thread::JoinHandle<()>>>>,
@@ -324,6 +336,7 @@ impl Queue {
 
         let closed = Arc::new(AtomicBool::new(false));
         let worker_closed = closed.clone();
+        let budget = Arc::new(QueueBudget::new(model_name.clone()));
         // Launch background queue task
         let worker = std::thread::spawn(move || {
             queue_blocking_task(
@@ -351,6 +364,8 @@ impl Queue {
                     > max_batch_tokens
                     && radix_mlp_threshold == 0.0,
             },
+            budget,
+            token_limits: None,
             priority_enabled: !priority_queue_bonus.is_zero(),
             flex_enabled: !flex_queue_offset.is_zero(),
             worker: Arc::new(std::sync::Mutex::new(Some(worker))),
@@ -365,6 +380,20 @@ impl Queue {
 
     pub(crate) fn priority_enabled(&self) -> bool {
         self.priority_enabled
+    }
+
+    /// Limits are shared by all tiers and all replicas consuming this queue.
+    pub fn with_token_limits(mut self, limits: Option<QueueTokenLimits>) -> Self {
+        self.token_limits = limits;
+        if limits.is_some() {
+            self.priority_enabled = true;
+            self.flex_enabled = true;
+        }
+        self
+    }
+
+    pub fn queued_compute_tokens(&self) -> i64 {
+        self.budget.queued_tokens()
     }
 
     pub fn is_closed(&self) -> bool {
@@ -388,7 +417,17 @@ impl Queue {
 
     /// Append an entry to the queue
     #[instrument(skip_all)]
-    pub async fn append(&self, mut entry: Entry) {
+    pub async fn append(&self, mut entry: Entry) -> Result<QueueLease, crate::TextEmbeddingsError> {
+        let lease = self.budget.reserve(
+            i64::try_from(entry.encoding.input_ids.len()).map_err(|_| {
+                crate::TextEmbeddingsError::Validation(
+                    "Queue token charge exceeds supported range".into(),
+                )
+            })?,
+            entry.metadata.service_tier,
+            self.token_limits,
+        )?;
+        entry.metadata.queue_reservation = Some(lease.queue_guard());
         if entry.metadata.input_memory.is_none() {
             entry.metadata.input_memory = crate::input_memory::current();
         }
@@ -397,7 +436,7 @@ impl Queue {
                 .metadata
                 .response_tx
                 .send(Err(BackendError::Unhealthy));
-            return;
+            return Err(BackendError::Unhealthy.into());
         }
         if let Err(err) = self
             .queue_sender
@@ -410,7 +449,9 @@ impl Queue {
                     .response_tx
                     .send(Err(BackendError::Unhealthy));
             }
+            return Err(BackendError::Unhealthy.into());
         }
+        Ok(lease)
     }
 
     /// Enqueue an already-prepared block request atomically. Never partially
@@ -418,7 +459,7 @@ impl Queue {
     pub async fn append_group(
         &self,
         mut group: Vec<Entry>,
-    ) -> Result<(), crate::TextEmbeddingsError> {
+    ) -> Result<QueueLease, crate::TextEmbeddingsError> {
         let (compute, expanded) = self.group_limits.charge(&group);
         if compute > self.group_limits.compute
             || expanded > self.group_limits.expanded
@@ -432,7 +473,21 @@ impl Queue {
                 group.len(), self.group_limits.compute, self.group_limits.expanded, self.group_limits.requests
             )));
         }
+        let tier = group
+            .first()
+            .map_or(ServiceTier::Default, |entry| entry.metadata.service_tier);
+        let lease = self.budget.reserve(
+            i64::try_from(compute).map_err(|_| {
+                crate::TextEmbeddingsError::Validation(
+                    "Queue token charge exceeds supported range".into(),
+                )
+            })?,
+            tier,
+            self.token_limits,
+        )?;
+        let queued_lease = lease.queue_guard();
         for entry in &mut group {
+            entry.metadata.queue_reservation = Some(queued_lease.clone());
             entry.metadata.input_memory = crate::input_memory::current();
         }
         if self.is_closed() {
@@ -441,7 +496,8 @@ impl Queue {
         self.queue_sender
             .send(QueueCommand::AppendGroup(group, Span::current()))
             .await
-            .map_err(|_| crate::TextEmbeddingsError::Backend(BackendError::Unhealthy))
+            .map_err(|_| crate::TextEmbeddingsError::Backend(BackendError::Unhealthy))?;
+        Ok(lease)
     }
 
     /// Get the next batch from the queue
@@ -1088,6 +1144,8 @@ mod tests {
                 requests: max_requests,
                 prefix_aware: max_expanded_tokens > max_tokens,
             },
+            budget: Arc::new(QueueBudget::default()),
+            token_limits: None,
             priority_enabled: true,
             flex_enabled: true,
             worker: Arc::new(std::sync::Mutex::new(None)),
@@ -1115,6 +1173,7 @@ mod tests {
                 metadata: Metadata {
                     service_tier: ServiceTier::Default,
                     input_memory: None,
+                    queue_reservation: None,
                     decision: None,
                     client_batch: None,
                     response_tx,
@@ -1163,8 +1222,8 @@ mod tests {
                 // Work already queued must not consume part of this request's budget.
                 let (earlier, response) = block_entry(20_000, 100);
                 responses.push(response);
-                queue.append(earlier).await;
-                queue.append_group(group).await.unwrap();
+                let _earlier_lease = queue.append(earlier).await.unwrap();
+                let _group_lease = queue.append_group(group).await.unwrap();
                 assert_eq!(queue.next_batch().await.unwrap().0.len(), 1);
                 let (metadata, batch) = queue.next_batch().await.unwrap();
                 assert_eq!(metadata.len(), 50);
@@ -1191,11 +1250,11 @@ mod tests {
         let queue = test_queue_with_expanded_limit(10, None, None, 100);
         let (a, a_response) = block_entry(6, 2);
         let (b, b_response) = block_entry(6, 2);
-        queue.append_group(vec![a, b]).await.unwrap();
+        let _group_lease = queue.append_group(vec![a, b]).await.unwrap();
         drop((a_response, b_response));
         assert!(queue.next_batch().await.is_none());
         let (live, _response) = block_entry(6, 2);
-        queue.append(live).await;
+        let _live_lease = queue.append(live).await.unwrap();
         assert_eq!(queue.next_batch().await.unwrap().0.len(), 1);
         queue.shutdown().await;
     }
@@ -1271,7 +1330,7 @@ mod tests {
             }
             let result = queue.append_group(group).await;
             if difference == 0 {
-                result.unwrap();
+                let _group_lease = result.unwrap();
                 assert_eq!(queue.next_batch().await.unwrap().0.len(), 2);
             } else {
                 assert!(result.is_err());
@@ -1279,6 +1338,79 @@ mod tests {
             }
             queue.shutdown().await;
         }
+    }
+
+    #[tokio::test]
+    async fn queue_budget_charges_fanout_and_releases_dispatch_and_cancellation() {
+        let queue = test_queue_with_expanded_limit(100, None, None, 1000).with_token_limits(Some(
+            QueueTokenLimits {
+                flex: 10,
+                default: 20,
+                priority: 30,
+            },
+        ));
+        let (mut a, ar) = block_entry(6, 2);
+        let (mut b, br) = block_entry(6, 2);
+        a.metadata.service_tier = ServiceTier::Flex;
+        b.metadata.service_tier = ServiceTier::Flex;
+        let lease = queue.append_group(vec![a, b]).await.unwrap();
+        assert_eq!(queue.queued_compute_tokens(), 10);
+        let (mut rejected, _rr) = block_entry(1, 1);
+        rejected.metadata.service_tier = ServiceTier::Flex;
+        assert!(matches!(
+            queue.append(rejected).await,
+            Err(crate::TextEmbeddingsError::QueueFull { .. })
+        ));
+        let batch = queue.next_batch().await.unwrap();
+        assert_eq!(batch.0.len(), 2);
+        // Prepared batches waiting for a replica remain charged.
+        assert_eq!(queue.queued_compute_tokens(), 10);
+        for metadata in &batch.0 {
+            metadata.mark_dispatched();
+        }
+        assert_eq!(queue.queued_compute_tokens(), 0);
+        drop((lease, ar, br, batch));
+        let (entry, response) = block_entry(6, 2);
+        let lease = queue.append(entry).await.unwrap();
+        assert_eq!(queue.queued_compute_tokens(), 8);
+        drop((response, lease));
+        assert_eq!(queue.queued_compute_tokens(), 0);
+        assert!(queue.next_batch().await.is_none());
+        let (entry, _response) = block_entry(6, 2);
+        let lease = queue.append(entry).await.unwrap();
+        let batch = queue.next_batch().await.unwrap();
+        assert_eq!(queue.queued_compute_tokens(), 8);
+        drop(batch); // Failed dispatch releases tokens even before the caller polls its error.
+        assert_eq!(queue.queued_compute_tokens(), 0);
+        drop(lease);
+        queue.close();
+        let (entry, _response) = block_entry(6, 2);
+        assert!(queue.append(entry).await.is_err());
+        assert_eq!(queue.queued_compute_tokens(), 0);
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn channel_waiters_are_counted_and_cancellation_releases_them() {
+        let (sender, _receiver) = mpsc::channel(1);
+        let mut queue = test_queue(100);
+        queue.shutdown().await;
+        queue.closed = Arc::new(AtomicBool::new(false));
+        queue.queue_sender = sender;
+        queue.queue_sender.send(QueueCommand::Close).await.unwrap();
+        let (entry, _response) = test_entry(vec![1; 8], false);
+        let q = queue.clone();
+        let waiter = tokio::spawn(async move { q.append(entry).await });
+        for _ in 0..100 {
+            if queue.queued_compute_tokens() == 8 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(queue.queued_compute_tokens(), 8);
+        waiter.abort();
+        let _ = waiter.await;
+        assert_eq!(queue.queued_compute_tokens(), 0);
     }
 
     #[test]
@@ -1401,7 +1533,7 @@ mod tests {
             for id in [1, 2, 3] {
                 let (mut entry, response) = test_entry(vec![id; 2], true);
                 entry.metadata.service_tier = tier;
-                queue.append(entry).await;
+                let _queue_lease = queue.append(entry).await.unwrap();
                 if id != 1 {
                     responses.push(response);
                 }
@@ -1421,7 +1553,9 @@ mod tests {
         let budget = Arc::new(tokio::sync::Semaphore::new(1));
         let (canceled, response) = test_entry(vec![1, 2], true);
         let owner = Arc::new(budget.clone().try_acquire_owned().unwrap());
-        crate::input_memory::with_input_memory(owner, queue.append(canceled)).await;
+        let _queue_lease = crate::input_memory::with_input_memory(owner, queue.append(canceled))
+            .await
+            .unwrap();
         drop(response);
         assert_eq!(budget.available_permits(), 0);
         assert!(queue.next_batch().await.is_none());
@@ -1429,7 +1563,9 @@ mod tests {
 
         let (live, _response) = test_entry(vec![3, 4], true);
         let owner = Arc::new(budget.clone().try_acquire_owned().unwrap());
-        crate::input_memory::with_input_memory(owner, queue.append(live)).await;
+        let _queue_lease = crate::input_memory::with_input_memory(owner, queue.append(live))
+            .await
+            .unwrap();
         assert_eq!(budget.available_permits(), 0);
         let (metadata, batch) = queue.next_batch().await.unwrap();
         assert_eq!(batch.input_ids, [3, 4]);
@@ -1448,7 +1584,7 @@ mod tests {
         for value in 0..4 {
             let (entry, response) = test_entry(vec![value; 5_000], true);
             responses.push(response);
-            queue.append(entry).await;
+            let _queue_lease = queue.append(entry).await.unwrap();
         }
         // The original 20k backlog disables the soft target for the entire batch.
         let (metadata, batch) = queue.next_batch().await.unwrap();
@@ -1459,13 +1595,13 @@ mod tests {
 
         let (canceled, response) = test_entry(vec![9; 15_000], true);
         drop(response);
-        queue.append(canceled).await;
+        let _queue_lease = queue.append(canceled).await.unwrap();
         let (live, response) = test_entry(vec![10; 5_000], true);
         responses.push(response);
-        queue.append(live).await;
+        let _queue_lease = queue.append(live).await.unwrap();
         let (live, response) = test_entry(vec![10; 5_000], true);
         responses.push(response);
-        queue.append(live).await;
+        let _queue_lease = queue.append(live).await.unwrap();
         // The canceled input conservatively disables only this soft cut.
         assert_eq!(queue.next_batch().await.unwrap().0.len(), 2);
         assert!(queue.next_batch().await.is_none());
@@ -1473,7 +1609,7 @@ mod tests {
         for value in 11..14 {
             let (entry, response) = test_entry(vec![value; 5_000], true);
             responses.push(response);
-            queue.append(entry).await;
+            let _queue_lease = queue.append(entry).await.unwrap();
         }
         for value in 11..14 {
             let (metadata, batch) = queue.next_batch().await.unwrap();
@@ -1491,7 +1627,7 @@ mod tests {
         for value in 0..6 {
             let (entry, response) = test_entry(vec![value; 5_000], true);
             responses.push(response);
-            queue.append(entry).await;
+            let _queue_lease = queue.append(entry).await.unwrap();
         }
         assert_eq!(queue.next_batch().await.unwrap().0.len(), 2);
         // Twenty thousand tokens remain, so the next selection still bypasses
@@ -1517,7 +1653,7 @@ mod tests {
                 } else {
                     responses.push(response);
                 }
-                queue.append(entry).await;
+                let _queue_lease = queue.append(entry).await.unwrap();
             }
             let (metadata, batch) = queue.next_batch().await.unwrap();
             assert_eq!(metadata.len(), if cancel_grouped_tail { 2 } else { 3 });
@@ -1551,7 +1687,7 @@ mod tests {
                 let group = ((seed >> 40) % 5) as usize;
                 let (mut entry, response) = test_entry(vec![id; tokens], true);
                 entry.metadata.client_batch = clients.get(group).cloned();
-                queue.append(entry).await;
+                let _queue_lease = queue.append(entry).await.unwrap();
                 responses.push(response);
                 reference.push_back((id, tokens, group));
             }
@@ -1604,7 +1740,7 @@ mod tests {
         assert!(queue.next_batch().await.is_none());
         let (canceled, response) = test_entry(vec![0; 2], true);
         drop(response);
-        queue.append(canceled).await;
+        let _queue_lease = queue.append(canceled).await.unwrap();
         assert!(queue.next_batch().await.is_none());
 
         let (single, _response) = test_entry(vec![10, 11], true);
@@ -1613,7 +1749,7 @@ mod tests {
             single.encoding.token_type_ids.as_ptr(),
             single.encoding.position_ids.as_ptr(),
         );
-        queue.append(single).await;
+        let _queue_lease = queue.append(single).await.unwrap();
         let (_, single_batch) = queue.next_batch().await.unwrap();
         assert_eq!(
             pointers,
@@ -1634,8 +1770,8 @@ mod tests {
             second.metadata.token_classification = true;
             second.encoding.tokens = vec!["x".into(), "y".into(), "z".into()];
             second.encoding.offsets = vec![(0, 1), (2, 3), (4, 5)];
-            queue.append(first).await;
-            queue.append(second).await;
+            let _queue_lease = queue.append(first).await.unwrap();
+            let _queue_lease = queue.append(second).await.unwrap();
             let (metadata, batch) = queue.next_batch().await.unwrap();
             assert_eq!(metadata.len(), 2);
             assert!(metadata[1].token_classification);
@@ -1678,6 +1814,7 @@ mod tests {
             .map(|response_tx| Metadata {
                 service_tier: ServiceTier::Default,
                 input_memory: None,
+                queue_reservation: None,
                 client_batch: None,
                 response_tx,
                 tokenization: Duration::ZERO,
@@ -1757,6 +1894,7 @@ mod tests {
             .map(|(i, response_tx)| Metadata {
                 service_tier: ServiceTier::Default,
                 input_memory: None,
+                queue_reservation: None,
                 client_batch: None,
                 response_tx,
                 tokenization: Duration::ZERO,
