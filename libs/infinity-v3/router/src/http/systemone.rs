@@ -1018,9 +1018,9 @@ pub(crate) async fn systemone_inner(
                         let status = if matches!(
                             e,
                             infinity_v3_core::TextEmbeddingsError::QueueFull { .. }
-                            | infinity_v3_core::TextEmbeddingsError::Backend(
-                                infinity_v3_backend::BackendError::Overloaded(_)
-                            )
+                                | infinity_v3_core::TextEmbeddingsError::Backend(
+                                    infinity_v3_backend::BackendError::Overloaded(_)
+                                )
                         ) {
                             StatusCode::TOO_MANY_REQUESTS
                         } else {
