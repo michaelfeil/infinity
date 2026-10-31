@@ -1199,13 +1199,15 @@
 <p>Infinity V3 on <strong>one H100 80 GB</strong>, with eight CPU threads and 64 GiB RAM.
 End-to-end HTTP throughput, request latency and startup time for text embeddings,
 reranking, image embeddings and decision requests. Updated as models are
-rebenchmarked; last updated October 26, 2026. Production latency depends on the
+rebenchmarked; last updated October 30, 2026. Production latency depends on the
 traffic mix.</p>
 <h2 id="text-embeddings">Text embeddings</h2>
 <p>FP16 unless marked BF16, with the same server CPU allocation. Throughput is
 <strong>input tokens/s</strong> at concurrency 32. Latency is the fastest observed 8-token request;
-startup is the median of three fresh starts with local weights, excluding downloads.
-Comparisons use vLLM 0.32.0 and TEI 1.9.4. Small differences should not be
+startup is the median of three fresh starts with local weights (six for Qwen3-8B
+FP16), excluding downloads.
+Infinity uses the published 3.0.1 image. Comparisons retain the October 25–26
+measurements of vLLM 0.32.0 and TEI 1.9.4. Small differences should not be
 treated as decisive; build revisions are recorded in the measurement data.</p>
 <table>
 <thead>
@@ -1222,10 +1224,10 @@ treated as decisive; build revisions are recorded in the measurement data.</p>
 <tr>
 <td>BGE-small</td>
 <td>Infinity</td>
-<td style="text-align: right;">959,425</td>
-<td style="text-align: right;">2,262,919</td>
-<td style="text-align: right;">0.71</td>
-<td style="text-align: right;">1.41</td>
+<td style="text-align: right;">910,550</td>
+<td style="text-align: right;">2,124,043</td>
+<td style="text-align: right;">0.73</td>
+<td style="text-align: right;">1.59</td>
 </tr>
 <tr>
 <td>BGE-small</td>
@@ -1246,10 +1248,10 @@ treated as decisive; build revisions are recorded in the measurement data.</p>
 <tr>
 <td>BGE-large</td>
 <td>Infinity</td>
-<td style="text-align: right;">435,406</td>
-<td style="text-align: right;">648,951</td>
+<td style="text-align: right;">428,049</td>
+<td style="text-align: right;">644,783</td>
 <td style="text-align: right;">1.25</td>
-<td style="text-align: right;">1.42</td>
+<td style="text-align: right;">1.71</td>
 </tr>
 <tr>
 <td>BGE-large</td>
@@ -1270,10 +1272,10 @@ treated as decisive; build revisions are recorded in the measurement data.</p>
 <tr>
 <td>ModernBERT-base</td>
 <td>Infinity</td>
-<td style="text-align: right;">578,841</td>
-<td style="text-align: right;">1,153,286</td>
-<td style="text-align: right;">1.12</td>
-<td style="text-align: right;">1.47</td>
+<td style="text-align: right;">547,340</td>
+<td style="text-align: right;">1,148,797</td>
+<td style="text-align: right;">1.13</td>
+<td style="text-align: right;">1.69</td>
 </tr>
 <tr>
 <td>ModernBERT-base</td>
@@ -1294,18 +1296,18 @@ treated as decisive; build revisions are recorded in the measurement data.</p>
 <tr>
 <td>Qwen3-Embedding-0.6B</td>
 <td>Infinity</td>
-<td style="text-align: right;">296,030</td>
-<td style="text-align: right;">423,359</td>
-<td style="text-align: right;">1.49</td>
-<td style="text-align: right;">1.64</td>
+<td style="text-align: right;">295,543</td>
+<td style="text-align: right;">422,132</td>
+<td style="text-align: right;">1.51</td>
+<td style="text-align: right;">1.79</td>
 </tr>
 <tr>
 <td>Qwen3-Embedding-0.6B</td>
 <td>Infinity (BF16)</td>
-<td style="text-align: right;">297,720</td>
-<td style="text-align: right;">431,569</td>
-<td style="text-align: right;">1.48</td>
-<td style="text-align: right;">1.58</td>
+<td style="text-align: right;">298,844</td>
+<td style="text-align: right;">432,252</td>
+<td style="text-align: right;">1.49</td>
+<td style="text-align: right;">1.94</td>
 </tr>
 <tr>
 <td>Qwen3-Embedding-0.6B</td>
@@ -1326,18 +1328,18 @@ treated as decisive; build revisions are recorded in the measurement data.</p>
 <tr>
 <td>Qwen3-Embedding-8B</td>
 <td>Infinity</td>
-<td style="text-align: right;">37,724</td>
-<td style="text-align: right;">41,770</td>
-<td style="text-align: right;">6.25</td>
-<td style="text-align: right;">3.31</td>
+<td style="text-align: right;">37,065</td>
+<td style="text-align: right;">42,093</td>
+<td style="text-align: right;">6.29</td>
+<td style="text-align: right;">12.25</td>
 </tr>
 <tr>
 <td>Qwen3-Embedding-8B</td>
 <td>Infinity (BF16)</td>
-<td style="text-align: right;">39,424</td>
-<td style="text-align: right;">42,936</td>
-<td style="text-align: right;">6.89</td>
-<td style="text-align: right;">3.00</td>
+<td style="text-align: right;">38,604</td>
+<td style="text-align: right;">43,548</td>
+<td style="text-align: right;">6.94</td>
+<td style="text-align: right;">3.51</td>
 </tr>
 <tr>
 <td>Qwen3-Embedding-8B</td>
@@ -1358,10 +1360,10 @@ treated as decisive; build revisions are recorded in the measurement data.</p>
 <tr>
 <td>EmbeddingGemma2</td>
 <td>Infinity</td>
-<td style="text-align: right;">241,031</td>
-<td style="text-align: right;">410,507</td>
-<td style="text-align: right;">2.17</td>
-<td style="text-align: right;">2.52</td>
+<td style="text-align: right;">230,180</td>
+<td style="text-align: right;">424,694</td>
+<td style="text-align: right;">2.21</td>
+<td style="text-align: right;">2.49</td>
 </tr>
 <tr>
 <td>EmbeddingGemma2</td>
@@ -1374,10 +1376,10 @@ treated as decisive; build revisions are recorded in the measurement data.</p>
 <tr>
 <td>pplx-embed-v1-4B</td>
 <td>Infinity</td>
-<td style="text-align: right;">62,968</td>
-<td style="text-align: right;">69,945</td>
-<td style="text-align: right;">4.40</td>
-<td style="text-align: right;">3.15</td>
+<td style="text-align: right;">62,239</td>
+<td style="text-align: right;">70,066</td>
+<td style="text-align: right;">4.59</td>
+<td style="text-align: right;">3.53</td>
 </tr>
 <tr>
 <td>pplx-embed-v1-4B</td>
@@ -1390,10 +1392,10 @@ treated as decisive; build revisions are recorded in the measurement data.</p>
 <tr>
 <td>UltraBERT-Embed-150M</td>
 <td>Infinity</td>
-<td style="text-align: right;">498,933</td>
-<td style="text-align: right;">1,011,166</td>
-<td style="text-align: right;">1.20</td>
-<td style="text-align: right;">1.45</td>
+<td style="text-align: right;">424,551</td>
+<td style="text-align: right;">1,003,116</td>
+<td style="text-align: right;">1.24</td>
+<td style="text-align: right;">1.67</td>
 </tr>
 </tbody>
 </table>
@@ -1415,17 +1417,25 @@ image. UltraBERT’s vLLM run failed its numerical check.</p>
 <tr>
 <td>DeBERTa-v3-base</td>
 <td>FP16</td>
-<td style="text-align: right;">732,448</td>
-<td style="text-align: right;">592,371</td>
+<td style="text-align: right;">735,960</td>
+<td style="text-align: right;">593,844</td>
 </tr>
 <tr>
 <td>Nemotron 3.5 Rerank 8B</td>
 <td>BF16</td>
-<td style="text-align: right;">40,915</td>
-<td style="text-align: right;">41,564</td>
+<td style="text-align: right;">40,912</td>
+<td style="text-align: right;">41,851</td>
+</tr>
+<tr>
+<td>Nemotron 3.5 Rerank 8B</td>
+<td>BF16 + FP8 linears</td>
+<td style="text-align: right;">70,290</td>
+<td style="text-align: right;">71,965</td>
 </tr>
 </tbody>
 </table>
+<p>FP8 uses <code>--enable-fp8-dynamic</code>. Its numerical check is a two-document smoke
+test, not a ranking-quality evaluation.</p>
 <h2 id="image-embeddings">Image embeddings</h2>
 <p>Qwen3-VL-Embedding-8B, one square PNG per request. Images are sent inline,
 so timings exclude external downloads. Token counts include vision placeholders
@@ -1445,34 +1455,34 @@ and are not directly comparable to text throughput.</p>
 <tr>
 <td>256px</td>
 <td>Image</td>
-<td style="text-align: right;">259.99</td>
-<td style="text-align: right;">262.12</td>
-<td style="text-align: right;">22,359</td>
-<td style="text-align: right;">22,542</td>
+<td style="text-align: right;">255.88</td>
+<td style="text-align: right;">260.93</td>
+<td style="text-align: right;">22,006</td>
+<td style="text-align: right;">22,440</td>
 </tr>
 <tr>
 <td>256px</td>
 <td>Image + text</td>
-<td style="text-align: right;">244.62</td>
-<td style="text-align: right;">250.13</td>
-<td style="text-align: right;">23,239</td>
-<td style="text-align: right;">23,762</td>
+<td style="text-align: right;">245.27</td>
+<td style="text-align: right;">249.65</td>
+<td style="text-align: right;">23,301</td>
+<td style="text-align: right;">23,717</td>
 </tr>
 <tr>
 <td>1024px</td>
 <td>Image</td>
-<td style="text-align: right;">20.80</td>
-<td style="text-align: right;">21.32</td>
-<td style="text-align: right;">21,754</td>
-<td style="text-align: right;">22,299</td>
+<td style="text-align: right;">20.92</td>
+<td style="text-align: right;">21.37</td>
+<td style="text-align: right;">21,884</td>
+<td style="text-align: right;">22,353</td>
 </tr>
 <tr>
 <td>1024px</td>
 <td>Image + text</td>
-<td style="text-align: right;">20.91</td>
-<td style="text-align: right;">21.35</td>
-<td style="text-align: right;">22,060</td>
-<td style="text-align: right;">22,522</td>
+<td style="text-align: right;">20.97</td>
+<td style="text-align: right;">21.36</td>
+<td style="text-align: right;">22,119</td>
+<td style="text-align: right;">22,538</td>
 </tr>
 </tbody>
 </table>
@@ -1491,42 +1501,43 @@ state across its yes/no questions; state length below is in <strong>words</stron
 <tr>
 <td style="text-align: right;">8</td>
 <td style="text-align: right;">1</td>
-<td style="text-align: right;">508.03</td>
+<td style="text-align: right;">553.60</td>
 </tr>
 <tr>
 <td style="text-align: right;">128</td>
 <td style="text-align: right;">1</td>
-<td style="text-align: right;">460.94</td>
+<td style="text-align: right;">507.82</td>
 </tr>
 <tr>
 <td style="text-align: right;">512</td>
 <td style="text-align: right;">3</td>
-<td style="text-align: right;">210.15</td>
+<td style="text-align: right;">221.57</td>
 </tr>
 <tr>
 <td style="text-align: right;">512</td>
 <td style="text-align: right;">12</td>
-<td style="text-align: right;">55.38</td>
+<td style="text-align: right;">58.39</td>
 </tr>
 <tr>
 <td style="text-align: right;">2048</td>
 <td style="text-align: right;">3</td>
-<td style="text-align: right;">47.58</td>
+<td style="text-align: right;">49.26</td>
 </tr>
 </tbody>
 </table>
 <h2 id="measurement-notes">Measurement notes</h2>
-<p>Throughput uses two five-second windows after warmup (six for Qwen3-8B BF16
-at 128 tokens, including confirmation runs). Reranking, image and
+<p>Throughput uses two five-second windows after warmup. Reranking, image and
 decision rows report the best median across tested concurrency levels.
-Text embeddings use JSON float outputs, a 16K batch-token budget and no Radix MLP;
-DeBERTa uses 8K. Startup storage caches were uncontrolled.
+Text embeddings use CUDA graphs, JSON float outputs, a 16K batch-token budget
+and no Radix MLP; DeBERTa uses 8K. Startup storage caches were uncontrolled.
+Qwen3-8B FP16 starts ranged from 3.4 to 24.6 seconds. Perplexity and UltraBERT used CPUs on a different NUMA node from GPU4;
+other GPU4 runs used local CPUs. Exact placement is recorded in the measurement data.
 <a href="../h100-alpha19.json">Measurement data</a> contains mixed-length workloads, individual
 runs, checkpoint names, commit SHAs and numerical checks.</p>
 <p><strong>Accuracy:</strong> these are timing benchmarks, not task-accuracy evaluations.
-† Qwen3-VL BF16 failed one numerical parity check (0.998545 cosine; threshold
-0.999). Elephant’s sampled choices matched, with probability differences up to
-1.87 percentage points. Numerical checks are included in the data file.</p>
+† Qwen3-VL BF16's minimum cosine against the original numerical reference was
+0.998545 (screen threshold 0.999). Elephant’s sampled choices and probabilities
+matched the previous benchmark. Numerical checks are included in the data file.</p>
 
 
 
