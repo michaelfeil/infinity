@@ -86,11 +86,27 @@ impl<K, V> WorkspaceCache<K, V> {
         self.entries.back().map(|entry| &entry.value)
     }
 
+    #[cfg(test)]
     pub(crate) fn take(&mut self, key: &K) -> Option<V>
     where
         K: PartialEq,
     {
         let pos = self.entries.iter().position(|entry| &entry.key == key)?;
+        let entry = self.entries.remove(pos)?;
+        self.cached_bytes = self.cached_bytes.saturating_sub(entry.bytes);
+        Some(entry.value)
+    }
+
+    /// Reuse the smallest retained allocation that can serve this request.
+    /// The predicate concerns capacity, not an exact logical shape.
+    pub(crate) fn take_best_fit(&mut self, mut fits: impl FnMut(&K) -> bool) -> Option<V> {
+        let pos = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| fits(&entry.key))
+            .min_by_key(|(_, entry)| entry.bytes)
+            .map(|(pos, _)| pos)?;
         let entry = self.entries.remove(pos)?;
         self.cached_bytes = self.cached_bytes.saturating_sub(entry.bytes);
         Some(entry.value)
@@ -131,6 +147,32 @@ impl<K, V> WorkspaceCache<K, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selects_smallest_fitting_arena_and_charges_its_actual_size() {
+        let mut cache = WorkspaceCache::with_limits(7, 1000);
+        assert!(cache.put(128, "large", 600).is_empty());
+        assert!(cache.put(64, "medium", 300).is_empty());
+        assert!(cache.put(8, "small", 80).is_empty());
+        assert_eq!(
+            cache.take_best_fit(|capacity| *capacity >= 32),
+            Some("medium")
+        );
+        assert_eq!(cache.cached_bytes, 680);
+        let evicted = cache.reserve(300);
+        assert!(evicted.is_empty());
+        assert_eq!(cache.total_with(0), 980);
+        assert_eq!(
+            cache.take_best_fit(|capacity| *capacity >= 64),
+            Some("large")
+        );
+        // Reusing a 600-byte arena for a smaller request must reserve 600,
+        // not the 300-byte request estimate. The inactive 300-byte arena fits.
+        assert!(cache.reserve(600).is_empty());
+        assert!(cache.put(64, "medium", 300).is_empty());
+        assert_eq!(cache.total_with(0), 980);
+        assert!(cache.take_best_fit(|capacity| *capacity >= 256).is_none());
+    }
 
     #[test]
     fn shape_switches_retain_other_cached_workspaces() {

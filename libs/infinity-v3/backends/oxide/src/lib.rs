@@ -19,10 +19,20 @@ use std::{
     ffi::c_void,
     mem::ManuallyDrop,
     path::Path,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
 };
 use tensor::Bf16;
 use upload::WeightUploader;
+
+// Model warmup precedes the HTTP metrics recorder. Track physical ownership
+// independently so publishing metrics later cannot lose startup allocations.
+static LIVE_ARENA_BYTES: AtomicUsize = AtomicUsize::new(0);
+fn record_live_arena_bytes() {
+    metrics::gauge!("oxide_arena_live_bytes").set(LIVE_ARENA_BYTES.load(Ordering::Relaxed) as f64);
+}
 
 fn start(error: impl std::fmt::Display) -> BackendError {
     BackendError::Start(error.to_string())
@@ -287,21 +297,36 @@ impl Drop for Engine {
     }
 }
 /// Stable device and pinned-host arenas; raw launches retain all allocations.
-type WorkKey = (usize, usize, usize, usize);
-const BUCKET: usize = 32;
-fn bucketed(value: usize) -> Result<usize, BackendError> {
+type WorkKey = (usize, usize, usize);
+const MIN_TOKEN_CAPACITY: usize = 32;
+fn bucketed(value: usize, minimum: usize) -> Result<usize, BackendError> {
     value
-        .checked_add(BUCKET - 1)
-        .map(|rounded| rounded / BUCKET * BUCKET)
-        .ok_or_else(|| infer("Batch bucket capacity overflow"))
+        .max(minimum)
+        .checked_next_power_of_two()
+        .ok_or_else(|| infer("Batch arena capacity overflow"))
 }
-fn work_key(b: &Batch, max_length: usize) -> Result<WorkKey, BackendError> {
+fn work_key(b: &Batch) -> Result<WorkKey, BackendError> {
     Ok((
-        bucketed(b.input_ids.len())?,
-        b.cumulative_seq_lengths.len(),
-        b.pooled_indices.len(),
-        bucketed(max_length)?,
+        bucketed(b.input_ids.len(), MIN_TOKEN_CAPACITY)?,
+        bucketed(b.cumulative_seq_lengths.len(), 2)?,
+        bucketed(b.pooled_indices.len(), 1)?,
     ))
+}
+fn capacity_fits(capacity: WorkKey, request: WorkKey, bytes: usize) -> bool {
+    capacity.0 >= request.0 && capacity.1 >= request.1 && capacity.2 >= request.2
+        // Release an oversized active arena after the exceptional request;
+        // normal traffic must not keep it resident indefinitely.
+        && (bytes <= cache::BYTE_BUDGET || capacity == request)
+}
+fn input_elements(
+    tokens: usize,
+    boundaries: usize,
+    selected: usize,
+) -> Result<usize, BackendError> {
+    product(tokens, 3)?
+        .checked_add(boundaries)
+        .and_then(|n| n.checked_add(selected))
+        .ok_or_else(|| infer("Input staging layout overflow"))
 }
 fn pack_input(
     out: &mut [u32],
@@ -351,7 +376,8 @@ struct Work {
     tokens: usize,
     sequences: usize,
     selections: usize,
-    max_length: usize,
+    input_elements: usize,
+    output_elements: usize,
     bytes: usize,
     input: ManuallyDrop<DeviceBuffer<u32>>,
     host_input: ManuallyDrop<PinnedHostBuffer<u32>>,
@@ -404,24 +430,24 @@ impl Drop for Work {
                 ManuallyDrop::drop(&mut self.intermediate);
                 ManuallyDrop::drop(&mut self.pooled);
             }
+            LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
+            record_live_arena_bytes();
+        } else {
+            // Live bytes includes retained allocations when completion is
+            // uncertain; expose that exceptional subset separately.
+            metrics::counter!("oxide_arena_retained_bytes_total").increment(self.bytes as u64);
         }
     }
 }
 impl Work {
     fn key(&self) -> WorkKey {
-        (
-            self.tokens,
-            self.sequences,
-            self.selections,
-            self.max_length,
-        )
+        (self.tokens, self.sequences, self.selections)
     }
     fn allocation_bytes(key: WorkKey, c: &BertConfig) -> Result<usize, BackendError> {
-        let (tokens, sequences, selections, max_length) = key;
+        let (tokens, sequences, selections) = key;
         i32::try_from(tokens).map_err(infer)?;
         u32_size(product(tokens, c.hidden_size)?)?;
         u32_size(product(tokens, c.intermediate_size)?)?;
-        u32_size(product(max_length, 4)?)?;
         let input = product(tokens, 3)?
             .checked_add(sequences)
             .and_then(|n| n.checked_add(selections))
@@ -437,12 +463,12 @@ impl Work {
             .and_then(|n| n.checked_add(intermediate))
             .ok_or_else(|| infer("Workspace arena overflow"))
     }
-    fn matches(&self, key: &WorkKey) -> bool {
-        self.key() == *key
+    fn fits(&self, key: WorkKey) -> bool {
+        capacity_fits(self.key(), key, self.bytes)
     }
     fn new(s: Arc<Stream>, c: &BertConfig, key: WorkKey) -> Result<Self, BackendError> {
         let bytes = Self::allocation_bytes(key, c)?;
-        let (tokens, sequences, selections, max_length) = key;
+        let (tokens, sequences, selections) = key;
         let hidden = product(tokens, c.hidden_size)?;
         let input_len = product(tokens, 3)?
             .checked_add(sequences)
@@ -484,12 +510,16 @@ impl Work {
         // SAFETY: the pooling kernel writes every element before D2H.
         let pooled =
             unsafe { DeviceBuffer::<f32>::uninitialized_async(&s, output) }.map_err(infer)?;
+        metrics::counter!("oxide_arena_allocations_total").increment(1);
+        LIVE_ARENA_BYTES.fetch_add(bytes, Ordering::Relaxed);
+        record_live_arena_bytes();
         Ok(Self {
             linear,
             tokens,
             sequences,
             selections,
-            max_length,
+            input_elements: 0,
+            output_elements: 0,
             bytes,
             input: ManuallyDrop::new(input),
             host_input: ManuallyDrop::new(host_input),
@@ -506,16 +536,33 @@ impl Work {
             stream: s,
         })
     }
-    fn stage(&mut self, b: &Batch) -> Result<(), BackendError> {
+    fn stage(&mut self, b: &Batch, hidden: usize) -> Result<(), BackendError> {
+        let elements = input_elements(
+            b.input_ids.len(),
+            b.cumulative_seq_lengths.len(),
+            b.pooled_indices.len(),
+        )?;
+        let output = product(b.pooled_indices.len(), hidden)?;
+        let host = self
+            .host_input
+            .as_mut_slice()
+            .get_mut(..elements)
+            .ok_or_else(|| infer("Input exceeds retained arena"))?;
         pack_input(
-            self.host_input.as_mut_slice(),
-            self.tokens,
+            host,
+            b.input_ids.len(),
             &b.input_ids,
             &b.position_ids,
             &b.token_type_ids,
             &b.cumulative_seq_lengths,
             &b.pooled_indices,
-        )
+        )?;
+        if output > self.host_output.len() {
+            return Err(infer("Output exceeds retained arena"));
+        }
+        self.input_elements = elements;
+        self.output_elements = output;
+        Ok(())
     }
     fn upload(&self) -> Result<(), BackendError> {
         // SAFETY: pinned staging and destination are retained in this workspace;
@@ -524,7 +571,7 @@ impl Work {
             cuda_core::memory::memcpy_htod_async(
                 self.input.cu_deviceptr(),
                 self.host_input.as_ptr(),
-                self.input.num_bytes(),
+                product(self.input_elements, 4)?,
                 self.stream.cu_stream(),
             )
         }
@@ -538,7 +585,7 @@ impl Work {
             cuda_core::memory::memcpy_dtoh_async(
                 self.host_output.as_mut_ptr(),
                 self.pooled.cu_deviceptr(),
-                self.pooled.num_bytes(),
+                product(self.output_elements, 4)?,
                 self.stream.cu_stream(),
             )
         }
@@ -546,7 +593,12 @@ impl Work {
     }
     fn complete(&self) -> Result<Vec<f32>, BackendError> {
         self.stream.synchronize().map_err(infer)?;
-        Ok(self.host_output.as_slice().to_vec())
+        Ok(self
+            .host_output
+            .as_slice()
+            .get(..self.output_elements)
+            .ok_or_else(|| infer("Output exceeds retained arena"))?
+            .to_vec())
     }
 }
 impl Engine {
@@ -565,6 +617,8 @@ impl Engine {
             self.failed = true;
             if self.stream.synchronize().is_err() {
                 if let Some(work) = self.workspace.take() {
+                    metrics::counter!("oxide_arena_retained_bytes_total")
+                        .increment(work.bytes as u64);
                     std::mem::forget(work);
                 }
             }
@@ -579,18 +633,33 @@ impl Engine {
         max_length: usize,
     ) -> Result<Vec<f32>, BackendError> {
         self.context.bind_to_thread().map_err(infer)?;
-        let plan = work_key(b, max_length)?;
-        if !self.workspace.as_ref().is_some_and(|w| w.matches(&plan)) {
-            let next = self.cached.take(&plan);
-            // Reserve the next active arena before retaining the previous one.
-            // Oversized active requests empty the inactive cache.
-            drop(self.cached.reserve(Work::allocation_bytes(plan, c)?));
+        metrics::counter!("oxide_arena_requests_total").increment(1);
+        record_live_arena_bytes();
+        let plan = work_key(b)?;
+        if !self.workspace.as_ref().is_some_and(|w| w.fits(plan)) {
+            let next = self
+                .cached
+                .take_best_fit(|key| capacity_fits(*key, plan, 0));
+            // A cached fit can be larger than the requested size class: reserve
+            // its actual allocation, not the smaller request estimate.
+            let bytes = match next.as_ref() {
+                Some(work) => work.bytes,
+                None => Work::allocation_bytes(plan, c)?,
+            };
+            let evicted = self.cached.reserve(bytes);
+            metrics::counter!("oxide_arena_evictions_total").increment(evicted.len() as u64);
+            drop(evicted);
             if let Some(previous) = self.workspace.take() {
                 let (key, bytes) = (previous.key(), previous.bytes);
-                drop(self.cached.put(key, previous, bytes));
+                let evicted = self.cached.put(key, previous, bytes);
+                metrics::counter!("oxide_arena_evictions_total").increment(evicted.len() as u64);
+                drop(evicted);
             }
             self.workspace = Some(match next {
-                Some(work) => work,
+                Some(work) => {
+                    metrics::counter!("oxide_arena_cached_reuses_total").increment(1);
+                    work
+                }
                 None => Work::new(self.stream.clone(), c, plan)?,
             });
         }
@@ -604,7 +673,7 @@ impl Engine {
             // exact-row plans once per changed batch, outside the layer loop.
             w.linear = LinearPlans::new(tokens, c)?;
         }
-        w.stage(b)?;
+        w.stage(b, c.hidden_size)?;
         let s = &*self.stream;
         // Ordinary ordered-stream dispatch; plans are prepared with the arena.
         w.upload()?;
@@ -615,10 +684,10 @@ impl Engine {
         let base = w.input.cu_deviceptr();
         let (mut ids, mut pos, mut types) = (
             base,
-            base + product(w.tokens, 4)? as u64,
-            base + product(w.tokens, 8)? as u64,
+            base + product(tokens, 4)? as u64,
+            base + product(tokens, 8)? as u64,
         );
-        let boundaries = base + product(w.tokens, 12)? as u64;
+        let boundaries = base + product(tokens, 12)? as u64;
         let selected = boundaries + product(b.cumulative_seq_lengths.len(), 4)? as u64;
         let (mut word, mut position, mut type_weight) = (
             weights.word.cu_deviceptr(),
@@ -883,25 +952,28 @@ impl OxideBackend {
         let attention_mode = std::env::var(infinity_v3_config::infinity_env!("OXIDE_ATTENTION"))
             .unwrap_or_else(|_| "auto".into());
         let fa4_root = std::env::var_os(infinity_v3_config::infinity_env!("FA4_ROOT"));
+        let attention_spec = fa4::AttentionSpec {
+            heads: config.num_attention_heads,
+            kv_heads: config.num_attention_heads,
+            head_dim: config.hidden_size / config.num_attention_heads,
+            causal: false,
+            window: fa4::Window::Global,
+            dtype: fa4::DType::Bf16,
+            scale: fa4::Scale::RsqrtHeadDim,
+        };
         let fa4 = match attention_mode.as_str() {
             "fa4" => Some(fa4::Fa4::new(
                 context.clone(),
                 Path::new(
                     &fa4_root.ok_or_else(|| start("FA4 attention requires INFINITY_FA4_ROOT"))?,
                 ),
-                config.num_attention_heads,
-                config.hidden_size / config.num_attention_heads,
+                attention_spec,
             )?),
-            "auto"
-                if fa4_root.is_some()
-                    && config.num_attention_heads == 12
-                    && config.hidden_size == 384 =>
-            {
+            "auto" if fa4_root.is_some() && fa4::Fa4::supports(&attention_spec) => {
                 Some(fa4::Fa4::new(
                     context.clone(),
                     Path::new(&fa4_root.ok_or_else(|| start("Missing FA4 root"))?),
-                    12,
-                    32,
+                    attention_spec,
                 )?)
             }
             "auto" | "simt" => None,
@@ -1100,25 +1172,47 @@ mod tests {
         b.token_type_ids = vec![2, 0, 0];
         assert!(validate(&b, &c).is_err());
         let mut b = batch();
+        b.pooled_indices.clear();
+        // Empty pooled output is valid and embed returns without GPU work.
+        assert!(validate(&b, &c).is_ok());
+        let mut b = batch();
         b.raw_indices = vec![0];
         assert!(validate(&b, &c).is_err());
     }
     #[test]
-    fn buckets_token_and_length_capacities_to_round_up_32() {
-        fn keyed(tokens: usize, max_length: usize) -> WorkKey {
-            let mut b = batch();
-            b.input_ids = vec![1; tokens];
-            b.position_ids = vec![0; tokens];
-            b.token_type_ids = vec![0; tokens];
-            b.cumulative_seq_lengths = vec![0, tokens as u32];
-            work_key(&b, max_length).unwrap()
+    fn arenas_fit_changing_shapes_without_length_in_the_key() {
+        let mut b = batch();
+        assert_eq!(work_key(&b).unwrap(), (32, 4, 2));
+        b.cumulative_seq_lengths = vec![0, 2, 3];
+        assert_eq!(work_key(&b).unwrap(), (32, 4, 2));
+        let capacity = (256, 16, 16);
+        for request in [(32, 2, 1), (64, 8, 4), capacity] {
+            assert!(capacity_fits(capacity, request, 1024));
         }
-        assert_eq!(keyed(31, 31), keyed(32, 32));
-        assert_ne!(keyed(32, 32), keyed(33, 33));
-        assert_eq!(keyed(33, 33), keyed(64, 64));
-        assert_ne!(keyed(64, 64), keyed(65, 65));
-        assert_eq!(keyed(31, 64), keyed(32, 64));
-        assert_ne!(keyed(32, 32), keyed(32, 33));
+        for request in [(512, 2, 1), (32, 32, 1), (32, 2, 32)] {
+            assert!(!capacity_fits(capacity, request, 1024));
+        }
+        assert!(!capacity_fits(capacity, (32, 2, 1), cache::BYTE_BUDGET + 1));
+        assert!(capacity_fits(capacity, capacity, cache::BYTE_BUDGET + 1));
+        assert_eq!(bucketed(33, MIN_TOKEN_CAPACITY).unwrap(), 64);
+        assert_eq!(bucketed(65, MIN_TOKEN_CAPACITY).unwrap(), 128);
+    }
+    #[test]
+    fn compact_metadata_does_not_touch_the_unused_arena_tail() {
+        let mut storage = vec![u32::MAX; 256];
+        let n = input_elements(3, 3, 1).unwrap();
+        pack_input(
+            &mut storage[..n],
+            3,
+            &[7, 8, 9],
+            &[0, 1, 2],
+            &[0, 0, 0],
+            &[0, 1, 3],
+            &[1],
+        )
+        .unwrap();
+        assert_eq!(&storage[..n], &[7, 8, 9, 0, 1, 2, 0, 0, 0, 0, 1, 3, 1]);
+        assert!(storage[n..].iter().all(|&x| x == u32::MAX));
     }
     #[test]
     fn stages_actual_metadata_into_padded_sections() {
@@ -1172,7 +1266,7 @@ mod tests {
     fn allocation_rounding_does_not_expand_linear_rows() {
         let b = batch();
         let c = config();
-        let capacity = work_key(&b, 2).unwrap();
+        let capacity = work_key(&b).unwrap();
         assert_eq!(capacity.0, 32);
         let plans = LinearPlans::new(b.input_ids.len(), &c).unwrap();
         for plan in [
@@ -1188,11 +1282,10 @@ mod tests {
     }
     #[test]
     fn rejects_bucket_and_capacity_overflow() {
-        assert!(bucketed(usize::MAX).is_err());
-        assert!(work_key(&batch(), usize::MAX).is_err());
+        assert!(bucketed(usize::MAX, MIN_TOKEN_CAPACITY).is_err());
         let c = config();
         let oversized = u32::MAX as usize + 1;
-        assert!(Work::allocation_bytes((oversized, 2, 1, BUCKET), &c).is_err());
-        assert!(Work::allocation_bytes((usize::MAX, 2, 1, BUCKET), &c).is_err());
+        assert!(Work::allocation_bytes((oversized, 2, 1), &c).is_err());
+        assert!(Work::allocation_bytes((usize::MAX, 2, 1), &c).is_err());
     }
 }

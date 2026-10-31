@@ -1910,6 +1910,7 @@ dependencies = [
  "infinity-v3-config",
  "infinity_v3-backend-core",
  "libloading",
+ "metrics",
  "safetensors",
  "serde",
  "serde_json",

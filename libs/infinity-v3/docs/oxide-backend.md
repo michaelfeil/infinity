@@ -29,24 +29,47 @@ remain necessary.
 
 The Rust kernels fuse embedding normalization and QKV preparation; register-cached
 384-wide normalization specializations and a parallel mean-pool kernel cover the
-MiniLM geometry. The model executor retains at most eight geometry workspaces:
-one active plus up to seven inactive device and pinned-host arenas. The reuse key
-rounds token count and maximum sequence length up to 32-token boundaries while
-keeping sequence-boundary and pooled-selection counts exact. Actual sequence
-lengths, token counts and selected indices remain authoritative. Rounding is
-only an allocation/cache policy: GEMM, attention and custom kernels execute on
-the actual dimensions. Unused staging capacity is initialized but is not a model
-sequence. Inactive workspaces are evicted LRU under the count limit and a
-256 MiB budget covering active plus cached arena buffers. Model weights and
-driver/provider metadata sit outside that budget. One active request may exceed the
-budget; doing so empties the inactive cache.
+MiniLM geometry. The model executor retains at most eight workspaces: one active
+plus up to seven inactive device and pinned-host arenas. Each capacity dimension
+is the next power of two at or above a minimum: 32 tokens, two packed boundary
+entries, and one pooled selection. Arenas therefore grow geometrically, and an
+in-budget active arena is reused whenever all three capacities suffice. Otherwise
+the executor promotes the smallest cached arena that fits by its actual allocated
+bytes, not by a request-size estimate. Capacity reuse never changes logical
+tensor extents: actual token counts, packed sequence boundaries, and pooled
+selections drive the kernels. Inputs and metadata use a compact H2D copy, and
+only actual pooled rows are copied D2H. There is no maximum-length allocation or
+cache dimension. Unused capacity is neither transferred nor treated as a sequence.
+Inactive workspaces are evicted LRU under the count limit and a 256 MiB budget
+covering active plus cached arena buffers. Model weights and driver/provider
+metadata sit outside that budget. One active request may exceed the budget; doing
+so empties the inactive cache, and that oversized active arena is reused only for
+an identical capacity key and otherwise released rather than cached.
+
+Arena event counters start when the serving metrics recorder is installed. The
+live-byte gauge also includes arenas allocated during earlier model warmup.
+Metrics use these exact names. `oxide_arena_requests_total` counts forward
+requests that reach arena planning. `oxide_arena_allocations_total` counts newly
+allocated arenas. `oxide_arena_cached_reuses_total` counts cached arenas promoted
+to active. `oxide_arena_evictions_total` counts inactive cache removals and
+rejected cache inserts. `oxide_arena_live_bytes` is a gauge of the
+physically retained arena bytes: allocation increases it, and only a successful
+drop after stream completion decreases it. `oxide_arena_retained_bytes_total` is a
+monotonic counter of arena bytes whose failed-drain path deliberately retained
+allocations, covering both an active workspace forgotten after a failed
+error-path synchronization and arenas dropped while synchronization fails.
+Retained exceptions stay included in `oxide_arena_live_bytes`; the counter
+reports their cumulative byte total rather than a current size. These failed-drain
+retentions can exceed the normal active-plus-cache budget.
 
 Execution uses ordinary ordered CUDA streams. CUDA graph capture, replay, and
-the `INFINITY_OXIDE_CUDA_GRAPHS` setting have been removed. Kernel modules,
-allocations, the primary context, and streams remain owned until outstanding
-work drains, including on errors. An uncached geometry prepares its matrix
-plans and workspace once. Without an explicitly selected AOT provider, attention
-uses the Rust SIMT kernel. PDL is not implemented yet.
+the `INFINITY_OXIDE_CUDA_GRAPHS` setting have been removed from the oxide backend
+only; LibTorch CUDA graph support is unchanged. Kernel modules, allocations, the
+primary context, and streams remain owned until outstanding work drains, including
+on errors. Arena storage is prepared on allocation; exact-row matrix plans are
+prepared when the logical token count changes, outside the layer loop.
+Without an explicitly selected AOT provider, attention uses the Rust SIMT kernel.
+PDL is not implemented yet.
 
 PDL is the intended optional scheduling extension. Enable it only for qualified
 producer/consumer pairs with explicit dependency synchronization, checked native
@@ -192,43 +215,141 @@ requires Tile IR **13.3 for Hopper**. The current CUDA 13.1 compiler environment
 does not provide that producer, so cuTile is optional and does not determine
 this backend's runtime baseline.
 
-The repository's FA4 provider has noncausal BF16/FP16 exports with 12 heads of width 32
-matching MiniLM. The optional adapter uses its raw C ABI, passing device pointers,
-tensor strides, packed sequence boundaries, and the same CUDA stream without
-ATen or a LibTorch model call. When configured, this is a hybrid executor:
-oxide-authored Rust kernels plus cuBLAS and AOT FA4 attention; it is not a claim
-that FA4 attention was rewritten in Rust.
+The repository's FA4 provider has native ABI 1/export ABI 7 profiles for 19 exact
+geometries in both F16 and BF16. The optional adapter uses its raw C ABI, passing
+device pointers, tensor strides, packed sequence boundaries, and the same CUDA
+stream without ATen or a LibTorch model call. It selects a profile only from the
+exact tuple of query heads, KV heads, head width, causality, and window, and
+validates the manifest's dtype, symbol, geometry, window, and export order at
+load. Geometry is not inferred from a family name or a Q/KV ratio.
 
-`INFINITY_OXIDE_ATTENTION=auto` is the default. It selects FA4 when
-`INFINITY_FA4_ROOT=/path/to/infinityfa4` is present and the model has 12 heads of
-width 32; other geometries use oxide SIMT attention. `simt` explicitly selects
-the Rust attention kernel. `fa4` requires the provider and qualified geometry,
-and rejects unsupported models instead of silently changing implementations.
-The per-SM directory must contain the native ABI 1/export ABI 7 manifest,
-portable-host marker, matching compute capability and advertised mode 7. A
-selected provider's load or launch failure is an error rather than a retry
-through another attention path.
+| Export | Q heads | KV heads | Width | Causal | Window |
+| --- | ---: | ---: | ---: | --- | --- |
+| `bert` | 16 | 16 | 64 | No | Global |
+| `modern_local` | 12 | 12 | 64 | No | Local 64/64 |
+| `qwen` | 32 | 8 | 128 | Yes | Global |
+| `voyage` | 16 | 8 | 128 | No | Global |
+| `gqa6` | 12 | 2 | 128 | No | Global |
+| `gqa8` | 32 | 4 | 128 | No | Global |
+| `qwen35` | 16 | 4 | 256 | No | Global |
+| `mha32` | 12 | 12 | 32 | No | Global |
+| `media72` | 16 | 16 | 72 | No | Global |
+| `mha128` | 6 | 6 | 128 | No | Global |
+| `local128` | 6 | 6 | 128 | No | Local 64/64 |
+| `causal_gqa2` | 16 | 8 | 128 | Yes | Global |
+| `gqa3` | 24 | 8 | 128 | No | Global |
+| `gqa4` | 32 | 8 | 128 | No | Global |
+| `gqa7` | 28 | 4 | 128 | No | Global |
+| `causal_local128` | 32 | 8 | 128 | Yes | Local 64/0 |
+| `wide_gqa6` | 24 | 4 | 256 | No | Global |
+| `causal_wide6` | 24 | 4 | 256 | Yes | Global |
+| `causal_wide4` | 16 | 4 | 256 | Yes | Global |
+
+Score scaling is either `1 / sqrt(head_dim)`, resolved at load, or an explicit
+finite positive scalar. Score softcap, relative bias, and DeBERTa modifiers are
+unsupported by the adapter. A generalized packed launch accepts separate
+Q and K cumulative int32 boundaries, distinct Q/K token counts, element strides,
+and the longest query sequence; the BERT wrapper uses shared boundaries. On SM100
+(`capability / 10 == 10`), width-256 profiles reject separate Q/K boundaries and
+require shared boundaries; other exported profiles accept them.
+
+The pooled BF16 BERT executor supplies query heads equal to KV heads, head width
+`hidden_size / num_attention_heads`, noncausal global attention, and
+`1 / sqrt(head_dim)` scaling. It can use FA4 only when that tuple is one of the 19
+exports (`mha32` for MiniLM). Coverage of every export is operator coverage, not
+new model-family execution: the pooled BF16 BERT executor remains the only model
+executor, and end-to-end FP16 serving is not implemented.
+
+When configured, this is a hybrid executor: oxide-authored Rust kernels plus
+cuBLAS and AOT FA4 attention; it is not a claim that FA4 attention was rewritten
+in Rust. `INFINITY_OXIDE_ATTENTION=auto` is the default. It selects FA4 when
+`INFINITY_FA4_ROOT=/path/to/infinityfa4` is present and the BERT geometry is one
+of the exported tuples; other geometries use oxide SIMT attention. `simt`
+explicitly selects the Rust attention kernel. `fa4` requires the provider and an
+exact exported geometry, and rejects unsupported models instead of silently
+changing implementations. The per-SM directory must contain the native ABI
+1/export ABI 7 manifest, portable-host marker, matching compute capability and
+an advertised mode for the selected export. A selected provider's load or launch
+failure is an error rather than a retry through another attention path.
 Warm up provider initialization before serving requests. Preserve its adjacent
 `libcute_dsl_runtime.so`, `libtvm_ffi.so`, license files and provenance.
 The provider contains a native C++ ABI shim and CuTe-generated GPU kernels;
 the model executor remains Rust. Existing FA4 artifacts for `sm_90`, `sm_100`
 and `sm_120` were previously compiled and audited against the current bridge
-and profiles. This is separate from the fresh Rust-kernel builds, and does not
-establish runtime qualification on B200 or RTX hardware.
+and profiles. This is separate from the fresh Rust-kernel builds. FA4 operator
+runtime validation is H100 only: B200 and RTX artifacts are not runtime
+qualified. The GPU tests require `INFINITY_FA4_ROOT` and a matching CUDA device,
+are ignored by default, and load every export in both dtypes, compare every
+export on small ragged packed batches against a CPU reference, exercise the
+shared-boundary wrapper, and exercise separate Q/K boundaries on non-d256
+profiles; the SM100 d256 boundary guard is covered by unit validation.
 
 FA4 is the target production attention provider as model coverage expands; an
 FA2 compatibility backend is outside the oxide roadmap. The pinned provider
-already declares 19 profile cases spanning causal/noncausal, global/local and
-MHA/GQA attention at widths 32, 64, 72, 128 and 256. The current Rust adapter
-selects only the MiniLM case. Generalize that adapter and qualify the declared
-exports before adding another attention implementation. Exported head counts,
-windows, score modifications and separate Q/K boundaries remain explicit
-capabilities, rather than assumptions based on a family name or GQA ratio.
-Keep SIMT useful for reference and bring-up; extend FA4 exports for required
-model semantics where practical.
+declares the 19 profile cases above spanning causal/noncausal, global/local and
+MHA/GQA attention at widths 32, 64, 72, 128, and 256. The adapter now selects
+every exact export, but operator coverage is not by itself model or end-to-end
+qualification. Exported head counts, windows, score modifications, and separate
+Q/K boundaries remain explicit capabilities, rather than assumptions based on a
+family name or GQA ratio. Keep SIMT useful for reference and bring-up; extend
+FA4 exports for required model semantics where practical.
 
 The existing GDN provider also exposes reusable AOT kernels, but GDN/Qwen3.5
 model execution is not implemented by this initial backend.
+
+## Changing-shape serving replay
+
+On 2026-10-31, a local HTTP replay used 64 public SciFact queries and 256
+documents, with natural-text substrings, batch sizes 1–32, and long/short
+transitions. Reported request compute tokens ranged from 3 to 8192; sequences
+were truncated to 256 tokens. The tokenizer, admission queue, batcher, backend,
+and tensor response path all ran. This was public data through the serving
+stack, not customer production traffic.
+
+Three fresh processes per runtime ran in balanced order on H100 GPU 0, with
+64 HTTP warmup requests and at least 10 seconds **and** 300 requests per client
+count. Both oxide builds used BF16 mean pooling, FA4, the same checkpoint,
+kernel bundle, and graph-free execution. The previous build was `8bd3d50`.
+Values below are medians of process percentiles, not pooled-request percentiles.
+
+| Clients | Previous p50 / p99 ms | Capacity reuse p50 / p99 ms | Previous / new requests/s |
+| ---: | ---: | ---: | ---: |
+| 1 | 4.362 / 11.894 | 4.166 / 11.692 | 187.0 / 190.1 |
+| 8 | 10.283 / 31.387 | 9.980 / 21.667 | 519.5 / 506.5 |
+
+The eight-client p99 process ranges were 29.49–32.20 ms before and
+19.51–21.82 ms after. Throughput was roughly flat: its eight-client ranges
+overlapped (502.5–537.6 versus 482.6–559.1 requests/s). This supports a
+tail-latency improvement on this replay, not a general throughput increase.
+The time-bounded streams shared deterministic prefixes but completed different
+numbers of requests. Observed request-shape classes exceeded 1000 per process;
+these are HTTP proxies, not exact native batch geometries.
+
+Each new process recorded one arena allocation after model warmup across
+29,389–31,741 native forwards, with 164,689,688 live arena bytes. All 320
+canonical embeddings were bit-identical to the previous oxide build in every
+process pair. Sentinel, single-versus-mixed, duplicate/order, finite-output,
+and long/short-transition checks passed. All 19 FA4 profiles in both dtypes
+passed H100 numerical tests and memory/initialization checking; native BERT
+SIMT and FA4 changing-shape sweeps also passed both sanitizers.
+
+An unchanged Torch 2.14.1 reference with graphs enabled measured p50/p99
+4.839/18.167 ms at one client and 11.066/24.208 ms at eight. It used the same
+checkpoint and the previously qualified native library, but ran through a
+private Docker bridge while oxide used loopback. These reference latencies
+include that networking difference and do not qualify the latest LibTorch
+version. Minimum embedding cosine versus this reference was 0.999952;
+recall@10 and every top-1 result matched on the small fixture.
+A separate short diagnostic confirmed graph use: two captures, 731 hits, and
+1720 misses across warmup, quality, replay, and correctness phases. These
+aggregate counters do not isolate replay-phase reuse.
+
+Batch fragmentation remains relevant: one new-process replay submitted
+112,691 sequences in 6927 HTTP requests but executed 30,392 native forwards,
+or 3.71 sequences per native batch. Inputs tokenize and queue independently.
+Partial-client dispatch is intentional and has admission-deadlock regression
+coverage; waiting for every sibling is not a safe general replacement.
+Aggregate counts do not isolate tokenization from backend scheduling costs.
 
 ## Historical MiniLM results before graph-free execution
 
