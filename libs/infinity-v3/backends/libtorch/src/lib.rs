@@ -2277,7 +2277,9 @@ mod tests {
     fn values(value: &Embedding) -> Vec<f32> {
         match value {
             Embedding::Pooled(v) => v.clone(),
+            Embedding::Shared(v) => v.to_vec(),
             Embedding::All(v) => v.iter().flatten().copied().collect(),
+            Embedding::SharedAll(v) => v.iter().flat_map(|row| row.iter().copied()).collect(),
         }
     }
 
@@ -2541,7 +2543,9 @@ mod tests {
                 assert!(got.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.02));
                 match embedding {
                     Embedding::Pooled(v) => assert_eq!(v.len(), 3),
+                    Embedding::Shared(v) => assert_eq!(v.len(), 3),
                     Embedding::All(v) => assert!(v.iter().all(|token| token.len() == 16)),
+                    Embedding::SharedAll(v) => assert!(v.iter().all(|token| token.len() == 16)),
                 }
             }
         }

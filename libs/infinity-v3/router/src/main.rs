@@ -142,7 +142,8 @@ struct Args {
 
     /// Advanced backend override; normally determined by the build/image.
     /// Runtime selection is rarely needed; single-backend builds select it automatically.
-    /// When both are compiled, defaults to LibTorch. This flag cannot enable an uncompiled backend.
+    /// When several are compiled, defaults to LibTorch, then python-backend.
+    /// This flag cannot enable an uncompiled backend.
     #[clap(
         long,
         env = infinity_v3_config::infinity_env!("BACKEND"),
@@ -152,7 +153,7 @@ struct Args {
     )]
     backend: Vec<infinity_v3_backend::BackendKind>,
 
-    /// LibTorch accelerator family. Auto selects CUDA when available, otherwise CPU.
+    /// Accelerator family for LibTorch. Auto selects CUDA when available, otherwise CPU.
     #[clap(
         long,
         env = infinity_v3_config::infinity_env!("TORCH_DEVICE"),
@@ -161,6 +162,11 @@ struct Args {
         value_delimiter = ';'
     )]
     torch_device: Vec<infinity_v3_backend::TorchDevice>,
+
+    /// JSON object for the Python backend. Reserved keys: backend, queue_depth.
+    /// Other keys are passed to the plugin.
+    #[clap(long, env = infinity_v3_config::infinity_env!("PYTHON_CONFIG"), value_parser = optional_string)]
+    python_config: Vec<Optional<String>>,
 
     /// Optionally control the pooling method for embedding models.
     ///
@@ -407,6 +413,7 @@ impl Args {
         )?;
         let backend = expand(&self.backend, count, "backend")?;
         let torch_device = expand(&self.torch_device, count, "torch-device")?;
+        let python_config = expand_optional(&self.python_config, count, "python-config")?;
         let image_memory_budget_mib = expand(
             &self.image_memory_budget_mib,
             count,
@@ -488,6 +495,7 @@ impl Args {
                     backend_device_ids: backend_device_ids[i].clone(),
                     backend_kind: backend[i],
                     torch_device: torch_device[i],
+                    python_config: python_config[i].clone(),
                     multimodal_config: infinity_v3_core::multimodal::MultimodalConfig {
                         allowed_image_hosts: self
                             .image_allowed_hosts
@@ -790,7 +798,7 @@ mod tests {
             .unwrap()
             .models()
             .unwrap();
-        let expected = infinity_v3_backend::BackendKind::Libtorch;
+        let expected = infinity_v3_backend::BackendKind::default();
         assert!(models.iter().all(|m| m.backend_kind == expected));
         let models = Args::try_parse_from([
             "infinity_v3",

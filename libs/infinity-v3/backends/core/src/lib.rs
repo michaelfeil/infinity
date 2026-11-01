@@ -6,6 +6,7 @@ use clap::ValueEnum;
 pub use multimodal::{AudioFeatures, ImagePatches, MultimodalEncoding};
 use serde::Deserialize;
 use std::fmt;
+use std::ops::Deref;
 use thiserror::Error;
 
 #[derive(Debug, Clone)]
@@ -37,9 +38,111 @@ impl Batch {
     }
 }
 
+/// Float data that is either owned by Rust or shared from an external owner.
+#[derive(Clone)]
+pub struct SharedF32(Storage);
+
+#[derive(Clone)]
+enum Storage {
+    Owned(Vec<f32>),
+    Shared {
+        bytes: bytes::Bytes,
+        offset: usize,
+        len: usize,
+    },
+}
+
+impl Storage {
+    fn owned_mut(&mut self) -> &mut Vec<f32> {
+        loop {
+            match self {
+                Self::Owned(values) => return values,
+                Self::Shared { bytes, offset, len } => {
+                    let values = shared_slice(bytes, *offset, *len).to_vec();
+                    *self = Self::Owned(values);
+                }
+            }
+        }
+    }
+}
+
+fn shared_slice(bytes: &bytes::Bytes, offset: usize, len: usize) -> &[f32] {
+    // SAFETY: the private storage can only be created by `shared`, which checks
+    // the complete byte range and actual pointer alignment. Truncation only
+    // narrows that range and Bytes keeps the immutable allocation alive.
+    unsafe { std::slice::from_raw_parts(bytes.as_ptr().add(offset).cast::<f32>(), len) }
+}
+
+impl SharedF32 {
+    pub fn shared(bytes: bytes::Bytes, offset: usize, len: usize) -> Result<Self, &'static str> {
+        let byte_len = len
+            .checked_mul(std::mem::size_of::<f32>())
+            .ok_or("float size overflow")?;
+        let end = offset.checked_add(byte_len).ok_or("float range overflow")?;
+        let raw = bytes.get(offset..end).ok_or("invalid float byte range")?;
+        if !(raw.as_ptr() as usize).is_multiple_of(std::mem::align_of::<f32>()) {
+            return Err("misaligned float buffer");
+        }
+        Ok(Self(Storage::Shared { bytes, offset, len }))
+    }
+
+    pub fn is_shared(&self) -> bool {
+        matches!(self.0, Storage::Shared { .. })
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        if len >= self.len() {
+            return;
+        }
+        match &mut self.0 {
+            Storage::Owned(values) => values.truncate(len),
+            Storage::Shared { len: current, .. } => *current = len,
+        }
+    }
+
+    pub fn make_mut(&mut self) -> &mut Vec<f32> {
+        self.0.owned_mut()
+    }
+
+    pub fn as_slice(&self) -> &[f32] {
+        match &self.0 {
+            Storage::Owned(values) => values.as_slice(),
+            Storage::Shared { bytes, offset, len } => shared_slice(bytes, *offset, *len),
+        }
+    }
+}
+
+impl Deref for SharedF32 {
+    type Target = [f32];
+
+    fn deref(&self) -> &Self::Target {
+        self.as_slice()
+    }
+}
+
+impl AsRef<[f32]> for SharedF32 {
+    fn as_ref(&self) -> &[f32] {
+        self.as_slice()
+    }
+}
+
+impl From<Vec<f32>> for SharedF32 {
+    fn from(values: Vec<f32>) -> Self {
+        Self(Storage::Owned(values))
+    }
+}
+
+impl fmt::Debug for SharedF32 {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.debug_list().entries(self.as_slice()).finish()
+    }
+}
+
 pub enum Embedding {
     Pooled(Vec<f32>),
+    Shared(SharedF32),
     All(Vec<Vec<f32>>),
+    SharedAll(Vec<SharedF32>),
 }
 
 pub type Embeddings = result_memory::ResultMap<Embedding>;
@@ -166,6 +269,8 @@ pub trait Backend {
         ))
     }
     fn health(&self) -> Result<(), BackendError>;
+    /// Stop runtime-owned workers before the model is dropped.
+    fn shutdown(&self) {}
     fn max_batch_size(&self) -> Option<usize> {
         None
     }
@@ -242,4 +347,66 @@ pub enum BackendError {
     Unhealthy,
     #[error("Weights not found: {0}")]
     WeightsNotFound(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SharedF32;
+    use bytes::Bytes;
+
+    fn aligned_buffer(values: &[f32]) -> Bytes {
+        let payload: Vec<u8> = values
+            .iter()
+            .flat_map(|value| value.to_ne_bytes())
+            .collect();
+        let align = std::mem::align_of::<f32>();
+        let mut buffer = vec![0u8; payload.len() + align];
+        let shift = (align - buffer.as_ptr() as usize % align) % align;
+        buffer[shift..shift + payload.len()].copy_from_slice(&payload);
+        Bytes::from(buffer).slice(shift..shift + payload.len())
+    }
+
+    #[test]
+    fn rejects_misaligned_buffer() {
+        let bytes = Bytes::from(vec![0u8; 16]);
+        let align = std::mem::align_of::<f32>();
+        let offset = (align - bytes.as_ptr() as usize % align) % align + 1;
+        let sliced = bytes.slice(offset..offset + 4);
+        // A relative offset of zero used to pass even though Bytes itself had
+        // already been sliced to a misaligned address.
+        assert!(SharedF32::shared(sliced.clone(), 0, 1).is_err());
+        assert!(SharedF32::shared(sliced, 0, 0).is_err());
+    }
+
+    #[test]
+    fn accepts_aligned_sliced_buffer() {
+        let bytes = aligned_buffer(&[1.5, -2.25, 3.0]);
+        let shared = SharedF32::shared(bytes, 0, 3).expect("aligned buffer is accepted");
+        assert!(shared.is_shared());
+        assert_eq!(shared.as_slice(), &[1.5, -2.25, 3.0]);
+    }
+
+    #[test]
+    fn rejects_out_of_range_and_overflow() {
+        let bytes = Bytes::from(vec![0u8; 16]);
+        assert!(SharedF32::shared(bytes.clone(), 13, 2).is_err());
+        assert!(SharedF32::shared(bytes.clone(), 0, usize::MAX).is_err());
+        assert!(SharedF32::shared(bytes, usize::MAX, 1).is_err());
+    }
+
+    #[test]
+    fn truncate_and_make_mut_isolate_shared_rows() {
+        let bytes = aligned_buffer(&[1.0, 2.0, 3.0, 4.0]);
+        let mut left = SharedF32::shared(bytes.clone(), 0, 4).expect("aligned buffer is accepted");
+        let mut right = SharedF32::shared(bytes, 0, 4).expect("aligned buffer is accepted");
+
+        left.truncate(2);
+        assert_eq!(left.as_slice(), &[1.0, 2.0]);
+        assert_eq!(right.as_slice(), &[1.0, 2.0, 3.0, 4.0]);
+
+        right.make_mut()[0] = 9.0;
+        assert!(!right.is_shared());
+        assert_eq!(left.as_slice(), &[1.0, 2.0]);
+        assert_eq!(right.as_slice(), &[9.0, 2.0, 3.0, 4.0]);
+    }
 }

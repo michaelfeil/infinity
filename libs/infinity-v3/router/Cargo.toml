@@ -19,7 +19,7 @@ path = "src/main.rs"
 [dependencies]
 infinity-v3-config = { workspace = true }
 anyhow = { workspace = true }
-infinity_v3-backend = { path = "../backends", features = ["clap"] }
+infinity_v3-backend = { path = "../backends", default-features = false, features = ["clap"] }
 infinity_v3-core = { path = "../core" }
 clap = { workspace = true }
 futures = "^0.3"
@@ -79,3 +79,4 @@ vergen = { version = "8.0.0", features = ["build", "git", "gitcl"] }
 default = ["libtorch", "http"]
 http = ["infinity_v3-core/openapi", "dep:axum", "dep:http-body", "dep:axum-tracing-opentelemetry", "dep:base64", "dep:rmp-serde", "dep:tower-http", "dep:utoipa", "dep:utoipa-swagger-ui"]
 libtorch = ["infinity_v3-backend/libtorch"]
+python-backend = ["infinity_v3-backend/python-backend"]

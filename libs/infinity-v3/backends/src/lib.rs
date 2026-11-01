@@ -10,15 +10,26 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 use serde::Deserialize;
 
 pub use crate::dtype::DType;
 pub use infinity_v3_backend_core::{block_attention_config, result_memory};
 pub use infinity_v3_backend_core::{
     AudioFeatures, BackendError, Batch, ClefField, DecisionInput, DecisionOutput, Embedding,
-    Embeddings, ImagePatches, ModelType, MultimodalEncoding, Pool, Predictions, TokenPredictions,
+    Embeddings, ImagePatches, ModelType, MultimodalEncoding, Pool, Predictions, SharedF32,
+    TokenPredictions,
 };
+
+#[cfg(feature = "python-backend")]
+pub use infinity_v3_backend_python::PythonBackendConfig;
+
+/// Parameters for a bring-your-own-Python backend.
+#[cfg(not(feature = "python-backend"))]
+#[derive(Clone, Debug, Default)]
+pub struct PythonBackendConfig {
+    pub config: Option<String>,
+}
 
 /// A completed result or an owned completion handle after native submission.
 /// Deferred results have already been handed to the bounded completion worker,
@@ -38,23 +49,37 @@ impl<T> Submission<T> {
 }
 
 /// Inference runtime name retained for existing CLI configurations.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
 pub enum BackendKind {
-    #[default]
     Libtorch,
+    PythonBackend,
+}
+
+impl Default for BackendKind {
+    fn default() -> Self {
+        if cfg!(feature = "libtorch") {
+            Self::Libtorch
+        } else if cfg!(feature = "python-backend") {
+            Self::PythonBackend
+        } else {
+            Self::Libtorch
+        }
+    }
 }
 
 impl BackendKind {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Libtorch => "libtorch",
+            Self::PythonBackend => "python-backend",
         }
     }
 
     pub const fn is_compiled(self) -> bool {
         match self {
             Self::Libtorch => cfg!(feature = "libtorch"),
+            Self::PythonBackend => cfg!(feature = "python-backend"),
         }
     }
 
@@ -62,15 +87,27 @@ impl BackendKind {
         if self.is_compiled() {
             return Ok(());
         }
-        Err(BackendError::Start(
-            "LibTorch was not compiled; build with --features libtorch".into(),
-        ))
+        let available = [Self::Libtorch, Self::PythonBackend]
+            .into_iter()
+            .filter(|kind| kind.is_compiled())
+            .map(Self::as_str)
+            .collect::<Vec<_>>();
+        Err(BackendError::Start(format!(
+            "Requested backend '{}' was not compiled into this binary; compiled backends: {}.",
+            self.as_str(),
+            if available.is_empty() {
+                "none".into()
+            } else {
+                available.join(", ")
+            }
+        )))
     }
 
     /// Resolve accelerator selection once before choosing dtype or replica devices.
     pub fn resolve_device(self, torch: TorchDevice) -> Result<TorchDevice, BackendError> {
         match self {
             Self::Libtorch => torch.resolved(),
+            Self::PythonBackend => Ok(torch),
         }
     }
 
@@ -78,6 +115,7 @@ impl BackendKind {
     pub fn supports_replication(self, torch: TorchDevice) -> bool {
         match self {
             Self::Libtorch => torch == TorchDevice::Cuda,
+            Self::PythonBackend => false,
         }
     }
 
@@ -85,6 +123,7 @@ impl BackendKind {
     pub fn visible_device_count(self, torch: TorchDevice) -> Result<usize, BackendError> {
         match self {
             Self::Libtorch => torch.count(),
+            Self::PythonBackend => Ok(1),
         }
     }
 }
@@ -205,6 +244,7 @@ impl Backend {
             enable_fp8_dynamic,
             BackendKind::default(),
             TorchDevice::Auto,
+            PythonBackendConfig::default(),
         )
         .await
     }
@@ -220,6 +260,7 @@ impl Backend {
         enable_fp8_dynamic: bool,
         kind: BackendKind,
         torch_device: TorchDevice,
+        python: PythonBackendConfig,
     ) -> Result<Self, BackendError> {
         kind.ensure_compiled()?;
         let (backend_sender, backend_receiver) = mpsc::channel(8);
@@ -232,7 +273,9 @@ impl Backend {
             dense_path,
             device_id,
             enable_fp8_dynamic,
+            kind,
             torch_device,
+            python,
         )
         .await?;
         let radix_mlp_supported = backend.supports_radix_mlp();
@@ -469,7 +512,9 @@ async fn init_backend(
     dense_path: Option<String>,
     device_id: usize,
     enable_fp8_dynamic: bool,
+    kind: BackendKind,
     torch_device: TorchDevice,
+    python: PythonBackendConfig,
 ) -> Result<Box<dyn CoreBackend + Send>, BackendError> {
     if model_type == ModelType::Decision {
         if let Some(repo) = api_repo.as_ref() {
@@ -477,6 +522,42 @@ async fn init_backend(
                 .await
                 .map_err(|error| BackendError::WeightsNotFound(error.to_string()))?;
         }
+    }
+    if kind == BackendKind::PythonBackend {
+        #[cfg(feature = "python-backend")]
+        {
+            if let Some(repo) = api_repo.as_ref() {
+                if download_safetensors(repo.clone()).await.is_err() {
+                    tracing::warn!(
+                        "safetensors weights not found; falling back to pytorch_model.bin"
+                    );
+                    download_file(repo, "pytorch_model.bin")
+                        .await
+                        .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
+                }
+                download_dense_modules(repo, dense_path.clone())
+                    .await
+                    .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
+            }
+            let path = model_path.clone();
+            let dtype = dtype.to_string();
+            let backend = tokio::task::spawn_blocking(move || {
+                infinity_v3_backend_python::PythonBackend::new(
+                    &path, &dtype, model_type, device_id, python,
+                )
+            })
+            .await
+            .map_err(|error| {
+                BackendError::Start(format!(
+                    "Python backend initialization worker failed: {error}"
+                ))
+            })??;
+            return Ok(Box::new(backend));
+        }
+        #[cfg(not(feature = "python-backend"))]
+        return Err(BackendError::Start(
+            "Python backend was not compiled; build with --features python".into(),
+        ));
     }
     #[cfg(feature = "libtorch")]
     {
@@ -647,7 +728,10 @@ impl BackendThread {
             while let Some(cmd) = backend_receiver.blocking_recv() {
                 let start = Instant::now();
                 match cmd {
-                    BackendCommand::Shutdown => break,
+                    BackendCommand::Shutdown => {
+                        backend.shutdown();
+                        break;
+                    }
                     BackendCommand::Probe(batch, model_type, span, sender) => {
                         let _span = span.entered();
                         let result = backend.probe(batch, &model_type);
@@ -760,6 +844,7 @@ async fn download_decision_sidecars(api: &ApiRepo) -> Result<(), ApiError> {
     Ok(())
 }
 
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
     // Single file
     tracing::info!("Downloading `model.safetensors`");
@@ -772,14 +857,19 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     // Download and parse index file
     tracing::info!("Downloading `model.safetensors.index.json`");
     let index_file = api.get("model.safetensors.index.json").await?;
-    let index_file_string: String =
-        std::fs::read_to_string(index_file).expect("model.safetensors.index.json is corrupted");
-    let json: serde_json::Value = serde_json::from_str(&index_file_string)
-        .expect("model.safetensors.index.json is corrupted");
+    let index_file_string = std::fs::read_to_string(index_file)?;
+    let json: serde_json::Value = serde_json::from_str(&index_file_string).map_err(|error| {
+        ApiError::IoError(std::io::Error::new(std::io::ErrorKind::InvalidData, error))
+    })?;
 
     let weight_map = match json.get("weight_map") {
         Some(serde_json::Value::Object(map)) => map,
-        _ => panic!("model.safetensors.index.json is corrupted"),
+        _ => {
+            return Err(ApiError::IoError(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "model.safetensors.index.json is missing weight_map",
+            )))
+        }
     };
 
     let mut safetensors_filenames = std::collections::HashSet::new();
@@ -811,7 +901,7 @@ async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiErro
     Ok(safetensors_files)
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 enum ModuleType {
     // Output quantization is omitted when serving floating-point embeddings.
@@ -843,7 +933,7 @@ enum ModuleType {
     Transformer,
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 #[derive(Debug, Clone, Deserialize)]
 struct ModuleConfig {
     #[allow(dead_code)]
@@ -857,13 +947,13 @@ struct ModuleConfig {
     module_type: ModuleType,
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 async fn download_file(api: &ApiRepo, file_path: &str) -> Result<PathBuf, ApiError> {
     tracing::info!("Downloading `{}`", file_path);
     api.get(file_path).await
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 async fn parse_dense_paths_from_modules(
     modules_path: &PathBuf,
 ) -> Result<Vec<String>, std::io::Error> {
@@ -878,7 +968,7 @@ async fn parse_dense_paths_from_modules(
         .collect::<Vec<String>>())
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 #[instrument(skip_all)]
 pub async fn download_dense_modules(
     api: &ApiRepo,
@@ -958,7 +1048,7 @@ pub async fn download_dense_modules(
     }
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "python-backend"))]
 async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
     // Download `config.json` for the Dense module
     let config_file = format!("{}/config.json", dense_path);
@@ -1239,5 +1329,35 @@ mod completion_tests {
         assert!(commands.is_closed());
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
         assert_eq!(completed.load(Ordering::SeqCst), 3);
+    }
+}
+
+#[cfg(test)]
+mod backend_selection_tests {
+    use super::*;
+
+    #[test]
+    fn default_uses_compiled_backend() {
+        let default = BackendKind::default();
+        if cfg!(feature = "libtorch") {
+            assert_eq!(default, BackendKind::Libtorch);
+        } else if cfg!(feature = "python-backend") {
+            assert_eq!(default, BackendKind::PythonBackend);
+        } else {
+            assert!(default.ensure_compiled().is_err());
+        }
+    }
+
+    #[test]
+    fn unavailable_backend_reports_compiled_choices() {
+        for kind in [BackendKind::Libtorch, BackendKind::PythonBackend] {
+            let result = kind.ensure_compiled();
+            if kind.is_compiled() {
+                assert!(result.is_ok());
+            } else {
+                let error = result.unwrap_err().to_string();
+                assert!(error.contains(&format!("Requested backend '{}'", kind.as_str())));
+            }
+        }
     }
 }

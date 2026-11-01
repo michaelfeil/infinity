@@ -283,7 +283,9 @@ fn batch() -> Batch {
 fn values(e: &Embedding) -> Vec<f32> {
     match e {
         Embedding::Pooled(v) => v.clone(),
+        Embedding::Shared(v) => v.to_vec(),
         Embedding::All(v) => v.iter().flatten().copied().collect(),
+        Embedding::SharedAll(v) => v.iter().flat_map(|row| row.iter().copied()).collect(),
     }
 }
 

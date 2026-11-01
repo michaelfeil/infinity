@@ -1,11 +1,13 @@
 use super::tensor::Tensor;
 use crate::ErrorType;
+use infinity_v3_backend::SharedF32;
 use infinity_v3_core::input::{Message, MessageInput};
 use infinity_v3_core::tokenization::EncodingInput;
 use serde::de::{value::MapAccessDeserializer, MapAccess, SeqAccess, Visitor};
-use serde::{de, Deserialize, Deserializer, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::json;
 use std::fmt::Formatter;
+use std::ops::Deref;
 use utoipa::openapi::{RefOr, Schema};
 use utoipa::ToSchema;
 
@@ -695,10 +697,52 @@ pub(super) fn exclusive_input_schema(schema: RefOr<Schema>) -> RefOr<Schema> {
         .into()
 }
 
+#[derive(Debug)]
+pub(crate) struct FloatOutput(pub(crate) SharedF32);
+
+impl Serialize for FloatOutput {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.0.as_ref().serialize(serializer)
+    }
+}
+
+impl<'__s> ToSchema<'__s> for FloatOutput {
+    fn schema() -> (&'__s str, RefOr<Schema>) {
+        let items = utoipa::openapi::ObjectBuilder::new()
+            .schema_type(utoipa::openapi::SchemaType::Number)
+            .format(Some(utoipa::openapi::schema::SchemaFormat::KnownFormat(
+                utoipa::openapi::schema::KnownFormat::Float,
+            )))
+            .build();
+        (
+            "FloatOutput",
+            utoipa::openapi::ArrayBuilder::new()
+                .items(items)
+                .build()
+                .into(),
+        )
+    }
+}
+
+impl Deref for FloatOutput {
+    type Target = [f32];
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref()
+    }
+}
+
+impl AsRef<[f32]> for FloatOutput {
+    fn as_ref(&self) -> &[f32] {
+        self.0.as_ref()
+    }
+}
+
 #[derive(Serialize, ToSchema)]
 #[serde(untagged)]
 pub(crate) enum Embedding {
-    Float(Vec<f32>),
+    #[schema(value_type = Vec<f32>)]
+    Float(FloatOutput),
     All(AllEmbedding),
     Base64(String),
 }
@@ -706,7 +750,8 @@ pub(crate) enum Embedding {
 #[derive(Serialize, ToSchema)]
 #[serde(untagged)]
 pub(crate) enum AllEmbedding {
-    Float(Vec<Vec<f32>>),
+    #[schema(value_type = Vec<Vec<f32>>)]
+    Float(Vec<FloatOutput>),
     Base64(Vec<String>),
     Tensor(Tensor),
 }

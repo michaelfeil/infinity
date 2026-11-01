@@ -4,6 +4,7 @@ members = [
     "backends",
     "backends/core",
     "backends/libtorch",
+    "backends/python",
     "core",
     "router",
 ]

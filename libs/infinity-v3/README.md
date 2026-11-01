@@ -444,6 +444,7 @@ server's `/docs`, [decision inputs](docs/cli.md#structured-decision-inputs) and
 - [Performance and Radix MLP](docs/performance.md)
 - [CLI and deployment options](docs/cli.md)
 - [Native LibTorch backend](docs/libtorch-backend.md)
+- [Python backend plugins](docs/python-backend.md)
 - [Model coverage and limitations](docs/libtorch-model-coverage.md)
 - [API and documentation index](docs/README.md)
 - [Licensing](LICENSING.md): Infinity Restricted MIT License 1.0, with retained third-party and earlier grants
