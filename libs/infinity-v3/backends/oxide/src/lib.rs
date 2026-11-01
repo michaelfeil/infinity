@@ -1240,6 +1240,32 @@ fn work_key(b: &Batch) -> Result<WorkKey, BackendError> {
         bucketed(output::rows(b)?, 1)?,
     ))
 }
+/// Pure arena admission. Existing arenas already proved their capacity valid;
+/// only a new size class needs checked geometry before context or reservation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct WorkspacePreflight {
+    key: WorkKey,
+    reuse_active: bool,
+    requested_bytes: Option<usize>,
+}
+fn preflight_workspace(
+    batch: &Batch,
+    active_fits: impl FnOnce(WorkKey) -> bool,
+    bytes_for: impl FnOnce(WorkKey) -> Result<usize, BackendError>,
+) -> Result<WorkspacePreflight, BackendError> {
+    let key = work_key(batch)?;
+    let reuse_active = active_fits(key);
+    let requested_bytes = if reuse_active {
+        None
+    } else {
+        Some(bytes_for(key)?)
+    };
+    Ok(WorkspacePreflight {
+        key,
+        reuse_active,
+        requested_bytes,
+    })
+}
 /// Dense scratch follows pooled selection capacity only. A raw-only request
 /// (`pooled_rows == 0`) retains any existing allocation without executing or
 /// growing it, and pooled growth is independent of the backbone key.
@@ -1789,6 +1815,14 @@ impl Engine {
         max_length: usize,
         lease: &mut HostIoLease,
     ) -> Result<(), EnqueueError> {
+        // Reject pure checked-size failures before descriptor changes, context
+        // binding, arena initialization, or this request's lease.begin().
+        let workspace = preflight_workspace(
+            b,
+            |key| self.workspace.as_ref().is_some_and(|work| work.fits(key)),
+            |key| self.model.workspace_bytes(key),
+        )
+        .map_err(EnqueueError::PreflightRejected)?;
         // Descriptor-only preflight precedes arena allocation/zeroing. The
         // actual-M down metadata is prepared later, after the reserved arena
         // exposes every scratch/weight/bias pointer but before lease.begin.
@@ -1807,7 +1841,7 @@ impl Engine {
         #[cfg(test)]
         bump_engine_context_bind();
         self.context.bind_to_thread().map_err(infer)?;
-        self.enqueue_inner(b, pool, max_length, lease)
+        self.enqueue_inner(b, pool, max_length, lease, workspace)
     }
     fn enqueue_inner(
         &mut self,
@@ -1815,6 +1849,7 @@ impl Engine {
         pool: &Pool,
         max_length: usize,
         lease: &mut HostIoLease,
+        workspace: WorkspacePreflight,
     ) -> Result<(), EnqueueError> {
         metrics::counter!("oxide_arena_requests_total").increment(1);
         record_live_arena_bytes();
@@ -1826,13 +1861,13 @@ impl Engine {
         let pooled_rows = b.pooled_indices.len();
         let raw_rows = output::raw_rows(b)?;
         let host_elements = geometry.host_elements(b)?;
-        let plan = work_key(b)?;
+        let plan = workspace.key;
         let host_before = lease.bytes()?;
         let host_after = lease
             .required_bytes(plan, host_elements)?
             .unwrap_or(host_before);
         let mut pinned = self.io.pinned_after(host_before, host_after)?;
-        let reuse_active = self.workspace.as_ref().is_some_and(|w| w.fits(plan));
+        let reuse_active = workspace.reuse_active;
         let mut next = None;
         let workspace_bytes = if reuse_active {
             self.workspace
@@ -1847,7 +1882,9 @@ impl Engine {
                 .take_best_fit(|key| capacity_fits(*key, plan, 0));
             match next.as_ref() {
                 Some(work) => work.bytes(),
-                None => self.model.workspace_bytes(plan)?,
+                None => workspace
+                    .requested_bytes
+                    .ok_or_else(|| infer("Missing preflight workspace geometry"))?,
             }
         };
         // Dense scratch is sized by pooled selections only. Raw token rows may
@@ -3539,6 +3576,79 @@ mod tests {
             gate_bytes - dense_bytes,
             32 * 2 * 3072 * size_of::<half::bf16>()
         );
+    }
+
+    #[test]
+    fn oversized_workspace_preflight_rejects_without_retiring_the_active_shape() {
+        use std::cell::Cell;
+        let mut config = config();
+        config.hidden_size = 768;
+        config.intermediate_size = 3072;
+        config.num_attention_heads = 12;
+        config.max_position_embeddings = 514;
+        config.vocab_size = 30527;
+        let healthy = batch();
+        let active_key = work_key(&healthy).unwrap();
+        let active_bytes = Work::<Bf16>::allocation_bytes(active_key, &config).unwrap();
+        let estimates = Cell::new(0);
+        let estimate = |key| {
+            estimates.set(estimates.get() + 1);
+            Work::<Bf16>::allocation_bytes(key, &config)
+        };
+        let fits = |key| capacity_fits(active_key, key, active_bytes);
+        let before = preflight_workspace(&healthy, fits, estimate).unwrap();
+        assert!(before.reuse_active);
+        assert_eq!(before.requested_bytes, None);
+        assert_eq!(
+            estimates.get(),
+            0,
+            "hot admission does not re-estimate geometry"
+        );
+
+        // Actual rows fit the u32 intermediate count; their power-of-two
+        // retained capacity does not. Every sequence stays within 512 tokens.
+        let tokens = u32::MAX as usize / config.intermediate_size;
+        let mut oversized = healthy.clone();
+        oversized.input_ids = vec![1; tokens];
+        oversized.token_type_ids = vec![0; tokens];
+        oversized.position_ids = (0..tokens).map(|i| (i % 512) as u32).collect();
+        oversized.cumulative_seq_lengths = (0..tokens).step_by(512).map(|i| i as u32).collect();
+        oversized.cumulative_seq_lengths.push(tokens as u32);
+        oversized.pooled_indices = vec![0];
+        oversized.raw_indices.clear();
+        oversized.max_length = 512;
+        validate(&oversized, &config).unwrap();
+        assert!(tokens * config.intermediate_size <= u32::MAX as usize);
+        assert!(tokens.next_power_of_two() * config.intermediate_size > u32::MAX as usize);
+        let error = preflight_workspace(&oversized, fits, estimate)
+            .map_err(EnqueueError::PreflightRejected)
+            .unwrap_err();
+        assert!(matches!(error, EnqueueError::PreflightRejected(_)));
+        assert!(!error.poisons());
+        assert_eq!(estimates.get(), 1);
+        let after = preflight_workspace(&healthy, fits, estimate).unwrap();
+        assert_eq!(
+            before, after,
+            "rejected growth preserves the exact active admission"
+        );
+        assert_eq!(estimates.get(), 1, "recovery remains on the hot path");
+    }
+
+    #[test]
+    fn cold_workspace_preflight_carries_the_single_checked_estimate() {
+        let config = config();
+        let request = batch();
+        let expected_key = work_key(&request).unwrap();
+        let expected_bytes = Work::<Bf16>::allocation_bytes(expected_key, &config).unwrap();
+        let cold = preflight_workspace(
+            &request,
+            |_| false,
+            |key| Work::<Bf16>::allocation_bytes(key, &config),
+        )
+        .unwrap();
+        assert_eq!(cold.key, expected_key);
+        assert!(!cold.reuse_active);
+        assert_eq!(cold.requested_bytes, Some(expected_bytes));
     }
 
     fn config() -> BertConfig {
