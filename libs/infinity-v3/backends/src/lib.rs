@@ -546,10 +546,10 @@ async fn init_backend(
         let dtype = oxide_dtype(dtype)?;
         if !matches!(
             &model_type,
-            ModelType::Embedding(Pool::Cls | Pool::Mean | Pool::LastToken)
+            ModelType::Embedding(Pool::Cls | Pool::Mean | Pool::LastToken) | ModelType::Classifier
         ) {
             return Err(BackendError::Start(
-                "The plain CUDA backend currently supports pooled BERT embeddings only".into(),
+                "The plain CUDA backend supports dense embeddings and BF16 BERT classifiers".into(),
             ));
         }
         let dense_paths = if let Some(repo) = api_repo.as_ref() {
@@ -981,6 +981,51 @@ mod startup_tests {
 
     #[cfg(feature = "oxide")]
     #[test]
+    fn oxide_classifier_facade_reaches_task_admission_and_preserves_dtype_rejection() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "oxide-classifier-facade-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        // A valid ordinary BERT shape that is deliberately outside the admitted
+        // sequence classifier geometry reaches task admission without weights/CUDA.
+        std::fs::write(path.join("config.json"), br#"{"model_type":"bert","architectures":["BertForSequenceClassification"],"hidden_size":768,"intermediate_size":3072,"num_hidden_layers":12,"num_attention_heads":12,"vocab_size":30522,"max_position_embeddings":512,"type_vocab_size":2,"layer_norm_eps":1e-12,"hidden_act":"gelu","position_embedding_type":"absolute"}"#).unwrap();
+        for (dtype, expected) in [
+            (DType::Float16, "classifiers require bfloat16"),
+            (
+                DType::Bfloat16,
+                "unsupported BertForSequenceClassification classifier geometry",
+            ),
+        ] {
+            let result = runtime.block_on(init_backend(
+                path.clone(),
+                None,
+                dtype,
+                ModelType::Classifier,
+                None,
+                0,
+                false,
+                BackendKind::Oxide,
+                TorchDevice::Cuda,
+            ));
+            let error = result
+                .err()
+                .expect("unsupported classifier must reject without CUDA");
+            assert!(matches!(error, BackendError::Start(_)));
+            assert!(error.to_string().contains(expected), "{error}");
+        }
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[cfg(feature = "oxide")]
+    #[test]
     fn oxide_rejects_unsupported_options_before_loading_checkpoint_or_driver() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -1012,11 +1057,11 @@ mod startup_tests {
             ),
             (
                 DType::Bfloat16,
-                ModelType::Classifier,
+                ModelType::Embedding(Pool::Splade),
                 None,
                 false,
                 TorchDevice::Cuda,
-                "pooled BERT embeddings",
+                "dense embeddings",
             ),
         ] {
             let result = runtime.block_on(init_backend(

@@ -286,15 +286,26 @@ pub(crate) struct BertConfig {
     // The encoder executor consumes this once it is integrated into lib.rs.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) recipe: EncoderRecipe,
+    pub(crate) architectures: Vec<String>,
     hidden_act: String,
     position_embedding_type: String,
     is_decoder: bool,
     add_cross_attention: bool,
 }
 impl BertConfig {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn load(path: &Path) -> Result<Self, BackendError> {
+        Self::load_admitted(path, false)
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn load_classifier(path: &Path) -> Result<Self, BackendError> {
+        Self::load_admitted(path, true)
+    }
+
+    fn load_admitted(path: &Path, classifier: bool) -> Result<Self, BackendError> {
         let raw: RawEncoderConfig = read_json(&path.join("config.json"))?;
-        Self::from_raw(raw)
+        Self::from_raw_admitted(raw, classifier)
     }
 
     /// Admit the single FP16 encoder family implemented by the native H384
@@ -348,6 +359,7 @@ impl BertConfig {
         configured_type_vocab_size: Option<usize>,
     ) -> Self {
         Self {
+            architectures: Vec::new(),
             hidden_size,
             intermediate_size,
             num_attention_heads,
@@ -389,6 +401,7 @@ impl BertConfig {
         rope_positions: usize,
     ) -> Self {
         Self {
+            architectures: Vec::new(),
             hidden_size,
             intermediate_size,
             num_attention_heads,
@@ -430,6 +443,7 @@ impl BertConfig {
         layer_norm_eps: f64,
     ) -> Self {
         Self {
+            architectures: Vec::new(),
             hidden_size,
             intermediate_size,
             num_attention_heads,
@@ -454,13 +468,31 @@ impl BertConfig {
         }
     }
     fn from_raw(raw: RawEncoderConfig) -> Result<Self, BackendError> {
+        Self::from_raw_admitted(raw, false)
+    }
+
+    fn from_raw_admitted(raw: RawEncoderConfig, classifier: bool) -> Result<Self, BackendError> {
         let family = EncoderFamily::from_model_type(&raw.model_type).ok_or_else(|| {
             start(format!(
                 "unsupported encoder model_type {}; expected bert, roberta, xlm-roberta, camembert, distilbert or GTE NewModel",
                 raw.model_type
             ))
         })?;
-        if let Some(architectures) = raw.architectures.as_deref() {
+        if classifier {
+            let admitted = family == EncoderFamily::Bert
+                && raw.architectures.as_deref().is_some_and(|architectures| {
+                    architectures.len() == 1
+                        && matches!(
+                            architectures.first().map(String::as_str),
+                            Some("BertForSequenceClassification" | "BertForTokenClassification")
+                        )
+                });
+            if !admitted {
+                return Err(start(
+                    "classifier admission requires bert with one BertForSequenceClassification or BertForTokenClassification architecture",
+                ));
+            }
+        } else if let Some(architectures) = raw.architectures.as_deref() {
             if let Some(architecture) = architectures
                 .iter()
                 .find(|architecture| !family.accepts_architecture(architecture))
@@ -607,6 +639,7 @@ impl BertConfig {
             },
             family,
             recipe,
+            architectures: raw.architectures.unwrap_or_default(),
             hidden_act,
             position_embedding_type,
             is_decoder: raw.is_decoder.unwrap_or(false),
@@ -1760,10 +1793,26 @@ fn linear(
 }
 impl BertWeights {
     pub(crate) fn load(path: &Path) -> Result<Self, BackendError> {
-        let mut config = BertConfig::load(path)?;
+        Self::load_admitted(path, false).map(|(weights, _)| weights)
+    }
+
+    /// Task-specific classifier backbone admission. The returned checkpoint is
+    /// reused by the classifier-head loader so the strict head metadata and the
+    /// backbone are validated from one opened shard set.
+    pub(crate) fn load_classifier(path: &Path) -> Result<(Self, Checkpoint), BackendError> {
+        let (weights, checkpoint) = Self::load_admitted(path, true)?;
+        let checkpoint = checkpoint.ok_or_else(|| start("missing classifier checkpoint"))?;
+        Ok((weights, checkpoint))
+    }
+
+    fn load_admitted(
+        path: &Path,
+        classifier: bool,
+    ) -> Result<(Self, Option<Checkpoint>), BackendError> {
+        let mut config = BertConfig::load_admitted(path, classifier)?;
         validate_modules(path)?;
         if config.family == EncoderFamily::Gte {
-            return crate::rotary_encoder_model::load(path, config);
+            return crate::rotary_encoder_model::load(path, config).map(|weights| (weights, None));
         }
         let checkpoint = Checkpoint::open(path)?;
         let names = checkpoint.names().cloned().collect::<BTreeSet<_>>();
@@ -1868,7 +1917,7 @@ impl BertWeights {
                 output_beta: take(&mut weights, &format!("{p}.output.LayerNorm.bias"))?,
             });
         }
-        Ok(Self {
+        let weights = Self {
             word: take(&mut weights, "embeddings.word_embeddings.weight")?,
             position: take(&mut weights, "embeddings.position_embeddings.weight")?,
             token_type,
@@ -1876,7 +1925,8 @@ impl BertWeights {
             beta: take(&mut weights, "embeddings.LayerNorm.bias")?,
             config,
             layers,
-        })
+        };
+        Ok((weights, classifier.then_some(checkpoint)))
     }
 }
 

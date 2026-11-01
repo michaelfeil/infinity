@@ -206,6 +206,14 @@ fn check_native_m1_prepared(
 }
 
 impl Blas {
+    pub(crate) fn stream(&self) -> &Stream {
+        &self.stream
+    }
+
+    pub(crate) fn context(&self) -> &Arc<Context> {
+        &self.context
+    }
+
     pub(crate) fn new(context: Arc<Context>, stream: Arc<Stream>) -> Result<Self, BackendError> {
         context.bind_to_thread().map_err(super::start)?;
         // CUDA 13 is required by the pinned cuda-core headers/runtime.

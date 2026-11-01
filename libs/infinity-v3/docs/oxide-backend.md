@@ -29,7 +29,8 @@ variant of these families.
 - Existing HTTP endpoints, tokenizer workers, batching interface, response
   encodings, and request-controlled normalization. When `modules.json` is present,
   validated BF16 Dense projections are supported in the ordered module chain.
-  Classification, SPLADE, quantized compute and other serving dtypes fail explicitly.
+  Classifiers are limited to the BF16 configurations below. SPLADE, quantized
+  compute and other serving dtypes fail explicitly.
 
 | Typed executor | Accepted configuration |
 | --- | --- |
@@ -48,6 +49,13 @@ Explicit `--dtype float16` admits BERT MiniLM with hidden width 384, six layers,
 LayerNorm epsilon `1e-12`. It supports all three pools and raw/mixed output;
 Dense modules and other FP16 configurations are rejected. FP16 uses the same
 typed encoder loop and workspace ownership as BF16, without CUDA graphs.
+
+BF16 classifier admission covers MS MARCO MiniLM-L6 (H384, one logit) and
+DSLIM BERT-base NER (H768, nine logits), with sequence and token predictions
+for both checkpoints. Optional BERT pooler weights are honored for sequence
+predictions. Other classifier configurations, MLP heads, Dense modules and
+FP16 classifiers are rejected. These paths have native output and lifecycle
+qualification; performance remains workload-specific.
 
 Decoder loading also rejects sliding windows, partial rotary dimensions, expert,
 recurrent, media and quantization modifiers. Accepted Model/ForCausalLM checkpoint
@@ -76,8 +84,9 @@ tensor extents: actual token counts, packed sequence boundaries, and pooled
 selections drive the kernels. Inputs and metadata use a compact H2D copy, and
 only actual pooled rows are copied D2H. There is no maximum-length allocation or
 cache dimension. Unused capacity is neither transferred nor treated as a sequence.
-Inactive workspaces are evicted LRU under the count limit and a 256 MiB budget
-covering active and cached GPU arenas plus both pinned slots. Model weights,
+Inactive workspaces are evicted LRU under the count limit and a 256 MiB retention
+budget. A required active arena may exceed that budget and evicts inactive
+arenas; pinned input/output slots remain separately admitted. Model weights,
 immutable RoPE tables and driver/provider metadata sit outside that budget.
 An oversized GPU arena empties the inactive cache but remains available to
 ordered submissions with the same token capacity and sufficient boundary and
@@ -225,11 +234,12 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles all 64 Rust kernels separately for `sm_90`,
+`device/build.sh` compiles all 68 Rust kernels separately for `sm_90`,
 `sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
 symbols, and writes a manifest recording source/artifact hashes, target,
 compiler revision, and commands. Every architecture is natively compiled from
-Rust for all 64 exports, including seven FP16 MiniLM primitives. The original nine BERT kernels remain byte-identical
+Rust for all 68 exports, including seven FP16 MiniLM and four classifier
+primitives. The original nine BERT kernels remain byte-identical
 on all three targets. Additional exports provide rounded embedding/residual
 LayerNorm, native width-768/1024 normalization arithmetic, ordinary or rounded RMSNorm with an optional residual output,
 NeoX/interleaved RoPE with separate-product or fused arithmetic, staged or FP32
@@ -607,7 +617,7 @@ not a full MTEB evaluation or a general accuracy guarantee.
 
 The typed catalog above does not replace the full LibTorch catalog. MPNet,
 DeBERTa, other decoder families, unsupported position/attention recipes,
-recurrent/MoE state, media inputs and task heads remain unsupported.
+recurrent/MoE state, media inputs and other task heads remain unsupported.
 FA4 local/window profiles and standalone device
 primitives do not enable those model contracts. CPU execution is also outside
 this CUDA backend. See [LibTorch model coverage](libtorch-model-coverage.md) for

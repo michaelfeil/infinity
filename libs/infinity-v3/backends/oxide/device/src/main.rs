@@ -7,6 +7,8 @@
 
 use cuda_device::{convert, cuda_module, kernel, thread, warp, DynamicSharedArray, SharedArray};
 mod aten_embedding;
+mod classifier;
+mod classifier_norm384;
 mod decoder;
 mod dense;
 mod encoder_f16;
@@ -1465,6 +1467,27 @@ mod kernels {
         unsafe { crate::silu_vector8::silu_mul_bf16_vector8_native(input, out, rows, width) };
     }
 
+    /// Exact native classifier H384 embedding norm; 4 rows/128-thread CTA.
+    #[kernel]
+    pub unsafe fn infinity_classifier_embedding_norm_384_exact(
+        ids: *const u32, positions: *const u32, types: *const u32,
+        word: *const u16, position: *const u16, token_type: *const u16,
+        gamma: *const u16, beta: *const u16, out: *mut u16,
+        tokens: u32, hidden: u32, eps: f32,
+    ) {
+        unsafe { crate::classifier_norm384::embedding_norm_384_exact(ids,positions,types,word,position,token_type,gamma,beta,out,tokens,hidden,eps) };
+    }
+
+    /// Exact native classifier H384 residual norm; 4 rows/128-thread CTA.
+    #[kernel]
+    pub unsafe fn infinity_classifier_layer_norm_384_exact(
+        input: *const u16, residual: *const u16, bias: *const u16,
+        gamma: *const u16, beta: *const u16, out: *mut u16,
+        rows: u32, hidden: u32, eps: f32,
+    ) {
+        unsafe { crate::classifier_norm384::layer_norm_384_exact(input,residual,bias,gamma,beta,out,rows,hidden,eps) };
+    }
+
     /// Word-only BF16 gather; grid=ceil(tokens*width/256), block=256.
     #[kernel]
     pub unsafe fn infinity_embedding_gather(
@@ -1531,6 +1554,31 @@ mod kernels {
     #[kernel]
     pub unsafe fn infinity_dense_tanh_bf16_inplace(input: *mut u16, count: u32) {
         unsafe { crate::dense::tanh_bf16_inplace(input, count) };
+    }
+
+    /// Seed every logical BF16 output element from the bias vector.
+    /// Grid=ceil(rows*width/256), block=256.
+    #[kernel]
+    pub unsafe fn infinity_classifier_bias_bf16(
+        bias: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::classifier::bias_seed_bf16(bias, out, rows, width) };
+    }
+
+    /// Copy each sequence's first packed BF16 row into contiguous output rows.
+    /// Grid=ceil(rows*width/256), block=256; exact 16-bit copies only.
+    #[kernel]
+    pub unsafe fn infinity_classifier_gather_first_bf16(
+        source: *const u16,
+        bounds: *const u32,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::classifier::gather_first_rows_bf16(source, bounds, out, rows, width) };
     }
 
     /// Widen selected BF16 rows to FP32; grid=ceil(count*width/256).

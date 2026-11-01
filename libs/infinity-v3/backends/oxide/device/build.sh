@@ -60,6 +60,8 @@ symbols = sorted(symbols + [
     "infinity_pool_f16", "infinity_qkv_f16", "infinity_f16_to_f32",
 ])
 
+symbols = sorted(symbols + ["infinity_classifier_bias_bf16", "infinity_classifier_gather_first_bf16", "infinity_classifier_embedding_norm_384_exact", "infinity_classifier_layer_norm_384_exact"])
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -88,6 +90,8 @@ manifest = {
 }
 # Hash the additive F16 module without rewriting the phase1 source list above.
 manifest["sources"]["src/encoder_f16.rs"] = digest(root / "src/encoder_f16.rs")
+manifest["sources"]["src/classifier.rs"] = digest(root / "src/classifier.rs")
+manifest["sources"]["src/classifier_norm384.rs"] = digest(root / "src/classifier_norm384.rs")
 manifest["sources"] = dict(sorted(manifest["sources"].items()))
 output.mkdir(parents=True, exist_ok=True)
 # Carry the newly adapted primitive's attribution with standalone bundles.

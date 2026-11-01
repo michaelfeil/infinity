@@ -708,6 +708,14 @@ impl LtProvider {
         self.core.context.bind_to_thread().map_err(super::infer)
     }
 
+    pub(crate) fn stream(&self) -> &Stream {
+        &self.core.stream
+    }
+
+    pub(crate) fn context(&self) -> &Arc<Context> {
+        &self.core.context
+    }
+
     // Strided entry point retained for operator qualification and future callers.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn prepare_bias<E: Element>(

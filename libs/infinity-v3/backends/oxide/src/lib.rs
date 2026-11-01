@@ -1,7 +1,11 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 //! Dense encoder/decoder executors with oxide-compiled Rust kernels and BF16
 //! cuBLASLt projections.
+mod biased_linear;
 mod cache;
+mod classifier_head;
+#[cfg(test)]
+mod classifier_primitives;
 mod cublas;
 mod decoder;
 mod decoder_model;
@@ -32,6 +36,11 @@ mod staging;
 pub mod tensor;
 mod upload;
 
+use classifier_head::{
+    canonicalize_indices, pack_predictions, pack_token_predictions, ClassifierHead,
+    ClassifierHeadHost, ClassifierReadout, ClassifierScratchBuffers, ClassifierScratchLayout,
+    ReadoutMode,
+};
 use cublas::Blas;
 use cuda_core::{launch_kernel, Context, DeviceBuffer, Function, Stream};
 use decoder_model::{DecoderConfig, DecoderFamily, DecoderWeights};
@@ -69,6 +78,13 @@ use upload::{UploadElement, WeightUploader};
 static LIVE_ARENA_BYTES: AtomicUsize = AtomicUsize::new(0);
 fn record_live_arena_bytes() {
     metrics::gauge!("oxide_arena_live_bytes").set(LIVE_ARENA_BYTES.load(Ordering::Relaxed) as f64);
+}
+
+// Retained buffers outside a charged Work owner remain physical live bytes.
+fn record_uncharged_retained_bytes(bytes: usize) {
+    LIVE_ARENA_BYTES.fetch_add(bytes, Ordering::Relaxed);
+    record_live_arena_bytes();
+    metrics::counter!("oxide_arena_retained_bytes_total").increment(bytes as u64);
 }
 
 fn start(error: impl std::fmt::Display) -> BackendError {
@@ -447,6 +463,8 @@ impl Kernels {
             }
             Some(limit)
         };
+        let exact_classifier_384 =
+            config.hidden_size == 384 && classifier_head::is_classifier_config(config);
         let exact_768_embedding =
             config.hidden_size == 768 && config.recipe.embedding == NormArithmetic::ExactBiased;
         let exact_768_norm =
@@ -461,6 +479,9 @@ impl Kernels {
         let aten_768_embedding =
             config.hidden_size == 768 && config.recipe.embedding == NormArithmetic::AtenEmbedding;
         let embedding_name = match config.recipe.embedding {
+            NormArithmetic::ExactBiased if exact_classifier_384 => {
+                "infinity_classifier_embedding_norm_384_exact"
+            }
             NormArithmetic::ExactWordTypeBiased if config.hidden_size == 768 => {
                 "infinity_embedding_word_type_norm_768_exact"
             }
@@ -490,6 +511,9 @@ impl Kernels {
             NormArithmetic::RoundedAddBeforeStats => "infinity_embedding_norm_rounded",
         };
         let norm_name = match config.recipe.residual {
+            NormArithmetic::ExactBiased if exact_classifier_384 => {
+                "infinity_classifier_layer_norm_384_exact"
+            }
             NormArithmetic::ExactBiased if exact_768_norm => "infinity_layer_norm_768_exact_vector",
             NormArithmetic::RoundedAddBeforeStats if rounded_512_norm => {
                 "infinity_layer_norm_512_rounded_native"
@@ -537,7 +561,8 @@ impl Kernels {
         };
         Ok(Self {
             raw_cast,
-            embedding_384: if config.hidden_size == 384
+            embedding_384: if !exact_classifier_384
+                && config.hidden_size == 384
                 && config.recipe.embedding == NormArithmetic::ExactBiased
             {
                 Some(
@@ -548,7 +573,8 @@ impl Kernels {
             } else {
                 None
             },
-            norm_384: if config.hidden_size == 384
+            norm_384: if !exact_classifier_384
+                && config.hidden_size == 384
                 && config.recipe.residual == NormArithmetic::ExactBiased
             {
                 Some(
@@ -562,12 +588,12 @@ impl Kernels {
             mean_pool: module.load_function("infinity_mean_pool").map_err(start)?,
             embedding: module.load_function(embedding_name).map_err(start)?,
             norm: module.load_function(norm_name).map_err(start)?,
-            embedding_geometry: if exact_768_embedding {
+            embedding_geometry: if exact_768_embedding || exact_classifier_384 {
                 H768_GEOMETRY
             } else {
                 GENERIC_GEOMETRY
             },
-            norm_geometry: if exact_768_norm {
+            norm_geometry: if exact_768_norm || exact_classifier_384 {
                 H768_GEOMETRY
             } else {
                 GENERIC_GEOMETRY
@@ -797,11 +823,14 @@ enum DownPolicy {
     NativeDefault,
     Plain,
     Biased,
+    ClassifierNativeDefault,
 }
 
 fn down_policy(c: &BertConfig) -> DownPolicy {
     if c.family == EncoderFamily::Gte {
         DownPolicy::NativeDefault
+    } else if classifier_head::is_classifier_config(c) {
+        DownPolicy::ClassifierNativeDefault
     } else if c.family == EncoderFamily::Nomic {
         DownPolicy::Plain
     } else {
@@ -817,6 +846,7 @@ enum DownInvocation {
 
 enum PreparedDown<E: UploadElement> {
     NativeDefault {
+        lt_for_single_row: bool,
         m1: Box<math::LinearPlan<E>>,
         lt_native: Box<LtPlan<E>>,
         invocations: Vec<Option<DownInvocation>>,
@@ -827,19 +857,22 @@ enum PreparedDown<E: UploadElement> {
 impl<E: UploadElement> PreparedDown<E> {
     fn new(provider: &LtProvider, c: &BertConfig) -> Result<Self, BackendError> {
         Ok(match down_policy(c) {
-            DownPolicy::NativeDefault => Self::NativeDefault {
-                m1: Box::new(
-                    math::LinearPlan::<E>::contiguous(1, c.intermediate_size, c.hidden_size)
-                        .map_err(infer)?,
-                ),
-                lt_native: Box::new(provider.prepare_native_default_bias_shape::<E>(
-                    c.intermediate_size,
-                    c.hidden_size,
-                    NATIVE_DEFAULT_SEED_ROWS,
-                )?),
-                invocations: vec![None; c.num_hidden_layers],
-                pending: Box::<lt::NativeDefaultPending>::default(),
-            },
+            DownPolicy::NativeDefault | DownPolicy::ClassifierNativeDefault => {
+                Self::NativeDefault {
+                    lt_for_single_row: down_policy(c) == DownPolicy::ClassifierNativeDefault,
+                    m1: Box::new(
+                        math::LinearPlan::<E>::contiguous(1, c.intermediate_size, c.hidden_size)
+                            .map_err(infer)?,
+                    ),
+                    lt_native: Box::new(provider.prepare_native_default_bias_shape::<E>(
+                        c.intermediate_size,
+                        c.hidden_size,
+                        NATIVE_DEFAULT_SEED_ROWS,
+                    )?),
+                    invocations: vec![None; c.num_hidden_layers],
+                    pending: Box::<lt::NativeDefaultPending>::default(),
+                }
+            }
             DownPolicy::Plain => Self::Projection(ProjectionPlan::<E>::plain(
                 c.intermediate_size,
                 c.hidden_size,
@@ -900,6 +933,7 @@ impl<E: UploadElement> PreparedDown<E> {
         index: usize,
     ) -> Result<(), ShapeError> {
         let Self::NativeDefault {
+            lt_for_single_row,
             m1,
             lt_native,
             invocations,
@@ -910,7 +944,7 @@ impl<E: UploadElement> PreparedDown<E> {
         };
         let bias =
             bias.ok_or_else(|| ShapeError::Fatal(infer("GTE down M1 requires a bias buffer")))?;
-        let invocation = if tokens == 1 {
+        let invocation = if tokens == 1 && !*lt_for_single_row {
             let blas =
                 blas.ok_or_else(|| ShapeError::Fatal(infer("GTE down M1 requires plain cuBLAS")))?;
             DownInvocation::M1(
@@ -952,6 +986,7 @@ unsafe fn enqueue_down<E: UploadElement>(
 ) -> Result<(), ShapeError> {
     match prepared {
         PreparedDown::NativeDefault {
+            lt_for_single_row,
             m1,
             lt_native,
             invocations,
@@ -968,7 +1003,7 @@ unsafe fn enqueue_down<E: UploadElement>(
                     ))
                 })?;
             match invocation {
-                DownInvocation::M1(plan) if tokens == 1 => {
+                DownInvocation::M1(plan) if tokens == 1 && !*lt_for_single_row => {
                     let blas = blas.ok_or_else(|| {
                         ShapeError::Fatal(infer("GTE down M1 requires plain cuBLAS"))
                     })?;
@@ -976,7 +1011,7 @@ unsafe fn enqueue_down<E: UploadElement>(
                     // contract covers the revalidated M1 invocation.
                     unsafe { blas.launch_native_m1(m1, plan, x, weight, bias, output, stream) }
                 }
-                DownInvocation::Lt(plan) if tokens != 1 => {
+                DownInvocation::Lt(plan) if tokens != 1 || *lt_for_single_row => {
                     // SAFETY: the caller's bound-context and retained-buffer
                     // contract covers the preselected invocation.
                     unsafe {
@@ -1129,9 +1164,18 @@ impl ExecutableModel {
         provider: &LtProvider,
         batch: &Batch,
         pool: &Pool,
+        readout_mode: Option<ReadoutMode>,
     ) -> Result<(), ShapeError> {
         match self {
-            Self::Encoder(model) => model.plans.set_rows(provider, batch.input_ids.len()),
+            Self::Encoder(model) => {
+                model.plans.set_rows(provider, batch.input_ids.len())?;
+                match (readout_mode, &model.classifier) {
+                    (Some(mode), Some(classifier)) => {
+                        classifier.preflight(provider, batch, mode).map(|_| ())
+                    }
+                    _ => Ok(()),
+                }
+            }
             Self::EncoderF16(model) => model.plans.set_rows(provider, batch.input_ids.len()),
             Self::Modern(model) => model.preflight(batch.input_ids.len()),
             Self::Decoder(model) => model.preflight(provider, batch, pool),
@@ -1191,9 +1235,26 @@ impl ExecutableModel {
             _ => Ok(()),
         }
     }
+    fn classifier_layout(
+        &self,
+        key: WorkKey,
+    ) -> Result<Option<ClassifierScratchLayout>, BackendError> {
+        match self {
+            Self::Encoder(model) => model
+                .classifier
+                .as_ref()
+                .map(|classifier| classifier.scratch_layout(key))
+                .transpose(),
+            Self::EncoderF16(_) | Self::Modern(_) | Self::Decoder(_) => Ok(None),
+        }
+    }
     fn workspace_bytes(&self, key: WorkKey) -> Result<usize, BackendError> {
         match self {
-            Self::Encoder(model) => Work::<Bf16>::allocation_bytes(key, &model.config),
+            Self::Encoder(model) => Work::<Bf16>::allocation_bytes_with_classifier(
+                key,
+                &model.config,
+                self.classifier_layout(key)?,
+            ),
             Self::EncoderF16(model) => Work::<F16>::allocation_bytes(key, &model.config),
             Self::Modern(model) => Work::<Bf16>::allocation_bytes(key, &model.config.geometry),
             Self::Decoder(model) => decoder::DecoderWork::allocation_bytes(key, &model.config),
@@ -1201,10 +1262,11 @@ impl ExecutableModel {
     }
     fn workspace(&self, stream: Arc<Stream>, key: WorkKey) -> Result<Workspace, BackendError> {
         match self {
-            Self::Encoder(model) => Ok(Workspace::Encoder(Work::<Bf16>::new(
+            Self::Encoder(model) => Ok(Workspace::Encoder(Work::<Bf16>::new_with_classifier(
                 stream,
                 &model.config,
                 key,
+                self.classifier_layout(key)?,
             )?)),
             Self::EncoderF16(model) => Ok(Workspace::EncoderF16(Work::<F16>::new(
                 stream,
@@ -1223,6 +1285,12 @@ impl ExecutableModel {
             )?)),
         }
     }
+    fn classifier_readout(&self) -> Option<ClassifierReadout> {
+        match self {
+            Self::Encoder(model) => model.classifier.as_ref().map(ClassifierHead::readout),
+            Self::EncoderF16(_) | Self::Modern(_) | Self::Decoder(_) => None,
+        }
+    }
 }
 
 struct EncoderModel<E: UploadElement> {
@@ -1234,6 +1302,7 @@ struct EncoderModel<E: UploadElement> {
     gated: Option<PreparedGatedActivation>,
     fa4: Option<fa4::Fa4>,
     fa4_layout: Option<PackedAttention>,
+    classifier: Option<ClassifierHead>,
 }
 
 enum Workspace {
@@ -1273,6 +1342,19 @@ impl Workspace {
             Self::Encoder(work) => work.stage(batch, geometry, lease),
             Self::EncoderF16(work) => work.stage(batch, geometry, lease),
             Self::Decoder(work) => work.stage(batch, geometry, lease),
+        }
+    }
+    fn stage_classifier(
+        &self,
+        batch: &Batch,
+        geometry: output::OutputGeometry,
+        lease: &mut HostIoLease,
+    ) -> Result<(usize, usize), BackendError> {
+        match self {
+            Self::Encoder(work) => work.stage_classifier(batch, geometry, lease),
+            Self::EncoderF16(_) | Self::Decoder(_) => Err(infer(
+                "Classifier staging requires a BF16 encoder workspace",
+            )),
         }
     }
     fn upload(&self, host: &[u32], elements: usize) -> Result<(), BackendError> {
@@ -1322,6 +1404,19 @@ impl Workspace {
                 lease,
             ),
         }
+    }
+}
+
+impl Work<Bf16> {
+    fn classifier_parts(
+        &mut self,
+    ) -> Result<(&DeviceBuffer<Bf16>, &mut ClassifierScratchBuffers), BackendError> {
+        let source = &self.x;
+        let classifier = self
+            .classifier
+            .as_mut()
+            .ok_or_else(|| infer("Missing classifier workspace"))?;
+        Ok((source, classifier.as_mut()))
     }
 }
 
@@ -1650,6 +1745,7 @@ struct Work<E: UploadElement> {
     intermediate: ManuallyDrop<DeviceBuffer<E>>,
     gated: ManuallyDrop<Option<DeviceBuffer<E>>>,
     pooled: ManuallyDrop<DeviceBuffer<f32>>,
+    classifier: ManuallyDrop<Option<Box<ClassifierScratchBuffers>>>,
 }
 #[cfg(test)]
 struct LinearPlans {
@@ -1677,6 +1773,9 @@ impl<E: UploadElement> Drop for Work<E> {
             // SAFETY: every field is dropped once after completion. Failed
             // drains deliberately retain device allocations.
             unsafe {
+                if let Some(scratch) = self.classifier.as_mut() {
+                    scratch.mark_stream_drained();
+                }
                 ManuallyDrop::drop(&mut self.input);
                 ManuallyDrop::drop(&mut self.x);
                 ManuallyDrop::drop(&mut self.temp);
@@ -1688,6 +1787,7 @@ impl<E: UploadElement> Drop for Work<E> {
                 ManuallyDrop::drop(&mut self.intermediate);
                 ManuallyDrop::drop(&mut self.gated);
                 ManuallyDrop::drop(&mut self.pooled);
+                ManuallyDrop::drop(&mut self.classifier);
             }
             LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
             record_live_arena_bytes();
@@ -1699,10 +1799,21 @@ impl<E: UploadElement> Drop for Work<E> {
     }
 }
 impl<E: UploadElement> Work<E> {
+    fn new(s: Arc<Stream>, c: &BertConfig, key: WorkKey) -> Result<Self, BackendError> {
+        Self::new_with_classifier(s, c, key, None)
+    }
     fn key(&self) -> WorkKey {
         (self.tokens, self.sequences, self.selections)
     }
+    #[cfg_attr(not(test), allow(dead_code))]
     fn allocation_bytes(key: WorkKey, c: &BertConfig) -> Result<usize, BackendError> {
+        Self::allocation_bytes_with_classifier(key, c, None)
+    }
+    fn allocation_bytes_with_classifier(
+        key: WorkKey,
+        c: &BertConfig,
+        classifier: Option<ClassifierScratchLayout>,
+    ) -> Result<usize, BackendError> {
         let (tokens, _, _) = key;
         i32::try_from(tokens).map_err(infer)?;
         u32_size(product(tokens, c.hidden_size)?)?;
@@ -1721,17 +1832,24 @@ impl<E: UploadElement> Work<E> {
                 .checked_add(product(gated_elements, 2)?)
                 .ok_or_else(|| infer("Workspace arena overflow"))?;
         }
+        let classifier = classifier.map_or(Ok(0), ClassifierScratchLayout::bytes)?;
         product(input, 4)?
             .checked_add(product(output, 4)?)
             .and_then(|n| n.checked_add(hidden))
             .and_then(|n| n.checked_add(intermediate))
+            .and_then(|n| n.checked_add(classifier))
             .ok_or_else(|| infer("Workspace arena overflow"))
     }
     fn fits(&self, key: WorkKey) -> bool {
         capacity_fits(self.key(), key, self.bytes)
     }
-    fn new(s: Arc<Stream>, c: &BertConfig, key: WorkKey) -> Result<Self, BackendError> {
-        let bytes = Self::allocation_bytes(key, c)?;
+    fn new_with_classifier(
+        s: Arc<Stream>,
+        c: &BertConfig,
+        key: WorkKey,
+        classifier_layout: Option<ClassifierScratchLayout>,
+    ) -> Result<Self, BackendError> {
+        let bytes = Self::allocation_bytes_with_classifier(key, c, classifier_layout)?;
         let (tokens, sequences, selections) = key;
         let hidden = product(tokens, c.hidden_size)?;
         let input_len = staging::input_capacity(key)?;
@@ -1774,6 +1892,10 @@ impl<E: UploadElement> Work<E> {
         // SAFETY: the pooling kernel writes every element before D2H.
         let pooled =
             unsafe { DeviceBuffer::<f32>::uninitialized_async(&s, output) }.map_err(infer)?;
+        let classifier = classifier_layout
+            .map(|layout| ClassifierScratchBuffers::new(s.clone(), layout))
+            .transpose()?
+            .map(Box::new);
         metrics::counter!("oxide_arena_allocations_total").increment(1);
         LIVE_ARENA_BYTES.fetch_add(bytes, Ordering::Relaxed);
         record_live_arena_bytes();
@@ -1793,8 +1915,17 @@ impl<E: UploadElement> Work<E> {
             intermediate: ManuallyDrop::new(intermediate),
             gated: ManuallyDrop::new(gated),
             pooled: ManuallyDrop::new(pooled),
+            classifier: ManuallyDrop::new(classifier),
             stream: s,
         })
+    }
+    fn stage_classifier(
+        &self,
+        b: &Batch,
+        geometry: output::OutputGeometry,
+        lease: &mut HostIoLease,
+    ) -> Result<(usize, usize), BackendError> {
+        stage_batch(b, geometry, lease)
     }
     fn stage(
         &self,
@@ -1917,6 +2048,7 @@ impl Engine {
         b: &Batch,
         pool: &Pool,
         max_length: usize,
+        readout_mode: Option<ReadoutMode>,
         lease: &mut HostIoLease,
     ) -> Result<(), BackendError> {
         if self.failed || self.io.poisoned() {
@@ -1924,7 +2056,7 @@ impl Engine {
         }
         #[cfg(test)]
         reset_request_counters();
-        match self.enqueue_request(b, pool, max_length, lease) {
+        match self.enqueue_request(b, pool, max_length, readout_mode, lease) {
             Ok(()) => Ok(()),
             Err(EnqueueError::PreflightRejected(error)) => Err(error),
             Err(EnqueueError::Admission(error)) => Err(error),
@@ -1953,6 +2085,7 @@ impl Engine {
         b: &Batch,
         pool: &Pool,
         max_length: usize,
+        readout_mode: Option<ReadoutMode>,
         lease: &mut HostIoLease,
     ) -> Result<(), EnqueueError> {
         // Reject pure checked-size failures before descriptor changes, context
@@ -1966,13 +2099,13 @@ impl Engine {
         // Descriptor-only preflight precedes arena allocation/zeroing. The
         // actual-M down metadata is prepared later, after the reserved arena
         // exposes every scratch/weight/bias pointer but before lease.begin.
-        let preflight =
-            self.model
-                .preflight(&self.lt, b, pool)
-                .and_then(|()| match (*self.dense).as_mut() {
-                    Some(dense) => dense.preflight(&self.lt, b.pooled_indices.len()),
-                    None => Ok(()),
-                });
+        let preflight = self
+            .model
+            .preflight(&self.lt, b, pool, readout_mode)
+            .and_then(|()| match (*self.dense).as_mut() {
+                Some(dense) => dense.preflight(&self.lt, b.pooled_indices.len()),
+                None => Ok(()),
+            });
         match preflight {
             Ok(()) => {}
             Err(ShapeError::Rejected(error)) => return Err(EnqueueError::PreflightRejected(error)),
@@ -1981,23 +2114,29 @@ impl Engine {
         #[cfg(test)]
         bump_engine_context_bind();
         self.context.bind_to_thread().map_err(infer)?;
-        self.enqueue_inner(b, pool, max_length, lease, workspace)
+        self.enqueue_inner(b, pool, max_length, readout_mode, lease, workspace)
     }
     fn enqueue_inner(
         &mut self,
         b: &Batch,
         pool: &Pool,
         max_length: usize,
+        readout_mode: Option<ReadoutMode>,
         lease: &mut HostIoLease,
         workspace: WorkspacePreflight,
     ) -> Result<(), EnqueueError> {
         metrics::counter!("oxide_arena_requests_total").increment(1);
         record_live_arena_bytes();
         let hidden = self.model.hidden_size();
-        let pooled_width = (*self.dense)
-            .as_ref()
-            .map_or(hidden, DenseHead::output_width);
-        let geometry = output::OutputGeometry::new(pooled_width, hidden)?;
+        let classifier = self.model.classifier_readout();
+        let geometry = if let Some(readout) = classifier {
+            output::OutputGeometry::new(readout.width(), readout.width())?
+        } else {
+            let pooled_width = (*self.dense)
+                .as_ref()
+                .map_or(hidden, DenseHead::output_width);
+            output::OutputGeometry::new(pooled_width, hidden)?
+        };
         let pooled_rows = b.pooled_indices.len();
         let raw_rows = output::raw_rows(b)?;
         let host_elements = geometry.host_elements(b)?;
@@ -2108,6 +2247,22 @@ impl Engine {
         // SAFETY: enqueue_request bound the engine context above and keeps it
         // current through the ordered body.
         unsafe { self.model.prepare(lt, plain_blas, tokens, w)? };
+        if let (ExecutableModel::Encoder(model), Workspace::Encoder(work)) =
+            (&mut *self.model, &mut *w)
+        {
+            if let Some(head) = model.classifier.as_mut() {
+                let blas = plain_blas
+                    .ok_or_else(|| infer("Classifier head requires a plain cuBLAS handle"))?;
+                let stream = self.stream.clone();
+                let (source, scratch) = work.classifier_parts()?;
+                let mode = readout_mode.ok_or_else(|| {
+                    infer("Classifier head requires a call-selected readout mode")
+                })?;
+                // SAFETY: the engine context is bound and every pointer is
+                // fixed by the reserved arena before the lease begins.
+                unsafe { head.prepare(lt, blas, b, mode, &stream, source, scratch)? };
+            }
+        }
         // Retire/cache the previous GPU arena before allocating larger pins;
         // otherwise old scratch plus future staging can exceed the projection.
         let host_oversized = pinned > cache::BYTE_BUDGET;
@@ -2115,7 +2270,11 @@ impl Engine {
             lease.mark_exclusive();
         }
         lease.prepare(plan, host_elements, host_oversized)?;
-        let (input_elements, _) = w.stage(b, geometry, lease)?;
+        let (input_elements, _) = if readout_mode.is_some() {
+            w.stage_classifier(b, geometry, lease)?
+        } else {
+            w.stage(b, geometry, lease)?
+        };
         let s = &*self.stream;
         // Ordinary ordered-stream dispatch; concrete plans were refreshed for
         // the exact logical row count and down metadata was preselected above.
@@ -2140,7 +2299,26 @@ impl Engine {
                 Ok(())
             }
             (ExecutableModel::Encoder(model), Workspace::Encoder(w)) => {
-                enqueue_encoder(model, w, lt, plain_blas, s, b, pool, max_length, tokens)
+                enqueue_encoder(model, w, lt, plain_blas, s, b, pool, max_length, tokens)?;
+                if let Some(head) = model.classifier.as_mut() {
+                    let blas = plain_blas
+                        .ok_or_else(|| infer("Classifier head requires a plain cuBLAS handle"))?;
+                    let mode = readout_mode.ok_or_else(|| {
+                        infer("Classifier head requires a call-selected readout mode")
+                    })?;
+                    let boundaries = w.input.cu_deviceptr() + product(tokens, 12)? as u64;
+                    let (source, scratch) = w.classifier_parts()?;
+                    // SAFETY: pre-enqueue preparation fixed all pointers; the bound context and owner survive stream drain.
+                    unsafe {
+                        head.enqueue(lt, blas, s, source, boundaries, scratch)?;
+                    }
+                    let elements = product(head.rows(b, mode)?, head.readout().width())?;
+                    let host = lease.slot_mut()?.output.as_mut_slice();
+                    download_output_range(s, scratch.logits(), 0, host, 0, elements)?;
+                    lease.record()?;
+                    return Ok(());
+                }
+                Ok(())
             }
             (ExecutableModel::EncoderF16(model), Workspace::EncoderF16(w)) => {
                 enqueue_encoder(model, w, lt, plain_blas, s, b, pool, max_length, tokens)
@@ -2626,6 +2804,9 @@ fn enqueue_encoder<E: UploadElement>(
     if let Some(trace) = trace.take() {
         trace.finish();
     }
+    if model.classifier.is_some() {
+        return Ok(());
+    }
     let (mut bounds, mut indices, mut out) = (boundaries, selected, w.pooled.cu_deviceptr());
     let mut count = u32_size(b.pooled_indices.len())?;
     let mut mode = match pool {
@@ -2738,6 +2919,7 @@ pub struct OxideBackend {
     config: LoadedConfig,
     output_width: usize,
     pool: Pool,
+    readout: Option<ClassifierReadout>,
     attention_length_limit: Option<usize>,
     raw_output_supported: bool,
     engine: Arc<Mutex<Engine>>,
@@ -2764,9 +2946,21 @@ impl OxideBackend {
         dense_paths: Option<Vec<String>>,
     ) -> Result<Self, BackendError> {
         let precision = EncoderPrecision::from_dtype(dtype)?;
+        let classifier = model_type == ModelType::Classifier;
+        if classifier {
+            if precision != EncoderPrecision::Bf16 {
+                return Err(start("Oxide classifiers require bfloat16"));
+            }
+            classifier_head::validate_admission(path, dense_paths.clone())?;
+        }
         let pool = match model_type {
             ModelType::Embedding(p @ (Pool::Cls | Pool::Mean | Pool::LastToken)) => p,
-            _ => return Err(start("Oxide currently supports dense embeddings only")),
+            ModelType::Classifier => Pool::Cls,
+            _ => {
+                return Err(start(
+                    "Oxide currently supports dense embeddings and classifiers",
+                ))
+            }
         };
         // FP16 admission is host-side policy. Reject every unsupported family
         // and shape before the driver/device query or any weight upload.
@@ -2788,118 +2982,176 @@ impl OxideBackend {
         let stream = context.new_stream().map_err(start)?;
         let architecture = detects_architecture(path)?;
         let decoder = architecture == CheckpointArchitecture::Decoder;
-        let native_default = architecture.uses_native_default();
+        let native_default = classifier || architecture.uses_native_default();
         let lt = if native_default {
             LtProvider::new_native_default(context.clone(), stream.clone())?
         } else {
             LtProvider::new(context.clone(), stream.clone())?
         };
-        let (model, config, plain_blas, attention_length_limit, dense, output_width) = if precision
-            == EncoderPrecision::F16
-        {
-            f16_admitted.ok_or_else(|| start("Missing admitted FP16 encoder config"))?;
-            let host = BertWeights::load(path)?;
-            let config = loaded_f16_config(&host)?;
-            let dense_host =
-                DenseChainHost::load_with_paths(path, config.hidden_size, dense_paths.clone())?;
-            if dense_host.is_some() {
-                return Err(start("FP16 H384 MiniLM currently requires its backbone pooling without Dense modules"));
-            }
-            let host = EncoderHostWeights::Standard(host);
-            let model = encoder_model::<F16>(host, &context, &stream, &lt, EncoderPrecision::F16)?;
-            let attention_length_limit = model.kernels.attention_length_limit;
-            let output_width = config.hidden_size;
-            (
-                ExecutableModel::EncoderF16(Box::new(model)),
-                LoadedConfig::Encoder(config),
-                None,
-                attention_length_limit,
-                None,
-                output_width,
-            )
-        } else if decoder {
-            let host = DecoderWeights::load(path)?;
-            let config = host.config.clone();
-            let dense_host =
-                DenseChainHost::load_with_paths(path, config.hidden_size, dense_paths.clone())?;
-            let output_width = dense_host
-                .as_ref()
-                .map_or(config.hidden_size, DenseChainHost::output_width);
-            let model = decoder::DecoderModel::new(host, &context, &stream, &lt)?;
-            let needs_plain =
-                model.needs_plain() || dense_host.as_ref().is_some_and(DenseChainHost::uses_plain);
-            let dense = dense_host
-                .map(|host| DenseHead::new(host, &context, &stream, &lt))
-                .transpose()?;
-            let plain_blas = if needs_plain {
-                Some(Blas::new(context.clone(), stream.clone())?)
+        let (model, config, plain_blas, attention_length_limit, dense, output_width, readout) =
+            if classifier {
+                let (host, checkpoint) = BertWeights::load_classifier(path)?;
+                let config = host.config.clone();
+                let head_host = ClassifierHeadHost::load(&checkpoint, &config)?;
+                let readout = head_host.readout;
+                let output_width = readout.width();
+                let mut model = encoder_model::<Bf16>(
+                    EncoderHostWeights::Standard(host),
+                    &context,
+                    &stream,
+                    &lt,
+                    EncoderPrecision::Bf16,
+                )?;
+                model.classifier = Some(ClassifierHead::new(head_host, &context, &stream, &lt)?);
+                (
+                    ExecutableModel::Encoder(Box::new(model)),
+                    LoadedConfig::Encoder(config),
+                    Some(Blas::new(context.clone(), stream.clone())?),
+                    None,
+                    None,
+                    output_width,
+                    Some(readout),
+                )
             } else {
-                None
+                let (model, config, plain_blas, attention_length_limit, dense, output_width) =
+                    if precision == EncoderPrecision::F16 {
+                        f16_admitted
+                            .ok_or_else(|| start("Missing admitted FP16 encoder config"))?;
+                        let host = BertWeights::load(path)?;
+                        let config = loaded_f16_config(&host)?;
+                        let dense_host = DenseChainHost::load_with_paths(
+                            path,
+                            config.hidden_size,
+                            dense_paths.clone(),
+                        )?;
+                        if dense_host.is_some() {
+                            return Err(start("FP16 H384 MiniLM currently requires its backbone pooling without Dense modules"));
+                        }
+                        let host = EncoderHostWeights::Standard(host);
+                        let model = encoder_model::<F16>(
+                            host,
+                            &context,
+                            &stream,
+                            &lt,
+                            EncoderPrecision::F16,
+                        )?;
+                        let attention_length_limit = model.kernels.attention_length_limit;
+                        let output_width = config.hidden_size;
+                        (
+                            ExecutableModel::EncoderF16(Box::new(model)),
+                            LoadedConfig::Encoder(config),
+                            None,
+                            attention_length_limit,
+                            None,
+                            output_width,
+                        )
+                    } else if decoder {
+                        let host = DecoderWeights::load(path)?;
+                        let config = host.config.clone();
+                        let dense_host = DenseChainHost::load_with_paths(
+                            path,
+                            config.hidden_size,
+                            dense_paths.clone(),
+                        )?;
+                        let output_width = dense_host
+                            .as_ref()
+                            .map_or(config.hidden_size, DenseChainHost::output_width);
+                        let model = decoder::DecoderModel::new(host, &context, &stream, &lt)?;
+                        let needs_plain = model.needs_plain()
+                            || dense_host.as_ref().is_some_and(DenseChainHost::uses_plain);
+                        let dense = dense_host
+                            .map(|host| DenseHead::new(host, &context, &stream, &lt))
+                            .transpose()?;
+                        let plain_blas = if needs_plain {
+                            Some(Blas::new(context.clone(), stream.clone())?)
+                        } else {
+                            None
+                        };
+                        (
+                            ExecutableModel::Decoder(Box::new(model)),
+                            LoadedConfig::Decoder(config),
+                            plain_blas,
+                            None,
+                            dense,
+                            output_width,
+                        )
+                    } else if architecture == CheckpointArchitecture::Modern {
+                        let host = ModernWeights::load(path)?;
+                        let config = host.config.clone();
+                        let hidden = config.geometry.hidden_size;
+                        let dense_host =
+                            DenseChainHost::load_with_paths(path, hidden, dense_paths.clone())?;
+                        let output_width = dense_host
+                            .as_ref()
+                            .map_or(hidden, DenseChainHost::output_width);
+                        let model = ModernEncoder::new(host, &context, &stream)?;
+                        let dense = dense_host
+                            .map(|host| DenseHead::new(host, &context, &stream, &lt))
+                            .transpose()?;
+                        (
+                            ExecutableModel::Modern(Box::new(model)),
+                            LoadedConfig::Modern(config),
+                            Some(Blas::new(context.clone(), stream.clone())?),
+                            None,
+                            dense,
+                            output_width,
+                        )
+                    } else {
+                        let host = match architecture {
+                            CheckpointArchitecture::Jina => {
+                                EncoderHostWeights::Jina(JinaWeights::load(path)?)
+                            }
+                            CheckpointArchitecture::Nomic => {
+                                EncoderHostWeights::Nomic(NomicWeights::load(path)?)
+                            }
+                            _ => EncoderHostWeights::Standard(BertWeights::load(path)?),
+                        };
+                        let config = host.config().clone();
+                        let dense_host = DenseChainHost::load_with_paths(
+                            path,
+                            config.hidden_size,
+                            dense_paths.clone(),
+                        )?;
+                        let output_width = dense_host
+                            .as_ref()
+                            .map_or(config.hidden_size, DenseChainHost::output_width);
+                        let model = encoder_model::<Bf16>(
+                            host,
+                            &context,
+                            &stream,
+                            &lt,
+                            EncoderPrecision::Bf16,
+                        )?;
+                        let dense = dense_host
+                            .map(|host| DenseHead::new(host, &context, &stream, &lt))
+                            .transpose()?;
+                        let plain_blas = if dense.as_ref().is_some_and(DenseHead::uses_plain)
+                            || config.recipe.feed_forward.is_gated()
+                        {
+                            Some(Blas::new(context.clone(), stream.clone())?)
+                        } else {
+                            None
+                        };
+                        let attention_length_limit = model.kernels.attention_length_limit;
+                        (
+                            ExecutableModel::Encoder(Box::new(model)),
+                            LoadedConfig::Encoder(config),
+                            plain_blas,
+                            attention_length_limit,
+                            dense,
+                            output_width,
+                        )
+                    };
+                (
+                    model,
+                    config,
+                    plain_blas,
+                    attention_length_limit,
+                    dense,
+                    output_width,
+                    None,
+                )
             };
-            (
-                ExecutableModel::Decoder(Box::new(model)),
-                LoadedConfig::Decoder(config),
-                plain_blas,
-                None,
-                dense,
-                output_width,
-            )
-        } else if architecture == CheckpointArchitecture::Modern {
-            let host = ModernWeights::load(path)?;
-            let config = host.config.clone();
-            let hidden = config.geometry.hidden_size;
-            let dense_host = DenseChainHost::load_with_paths(path, hidden, dense_paths.clone())?;
-            let output_width = dense_host
-                .as_ref()
-                .map_or(hidden, DenseChainHost::output_width);
-            let model = ModernEncoder::new(host, &context, &stream)?;
-            let dense = dense_host
-                .map(|host| DenseHead::new(host, &context, &stream, &lt))
-                .transpose()?;
-            (
-                ExecutableModel::Modern(Box::new(model)),
-                LoadedConfig::Modern(config),
-                Some(Blas::new(context.clone(), stream.clone())?),
-                None,
-                dense,
-                output_width,
-            )
-        } else {
-            let host = match architecture {
-                CheckpointArchitecture::Jina => EncoderHostWeights::Jina(JinaWeights::load(path)?),
-                CheckpointArchitecture::Nomic => {
-                    EncoderHostWeights::Nomic(NomicWeights::load(path)?)
-                }
-                _ => EncoderHostWeights::Standard(BertWeights::load(path)?),
-            };
-            let config = host.config().clone();
-            let dense_host =
-                DenseChainHost::load_with_paths(path, config.hidden_size, dense_paths.clone())?;
-            let output_width = dense_host
-                .as_ref()
-                .map_or(config.hidden_size, DenseChainHost::output_width);
-            let model =
-                encoder_model::<Bf16>(host, &context, &stream, &lt, EncoderPrecision::Bf16)?;
-            let dense = dense_host
-                .map(|host| DenseHead::new(host, &context, &stream, &lt))
-                .transpose()?;
-            let plain_blas = if dense.as_ref().is_some_and(DenseHead::uses_plain)
-                || config.recipe.feed_forward.is_gated()
-            {
-                Some(Blas::new(context.clone(), stream.clone())?)
-            } else {
-                None
-            };
-            let attention_length_limit = model.kernels.attention_length_limit;
-            (
-                ExecutableModel::Encoder(Box::new(model)),
-                LoadedConfig::Encoder(config),
-                plain_blas,
-                attention_length_limit,
-                dense,
-                output_width,
-            )
-        };
         let io = HostIo::pool(&context)?;
         let raw_output_supported = model.supports_raw_output();
         Ok(Self {
@@ -2908,6 +3160,7 @@ impl OxideBackend {
             pool,
             attention_length_limit,
             raw_output_supported,
+            readout,
             engine: Arc::new(Mutex::new(Engine {
                 lt: ManuallyDrop::new(lt),
                 model: ManuallyDrop::new(model),
@@ -3079,6 +3332,7 @@ fn encoder_model<E: UploadElement>(
         gated,
         fa4,
         fa4_layout,
+        classifier: None,
     })
 }
 
@@ -3263,6 +3517,11 @@ impl Backend for OxideBackend {
         self.submit_embed(batch)?.complete()
     }
     fn submit_embed(&self, batch: Batch) -> Result<Inference<Embeddings>, BackendError> {
+        if self.readout.is_some() {
+            return Err(infer(
+                "Classifier admission does not expose the ordinary embedding API",
+            ));
+        }
         let max_length = validate_loaded(&batch, &self.config)?;
         if let Some(limit) = self.attention_length_limit {
             if max_length > limit {
@@ -3310,7 +3569,7 @@ impl Backend for OxideBackend {
                 self.io.close();
                 return Err(BackendError::Unhealthy);
             }
-            engine.enqueue(&batch, &self.pool, max_length, &mut lease)?;
+            engine.enqueue(&batch, &self.pool, max_length, None, &mut lease)?;
         }
         if !batch.raw_indices.is_empty() {
             let pooled = batch.pooled_indices;
@@ -3347,11 +3606,148 @@ impl Backend for OxideBackend {
             Ok(result)
         })))
     }
-    fn predict(&self, _: Batch) -> Result<Predictions, BackendError> {
-        Err(infer("Oxide classifiers are not implemented"))
+    fn predict(&self, batch: Batch) -> Result<Predictions, BackendError> {
+        self.submit_predict(batch)?.complete()
     }
-    fn predict_tokens(&self, _: Batch) -> Result<TokenPredictions, BackendError> {
-        Err(infer("Oxide token predictions are not implemented"))
+    fn submit_predict(&self, mut batch: Batch) -> Result<Inference<Predictions>, BackendError> {
+        let readout = self
+            .readout
+            .ok_or_else(|| infer("Oxide classifier readout is not configured"))?;
+        let sequences = batch
+            .cumulative_seq_lengths
+            .len()
+            .checked_sub(1)
+            .filter(|n| *n > 0)
+            .ok_or_else(|| infer("Classifier batch must contain at least one sequence"))?;
+        canonicalize_indices(&mut batch.pooled_indices, sequences)?;
+        batch.raw_indices.clear();
+        let max_length = validate_loaded(&batch, &self.config)?;
+        if let Some(limit) = self.attention_length_limit {
+            if max_length > limit {
+                return Err(infer(format!(
+                    "SIMT attention sequence length {max_length} exceeds kernel limit {limit}"
+                )));
+            }
+        }
+        let width = readout.width();
+        let geometry = output::OutputGeometry::new(width, width)?;
+        let elements = geometry.host_elements(&batch)?;
+        u32_size(elements)?;
+        let memory =
+            result_memory::global_pool()?.reserve(output::result_bytes(&batch, width, width)?)?;
+        let slot = self.io.acquire()?;
+        let mut lease = HostIoLease::new(
+            slot,
+            self.io.clone(),
+            self.engine.clone(),
+            self.stream.clone(),
+        );
+        {
+            let mut engine = match self.engine.lock() {
+                Ok(engine) => engine,
+                Err(_) => {
+                    self.io.close();
+                    return Err(BackendError::Unhealthy);
+                }
+            };
+            if engine.failed || self.io.poisoned() {
+                self.io.close();
+                return Err(BackendError::Unhealthy);
+            }
+            engine.enqueue(
+                &batch,
+                &self.pool,
+                max_length,
+                Some(ReadoutMode::Sequence),
+                &mut lease,
+            )?;
+        }
+        Ok(Inference::Deferred(Box::new(move || {
+            lease.wait()?;
+            let output = lease.output(elements)?;
+            if output.iter().any(|value| !value.is_finite()) {
+                lease.poison();
+                return Err(infer("Invalid oxide classifier output"));
+            }
+            let mut result = pack_predictions(output, sequences, width)?;
+            result.memory = Some(memory);
+            Ok(result)
+        })))
+    }
+    fn predict_tokens(&self, batch: Batch) -> Result<TokenPredictions, BackendError> {
+        self.submit_predict_tokens(batch)?.complete()
+    }
+    fn submit_predict_tokens(
+        &self,
+        mut batch: Batch,
+    ) -> Result<Inference<TokenPredictions>, BackendError> {
+        let readout = self
+            .readout
+            .ok_or_else(|| infer("Oxide classifier readout is not configured"))?;
+        let sequences = batch
+            .cumulative_seq_lengths
+            .len()
+            .checked_sub(1)
+            .filter(|n| *n > 0)
+            .ok_or_else(|| infer("Classifier batch must contain at least one sequence"))?;
+        if batch.input_ids.is_empty() {
+            return Err(infer("Classifier batch must contain at least one token"));
+        }
+        canonicalize_indices(&mut batch.raw_indices, sequences)?;
+        batch.pooled_indices.clear();
+        let max_length = validate_loaded(&batch, &self.config)?;
+        if let Some(limit) = self.attention_length_limit {
+            if max_length > limit {
+                return Err(infer(format!(
+                    "SIMT attention sequence length {max_length} exceeds kernel limit {limit}"
+                )));
+            }
+        }
+        let width = readout.width();
+        let geometry = output::OutputGeometry::new(width, width)?;
+        let elements = geometry.host_elements(&batch)?;
+        u32_size(elements)?;
+        let memory =
+            result_memory::global_pool()?.reserve(output::result_bytes(&batch, width, width)?)?;
+        let slot = self.io.acquire()?;
+        let mut lease = HostIoLease::new(
+            slot,
+            self.io.clone(),
+            self.engine.clone(),
+            self.stream.clone(),
+        );
+        {
+            let mut engine = match self.engine.lock() {
+                Ok(engine) => engine,
+                Err(_) => {
+                    self.io.close();
+                    return Err(BackendError::Unhealthy);
+                }
+            };
+            if engine.failed || self.io.poisoned() {
+                self.io.close();
+                return Err(BackendError::Unhealthy);
+            }
+            engine.enqueue(
+                &batch,
+                &self.pool,
+                max_length,
+                Some(ReadoutMode::Tokens),
+                &mut lease,
+            )?;
+        }
+        let boundaries = batch.cumulative_seq_lengths;
+        Ok(Inference::Deferred(Box::new(move || {
+            lease.wait()?;
+            let output = lease.output(elements)?;
+            if output.iter().any(|value| !value.is_finite()) {
+                lease.poison();
+                return Err(infer("Invalid oxide token classifier output"));
+            }
+            let mut result = pack_token_predictions(output, &boundaries, width)?;
+            result.memory = Some(memory);
+            Ok(result)
+        })))
     }
 }
 
@@ -5350,7 +5746,7 @@ mod tests {
     }
 
     #[test]
-    fn only_the_gte_family_selects_the_native_default_down_policy() {
+    fn embedding_down_policy_preserves_gte_and_standard_profiles() {
         let gte: BertConfig = serde_json::from_value(serde_json::json!({
             "model_type": "new", "architectures": ["NewModel"],
             "hidden_size": 768, "intermediate_size": 3072,
@@ -6126,6 +6522,66 @@ mod tests {
             Some(corrupted_index),
             "a one-bit corrupted gold must be rejected"
         );
+    }
+
+    #[test]
+    #[ignore = "Requires CUDA, an actual MiniLM6 classifier INFINITY_OXIDE_TEST_MODEL, and INFINITY_OXIDE_KERNEL_MODULE"]
+    fn trained_sequence_classifier_finite_smoke() {
+        let path = std::env::var_os("INFINITY_OXIDE_TEST_MODEL")
+            .expect("set INFINITY_OXIDE_TEST_MODEL to the actual MiniLM score classifier");
+        let backend =
+            OxideBackend::new(Path::new(&path), "bfloat16", ModelType::Classifier, 0).unwrap();
+        let request = repeated_sequences(2, 5);
+        let sequence = backend.predict(request.clone()).unwrap();
+        assert_eq!(sequence.len(), request.len());
+        for index in 0..request.len() {
+            let row = sequence.get(&index).expect("missing sequence score");
+            assert_eq!(row.len(), 1);
+            assert!(row.iter().all(|value| value.is_finite()));
+        }
+        let tokens = backend.predict_tokens(request.clone()).unwrap();
+        assert_eq!(tokens.len(), request.len());
+        for index in 0..request.len() {
+            let rows = tokens.get(&index).expect("missing token scores");
+            assert_eq!(rows.len(), 5);
+            assert!(rows.iter().all(|row| row.len() == 1));
+            assert!(rows.iter().flatten().all(|value| value.is_finite()));
+        }
+        let held_sequence = backend.submit_predict(request.clone()).unwrap();
+        let held_tokens = backend.submit_predict_tokens(request).unwrap();
+        drop(held_sequence);
+        let _ = held_tokens.complete().unwrap();
+        backend.health().unwrap();
+    }
+
+    #[test]
+    #[ignore = "Requires CUDA, an actual NER classifier INFINITY_OXIDE_TEST_MODEL, and INFINITY_OXIDE_KERNEL_MODULE"]
+    fn trained_token_classifier_finite_smoke() {
+        let path = std::env::var_os("INFINITY_OXIDE_TEST_MODEL")
+            .expect("set INFINITY_OXIDE_TEST_MODEL to the actual NER token classifier");
+        let backend =
+            OxideBackend::new(Path::new(&path), "bfloat16", ModelType::Classifier, 0).unwrap();
+        let request = repeated_sequences(2, 5);
+        let tokens = backend.predict_tokens(request.clone()).unwrap();
+        assert_eq!(tokens.len(), request.len());
+        for index in 0..request.len() {
+            let rows = tokens.get(&index).expect("missing token scores");
+            assert_eq!(rows.len(), 5, "token rows must preserve sequence length");
+            assert!(rows.iter().all(|row| row.len() == 9));
+            assert!(rows.iter().flatten().all(|value| value.is_finite()));
+        }
+        let sequence = backend.predict(request.clone()).unwrap();
+        assert_eq!(sequence.len(), request.len());
+        for index in 0..request.len() {
+            let row = sequence.get(&index).expect("missing sequence score");
+            assert_eq!(row.len(), 9, "stored pooler feeds the root classifier");
+            assert!(row.iter().all(|value| value.is_finite()));
+        }
+        let held_tokens = backend.submit_predict_tokens(request.clone()).unwrap();
+        let held_sequence = backend.submit_predict(request).unwrap();
+        drop(held_tokens);
+        let _ = held_sequence.complete().unwrap();
+        backend.health().unwrap();
     }
 }
 
