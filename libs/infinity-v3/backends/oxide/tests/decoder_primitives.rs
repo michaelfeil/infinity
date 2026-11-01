@@ -557,3 +557,254 @@ fn embedding_gather_preserves_ids_bits_scale_and_guards() {
         );
     }
 }
+
+fn run_selected_cast(
+    function: &Function,
+    stream: &Stream,
+    input: u64,
+    selected: Option<&[u32]>,
+    count: usize,
+    width: usize,
+) -> Vec<f32> {
+    let elements = count * width;
+    let sentinel = f32::from_bits(0x4242_4242);
+    let selected_device = selected
+        .map(|values| DeviceBuffer::from_host(stream, values).expect("upload cast selection"));
+    let cast = DeviceBuffer::from_host(stream, &vec![sentinel; elements + 2 * GUARD])
+        .expect("allocate cast output");
+    let mut input_ptr = input;
+    let mut selected_ptr = selected_device
+        .as_ref()
+        .map_or(0, |buffer| buffer.cu_deviceptr());
+    let mut out_ptr = cast.cu_deviceptr() + (GUARD * 4) as u64;
+    let mut rows = u32::try_from(count).expect("cast count fits u32");
+    let mut columns = u32::try_from(width).expect("cast width fits u32");
+    launch(
+        function,
+        stream,
+        elements.div_ceil(256) + 1,
+        &mut [
+            arg(&mut input_ptr),
+            arg(&mut out_ptr),
+            arg(&mut selected_ptr),
+            arg(&mut rows),
+            arg(&mut columns),
+        ],
+    );
+    let mut values = vec![sentinel; elements + 2 * GUARD];
+    cast.copy_to_host(stream, &mut values)
+        .expect("download cast output");
+    assert!(values[..GUARD]
+        .iter()
+        .all(|value| value.to_bits() == 0x4242_4242));
+    assert!(values[GUARD + elements..]
+        .iter()
+        .all(|value| value.to_bits() == 0x4242_4242));
+    values[GUARD..GUARD + elements].to_vec()
+}
+
+#[test]
+#[ignore = "requires INFINITY_OXIDE_KERNEL_MODULE with readout exports and a matching CUDA device"]
+fn selected_rows_and_bf16_cast_preserve_bits_order_tails_and_guards() {
+    let (module, stream) = setup();
+    let boundaries = [0u32, 3, 8, 12];
+    let explicit = [2u32, 0];
+    let sequences = boundaries.len() - 1;
+    let boundaries_device =
+        DeviceBuffer::from_host(&stream, &boundaries).expect("upload cumulative boundaries");
+    let explicit_device = DeviceBuffer::from_host(&stream, &explicit).expect("upload selections");
+    let tokens = *boundaries.last().expect("tokens") as usize;
+    let gather_function = module
+        .load_function("infinity_selected_rows")
+        .expect("load selected rows");
+    let cast_function = module
+        .load_function("infinity_bf16_to_f32")
+        .expect("load bf16 cast");
+    for (first_width, second_width) in [(17usize, 31usize), (31, 17)] {
+        let first = (0..tokens * first_width)
+            .map(|i| match i % 11 {
+                0 => bf16::from_bits(0x8000),
+                1 => bf16::from_bits(0x0001),
+                2 => bf16::from_bits(0x7bff),
+                _ => bf16::from_f32(((i * 37 + 11) % 251) as f32 / 16.0 - 7.75),
+            })
+            .collect::<Vec<_>>();
+        let second = (0..tokens * second_width)
+            .map(|i| match i % 13 {
+                0 => bf16::from_bits(0x0000),
+                1 => bf16::from_bits(0x8001),
+                2 => bf16::from_bits(0xfbff),
+                _ => bf16::from_f32(((i * 19 + 5) % 239) as f32 / 8.0 - 14.875),
+            })
+            .collect::<Vec<_>>();
+        let first_device = DeviceBuffer::from_host(&stream, &first).expect("upload first tensor");
+        let second_device =
+            DeviceBuffer::from_host(&stream, &second).expect("upload second tensor");
+        for mode in [0u32, 1] {
+            let token_for = |sequence: u32| {
+                let start = boundaries[sequence as usize] as usize;
+                let end = boundaries[sequence as usize + 1] as usize;
+                if mode == 0 {
+                    start
+                } else {
+                    end - 1
+                }
+            };
+            // Canonical bridge gather: null selection maps row to sequence row.
+            let canonical_first = guarded(&stream, sequences * first_width);
+            let canonical_second = guarded(&stream, sequences * second_width);
+            let mut first_ptr = first_device.cu_deviceptr();
+            let mut second_ptr = second_device.cu_deviceptr();
+            let mut bounds_ptr = boundaries_device.cu_deviceptr();
+            let mut no_selection = 0u64;
+            let mut first_out_ptr = canonical_first.cu_deviceptr() + (2 * GUARD) as u64;
+            let mut second_out_ptr = canonical_second.cu_deviceptr() + (2 * GUARD) as u64;
+            let mut count = sequences as u32;
+            let mut first_columns = first_width as u32;
+            let mut second_columns = second_width as u32;
+            let mut readout_mode = mode;
+            launch(
+                &gather_function,
+                &stream,
+                (sequences * (first_width + second_width)).div_ceil(256) + 1,
+                &mut [
+                    arg(&mut first_ptr),
+                    arg(&mut second_ptr),
+                    arg(&mut bounds_ptr),
+                    arg(&mut no_selection),
+                    arg(&mut first_out_ptr),
+                    arg(&mut second_out_ptr),
+                    arg(&mut count),
+                    arg(&mut first_columns),
+                    arg(&mut second_columns),
+                    arg(&mut readout_mode),
+                ],
+            );
+            let canonical_first_bits = download(&stream, &canonical_first);
+            let canonical_second_bits = download(&stream, &canonical_second);
+            for (label, got, width, source) in [
+                ("first", &canonical_first_bits, first_width, &first),
+                ("second", &canonical_second_bits, second_width, &second),
+            ] {
+                assert!(got[..GUARD].iter().all(|v| v.to_bits() == SENTINEL));
+                assert!(got[GUARD + sequences * width..]
+                    .iter()
+                    .all(|v| v.to_bits() == SENTINEL));
+                for sequence in 0..sequences {
+                    let token = token_for(sequence as u32);
+                    for column in 0..width {
+                        assert_eq!(
+                            got[GUARD + sequence * width + column].to_bits(),
+                            source[token * width + column].to_bits(),
+                            "canonical {label} width{width} mode{mode} sequence{sequence} column{column}"
+                        );
+                    }
+                }
+            }
+
+            // Explicit selection [2,0] must reorder requested rows.
+            let selected_first = guarded(&stream, explicit.len() * first_width);
+            let selected_second = guarded(&stream, explicit.len() * second_width);
+            let mut first_ptr = first_device.cu_deviceptr();
+            let mut second_ptr = second_device.cu_deviceptr();
+            let mut bounds_ptr = boundaries_device.cu_deviceptr();
+            let mut selected_ptr = explicit_device.cu_deviceptr();
+            let mut first_out_ptr = selected_first.cu_deviceptr() + (2 * GUARD) as u64;
+            let mut second_out_ptr = selected_second.cu_deviceptr() + (2 * GUARD) as u64;
+            let mut count = explicit.len() as u32;
+            let mut first_columns = first_width as u32;
+            let mut second_columns = second_width as u32;
+            let mut readout_mode = mode;
+            launch(
+                &gather_function,
+                &stream,
+                (explicit.len() * (first_width + second_width)).div_ceil(256) + 1,
+                &mut [
+                    arg(&mut first_ptr),
+                    arg(&mut second_ptr),
+                    arg(&mut bounds_ptr),
+                    arg(&mut selected_ptr),
+                    arg(&mut first_out_ptr),
+                    arg(&mut second_out_ptr),
+                    arg(&mut count),
+                    arg(&mut first_columns),
+                    arg(&mut second_columns),
+                    arg(&mut readout_mode),
+                ],
+            );
+            let selected_first_bits = download(&stream, &selected_first);
+            let selected_second_bits = download(&stream, &selected_second);
+            for (label, got, width, source) in [
+                ("first", &selected_first_bits, first_width, &first),
+                ("second", &selected_second_bits, second_width, &second),
+            ] {
+                assert!(got[..GUARD].iter().all(|v| v.to_bits() == SENTINEL));
+                assert!(got[GUARD + explicit.len() * width..]
+                    .iter()
+                    .all(|v| v.to_bits() == SENTINEL));
+                for (row, &sequence) in explicit.iter().enumerate() {
+                    let token = token_for(sequence);
+                    for column in 0..width {
+                        assert_eq!(
+                            got[GUARD + row * width + column].to_bits(),
+                            source[token * width + column].to_bits(),
+                            "selected {label} width{width} mode{mode} row{row} column{column}"
+                        );
+                    }
+                }
+            }
+            assert_eq!(
+                download(&stream, &first_device),
+                first,
+                "selected gather mutated its first input"
+            );
+            assert_eq!(
+                download(&stream, &second_device),
+                second,
+                "selected gather mutated its second input"
+            );
+
+            // Cast canonical B rows with identity, reordered, and duplicate
+            // excess S>B selections; each must survive raw bit widening.
+            for (label, canonical, canonical_bits, width) in [
+                (
+                    "first",
+                    &canonical_first,
+                    &canonical_first_bits,
+                    first_width,
+                ),
+                (
+                    "second",
+                    &canonical_second,
+                    &canonical_second_bits,
+                    second_width,
+                ),
+            ] {
+                let input = canonical.cu_deviceptr() + (2 * GUARD) as u64;
+                for (case, selection) in [
+                    ("identity", None),
+                    ("reorder", Some(&[2u32, 0][..])),
+                    ("duplicate_excess", Some(&[2u32, 0, 2, 1][..])),
+                ] {
+                    let rows = selection.map_or(sequences, <[u32]>::len);
+                    let got =
+                        run_selected_cast(&cast_function, &stream, input, selection, rows, width);
+                    let expected = (0..rows)
+                        .flat_map(|row| {
+                            let sequence = selection.map_or(row, |values| values[row] as usize);
+                            (0..width).map(move |column| {
+                                (canonical_bits[GUARD + sequence * width + column].to_bits() as u32)
+                                    << 16
+                            })
+                        })
+                        .collect::<Vec<_>>();
+                    assert_eq!(
+                        got.iter().map(|value| value.to_bits()).collect::<Vec<_>>(),
+                        expected,
+                        "cast {case} {label} width{width} mode{mode}"
+                    );
+                }
+            }
+        }
+    }
+}

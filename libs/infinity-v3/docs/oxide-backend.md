@@ -173,15 +173,18 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles all 27 Rust kernels separately for `sm_90`,
+`device/build.sh` compiles all 29 Rust kernels separately for `sm_90`,
 `sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
 symbols, and writes a manifest recording source/artifact hashes, target,
 compiler revision, and commands. Every architecture is natively compiled from
-Rust for all 27 exports. The original nine BERT kernels remain byte-identical
+Rust for all 29 exports. The original nine BERT kernels remain byte-identical
 on all three targets. Additional exports provide rounded embedding/residual
 LayerNorm, native width-768/1024 normalization arithmetic, ordinary or rounded RMSNorm with an optional residual output,
 NeoX/interleaved RoPE with separate-product or fused arithmetic, staged or FP32
-SiLU multiplication, and plain or scaled word gathers. These primitives do not
+SiLU multiplication, plain or scaled word gathers, paired CLS/last-row gathers,
+and selected BF16-to-FP32 output extraction. The latter two copy storage bits
+or widen them exactly, support independent tensor widths and repeated output
+selections, and need no additional intermediate allocation. These primitives do not
 enable decoder model serving: checkpoint loading, model execution, and full
 quality/performance qualification remain separate work. Generic RMS reductions
 also need qualification against width-specific native reduction recipes.

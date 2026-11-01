@@ -10,6 +10,7 @@ mod decoder;
 mod norm1024;
 mod norm384;
 mod norm768;
+mod readout;
 
 /// Interpret one BF16 storage element without numerical conversion error.
 /// The upper16 bits are the exponent, sign and significant FP32 bits.
@@ -976,6 +977,50 @@ mod kernels {
         scale: f32,
     ) {
         unsafe { crate::decoder::embedding_gather::<true>(ids, table, out, tokens, width, scale) };
+    }
+
+    /// Gather the same CLS or last rows from two independent-width BF16 tensors.
+    /// Grid=ceil(count*(first_width+second_width)/256), block=256; bit copies.
+    #[kernel]
+    pub unsafe fn infinity_selected_rows(
+        first: *const u16,
+        second: *const u16,
+        cu_seqlens: *const u32,
+        selected: *const u32,
+        first_out: *mut u16,
+        second_out: *mut u16,
+        count: u32,
+        first_width: u32,
+        second_width: u32,
+        mode: u32,
+    ) {
+        unsafe {
+            crate::readout::selected_rows(
+                first,
+                second,
+                cu_seqlens,
+                selected,
+                first_out,
+                second_out,
+                count,
+                first_width,
+                second_width,
+                mode,
+            )
+        };
+    }
+
+    /// Widen selected BF16 rows to FP32; grid=ceil(count*width/256).
+    /// A null selection keeps canonical row order.
+    #[kernel]
+    pub unsafe fn infinity_bf16_to_f32(
+        input: *const u16,
+        out: *mut f32,
+        selected: *const u32,
+        count: u32,
+        width: u32,
+    ) {
+        unsafe { crate::readout::bf16_to_f32(input, out, selected, count, width) };
     }
 }
 

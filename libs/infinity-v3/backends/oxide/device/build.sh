@@ -36,7 +36,8 @@ symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_emb
                   "infinity_rope_neox", "infinity_rope_neox_hfma",
                   "infinity_rope_interleaved", "infinity_rope_interleaved_hfma",
                   "infinity_silu_mul", "infinity_silu_mul_f32",
-                  "infinity_embedding_gather", "infinity_embedding_gather_scaled"])
+                  "infinity_embedding_gather", "infinity_embedding_gather_scaled",
+                  "infinity_selected_rows", "infinity_bf16_to_f32"])
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -56,7 +57,7 @@ manifest = {
     "compute_dtype": "bfloat16",
     "output_dtype": "float32",
     "sources": {name: digest(root / name) for name in
-                ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs", "src/norm384.rs", "src/norm768.rs", "src/norm1024.rs", "src/decoder.rs"]},
+                ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs", "src/norm384.rs", "src/norm768.rs", "src/norm1024.rs", "src/decoder.rs", "src/readout.rs"]},
     "kernels": symbols,
     "qualification": "Every architecture is independently compiled from Rust and assembled to a native cubin; hardware runtime validation is separate.",
     "architectures": [],
