@@ -30,6 +30,7 @@ DEALINGS IN THE SOFTWARE.
 /// CUDA encoder GELU and bias-plus-GELU kernels with reference rounding.
 
 #include "kernels/encoder_activation.h"
+#include "kernels/dependent_launch.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
@@ -65,6 +66,7 @@ template <class T> struct alignas(sizeof(T) * 4) Four {
 };
 
 template <class T> __global__ void gelu_kernel(const T* input, T* output, int64_t count) {
+  wait_for_producer();
   const int64_t i = (int64_t(blockIdx.x) * blockDim.x + threadIdx.x) * 4;
   if (i + 3 < count && reinterpret_cast<uintptr_t>(input) % alignof(Four<T>) == 0 &&
       reinterpret_cast<uintptr_t>(output) % alignof(Four<T>) == 0) {
@@ -81,14 +83,18 @@ template <class T> __global__ void gelu_kernel(const T* input, T* output, int64_
 
 template <class T> void launch(const at::Tensor& input, at::Tensor& output, cudaStream_t stream) {
   const int64_t blocks = (input.numel() + 1023) / 1024;
-  gelu_kernel<T><<<blocks, 256, 0, stream>>>(reinterpret_cast<const T*>(input.const_data_ptr()),
-                                             reinterpret_cast<T*>(output.mutable_data_ptr()),
-                                             input.numel());
+  launch_dependent<gelu_kernel<T>>(blocks,
+                                   256,
+                                   stream,
+                                   reinterpret_cast<const T*>(input.const_data_ptr()),
+                                   reinterpret_cast<T*>(output.mutable_data_ptr()),
+                                   input.numel());
 }
 
 template <class T>
 __global__ void
 bias_gelu_kernel(const T* input, const T* bias, T* output, int64_t count, int64_t width) {
+  wait_for_producer();
   const int64_t i = (int64_t(blockIdx.x) * blockDim.x + threadIdx.x) * 4;
 #pragma unroll
   for (int j = 0; j < 4; ++j)
@@ -104,12 +110,14 @@ void launch_bias(const at::Tensor& input,
                  const at::Tensor& bias,
                  at::Tensor& output,
                  cudaStream_t stream) {
-  bias_gelu_kernel<T><<<(input.numel() + 1023) / 1024, 256, 0, stream>>>(
-      reinterpret_cast<const T*>(input.const_data_ptr()),
-      reinterpret_cast<const T*>(bias.const_data_ptr()),
-      reinterpret_cast<T*>(output.mutable_data_ptr()),
-      input.numel(),
-      input.size(-1));
+  launch_dependent<bias_gelu_kernel<T>>((input.numel() + 1023) / 1024,
+                                        256,
+                                        stream,
+                                        reinterpret_cast<const T*>(input.const_data_ptr()),
+                                        reinterpret_cast<const T*>(bias.const_data_ptr()),
+                                        reinterpret_cast<T*>(output.mutable_data_ptr()),
+                                        input.numel(),
+                                        input.size(-1));
 }
 }
 
