@@ -6,11 +6,25 @@ mod cublas;
 mod decoder;
 mod decoder_model;
 mod dense;
+mod encoder_linear;
+mod encoder_policy;
 mod fa4;
+mod fa4_alibi;
+mod jina_encoder_model;
 pub(crate) mod lt;
 pub mod math;
 mod model;
+mod modern_encoder_model;
+mod native_rope_tables;
+mod nomic_encoder_model;
+#[cfg(test)]
+#[path = "../tests/support/nomic_numerics.rs"]
+mod nomic_numerics;
+#[cfg(test)]
+#[path = "../tests/support/nomic_primitives.rs"]
+mod nomic_primitive_schema;
 mod output;
+mod pytorch_checkpoint;
 mod rotary;
 mod rotary_encoder;
 mod rotary_encoder_model;
@@ -22,16 +36,21 @@ use cublas::Blas;
 use cuda_core::{launch_kernel, Context, DeviceBuffer, Function, Stream};
 use decoder_model::{DecoderConfig, DecoderFamily, DecoderWeights};
 use dense::{DenseChainHost, DenseHead, DenseWork};
+use encoder_linear::ProjectionPlan;
+use encoder_policy::{EmbeddingInputs, ModernEncoder};
 use infinity_v3_backend_core::{
     result_memory, Backend, BackendError, Batch, Embedding, Embeddings, Inference, ModelType, Pool,
     Predictions, TokenPredictions,
 };
+use jina_encoder_model::{JinaLayerWeights, JinaWeights};
 use lt::{LtPlan, LtProvider, ShapeError, NATIVE_DEFAULT_SEED_ROWS};
 use model::{
     BertConfig, BertWeights, EncoderFamily, FeedForwardRecipe, LayerWeights, LinearWeights,
-    NormArithmetic, PositionRecipe,
+    NormArithmetic, PositionRecipe, WeightSource,
 };
-use rotary_encoder::{RotaryEncoder, RotaryFunctions};
+use modern_encoder_model::{ModernConfig, ModernWeights};
+use nomic_encoder_model::{MatrixSources, NomicLayerWeights, NomicWeights};
+use rotary_encoder::{PreparedGatedActivation, RotaryEncoder, RotaryFunctions};
 use staging::{HostIo, HostIoLease, SlotPool};
 use std::{
     ffi::c_void,
@@ -43,7 +62,7 @@ use std::{
     },
 };
 use tensor::Bf16;
-use upload::WeightUploader;
+use upload::{UploadElement, WeightUploader};
 
 // Model warmup precedes the HTTP metrics recorder. Track physical ownership
 // independently so publishing metrics later cannot lose startup allocations.
@@ -189,51 +208,139 @@ pub fn device_count() -> Result<usize, BackendError> {
     usize::try_from(Context::device_count().map_err(start)?).map_err(start)
 }
 
-struct Linear {
-    weight: DeviceBuffer<Bf16>,
-    bias: DeviceBuffer<Bf16>,
+struct Linear<E: UploadElement> {
+    weight: DeviceBuffer<E>,
+    bias: Option<DeviceBuffer<E>>,
 }
-struct Layer {
-    qkv: Linear,
-    attention: Linear,
-    intermediate: Linear,
-    output: Linear,
-    attention_gamma: DeviceBuffer<Bf16>,
-    attention_beta: DeviceBuffer<Bf16>,
-    output_gamma: DeviceBuffer<Bf16>,
-    output_beta: DeviceBuffer<Bf16>,
+struct Layer<E: UploadElement> {
+    qkv: Linear<E>,
+    attention: Linear<E>,
+    intermediate: Linear<E>,
+    output: Linear<E>,
+    attention_gamma: DeviceBuffer<E>,
+    attention_beta: DeviceBuffer<E>,
+    output_gamma: DeviceBuffer<E>,
+    output_beta: DeviceBuffer<E>,
 }
-struct Weights {
-    word: DeviceBuffer<Bf16>,
-    position: DeviceBuffer<Bf16>,
-    token_type: DeviceBuffer<Bf16>,
-    gamma: DeviceBuffer<Bf16>,
-    beta: DeviceBuffer<Bf16>,
-    qkv_zero_bias: DeviceBuffer<Bf16>,
-    layers: Vec<Layer>,
+struct Weights<E: UploadElement> {
+    word: DeviceBuffer<E>,
+    position: Option<DeviceBuffer<E>>,
+    token_type: DeviceBuffer<E>,
+    gamma: DeviceBuffer<E>,
+    beta: DeviceBuffer<E>,
+    qkv_zero_bias: Option<DeviceBuffer<E>>,
+    layers: Vec<Layer<E>>,
 }
-impl Linear {
+impl<E: UploadElement> Linear<E> {
     fn upload(u: &mut WeightUploader, w: &LinearWeights) -> Result<Self, BackendError> {
         Ok(Self {
-            weight: u.upload(&[&w.weight])?,
-            bias: u.upload(&[&w.bias])?,
+            weight: u.upload_typed::<E>(&[&w.weight])?,
+            bias: Some(u.upload_typed::<E>(&[&w.bias])?),
         })
     }
 }
-impl Layer {
+impl<E: UploadElement> Layer<E> {
     fn upload(u: &mut WeightUploader, w: &LayerWeights) -> Result<Self, BackendError> {
         Ok(Self {
             qkv: Linear {
-                weight: u.upload(&[&w.query.weight, &w.key.weight, &w.value.weight])?,
-                bias: u.upload(&[&w.query.bias, &w.key.bias, &w.value.bias])?,
+                weight: u.upload_typed::<E>(&[&w.query.weight, &w.key.weight, &w.value.weight])?,
+                bias: Some(u.upload_typed::<E>(&[&w.query.bias, &w.key.bias, &w.value.bias])?),
             },
-            attention: Linear::upload(u, &w.attention)?,
-            intermediate: Linear::upload(u, &w.intermediate)?,
-            output: Linear::upload(u, &w.output)?,
-            attention_gamma: u.upload(&[&w.attention_gamma])?,
-            attention_beta: u.upload(&[&w.attention_beta])?,
-            output_gamma: u.upload(&[&w.output_gamma])?,
-            output_beta: u.upload(&[&w.output_beta])?,
+            attention: Linear::<E>::upload(u, &w.attention)?,
+            intermediate: Linear::<E>::upload(u, &w.intermediate)?,
+            output: Linear::<E>::upload(u, &w.output)?,
+            attention_gamma: u.upload_typed::<E>(&[&w.attention_gamma])?,
+            attention_beta: u.upload_typed::<E>(&[&w.attention_beta])?,
+            output_gamma: u.upload_typed::<E>(&[&w.output_gamma])?,
+            output_beta: u.upload_typed::<E>(&[&w.output_beta])?,
+        })
+    }
+}
+
+#[allow(clippy::large_enum_variant)]
+enum EncoderHostWeights {
+    Standard(BertWeights),
+    Nomic(NomicWeights),
+    Jina(JinaWeights),
+}
+impl EncoderHostWeights {
+    fn config(&self) -> &BertConfig {
+        match self {
+            Self::Standard(host) => &host.config,
+            Self::Nomic(host) => &host.config,
+            Self::Jina(host) => &host.geometry,
+        }
+    }
+}
+fn upload_matrix<E: UploadElement>(
+    u: &mut WeightUploader,
+    sources: &MatrixSources,
+) -> Result<Linear<E>, BackendError> {
+    let parts = sources.parts.iter().collect::<Vec<_>>();
+    Ok(Linear {
+        weight: u.upload_typed::<E>(&parts)?,
+        bias: None,
+    })
+}
+fn upload_projection_parts<E: UploadElement>(
+    u: &mut WeightUploader,
+    weight_parts: &[WeightSource],
+    bias_parts: Option<&[WeightSource]>,
+) -> Result<Linear<E>, BackendError> {
+    let parts = weight_parts.iter().collect::<Vec<_>>();
+    let weight = u.upload_typed::<E>(&parts)?;
+    let bias = match bias_parts {
+        Some(sources) => {
+            let parts = sources.iter().collect::<Vec<_>>();
+            Some(u.upload_typed::<E>(&parts)?)
+        }
+        None => None,
+    };
+    Ok(Linear { weight, bias })
+}
+impl<E: UploadElement> Layer<E> {
+    fn upload_nomic(
+        u: &mut WeightUploader,
+        host: &NomicLayerWeights,
+    ) -> Result<Self, BackendError> {
+        Ok(Self {
+            qkv: upload_matrix::<E>(u, &host.qkv)?,
+            attention: upload_matrix::<E>(u, &host.attention)?,
+            intermediate: upload_matrix::<E>(u, &host.intermediate)?,
+            output: upload_matrix::<E>(u, &host.output)?,
+            attention_gamma: u.upload_typed::<E>(&[&host.attention_gamma])?,
+            attention_beta: u.upload_typed::<E>(&[&host.attention_beta])?,
+            output_gamma: u.upload_typed::<E>(&[&host.output_gamma])?,
+            output_beta: u.upload_typed::<E>(&[&host.output_beta])?,
+        })
+    }
+
+    fn upload_jina(u: &mut WeightUploader, host: &JinaLayerWeights) -> Result<Self, BackendError> {
+        Ok(Self {
+            qkv: upload_projection_parts(
+                u,
+                &host.qkv.weight_parts,
+                host.qkv.bias_parts.as_deref(),
+            )?,
+            attention: upload_projection_parts(
+                u,
+                &host.attention.weight_parts,
+                host.attention.bias_parts.as_deref(),
+            )?,
+            intermediate: upload_projection_parts(
+                u,
+                &host.intermediate.weight_parts,
+                host.intermediate.bias_parts.as_deref(),
+            )?,
+            output: upload_projection_parts(
+                u,
+                &host.output.weight_parts,
+                host.output.bias_parts.as_deref(),
+            )?,
+            attention_gamma: u.upload_typed::<E>(&[&host.attention_gamma])?,
+            attention_beta: u.upload_typed::<E>(&[&host.attention_beta])?,
+            output_gamma: u.upload_typed::<E>(&[&host.output_gamma])?,
+            output_beta: u.upload_typed::<E>(&[&host.output_beta])?,
         })
     }
 }
@@ -266,6 +373,7 @@ struct Kernels {
     mean_pool: Function,
     raw_cast: Option<Function>,
     rotary: Option<RotaryFunctions>,
+    gated: Option<PreparedGatedActivation>,
 }
 impl Kernels {
     fn load(ctx: &Arc<Context>, config: &BertConfig, fa4: bool) -> Result<Self, BackendError> {
@@ -309,6 +417,9 @@ impl Kernels {
             config.hidden_size == 768 && config.recipe.embedding == NormArithmetic::ExactBiased;
         let exact_768_norm =
             config.hidden_size == 768 && config.recipe.residual == NormArithmetic::ExactBiased;
+        let rounded_512_norm = config.family == EncoderFamily::Jina
+            && config.hidden_size == 512
+            && config.recipe.residual == NormArithmetic::RoundedAddBeforeStats;
         let rounded_1024_embedding = config.hidden_size == 1024
             && config.recipe.embedding == NormArithmetic::RoundedAddBeforeStats;
         let rounded_1024_norm = config.hidden_size == 1024
@@ -316,6 +427,17 @@ impl Kernels {
         let aten_768_embedding =
             config.hidden_size == 768 && config.recipe.embedding == NormArithmetic::AtenEmbedding;
         let embedding_name = match config.recipe.embedding {
+            NormArithmetic::ExactWordTypeBiased if config.hidden_size == 768 => {
+                "infinity_embedding_word_type_norm_768_exact"
+            }
+            NormArithmetic::ExactWordTypeBiased if config.hidden_size == 512 => {
+                "infinity_embedding_word_type_norm_512_exact"
+            }
+            NormArithmetic::ExactWordTypeBiased => {
+                return Err(start(
+                    "Word/type native embedding norm requires hidden512 or hidden768",
+                ));
+            }
             NormArithmetic::ExactBiased if exact_768_embedding => {
                 "infinity_embedding_norm_768_exact_vector"
             }
@@ -335,26 +457,48 @@ impl Kernels {
         };
         let norm_name = match config.recipe.residual {
             NormArithmetic::ExactBiased if exact_768_norm => "infinity_layer_norm_768_exact_vector",
+            NormArithmetic::RoundedAddBeforeStats if rounded_512_norm => {
+                "infinity_layer_norm_512_rounded_native"
+            }
             NormArithmetic::RoundedAddBeforeStats if rounded_1024_norm => {
                 "infinity_layer_norm_1024_rounded_native"
             }
             NormArithmetic::ExactBiased => "infinity_layer_norm",
             NormArithmetic::RoundedAddBeforeStats => "infinity_layer_norm_rounded",
-            NormArithmetic::AtenEmbedding => {
+            NormArithmetic::AtenEmbedding | NormArithmetic::ExactWordTypeBiased => {
                 return Err(start(
-                    "AtenEmbedding is only valid for the GTE word-only embedding norm",
+                    "Embedding-only arithmetic is not valid for residual norms",
                 ))
             }
         };
+        let gated = match config.recipe.feed_forward {
+            FeedForwardRecipe::DenseGelu => None,
+            recipe @ (FeedForwardRecipe::GatedGeluUpFirst
+            | FeedForwardRecipe::GatedSiluGateFirst) => {
+                let name = if recipe == FeedForwardRecipe::GatedSiluGateFirst {
+                    "infinity_silu_mul_bf16_vector8_native"
+                } else {
+                    "infinity_gated_gelu_up_first"
+                };
+                let function = module.load_function(name).map_err(start)?;
+                Some(PreparedGatedActivation::new(recipe, config, function)?)
+            }
+        };
         let rotary = match config.recipe.positions {
-            PositionRecipe::Absolute => None,
+            PositionRecipe::Absolute | PositionRecipe::AlibiModelBias => None,
             PositionRecipe::Rotary(_) => Some(RotaryFunctions {
                 rope_hfma: module
                     .load_function("infinity_rope_neox_hfma")
                     .map_err(start)?,
-                gated_gelu: module
-                    .load_function("infinity_gated_gelu_up_first")
-                    .map_err(start)?,
+                table_initializer: if config.family == EncoderFamily::Nomic {
+                    Some(Arc::new(
+                        module
+                            .load_function("infinity_base_rope_tables_64_bf16")
+                            .map_err(start)?,
+                    ))
+                } else {
+                    None
+                },
             }),
         };
         Ok(Self {
@@ -399,6 +543,7 @@ impl Kernels {
             attention_length_limit,
             pool,
             rotary,
+            gated,
         })
     }
 }
@@ -444,14 +589,14 @@ fn blocks(elements: usize) -> Result<(u32, u32, u32), BackendError> {
     Ok((u32_size(elements.div_ceil(256))?, 1, 1))
 }
 #[allow(clippy::too_many_arguments)]
-fn norm(
+fn norm<E: UploadElement>(
     k: &Kernels,
     s: &Stream,
     mut input: u64,
     mut residual: u64,
     mut bias: u64,
-    gamma: &DeviceBuffer<Bf16>,
-    beta: &DeviceBuffer<Bf16>,
+    gamma: &DeviceBuffer<E>,
+    beta: &DeviceBuffer<E>,
     mut out: u64,
     mut rows: u32,
     mut width: u32,
@@ -539,10 +684,10 @@ fn packed_attention_layout(c: &BertConfig) -> Result<Option<PackedAttention>, Ba
     }))
 }
 
-enum IntermediatePlan {
-    Dense(Box<LtPlan<Bf16>>),
+enum IntermediatePlan<E: UploadElement> {
+    Dense(Box<LtPlan<E>>),
     Gated {
-        plan: Box<Option<math::LinearPlan<Bf16>>>,
+        plan: Box<Option<math::LinearPlan<E>>>,
         input: usize,
         width: usize,
     },
@@ -551,14 +696,17 @@ enum IntermediatePlan {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum DownPolicy {
     NativeDefault,
-    Existing,
+    Plain,
+    Biased,
 }
 
 fn down_policy(c: &BertConfig) -> DownPolicy {
     if c.family == EncoderFamily::Gte {
         DownPolicy::NativeDefault
+    } else if c.family == EncoderFamily::Nomic {
+        DownPolicy::Plain
     } else {
-        DownPolicy::Existing
+        DownPolicy::Biased
     }
 }
 
@@ -568,24 +716,24 @@ enum DownInvocation {
     Lt(lt::NativeDefaultPrepared),
 }
 
-enum PreparedDown {
+enum PreparedDown<E: UploadElement> {
     NativeDefault {
-        m1: Box<math::LinearPlan<Bf16>>,
-        lt_native: Box<LtPlan<Bf16>>,
+        m1: Box<math::LinearPlan<E>>,
+        lt_native: Box<LtPlan<E>>,
         invocations: Vec<Option<DownInvocation>>,
         pending: Box<lt::NativeDefaultPending>,
     },
-    Existing(Box<LtPlan<Bf16>>),
+    Projection(ProjectionPlan<E>),
 }
-impl PreparedDown {
+impl<E: UploadElement> PreparedDown<E> {
     fn new(provider: &LtProvider, c: &BertConfig) -> Result<Self, BackendError> {
         Ok(match down_policy(c) {
             DownPolicy::NativeDefault => Self::NativeDefault {
                 m1: Box::new(
-                    math::LinearPlan::contiguous(1, c.intermediate_size, c.hidden_size)
+                    math::LinearPlan::<E>::contiguous(1, c.intermediate_size, c.hidden_size)
                         .map_err(infer)?,
                 ),
-                lt_native: Box::new(provider.prepare_native_default_bias_shape::<Bf16>(
+                lt_native: Box::new(provider.prepare_native_default_bias_shape::<E>(
                     c.intermediate_size,
                     c.hidden_size,
                     NATIVE_DEFAULT_SEED_ROWS,
@@ -593,17 +741,22 @@ impl PreparedDown {
                 invocations: vec![None; c.num_hidden_layers],
                 pending: Box::<lt::NativeDefaultPending>::default(),
             },
-            DownPolicy::Existing => Self::Existing(Box::new(
-                provider
-                    .prepare_native_small_bias_shape::<Bf16>(c.intermediate_size, c.hidden_size)?,
-            )),
+            DownPolicy::Plain => Self::Projection(ProjectionPlan::<E>::plain(
+                c.intermediate_size,
+                c.hidden_size,
+            )?),
+            DownPolicy::Biased => Self::Projection(ProjectionPlan::<E>::biased(
+                provider,
+                c.intermediate_size,
+                c.hidden_size,
+            )?),
         })
     }
 
     fn set_rows(&mut self, provider: &LtProvider, rows: usize) -> Result<(), ShapeError> {
         match self {
             Self::NativeDefault { .. } => Ok(()),
-            Self::Existing(plan) => provider.set_logical_rows(plan, rows),
+            Self::Projection(plan) => plan.set_rows(provider, rows),
         }
     }
 
@@ -639,10 +792,10 @@ impl PreparedDown {
         provider: &LtProvider,
         blas: Option<&Blas>,
         tokens: usize,
-        x: &DeviceBuffer<Bf16>,
-        weight: &DeviceBuffer<Bf16>,
-        bias: &DeviceBuffer<Bf16>,
-        output: &mut DeviceBuffer<Bf16>,
+        x: &DeviceBuffer<E>,
+        weight: &DeviceBuffer<E>,
+        bias: Option<&DeviceBuffer<E>>,
+        output: &mut DeviceBuffer<E>,
         stream: &Stream,
         width: usize,
         index: usize,
@@ -656,6 +809,8 @@ impl PreparedDown {
         else {
             return Ok(());
         };
+        let bias =
+            bias.ok_or_else(|| ShapeError::Fatal(infer("GTE down M1 requires a bias buffer")))?;
         let invocation = if tokens == 1 {
             let blas =
                 blas.ok_or_else(|| ShapeError::Fatal(infer("GTE down M1 requires plain cuBLAS")))?;
@@ -684,16 +839,16 @@ impl PreparedDown {
 /// thread, keep every buffer alive without conflicting access until the stream
 /// drains, and pass the same buffers used during `prepare_layer`.
 #[allow(clippy::too_many_arguments)]
-unsafe fn enqueue_down(
-    prepared: &mut PreparedDown,
+unsafe fn enqueue_down<E: UploadElement>(
+    prepared: &mut PreparedDown<E>,
     provider: &LtProvider,
     blas: Option<&Blas>,
     tokens: usize,
     index: usize,
-    x: &DeviceBuffer<Bf16>,
-    weight: &DeviceBuffer<Bf16>,
-    bias: &DeviceBuffer<Bf16>,
-    output: &mut DeviceBuffer<Bf16>,
+    x: &DeviceBuffer<E>,
+    weight: &DeviceBuffer<E>,
+    bias: Option<&DeviceBuffer<E>>,
+    output: &mut DeviceBuffer<E>,
     stream: &Stream,
 ) -> Result<(), ShapeError> {
     match prepared {
@@ -703,6 +858,8 @@ unsafe fn enqueue_down(
             invocations,
             ..
         } => {
+            let bias =
+                bias.ok_or_else(|| ShapeError::Fatal(infer("GTE down M1 requires a bias buffer")))?;
             let invocation = invocations
                 .get(index)
                 .and_then(Option::as_ref)
@@ -732,37 +889,47 @@ unsafe fn enqueue_down(
                 ))),
             }
         }
-        PreparedDown::Existing(plan) => {
+        PreparedDown::Projection(plan) => {
             // SAFETY: the caller retains every buffer through stream drain.
-            unsafe { provider.enqueue(plan, x, weight, bias, output) }.map_err(ShapeError::Fatal)
+            unsafe { plan.enqueue(provider, blas, x, weight, bias, output) }
+                .map_err(ShapeError::Fatal)
         }
     }
 }
 
-struct Plans {
+struct Plans<E: UploadElement> {
     rows: Option<usize>,
-    qkv: LtPlan<Bf16>,
-    attention: LtPlan<Bf16>,
-    intermediate: IntermediatePlan,
-    output: PreparedDown,
+    qkv: ProjectionPlan<E>,
+    attention: ProjectionPlan<E>,
+    intermediate: IntermediatePlan<E>,
+    output: PreparedDown<E>,
 }
-impl Plans {
+impl<E: UploadElement> Plans<E> {
     fn new(provider: &LtProvider, c: &BertConfig) -> Result<Self, BackendError> {
         let h = c.hidden_size;
         let intermediate = match c.recipe.feed_forward {
             FeedForwardRecipe::DenseGelu => IntermediatePlan::Dense(Box::new(
-                provider.prepare_native_small_gelu_bias_shape::<Bf16>(h, c.intermediate_size)?,
+                provider.prepare_native_small_gelu_bias_shape::<E>(h, c.intermediate_size)?,
             )),
-            FeedForwardRecipe::GatedGeluUpFirst => IntermediatePlan::Gated {
-                plan: Box::new(None),
-                input: h,
-                width: product(c.intermediate_size, 2)?,
-            },
+            FeedForwardRecipe::GatedGeluUpFirst | FeedForwardRecipe::GatedSiluGateFirst => {
+                IntermediatePlan::Gated {
+                    plan: Box::new(None),
+                    input: h,
+                    width: product(c.intermediate_size, 2)?,
+                }
+            }
+        };
+        let projection = |input, output| {
+            if c.family == EncoderFamily::Nomic {
+                ProjectionPlan::plain(input, output)
+            } else {
+                ProjectionPlan::biased(provider, input, output)
+            }
         };
         Ok(Self {
             rows: None,
-            qkv: provider.prepare_native_small_bias_shape::<Bf16>(h, product(h, 3)?)?,
-            attention: provider.prepare_native_small_bias_shape::<Bf16>(h, h)?,
+            qkv: projection(h, product(h, 3)?)?,
+            attention: projection(h, h)?,
             intermediate,
             output: PreparedDown::new(provider, c)?,
         })
@@ -770,8 +937,8 @@ impl Plans {
 
     fn set_rows(&mut self, provider: &LtProvider, rows: usize) -> Result<(), ShapeError> {
         math::refresh_plan_rows(&mut self.rows, rows, || {
-            provider.set_logical_rows(&mut self.qkv, rows)?;
-            provider.set_logical_rows(&mut self.attention, rows)?;
+            self.qkv.set_rows(provider, rows)?;
+            self.attention.set_rows(provider, rows)?;
             match &mut self.intermediate {
                 IntermediatePlan::Dense(plan) => provider.set_logical_rows(plan, rows)?,
                 IntermediatePlan::Gated { plan, input, width } => {
@@ -797,9 +964,9 @@ impl Plans {
         provider: &LtProvider,
         blas: Option<&Blas>,
         tokens: usize,
-        layers: &[Layer],
-        x: &DeviceBuffer<Bf16>,
-        output: &mut DeviceBuffer<Bf16>,
+        layers: &[Layer<E>],
+        x: &DeviceBuffer<E>,
+        output: &mut DeviceBuffer<E>,
         stream: &Stream,
         width: usize,
     ) -> Result<(), ShapeError> {
@@ -815,7 +982,7 @@ impl Plans {
                         tokens,
                         x,
                         &layer.output.weight,
-                        &layer.output.bias,
+                        layer.output.bias.as_ref(),
                         output,
                         stream,
                         width,
@@ -830,7 +997,7 @@ impl Plans {
     }
 }
 #[cfg(test)]
-impl IntermediatePlan {
+impl<E: UploadElement> IntermediatePlan<E> {
     fn logical_rows(&self) -> i32 {
         match self {
             Self::Dense(plan) => plan.logical_rows(),
@@ -845,14 +1012,15 @@ impl IntermediatePlan {
 /// Concrete executable selected once at load. Encoder and decoder share the
 /// Engine's context, ordered stream, provider, host I/O pool and admission.
 enum ExecutableModel {
-    Encoder(Box<EncoderModel>),
+    Modern(Box<ModernEncoder>),
+    Encoder(Box<EncoderModel<Bf16>>),
     Decoder(Box<decoder::DecoderModel>),
 }
 impl ExecutableModel {
     fn supports_raw_output(&self) -> bool {
         match self {
             Self::Encoder(model) => model.kernels.raw_cast.is_some(),
-            Self::Decoder(_) => true,
+            Self::Modern(_) | Self::Decoder(_) => true,
         }
     }
     fn preflight(
@@ -863,6 +1031,7 @@ impl ExecutableModel {
     ) -> Result<(), ShapeError> {
         match self {
             Self::Encoder(model) => model.plans.set_rows(provider, batch.input_ids.len()),
+            Self::Modern(model) => model.preflight(batch.input_ids.len()),
             Self::Decoder(model) => model.preflight(provider, batch, pool),
         }
     }
@@ -870,6 +1039,7 @@ impl ExecutableModel {
     fn hidden_size(&self) -> usize {
         match self {
             Self::Encoder(model) => model.config.hidden_size,
+            Self::Modern(model) => model.config.geometry.hidden_size,
             Self::Decoder(model) => model.config.hidden_size,
         }
     }
@@ -904,13 +1074,23 @@ impl ExecutableModel {
     }
     fn workspace_bytes(&self, key: WorkKey) -> Result<usize, BackendError> {
         match self {
-            Self::Encoder(model) => Work::allocation_bytes(key, &model.config),
+            Self::Encoder(model) => Work::<Bf16>::allocation_bytes(key, &model.config),
+            Self::Modern(model) => Work::<Bf16>::allocation_bytes(key, &model.config.geometry),
             Self::Decoder(model) => decoder::DecoderWork::allocation_bytes(key, &model.config),
         }
     }
     fn workspace(&self, stream: Arc<Stream>, key: WorkKey) -> Result<Workspace, BackendError> {
         match self {
-            Self::Encoder(model) => Ok(Workspace::Encoder(Work::new(stream, &model.config, key)?)),
+            Self::Encoder(model) => Ok(Workspace::Encoder(Work::<Bf16>::new(
+                stream,
+                &model.config,
+                key,
+            )?)),
+            Self::Modern(model) => Ok(Workspace::Encoder(Work::<Bf16>::new(
+                stream,
+                &model.config.geometry,
+                key,
+            )?)),
             Self::Decoder(model) => Ok(Workspace::Decoder(decoder::DecoderWork::new(
                 stream,
                 &model.config,
@@ -920,18 +1100,19 @@ impl ExecutableModel {
     }
 }
 
-struct EncoderModel {
+struct EncoderModel<E: UploadElement> {
     config: BertConfig,
-    plans: Plans,
+    plans: Plans<E>,
     kernels: Kernels,
-    weights: Weights,
+    weights: Weights<E>,
     rotary: Option<RotaryEncoder>,
+    gated: Option<PreparedGatedActivation>,
     fa4: Option<fa4::Fa4>,
     fa4_layout: Option<PackedAttention>,
 }
 
 enum Workspace {
-    Encoder(Work),
+    Encoder(Work<Bf16>),
     Decoder(decoder::DecoderWork),
 }
 impl Workspace {
@@ -1286,22 +1467,22 @@ fn enqueue_raw_output(
     )
 }
 
-struct Work {
+struct Work<E: UploadElement> {
     stream: Arc<Stream>,
     tokens: usize,
     sequences: usize,
     selections: usize,
     bytes: usize,
     input: ManuallyDrop<DeviceBuffer<u32>>,
-    x: ManuallyDrop<DeviceBuffer<Bf16>>,
-    temp: ManuallyDrop<DeviceBuffer<Bf16>>,
-    qkv: ManuallyDrop<DeviceBuffer<Bf16>>,
-    query: ManuallyDrop<DeviceBuffer<Bf16>>,
-    key: ManuallyDrop<DeviceBuffer<Bf16>>,
-    value: ManuallyDrop<DeviceBuffer<Bf16>>,
-    attention: ManuallyDrop<DeviceBuffer<Bf16>>,
-    intermediate: ManuallyDrop<DeviceBuffer<Bf16>>,
-    gated: ManuallyDrop<Option<DeviceBuffer<Bf16>>>,
+    x: ManuallyDrop<DeviceBuffer<E>>,
+    temp: ManuallyDrop<DeviceBuffer<E>>,
+    qkv: ManuallyDrop<DeviceBuffer<E>>,
+    query: ManuallyDrop<DeviceBuffer<E>>,
+    key: ManuallyDrop<DeviceBuffer<E>>,
+    value: ManuallyDrop<DeviceBuffer<E>>,
+    attention: ManuallyDrop<DeviceBuffer<E>>,
+    intermediate: ManuallyDrop<DeviceBuffer<E>>,
+    gated: ManuallyDrop<Option<DeviceBuffer<E>>>,
     pooled: ManuallyDrop<DeviceBuffer<f32>>,
 }
 #[cfg(test)]
@@ -1324,7 +1505,7 @@ impl LinearPlans {
         })
     }
 }
-impl Drop for Work {
+impl<E: UploadElement> Drop for Work<E> {
     fn drop(&mut self) {
         if self.stream.synchronize().is_ok() {
             // SAFETY: every field is dropped once after completion. Failed
@@ -1351,7 +1532,7 @@ impl Drop for Work {
         }
     }
 }
-impl Work {
+impl<E: UploadElement> Work<E> {
     fn key(&self) -> WorkKey {
         (self.tokens, self.sequences, self.selections)
     }
@@ -1367,7 +1548,7 @@ impl Work {
         let output = product(key.2, c.hidden_size)?;
         let hidden = product(product(tokens, c.hidden_size)?, 18)?;
         let mut intermediate = product(product(tokens, c.intermediate_size)?, 2)?;
-        if c.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst {
+        if c.recipe.feed_forward.is_gated() {
             let gated_elements = product(tokens, product(c.intermediate_size, 2)?)?;
             u32_size(gated_elements)?;
             intermediate = intermediate
@@ -1394,7 +1575,7 @@ impl Work {
             // SAFETY: private allocation; initialization precedes every use on
             // this stream, including vectorized library reads of scratch.
             let buffer =
-                unsafe { DeviceBuffer::<Bf16>::uninitialized_async(&s, len) }.map_err(infer)?;
+                unsafe { DeviceBuffer::<E>::uninitialized_async(&s, len) }.map_err(infer)?;
             unsafe {
                 cuda_core::memory::memset_d8_async(
                     buffer.cu_deviceptr(),
@@ -1420,7 +1601,7 @@ impl Work {
         let intermediate = alloc(product(tokens, c.intermediate_size)?)?;
         let gated = match c.recipe.feed_forward {
             FeedForwardRecipe::DenseGelu => None,
-            FeedForwardRecipe::GatedGeluUpFirst => {
+            FeedForwardRecipe::GatedGeluUpFirst | FeedForwardRecipe::GatedSiluGateFirst => {
                 Some(alloc(product(product(tokens, c.intermediate_size)?, 2)?)?)
             }
         };
@@ -1766,502 +1947,25 @@ impl Engine {
         bump_lease_begin();
         w.upload(lease.slot()?.input.as_slice(), input_elements)?;
         match (&mut *self.model, &mut *w) {
+            (ExecutableModel::Modern(model), Workspace::Encoder(work)) => model
+                .enqueue(
+                    plain_blas.ok_or_else(|| infer("Modern requires plain cuBLAS"))?,
+                    s,
+                    work,
+                    b,
+                    pool,
+                    max_length,
+                    tokens,
+                )
+                .map_err(EnqueueError::from),
             (ExecutableModel::Decoder(model), Workspace::Decoder(work)) => {
                 model.enqueue(lt, plain_blas, s, work, b, pool, max_length, tokens)?;
                 Ok(())
             }
             (ExecutableModel::Encoder(model), Workspace::Encoder(w)) => {
-                let c = &model.config;
-                let k = &model.kernels;
-                let weights = &model.weights;
-                let fa4 = model.fa4.as_ref();
-                let fa4_layout = model.fa4_layout;
-                let rotary = model.rotary.as_ref();
-                let plans = &mut model.plans;
-                let h = c.hidden_size;
-                let batch_count = b
-                    .cumulative_seq_lengths
-                    .len()
-                    .checked_sub(1)
-                    .ok_or_else(|| infer("Missing oxide sequence boundaries"))?;
-                let (mut t, mut width) = (u32_size(tokens)?, u32_size(h)?);
-                let (mut count, mut heads, mut dim) = (
-                    u32_size(batch_count)?,
-                    u32_size(c.num_attention_heads)?,
-                    u32_size(
-                        h.checked_div(c.num_attention_heads)
-                            .ok_or_else(|| infer("Invalid oxide attention head count"))?,
-                    )?,
-                );
-                #[cfg(test)]
-                let mut trace = trace::Trace::from_env(c, pool, tokens, batch_count);
-                let zero_bias = weights.qkv_zero_bias.cu_deviceptr();
-                let base = w.input.cu_deviceptr();
-                let (mut ids, mut pos, mut types) = (
-                    base,
-                    base + product(tokens, 4)? as u64,
-                    base + product(tokens, 8)? as u64,
-                );
-                let boundaries = base + product(tokens, 12)? as u64;
-                let selected = boundaries + product(b.cumulative_seq_lengths.len(), 4)? as u64;
-                let (mut word, mut position, mut type_weight) = (
-                    weights.word.cu_deviceptr(),
-                    weights.position.cu_deviceptr(),
-                    weights.token_type.cu_deviceptr(),
-                );
-                let (mut gamma, mut beta) =
-                    (weights.gamma.cu_deviceptr(), weights.beta.cu_deviceptr());
-                let (mut x, mut eps) = (w.x.cu_deviceptr(), c.layer_norm_eps as f32);
-                if rotary.is_some() {
-                    launch_threads(
-                        &k.embedding,
-                        s,
-                        (t, 1, 1),
-                        128,
-                        0,
-                        &mut [
-                            arg(&mut ids),
-                            arg(&mut word),
-                            arg(&mut gamma),
-                            arg(&mut beta),
-                            arg(&mut x),
-                            arg(&mut t),
-                            arg(&mut width),
-                            arg(&mut eps),
-                        ],
-                    )?;
-                } else if let Some(kernel) = &k.embedding_384 {
-                    launch_threads(
-                        kernel,
-                        s,
-                        (t, 1, 1),
-                        256,
-                        0,
-                        &mut [
-                            arg(&mut ids),
-                            arg(&mut pos),
-                            arg(&mut types),
-                            arg(&mut word),
-                            arg(&mut position),
-                            arg(&mut type_weight),
-                            arg(&mut gamma),
-                            arg(&mut beta),
-                            arg(&mut x),
-                            arg(&mut t),
-                            arg(&mut eps),
-                        ],
-                    )?;
-                } else {
-                    launch_threads(
-                        &k.embedding,
-                        s,
-                        (t.div_ceil(k.embedding_geometry.rows_per_cta), 1, 1),
-                        k.embedding_geometry.threads,
-                        0,
-                        &mut [
-                            arg(&mut ids),
-                            arg(&mut pos),
-                            arg(&mut types),
-                            arg(&mut word),
-                            arg(&mut position),
-                            arg(&mut type_weight),
-                            arg(&mut gamma),
-                            arg(&mut beta),
-                            arg(&mut x),
-                            arg(&mut t),
-                            arg(&mut width),
-                            arg(&mut eps),
-                        ],
-                    )?;
-                }
-                #[cfg(test)]
-                if let Some(trace) = trace.as_mut() {
-                    trace.tensor(s, &w.x, tokens, h, "embedding");
-                }
-                for (layer_index, layer) in weights.layers.iter().enumerate() {
-                    // SAFETY: this thread bound the engine context once above. The
-                    // engine retains all buffers until stream completion/error drain;
-                    // input/output buffers are distinct and access is stream-ordered.
-                    unsafe {
-                        lt.enqueue(
-                            &plans.qkv,
-                            &w.x,
-                            &layer.qkv.weight,
-                            &layer.qkv.bias,
-                            &mut w.qkv,
-                        )?;
-                    }
-                    #[cfg(test)]
-                    if let Some(trace) = trace.as_mut() {
-                        trace.tensor(
-                            s,
-                            &w.qkv,
-                            tokens,
-                            product(h, 3)?,
-                            &format!("layer_{layer_index:02}_qkv_pre_rope"),
-                        );
-                    }
-                    if let Some(rotary) = rotary {
-                        let mut q = w.qkv.cu_deviceptr();
-                        let mut key = q
-                            .checked_add(
-                                u64::try_from(product(h, 2)?)
-                                    .map_err(|_| infer("GTE rotary K offset overflow"))?,
-                            )
-                            .ok_or_else(|| infer("GTE rotary K offset overflow"))?;
-                        let mut cosine = rotary.cosine.cu_deviceptr();
-                        let mut sine = rotary.sine.cu_deviceptr();
-                        let mut positions = pos;
-                        let mut rotary_tokens = t;
-                        let mut q_heads = heads;
-                        let mut kv_heads = heads;
-                        let mut head_dim = rotary.head_dim;
-                        let mut rotary_dim = rotary.head_dim;
-                        let row = product(h, 3)?;
-                        let mut q_stride =
-                            u64::try_from(row).map_err(|_| infer("GTE rotary stride overflow"))?;
-                        let mut k_stride = q_stride;
-                        let mut table_stride = rotary.table_stride;
-                        let twice_heads = c
-                            .num_attention_heads
-                            .checked_mul(2)
-                            .ok_or_else(|| infer("GTE rotary grid overflow"))?;
-                        let rotary_work =
-                            product(product(tokens, twice_heads)?, rotary.head_dim as usize / 2)?;
-                        let rope_grid = blocks(rotary_work)?;
-                        launch_threads(
-                            &rotary.rope_hfma,
-                            s,
-                            rope_grid,
-                            256,
-                            0,
-                            &mut [
-                                arg(&mut q),
-                                arg(&mut key),
-                                arg(&mut cosine),
-                                arg(&mut sine),
-                                arg(&mut positions),
-                                arg(&mut rotary_tokens),
-                                arg(&mut q_heads),
-                                arg(&mut kv_heads),
-                                arg(&mut head_dim),
-                                arg(&mut rotary_dim),
-                                arg(&mut q_stride),
-                                arg(&mut k_stride),
-                                arg(&mut table_stride),
-                            ],
-                        )?;
-                    }
-                    #[cfg(test)]
-                    if let Some(trace) = trace.as_mut() {
-                        trace.tensor(
-                            s,
-                            &w.qkv,
-                            tokens,
-                            product(h, 3).unwrap(),
-                            &format!("layer_{layer_index:02}_qkv"),
-                        );
-                    }
-                    if let Some(provider) = fa4 {
-                        let layout =
-                            fa4_layout.ok_or_else(|| infer("Missing FA4 packed layout"))?;
-                        let q = w.qkv.cu_deviceptr();
-                        let attention = fa4::AttentionBatch {
-                            q,
-                            k: q.checked_add(layout.k_offset)
-                                .ok_or_else(|| infer("FA4 packed K address overflow"))?,
-                            v: q.checked_add(layout.v_offset)
-                                .ok_or_else(|| infer("FA4 packed V address overflow"))?,
-                            out: w.attention.cu_deviceptr(),
-                            q_offsets: boundaries,
-                            k_offsets: boundaries,
-                            q_tokens: tokens,
-                            k_tokens: tokens,
-                            batch: batch_count,
-                            max_q: max_length,
-                            strides: layout.strides,
-                        };
-                        // SAFETY: Engine::enqueue_inner bound this context once on
-                        // this thread; packed Q/K/V and the separate output remain
-                        // retained by the engine, and the cumulative boundaries are
-                        // shared int32 data.
-                        unsafe { provider.forward_batch_bound(s, &attention)? };
-                    } else {
-                        let mut qkv = w.qkv.cu_deviceptr();
-                        let (mut q, mut key, mut v) = (
-                            w.query.cu_deviceptr(),
-                            w.key.cu_deviceptr(),
-                            w.value.cu_deviceptr(),
-                        );
-                        let (mut qkv_bias, mut n) = (zero_bias, u32_size(product(tokens, h)?)?);
-                        launch(
-                            &k.qkv,
-                            s,
-                            blocks(product(tokens, h)?)?,
-                            0,
-                            &mut [
-                                arg(&mut qkv),
-                                arg(&mut qkv_bias),
-                                arg(&mut q),
-                                arg(&mut key),
-                                arg(&mut v),
-                                arg(&mut n),
-                                arg(&mut width),
-                            ],
-                        )?;
-                        let (mut bounds, mut attn) = (boundaries, w.attention.cu_deviceptr());
-                        launch(
-                            &k.attention,
-                            s,
-                            (u32_size(max_length)?, heads, count),
-                            u32_size(product(max_length, 4)?)?,
-                            &mut [
-                                arg(&mut q),
-                                arg(&mut key),
-                                arg(&mut v),
-                                arg(&mut bounds),
-                                arg(&mut attn),
-                                arg(&mut count),
-                                arg(&mut heads),
-                                arg(&mut dim),
-                                arg(&mut width),
-                            ],
-                        )?;
-                    }
-                    #[cfg(test)]
-                    if let Some(trace) = trace.as_mut() {
-                        trace.tensor(
-                            s,
-                            &w.attention,
-                            tokens,
-                            h,
-                            &format!("layer_{layer_index:02}_attention"),
-                        );
-                    }
-                    // SAFETY: same retained-buffer/context contract as the QKV call.
-                    unsafe {
-                        lt.enqueue(
-                            &plans.attention,
-                            &w.attention,
-                            &layer.attention.weight,
-                            &layer.attention.bias,
-                            &mut w.temp,
-                        )?;
-                    }
-                    #[cfg(test)]
-                    if let Some(trace) = trace.as_mut() {
-                        trace.tensor(
-                            s,
-                            &w.temp,
-                            tokens,
-                            h,
-                            &format!("layer_{layer_index:02}_attention_projection"),
-                        );
-                    }
-                    let temp = w.temp.cu_deviceptr();
-                    norm(
-                        k,
-                        s,
-                        temp,
-                        x,
-                        0,
-                        &layer.attention_gamma,
-                        &layer.attention_beta,
-                        x,
-                        t,
-                        width,
-                        eps,
-                    )?;
-                    #[cfg(test)]
-                    if let Some(trace) = trace.as_mut() {
-                        trace.tensor(
-                            s,
-                            &w.x,
-                            tokens,
-                            h,
-                            &format!("layer_{layer_index:02}_attention_norm"),
-                        );
-                    }
-                    if let Some(rotary) = rotary {
-                        let IntermediatePlan::Gated { plan, .. } = &plans.intermediate else {
-                            return Err(infer(
-                                "GTE gated feed-forward requires a gated intermediate plan",
-                            )
-                            .into());
-                        };
-                        let plan = plan
-                            .as_ref()
-                            .as_ref()
-                            .ok_or_else(|| infer("Gated feed-forward plan is not prepared"))?;
-                        let blas = plain_blas
-                            .ok_or_else(|| infer("Gated feed-forward requires plain cuBLAS"))?;
-                        let mut input = {
-                            let scratch = (*w.gated)
-                                .as_mut()
-                                .ok_or_else(|| infer("Missing gated feed-forward scratch"))?;
-                            // SAFETY: same retained-buffer/context contract as the QKV call.
-                            unsafe {
-                                blas.linear(plan, &w.x, &layer.intermediate.weight, scratch)?;
-                            }
-                            #[cfg(test)]
-                            if let Some(trace) = trace.as_mut() {
-                                trace.tensor(
-                                    s,
-                                    scratch,
-                                    tokens,
-                                    product(c.intermediate_size, 2)?,
-                                    &format!("layer_{layer_index:02}_up_gate"),
-                                );
-                            }
-                            scratch.cu_deviceptr()
-                        };
-                        let mut output = w.intermediate.cu_deviceptr();
-                        let mut rows = t;
-                        let mut gate_width = u32_size(c.intermediate_size)?;
-                        launch(
-                            &rotary.gated_gelu,
-                            s,
-                            blocks(product(tokens, c.intermediate_size)?)?,
-                            0,
-                            &mut [
-                                arg(&mut input),
-                                arg(&mut output),
-                                arg(&mut rows),
-                                arg(&mut gate_width),
-                            ],
-                        )?;
-                    } else {
-                        let IntermediatePlan::Dense(plan) = &plans.intermediate else {
-                            return Err(infer(
-                                "Dense feed-forward requires a dense intermediate plan",
-                            )
-                            .into());
-                        };
-                        // SAFETY: same retained-buffer/context contract as the QKV call.
-                        unsafe {
-                            lt.enqueue(
-                                plan,
-                                &w.x,
-                                &layer.intermediate.weight,
-                                &layer.intermediate.bias,
-                                &mut w.intermediate,
-                            )?;
-                        }
-                    }
-                    #[cfg(test)]
-                    if let Some(trace) = trace.as_mut() {
-                        trace.tensor(
-                            s,
-                            &w.intermediate,
-                            tokens,
-                            c.intermediate_size,
-                            &format!("layer_{layer_index:02}_gelu"),
-                        );
-                    }
-                    // SAFETY: same retained-buffer/context contract as the QKV call.
-                    unsafe {
-                        enqueue_down(
-                            &mut plans.output,
-                            lt,
-                            plain_blas,
-                            tokens,
-                            layer_index,
-                            &w.intermediate,
-                            &layer.output.weight,
-                            &layer.output.bias,
-                            &mut w.temp,
-                            s,
-                        )?;
-                    }
-                    #[cfg(test)]
-                    if let Some(trace) = trace.as_mut() {
-                        trace.tensor(
-                            s,
-                            &w.temp,
-                            tokens,
-                            h,
-                            &format!("layer_{layer_index:02}_output_projection"),
-                        );
-                    }
-                    norm(
-                        k,
-                        s,
-                        temp,
-                        x,
-                        0,
-                        &layer.output_gamma,
-                        &layer.output_beta,
-                        x,
-                        t,
-                        width,
-                        eps,
-                    )?;
-                    #[cfg(test)]
-                    if let Some(trace) = trace.as_mut() {
-                        trace.tensor(
-                            s,
-                            &w.x,
-                            tokens,
-                            h,
-                            &format!("layer_{layer_index:02}_output_norm"),
-                        );
-                    }
-                }
-                #[cfg(test)]
-                if let Some(trace) = trace.take() {
-                    trace.finish();
-                }
-                let (mut bounds, mut indices, mut out) =
-                    (boundaries, selected, w.pooled.cu_deviceptr());
-                let mut count = u32_size(b.pooled_indices.len())?;
-                let mut mode = match pool {
-                    Pool::Cls => 0u32,
-                    Pool::Mean => 1,
-                    Pool::LastToken => 2,
-                    Pool::Splade => return Err(infer("Oxide SPLADE unsupported").into()),
-                };
-                if count > 0 && mode == 1 {
-                    launch(
-                        &k.mean_pool,
-                        s,
-                        (count, u32_size(h.div_ceil(32))?, 1),
-                        0,
-                        &mut [
-                            arg(&mut x),
-                            arg(&mut bounds),
-                            arg(&mut indices),
-                            arg(&mut out),
-                            arg(&mut count),
-                            arg(&mut width),
-                        ],
-                    )?;
-                } else if count > 0 {
-                    launch(
-                        &k.pool,
-                        s,
-                        blocks(product(count as usize, h)?)?,
-                        0,
-                        &mut [
-                            arg(&mut x),
-                            arg(&mut bounds),
-                            arg(&mut indices),
-                            arg(&mut out),
-                            arg(&mut count),
-                            arg(&mut width),
-                            arg(&mut mode),
-                        ],
-                    )?;
-                }
-                if !b.raw_indices.is_empty() {
-                    let function = k
-                        .raw_cast
-                        .as_ref()
-                        .ok_or_else(|| infer("Raw output kernel is unavailable"))?;
-                    enqueue_raw_output(function, s, x, w.pooled.cu_deviceptr(), selected, b, h)?;
-                }
-                Ok(())
+                enqueue_encoder(model, w, lt, plain_blas, s, b, pool, max_length, tokens)
             }
-            _ => Err(infer("Oxide model/workspace mismatch")),
+            _ => Err(infer("Oxide model/workspace mismatch").into()),
         }?;
         let dense = match ((*self.dense).as_mut(), self.dense_workspace.as_mut()) {
             (Some(_), _) if pooled_rows == 0 => None,
@@ -2278,7 +1982,514 @@ impl Engine {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn enqueue_encoder<E: UploadElement>(
+    model: &mut EncoderModel<E>,
+    w: &mut Work<E>,
+    lt: &LtProvider,
+    plain_blas: Option<&Blas>,
+    s: &Stream,
+    b: &Batch,
+    pool: &Pool,
+    max_length: usize,
+    tokens: usize,
+) -> Result<(), EnqueueError> {
+    let c = &model.config;
+    let k = &model.kernels;
+    let weights = &model.weights;
+    let fa4 = model.fa4.as_ref();
+    let fa4_layout = model.fa4_layout;
+    let rotary = model.rotary.as_ref();
+    let gated = model.gated.as_ref();
+    let plans = &mut model.plans;
+    let h = c.hidden_size;
+    let batch_count = b
+        .cumulative_seq_lengths
+        .len()
+        .checked_sub(1)
+        .ok_or_else(|| infer("Missing oxide sequence boundaries"))?;
+    let (mut t, mut width) = (u32_size(tokens)?, u32_size(h)?);
+    let (mut count, mut heads, mut dim) = (
+        u32_size(batch_count)?,
+        u32_size(c.num_attention_heads)?,
+        u32_size(
+            h.checked_div(c.num_attention_heads)
+                .ok_or_else(|| infer("Invalid oxide attention head count"))?,
+        )?,
+    );
+    #[cfg(test)]
+    let mut trace = trace::Trace::from_env(c, pool, tokens, batch_count);
+    let zero_bias = weights
+        .qkv_zero_bias
+        .as_ref()
+        .map_or(0, DeviceBuffer::cu_deviceptr);
+    let base = w.input.cu_deviceptr();
+    let (mut ids, mut pos, mut types) = (
+        base,
+        base + product(tokens, 4)? as u64,
+        base + product(tokens, 8)? as u64,
+    );
+    let boundaries = base + product(tokens, 12)? as u64;
+    let selected = boundaries + product(b.cumulative_seq_lengths.len(), 4)? as u64;
+    let (mut word, mut position, mut type_weight) = (
+        weights.word.cu_deviceptr(),
+        weights
+            .position
+            .as_ref()
+            .map_or(0, DeviceBuffer::cu_deviceptr),
+        weights.token_type.cu_deviceptr(),
+    );
+    let (mut gamma, mut beta) = (weights.gamma.cu_deviceptr(), weights.beta.cu_deviceptr());
+    let (mut x, mut eps) = (w.x.cu_deviceptr(), c.layer_norm_eps as f32);
+    if c.recipe.embedding == NormArithmetic::ExactWordTypeBiased {
+        launch_threads(
+            &k.embedding,
+            s,
+            (t.div_ceil(4), 1, 1),
+            128,
+            0,
+            &mut [
+                arg(&mut ids),
+                arg(&mut types),
+                arg(&mut word),
+                arg(&mut type_weight),
+                arg(&mut gamma),
+                arg(&mut beta),
+                arg(&mut x),
+                arg(&mut t),
+                arg(&mut eps),
+            ],
+        )?;
+    } else if rotary.is_some() {
+        launch_threads(
+            &k.embedding,
+            s,
+            (t, 1, 1),
+            128,
+            0,
+            &mut [
+                arg(&mut ids),
+                arg(&mut word),
+                arg(&mut gamma),
+                arg(&mut beta),
+                arg(&mut x),
+                arg(&mut t),
+                arg(&mut width),
+                arg(&mut eps),
+            ],
+        )?;
+    } else if let Some(kernel) = &k.embedding_384 {
+        launch_threads(
+            kernel,
+            s,
+            (t, 1, 1),
+            256,
+            0,
+            &mut [
+                arg(&mut ids),
+                arg(&mut pos),
+                arg(&mut types),
+                arg(&mut word),
+                arg(&mut position),
+                arg(&mut type_weight),
+                arg(&mut gamma),
+                arg(&mut beta),
+                arg(&mut x),
+                arg(&mut t),
+                arg(&mut eps),
+            ],
+        )?;
+    } else {
+        launch_threads(
+            &k.embedding,
+            s,
+            (t.div_ceil(k.embedding_geometry.rows_per_cta), 1, 1),
+            k.embedding_geometry.threads,
+            0,
+            &mut [
+                arg(&mut ids),
+                arg(&mut pos),
+                arg(&mut types),
+                arg(&mut word),
+                arg(&mut position),
+                arg(&mut type_weight),
+                arg(&mut gamma),
+                arg(&mut beta),
+                arg(&mut x),
+                arg(&mut t),
+                arg(&mut width),
+                arg(&mut eps),
+            ],
+        )?;
+    }
+    #[cfg(test)]
+    if let Some(trace) = trace.as_mut() {
+        trace.tensor(s, &w.x, tokens, h, "embedding");
+    }
+    let layers = weights.layers.iter().enumerate();
+    for (_layer_index, layer) in layers {
+        // SAFETY: this thread bound the engine context once above. The
+        // engine retains all buffers until stream completion/error drain;
+        // input/output buffers are distinct and access is stream-ordered.
+        unsafe {
+            plans.qkv.enqueue(
+                lt,
+                plain_blas,
+                &w.x,
+                &layer.qkv.weight,
+                layer.qkv.bias.as_ref(),
+                &mut w.qkv,
+            )?;
+        }
+        if let Some(rotary) = rotary {
+            let mut q = w.qkv.cu_deviceptr();
+            let mut key = q
+                .checked_add(
+                    u64::try_from(product(h, 2)?)
+                        .map_err(|_| infer("GTE rotary K offset overflow"))?,
+                )
+                .ok_or_else(|| infer("GTE rotary K offset overflow"))?;
+            let mut cosine = rotary.cosine.cu_deviceptr();
+            let mut sine = rotary.sine.cu_deviceptr();
+            let mut positions = pos;
+            let mut rotary_tokens = t;
+            let mut q_heads = heads;
+            let mut kv_heads = heads;
+            let mut head_dim = rotary.head_dim;
+            let mut rotary_dim = rotary.head_dim;
+            let row = product(h, 3)?;
+            let mut q_stride =
+                u64::try_from(row).map_err(|_| infer("GTE rotary stride overflow"))?;
+            let mut k_stride = q_stride;
+            let mut table_stride = rotary.table_stride;
+            let twice_heads = c
+                .num_attention_heads
+                .checked_mul(2)
+                .ok_or_else(|| infer("GTE rotary grid overflow"))?;
+            let rotary_work = product(product(tokens, twice_heads)?, rotary.head_dim as usize / 2)?;
+            let rope_grid = blocks(rotary_work)?;
+            launch_threads(
+                &rotary.rope_hfma,
+                s,
+                rope_grid,
+                256,
+                0,
+                &mut [
+                    arg(&mut q),
+                    arg(&mut key),
+                    arg(&mut cosine),
+                    arg(&mut sine),
+                    arg(&mut positions),
+                    arg(&mut rotary_tokens),
+                    arg(&mut q_heads),
+                    arg(&mut kv_heads),
+                    arg(&mut head_dim),
+                    arg(&mut rotary_dim),
+                    arg(&mut q_stride),
+                    arg(&mut k_stride),
+                    arg(&mut table_stride),
+                ],
+            )?;
+        }
+        #[cfg(test)]
+        if let Some(trace) = trace.as_mut() {
+            trace.tensor(
+                s,
+                &w.qkv,
+                tokens,
+                product(h, 3).unwrap(),
+                &format!("layer_{_layer_index:02}_qkv"),
+            );
+        }
+        if let Some(provider) = fa4 {
+            let layout = fa4_layout.ok_or_else(|| infer("Missing FA4 packed layout"))?;
+            let q = w.qkv.cu_deviceptr();
+            let attention = fa4::AttentionBatch {
+                q,
+                k: q.checked_add(layout.k_offset)
+                    .ok_or_else(|| infer("FA4 packed K address overflow"))?,
+                v: q.checked_add(layout.v_offset)
+                    .ok_or_else(|| infer("FA4 packed V address overflow"))?,
+                out: w.attention.cu_deviceptr(),
+                q_offsets: boundaries,
+                k_offsets: boundaries,
+                q_tokens: tokens,
+                k_tokens: tokens,
+                batch: batch_count,
+                max_q: max_length,
+                strides: layout.strides,
+            };
+            // SAFETY: Engine::enqueue_inner bound this context once on
+            // this thread; packed Q/K/V and the separate output remain
+            // retained by the engine, and the cumulative boundaries are
+            // shared int32 data.
+            unsafe { provider.forward_batch_bound(s, &attention)? };
+        } else {
+            let mut qkv = w.qkv.cu_deviceptr();
+            let (mut q, mut key, mut v) = (
+                w.query.cu_deviceptr(),
+                w.key.cu_deviceptr(),
+                w.value.cu_deviceptr(),
+            );
+            let (mut qkv_bias, mut n) = (zero_bias, u32_size(product(tokens, h)?)?);
+            launch(
+                &k.qkv,
+                s,
+                blocks(product(tokens, h)?)?,
+                0,
+                &mut [
+                    arg(&mut qkv),
+                    arg(&mut qkv_bias),
+                    arg(&mut q),
+                    arg(&mut key),
+                    arg(&mut v),
+                    arg(&mut n),
+                    arg(&mut width),
+                ],
+            )?;
+            let (mut bounds, mut attn) = (boundaries, w.attention.cu_deviceptr());
+            launch(
+                &k.attention,
+                s,
+                (u32_size(max_length)?, heads, count),
+                u32_size(product(max_length, 4)?)?,
+                &mut [
+                    arg(&mut q),
+                    arg(&mut key),
+                    arg(&mut v),
+                    arg(&mut bounds),
+                    arg(&mut attn),
+                    arg(&mut count),
+                    arg(&mut heads),
+                    arg(&mut dim),
+                    arg(&mut width),
+                ],
+            )?;
+        }
+        #[cfg(test)]
+        if let Some(trace) = trace.as_mut() {
+            trace.tensor(
+                s,
+                &w.attention,
+                tokens,
+                h,
+                &format!("layer_{_layer_index:02}_attention"),
+            );
+        }
+        // SAFETY: same retained-buffer/context contract as the QKV call.
+        unsafe {
+            plans.attention.enqueue(
+                lt,
+                plain_blas,
+                &w.attention,
+                &layer.attention.weight,
+                layer.attention.bias.as_ref(),
+                &mut w.temp,
+            )?;
+        }
+        #[cfg(test)]
+        if let Some(trace) = trace.as_mut() {
+            trace.tensor(
+                s,
+                &w.temp,
+                tokens,
+                h,
+                &format!("layer_{_layer_index:02}_attention_projection"),
+            );
+        }
+        let temp = w.temp.cu_deviceptr();
+        norm(
+            k,
+            s,
+            temp,
+            x,
+            0,
+            &layer.attention_gamma,
+            &layer.attention_beta,
+            x,
+            t,
+            width,
+            eps,
+        )?;
+        #[cfg(test)]
+        if let Some(trace) = trace.as_mut() {
+            trace.tensor(
+                s,
+                &w.x,
+                tokens,
+                h,
+                &format!("layer_{_layer_index:02}_attention_norm"),
+            );
+        }
+        if let Some(gated) = gated {
+            let IntermediatePlan::Gated { plan, .. } = &plans.intermediate else {
+                return Err(infer("Gated feed-forward requires a gated intermediate plan").into());
+            };
+            let plan = plan
+                .as_ref()
+                .as_ref()
+                .ok_or_else(|| infer("Gated feed-forward plan is not prepared"))?;
+            let blas =
+                plain_blas.ok_or_else(|| infer("Gated feed-forward requires plain cuBLAS"))?;
+            let mut input = {
+                let scratch = (*w.gated)
+                    .as_mut()
+                    .ok_or_else(|| infer("Missing gated feed-forward scratch"))?;
+                // SAFETY: same retained-buffer/context contract as the QKV call.
+                unsafe {
+                    blas.linear(plan, &w.x, &layer.intermediate.weight, scratch)?;
+                }
+                scratch.cu_deviceptr()
+            };
+            let mut output = w.intermediate.cu_deviceptr();
+            let mut rows = t;
+            let mut gate_width = u32_size(c.intermediate_size)?;
+            launch(
+                &gated.function,
+                s,
+                blocks(product(tokens, gated.units_per_row)?)?,
+                0,
+                &mut [
+                    arg(&mut input),
+                    arg(&mut output),
+                    arg(&mut rows),
+                    arg(&mut gate_width),
+                ],
+            )?;
+        } else {
+            let IntermediatePlan::Dense(plan) = &plans.intermediate else {
+                return Err(infer("Dense feed-forward requires a dense intermediate plan").into());
+            };
+            // SAFETY: same retained-buffer/context contract as the QKV call.
+            unsafe {
+                lt.enqueue(
+                    plan,
+                    &w.x,
+                    &layer.intermediate.weight,
+                    layer
+                        .intermediate
+                        .bias
+                        .as_ref()
+                        .ok_or_else(|| infer("Dense intermediate bias is missing"))?,
+                    &mut w.intermediate,
+                )?;
+            }
+        }
+        #[cfg(test)]
+        if let Some(trace) = trace.as_mut() {
+            trace.tensor(
+                s,
+                &w.intermediate,
+                tokens,
+                c.intermediate_size,
+                &format!("layer_{_layer_index:02}_gelu"),
+            );
+        }
+        // SAFETY: same retained-buffer/context contract as the QKV call.
+        unsafe {
+            enqueue_down(
+                &mut plans.output,
+                lt,
+                plain_blas,
+                tokens,
+                _layer_index,
+                &w.intermediate,
+                &layer.output.weight,
+                layer.output.bias.as_ref(),
+                &mut w.temp,
+                s,
+            )?;
+        }
+        #[cfg(test)]
+        if let Some(trace) = trace.as_mut() {
+            trace.tensor(
+                s,
+                &w.temp,
+                tokens,
+                h,
+                &format!("layer_{_layer_index:02}_output_projection"),
+            );
+        }
+        norm(
+            k,
+            s,
+            temp,
+            x,
+            0,
+            &layer.output_gamma,
+            &layer.output_beta,
+            x,
+            t,
+            width,
+            eps,
+        )?;
+        #[cfg(test)]
+        if let Some(trace) = trace.as_mut() {
+            trace.tensor(
+                s,
+                &w.x,
+                tokens,
+                h,
+                &format!("layer_{_layer_index:02}_output_norm"),
+            );
+        }
+    }
+    #[cfg(test)]
+    if let Some(trace) = trace.take() {
+        trace.finish();
+    }
+    let (mut bounds, mut indices, mut out) = (boundaries, selected, w.pooled.cu_deviceptr());
+    let mut count = u32_size(b.pooled_indices.len())?;
+    let mut mode = match pool {
+        Pool::Cls => 0u32,
+        Pool::Mean => 1,
+        Pool::LastToken => 2,
+        Pool::Splade => return Err(infer("Oxide SPLADE unsupported").into()),
+    };
+    if count > 0 && mode == 1 {
+        launch(
+            &k.mean_pool,
+            s,
+            (count, u32_size(h.div_ceil(32))?, 1),
+            0,
+            &mut [
+                arg(&mut x),
+                arg(&mut bounds),
+                arg(&mut indices),
+                arg(&mut out),
+                arg(&mut count),
+                arg(&mut width),
+            ],
+        )?;
+    } else if count > 0 {
+        launch(
+            &k.pool,
+            s,
+            blocks(product(count as usize, h)?)?,
+            0,
+            &mut [
+                arg(&mut x),
+                arg(&mut bounds),
+                arg(&mut indices),
+                arg(&mut out),
+                arg(&mut count),
+                arg(&mut width),
+                arg(&mut mode),
+            ],
+        )?;
+    }
+    if !b.raw_indices.is_empty() {
+        let function = k
+            .raw_cast
+            .as_ref()
+            .ok_or_else(|| infer("Raw output kernel is unavailable"))?;
+        enqueue_raw_output(function, s, x, w.pooled.cu_deviceptr(), selected, b, h)?;
+    }
+    Ok(())
+}
+
 enum LoadedConfig {
+    Modern(ModernConfig),
     Encoder(BertConfig),
     Decoder(DecoderConfig),
 }
@@ -2287,18 +2498,48 @@ impl LoadedConfig {
     fn hidden_size(&self) -> usize {
         match self {
             Self::Encoder(config) => config.hidden_size,
+            Self::Modern(config) => config.geometry.hidden_size,
             Self::Decoder(config) => config.hidden_size,
         }
     }
 }
 
-fn detects_decoder(path: &Path) -> Result<bool, BackendError> {
-    #[derive(serde::Deserialize)]
-    struct Head {
-        model_type: String,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CheckpointArchitecture {
+    Decoder,
+    Modern,
+    Nomic,
+    Jina,
+    Gte,
+    Encoder,
+}
+impl CheckpointArchitecture {
+    fn uses_native_default(self) -> bool {
+        self == Self::Gte
     }
-    let head: Head = model::read_json(&path.join("config.json"))?;
-    Ok(DecoderFamily::from_model_type(&head.model_type).is_some())
+}
+
+fn selects_architecture(
+    head: &jina_encoder_model::RawJinaMarker,
+) -> Result<CheckpointArchitecture, BackendError> {
+    let Some(model_type) = head.model_type.as_deref() else {
+        return Ok(CheckpointArchitecture::Encoder);
+    };
+    if DecoderFamily::from_model_type(model_type).is_some() {
+        return Ok(CheckpointArchitecture::Decoder);
+    }
+    match model_type {
+        "modernbert" => Ok(CheckpointArchitecture::Modern),
+        "nomic_bert" | "nomic-bert" => Ok(CheckpointArchitecture::Nomic),
+        "new" | "gte" => Ok(CheckpointArchitecture::Gte),
+        _ if jina_encoder_model::classify_marker(head)? => Ok(CheckpointArchitecture::Jina),
+        _ => Ok(CheckpointArchitecture::Encoder),
+    }
+}
+
+fn detects_architecture(path: &Path) -> Result<CheckpointArchitecture, BackendError> {
+    let head: jina_encoder_model::RawJinaMarker = model::read_json(&path.join("config.json"))?;
+    selects_architecture(&head)
 }
 
 pub struct OxideBackend {
@@ -2342,12 +2583,9 @@ impl OxideBackend {
         }
         let context = Context::new(device_id).map_err(start)?;
         let stream = context.new_stream().map_err(start)?;
-        let decoder = detects_decoder(path)?;
-        let native_default = if decoder {
-            false
-        } else {
-            model::read_json::<BertConfig>(&path.join("config.json"))?.family == EncoderFamily::Gte
-        };
+        let architecture = detects_architecture(path)?;
+        let decoder = architecture == CheckpointArchitecture::Decoder;
+        let native_default = architecture.uses_native_default();
         let lt = if native_default {
             LtProvider::new_native_default(context.clone(), stream.clone())?
         } else {
@@ -2380,9 +2618,35 @@ impl OxideBackend {
                 dense,
                 output_width,
             )
-        } else {
-            let host = BertWeights::load(path)?;
+        } else if architecture == CheckpointArchitecture::Modern {
+            let host = ModernWeights::load(path)?;
             let config = host.config.clone();
+            let hidden = config.geometry.hidden_size;
+            let dense_host = DenseChainHost::load_with_paths(path, hidden, dense_paths.clone())?;
+            let output_width = dense_host
+                .as_ref()
+                .map_or(hidden, DenseChainHost::output_width);
+            let model = ModernEncoder::new(host, &context, &stream)?;
+            let dense = dense_host
+                .map(|host| DenseHead::new(host, &context, &stream, &lt))
+                .transpose()?;
+            (
+                ExecutableModel::Modern(Box::new(model)),
+                LoadedConfig::Modern(config),
+                Some(Blas::new(context.clone(), stream.clone())?),
+                None,
+                dense,
+                output_width,
+            )
+        } else {
+            let host = match architecture {
+                CheckpointArchitecture::Jina => EncoderHostWeights::Jina(JinaWeights::load(path)?),
+                CheckpointArchitecture::Nomic => {
+                    EncoderHostWeights::Nomic(NomicWeights::load(path)?)
+                }
+                _ => EncoderHostWeights::Standard(BertWeights::load(path)?),
+            };
+            let config = host.config().clone();
             let dense_host =
                 DenseChainHost::load_with_paths(path, config.hidden_size, dense_paths.clone())?;
             let output_width = dense_host
@@ -2393,7 +2657,7 @@ impl OxideBackend {
                 .map(|host| DenseHead::new(host, &context, &stream, &lt))
                 .transpose()?;
             let plain_blas = if dense.as_ref().is_some_and(DenseHead::uses_plain)
-                || config.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst
+                || config.recipe.feed_forward.is_gated()
             {
                 Some(Blas::new(context.clone(), stream.clone())?)
             } else {
@@ -2436,13 +2700,13 @@ impl OxideBackend {
     }
 }
 
-fn encoder_model(
-    host: BertWeights,
+fn encoder_model<E: UploadElement>(
+    host: EncoderHostWeights,
     context: &Arc<Context>,
     stream: &Arc<Stream>,
     lt: &LtProvider,
-) -> Result<EncoderModel, BackendError> {
-    let config = host.config.clone();
+) -> Result<EncoderModel<E>, BackendError> {
+    let config = host.config().clone();
     let attention_mode = std::env::var(infinity_v3_config::infinity_env!("OXIDE_ATTENTION"))
         .unwrap_or_else(|_| "auto".into());
     let fa4_root = std::env::var_os(infinity_v3_config::infinity_env!("FA4_ROOT"));
@@ -2460,6 +2724,12 @@ fn encoder_model(
         scale: fa4::Scale::RsqrtHeadDim,
     };
     let packed = packed_attention_layout(&config)?;
+    let jina = config.family == EncoderFamily::Jina;
+    if jina && packed.is_none() {
+        return Err(start(
+            "Jina requires packed QKV and attention row strides divisible by 8 elements",
+        ));
+    }
     let fa4 = match attention_mode.as_str() {
         "fa4" => {
             if packed.is_none() {
@@ -2467,28 +2737,45 @@ fn encoder_model(
                     "FA4 requires packed QKV and output row strides divisible by 8 elements",
                 ));
             }
-            Some(fa4::Fa4::new(
-                context.clone(),
-                Path::new(
-                    &fa4_root.ok_or_else(|| start("FA4 attention requires INFINITY_FA4_ROOT"))?,
-                ),
-                attention_spec,
-            )?)
+            let root = fa4_root
+                .as_ref()
+                .ok_or_else(|| start("FA4 attention requires INFINITY_FA4_ROOT"))?;
+            let root = Path::new(root);
+            Some(if jina {
+                fa4::Fa4::new_alibi(context.clone(), stream.clone(), root, attention_spec)?
+            } else {
+                fa4::Fa4::new(context.clone(), root, attention_spec)?
+            })
         }
-        "auto" if fa4_root.is_some() && fa4::Fa4::supports(&attention_spec) && packed.is_some() => {
-            Some(fa4::Fa4::new(
-                context.clone(),
-                Path::new(&fa4_root.ok_or_else(|| start("Missing FA4 root"))?),
-                attention_spec,
-            )?)
+        "auto"
+            if fa4_root.is_some()
+                && (jina || fa4::Fa4::supports(&attention_spec))
+                && packed.is_some() =>
+        {
+            let root = fa4_root.as_ref().ok_or_else(|| start("Missing FA4 root"))?;
+            let root = Path::new(root);
+            Some(if jina {
+                fa4::Fa4::new_alibi(context.clone(), stream.clone(), root, attention_spec)?
+            } else {
+                fa4::Fa4::new(context.clone(), root, attention_spec)?
+            })
         }
         "auto" | "simt" => None,
         _ => return Err(start("INFINITY_OXIDE_ATTENTION must be auto,simt or fa4")),
     };
+    if config.family == EncoderFamily::Nomic && fa4.is_none() {
+        return Err(start("Dense Nomic requires prepared FA4 attention"));
+    }
+    if jina && fa4.is_none() {
+        return Err(start(
+            "Jina ALiBi attention requires prepared FA4 attention",
+        ));
+    }
     let fa4_layout = if fa4.is_some() { packed } else { None };
     let mut kernels = Kernels::load(context, &config, fa4.is_some())?;
+    let gated = kernels.gated.take();
     let rotary = match config.recipe.positions {
-        PositionRecipe::Absolute => None,
+        PositionRecipe::Absolute | PositionRecipe::AlibiModelBias => None,
         PositionRecipe::Rotary(recipe) => {
             let functions = kernels
                 .rotary
@@ -2497,35 +2784,80 @@ fn encoder_model(
             Some(RotaryEncoder::new(recipe, &config, stream, functions)?)
         }
     };
-    let plans = Plans::new(lt, &config)?;
+    let plans = Plans::<E>::new(lt, &config)?;
     let mut uploader = WeightUploader::new(stream.clone())?;
-    let weights = Weights {
-        word: uploader.upload(&[&host.word])?,
-        position: uploader.upload(&[&host.position])?,
-        token_type: uploader.upload(&[&host.token_type])?,
-        gamma: uploader.upload(&[&host.gamma])?,
-        beta: uploader.upload(&[&host.beta])?,
-        qkv_zero_bias: DeviceBuffer::zeroed(stream, product(config.hidden_size, 3)?)
-            .map_err(start)?,
-        layers: host
-            .layers
-            .iter()
-            .map(|l| Layer::upload(&mut uploader, l))
-            .collect::<Result<_, _>>()?,
+    let weights = match host {
+        EncoderHostWeights::Standard(host) => Weights::<E> {
+            word: uploader.upload_typed::<E>(&[&host.word])?,
+            position: Some(uploader.upload_typed::<E>(&[&host.position])?),
+            token_type: uploader.upload_typed::<E>(&[&host.token_type])?,
+            gamma: uploader.upload_typed::<E>(&[&host.gamma])?,
+            beta: uploader.upload_typed::<E>(&[&host.beta])?,
+            qkv_zero_bias: Some(
+                DeviceBuffer::<E>::zeroed(stream, product(config.hidden_size, 3)?)
+                    .map_err(start)?,
+            ),
+            layers: host
+                .layers
+                .iter()
+                .map(|l| Layer::<E>::upload(&mut uploader, l))
+                .collect::<Result<_, _>>()?,
+        },
+        EncoderHostWeights::Nomic(host) => Weights::<E> {
+            word: uploader.upload_typed::<E>(&[&host.word])?,
+            position: None,
+            token_type: uploader.upload_typed::<E>(&[&host.token_type])?,
+            gamma: uploader.upload_typed::<E>(&[&host.gamma])?,
+            beta: uploader.upload_typed::<E>(&[&host.beta])?,
+            qkv_zero_bias: None,
+            layers: host
+                .layers
+                .iter()
+                .map(|layer| Layer::<E>::upload_nomic(&mut uploader, layer))
+                .collect::<Result<_, _>>()?,
+        },
+        EncoderHostWeights::Jina(host) => Weights::<E> {
+            word: uploader.upload_typed::<E>(&[&host.word])?,
+            position: None,
+            token_type: uploader.upload_typed::<E>(&[&host.token_type])?,
+            gamma: uploader.upload_typed::<E>(&[&host.gamma])?,
+            beta: uploader.upload_typed::<E>(&[&host.beta])?,
+            qkv_zero_bias: None,
+            layers: host
+                .layers
+                .iter()
+                .map(|layer| Layer::<E>::upload_jina(&mut uploader, layer))
+                .collect::<Result<_, _>>()?,
+        },
     };
     uploader.finish()?;
-    Ok(EncoderModel {
+    Ok(EncoderModel::<E> {
         config,
         plans,
         kernels,
         weights,
         rotary,
+        gated,
         fa4,
         fa4_layout,
     })
 }
 
 fn validate(batch: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
+    let inputs = if c.family == model::EncoderFamily::Gte
+        && c.recipe.embedding == NormArithmetic::AtenEmbedding
+    {
+        EmbeddingInputs::WordsOnly
+    } else {
+        EmbeddingInputs::WordsAndTypes
+    };
+    validate_encoder_inputs(batch, c, inputs)
+}
+fn validate_encoder_inputs(
+    batch: &Batch,
+    c: &BertConfig,
+    inputs: EmbeddingInputs,
+) -> Result<usize, BackendError> {
     let fail = || infer("Invalid or unsupported packed oxide BERT batch");
     let tokens = batch.input_ids.len();
     let sequences = batch
@@ -2563,8 +2895,7 @@ fn validate(batch: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
         }
         max_length = max_length.max(length);
     }
-    let ignores_token_type_ids = c.family == model::EncoderFamily::Gte
-        && c.recipe.embedding == NormArithmetic::AtenEmbedding;
+    let ignores_token_type_ids = inputs == EmbeddingInputs::WordsOnly;
     if sequences > 65535
         || batch
             .pooled_indices
@@ -2585,7 +2916,7 @@ fn validate(batch: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
         return Err(fail());
     }
     u32_size(product(tokens, c.intermediate_size)?)?;
-    if c.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst {
+    if c.recipe.feed_forward.is_gated() {
         let gate_width = product(c.intermediate_size, 2)?;
         u32_size(product(tokens, gate_width)?)?;
         // Bucket padding is admitted here as well: rejecting it after engine
@@ -2599,6 +2930,9 @@ fn validate(batch: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
 fn validate_loaded(batch: &Batch, config: &LoadedConfig) -> Result<usize, BackendError> {
     match config {
         LoadedConfig::Encoder(config) => validate(batch, config),
+        LoadedConfig::Modern(config) => {
+            validate_encoder_inputs(batch, &config.geometry, EmbeddingInputs::WordsOnly)
+        }
         LoadedConfig::Decoder(config) => validate_decoder(batch, config),
     }
 }
@@ -2834,10 +3168,10 @@ mod trace {
             })
         }
 
-        pub(super) fn tensor(
+        pub(super) fn tensor<E: UploadElement>(
             &mut self,
             stream: &Stream,
-            buffer: &DeviceBuffer<Bf16>,
+            buffer: &DeviceBuffer<E>,
             tokens: usize,
             width: usize,
             name: &str,
@@ -2846,25 +3180,32 @@ mod trace {
                 width > 0 && tokens * width <= buffer.len(),
                 "trace shape exceeds {name}"
             );
+            let element_bytes = std::mem::size_of::<E>();
+            assert_eq!(element_bytes, 2, "encoder trace requires 16-bit storage");
+            let suffix = match <E as crate::tensor::Element>::FORMAT {
+                crate::tensor::ScalarFormat::Bf16 => "bf16",
+                crate::tensor::ScalarFormat::F16 => "f16",
+                _ => "bin",
+            };
             stream.synchronize().unwrap();
             let mut host = vec![0u16; tokens * width];
             unsafe {
                 cuda_core::memory::memcpy_dtoh_async(
-                    host.as_mut_ptr(),
+                    host.as_mut_ptr().cast::<c_void>(),
                     buffer.cu_deviceptr(),
-                    host.len() * 2,
+                    host.len() * element_bytes,
                     stream.cu_stream(),
                 )
             }
             .unwrap();
             stream.synchronize().unwrap();
-            let mut bytes = Vec::with_capacity(host.len() * 2);
+            let mut bytes = Vec::with_capacity(host.len() * element_bytes);
             for value in host {
                 bytes.extend_from_slice(&value.to_le_bytes());
             }
-            std::fs::write(self.dir.join(format!("{name}.bf16")), &bytes).unwrap();
+            std::fs::write(self.dir.join(format!("{name}.{suffix}")), &bytes).unwrap();
             self.entries.push(serde_json::json!({
-                "file": format!("{name}.bf16"),
+                "file": format!("{name}.{suffix}"),
                 "shape": [tokens, width],
             }));
         }
@@ -3086,6 +3427,61 @@ mod tests {
     use super::*;
     use std::time::Instant;
     #[test]
+    fn nomic_validation_uses_native_positions_and_real_token_types() {
+        let geometry =
+            BertConfig::nomic_geometry(768, 3072, 12, 12, 8192, 30528, 2, 1e-12, 1000.0, 8192);
+        let mut request = batch();
+        request.token_type_ids = vec![0, 1, 1];
+        request.position_ids[0] = 8191;
+        assert_eq!(validate(&request, &geometry).unwrap(), 2);
+        for invalid in [2, u32::MAX] {
+            request.token_type_ids[0] = invalid;
+            assert!(validate(&request, &geometry).is_err());
+        }
+        request.token_type_ids[0] = 1;
+        request.position_ids[0] = 8192;
+        assert!(validate(&request, &geometry).is_err());
+        request.position_ids[0] = 8191;
+        assert!(validate(&request, &geometry).is_ok());
+        request.token_type_ids.pop();
+        assert!(validate(&request, &geometry).is_err());
+        request.token_type_ids.push(1);
+        assert!(validate(&request, &geometry).is_ok());
+    }
+
+    #[test]
+    fn modern_word_only_validation_keeps_lengths_positions_and_bert_type_bounds() {
+        let geometry =
+            BertConfig::modern_geometry(768, 1152, 12, 22, 8192, 50368, 1e-5, 160000.0, None);
+        let loaded = LoadedConfig::Modern(ModernConfig {
+            geometry,
+            global_theta: 160000.0,
+            local_theta: 10000.0,
+            global_every: 3,
+            local_radius: 64,
+        });
+        let mut request = batch();
+        request.token_type_ids = vec![1, u32::MAX, 0];
+        assert_eq!(validate_loaded(&request, &loaded).unwrap(), 2);
+        request.token_type_ids.pop();
+        assert!(validate_loaded(&request, &loaded).is_err());
+        request.token_type_ids.push(0);
+        request.position_ids[0] = 8192;
+        assert!(validate_loaded(&request, &loaded).is_err());
+        request.position_ids[0] = 8191;
+        assert!(validate_loaded(&request, &loaded).is_ok());
+        request.input_ids[0] = 50368;
+        assert!(validate_loaded(&request, &loaded).is_err());
+        request.input_ids[0] = 1;
+        assert!(validate_loaded(&request, &loaded).is_ok());
+        let mut ordinary = batch();
+        ordinary.token_type_ids[0] = u32::MAX;
+        assert!(validate(&ordinary, &config()).is_err());
+        ordinary.token_type_ids[0] = 1;
+        assert!(validate(&ordinary, &config()).is_ok());
+    }
+
+    #[test]
     fn gte_request_validation_and_arena_account_for_packed_gates() {
         let config: BertConfig = serde_json::from_value(serde_json::json!({
             "model_type": "new", "architectures": ["NewModel"],
@@ -3137,8 +3533,8 @@ mod tests {
         let key = (32, 4, 2);
         let mut dense = config.clone();
         dense.recipe.feed_forward = FeedForwardRecipe::DenseGelu;
-        let gate_bytes = Work::allocation_bytes(key, &config).unwrap();
-        let dense_bytes = Work::allocation_bytes(key, &dense).unwrap();
+        let gate_bytes = Work::<Bf16>::allocation_bytes(key, &config).unwrap();
+        let dense_bytes = Work::<Bf16>::allocation_bytes(key, &dense).unwrap();
         assert_eq!(
             gate_bytes - dense_bytes,
             32 * 2 * 3072 * size_of::<half::bf16>()
@@ -3544,7 +3940,9 @@ mod tests {
                 );
                 let model = match &*engine.model {
                     ExecutableModel::Encoder(model) => model,
-                    ExecutableModel::Decoder(_) => panic!("MiniLM must use encoder plans"),
+                    ExecutableModel::Decoder(_) | ExecutableModel::Modern(_) => {
+                        panic!("MiniLM must use encoder plans")
+                    }
                 };
                 assert_eq!(model.plans.rows, None);
                 assert_eq!(model.plans.qkv.logical_rows(), b.input_ids.len() as i32);
@@ -3698,10 +4096,12 @@ mod tests {
         let large_key = work_key(&large).unwrap();
         let encoder_config = match &reference.config {
             LoadedConfig::Encoder(config) => config,
-            LoadedConfig::Decoder(_) => panic!("this test requires an encoder checkpoint"),
+            LoadedConfig::Decoder(_) | LoadedConfig::Modern(_) => {
+                panic!("this test requires an encoder checkpoint")
+            }
         };
-        let small_bytes = Work::allocation_bytes(small_key, encoder_config).unwrap();
-        let large_bytes = Work::allocation_bytes(large_key, encoder_config).unwrap();
+        let small_bytes = Work::<Bf16>::allocation_bytes(small_key, encoder_config).unwrap();
+        let large_bytes = Work::<Bf16>::allocation_bytes(large_key, encoder_config).unwrap();
         assert!(small_bytes <= cache::BYTE_BUDGET);
         assert!(
             large_bytes > cache::BYTE_BUDGET,
@@ -3790,7 +4190,7 @@ mod tests {
     fn gpu_and_both_host_slots_are_charged_once() {
         let c = config();
         let key = (32, 4, 2);
-        let gpu = Work::allocation_bytes(key, &c).unwrap();
+        let gpu = Work::<Bf16>::allocation_bytes(key, &c).unwrap();
         let pin = staging::pinned_bytes(key, key.2 * c.hidden_size).unwrap();
         let input = staging::input_capacity(key).unwrap();
         let output = key.2 * c.hidden_size;
@@ -3805,8 +4205,8 @@ mod tests {
         assert!(bucketed(usize::MAX, MIN_TOKEN_CAPACITY).is_err());
         let c = config();
         let oversized = u32::MAX as usize + 1;
-        assert!(Work::allocation_bytes((oversized, 2, 1), &c).is_err());
-        assert!(Work::allocation_bytes((usize::MAX, 2, 1), &c).is_err());
+        assert!(Work::<Bf16>::allocation_bytes((oversized, 2, 1), &c).is_err());
+        assert!(Work::<Bf16>::allocation_bytes((usize::MAX, 2, 1), &c).is_err());
     }
     #[derive(serde::Deserialize)]
     struct TraceBatch {
@@ -4102,7 +4502,9 @@ mod tests {
         let oversized_length = limit.checked_add(1).unwrap();
         let vocab_size = match &backend.config {
             LoadedConfig::Encoder(config) => config.vocab_size,
-            LoadedConfig::Decoder(_) => panic!("this test requires an encoder checkpoint"),
+            LoadedConfig::Decoder(_) | LoadedConfig::Modern(_) => {
+                panic!("this test requires an encoder checkpoint")
+            }
         };
         assert!(vocab_size > 0);
         match &mut backend.config {
@@ -4110,7 +4512,7 @@ mod tests {
                 config.max_position_embeddings =
                     config.max_position_embeddings.max(oversized_length);
             }
-            LoadedConfig::Decoder(_) => unreachable!(),
+            LoadedConfig::Decoder(_) | LoadedConfig::Modern(_) => unreachable!(),
         }
         let boundary = u32::try_from(oversized_length).unwrap();
         let oversized = Batch {
@@ -4162,7 +4564,9 @@ mod tests {
                 assert_eq!(config.head_dim, 64);
                 assert!(config.is_causal);
             }
-            LoadedConfig::Encoder(_) => panic!("TinyLlama must load as a decoder"),
+            LoadedConfig::Encoder(_) | LoadedConfig::Modern(_) => {
+                panic!("TinyLlama must load as a decoder")
+            }
         }
 
         let a = decoder_batch(&[3, 5, 2]);
@@ -4386,7 +4790,9 @@ mod tests {
                     config.max_position_embeddings,
                 )
             }
-            LoadedConfig::Encoder(_) => panic!("Qwen3 must load as a decoder"),
+            LoadedConfig::Encoder(_) | LoadedConfig::Modern(_) => {
+                panic!("Qwen3 must load as a decoder")
+            }
         };
 
         let a = decoder_batch(&[3, 5, 2]);
@@ -4485,7 +4891,7 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(down_policy(&gte), DownPolicy::NativeDefault);
-        assert_eq!(down_policy(&config()), DownPolicy::Existing);
+        assert_eq!(down_policy(&config()), DownPolicy::Biased);
         let roberta: BertConfig = serde_json::from_value(serde_json::json!({
             "model_type": "roberta", "architectures": ["RobertaModel"],
             "hidden_size": 4, "intermediate_size": 8,
@@ -4493,7 +4899,116 @@ mod tests {
             "max_position_embeddings": 8, "vocab_size": 4, "type_vocab_size": 1
         }))
         .unwrap();
-        assert_eq!(down_policy(&roberta), DownPolicy::Existing);
+        assert_eq!(down_policy(&roberta), DownPolicy::Biased);
+    }
+
+    fn config_fixture(label: &str, value: &serde_json::Value) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "infinity-factory-{}-{label}-{}",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("config.json"), serde_json::to_vec(value).unwrap()).unwrap();
+        path
+    }
+
+    #[test]
+    fn cold_factory_routes_trained_modern_nomic_jina_and_aliases_before_bert_validation() {
+        let nomic = include_str!("../tests/fixtures/nomic-v15-config.json");
+        for (label, model_type) in [("nomic", "nomic_bert"), ("nomic-hyphen", "nomic-bert")] {
+            let mut value: serde_json::Value = serde_json::from_str(nomic).unwrap();
+            value["model_type"] = serde_json::json!(model_type);
+            let path = config_fixture(label, &value);
+            assert_eq!(
+                detects_architecture(&path).unwrap(),
+                CheckpointArchitecture::Nomic
+            );
+            assert!(
+                BertConfig::load(&path).is_err(),
+                "BertConfig must not normalize trained {model_type} checkpoints"
+            );
+            std::fs::remove_dir_all(path).unwrap();
+        }
+
+        let modern = serde_json::json!({
+            "model_type": "modernbert",
+            "architectures": ["ModernBertModel"],
+            "hidden_size": 768,
+            "intermediate_size": 1152,
+            "num_attention_heads": 12,
+            "num_hidden_layers": 22,
+            "max_position_embeddings": 8192,
+            "vocab_size": 50368,
+            "type_vocab_size": 0
+        });
+        let path = config_fixture("modern", &modern);
+        assert_eq!(
+            detects_architecture(&path).unwrap(),
+            CheckpointArchitecture::Modern
+        );
+        assert!(ModernConfig::load(&path).is_ok());
+        assert!(BertConfig::load(&path).is_err());
+        std::fs::remove_dir_all(path).unwrap();
+
+        let jina = serde_json::json!({
+            "model_type": "bert",
+            "_name_or_path": "jinaai/jina-bert-implementation",
+            "architectures": ["JinaBertForMaskedLM"],
+            "position_embedding_type": "alibi",
+            "feed_forward_type": "geglu",
+            "hidden_act": "gelu",
+            "hidden_size": 512,
+            "intermediate_size": 2048,
+            "num_attention_heads": 8,
+            "num_hidden_layers": 4,
+            "max_position_embeddings": 8192,
+            "vocab_size": 30528,
+            "type_vocab_size": 2
+        });
+        let path = config_fixture("jina", &jina);
+        assert_eq!(
+            detects_architecture(&path).unwrap(),
+            CheckpointArchitecture::Jina
+        );
+        assert!(
+            BertConfig::load(&path).is_err(),
+            "ordinary BERT parsing must not accept Jina ALiBi checkpoints"
+        );
+        std::fs::remove_dir_all(path).unwrap();
+
+        for (model_type, expected) in [
+            ("new", CheckpointArchitecture::Gte),
+            ("gte", CheckpointArchitecture::Gte),
+            ("bert", CheckpointArchitecture::Encoder),
+            ("qwen2", CheckpointArchitecture::Decoder),
+        ] {
+            let path = config_fixture(
+                model_type,
+                &serde_json::json!({
+                    "model_type": model_type,
+                    "architectures": ["BertModel"]
+                }),
+            );
+            assert_eq!(detects_architecture(&path).unwrap(), expected);
+            std::fs::remove_dir_all(path).unwrap();
+        }
+
+        assert!(CheckpointArchitecture::Gte.uses_native_default());
+        for architecture in [
+            CheckpointArchitecture::Decoder,
+            CheckpointArchitecture::Modern,
+            CheckpointArchitecture::Nomic,
+            CheckpointArchitecture::Jina,
+            CheckpointArchitecture::Encoder,
+        ] {
+            assert!(
+                !architecture.uses_native_default(),
+                "{architecture:?} must retain the existing Lt provider"
+            );
+        }
     }
 
     #[test]
@@ -4573,23 +5088,23 @@ mod tests {
         f32::from_bits(u32::from(bits) << 16).is_finite()
     }
 
-    fn native_down_queries(provider: &LtProvider, prepared: &PreparedDown) -> usize {
+    fn native_down_queries(provider: &LtProvider, prepared: &PreparedDown<Bf16>) -> usize {
         match prepared {
             PreparedDown::NativeDefault { lt_native, .. } => {
                 provider.native_default_queries(lt_native)
             }
-            PreparedDown::Existing(_) => {
+            PreparedDown::Projection(_) => {
                 panic!("GTE down primitive requires a native-default plan")
             }
         }
     }
 
-    fn native_down_cache_len(provider: &LtProvider, prepared: &PreparedDown) -> usize {
+    fn native_down_cache_len(provider: &LtProvider, prepared: &PreparedDown<Bf16>) -> usize {
         match prepared {
             PreparedDown::NativeDefault { lt_native, .. } => {
                 provider.native_default_cache_len(lt_native)
             }
-            PreparedDown::Existing(_) => {
+            PreparedDown::Projection(_) => {
                 panic!("GTE down primitive requires a native-default plan")
             }
         }
@@ -4599,7 +5114,9 @@ mod tests {
         let engine = backend.engine.lock().unwrap();
         let model = match &*engine.model {
             ExecutableModel::Encoder(model) => model,
-            ExecutableModel::Decoder(_) => panic!("GTE must use encoder plans"),
+            ExecutableModel::Modern(_) | ExecutableModel::Decoder(_) => {
+                panic!("GTE must use encoder plans")
+            }
         };
         (
             native_down_queries(&engine.lt, &model.plans.output),
@@ -4609,7 +5126,7 @@ mod tests {
 
     #[allow(clippy::too_many_arguments)]
     fn run_down_result(
-        prepared: &mut PreparedDown,
+        prepared: &mut PreparedDown<Bf16>,
         provider: &LtProvider,
         blas: Option<&Blas>,
         tokens: usize,
@@ -4626,7 +5143,16 @@ mod tests {
         // every buffer remains alive until the readback stream drains.
         let result = unsafe {
             prepared.prepare_layer(
-                provider, blas, tokens, x, weight, bias, output, stream, width, 0,
+                provider,
+                blas,
+                tokens,
+                x,
+                weight,
+                Some(bias),
+                output,
+                stream,
+                width,
+                0,
             )
         };
         prepared.end_prepare();
@@ -4635,14 +5161,23 @@ mod tests {
         // until the readback stream drains.
         unsafe {
             enqueue_down(
-                prepared, provider, blas, tokens, 0, x, weight, bias, output, stream,
+                prepared,
+                provider,
+                blas,
+                tokens,
+                0,
+                x,
+                weight,
+                Some(bias),
+                output,
+                stream,
             )
         }
     }
 
     #[allow(clippy::too_many_arguments)]
     fn run_down(
-        prepared: &mut PreparedDown,
+        prepared: &mut PreparedDown<Bf16>,
         provider: &LtProvider,
         blas: Option<&Blas>,
         tokens: usize,
@@ -4694,7 +5229,9 @@ mod tests {
         assert_eq!(
             down_policy(match &reference.config {
                 LoadedConfig::Encoder(config) => config,
-                LoadedConfig::Decoder(_) => panic!("GTE must use the encoder executor"),
+                LoadedConfig::Modern(_) | LoadedConfig::Decoder(_) => {
+                    panic!("GTE must use the encoder executor")
+                }
             }),
             DownPolicy::NativeDefault
         );
@@ -4965,7 +5502,7 @@ mod tests {
                     0,
                     &x,
                     &weight,
-                    &bias,
+                    Some(&bias),
                     &mut wrong_output,
                     &stream,
                 )
@@ -5117,3 +5654,14 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/support/jina_numerics.rs"]
+mod jina_numerics;
+#[cfg(test)]
+#[path = "../tests/support/jina_primitives.rs"]
+mod jina_primitive_schema;
+
+#[cfg(test)]
+#[path = "../tests/support/jina_alibi.rs"]
+mod jina_alibi;

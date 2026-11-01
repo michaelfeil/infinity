@@ -8,6 +8,7 @@ members = [
     "core",
     "router",
 ]
+exclude = ["backends/oxide/vendor/pytorch-reader"]
 default-members = [
     "backends",
     "backends/core",

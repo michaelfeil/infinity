@@ -272,6 +272,7 @@ fn validate_profile_order(
         .ok_or_else(|| start("manifest lacks a kernels array"))?;
     let deberta_symbol = format!("fa4_deberta_{}", dtype.name());
     let mut deberta_seen = false;
+    let mut alibi_seen = false;
     let mut seen = 0usize;
     for kernel in kernels {
         if kernel.get("dtype").and_then(serde_json::Value::as_str) != Some(dtype.name()) {
@@ -286,6 +287,15 @@ fn validate_profile_order(
                 )));
             }
             deberta_seen = true;
+            continue;
+        }
+        if kernel.get("symbol").and_then(serde_json::Value::as_str)
+            == Some(format!("fa4_alibi_model_bias_{}", dtype.name()).as_str())
+        {
+            if alibi_seen || !crate::fa4_alibi::kernel_matches(kernel, dtype.name()) {
+                return Err(start("invalid or duplicate ALiBi model-bias export"));
+            }
+            alibi_seen = true;
             continue;
         }
         if seen >= PROFILES.len() {
@@ -475,6 +485,7 @@ fn provider_error(error: Error, status: i32) -> BackendError {
 }
 
 pub(crate) struct Fa4 {
+    alibi: Option<crate::fa4_alibi::AlibiLaunch>,
     forward: Forward,
     error: Error,
     context: Arc<Context>,
@@ -573,6 +584,7 @@ impl Fa4 {
             return Err(start("selected attention mode is not exported"));
         }
         Ok(Self {
+            alibi: None,
             forward,
             error,
             device: i32::try_from(context.ordinal()).map_err(start)?,
@@ -590,6 +602,52 @@ impl Fa4 {
             contiguous_strides,
             _library: library,
         })
+    }
+
+    /// Construct the fixed native Jina-small ALiBi recipe. The ordinary ABI
+    /// and its mode mask stay unchanged; the additive export owns F32 slopes.
+    pub(crate) fn new_alibi(
+        context: Arc<Context>,
+        stream: Arc<Stream>,
+        root: &Path,
+        spec: AttentionSpec,
+    ) -> Result<Self, BackendError> {
+        if spec.heads != 8
+            || spec.kv_heads != 8
+            || spec.head_dim != 64
+            || spec.causal
+            || spec.window != Window::Global
+            || resolve_scale(&spec)? != 0.125
+        {
+            return Err(start(
+                "ALiBi model-bias requires noncausal 8x64 self-attention at scale0.125",
+            ));
+        }
+        let mut result = Self::new(context.clone(), root, spec)?;
+        let path = root.join(format!("sm_{}", result.capability));
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path.join("manifest.json")).map_err(start)?)
+                .map_err(start)?;
+        let kernels = manifest
+            .get("kernels")
+            .and_then(serde_json::Value::as_array)
+            .ok_or_else(|| start("manifest lacks kernels"))?;
+        if kernels
+            .iter()
+            .filter(|k| crate::fa4_alibi::kernel_matches(k, spec.dtype.name()))
+            .count()
+            != 1
+        {
+            return Err(start(
+                "manifest lacks exactly one selected ALiBi model-bias export",
+            ));
+        }
+        result.alibi = Some(crate::fa4_alibi::AlibiLaunch::new(
+            context,
+            stream,
+            &path.join("libinfinityfa4.so"),
+        )?);
+        Ok(result)
     }
 
     /// Contiguous packed self-attention using the selected spec. The engine
@@ -683,6 +741,17 @@ impl Fa4 {
             return Err(infer("stream belongs to another CUDA context"));
         }
         check_batch(&self.spec, self.capability, batch)?;
+        if let Some(alibi) = &self.alibi {
+            alibi.check_stream(stream)?;
+            if batch.q_offsets != batch.k_offsets
+                || batch.q_tokens != batch.k_tokens
+                || batch.q_tokens > i32::MAX as usize / 512
+            {
+                return Err(infer(
+                    "ALiBi requires shared packed self-attention boundaries within int32 geometry",
+                ));
+            }
+        }
         let total = i64::from(i32::try_from(batch.q_tokens).map_err(infer)?);
         let total_k = i64::from(i32::try_from(batch.k_tokens).map_err(infer)?);
         let count = i32::try_from(batch.batch).map_err(infer)?;
@@ -699,6 +768,29 @@ impl Fa4 {
         batch: &AttentionBatch,
         (total, total_k, count, max_q): (i64, i64, i32, i32),
     ) -> Result<(), BackendError> {
+        if let Some(alibi) = &self.alibi {
+            // SAFETY: common validation plus fixed ALiBi self-attention contract.
+            let status = unsafe {
+                alibi.launch(
+                    self.dtype,
+                    self.device,
+                    stream,
+                    batch.q,
+                    batch.k,
+                    batch.v,
+                    batch.out,
+                    batch.q_offsets,
+                    total,
+                    i64::from(count),
+                    &batch.strides,
+                    max_q,
+                )
+            };
+            if status != 0 {
+                return Err(provider_error(self.error, status));
+            }
+            return Ok(());
+        }
         // SAFETY: check_batch validated geometry, pointer alignment and the
         // element strides. The selected profile is immutable, and the caller
         // upholds the lifetime/context contract documented above. Stack
@@ -1101,6 +1193,60 @@ mod tests {
         let mha32 = spec_for(&mha32(), DType::Bf16);
         let separate = fake_batch(&mha32, 8, 16);
         assert!(check_batch(&mha32, 100, &separate).is_ok());
+    }
+
+    #[test]
+    fn alibi_exports_are_additive_and_keep_ordinary_modes() {
+        for dtype in [DType::F16, DType::Bf16] {
+            let mut manifest = manifest_for(&[dtype]);
+            manifest["kernels"].as_array_mut().unwrap().push(json!({
+                "symbol": format!("fa4_alibi_model_bias_{}", dtype.name()),
+                "dtype": dtype.name(), "kind":"alibi_model_bias", "score_source":"alibi_score.py", "score_abi":1,"qk_scale":0.125,"external_softmax_scale":1.0,"bias_rounding":"model_dtype",
+                "heads":8,"kv_heads":8,"d":64,"causal":false,"window":[null,null]
+            }));
+            assert_eq!(
+                select_profile(&manifest, &spec_for(&PROFILES[0], dtype)).unwrap(),
+                0
+            );
+            assert_eq!(
+                validate_profile_order(&manifest, dtype).unwrap(),
+                PROFILES.len()
+            );
+            let extra = manifest["kernels"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()
+                .clone();
+            manifest["kernels"].as_array_mut().unwrap().push(extra);
+            assert!(validate_profile_order(&manifest, dtype).is_err());
+        }
+    }
+
+    #[test]
+    fn malformed_alibi_manifest_cannot_change_the_score_recipe() {
+        let dtype = DType::Bf16;
+        let mut manifest = manifest_for(&[dtype]);
+        let alibi = json!({"symbol":"fa4_alibi_model_bias_bf16", "dtype":"bf16", "kind":"alibi_model_bias", "score_source":"alibi_score.py", "score_abi":1,"qk_scale":0.125,"external_softmax_scale":1.0,"bias_rounding":"model_dtype", "heads":8,"kv_heads":8,"d":64,"causal":false,"window":[null,null]});
+        for (field, value) in [
+            ("heads", json!(12)),
+            ("kv_heads", json!(4)),
+            ("d", json!(32)),
+            ("causal", json!(true)),
+            ("window", json!([64, 64])),
+            ("kind", json!("alibi")),
+            ("score_source", json!("different.py")),
+            ("score_abi", json!(2)),
+            ("qk_scale", json!(1.0)),
+            ("external_softmax_scale", json!(0.125)),
+            ("bias_rounding", json!("f32")),
+        ] {
+            let mut wrong = alibi.clone();
+            wrong[field] = value;
+            manifest["kernels"].as_array_mut().unwrap().push(wrong);
+            assert!(validate_profile_order(&manifest, dtype).is_err(), "{field}");
+            manifest["kernels"].as_array_mut().unwrap().pop();
+        }
     }
 
     #[test]

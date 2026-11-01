@@ -31,6 +31,7 @@ phase = p.add_mutually_exclusive_group()
 phase.add_argument("--export-only", action="store_true", help="Export kernels before linking in the deployment toolchain")
 phase.add_argument("--link-only", action="store_true", help="Link existing exports; no Python GPU packages required")
 p.add_argument("--deberta", action="store_true", help="Also export packed DeBERTa relative attention")
+p.add_argument("--alibi", action="store_true", help="Also export packed Jina ALiBi model-bias attention")
 p.add_argument("--compile-only", action="store_true", help="Export using fake tensors without a build GPU; runtime validation is still required")
 p.add_argument("--arch", choices=["sm_80", "sm_86", "sm_89", "sm_90a", "sm_100a", "sm_120"], default="sm_90a", help="Target architecture; one native bundle per architecture")
 a = p.parse_args()
@@ -122,6 +123,34 @@ if not a.link_only:
                 objects.append(str(obj))
                 kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
                                     causal=False, window=[None, None], dtype=dtype_name))
+        if a.alibi:
+            # Same fake-tensor compile-only path as the ordinary exports.  The
+            # 129 below is an export example, not a runtime sequence cap: the
+            # packed offsets determine the actual varlen grid.
+            from alibi_score import alibi_model_bias_bf16, alibi_model_bias_fp16
+            for dtype_name, dtype, score_mod in [
+                    ("fp16", torch.float16, alibi_model_bias_fp16),
+                    ("bf16", torch.bfloat16, alibi_model_bias_bf16)]:
+                q = torch.zeros((256, 8, 64), device="cuda", dtype=dtype)
+                slopes = torch.zeros(8, device="cuda", dtype=torch.float32)
+                previous = set(interface._flash_attn_fwd.compile_cache.cache)
+                interface.flash_attn_varlen_func(q, q, q, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                    max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
+                    score_mod=score_mod, aux_tensors=[slopes],
+                    disable_scheduler_metadata=True)
+                fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
+                if len(fresh) != 1:
+                    raise RuntimeError("Unexpected ALiBi compilation count")
+                compiled = interface._flash_attn_fwd.compile_cache.cache[fresh.pop()]
+                symbol = f"fa4_alibi_model_bias_{dtype_name}"
+                obj = a.output / f"{symbol}.o"
+                export_portable(compiled, obj, symbol)
+                objects.append(str(obj))
+                kernels.append(dict(symbol=symbol, heads=8, kv_heads=8, d=64,
+                                    causal=False, window=[None, None], dtype=dtype_name,
+                                    kind="alibi_model_bias", score_source="alibi_score.py",
+                                    score_abi=1, qk_scale=0.125, external_softmax_scale=1.0,
+                                    bias_rounding="model_dtype"))
     manifest = {
         "abi_version": 7,
         "host_target": host_target(),
@@ -137,6 +166,8 @@ if not a.link_only:
         "tvm_ffi": importlib.metadata.version("apache-tvm-ffi"),
         "objects": {pathlib.Path(obj).name: digest(pathlib.Path(obj)) for obj in objects},
     }
+    if a.alibi:
+        manifest["alibi_score_sha256"] = digest(pathlib.Path(__file__).with_name("alibi_score.py"))
     (a.output / "manifest.json").write_text(json.dumps(manifest, indent=2))
 else:
     manifest = json.loads((a.output / "manifest.json").read_text())
@@ -160,12 +191,18 @@ if manifest["architecture"] not in ["sm_80", "sm_86", "sm_89", "sm_90a", "sm_100
     raise RuntimeError("Unsupported bundle architecture")
 capability = int(manifest["architecture"].removeprefix("sm_").removesuffix("a"))
 bridge = pathlib.Path(__file__).with_name("bridge.cpp")
+if any(k["symbol"].startswith("fa4_alibi_model_bias_") for k in manifest["kernels"]):
+    from alibi_score import native_link_defines
+    link_defines = native_link_defines(manifest["kernels"])
+else:
+    # Keep the pre-ALiBi link path independent of the additive module.
+    link_defines = ["-DFA4_DEBERTA"] if any(k["symbol"].startswith("fa4_deberta_") for k in manifest["kernels"]) else []
 subprocess.run([a.cxx, "-std=c++17", "-O2", "-fPIC", "-shared", str(bridge),
                 *objects, "-DINFINITY_FA4_PORTABLE_HOST=1", f"-DFA4_COMPUTE_CAPABILITY={capability}", f"-I{a.ffi_root / 'include'}",
                 f"-L{a.runtime_dir}", "-lcute_dsl_runtime",
                 f"-L{a.ffi_root / 'lib'}", "-ltvm_ffi",
                 "-Wl,-rpath,$ORIGIN", "-Wl,-z,defs",
-                *(["-DFA4_DEBERTA"] if any(k["symbol"].startswith("fa4_deberta_") for k in manifest["kernels"]) else []),
+                *link_defines,
                 "-o", str(a.output / "libinfinityfa4.so")], check=True)
 validate_host_object(a.output / "libinfinityfa4.so")
 for source in [a.runtime_dir / "libcute_dsl_runtime.so",

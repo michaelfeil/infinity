@@ -128,7 +128,7 @@ unsafe fn residual_value(
 }
 
 #[inline(always)]
-unsafe fn normalize(
+pub(crate) unsafe fn normalize(
     values: [f32; VALUES],
     offset: usize,
     gamma: *const u16,

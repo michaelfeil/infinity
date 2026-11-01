@@ -3,9 +3,10 @@
 //!
 //! Module metadata is read from `modules.json` in array order. Every admitted
 //! projection must stay inside the checkpoint root after canonicalization, and
-//! its safetensors payload is exposed through the same bounded `WeightSource`
-//! streaming path as the backbone weights. Execution rounds the FP32 pooled
-//! rows to BF16 once, applies each prepared linear projection (with a fused
+//! its safetensors or stored PyTorch `.bin` payload is exposed through the same
+//! bounded `WeightSource` streaming path as the backbone weights. Execution
+//! rounds the FP32 pooled rows to BF16 once, applies each prepared linear
+//! projection (with a fused
 //! bias epilogue when configured), applies optional Tanh in FP32 then rounds
 //! back to BF16, and widens the final rows to FP32 for the existing readback.
 
@@ -260,16 +261,13 @@ fn open_dense_checkpoint(
     module_root: &Path,
     relative: &str,
 ) -> Result<Checkpoint, crate::BackendError> {
-    let single = path_present(&module_root.join("model.safetensors"))?;
-    let sharded = path_present(&module_root.join("model.safetensors.index.json"))?;
-    if !single && !sharded {
-        if path_present(&module_root.join("pytorch_model.bin"))? {
-            return Err(start(format!(
-                "Dense module {relative} uses pytorch_model.bin; only safetensors Dense checkpoints are implemented"
-            )));
-        }
+    let has_safetensors = path_present(&module_root.join("model.safetensors"))?
+        || path_present(&module_root.join("model.safetensors.index.json"))?;
+    let has_pytorch = path_present(&module_root.join("pytorch_model.bin"))?
+        || path_present(&module_root.join("pytorch_model.bin.index.json"))?;
+    if !has_safetensors && !has_pytorch {
         return Err(start(format!(
-            "Dense module {relative} has no model.safetensors checkpoint"
+            "Dense module {relative} has no model.safetensors or pytorch_model.bin checkpoint"
         )));
     }
     Checkpoint::open_module(model_root, module_root)
@@ -787,9 +785,13 @@ impl Drop for DenseWork {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pytorch_reader::DType as TorchDType;
     use safetensors::tensor::{serialize, TensorView};
     use safetensors::Dtype;
+    use std::collections::BTreeMap;
     use std::fs;
+    use std::fs::File;
+    use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     struct Fixture(PathBuf);
@@ -857,6 +859,32 @@ mod tests {
             root
         }
 
+        fn bin_module(
+            &self,
+            relative: &str,
+            config: serde_json::Value,
+            tensors: &[BinTensor],
+            shard_split: Option<usize>,
+            compression: zip::CompressionMethod,
+        ) -> PathBuf {
+            let root = self.0.join(relative);
+            write_dense_config(&root, config);
+            match shard_split {
+                Some(split) => write_sharded_bin(
+                    &root,
+                    [
+                        "pytorch_model-00001-of-00002.bin",
+                        "pytorch_model-00002-of-00002.bin",
+                    ],
+                    tensors,
+                    split,
+                    compression,
+                ),
+                None => write_bin_file(&root, "pytorch_model.bin", tensors, compression),
+            }
+            root
+        }
+
         fn error(&self, width: usize) -> String {
             match DenseChainHost::load(&self.0, width) {
                 Ok(_) => panic!("invalid Dense fixture was accepted"),
@@ -896,6 +924,235 @@ mod tests {
             "path": "1_Pooling"
         }));
         serde_json::Value::Array(entries)
+    }
+
+    #[derive(Clone)]
+    struct BinTensor {
+        name: String,
+        dtype: TorchDType,
+        shape: Vec<usize>,
+        storage: Vec<f32>,
+        offset: usize,
+        stride: Vec<usize>,
+    }
+
+    impl BinTensor {
+        fn new(name: &str, dtype: TorchDType, shape: Vec<usize>, values: &[f32]) -> Self {
+            assert_eq!(shape.iter().product::<usize>(), values.len());
+            Self {
+                name: name.to_owned(),
+                stride: row_major_stride(&shape),
+                dtype,
+                shape,
+                storage: values.to_vec(),
+                offset: 0,
+            }
+        }
+
+        fn view(
+            name: &str,
+            dtype: TorchDType,
+            shape: Vec<usize>,
+            storage: &[f32],
+            offset: usize,
+            stride: Vec<usize>,
+        ) -> Self {
+            assert_eq!(shape.len(), stride.len());
+            let last = shape
+                .iter()
+                .zip(&stride)
+                .map(|(&dim, &step)| dim.saturating_sub(1).saturating_mul(step))
+                .sum::<usize>();
+            assert!(offset
+                .checked_add(last)
+                .is_some_and(|end| end < storage.len()));
+            Self {
+                name: name.to_owned(),
+                dtype,
+                shape,
+                storage: storage.to_vec(),
+                offset,
+                stride,
+            }
+        }
+    }
+
+    fn write_dense_config(root: &Path, config: serde_json::Value) {
+        fs::create_dir_all(root).unwrap();
+        fs::write(
+            root.join("config.json"),
+            serde_json::to_vec(&config).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn torch_width(dtype: TorchDType) -> usize {
+        match dtype {
+            TorchDType::F32 => 4,
+            TorchDType::F16 | TorchDType::BF16 => 2,
+            TorchDType::I64 => 8,
+            other => panic!("Dense bin fixture has no width for {other:?}"),
+        }
+    }
+
+    fn encode_torch(dtype: TorchDType, values: &[f32]) -> Vec<u8> {
+        let mut bytes = Vec::with_capacity(values.len() * torch_width(dtype));
+        for &value in values {
+            match dtype {
+                TorchDType::F32 => bytes.extend_from_slice(&value.to_le_bytes()),
+                TorchDType::F16 => {
+                    bytes.extend_from_slice(&half::f16::from_f32(value).to_bits().to_le_bytes())
+                }
+                TorchDType::BF16 => {
+                    bytes.extend_from_slice(&half::bf16::from_f32(value).to_bits().to_le_bytes())
+                }
+                TorchDType::I64 => bytes.extend_from_slice(&(value as i64).to_le_bytes()),
+                other => panic!("Dense bin fixture has no encoding for {other:?}"),
+            }
+        }
+        bytes
+    }
+
+    fn torch_storage_class(dtype: TorchDType) -> &'static str {
+        match dtype {
+            TorchDType::F32 => "FloatStorage",
+            TorchDType::F16 => "HalfStorage",
+            TorchDType::BF16 => "BFloat16Storage",
+            TorchDType::I64 => "LongStorage",
+            other => panic!("Dense bin fixture has no storage class for {other:?}"),
+        }
+    }
+
+    fn row_major_stride(shape: &[usize]) -> Vec<usize> {
+        let mut stride = vec![0usize; shape.len()];
+        let mut product = 1usize;
+        for index in (0..shape.len()).rev() {
+            stride[index] = product;
+            product *= shape[index];
+        }
+        stride
+    }
+
+    fn put_unicode(out: &mut Vec<u8>, value: &str) {
+        out.push(0x58);
+        out.extend_from_slice(&u32::try_from(value.len()).unwrap().to_le_bytes());
+        out.extend_from_slice(value.as_bytes());
+    }
+
+    fn put_int(out: &mut Vec<u8>, value: usize) {
+        if let Ok(small) = u8::try_from(value) {
+            out.push(0x4b);
+            out.push(small);
+        } else {
+            out.push(0x4a);
+            out.extend_from_slice(&i32::try_from(value).unwrap().to_le_bytes());
+        }
+    }
+
+    fn put_global(out: &mut Vec<u8>, module: &str, name: &str) {
+        out.push(b'c');
+        out.extend_from_slice(module.as_bytes());
+        out.push(b'\n');
+        out.extend_from_slice(name.as_bytes());
+        out.push(b'\n');
+    }
+
+    fn put_tuple(out: &mut Vec<u8>, items: impl FnOnce(&mut Vec<u8>)) {
+        out.push(0x28);
+        items(out);
+        out.push(0x74);
+    }
+
+    fn bin_pickle(tensors: &[BinTensor]) -> Vec<u8> {
+        let mut out = vec![0x80, 0x02, b'}'];
+        for (storage, tensor) in tensors.iter().enumerate() {
+            put_unicode(&mut out, &tensor.name);
+            put_global(&mut out, "torch._utils", "_rebuild_tensor_v2");
+            out.push(0x28);
+            put_tuple(&mut out, |out| {
+                put_unicode(out, "storage");
+                put_global(out, "torch", torch_storage_class(tensor.dtype));
+                put_unicode(out, &storage.to_string());
+                put_unicode(out, "cpu");
+                put_int(out, tensor.storage.len());
+            });
+            out.push(b'Q');
+            put_int(&mut out, tensor.offset);
+            put_tuple(&mut out, |out| {
+                for &dim in &tensor.shape {
+                    put_int(out, dim);
+                }
+            });
+            put_tuple(&mut out, |out| {
+                for &step in &tensor.stride {
+                    put_int(out, step);
+                }
+            });
+            out.push(0x89);
+            out.push(b'N');
+            out.push(0x74);
+            out.push(b'R');
+            out.push(b's');
+        }
+        out.push(b'.');
+        out
+    }
+
+    fn write_bin_file(
+        dir: &Path,
+        file: &str,
+        tensors: &[BinTensor],
+        compression: zip::CompressionMethod,
+    ) {
+        let output = File::create(dir.join(file)).unwrap();
+        let mut writer = zip::ZipWriter::new(output);
+        let options = zip::write::SimpleFileOptions::default().compression_method(compression);
+        writer.start_file("data.pkl", options).unwrap();
+        writer.write_all(&bin_pickle(tensors)).unwrap();
+        for (index, tensor) in tensors.iter().enumerate() {
+            writer.start_file(format!("data/{index}"), options).unwrap();
+            writer
+                .write_all(&encode_torch(tensor.dtype, &tensor.storage))
+                .unwrap();
+        }
+        for (name, value) in [
+            ("version", "3"),
+            ("byteorder", "little"),
+            (".format_version", "1"),
+        ] {
+            writer.start_file(name, options).unwrap();
+            writer.write_all(value.as_bytes()).unwrap();
+        }
+        writer.finish().unwrap();
+    }
+
+    fn write_sharded_bin(
+        dir: &Path,
+        files: [&str; 2],
+        tensors: &[BinTensor],
+        split: usize,
+        compression: zip::CompressionMethod,
+    ) {
+        assert!(split > 0 && split < tensors.len());
+        let (first, second) = tensors.split_at(split);
+        let mut weight_map = BTreeMap::new();
+        for (file, chunk) in files.iter().zip([first, second]) {
+            write_bin_file(dir, file, chunk, compression);
+            for tensor in chunk {
+                weight_map.insert(tensor.name.clone(), (*file).to_owned());
+            }
+        }
+        fs::write(
+            dir.join("pytorch_model.bin.index.json"),
+            serde_json::to_vec(&serde_json::json!({"weight_map": weight_map})).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn read_source(source: &WeightSource) -> Vec<u16> {
+        let mut out = vec![0u16; source.len()];
+        source.read_bf16(0, &mut out).unwrap();
+        out
     }
 
     #[test]
@@ -1210,20 +1467,504 @@ mod tests {
         }
     }
 
+    const DENSE_WEIGHT_ONE: [f32; 12] = [
+        1.0, -2.0, 0.5, -0.25, 2.0, 0.75, -1.0, 4.0, 0.25, -0.5, 1.5, -0.75,
+    ];
+    const DENSE_BIAS_ONE: [f32; 3] = [0.25, -0.5, 1.5];
+    const DENSE_WEIGHT_TWO: [f32; 6] = [2.0, -1.0, 0.75, -0.25, 0.5, 4.0];
+    const DENSE_WEIGHT_ONE_BITS: [u16; 12] = [
+        0x3f80, 0xc000, 0x3f00, 0xbe80, 0x4000, 0x3f40, 0xbf80, 0x4080, 0x3e80, 0xbf00, 0x3fc0,
+        0xbf40,
+    ];
+    const DENSE_BIAS_ONE_BITS: [u16; 3] = [0x3e80, 0xbf00, 0x3fc0];
+    const DENSE_WEIGHT_TWO_BITS: [u16; 6] = [0x4000, 0xbf80, 0x3f40, 0xbe80, 0x3f00, 0x4080];
+
+    fn biased_module(dtype: TorchDType) -> Vec<BinTensor> {
+        vec![
+            BinTensor::new("linear.weight", dtype, vec![3, 4], &DENSE_WEIGHT_ONE),
+            BinTensor::new("linear.bias", dtype, vec![3], &DENSE_BIAS_ONE),
+        ]
+    }
+
+    fn unbiased_module(dtype: TorchDType) -> Vec<BinTensor> {
+        vec![BinTensor::new(
+            "linear.weight",
+            dtype,
+            vec![2, 3],
+            &DENSE_WEIGHT_TWO,
+        )]
+    }
+
     #[test]
-    fn rejects_pytorch_bin_only_modules_without_claiming_support() {
+    fn loads_stored_bin_dense_chains_for_all_float_dtypes_with_literal_bits() {
+        for dtype in [TorchDType::F32, TorchDType::F16, TorchDType::BF16] {
+            let fixture = Fixture::new();
+            fixture.bin_module(
+                "2_Dense",
+                dense_config(4, 3, true),
+                &biased_module(dtype),
+                None,
+                zip::CompressionMethod::Stored,
+            );
+            fixture.bin_module(
+                "3_Dense",
+                dense_config(3, 2, false),
+                &unbiased_module(dtype),
+                None,
+                zip::CompressionMethod::Stored,
+            );
+            fixture.write_modules(modules(&["2_Dense", "3_Dense"]));
+
+            let chain = DenseChainHost::load(&fixture.0, 4).unwrap().unwrap();
+            assert_eq!(chain.input_width(), 4, "{dtype:?}");
+            assert_eq!(chain.output_width(), 2, "{dtype:?}");
+            assert_eq!(chain.modules().len(), 2, "{dtype:?}");
+            assert_eq!(chain.modules()[0].config.in_features, 4);
+            assert_eq!(chain.modules()[0].config.out_features, 3);
+            assert_eq!(chain.modules()[1].config.in_features, 3);
+            assert_eq!(chain.modules()[1].config.out_features, 2);
+            assert!(chain.modules()[0].bias.is_some(), "{dtype:?}");
+            assert!(chain.modules()[1].bias.is_none(), "{dtype:?}");
+            assert!(chain.uses_plain(), "{dtype:?}");
+            assert_eq!(
+                read_source(&chain.modules()[0].weight),
+                DENSE_WEIGHT_ONE_BITS
+            );
+            assert_eq!(
+                read_source(chain.modules()[0].bias.as_ref().unwrap()),
+                DENSE_BIAS_ONE_BITS
+            );
+            assert_eq!(
+                read_source(&chain.modules()[1].weight),
+                DENSE_WEIGHT_TWO_BITS
+            );
+        }
+    }
+
+    #[test]
+    fn loads_sharded_stored_bin_dense_module_across_shards() {
+        let fixture = Fixture::new();
+        let root = fixture.bin_module(
+            "2_Dense",
+            dense_config(4, 2, true),
+            &[
+                BinTensor::new(
+                    "linear.weight",
+                    TorchDType::F16,
+                    vec![2, 4],
+                    &[1.0, -2.0, 0.5, -0.25, 2.0, 0.75, -1.0, 4.0],
+                ),
+                BinTensor::new("linear.bias", TorchDType::F16, vec![2], &[0.25, -0.5]),
+            ],
+            Some(1),
+            zip::CompressionMethod::Stored,
+        );
+        assert!(root.join("pytorch_model.bin.index.json").is_file());
+        fixture.write_modules(modules(&["2_Dense"]));
+
+        let chain = DenseChainHost::load(&fixture.0, 4).unwrap().unwrap();
+        assert_eq!(chain.output_width(), 2);
+        assert_eq!(
+            read_source(&chain.modules()[0].weight),
+            [0x3f80, 0xc000, 0x3f00, 0xbe80, 0x4000, 0x3f40, 0xbf80, 0x4080]
+        );
+        assert_eq!(
+            read_source(chain.modules()[0].bias.as_ref().unwrap()),
+            [0x3e80, 0xbf00]
+        );
+    }
+
+    #[test]
+    fn dense_bin_reads_nonzero_offset_strided_weight_through_production_source() {
+        let storage = [99.0, 99.0, 1.0, -2.0, 9.0, 0.5, -0.25, 2.0, 0.75, -1.0, 4.0];
+        for dtype in [TorchDType::F32, TorchDType::F16, TorchDType::BF16] {
+            let fixture = Fixture::new();
+            fixture.bin_module(
+                "2_Dense",
+                dense_config(2, 2, false),
+                &[BinTensor::view(
+                    "linear.weight",
+                    dtype,
+                    vec![2, 2],
+                    &storage,
+                    2,
+                    vec![5, 1],
+                )],
+                None,
+                zip::CompressionMethod::Stored,
+            );
+            fixture.write_modules(modules(&["2_Dense"]));
+
+            let chain = DenseChainHost::load(&fixture.0, 2).unwrap().unwrap();
+            assert_eq!(chain.output_width(), 2);
+            assert_eq!(chain.modules()[0].weight.shape(), &[2, 2]);
+            assert_eq!(
+                read_source(&chain.modules()[0].weight),
+                [0x3f80, 0xc000, 0x4000, 0x3f40],
+                "{dtype:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn prefers_safetensors_over_stored_bin_for_dense_modules() {
+        let fixture = Fixture::new();
+        let root = fixture.module(
+            "2_Dense",
+            dense_config(8, 4, true),
+            Dtype::F32,
+            [4, 8],
+            true,
+        );
+        write_bin_file(
+            &root,
+            "pytorch_model.bin",
+            &[
+                BinTensor::new("linear.weight", TorchDType::F32, vec![4, 8], &[1.0; 32]),
+                BinTensor::new("linear.bias", TorchDType::F32, vec![4], &[1.0; 4]),
+            ],
+            zip::CompressionMethod::Stored,
+        );
+        fixture.write_modules(modules(&["2_Dense"]));
+
+        let chain = DenseChainHost::load(&fixture.0, 8).unwrap().unwrap();
+        assert_eq!(read_source(&chain.modules()[0].weight), vec![0u16; 32]);
+        assert_eq!(
+            read_source(chain.modules()[0].bias.as_ref().unwrap()),
+            vec![0u16; 4]
+        );
+    }
+
+    #[test]
+    fn rejects_bin_wrong_shape_missing_bias_and_unsupported_dtype() {
+        let fixture = Fixture::new();
+        fixture.bin_module(
+            "2_Dense",
+            dense_config(8, 4, true),
+            &[
+                BinTensor::new("linear.weight", TorchDType::F32, vec![3, 8], &[1.0; 24]),
+                BinTensor::new("linear.bias", TorchDType::F32, vec![4], &[1.0; 4]),
+            ],
+            None,
+            zip::CompressionMethod::Stored,
+        );
+        fixture.write_modules(modules(&["2_Dense"]));
+        assert!(fixture.error(8).contains("wrong shape"));
+
+        let fixture = Fixture::new();
+        fixture.bin_module(
+            "2_Dense",
+            dense_config(8, 4, true),
+            &[BinTensor::new(
+                "linear.weight",
+                TorchDType::F32,
+                vec![4, 8],
+                &[1.0; 32],
+            )],
+            None,
+            zip::CompressionMethod::Stored,
+        );
+        fixture.write_modules(modules(&["2_Dense"]));
+        assert!(fixture.error(8).contains("missing weight linear.bias"));
+
+        let fixture = Fixture::new();
+        fixture.bin_module(
+            "2_Dense",
+            dense_config(8, 4, false),
+            &[BinTensor::new(
+                "linear.weight",
+                TorchDType::I64,
+                vec![4, 8],
+                &[1.0; 32],
+            )],
+            None,
+            zip::CompressionMethod::Stored,
+        );
+        fixture.write_modules(modules(&["2_Dense"]));
+        let error = fixture.error(8);
+        assert!(
+            error.contains("unsupported PyTorch weight dtype"),
+            "{error}"
+        );
+
         let fixture = Fixture::new();
         let root = fixture.0.join("2_Dense");
-        fs::create_dir_all(&root).unwrap();
-        fs::write(
-            root.join("config.json"),
-            serde_json::to_vec(&dense_config(8, 4, true)).unwrap(),
-        )
-        .unwrap();
+        write_dense_config(&root, dense_config(8, 4, true));
         fs::write(root.join("pytorch_model.bin"), b"not a pickle").unwrap();
         fixture.write_modules(modules(&["2_Dense"]));
         let error = fixture.error(8);
-        assert!(error.contains("only safetensors"), "{error}");
+        assert!(error.contains("PyTorch shard"), "{error}");
+    }
+
+    #[test]
+    fn rejects_corrupt_and_compressed_bin_before_dense_bits_are_published() {
+        let fixture = Fixture::new();
+        let root = fixture.bin_module(
+            "2_Dense",
+            dense_config(4, 2, true),
+            &biased_f16_tensors(),
+            None,
+            zip::CompressionMethod::Stored,
+        );
+        let data_start = {
+            let mut archive =
+                zip::ZipArchive::new(File::open(root.join("pytorch_model.bin")).unwrap()).unwrap();
+            let start = archive.by_name("data/0").unwrap().data_start().unwrap() as usize;
+            start
+        };
+        let mut bytes = fs::read(root.join("pytorch_model.bin")).unwrap();
+        bytes[data_start] ^= 0xff;
+        fs::write(root.join("pytorch_model.bin"), bytes).unwrap();
+        fixture.write_modules(modules(&["2_Dense"]));
+        let chain = DenseChainHost::load(&fixture.0, 4).unwrap().unwrap();
+        let mut out = vec![0u16; chain.modules()[0].weight.len()];
+        let error = chain.modules()[0]
+            .weight
+            .read_bf16(0, &mut out)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("verification failed"), "{error}");
+
+        let fixture = Fixture::new();
+        fixture.bin_module(
+            "2_Dense",
+            dense_config(4, 2, true),
+            &biased_f16_tensors(),
+            None,
+            zip::CompressionMethod::Deflated,
+        );
+        fixture.write_modules(modules(&["2_Dense"]));
+        let chain = DenseChainHost::load(&fixture.0, 4).unwrap().unwrap();
+        let mut out = vec![0u16; chain.modules()[0].weight.len()];
+        let error = chain.modules()[0]
+            .weight
+            .read_bf16(0, &mut out)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("compressed ZIP entries are unsupported"),
+            "{error}"
+        );
+    }
+
+    fn biased_f16_tensors() -> Vec<BinTensor> {
+        vec![
+            BinTensor::new(
+                "linear.weight",
+                TorchDType::F16,
+                vec![2, 4],
+                &[1.0, -2.0, 0.5, -0.25, 2.0, 0.75, -1.0, 4.0],
+            ),
+            BinTensor::new("linear.bias", TorchDType::F16, vec![2], &[0.25, -0.5]),
+        ]
+    }
+
+    #[test]
+    fn rejects_bin_index_traversal_and_shard_symlink_escapes() {
+        for shard in ["../outside.bin", "/tmp/outside.bin", "sub/outside.bin"] {
+            let fixture = Fixture::new();
+            let root = fixture.0.join("2_Dense");
+            write_dense_config(&root, dense_config(8, 4, true));
+            fs::write(
+                root.join("pytorch_model.bin.index.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "weight_map": {"linear.weight": shard}
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            fixture.write_modules(modules(&["2_Dense"]));
+            let error = fixture.error(8);
+            assert!(
+                error.contains("invalid PyTorch shard path"),
+                "{shard}: {error}"
+            );
+        }
+
+        #[cfg(unix)]
+        {
+            let fixture = Fixture::new();
+            let root = fixture.0.join("2_Dense");
+            write_dense_config(&root, dense_config(8, 4, true));
+            write_bin_file(
+                &fixture.0,
+                "outside.bin",
+                &[BinTensor::new(
+                    "linear.weight",
+                    TorchDType::F32,
+                    vec![4, 8],
+                    &[1.0; 32],
+                )],
+                zip::CompressionMethod::Stored,
+            );
+            std::os::unix::fs::symlink(Path::new("../outside.bin"), root.join("pytorch_model.bin"))
+                .unwrap();
+            fixture.write_modules(modules(&["2_Dense"]));
+            let error = fixture.error(8);
+            assert!(error.contains("escapes model directory"), "{error}");
+
+            let fixture = Fixture::new();
+            let root = fixture.0.join("2_Dense");
+            write_dense_config(&root, dense_config(8, 4, true));
+            write_bin_file(
+                &fixture.0,
+                "outside.bin",
+                &[
+                    BinTensor::new("linear.weight", TorchDType::F32, vec![4, 8], &[1.0; 32]),
+                    BinTensor::new("linear.bias", TorchDType::F32, vec![4], &[1.0; 4]),
+                ],
+                zip::CompressionMethod::Stored,
+            );
+            std::os::unix::fs::symlink(Path::new("../outside.bin"), root.join("escaped.bin"))
+                .unwrap();
+            fs::write(
+                root.join("pytorch_model.bin.index.json"),
+                serde_json::to_vec(&serde_json::json!({
+                    "weight_map": {
+                        "linear.weight": "escaped.bin",
+                        "linear.bias": "escaped.bin"
+                    }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            fixture.write_modules(modules(&["2_Dense"]));
+            let error = fixture.error(8);
+            assert!(error.contains("escapes model directory"), "{error}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn loads_bin_shard_from_same_repo_cache_blob_and_rejects_foreign_repo() {
+        let fixture = Fixture::new();
+        let repo = fixture.0.join("models--owner--repo");
+        let snapshot = repo.join("snapshots").join("a".repeat(40));
+        let module = snapshot.join("2_Dense");
+        let blobs = repo.join("blobs");
+        fs::create_dir_all(&module).unwrap();
+        fs::create_dir_all(&blobs).unwrap();
+        write_dense_config(&module, dense_config(4, 2, true));
+        fs::write(
+            snapshot.join("modules.json"),
+            serde_json::to_vec(&modules(&["2_Dense"])).unwrap(),
+        )
+        .unwrap();
+        let digest = "c".repeat(64);
+        write_bin_file(
+            &blobs,
+            &digest,
+            &biased_f16_tensors(),
+            zip::CompressionMethod::Stored,
+        );
+        std::os::unix::fs::symlink(
+            Path::new("../../../blobs").join(&digest),
+            module.join("pytorch_model.bin"),
+        )
+        .unwrap();
+
+        let chain = DenseChainHost::load(&snapshot, 4).unwrap().unwrap();
+        assert_eq!(
+            read_source(&chain.modules()[0].weight),
+            [0x3f80, 0xc000, 0x3f00, 0xbe80, 0x4000, 0x3f40, 0xbf80, 0x4080]
+        );
+
+        let foreign = fixture.0.join("models--foreign--repo");
+        let foreign_blob = foreign.join("blobs").join("d".repeat(64));
+        fs::create_dir_all(foreign_blob.parent().unwrap()).unwrap();
+        write_bin_file(
+            foreign_blob.parent().unwrap(),
+            foreign_blob.file_name().unwrap().to_str().unwrap(),
+            &biased_f16_tensors(),
+            zip::CompressionMethod::Stored,
+        );
+        let escaped = snapshot.join("2_Dense_foreign");
+        write_dense_config(&escaped, dense_config(2, 2, true));
+        std::os::unix::fs::symlink(&foreign_blob, escaped.join("pytorch_model.bin")).unwrap();
+        fs::write(
+            snapshot.join("modules.json"),
+            serde_json::to_vec(&modules(&["2_Dense", "2_Dense_foreign"])).unwrap(),
+        )
+        .unwrap();
+        let error = match DenseChainHost::load(&snapshot, 4) {
+            Ok(_) => panic!("foreign cache blob was accepted"),
+            Err(error) => error.to_string(),
+        };
+        assert!(error.contains("escapes model directory"), "{error}");
+    }
+
+    #[test]
+    fn retains_bin_handle_after_path_rename_for_dense_weight_reads() {
+        let fixture = Fixture::new();
+        let root = fixture.bin_module(
+            "2_Dense",
+            dense_config(4, 2, true),
+            &biased_f16_tensors(),
+            None,
+            zip::CompressionMethod::Stored,
+        );
+        fixture.write_modules(modules(&["2_Dense"]));
+        let chain = DenseChainHost::load(&fixture.0, 4).unwrap().unwrap();
+        fs::rename(root.join("pytorch_model.bin"), root.join("renamed.bin")).unwrap();
+        assert_eq!(
+            read_source(&chain.modules()[0].weight),
+            [0x3f80, 0xc000, 0x3f00, 0xbe80, 0x4000, 0x3f40, 0xbf80, 0x4080]
+        );
+    }
+
+    #[test]
+    fn rejects_single_and_index_checkpoint_ambiguity_for_dense_modules() {
+        let fixture = Fixture::new();
+        let root = fixture.bin_module(
+            "2_Dense",
+            dense_config(4, 2, true),
+            &biased_f16_tensors(),
+            None,
+            zip::CompressionMethod::Stored,
+        );
+        write_bin_file(
+            &root,
+            "pytorch_model-00001-of-00001.bin",
+            &biased_f16_tensors(),
+            zip::CompressionMethod::Stored,
+        );
+        fs::write(
+            root.join("pytorch_model.bin.index.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "weight_map": {
+                    "linear.weight": "pytorch_model-00001-of-00001.bin",
+                    "linear.bias": "pytorch_model-00001-of-00001.bin"
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fixture.write_modules(modules(&["2_Dense"]));
+        let error = fixture.error(4);
+        assert!(error.contains("ambiguous PyTorch checkpoint"), "{error}");
+
+        let fixture = Fixture::new();
+        let root = fixture.module(
+            "2_Dense",
+            dense_config(4, 2, true),
+            Dtype::F32,
+            [2, 4],
+            true,
+        );
+        fs::write(
+            root.join("model.safetensors.index.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "weight_map": {"linear.weight": "model-00001-of-00001.safetensors"}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        fixture.write_modules(modules(&["2_Dense"]));
+        let error = fixture.error(4);
+        assert!(
+            error.contains("ambiguous safetensors checkpoint"),
+            "{error}"
+        );
     }
 
     #[test]

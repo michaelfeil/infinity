@@ -1,9 +1,51 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 //! Bounded load-time staging into final device weight layouts.
-use crate::{model::WeightSource, start, tensor::Bf16};
-use cuda_core::{DeviceBuffer, Event, PinnedHostBuffer, Stream};
+use crate::{
+    model::WeightSource,
+    start,
+    tensor::{Bf16, Element, F16},
+};
+use cuda_core::{DeviceBuffer, DeviceCopy, Event, PinnedHostBuffer, Stream};
 use infinity_v3_backend_core::BackendError;
 use std::sync::Arc;
+
+mod sealed {
+    pub trait Sealed {}
+}
+impl sealed::Sealed for Bf16 {}
+impl sealed::Sealed for F16 {}
+
+/// Cold-load destination for a bounded 16-bit weight upload. Implementations
+/// are closed to BF16 and FP16, so no inference path branches on a dtype.
+pub(crate) trait UploadElement:
+    sealed::Sealed + Element<Storage = Self> + DeviceCopy + 'static
+{
+    fn read(
+        source: &WeightSource,
+        offset_elements: usize,
+        out: &mut [u16],
+    ) -> Result<(), BackendError>;
+}
+
+impl UploadElement for Bf16 {
+    fn read(
+        source: &WeightSource,
+        offset_elements: usize,
+        out: &mut [u16],
+    ) -> Result<(), BackendError> {
+        source.read_bf16(offset_elements, out)
+    }
+}
+
+impl UploadElement for F16 {
+    fn read(
+        source: &WeightSource,
+        offset_elements: usize,
+        out: &mut [u16],
+    ) -> Result<(), BackendError> {
+        source.read_f16(offset_elements, out)
+    }
+}
 
 // Two slots, one MiB pinned in total, independent of shard/model size.
 const ELEMENTS: usize = 1 << 18;
@@ -37,6 +79,13 @@ impl WeightUploader {
         &mut self,
         sources: &[&WeightSource],
     ) -> Result<DeviceBuffer<Bf16>, BackendError> {
+        self.upload_typed::<Bf16>(sources)
+    }
+
+    pub(crate) fn upload_typed<E: UploadElement>(
+        &mut self,
+        sources: &[&WeightSource],
+    ) -> Result<DeviceBuffer<E>, BackendError> {
         let count = sources.iter().try_fold(0usize, |n, source| {
             source
                 .shape()
@@ -52,7 +101,7 @@ impl WeightUploader {
         // inference can access this not-yet-published allocation.
         let buffer =
             unsafe { DeviceBuffer::uninitialized_async(&self.stream, count) }.map_err(start)?;
-        if let Err(error) = self.populate(&buffer, sources) {
+        if let Err(error) = self.populate::<E>(&buffer, sources) {
             if self.stream.synchronize().is_err() {
                 // Preserve allocation/context when completion is uncertain.
                 // The failed backend is never published to requests.
@@ -63,9 +112,9 @@ impl WeightUploader {
         Ok(buffer)
     }
 
-    fn populate(
+    fn populate<E: UploadElement>(
         &mut self,
-        buffer: &DeviceBuffer<Bf16>,
+        buffer: &DeviceBuffer<E>,
         sources: &[&WeightSource],
     ) -> Result<(), BackendError> {
         let mut destination = 0usize;
@@ -87,7 +136,7 @@ impl WeightUploader {
                     .as_mut_slice()
                     .get_mut(..length)
                     .ok_or_else(|| start("Weight staging range overflow"))?;
-                source.read_bf16(position, out)?;
+                E::read(source, position, out)?;
                 let offset = destination
                     .checked_mul(2)
                     .ok_or_else(|| start("Weight offset overflow"))?;

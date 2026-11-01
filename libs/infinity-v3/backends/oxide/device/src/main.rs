@@ -5,16 +5,19 @@
 //! The host owns every allocation and validates shapes before raw launches.
 //! Row kernels launch exactly 256 threads; scalar kernels use a 1D grid.
 
-use cuda_device::{DynamicSharedArray, SharedArray, convert, cuda_module, kernel, thread, warp};
+use cuda_device::{convert, cuda_module, kernel, thread, warp, DynamicSharedArray, SharedArray};
 mod aten_embedding;
 mod decoder;
 mod dense;
+mod encoder_prenorm;
 mod gated;
+mod nomic_embedding;
 mod norm1024;
 mod norm1024_exact_vector;
 mod norm2048;
 mod norm2048_vector;
 mod norm384;
+mod norm512;
 mod norm768;
 mod norm768_vector;
 mod qk_norm_rope_128;
@@ -346,6 +349,66 @@ mod kernels {
     ) {
         unsafe {
             crate::norm768::layer_norm_768(
+                input, residual, bias, gamma, beta, out, rows, width, eps,
+            )
+        };
+    }
+
+    /// Word/type unrounded F32 statistics, four rows per128-thread CTA.
+    #[kernel]
+    pub unsafe fn infinity_embedding_word_type_norm_768_exact(
+        ids: *const u32,
+        types: *const u32,
+        word: *const u16,
+        token_type: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::nomic_embedding::word_type_norm_768(
+                ids, types, word, token_type, gamma, beta, out, tokens, eps,
+            )
+        };
+    }
+
+    /// Native width512 word/type Candle norm, grid ceil(T/4), block128.
+    #[kernel]
+    pub unsafe fn infinity_embedding_word_type_norm_512_exact(
+        ids: *const u32,
+        types: *const u32,
+        word: *const u16,
+        token_type: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm512::embedding_word_type_norm_512(
+                ids, types, word, token_type, gamma, beta, out, tokens, eps,
+            )
+        };
+    }
+
+    /// Native width512 rounded residual norm, grid rows, block256.
+    #[kernel]
+    pub unsafe fn infinity_layer_norm_512_rounded_native(
+        input: *const u16,
+        residual: *const u16,
+        bias: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm512::layer_norm_512_rounded(
                 input, residual, bias, gamma, beta, out, rows, width, eps,
             )
         };
@@ -687,6 +750,47 @@ mod kernels {
         };
     }
 
+    /// Prepared native phase tables; construction only, block256.
+    #[kernel]
+    pub unsafe fn infinity_base_rope_tables_64_bf16(
+        inverse: *const f32,
+        cosine: *mut f32,
+        sine: *mut f32,
+        positions: u32,
+    ) {
+        unsafe { crate::encoder_prenorm::base_rope_tables_bf16(inverse, cosine, sine, positions) };
+    }
+    /// Word-only biasless Candle width768; four rows per128-thread CTA.
+    #[kernel]
+    pub unsafe fn infinity_embedding_word_norm_768_candle(
+        ids: *const u32,
+        word: *const u16,
+        gamma: *const u16,
+        out: *mut u16,
+        rows: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::encoder_prenorm::embedding_word_norm_768(ids, word, gamma, out, rows, eps)
+        };
+    }
+    /// Rounded residual statistics; optional retained BF16 sum destination.
+    #[kernel]
+    pub unsafe fn infinity_rounded_residual_norm_768_candle(
+        input: *const u16,
+        residual: *const u16,
+        gamma: *const u16,
+        normalized: *mut u16,
+        summed: *mut u16,
+        rows: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::encoder_prenorm::rounded_residual_norm_768(
+                input, residual, gamma, normalized, summed, rows, eps,
+            )
+        };
+    }
     /// Rounded BF16 gated GELU with gate in the second packed half.
     /// Grid=ceil(rows*width/256), block=256; input and output must not alias.
     #[kernel]

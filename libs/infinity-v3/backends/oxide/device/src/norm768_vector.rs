@@ -82,7 +82,7 @@ fn aligned(pointer: *const u16) -> bool {
 }
 
 #[inline(always)]
-unsafe fn load_vector(pointer: *const u16) -> [u16; LANE_VALUES] {
+pub(crate) unsafe fn load_vector(pointer: *const u16) -> [u16; LANE_VALUES] {
     let address = pointer as usize as u64;
     let first: u32;
     let second: u32;
@@ -132,7 +132,7 @@ unsafe fn store_vector(pointer: *mut u16, values: [u16; LANE_VALUES]) {
 }
 
 #[device]
-unsafe fn normalize_vector(
+pub(crate) unsafe fn normalize_vector(
     values: [f32; VALUES],
     offset: usize,
     gamma: *const u16,

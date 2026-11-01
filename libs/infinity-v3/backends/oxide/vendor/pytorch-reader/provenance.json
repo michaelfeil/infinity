@@ -1,0 +1,47 @@
+{
+  "package": "pytorch-reader",
+  "version": "0.22.0",
+  "upstream": {
+    "repository": "https://github.com/tracel-ai/burn",
+    "revision": "b8d75ad07f426537594a5beb9309d62d916bcf05",
+    "path_in_vcs": "crates/pytorch-reader",
+    "license": "MIT OR Apache-2.0"
+  },
+  "original_prototype": {
+    "name": "bounded-reader-v3",
+    "revision": "v3",
+    "note": "The independently reviewed bounded-reader-v3 prototype was copied unchanged into this vendor directory; only Cargo.toml differs for the Oxide-scoped path build."
+  },
+  "original_sha256": {
+    "src/lib.rs": "f80a5de92f53385668d01a0744e6847b16a01544d63bb61dbb0049465ee65ccd",
+    "src/tensor.rs": "0d7648efd2d57d99ed4a227fce1c85f55b561d70675d66987f9feec348ada3d9",
+    "src/storage.rs": "cd31f988b01cd69c4d306f823cbe6e0cd77eb0df95a975bb201c50544134ac7a",
+    "src/tests/mod.rs": "bcf7c2e0708b2847b7677970dd03f7ca11967555a0a475a538b057d440b9e142",
+    "README.md": "96c6cf756af7b1108bf12033eb96a3bcc82771a1a7b6e169e37139d83c159578",
+    "Cargo.toml": "582177f02abc93b7f66c9dfa0aa6031a6fcab185137729281b57f9b75a0cb4bf",
+    "Cargo.toml.orig": "ccfd5dbc38a7f8a566fc038dbb881115ff4a013daf32e4b0d2dfaedcb70dbf42",
+    ".cargo_vcs_info.json": "398a01842cec6e1a630204f54a629c659cb4f6c357c21c190e87bdfd750fe42a",
+    "LICENSE-MIT": "f7e4a30a1e4b898a6d0409c6a7319c62a644539957dbc89381dc79b64e4f2249",
+    "LICENSE-APACHE": "ff1bd7bc62835a5aa72bcfcbd3f19b5feb3aa4f5906b8aaf3644a96c0b36765e"
+  },
+  "modifications": {
+    "Cargo.toml": "Registry workspace inheritance replaced with explicit pinned dependency versions so this vendor copy is consumed only through the Oxide path dependency. The main workspace excludes this directory so the original vendor integration tests do not join the workspace test run."
+  },
+  "licenses": {
+    "expression": "MIT OR Apache-2.0",
+    "files": [
+      "LICENSE-MIT",
+      "LICENSE-APACHE"
+    ],
+    "notice": "See NOTICE. Full upstream license texts are retained verbatim.",
+    "matches_cargo_vcs_info": true,
+    "note": "License texts are the full upstream MIT and Apache-2.0 texts; their hashes match the independently reviewed V3 prototype and the staged public artifacts."
+  },
+  "cargo_vcs_info": {
+    "git": {
+      "sha1": "b8d75ad07f426537594a5beb9309d62d916bcf05"
+    },
+    "path_in_vcs": "crates/pytorch-reader"
+  },
+  "modification_revision": "V2: source files restored to the frozen V3 prototype; deflated-ZIP verification remains Unsupported in the prototype API. Oxide rejects compressed entries for publication instead of reading them quadratically."
+}

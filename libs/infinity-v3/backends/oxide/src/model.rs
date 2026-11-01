@@ -1,5 +1,8 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 
+use crate::pytorch_checkpoint::{
+    detect_format, DataFormat, PyTorchCheckpoint, PyTorchWeightSource,
+};
 use infinity_v3_backend_core::BackendError;
 use safetensors::{
     tensor::{Metadata, TensorInfo},
@@ -15,7 +18,7 @@ use std::sync::{Arc, Mutex};
 const SAFETENSORS_PREFIX_BYTES: u64 = 8;
 const MAX_HEADER_BYTES: u64 = 100_000_000;
 const READ_SCRATCH_BYTES: usize = 64 * 1024;
-const NONFINITE: &str = "invalid or nonfinite checkpoint weights";
+pub(crate) const NONFINITE: &str = "invalid or nonfinite checkpoint weights";
 const MAX_SIDECAR_BYTES: u64 = 16 * 1024 * 1024;
 
 pub(crate) fn start(error: impl std::fmt::Display) -> BackendError {
@@ -62,6 +65,9 @@ pub(crate) enum EncoderFamily {
     Camembert,
     DistilBert,
     Gte,
+    Modern,
+    Nomic,
+    Jina,
 }
 impl EncoderFamily {
     fn from_model_type(model_type: &str) -> Option<Self> {
@@ -84,6 +90,9 @@ impl EncoderFamily {
             }
             Self::DistilBert => &["distilbert.", ""],
             Self::Gte => &["new.", ""],
+            Self::Modern => &["model.", ""],
+            Self::Nomic => &[""],
+            Self::Jina => &["bert.", ""],
         }
     }
 
@@ -104,6 +113,9 @@ impl EncoderFamily {
             Self::Camembert => matches!(architecture, "CamembertModel" | "CamembertForMaskedLM"),
             Self::DistilBert => matches!(architecture, "DistilBertModel" | "DistilBertForMaskedLM"),
             Self::Gte => matches!(architecture, "NewModel"),
+            Self::Modern => matches!(architecture, "ModernBertModel" | "ModernBertForMaskedLM"),
+            Self::Nomic => matches!(architecture, "NomicBertModel"),
+            Self::Jina => architecture.starts_with("JinaBert"),
         }
     }
 }
@@ -113,6 +125,8 @@ impl EncoderFamily {
 pub(crate) enum NormArithmetic {
     /// FP32 residual statistics with the biased BERT-family LayerNorm primitive.
     ExactBiased,
+    /// Word/type sums stay F32 through the biased Candle embedding norm.
+    ExactWordTypeBiased,
     /// Round embedding/residual additions to BF16 before normalization statistics.
     RoundedAddBeforeStats,
     /// ATen vectorized Welford statistics for the GTE word-only embedding norm.
@@ -129,12 +143,19 @@ pub(crate) struct RotaryRecipe {
 pub(crate) enum PositionRecipe {
     Absolute,
     Rotary(RotaryRecipe),
+    AlibiModelBias,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FeedForwardRecipe {
     DenseGelu,
     GatedGeluUpFirst,
+    GatedSiluGateFirst,
+}
+impl FeedForwardRecipe {
+    pub(crate) fn is_gated(self) -> bool {
+        self != Self::DenseGelu
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -255,6 +276,8 @@ pub(crate) struct BertConfig {
     pub num_attention_heads: usize,
     pub num_hidden_layers: usize,
     pub max_position_embeddings: usize,
+    /// Native table capacity may exceed the frontend token/position limit.
+    pub(crate) rotary_table_positions: Option<usize>,
     pub vocab_size: usize,
     pub type_vocab_size: usize,
     configured_type_vocab_size: Option<usize>,
@@ -269,11 +292,131 @@ pub(crate) struct BertConfig {
     add_cross_attention: bool,
 }
 impl BertConfig {
-    fn load(path: &Path) -> Result<Self, BackendError> {
+    pub(crate) fn load(path: &Path) -> Result<Self, BackendError> {
         let raw: RawEncoderConfig = read_json(&path.join("config.json"))?;
         Self::from_raw(raw)
     }
 
+    /// Arena and request geometry for the separately validated Modern loader.
+    /// The prenorm policy owns its biasless math and dual-table schedule.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn modern_geometry(
+        hidden_size: usize,
+        intermediate_size: usize,
+        num_attention_heads: usize,
+        num_hidden_layers: usize,
+        max_position_embeddings: usize,
+        vocab_size: usize,
+        layer_norm_eps: f64,
+        theta: f64,
+        configured_type_vocab_size: Option<usize>,
+    ) -> Self {
+        Self {
+            hidden_size,
+            intermediate_size,
+            num_attention_heads,
+            num_hidden_layers,
+            max_position_embeddings,
+            rotary_table_positions: None,
+            vocab_size,
+            type_vocab_size: 1,
+            configured_type_vocab_size,
+            layer_norm_eps,
+            family: EncoderFamily::Modern,
+            recipe: EncoderRecipe {
+                embedding: NormArithmetic::RoundedAddBeforeStats,
+                residual: NormArithmetic::RoundedAddBeforeStats,
+                positions: PositionRecipe::Rotary(RotaryRecipe {
+                    theta,
+                    ntk_factor: None,
+                }),
+                feed_forward: FeedForwardRecipe::GatedGeluUpFirst,
+            },
+            hidden_act: "gelu".into(),
+            position_embedding_type: "rope".into(),
+            is_decoder: false,
+            add_cross_attention: false,
+        }
+    }
+    /// Geometry for the separately validated dense Nomic loader.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn nomic_geometry(
+        hidden_size: usize,
+        intermediate_size: usize,
+        num_attention_heads: usize,
+        num_hidden_layers: usize,
+        max_position_embeddings: usize,
+        vocab_size: usize,
+        type_vocab_size: usize,
+        layer_norm_eps: f64,
+        theta: f64,
+        rope_positions: usize,
+    ) -> Self {
+        Self {
+            hidden_size,
+            intermediate_size,
+            num_attention_heads,
+            num_hidden_layers,
+            max_position_embeddings,
+            rotary_table_positions: Some(rope_positions),
+            vocab_size,
+            type_vocab_size,
+            configured_type_vocab_size: Some(type_vocab_size),
+            layer_norm_eps,
+            family: EncoderFamily::Nomic,
+            recipe: EncoderRecipe {
+                embedding: NormArithmetic::ExactWordTypeBiased,
+                residual: NormArithmetic::ExactBiased,
+                positions: PositionRecipe::Rotary(RotaryRecipe {
+                    theta,
+                    ntk_factor: None,
+                }),
+                feed_forward: FeedForwardRecipe::GatedSiluGateFirst,
+            },
+            hidden_act: "swiglu".into(),
+            position_embedding_type: "rope".into(),
+            is_decoder: false,
+            add_cross_attention: false,
+        }
+    }
+    /// Geometry for the separately validated Jina ALiBi loader. Jina keeps
+    /// `model_type = "bert"` in the source config; the family is selected from
+    /// the implementation marker before ordinary BERT config validation.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn jina_geometry(
+        hidden_size: usize,
+        intermediate_size: usize,
+        num_attention_heads: usize,
+        num_hidden_layers: usize,
+        max_position_embeddings: usize,
+        vocab_size: usize,
+        type_vocab_size: usize,
+        layer_norm_eps: f64,
+    ) -> Self {
+        Self {
+            hidden_size,
+            intermediate_size,
+            num_attention_heads,
+            num_hidden_layers,
+            max_position_embeddings,
+            rotary_table_positions: None,
+            vocab_size,
+            type_vocab_size,
+            configured_type_vocab_size: Some(type_vocab_size),
+            layer_norm_eps,
+            family: EncoderFamily::Jina,
+            recipe: EncoderRecipe {
+                embedding: NormArithmetic::ExactWordTypeBiased,
+                residual: NormArithmetic::RoundedAddBeforeStats,
+                positions: PositionRecipe::AlibiModelBias,
+                feed_forward: FeedForwardRecipe::GatedGeluUpFirst,
+            },
+            hidden_act: "gelu".into(),
+            position_embedding_type: "alibi".into(),
+            is_decoder: false,
+            add_cross_attention: false,
+        }
+    }
     fn from_raw(raw: RawEncoderConfig) -> Result<Self, BackendError> {
         let family = EncoderFamily::from_model_type(&raw.model_type).ok_or_else(|| {
             start(format!(
@@ -417,6 +560,7 @@ impl BertConfig {
                 raw.max_position_embeddings,
                 "max_position_embeddings",
             )?,
+            rotary_table_positions: None,
             vocab_size: required_usize(raw.vocab_size, "vocab_size")?,
             type_vocab_size,
             configured_type_vocab_size: raw.type_vocab_size,
@@ -442,6 +586,10 @@ impl BertConfig {
                 self.position_embedding_type == "rope"
             }
             (EncoderFamily::Gte, _) => false,
+            (EncoderFamily::Jina, PositionRecipe::AlibiModelBias) => {
+                self.position_embedding_type == "alibi"
+            }
+            (EncoderFamily::Jina, _) => false,
             (_, PositionRecipe::Absolute) => self.position_embedding_type == "absolute",
             _ => false,
         };
@@ -494,6 +642,21 @@ impl BertConfig {
                 ));
             }
             validate_gte_rotary(&rotary, self.hidden_size / self.num_attention_heads)?;
+        }
+        if self.family == EncoderFamily::Jina {
+            let recipe_valid = self.hidden_size == 512
+                && self.num_attention_heads == 8
+                && self.hidden_size / self.num_attention_heads == 64
+                && self.max_position_embeddings <= 8192
+                && self.recipe.embedding == NormArithmetic::ExactWordTypeBiased
+                && self.recipe.residual == NormArithmetic::RoundedAddBeforeStats
+                && self.recipe.positions == PositionRecipe::AlibiModelBias
+                && self.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst;
+            if !recipe_valid {
+                return Err(start(
+                    "invalid or unsupported Jina dimensions / arithmetic recipe",
+                ));
+            }
         }
         // CUDA position IDs are u32; checked tensor dimensions bound the actual
         // lookup allocation. Attention-provider sequence limits are separate.
@@ -563,6 +726,7 @@ pub(crate) struct WeightSource {
     shape: Vec<usize>,
     count: usize,
     width: usize,
+    pytorch: Option<PyTorchWeightSource>,
 }
 impl WeightSource {
     fn from_header(
@@ -614,6 +778,7 @@ impl WeightSource {
             shape: info.shape.clone(),
             count,
             width,
+            pytorch: None,
         })
     }
 
@@ -628,6 +793,26 @@ impl WeightSource {
             shape,
             count,
             width: 2,
+            pytorch: None,
+        })
+    }
+
+    fn from_pytorch(source: PyTorchWeightSource) -> Result<Self, BackendError> {
+        let count = source.len();
+        let width = source.width();
+        count
+            .checked_mul(width)
+            .ok_or_else(|| start("weight byte size overflow"))?;
+        Ok(Self {
+            file: None,
+            file_len: 0,
+            data_start: 0,
+            data_offset: 0,
+            dtype: source.safetensors_dtype(),
+            shape: source.shape().to_vec(),
+            count,
+            width,
+            pytorch: Some(source),
         })
     }
 
@@ -638,6 +823,9 @@ impl WeightSource {
         offset_elements: usize,
         shape: Vec<usize>,
     ) -> Result<Self, BackendError> {
+        if let Some(source) = &self.pytorch {
+            return Self::from_pytorch(source.slice(offset_elements, shape)?);
+        }
         let count = elements(&shape)?;
         let end = offset_elements
             .checked_add(count)
@@ -678,6 +866,7 @@ impl WeightSource {
             shape,
             count,
             width: self.width,
+            pytorch: None,
         })
     }
 
@@ -699,6 +888,28 @@ impl WeightSource {
         offset_elements: usize,
         out: &mut [u16],
     ) -> Result<(), BackendError> {
+        if let Some(source) = &self.pytorch {
+            return source.read_bf16(offset_elements, out);
+        }
+        self.read_target::<Bf16Target, false>(offset_elements, out)
+    }
+
+    pub(crate) fn read_f16(
+        &self,
+        offset_elements: usize,
+        out: &mut [u16],
+    ) -> Result<(), BackendError> {
+        if let Some(source) = &self.pytorch {
+            return source.read_f16(offset_elements, out);
+        }
+        self.read_target::<F16Target, false>(offset_elements, out)
+    }
+
+    fn read_target<T: Target16, const NATIVE: bool>(
+        &self,
+        offset_elements: usize,
+        out: &mut [u16],
+    ) -> Result<(), BackendError> {
         let end_element = offset_elements
             .checked_add(out.len())
             .ok_or_else(|| start("weight read range overflow"))?;
@@ -707,6 +918,9 @@ impl WeightSource {
         }
         if out.is_empty() {
             return Ok(());
+        }
+        if let Some(source) = &self.pytorch {
+            return source.read_target::<T, NATIVE>(offset_elements, out);
         }
         let Some(file) = self.file.as_ref() else {
             out.fill(0);
@@ -729,6 +943,7 @@ impl WeightSource {
         if per_read == 0 {
             return Err(start("invalid weight element width"));
         }
+        let source = Source16::from_safetensors_dtype(self.dtype)?;
         let mut file = file
             .lock()
             .map_err(|_| start("checkpoint shard lock is poisoned"))?;
@@ -759,14 +974,89 @@ impl WeightSource {
             let target = out
                 .get_mut(done..end)
                 .ok_or_else(|| start("weight output range error"))?;
-            convert_source(self.dtype, bytes, target)?;
+            convert_16::<T, NATIVE>(source, bytes, target)?;
             done = end;
         }
         Ok(())
     }
 }
 
-fn to_bf16(value: f32) -> Result<u16, BackendError> {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum Source16 {
+    F32,
+    F16,
+    Bf16,
+}
+
+impl Source16 {
+    fn from_safetensors_dtype(dtype: Dtype) -> Result<Self, BackendError> {
+        match dtype {
+            Dtype::F32 => Ok(Self::F32),
+            Dtype::F16 => Ok(Self::F16),
+            Dtype::BF16 => Ok(Self::Bf16),
+            other => Err(start(format!("unsupported weight dtype {other:?}"))),
+        }
+    }
+
+    pub(crate) const fn width(self) -> usize {
+        match self {
+            Self::F32 => 4,
+            Self::F16 | Self::Bf16 => 2,
+        }
+    }
+
+    const fn label(self) -> &'static str {
+        match self {
+            Self::F32 => "F32",
+            Self::F16 => "F16",
+            Self::Bf16 => "BF16",
+        }
+    }
+}
+
+pub(crate) trait Target16 {
+    fn from_bf16(bits: u16) -> Result<u16, BackendError>;
+    fn from_f16(bits: u16) -> Result<u16, BackendError>;
+    fn from_f32(value: f32) -> Result<u16, BackendError>;
+}
+
+pub(crate) struct Bf16Target;
+impl Target16 for Bf16Target {
+    fn from_bf16(bits: u16) -> Result<u16, BackendError> {
+        if !half::bf16::from_bits(bits).is_finite() {
+            return Err(start(NONFINITE));
+        }
+        Ok(bits)
+    }
+
+    fn from_f16(bits: u16) -> Result<u16, BackendError> {
+        to_bf16(half::f16::from_bits(bits).to_f32())
+    }
+
+    fn from_f32(value: f32) -> Result<u16, BackendError> {
+        to_bf16(value)
+    }
+}
+
+pub(crate) struct F16Target;
+impl Target16 for F16Target {
+    fn from_bf16(bits: u16) -> Result<u16, BackendError> {
+        to_f16(half::bf16::from_bits(bits).to_f32())
+    }
+
+    fn from_f16(bits: u16) -> Result<u16, BackendError> {
+        if !half::f16::from_bits(bits).is_finite() {
+            return Err(start(NONFINITE));
+        }
+        Ok(bits)
+    }
+
+    fn from_f32(value: f32) -> Result<u16, BackendError> {
+        to_f16(value)
+    }
+}
+
+pub(crate) fn to_bf16(value: f32) -> Result<u16, BackendError> {
     if !value.is_finite() {
         return Err(start(NONFINITE));
     }
@@ -777,12 +1067,28 @@ fn to_bf16(value: f32) -> Result<u16, BackendError> {
     Ok(bits)
 }
 
+fn to_f16(value: f32) -> Result<u16, BackendError> {
+    if !value.is_finite() {
+        return Err(start(NONFINITE));
+    }
+    let bits = half::f16::from_f32(value).to_bits();
+    if !half::f16::from_bits(bits).is_finite() {
+        return Err(start(NONFINITE));
+    }
+    Ok(bits)
+}
+
+#[cfg(test)]
 fn convert_source(dtype: Dtype, bytes: &[u8], out: &mut [u16]) -> Result<(), BackendError> {
-    let width = match dtype {
-        Dtype::F32 => 4,
-        Dtype::F16 | Dtype::BF16 => 2,
-        other => return Err(start(format!("unsupported weight dtype {other:?}"))),
-    };
+    convert_16::<Bf16Target, false>(Source16::from_safetensors_dtype(dtype)?, bytes, out)
+}
+
+pub(crate) fn convert_16<T: Target16, const NATIVE: bool>(
+    source: Source16,
+    bytes: &[u8],
+    out: &mut [u16],
+) -> Result<(), BackendError> {
+    let width = source.width();
     let expected = out
         .len()
         .checked_mul(width)
@@ -790,39 +1096,52 @@ fn convert_source(dtype: Dtype, bytes: &[u8], out: &mut [u16]) -> Result<(), Bac
     if bytes.len() != expected {
         return Err(start("weight source data length mismatch"));
     }
-    match dtype {
-        Dtype::BF16 => {
+    match source {
+        Source16::Bf16 => {
             for (chunk, slot) in bytes.chunks_exact(2).zip(out.iter_mut()) {
                 let raw: [u8; 2] = chunk
                     .try_into()
-                    .map_err(|_| start("invalid BF16 weight data"))?;
-                let bits = u16::from_le_bytes(raw);
-                if !half::bf16::from_bits(bits).is_finite() {
-                    return Err(start(NONFINITE));
-                }
-                *slot = bits;
+                    .map_err(|_| start(format!("invalid {} weight data", source.label())))?;
+                let bits = decode_u16::<NATIVE>(raw);
+                *slot = T::from_bf16(bits)?;
             }
         }
-        Dtype::F16 => {
+        Source16::F16 => {
             for (chunk, slot) in bytes.chunks_exact(2).zip(out.iter_mut()) {
                 let raw: [u8; 2] = chunk
                     .try_into()
-                    .map_err(|_| start("invalid F16 weight data"))?;
-                let value = half::f16::from_bits(u16::from_le_bytes(raw)).to_f32();
-                *slot = to_bf16(value)?;
+                    .map_err(|_| start(format!("invalid {} weight data", source.label())))?;
+                *slot = T::from_f16(decode_u16::<NATIVE>(raw))?;
             }
         }
-        Dtype::F32 => {
+        Source16::F32 => {
             for (chunk, slot) in bytes.chunks_exact(4).zip(out.iter_mut()) {
                 let raw: [u8; 4] = chunk
                     .try_into()
-                    .map_err(|_| start("invalid F32 weight data"))?;
-                *slot = to_bf16(f32::from_le_bytes(raw))?;
+                    .map_err(|_| start(format!("invalid {} weight data", source.label())))?;
+                *slot = T::from_f32(decode_f32::<NATIVE>(raw))?;
             }
         }
-        other => return Err(start(format!("unsupported weight dtype {other:?}"))),
     }
     Ok(())
+}
+
+#[inline]
+fn decode_u16<const NATIVE: bool>(raw: [u8; 2]) -> u16 {
+    if NATIVE {
+        u16::from_ne_bytes(raw)
+    } else {
+        u16::from_le_bytes(raw)
+    }
+}
+
+#[inline]
+fn decode_f32<const NATIVE: bool>(raw: [u8; 4]) -> f32 {
+    if NATIVE {
+        f32::from_ne_bytes(raw)
+    } else {
+        f32::from_le_bytes(raw)
+    }
 }
 
 pub(crate) struct LinearWeights {
@@ -863,7 +1182,7 @@ pub(crate) fn elements(shape: &[usize]) -> Result<usize, BackendError> {
         .ok_or_else(|| start("weight byte size overflow"))?;
     Ok(n)
 }
-fn validate_modules(path: &Path) -> Result<(), BackendError> {
+pub(crate) fn validate_modules(path: &Path) -> Result<(), BackendError> {
     let file = path.join("modules.json");
     if !path_present(&file)? {
         return Ok(());
@@ -933,14 +1252,14 @@ fn checkpoint_files(path: &Path) -> Result<CheckpointFiles, BackendError> {
 
 /// Hub snapshots use ../../blobs/<digest> symlinks within one cached repo.
 /// All other checkpoints remain confined to their canonical model directory.
-fn permitted_weight(root: &Path, resolved: &Path) -> bool {
+pub(crate) fn permitted_weight(root: &Path, resolved: &Path) -> bool {
     resolved.starts_with(root) || permitted_cache_blob(root, resolved)
 }
 
 /// Accept only a digest-named blob in the same Hub cache repository as `root`.
 /// The exact snapshot/blobs relationship is checked; arbitrary ancestors are
 /// deliberately not searched.
-fn permitted_cache_blob(root: &Path, resolved: &Path) -> bool {
+pub(crate) fn permitted_cache_blob(root: &Path, resolved: &Path) -> bool {
     if resolved.starts_with(root) {
         return false;
     }
@@ -969,6 +1288,27 @@ fn permitted_cache_blob(root: &Path, resolved: &Path) -> bool {
     // Compare the canonical target against this exact flat directory. A blobs
     // directory or blob symlink pointing elsewhere is not a permitted escape.
     resolved.parent() == Some(repo.join("blobs").as_path())
+}
+
+/// Dense module checkpoints must select exactly one layout per format. The
+/// backbone loaders intentionally keep their historical single-file preference;
+/// this stricter choice is local to nested module admission.
+fn reject_ambiguous_module_checkpoint(module_root: &Path) -> Result<(), BackendError> {
+    if path_present(&module_root.join("model.safetensors"))?
+        && path_present(&module_root.join("model.safetensors.index.json"))?
+    {
+        return Err(start(
+            "ambiguous safetensors checkpoint: both model.safetensors and model.safetensors.index.json are present",
+        ));
+    }
+    if path_present(&module_root.join("pytorch_model.bin"))?
+        && path_present(&module_root.join("pytorch_model.bin.index.json"))?
+    {
+        return Err(start(
+            "ambiguous PyTorch checkpoint: both pytorch_model.bin and pytorch_model.bin.index.json are present",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -1085,7 +1425,7 @@ fn reject_stray_token_types(
     Ok(())
 }
 
-fn required(config: &BertConfig) -> HashMap<String, Vec<usize>> {
+pub(crate) fn required(config: &BertConfig) -> HashMap<String, Vec<usize>> {
     let h = config.hidden_size;
     let mut out = HashMap::new();
     for (name, shape) in [
@@ -1204,9 +1544,13 @@ pub(crate) struct Checkpoint {
     index: Option<BTreeMap<String, String>>,
     shards: Vec<ShardHeader>,
     tensors: BTreeMap<String, (usize, TensorHeader)>,
+    pytorch: Option<PyTorchCheckpoint>,
 }
 impl Checkpoint {
     pub(crate) fn open(path: &Path) -> Result<Self, BackendError> {
+        if detect_format(path)? == DataFormat::PyTorch {
+            return Ok(Self::from_pytorch(PyTorchCheckpoint::open(path)?));
+        }
         let (files, index) = checkpoint_files(path)?;
         let root = path.canonicalize().map_err(start)?;
         let mut shards = Vec::new();
@@ -1232,6 +1576,13 @@ impl Checkpoint {
         let module_root = module_root.canonicalize().map_err(start)?;
         if !module_root.starts_with(&model_root) {
             return Err(start("Dense module path escapes the model directory"));
+        }
+        reject_ambiguous_module_checkpoint(&module_root)?;
+        if detect_format(&module_root)? == DataFormat::PyTorch {
+            return Ok(Self::from_pytorch(PyTorchCheckpoint::open_module(
+                &model_root,
+                &module_root,
+            )?));
         }
         let (files, index) = checkpoint_files(&module_root)?;
         let mut shards = Vec::new();
@@ -1267,21 +1618,42 @@ impl Checkpoint {
             index,
             shards,
             tensors,
+            pytorch: None,
         })
     }
 
-    pub(crate) fn names(&self) -> impl Iterator<Item = &String> {
-        self.tensors.keys()
+    fn from_pytorch(checkpoint: PyTorchCheckpoint) -> Self {
+        Self {
+            files: Vec::new(),
+            index: None,
+            shards: Vec::new(),
+            tensors: BTreeMap::new(),
+            pytorch: Some(checkpoint),
+        }
+    }
+
+    pub(crate) fn names(&self) -> Box<dyn Iterator<Item = &String> + '_> {
+        match &self.pytorch {
+            Some(checkpoint) => Box::new(checkpoint.names()),
+            None => Box::new(self.tensors.keys()),
+        }
     }
 
     pub(crate) fn contains(&self, name: &str) -> bool {
-        self.tensors.contains_key(name)
+        match &self.pytorch {
+            Some(checkpoint) => checkpoint.contains(name),
+            None => self.tensors.contains_key(name),
+        }
     }
 
     pub(crate) fn shape(&self, name: &str) -> Option<&[usize]> {
-        self.tensors
-            .get(name)
-            .map(|(_, info)| info.shape.as_slice())
+        match &self.pytorch {
+            Some(checkpoint) => checkpoint.shape(name),
+            None => self
+                .tensors
+                .get(name)
+                .map(|(_, info)| info.shape.as_slice()),
+        }
     }
 
     pub(crate) fn source(&self, name: &str, shape: &[usize]) -> Result<WeightSource, BackendError> {
@@ -1294,6 +1666,12 @@ impl Checkpoint {
         name: &str,
         shape: &[usize],
     ) -> Result<Option<WeightSource>, BackendError> {
+        if let Some(checkpoint) = &self.pytorch {
+            return checkpoint
+                .optional_source(name, shape)?
+                .map(WeightSource::from_pytorch)
+                .transpose();
+        }
         let Some((shard_index, info)) = self.tensors.get(name) else {
             return Ok(None);
         };
@@ -2450,6 +2828,24 @@ mod tests {
             assert!(fixture.error().contains("invalid safetensors shard path"));
         }
     }
+    #[test]
+    fn backbone_safetensors_single_file_keeps_preference_over_stale_index() {
+        let fixture = Fixture::new();
+        fixture.weights(Dtype::F32, true, false);
+        std::fs::write(
+            fixture.0.join("model.safetensors.index.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "weight_map": {
+                    "embeddings.word_embeddings.weight": "missing.safetensors"
+                }
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let weights = BertWeights::load(&fixture.0).unwrap();
+        assert_eq!(read_all(&weights.word), expected(&[0.25; 8]));
+    }
+
     #[cfg(unix)]
     #[test]
     fn loads_hub_snapshot_weight_symlinks_for_single_and_sharded_models() {
@@ -2639,6 +3035,148 @@ mod tests {
     }
 
     #[test]
+    fn f16_reads_safetensors_sources_offsets_and_rejects_nonfinite() {
+        let fixture = Fixture::new();
+        let f16_raw = [0x0000u16, 0x8000, 0x0001, 0x03ff, 0x3c00, 0x7bff];
+        let f32_values = [1.0f32 / 3.0, f32::from_bits(0x3f80_1000), -0.0];
+        let bf16_raw = [0x3f80u16, 0xbf80, 0x3f00, 0x0000, 0x8000];
+        let tensors = [
+            (
+                "f16",
+                Dtype::F16,
+                vec![6],
+                f16_raw.map(u16::to_le_bytes).concat(),
+            ),
+            (
+                "f32",
+                Dtype::F32,
+                vec![3],
+                f32_values.map(f32::to_le_bytes).concat(),
+            ),
+            (
+                "bf16",
+                Dtype::BF16,
+                vec![5],
+                bf16_raw.map(u16::to_le_bytes).concat(),
+            ),
+            (
+                "f16_inf",
+                Dtype::F16,
+                vec![1],
+                0x7c00u16.to_le_bytes().to_vec(),
+            ),
+            (
+                "f32_inf",
+                Dtype::F32,
+                vec![1],
+                f32::INFINITY.to_le_bytes().to_vec(),
+            ),
+            (
+                "f32_overflow",
+                Dtype::F32,
+                vec![1],
+                f32::MAX.to_le_bytes().to_vec(),
+            ),
+            (
+                "bf16_overflow",
+                Dtype::BF16,
+                vec![1],
+                0x7f7fu16.to_le_bytes().to_vec(),
+            ),
+        ];
+        let views = tensors
+            .iter()
+            .map(|(name, dtype, shape, bytes)| {
+                (
+                    (*name).to_string(),
+                    TensorView::new(*dtype, shape.clone(), bytes).unwrap(),
+                )
+            })
+            .collect::<Vec<_>>();
+        std::fs::write(
+            fixture.0.join("model.safetensors"),
+            serialize(views, None).unwrap(),
+        )
+        .unwrap();
+        let checkpoint = Checkpoint::open(&fixture.0).unwrap();
+
+        let source = checkpoint.source("f16", &[6]).unwrap();
+        let mut out = [0u16; 6];
+        source.read_f16(0, &mut out).unwrap();
+        assert_eq!(out, f16_raw);
+        let mut slice = [0u16; 3];
+        source.read_f16(2, &mut slice).unwrap();
+        assert_eq!(slice, f16_raw[2..5]);
+        assert!(source.read_f16(6, &mut [0u16; 1]).is_err());
+        assert!(source.read_f16(usize::MAX, &mut [0u16; 1]).is_err());
+
+        let source = checkpoint.source("f32", &[3]).unwrap();
+        let mut out = [0u16; 3];
+        source.read_f16(0, &mut out).unwrap();
+        assert_eq!(out[0], half::f16::from_f32(f32_values[0]).to_bits());
+        assert_eq!(out[1], 0x3c00, "ties round to even");
+        assert_eq!(out[2], 0x8000, "signed zero is preserved");
+
+        let source = checkpoint.source("bf16", &[5]).unwrap();
+        let mut out = [0u16; 5];
+        source.read_f16(0, &mut out).unwrap();
+        let expected = bf16_raw
+            .map(|bits| half::f16::from_f32(half::bf16::from_bits(bits).to_f32()).to_bits());
+        assert_eq!(out, expected);
+
+        for name in ["f16_inf", "f32_inf", "f32_overflow", "bf16_overflow"] {
+            let source = checkpoint.source(name, &[1]).unwrap();
+            let error = source.read_f16(0, &mut [0u16; 1]).unwrap_err().to_string();
+            assert!(error.contains("nonfinite"), "{name}: {error}");
+        }
+    }
+
+    #[test]
+    fn f16_target_preserves_every_finite_f16_source_pattern() {
+        for bits in 0..=u16::MAX {
+            let mut out = [0u16; 1];
+            let result =
+                convert_16::<F16Target, false>(Source16::F16, &bits.to_le_bytes(), &mut out);
+            if half::f16::from_bits(bits).is_finite() {
+                assert!(result.is_ok(), "{bits:#06x}");
+                assert_eq!(out, [bits]);
+            } else {
+                assert!(result.is_err(), "{bits:#06x}");
+            }
+        }
+    }
+
+    #[test]
+    fn f16_reads_nested_nonzero_safetensors_slices() {
+        let fixture = Fixture::new();
+        let raw = [
+            0x0400u16, 0x0401, 0x0402, 0x0403, 0x0404, 0x0405, 0x0406, 0x0407, 0x0408, 0x0409,
+            0x040a, 0x040b,
+        ];
+        let bytes = raw.map(u16::to_le_bytes).concat();
+        let view = TensorView::new(Dtype::F16, vec![12], &bytes).unwrap();
+        std::fs::write(
+            fixture.0.join("model.safetensors"),
+            serialize([("f16_nested", view)], None).unwrap(),
+        )
+        .unwrap();
+        let checkpoint = Checkpoint::open(&fixture.0).unwrap();
+        let source = checkpoint.source("f16_nested", &[12]).unwrap();
+        let first = source.slice(2, vec![5]).unwrap();
+        assert_eq!(first.shape(), &[5]);
+        let nested = first.slice(3, vec![2]).unwrap();
+        assert_eq!(nested.shape(), &[2]);
+        let mut out = [0u16; 2];
+        nested.read_f16(0, &mut out).unwrap();
+        assert_eq!(out, [raw[5], raw[6]]);
+        let mut tail = [0u16; 1];
+        nested.read_f16(1, &mut tail).unwrap();
+        assert_eq!(tail[0], raw[6]);
+        assert!(nested.read_f16(2, &mut [0u16; 1]).is_err());
+        assert!(first.slice(4, vec![2]).is_err());
+    }
+
+    #[test]
     #[ignore = "requires CUDA 13 GPU runtime"]
     fn gpu_streams_multiple_chunks_into_final_packed_weights() {
         use crate::upload::WeightUploader;
@@ -2731,5 +3269,101 @@ mod tests {
         file.write_all(&f32::NAN.to_le_bytes()).unwrap();
         assert!(uploader.upload(&[&sources[0]]).is_err());
         uploader.finish().unwrap();
+    }
+
+    #[test]
+    #[ignore = "requires CUDA 13 GPU runtime"]
+    fn gpu_streams_f16_multichunk_and_retains_prior_device_buffers() {
+        use crate::tensor::F16;
+        use crate::upload::WeightUploader;
+        use cuda_core::Context;
+        // More than two staging slots, plus an odd tail, for every source type.
+        let count = 600_003usize;
+        let fixture = Fixture::new();
+        let values = (0..count)
+            .map(|i| ((i % 997) as f32 - 498.0) / 37.0)
+            .collect::<Vec<_>>();
+        let f16_bits = values
+            .iter()
+            .map(|value| half::f16::from_f32(*value).to_bits())
+            .collect::<Vec<_>>();
+        let floats = values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect::<Vec<_>>();
+        let halfs = f16_bits
+            .iter()
+            .flat_map(|bits| bits.to_le_bytes())
+            .collect::<Vec<_>>();
+        let bfloats = values
+            .iter()
+            .flat_map(|value| half::bf16::from_f32(*value).to_bits().to_le_bytes())
+            .collect::<Vec<_>>();
+        let views = [
+            (
+                "q",
+                TensorView::new(Dtype::F32, vec![count], &floats).unwrap(),
+            ),
+            (
+                "k",
+                TensorView::new(Dtype::F16, vec![count], &halfs).unwrap(),
+            ),
+            (
+                "v",
+                TensorView::new(Dtype::BF16, vec![count], &bfloats).unwrap(),
+            ),
+        ];
+        std::fs::write(
+            fixture.0.join("model.safetensors"),
+            serialize(views, None).unwrap(),
+        )
+        .unwrap();
+        let shard = open_shard(&fixture.0.join("model.safetensors")).unwrap();
+        let sources = ["q", "k", "v"].map(|name| {
+            let info = &shard.tensors.iter().find(|(key, _)| key == name).unwrap().1;
+            WeightSource::from_header(
+                shard.file.clone(),
+                shard.file_len,
+                shard.data_start,
+                info,
+                name,
+            )
+            .unwrap()
+        });
+        let context = Context::new(0).unwrap();
+        let stream = context.new_stream().unwrap();
+        let mut uploader = WeightUploader::new(stream.clone()).unwrap();
+        let first = uploader
+            .upload_typed::<F16>(&sources.iter().collect::<Vec<_>>())
+            .unwrap();
+        // Keep the first device allocation live while a second bounded upload
+        // reuses the pinned slots and allocates its own final buffer.
+        let second = uploader.upload_typed::<F16>(&[&sources[1]]).unwrap();
+        uploader.finish().unwrap();
+        let expected = values
+            .iter()
+            .map(|value| half::f16::from_f32(*value).to_bits())
+            .chain(f16_bits.iter().copied())
+            .chain(values.iter().map(|value| {
+                half::f16::from_f32(
+                    half::bf16::from_bits(half::bf16::from_f32(*value).to_bits()).to_f32(),
+                )
+                .to_bits()
+            }))
+            .collect::<Vec<_>>();
+        let actual = first
+            .to_host_vec(&stream)
+            .unwrap()
+            .into_iter()
+            .map(F16::to_bits)
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+        let repeated = second
+            .to_host_vec(&stream)
+            .unwrap()
+            .into_iter()
+            .map(F16::to_bits)
+            .collect::<Vec<_>>();
+        assert_eq!(repeated, f16_bits);
     }
 }

@@ -4,12 +4,15 @@ use infinity_backend_oxide::OxideBackend;
 use infinity_v3_backend_core::{Backend, Batch, Embedding, ModelType, Pool};
 use std::{path::Path, time::Instant};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    const USAGE: &str =
+        "usage: probe MODEL_PATH [TOKENS] [ITERATIONS] [DEVICE] [POOL mean|cls|last-token]";
     let args = std::env::args().collect::<Vec<_>>();
+    if matches!(args.get(1).map(String::as_str), Some("--help" | "-h")) {
+        println!("{USAGE}");
+        return Ok(());
+    }
     let Some(path) = args.get(1) else {
-        return Err(
-            "usage: probe MODEL_PATH [TOKENS] [ITERATIONS] [DEVICE] [POOL mean|cls|last-token]"
-                .into(),
-        );
+        return Err(USAGE.into());
     };
     let len = args
         .get(2)

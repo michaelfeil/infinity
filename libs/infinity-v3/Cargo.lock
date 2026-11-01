@@ -1892,7 +1892,7 @@ dependencies = [
  "cmake",
  "infinity-v3-config",
  "infinity_v3-backend-core",
- "pytorch-reader",
+ "pytorch-reader 0.22.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "safetensors",
  "serde",
  "serde_json",
@@ -1911,9 +1911,11 @@ dependencies = [
  "infinity_v3-backend-core",
  "libloading",
  "metrics",
+ "pytorch-reader 0.22.0",
  "safetensors",
  "serde",
  "serde_json",
+ "zip 8.6.0",
 ]
 
 [[package]]
@@ -3049,6 +3051,22 @@ name = "pxfm"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0c5ccf5294c6ccd63a74f1565028353830a9c2f5eb0c682c355c471726a6e3f"
+
+[[package]]
+name = "pytorch-reader"
+version = "0.22.0"
+dependencies = [
+ "bytemuck",
+ "byteorder",
+ "crc32fast",
+ "half",
+ "num-traits",
+ "serde",
+ "tar",
+ "tempfile",
+ "thiserror 2.0.21",
+ "zip 8.6.0",
+]
 
 [[package]]
 name = "pytorch-reader"

@@ -18,3 +18,19 @@ is adapted from PyTorch aten/src/ATen/native/cuda/layer_norm_kernel.cu at
 5c4886908584029761b579af026dcfb627c84070. Its complete copyright and BSD
 license are retained in that source and device/LICENSE-PyTorch-BSD3. Include
 that license when redistributing the compiled device kernels.
+
+The biasless rounded-residual normalization in device/src/encoder_prenorm.rs
+adapts the bundled Candle layer-norm extension. Its complete BSD-3-Clause
+notice is retained in that source and device/LICENSE-Candle-BSD3. Include
+that license when redistributing the compiled device kernels.
+
+
+The PyTorch checkpoint adapter uses a vendored pytorch-reader 0.22.0 copy under
+vendor/pytorch-reader, derived from tracel-ai/burn at
+b8d75ad07f426537594a5beb9309d62d916bcf05 under MIT OR Apache-2.0. The complete
+upstream license texts, original file hashes, modification list and attribution
+notice are retained in that directory (LICENSE-MIT, LICENSE-APACHE, NOTICE,
+provenance.json). The vendored source is the frozen V3 prototype unchanged;
+only Cargo.toml is adapted for the Oxide path build. Deflated ZIP remains
+unsupported by the prototype verifier, and Oxide rejects compressed entries for
+backend publication rather than accepting its quadratic range access.

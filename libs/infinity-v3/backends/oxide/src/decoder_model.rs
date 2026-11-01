@@ -456,7 +456,7 @@ fn validate_checkpoint_capacity(
 }
 
 #[cfg(test)]
-fn decoder_tensor_shapes(config: &DecoderConfig) -> Vec<(String, Vec<usize>)> {
+pub(crate) fn decoder_tensor_shapes(config: &DecoderConfig) -> Vec<(String, Vec<usize>)> {
     let h = config.hidden_size;
     let q = config.q_width();
     let kv = config.kv_width();
