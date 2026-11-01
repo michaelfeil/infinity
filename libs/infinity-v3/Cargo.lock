@@ -1852,6 +1852,7 @@ dependencies = [
  "base64 0.22.1",
  "basetenkenizer",
  "bytemuck",
+ "bytes",
  "fast_image_resize",
  "hf-hub",
  "image",

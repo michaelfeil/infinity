@@ -33,6 +33,7 @@ sha2 = "0.10"
 bytemuck = "1"
 
 [dev-dependencies]
+bytes = "1"
 hf-hub = { workspace = true, features = ["ureq"] }
 
 [features]

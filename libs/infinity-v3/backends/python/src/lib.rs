@@ -10,13 +10,12 @@ mod envelope;
 mod executor;
 
 use batch::{pack_embeddings, pack_predictions, pad_batch, PaddedInputs};
-use envelope::ResponseEnvelope;
+use envelope::{OutputSnapshot, ResponseEnvelope};
 use executor::{Executor, ExecutorConfig};
 use infinity_v3_backend_core::{
     Backend, BackendError, Batch, Embeddings, Inference, ModelType, Pool, Predictions,
     TokenPredictions,
 };
-use numpy::PyArrayDyn;
 use pyo3::prelude::*;
 use std::path::Path;
 use std::sync::Arc;
@@ -72,11 +71,11 @@ impl PythonBackend {
         let queue_size = match object.get("queue_depth") {
             Some(value) => value
                 .as_u64()
-                .filter(|&value| value > 0)
+                .filter(|&value| value > 0 && value <= Semaphore::MAX_PERMITS as u64)
                 .and_then(|value| usize::try_from(value).ok())
                 .ok_or_else(|| {
                     BackendError::Start(
-                        "--python-config queue_depth must be a positive integer".into(),
+                        "--python-config queue_depth must be a positive integer within the semaphore limit".into(),
                     )
                 })?,
             None => 32,
@@ -102,11 +101,7 @@ impl PythonBackend {
         &self,
         route: &str,
         inputs: Arc<PaddedInputs>,
-        complete: impl FnOnce(
-                Py<PyArrayDyn<f32>>,
-                Python<'_>,
-                &PaddedInputs,
-            ) -> Result<InferenceResult, BackendError>
+        complete: impl FnOnce(OutputSnapshot, &PaddedInputs) -> Result<InferenceResult, BackendError>
             + Send
             + 'static,
     ) -> Result<Inference<InferenceResult>, BackendError> {
@@ -131,13 +126,22 @@ impl PythonBackend {
                     BackendError::Inference("Python backend executor dropped its response".into())
                 })?
                 .map_err(|error| {
-                    BackendError::Inference(format!("Python backend forward failed: {error}"))
+                    Python::try_attach(|py| {
+                        if error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py) {
+                            BackendError::Overloaded(error.to_string())
+                        } else {
+                            BackendError::Inference(format!(
+                                "Python backend forward failed: {error}"
+                            ))
+                        }
+                    })
+                    .unwrap_or_else(|| {
+                        BackendError::Inference(
+                            "Python interpreter is unavailable for backend completion".into(),
+                        )
+                    })
                 })?;
-            Python::try_attach(|py| complete(result, py, &owned)).unwrap_or_else(|| {
-                Err(BackendError::Inference(
-                    "Python interpreter is unavailable for backend completion".into(),
-                ))
-            })
+            complete(result, &owned)
         })))
     }
 }
@@ -160,8 +164,8 @@ impl Backend for PythonBackend {
                 "Python embedding batch has no requested rows".into(),
             ));
         }
-        self.submit("embed", inputs, |array, py, inputs| {
-            pack_embeddings(&array, py, inputs).map(InferenceResult::Embeddings)
+        self.submit("embed", inputs, |output, inputs| {
+            pack_embeddings(output, inputs).map(InferenceResult::Embeddings)
         })?
         .try_map(|result| match result {
             InferenceResult::Embeddings(value) => Ok(value),
@@ -178,8 +182,9 @@ impl Backend for PythonBackend {
             ));
         }
         let inputs = Arc::new(pad_batch(&batch)?);
-        self.submit("predict", inputs, |array, py, inputs| {
-            pack_predictions(&array, py, inputs).map(InferenceResult::Predictions)
+        self.submit("predict", inputs, |output, inputs| {
+            let pool = infinity_v3_backend_core::result_memory::global_pool()?;
+            pack_predictions(output, inputs, &pool).map(InferenceResult::Predictions)
         })?
         .try_map(|result| match result {
             InferenceResult::Predictions(value) => Ok(value),
@@ -271,12 +276,16 @@ mod tests {
 
     #[test]
     fn completed_requests_release_admission_permits() {
+        let mut config = config();
+        config.config = Some(
+            r#"{"backend":"infinity_v3_python.testing:create_executor","queue_depth":1}"#.into(),
+        );
         let backend = PythonBackend::new(
             Path::new("."),
             "float32",
             ModelType::Embedding(Pool::Mean),
             0,
-            config(),
+            config,
         )
         .unwrap();
         for _ in 0..5 {
@@ -300,6 +309,71 @@ mod tests {
         assert_eq!(predictions.len(), 2);
         assert_eq!(predictions[&0], vec![1.0, 0.0]);
         assert_eq!(predictions[&1], vec![0.0, 1.0]);
+        backend.shutdown();
+    }
+    #[test]
+    fn excessive_queue_depth_is_a_startup_error() {
+        let result = PythonBackend::new(
+            Path::new("."),
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            0,
+            PythonBackendConfig {
+                config: Some(format!(
+                    r#"{{"queue_depth":{}}}"#,
+                    Semaphore::MAX_PERMITS + 1
+                )),
+            },
+        );
+        assert!(matches!(result, Err(BackendError::Start(_))));
+    }
+    #[test]
+    fn python_memory_error_completes_as_overload_and_releases_admission() {
+        Python::attach(|py| {
+            let module = pyo3::types::PyModule::from_code(
+                py,
+                c"
+PROTOCOL_VERSION = 1
+class Executor:
+    def submit(self, route, response, payload):
+        self.last_response = response
+        response.set_exception(MemoryError('result budget exhausted'))
+    def healthy(self):
+        return True
+    def close(self):
+        pass
+def create_executor(**kwargs):
+    return Executor()
+",
+                c"_infinity_memory_error_test.py",
+                c"_infinity_memory_error_test",
+            )
+            .unwrap();
+            pyo3::types::PyModule::import(py, "sys")
+                .unwrap()
+                .getattr("modules")
+                .unwrap()
+                .set_item("_infinity_memory_error_test", module)
+                .unwrap();
+        });
+        let backend = PythonBackend::new(
+            Path::new("."),
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            0,
+            PythonBackendConfig {
+                config: Some(
+                    r#"{"backend":"_infinity_memory_error_test:create_executor","queue_depth":1}"#
+                        .into(),
+                ),
+            },
+        )
+        .unwrap();
+        for _ in 0..2 {
+            let result = backend.submit_embed(batch()).unwrap().complete();
+            assert!(matches!(result, Err(BackendError::Overloaded(message))
+                if message.contains("result budget exhausted")));
+        }
         backend.shutdown();
     }
 }

@@ -167,7 +167,9 @@ fn start_error(error: PyErr) -> BackendError {
 
 fn submit_error(error: PyErr) -> BackendError {
     let message = error.to_string();
-    if message.contains("queue is full") {
+    if Python::attach(|py| error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py))
+        || message.contains("queue is full")
+    {
         BackendError::Overloaded(message)
     } else if message.contains("executor is closed") {
         BackendError::Unhealthy

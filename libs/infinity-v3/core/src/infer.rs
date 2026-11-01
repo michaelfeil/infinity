@@ -481,21 +481,7 @@ impl Infer {
         }
 
         if normalize {
-            // Normalize embedding. This is the only pooling post-process that
-            // mutates the values; copy shared storage only when needed.
-            let results = response.results.make_mut();
-            let scale = (1.0
-                / results
-                    .iter()
-                    .map(|v| {
-                        let v = *v as f64;
-                        v * v
-                    })
-                    .sum::<f64>()
-                    .sqrt()) as f32;
-            for v in results.iter_mut() {
-                *v *= scale;
-            }
+            response.normalize()?;
         }
 
         // Timings
@@ -1214,6 +1200,42 @@ pub struct PooledEmbeddingsInferResponse {
     pub metadata: InferMetadata,
 }
 
+impl PooledEmbeddingsInferResponse {
+    fn normalize(&mut self) -> Result<(), BackendError> {
+        if self.results.is_shared() {
+            let bytes = self
+                .results
+                .len()
+                .checked_mul(std::mem::size_of::<f32>())
+                .ok_or_else(|| {
+                    BackendError::Overloaded("Normalized result size overflow".into())
+                })?;
+            let memory = match &self.metadata.memory {
+                Some(memory) => memory.reserve_more(bytes)?,
+                None => infinity_v3_backend::result_memory::global_pool()?.reserve(bytes)?,
+            };
+            // Other rows can retain the shared batch allocation. Keep both
+            // charges alive with this response and through HTTP serialization.
+            self.metadata.memory = Some(memory);
+            retain_for_request(self.metadata.memory.clone());
+        }
+        let results = self.results.make_mut();
+        let scale = (1.0
+            / results
+                .iter()
+                .map(|&v| {
+                    let v = v as f64;
+                    v * v
+                })
+                .sum::<f64>()
+                .sqrt()) as f32;
+        for value in results {
+            *value *= scale;
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug)]
 pub struct AllEmbeddingsInferResponse {
     pub results: Vec<SharedF32>,
@@ -1458,6 +1480,61 @@ mod completion_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn shared_response(
+        pool: &Arc<infinity_v3_backend::result_memory::ResultPool>,
+    ) -> PooledEmbeddingsInferResponse {
+        // Use a typed allocation so the backing pointer has f32 alignment.
+        struct FloatOwner(Vec<f32>);
+        impl AsRef<[u8]> for FloatOwner {
+            fn as_ref(&self) -> &[u8] {
+                unsafe { std::slice::from_raw_parts(self.0.as_ptr().cast(), self.0.len() * 4) }
+            }
+        }
+        let bytes = bytes::Bytes::from_owner(FloatOwner(vec![3.0, 4.0]));
+        PooledEmbeddingsInferResponse {
+            results: SharedF32::shared(bytes, 0, 2).unwrap(),
+            metadata: InferMetadata {
+                memory: Some(pool.reserve(8).unwrap()),
+                prompt_tokens: 1,
+                tokenization: Duration::ZERO,
+                queue: Duration::ZERO,
+                inference: Duration::ZERO,
+            },
+        }
+    }
+
+    #[test]
+    fn normalization_admits_copy_before_mutating_shared_results() {
+        let pool = infinity_v3_backend::result_memory::ResultPool::new(8).unwrap();
+        let mut response = shared_response(&pool);
+        assert!(matches!(
+            response.normalize(),
+            Err(BackendError::Overloaded(_))
+        ));
+        assert!(response.results.is_shared());
+        assert_eq!(response.results.as_ref(), &[3.0, 4.0]);
+        assert_eq!(pool.used(), 8);
+        drop(response);
+        assert_eq!(pool.used(), 0);
+    }
+
+    #[test]
+    fn normalization_retains_copy_reservation_through_response_lifetime() {
+        let pool = infinity_v3_backend::result_memory::ResultPool::new(16).unwrap();
+        let mut response = shared_response(&pool);
+        let sibling = response.results.clone();
+        response.normalize().unwrap();
+        assert!(!response.results.is_shared());
+        assert_eq!(response.results.as_ref(), &[0.6, 0.8]);
+        assert_eq!(sibling.as_ref(), &[3.0, 4.0]);
+        assert_eq!(pool.used(), 16);
+        response.normalize().unwrap();
+        assert_eq!(pool.used(), 16);
+        drop(sibling);
+        drop(response);
+        assert_eq!(pool.used(), 0);
+    }
 
     #[test]
     fn token_delivery_moves_text_and_preserves_alignment() {

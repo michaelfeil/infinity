@@ -1,7 +1,8 @@
+use crate::envelope::OutputSnapshot;
 use infinity_v3_backend_core::{
     result_memory, BackendError, Batch, Embedding, Embeddings, Predictions, SharedF32,
 };
-use numpy::{PyArray1, PyArrayDyn, PyArrayMethods, PyUntypedArrayMethods};
+use numpy::PyArray1;
 use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use std::sync::Arc;
@@ -227,72 +228,32 @@ pub(crate) fn pad_batch(batch: &Batch) -> Result<PaddedInputs, BackendError> {
     })
 }
 
-struct NumpyOwner {
-    array: Option<Py<PyArrayDyn<f32>>>,
-    ptr: *const u8,
-    len: usize,
-}
+/// Private, immutable Rust allocation backing shared float rows.
+struct FloatOwner(Vec<f32>);
 
-unsafe impl Send for NumpyOwner {}
-unsafe impl Sync for NumpyOwner {}
-
-impl NumpyOwner {
-    fn new(array: Py<PyArrayDyn<f32>>, py: Python<'_>) -> Result<Self, BackendError> {
-        let bound = array.bind(py);
-        let readonly = bound.readonly();
-        let values = readonly.as_slice().map_err(|error| {
-            BackendError::Inference(format!("Python backend output is not a slice: {error}"))
-        })?;
-        Ok(Self {
-            array: Some(array),
-            ptr: values.as_ptr().cast::<u8>(),
-            len: std::mem::size_of_val(values),
-        })
-    }
-}
-
-impl AsRef<[u8]> for NumpyOwner {
+impl AsRef<[u8]> for FloatOwner {
     fn as_ref(&self) -> &[u8] {
-        // SAFETY: the owned PyArray keeps the allocation alive and immutable for
-        // this owner's lifetime; the pointer and length are captured once.
-        unsafe { std::slice::from_raw_parts(self.ptr, self.len) }
-    }
-}
-
-impl Drop for NumpyOwner {
-    fn drop(&mut self) {
-        let Some(array) = self.array.take() else {
-            return;
-        };
-        if Python::try_attach(|_| {}).is_some() {
-            Python::attach(|_| drop(array));
-        } else {
-            // The interpreter is gone; leaking is safer than touching Python state.
-            std::mem::forget(array);
+        // SAFETY: f32 values are initialized and the private owner never mutates
+        // or resizes the allocation after it is handed to Bytes.
+        unsafe {
+            std::slice::from_raw_parts(
+                self.0.as_ptr().cast::<u8>(),
+                std::mem::size_of_val(self.0.as_slice()),
+            )
         }
     }
 }
 
-fn output_shape(
-    array: &Py<PyArrayDyn<f32>>,
-    py: Python<'_>,
-) -> Result<(usize, usize), BackendError> {
-    let array = array.bind(py);
-    match array.shape() {
-        [rows, width] => Ok((*rows, *width)),
-        shape => Err(BackendError::Inference(format!(
-            "Python backend returned rank {}; expected 2",
-            shape.len()
-        ))),
-    }
-}
-
 pub(crate) fn pack_embeddings(
-    array: &Py<PyArrayDyn<f32>>,
-    py: Python<'_>,
+    output: OutputSnapshot,
     inputs: &PaddedInputs,
 ) -> Result<Embeddings, BackendError> {
-    let (rows, width) = output_shape(array, py)?;
+    let OutputSnapshot {
+        values,
+        rows,
+        width,
+        memory,
+    } = output;
     let expected = inputs
         .pooled_indices
         .len()
@@ -305,8 +266,7 @@ pub(crate) fn pack_embeddings(
             "Python backend returned {rows} rows; expected {expected}"
         )));
     }
-    let owner = NumpyOwner::new(array.clone_ref(py), py)?;
-    let bytes = bytes::Bytes::from_owner(owner);
+    let bytes = bytes::Bytes::from_owner(FloatOwner(values));
     let element_size = std::mem::size_of::<f32>();
     let mut result = Embeddings::default();
     result
@@ -352,27 +312,34 @@ pub(crate) fn pack_embeddings(
         }
         result.insert(index, Embedding::SharedAll(token_rows));
     }
-    result.memory = Some(result_memory::global_pool()?.reserve(bytes.len())?);
+    result.memory = Some(memory);
     Ok(result)
 }
 
 pub(crate) fn pack_predictions(
-    array: &Py<PyArrayDyn<f32>>,
-    py: Python<'_>,
+    output: OutputSnapshot,
     inputs: &PaddedInputs,
+    pool: &Arc<result_memory::ResultPool>,
 ) -> Result<Predictions, BackendError> {
-    let bound = array.bind(py);
-    let (rows, width) = output_shape(array, py)?;
-    let readonly = bound.readonly();
-    let values = readonly.as_slice().map_err(|error| {
-        BackendError::Inference(format!("Python backend output is not a slice: {error}"))
-    })?;
+    let OutputSnapshot {
+        values,
+        rows,
+        width,
+        memory: snapshot_memory,
+    } = output;
     if rows != inputs.batch_size {
         return Err(BackendError::Inference(format!(
             "Python backend returned {rows} prediction rows; expected {}",
             inputs.batch_size
         )));
     }
+    let bytes = values
+        .len()
+        .checked_mul(std::mem::size_of::<f32>())
+        .ok_or_else(|| BackendError::Inference("Python backend result size overflow".into()))?;
+    // The snapshot remains live while score rows are copied. Admit that overlap
+    // before allocating; transfer only the new reservation to the result.
+    let memory = pool.reserve(bytes)?;
     let mut result = Predictions::default();
     result
         .try_reserve(inputs.batch_size)
@@ -387,19 +354,23 @@ pub(crate) fn pack_predictions(
         let row_values = values.get(start..end).ok_or_else(|| {
             BackendError::Inference("Python backend prediction row is missing".into())
         })?;
-        result.insert(index, row_values.to_vec());
+        let mut scores = Vec::new();
+        scores
+            .try_reserve_exact(width)
+            .map_err(|error| BackendError::Overloaded(error.to_string()))?;
+        scores.extend_from_slice(row_values);
+        result.insert(index, scores);
     }
-    let bytes = rows
-        .checked_mul(width)
-        .and_then(|elements| elements.checked_mul(std::mem::size_of::<f32>()))
-        .ok_or_else(|| BackendError::Inference("Python backend result size overflow".into()))?;
-    result.memory = Some(result_memory::global_pool()?.reserve(bytes)?);
+    drop(values);
+    drop(snapshot_memory);
+    result.memory = Some(memory);
     Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use numpy::PyArrayMethods;
 
     fn batch() -> Batch {
         Batch {
@@ -459,29 +430,57 @@ mod tests {
 
     #[test]
     fn packs_pooled_and_raw_rows_in_request_order() {
-        Python::initialize();
-        Python::attach(|py| {
-            let padded = pad_batch(&batch()).unwrap();
-            let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
-            let array = PyArray1::<f32>::from_slice(py, &values)
-                .reshape((4, 2))
+        let padded = pad_batch(&batch()).unwrap();
+        let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
+        let output = OutputSnapshot {
+            memory: result_memory::global_pool()
                 .unwrap()
-                .into_any()
-                .extract::<Bound<'_, PyArrayDyn<f32>>>()
-                .unwrap()
-                .unbind();
-            let embeddings = pack_embeddings(&array, py, &padded).unwrap();
-            let Embedding::Shared(pooled) = &embeddings[&0] else {
-                panic!("expected pooled output");
-            };
-            assert_eq!(pooled.as_ref(), &[1.0, 2.0]);
-            let Embedding::SharedAll(raw) = &embeddings[&1] else {
-                panic!("expected raw output");
-            };
-            assert_eq!(raw.len(), 3);
-            assert_eq!(raw[0].as_ref(), &[3.0, 4.0]);
-            assert_eq!(raw[1].as_ref(), &[5.0, 6.0]);
-            assert_eq!(raw[2].as_ref(), &[7.0, 8.0]);
-        });
+                .reserve(values.len() * 4)
+                .unwrap(),
+            values,
+            rows: 4,
+            width: 2,
+        };
+        let embeddings = pack_embeddings(output, &padded).unwrap();
+        let Embedding::Shared(pooled) = &embeddings[&0] else {
+            panic!("expected pooled output");
+        };
+        assert_eq!(pooled.as_ref(), &[1.0, 2.0]);
+        let Embedding::SharedAll(raw) = &embeddings[&1] else {
+            panic!("expected raw output");
+        };
+        assert_eq!(raw.len(), 3);
+        assert_eq!(raw[0].as_ref(), &[3.0, 4.0]);
+        assert_eq!(raw[1].as_ref(), &[5.0, 6.0]);
+        assert_eq!(raw[2].as_ref(), &[7.0, 8.0]);
+    }
+    fn prediction_snapshot(pool: &Arc<result_memory::ResultPool>) -> OutputSnapshot {
+        OutputSnapshot {
+            values: vec![1.0, 2.0, 3.0, 4.0],
+            rows: 2,
+            width: 2,
+            memory: pool.reserve(16).unwrap(),
+        }
+    }
+
+    #[test]
+    fn predictions_reject_unfunded_copy_and_release_the_snapshot() {
+        let pool = result_memory::ResultPool::new(16).unwrap();
+        let output = prediction_snapshot(&pool);
+        let result = pack_predictions(output, &pad_batch(&batch()).unwrap(), &pool);
+        assert!(matches!(result, Err(BackendError::Overloaded(_))));
+        assert_eq!(pool.used(), 0);
+    }
+
+    #[test]
+    fn predictions_transfer_the_reservation_after_copying() {
+        let pool = result_memory::ResultPool::new(32).unwrap();
+        let output = prediction_snapshot(&pool);
+        let result = pack_predictions(output, &pad_batch(&batch()).unwrap(), &pool).unwrap();
+        assert_eq!(result[&0], [1.0, 2.0]);
+        assert_eq!(result[&1], [3.0, 4.0]);
+        assert_eq!(pool.used(), 16);
+        drop(result);
+        assert_eq!(pool.used(), 0);
     }
 }
