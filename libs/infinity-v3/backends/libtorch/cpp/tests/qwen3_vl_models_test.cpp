@@ -15,6 +15,35 @@
 using namespace infinity;
 
 #ifdef TEI_TORCH_CUDA_KERNELS
+void vision_position_test(const c10::Device& device) {
+  for (auto dtype : {at::kHalf, at::kBFloat16, at::kFloat})
+    for (auto grid : {std::array<int64_t, 3>{4, 6, 2}, {6, 4, 2}, {1, 1, 1}}) {
+      auto [height, width, merge] = grid;
+      auto options = at::TensorOptions().device(device).dtype(dtype);
+      auto table = at::randn({25, 24}, options);
+      auto ix = at::arange(2 * height * width, options.dtype(at::kLong));
+      auto c = ix.remainder(merge) +
+               at::floor_divide(ix, merge * merge).remainder(width / merge) * merge;
+      auto r = at::floor_divide(ix, merge).remainder(merge) +
+               at::floor_divide(ix, merge * width).remainder(height / merge) * merge;
+      auto rf = r.to(at::kFloat) * (height == 1 ? 0.f : 4.f / float(height - 1));
+      auto cf = c.to(at::kFloat) * (width == 1 ? 0.f : 4.f / float(width - 1));
+      auto r0 = rf.floor().to(at::kLong), r1 = rf.ceil().clamp_max(4).to(at::kLong);
+      auto c0 = cf.floor().to(at::kLong), c1 = cf.ceil().clamp_max(4).to(at::kLong);
+      auto dr = rf - r0.to(at::kFloat), dc = cf - c0.to(at::kFloat);
+      auto corner = [&](const at::Tensor& rr, const at::Tensor& cc, const at::Tensor& scale) {
+        return table.index_select(0, rr * 5 + cc) * scale.to(dtype).unsqueeze(-1);
+      };
+      auto expected = at::stack({corner(r0, c0, (1 - dr) * (1 - dc)),
+                                 corner(r0, c1, (1 - dr) * dc),
+                                 corner(r1, c0, dr * (1 - dc)),
+                                 corner(r1, c1, dr * dc)});
+      auto actual = vision_position_corners(table, 5, 2, height, width, merge);
+      TORCH_CHECK(at::equal(actual.view(at::kByte), expected.view(at::kByte)),
+                  "Vision interpolation changed corner order or model-dtype rounding");
+    }
+}
+
 void vision_rotary_test(const c10::Device& device) {
   for (auto dtype : {at::kHalf, at::kBFloat16, at::kFloat})
     for (int64_t dim : {8, 64, 72, 128}) {
@@ -390,6 +419,7 @@ int main(int argc, char** argv) {
   if (argc > 1) {
     c10::Device device(argv[1]);
 #ifdef TEI_TORCH_CUDA_KERNELS
+    vision_position_test(device);
     vision_rotary_test(device);
 #endif
     Weights hw, cw;

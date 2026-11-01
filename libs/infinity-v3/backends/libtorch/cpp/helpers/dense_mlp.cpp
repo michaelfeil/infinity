@@ -265,10 +265,12 @@ at::Tensor DenseMlp::forward(const at::Tensor& x,
                       ? activation_.epilogue
                       : MlpEpilogue::None;
 #ifdef TEI_TORCH_CUDA_KERNELS
-  if (fp8() && activation_.fusion == MlpFusion::RoundedBiasGelu && x.is_cuda() &&
-      input_.bias_.defined() && !input_.recipe_.output_clip && !activation_.packed && !up_) {
+  if ((fp8() || input_.recipe_.separate_bias) && activation_.fusion == MlpFusion::RoundedBiasGelu &&
+      x.is_cuda() && x.dim() == 2 && input_.bias_.defined() && !input_.recipe_.output_clip &&
+      !activation_.packed && !up_) {
     auto middle = input_.execute(x, context, input_scales, MlpEpilogue::None, true);
-    return output_.forward(encoder_bias_gelu(middle, input_.bias_), context);
+    return output_.forward(encoder_bias_gelu(middle.contiguous(), input_.bias_.contiguous()),
+                           context);
   }
 #endif
   auto middle = input_.execute(x, context, input_scales, epilogue);
