@@ -126,6 +126,12 @@ context once per forward, rather than once per matrix operation. FP8/FP4 enum
 variants describe storage sizes only and do not enable arithmetic or quantized
 checkpoint loading. Packed scales and quantization schemes need separate methods.
 
+The regular cuBLAS handle owns a 32 MiB workspace, initialized once before the
+backend becomes ready. This avoids uninitialized split-K scratch reads observed
+with cuBLAS 13.2; matrix dispatch and algorithm selection are unchanged. The
+allocation is included in live device-byte accounting and retained if teardown
+cannot establish that GPU use has finished.
+
 The `dispatch_bench` example measures raw argument assembly versus the actual
 checked tensor binding on the host, with allocated GPU buffers but no CUDA calls
 inside timed loops. It verifies zero heap allocations during dispatch. These
