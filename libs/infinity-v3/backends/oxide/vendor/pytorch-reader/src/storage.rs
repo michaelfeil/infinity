@@ -10,7 +10,7 @@ use std::fmt;
 use std::fs::File;
 use std::io::{self, BufReader, Read};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 use zip::read::ZipFile;
 use zip::{CompressionMethod, ZipArchive, ZipReadOptions};
 
@@ -138,6 +138,26 @@ pub(crate) fn read_exact_len<R: Read>(
 ///
 /// The file is held open from [`open`](Self::open) until drop and never reopened by path,
 /// so a reader keeps reading the file it opened if that path is unlinked or replaced.
+#[derive(Clone)]
+struct CachedVerificationError {
+    kind: io::ErrorKind,
+    message: String,
+}
+impl CachedVerificationError {
+    fn capture(error: io::Error) -> Self {
+        Self {
+            kind: error.kind(),
+            message: error.to_string(),
+        }
+    }
+    fn restore(&self) -> io::Error {
+        io::Error::new(self.kind, self.message.clone())
+    }
+}
+
+type Verification = Result<ChecksumStatus, CachedVerificationError>;
+type VerificationCache = Mutex<HashMap<String, Arc<OnceLock<Verification>>>>;
+
 pub(crate) struct ZipSource {
     /// The central directory, and the stream every entry but a stored storage is read
     /// through. Locked to look any entry up, and for the whole of a read through the
@@ -154,6 +174,11 @@ pub(crate) struct ZipSource {
     /// Size of the archive file. A stored storage is checked to lie within it, and it caps
     /// the up-front allocation for a deflated one, which grows as it is read.
     file_len: u64,
+    // One immutable opened archive owns this cache. Independently named tensor
+    // views share a storage key, while other archives never share verification.
+    verification: VerificationCache,
+    #[cfg(test)]
+    crc_scans: std::sync::atomic::AtomicUsize,
 }
 
 impl ZipSource {
@@ -183,6 +208,9 @@ impl ZipSource {
             file,
             root,
             file_len,
+            verification: Mutex::new(HashMap::new()),
+            #[cfg(test)]
+            crc_scans: std::sync::atomic::AtomicUsize::new(0),
         })
     }
 
@@ -273,8 +301,31 @@ impl ZipSource {
         Ok((bytes, skipped as usize))
     }
 
-    /// Verify a stored ZIP entry's declared CRC by streaming it in bounded chunks.
+    /// Share whole-storage verification across independently named tensor views.
+    /// Success and failure are retained for this opened archive's lifetime, just
+    /// as tensor handles retain their validation state. The file must remain
+    /// immutable during model loading; replacing its path never changes this owner.
     fn verify_storage(&self, key: &str) -> io::Result<ChecksumStatus> {
+        let state = {
+            let mut cache = lock_ignoring_poison(&self.verification);
+            Arc::clone(
+                cache
+                    .entry(key.to_owned())
+                    .or_insert_with(|| Arc::new(OnceLock::new())),
+            )
+        };
+        match state.get_or_init(|| {
+            self.verify_storage_uncached(key)
+                .map_err(CachedVerificationError::capture)
+        }) {
+            Ok(status) => Ok(*status),
+            Err(error) => Err(error.restore()),
+        }
+    }
+
+    /// Validate an entry and stream its CRC in bounded chunks. The cache lock
+    /// is released before I/O so different storages can be verified concurrently.
+    fn verify_storage_uncached(&self, key: &str) -> io::Result<ChecksumStatus> {
         let name = format!("{}data/{key}", self.root);
         let mut archive = lock_ignoring_poison(&self.archive);
         let entry = open_entry(&mut archive, &name)?;
@@ -335,6 +386,9 @@ impl ZipSource {
                     "ZIP entry '{name}' extends beyond the end of the file"
                 ))
             })?;
+        #[cfg(test)]
+        self.crc_scans
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let mut hasher = crc32fast::Hasher::new();
         let mut buffer = vec![0u8; MAX_BOUNDED_WINDOW];
         let mut offset = data_start;
@@ -739,5 +793,155 @@ impl MockSource {
             }
         }
         Ok((data, start))
+    }
+}
+
+#[cfg(test)]
+mod verification_cache_tests {
+    use super::*;
+    use crate::pickle_reader::{StorageRef, build_tensor};
+    use crate::{DType, Tensor};
+    use std::io::{Seek, SeekFrom, Write};
+    use std::sync::atomic::Ordering;
+    use zip::write::SimpleFileOptions;
+
+    fn archive(compression: CompressionMethod) -> (tempfile::TempDir, std::path::PathBuf, Vec<u8>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("weights.bin");
+        let payload = (0..(MAX_BOUNDED_WINDOW * 3 + 32))
+            .map(|i| (i % 251) as u8)
+            .collect::<Vec<_>>();
+        let mut writer = zip::ZipWriter::new(File::create(&path).unwrap());
+        let opts = SimpleFileOptions::default().compression_method(compression);
+        writer.start_file("data.pkl", opts).unwrap();
+        writer
+            .write_all(b"metadata not used by this storage test")
+            .unwrap();
+        for key in ["0", "1"] {
+            writer.start_file(format!("data/{key}"), opts).unwrap();
+            writer.write_all(&payload).unwrap();
+        }
+        writer.finish().unwrap();
+        (dir, path, payload)
+    }
+    fn alias(source: &Arc<StorageSource>, key: &str, offset: usize, length: usize) -> Tensor {
+        build_tensor(
+            StorageRef {
+                source: Arc::clone(source),
+                key: key.into(),
+                dtype: Some(DType::U8),
+                reachable_bytes: MAX_BOUNDED_WINDOW * 3 + 32,
+                view_offset: 0,
+            },
+            DType::U8,
+            offset,
+            vec![length],
+            vec![1],
+        )
+        .unwrap()
+    }
+    fn scans(source: &StorageSource) -> usize {
+        let StorageSource::Zip(zip) = source else {
+            panic!("real ZIP required")
+        };
+        zip.crc_scans.load(Ordering::Relaxed)
+    }
+    fn corrupt(path: &Path) {
+        let mut zip = ZipArchive::new(File::open(path).unwrap()).unwrap();
+        let entry = zip.by_name("data/0").unwrap();
+        let start = entry.data_start().unwrap();
+        drop(entry);
+        drop(zip);
+        let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+        file.seek(SeekFrom::Start(start + MAX_BOUNDED_WINDOW as u64 + 3))
+            .unwrap();
+        file.write_all(&[255]).unwrap();
+        file.flush().unwrap();
+    }
+
+    #[test]
+    fn real_zip_aliases_and_concurrent_views_stream_one_crc_per_storage() {
+        let (_dir, path, payload) = archive(CompressionMethod::Stored);
+        let source = Arc::new(StorageSource::Zip(ZipSource::open(&path).unwrap()));
+        let first = alias(&source, "0", 7, 19);
+        let second = alias(&source, "0", MAX_BOUNDED_WINDOW + 5, 13);
+        assert_eq!(first.verify_storage().unwrap(), ChecksumStatus::Verified);
+        assert_eq!(second.verify_storage().unwrap(), ChecksumStatus::Verified);
+        assert_eq!(first.read_range(0, 19).unwrap(), payload[7..26]);
+        assert_eq!(
+            second.read_range(0, 13).unwrap(),
+            payload[MAX_BOUNDED_WINDOW + 5..MAX_BOUNDED_WINDOW + 18]
+        );
+        assert_eq!(
+            scans(&source),
+            1,
+            "distinct Tensor handles must not rehash their common storage"
+        );
+        let barrier = Arc::new(std::sync::Barrier::new(8));
+        let threads = (0..8)
+            .map(|offset| {
+                let tensor = alias(&source, "1", offset, 3);
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    assert_eq!(tensor.verify_storage().unwrap(), ChecksumStatus::Verified);
+                    tensor.read_range(0, 3).unwrap()
+                })
+            })
+            .collect::<Vec<_>>();
+        for (offset, thread) in threads.into_iter().enumerate() {
+            assert_eq!(thread.join().unwrap(), payload[offset..offset + 3]);
+        }
+        assert_eq!(
+            scans(&source),
+            2,
+            "a second storage needs one separate CRC, including concurrent cold aliases"
+        );
+    }
+
+    #[test]
+    fn corrupt_storage_failure_is_shared_and_new_archive_owner_revalidates() {
+        let (_dir, path, _) = archive(CompressionMethod::Stored);
+        let source = Arc::new(StorageSource::Zip(ZipSource::open(&path).unwrap()));
+        corrupt(&path);
+        let first = alias(&source, "0", 0, 3);
+        let second = alias(&source, "0", MAX_BOUNDED_WINDOW + 8, 3);
+        let a = first.verify_storage().unwrap_err();
+        let b = second.verify_storage().unwrap_err();
+        assert_eq!(a.kind(), io::ErrorKind::InvalidData);
+        assert_eq!(b.kind(), a.kind());
+        assert!(a.to_string().contains("checksum"), "{a}");
+        assert!(b.to_string().contains("checksum"), "{b}");
+        assert_eq!(
+            scans(&source),
+            1,
+            "cached corruption must stay failed without another full scan"
+        );
+        let independent = Arc::new(StorageSource::Zip(ZipSource::open(&path).unwrap()));
+        assert_eq!(
+            alias(&independent, "0", 0, 3)
+                .verify_storage()
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::InvalidData
+        );
+        assert_eq!(
+            scans(&independent),
+            1,
+            "a new open never inherits another archive's status"
+        );
+    }
+
+    #[test]
+    fn compressed_entries_remain_unsupported_without_false_verification() {
+        let (_dir, path, _) = archive(CompressionMethod::Deflated);
+        let source = Arc::new(StorageSource::Zip(ZipSource::open(&path).unwrap()));
+        for offset in [0, MAX_BOUNDED_WINDOW + 8] {
+            assert_eq!(
+                alias(&source, "0", offset, 3).verify_storage().unwrap(),
+                ChecksumStatus::Unsupported(ChecksumLimitation::CompressedZipEntry)
+            );
+        }
+        assert_eq!(scans(&source), 0);
     }
 }

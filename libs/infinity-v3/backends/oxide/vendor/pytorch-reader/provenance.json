@@ -25,7 +25,8 @@
     "LICENSE-APACHE": "ff1bd7bc62835a5aa72bcfcbd3f19b5feb3aa4f5906b8aaf3644a96c0b36765e"
   },
   "modifications": {
-    "Cargo.toml": "Registry workspace inheritance replaced with explicit pinned dependency versions so this vendor copy is consumed only through the Oxide path dependency. The main workspace excludes this directory so the original vendor integration tests do not join the workspace test run."
+    "Cargo.toml": "Registry workspace inheritance replaced with explicit pinned dependency versions so this vendor copy is consumed only through the Oxide path dependency. The main workspace excludes this directory so the original vendor integration tests do not join the workspace test run.",
+    "src/storage.rs": "Cache whole-storage verification results (including typed failures) per retained ZIP owner and storage key, so independently named aliased tensors do not rehash their backing storage; preserve extent, CRC0 and compression checks and bounded 64KiB CRC streaming. Real stored-ZIP alias/concurrent-key/corruption/independent-owner regressions use a test-only streamed-CRC counter."
   },
   "licenses": {
     "expression": "MIT OR Apache-2.0",
@@ -43,5 +44,5 @@
     },
     "path_in_vcs": "crates/pytorch-reader"
   },
-  "modification_revision": "V2: source files restored to the frozen V3 prototype; deflated-ZIP verification remains Unsupported in the prototype API. Oxide rejects compressed entries for publication instead of reading them quadratically."
+  "modification_revision": "Local CRC-alias followup on V2: storage.rs now caches whole-storage verification per archive/storage key; all other prototype source files remain unchanged."
 }
