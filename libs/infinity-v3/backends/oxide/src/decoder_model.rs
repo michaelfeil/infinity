@@ -18,31 +18,42 @@ fn start(error: impl std::fmt::Display) -> BackendError {
 
 const DEFAULT_LLAMA_THETA: f64 = 10_000.0;
 const DEFAULT_QWEN2_THETA: f64 = 1_000_000.0;
+const DEFAULT_QWEN3_THETA: f64 = 1_000_000.0;
+/// Dense Qwen3 per-head Q/K RMSNorm width. Unported variants with a different
+/// head dimension are rejected by the executor after metadata validation.
+pub(crate) const QWEN3_QK_NORM_WIDTH: usize = 128;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DecoderFamily {
     Qwen2,
+    Qwen3,
     Llama,
 }
 impl DecoderFamily {
     pub(crate) fn from_model_type(model_type: &str) -> Option<Self> {
         match model_type {
             "qwen2" => Some(Self::Qwen2),
+            "qwen3" => Some(Self::Qwen3),
             "llama" => Some(Self::Llama),
             _ => None,
         }
     }
 
+    pub(crate) const fn requires_qk_norm(self) -> bool {
+        matches!(self, Self::Qwen3)
+    }
+
     const fn default_theta(self) -> f64 {
         match self {
             Self::Qwen2 => DEFAULT_QWEN2_THETA,
+            Self::Qwen3 => DEFAULT_QWEN3_THETA,
             Self::Llama => DEFAULT_LLAMA_THETA,
         }
     }
 
     const fn default_rope(self) -> DecoderRope {
         match self {
-            Self::Qwen2 => DecoderRope::FullNeoX,
+            Self::Qwen2 | Self::Qwen3 => DecoderRope::FullNeoX,
             Self::Llama => DecoderRope::Default,
         }
     }
@@ -50,6 +61,7 @@ impl DecoderFamily {
     fn accepts_architecture(self, architecture: &str) -> bool {
         match self {
             Self::Qwen2 => matches!(architecture, "Qwen2Model" | "Qwen2ForCausalLM"),
+            Self::Qwen3 => matches!(architecture, "Qwen3Model" | "Qwen3ForCausalLM"),
             Self::Llama => matches!(architecture, "LlamaModel" | "LlamaForCausalLM"),
         }
     }
@@ -135,7 +147,7 @@ impl DecoderConfig {
     fn from_raw(raw: RawDecoderConfig) -> Result<Self, BackendError> {
         let family = DecoderFamily::from_model_type(&raw.model_type).ok_or_else(|| {
             start(format!(
-                "unsupported model_type {}; expected dense qwen2 or llama",
+                "unsupported model_type {}; expected dense qwen2, qwen3 or llama",
                 raw.model_type
             ))
         })?;
@@ -240,6 +252,7 @@ impl DecoderConfig {
         let bidirectional = raw.use_bidirectional_attention.unwrap_or(false);
         let is_causal = match family {
             DecoderFamily::Qwen2 => raw.is_causal.unwrap_or(true),
+            DecoderFamily::Qwen3 => raw.is_causal.unwrap_or(!bidirectional),
             DecoderFamily::Llama => raw.is_causal.unwrap_or(!bidirectional),
         };
 
@@ -361,6 +374,10 @@ pub(crate) struct DecoderLinear {
 pub(crate) struct DecoderLayerWeights {
     pub(crate) input_norm: WeightSource,
     pub(crate) post_attention_norm: WeightSource,
+    /// Dense Qwen3 per-head Q/K RMSNorm scales. Present only for Qwen3, always
+    /// as a complete pair, and absent for Qwen2/Llama checkpoints.
+    pub(crate) q_norm: Option<WeightSource>,
+    pub(crate) k_norm: Option<WeightSource>,
     pub(crate) q: DecoderLinear,
     pub(crate) k: DecoderLinear,
     pub(crate) v: DecoderLinear,
@@ -468,6 +485,18 @@ fn decoder_tensor_shapes(config: &DecoderConfig) -> Vec<(String, Vec<usize>)> {
             (format!("{p}.mlp.down_proj.weight"), vec![h, i]),
             (format!("{p}.mlp.down_proj.bias"), vec![h]),
         ]);
+        if config.family == DecoderFamily::Qwen3 {
+            out.extend([
+                (
+                    format!("{p}.self_attn.q_norm.weight"),
+                    vec![QWEN3_QK_NORM_WIDTH],
+                ),
+                (
+                    format!("{p}.self_attn.k_norm.weight"),
+                    vec![QWEN3_QK_NORM_WIDTH],
+                ),
+            ]);
+        }
     }
     out
 }
@@ -482,6 +511,30 @@ fn fetch_linear(
     let weight = checkpoint.source(&format!("{root}{name}.weight"), weight_shape)?;
     let bias = checkpoint.optional_source(&format!("{root}{name}.bias"), bias_shape)?;
     Ok(DecoderLinear { weight, bias })
+}
+
+fn fetch_qk_norm(
+    checkpoint: &Checkpoint,
+    layer: usize,
+    prefix: &str,
+    family: DecoderFamily,
+) -> Result<(Option<WeightSource>, Option<WeightSource>), BackendError> {
+    let q_name = format!("{prefix}.self_attn.q_norm.weight");
+    let k_name = format!("{prefix}.self_attn.k_norm.weight");
+    if !family.requires_qk_norm() {
+        for name in [&q_name, &k_name] {
+            if checkpoint.contains(name) {
+                return Err(start(format!(
+                    "decoder layer {layer} has {name}, but Q/K RMSNorm scales are only supported for dense Qwen3"
+                )));
+            }
+        }
+        return Ok((None, None));
+    }
+    let shape = [QWEN3_QK_NORM_WIDTH];
+    let q = checkpoint.source(&q_name, &shape)?;
+    let k = checkpoint.source(&k_name, &shape)?;
+    Ok((Some(q), Some(k)))
 }
 
 impl DecoderWeights {
@@ -524,10 +577,13 @@ impl DecoderWeights {
                     "decoder layer {layer} gate/up projection biases must be both present or both absent"
                 )));
             }
+            let (q_norm, k_norm) = fetch_qk_norm(&checkpoint, layer, &p, config.family)?;
             layers.push(DecoderLayerWeights {
                 input_norm: checkpoint.source(&format!("{p}.input_layernorm.weight"), &[h])?,
                 post_attention_norm: checkpoint
                     .source(&format!("{p}.post_attention_layernorm.weight"), &[h])?,
+                q_norm,
+                k_norm,
                 q: q_linear,
                 k: k_linear,
                 v: v_linear,
@@ -822,6 +878,24 @@ mod tests {
         })
     }
 
+    fn qwen3_config() -> serde_json::Value {
+        serde_json::json!({
+            "model_type": "qwen3",
+            "architectures": ["Qwen3ForCausalLM"],
+            "hidden_size": 8,
+            "intermediate_size": 16,
+            "num_hidden_layers": 1,
+            "num_attention_heads": 2,
+            "num_key_value_heads": 1,
+            "head_dim": 128,
+            "vocab_size": 12,
+            "max_position_embeddings": 32,
+            "rms_norm_eps": 1e-6,
+            "rope_theta": 1_000_000.0,
+            "hidden_act": "silu"
+        })
+    }
+
     fn with_fields(mut value: serde_json::Value, fields: serde_json::Value) -> serde_json::Value {
         for (key, field) in fields.as_object().unwrap() {
             value[key] = field.clone();
@@ -925,6 +999,139 @@ mod tests {
     }
 
     #[test]
+    fn loads_qwen3_backbone_with_complete_qk_norm_and_independent_widths() {
+        let fixture = Fixture::new();
+        fixture.raw_config(qwen3_config());
+        write_weights(&fixture, "model.", Biases::default(), false);
+
+        let loaded = DecoderWeights::load(&fixture.0).unwrap();
+        assert_eq!(loaded.config.family, DecoderFamily::Qwen3);
+        assert_eq!(loaded.config.head_dim, 128);
+        assert_eq!(loaded.config.q_width(), 256);
+        assert_eq!(loaded.config.kv_width(), 128);
+        assert!(loaded.config.is_causal);
+        assert_eq!(loaded.config.rope, DecoderRope::FullNeoX);
+        assert_eq!(loaded.config.rope_theta, 1_000_000.0);
+        assert_eq!(loaded.layers[0].q.weight.shape(), &[256, 8]);
+        assert_eq!(loaded.layers[0].k.weight.shape(), &[128, 8]);
+        assert_eq!(loaded.layers[0].v.weight.shape(), &[128, 8]);
+        assert_eq!(loaded.layers[0].o.weight.shape(), &[8, 256]);
+        assert_eq!(loaded.layers[0].q_norm.as_ref().unwrap().shape(), &[128]);
+        assert_eq!(loaded.layers[0].k_norm.as_ref().unwrap().shape(), &[128]);
+        assert!(loaded.layers[0].q.bias.is_none());
+        assert!(loaded.layers[0].k.bias.is_none());
+        assert!(loaded.layers[0].v.bias.is_none());
+        assert!(loaded.layers[0].o.bias.is_none());
+        assert!(loaded.layers[0].gate.bias.is_none());
+    }
+
+    #[test]
+    fn rejects_partial_or_malformed_qwen3_qk_norm_weights() {
+        let fixture = Fixture::new();
+        fixture.raw_config(qwen3_config());
+        let config = fixture.config_from_disk();
+        let mut missing = entries(&config, "model.", Biases::default());
+        missing.retain(|(name, _)| !name.ends_with(".self_attn.k_norm.weight"));
+        fixture.write_entries(&missing, false);
+        let error = fixture.error();
+        assert!(
+            error.contains("missing weight model.layers.0.self_attn.k_norm.weight"),
+            "{error}"
+        );
+
+        let fixture = Fixture::new();
+        fixture.raw_config(qwen3_config());
+        let config = fixture.config_from_disk();
+        let mut malformed = entries(&config, "model.", Biases::default());
+        for (name, shape) in &mut malformed {
+            if name == "model.layers.0.self_attn.q_norm.weight" {
+                *shape = vec![64];
+            }
+        }
+        fixture.write_entries(&malformed, false);
+        let error = fixture.error();
+        assert!(error.contains("wrong shape"), "{error}");
+    }
+
+    #[test]
+    fn rejects_qk_norm_weights_on_qwen2_and_llama_checkpoints() {
+        for config in [qwen2_config(), llama_config()] {
+            let fixture = Fixture::new();
+            fixture.raw_config(config);
+            let config = fixture.config_from_disk();
+            assert!(!config.family.requires_qk_norm());
+            let mut weights = entries(&config, "model.", Biases::default());
+            weights.push((
+                "model.layers.0.self_attn.q_norm.weight".into(),
+                vec![QWEN3_QK_NORM_WIDTH],
+            ));
+            fixture.write_entries(&weights, false);
+            let error = fixture.error();
+            assert!(error.contains("only supported for dense Qwen3"), "{error}");
+        }
+    }
+
+    #[test]
+    fn qwen3_06_and_8b_geometry_metadata_needs_no_model_weights() {
+        for (hidden, intermediate, layers, heads, kv_heads) in
+            [(1024usize, 3072, 28, 16, 8), (4096, 12288, 36, 32, 8)]
+        {
+            let fixture = Fixture::new();
+            fixture.raw_config(serde_json::json!({
+                "model_type": "qwen3",
+                "architectures": ["Qwen3ForCausalLM"],
+                "hidden_size": hidden,
+                "intermediate_size": intermediate,
+                "num_hidden_layers": layers,
+                "num_attention_heads": heads,
+                "num_key_value_heads": kv_heads,
+                "head_dim": 128,
+                "vocab_size": 151936,
+                "max_position_embeddings": 40960,
+                "rms_norm_eps": 1e-6,
+                "rope_theta": 1000000.0,
+                "hidden_act": "silu"
+            }));
+            let config = fixture.config_from_disk();
+            assert_eq!(config.family, DecoderFamily::Qwen3);
+            assert_eq!(config.head_dim, 128);
+            assert_eq!(config.q_width(), heads * 128);
+            assert_eq!(config.kv_width(), kv_heads * 128);
+            assert_eq!(config.num_hidden_layers, layers);
+            assert_eq!(config.intermediate_size, intermediate);
+            assert_eq!(config.rope_theta, 1_000_000.0);
+            assert!(config.is_causal);
+        }
+    }
+
+    #[test]
+    fn rejects_qwen3_moe_quantized_and_unported_architectures() {
+        for (overrides, needle) in [
+            (
+                serde_json::json!({"model_type": "qwen3_moe"}),
+                "unsupported model_type",
+            ),
+            (
+                serde_json::json!({"quantization_config": {"quant_method": "gptq"}}),
+                "quantized decoder",
+            ),
+            (
+                serde_json::json!({"architectures": ["Qwen3ForSequenceClassification"]}),
+                "unsupported decoder task/architecture",
+            ),
+            (
+                serde_json::json!({"num_experts": 8}),
+                "unsupported decoder config modifier",
+            ),
+        ] {
+            let fixture = Fixture::new();
+            fixture.raw_config(with_fields(qwen3_config(), overrides));
+            let error = DecoderConfig::load(&fixture.0).unwrap_err().to_string();
+            assert!(error.contains(needle), "{error}");
+        }
+    }
+
+    #[test]
     fn mask_flags_match_native_family_defaults_and_explicit_overrides() {
         let fixture = Fixture::new();
         fixture.raw_config(with_fields(
@@ -934,11 +1141,16 @@ mod tests {
         write_weights(&fixture, "", Biases::default(), false);
         assert!(!DecoderWeights::load(&fixture.0).unwrap().config.is_causal);
 
-        for family in [DecoderFamily::Qwen2, DecoderFamily::Llama] {
+        for family in [
+            DecoderFamily::Qwen2,
+            DecoderFamily::Qwen3,
+            DecoderFamily::Llama,
+        ] {
             for bidirectional in [None, Some(false), Some(true)] {
                 for causal in [None, Some(false), Some(true)] {
                     let mut value = match family {
                         DecoderFamily::Qwen2 => qwen2_config(),
+                        DecoderFamily::Qwen3 => qwen3_config(),
                         DecoderFamily::Llama => llama_config(),
                     };
                     let object = value.as_object_mut().unwrap();
@@ -953,6 +1165,7 @@ mod tests {
                     let loaded = DecoderConfig::load(&fixture.0).unwrap();
                     let default = match family {
                         DecoderFamily::Qwen2 => true,
+                        DecoderFamily::Qwen3 => !bidirectional.unwrap_or(false),
                         DecoderFamily::Llama => !bidirectional.unwrap_or(false),
                     };
                     assert_eq!(

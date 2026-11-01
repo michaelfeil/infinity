@@ -8,11 +8,13 @@
 use cuda_device::{DynamicSharedArray, SharedArray, convert, cuda_module, kernel, thread, warp};
 mod decoder;
 mod norm1024;
+mod norm1024_exact_vector;
 mod norm2048;
 mod norm2048_vector;
 mod norm384;
 mod norm768;
 mod norm768_vector;
+mod qk_norm_rope_128;
 mod readout;
 mod rms1536;
 mod silu_pairs;
@@ -501,6 +503,44 @@ mod kernels {
     ) {
         unsafe {
             crate::norm2048_vector::exact_add_rms_norm_2048_vector(
+                input, residual, weight, out, summed, rows, width, eps,
+            )
+        };
+    }
+
+    /// Exact width-1024 BF16 RMSNorm with aligned 128-bit transactions.
+    /// Grid=(ceil(rows/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_rms_norm_1024_exact_vector(
+        input: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm1024_exact_vector::exact_rms_norm_1024_vector(
+                input, weight, out, rows, width, eps,
+            )
+        };
+    }
+
+    /// Exact width-1024 BF16 residual RMSNorm with aligned 128-bit transactions.
+    /// Grid=(ceil(rows/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_add_rms_norm_1024_exact_vector(
+        input: *const u16,
+        residual: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        summed: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm1024_exact_vector::exact_add_rms_norm_1024_vector(
                 input, residual, weight, out, summed, rows, width, eps,
             )
         };
@@ -1103,6 +1143,45 @@ mod kernels {
                 q_stride,
                 k_stride,
                 table_stride,
+            )
+        };
+    }
+
+    /// In-place fused Q/K RMSNorm and NeoX rotary for head width 128.
+    /// Grid=(ceil(tokens*(qheads+kvheads)/8),1,1), block=(128,1,1).
+    #[kernel]
+    pub unsafe fn infinity_qk_norm_rope_128_bf16(
+        q: *mut u16,
+        k: *mut u16,
+        qgamma: *const u16,
+        kgamma: *const u16,
+        cosine: *const f32,
+        sine: *const f32,
+        positions: *const u32,
+        tokens: u32,
+        qheads: u32,
+        kvheads: u32,
+        qstride: u64,
+        kstride: u64,
+        table_stride: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::qk_norm_rope_128::qk_norm_rope_128(
+                q,
+                k,
+                qgamma,
+                kgamma,
+                cosine,
+                sine,
+                positions,
+                tokens,
+                qheads,
+                kvheads,
+                qstride,
+                kstride,
+                table_stride,
+                eps,
             )
         };
     }

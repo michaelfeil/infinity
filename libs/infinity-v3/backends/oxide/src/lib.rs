@@ -2889,4 +2889,118 @@ mod tests {
         let repeated_duplicate = pooled_bits(backend.embed(duplicate).unwrap());
         assert_pooled_bits(&repeated_duplicate, &expected_duplicate, hidden);
     }
+
+    #[test]
+    #[ignore = "Requires CUDA, INFINITY_OXIDE_TEST_QWEN3_MODEL, FA4_ROOT and oxide Qwen3 kernels"]
+    fn qwen3_deferred_aba_drop_subset_and_recovery() {
+        let path = std::env::var_os("INFINITY_OXIDE_TEST_QWEN3_MODEL")
+            .expect("set INFINITY_OXIDE_TEST_QWEN3_MODEL to a Qwen3-Embedding checkpoint");
+        let backend = OxideBackend::new(
+            std::path::Path::new(&path),
+            "bfloat16",
+            ModelType::Embedding(Pool::LastToken),
+            0,
+        )
+        .unwrap();
+        let (hidden, vocab_size, max_positions) = match &backend.config {
+            LoadedConfig::Decoder(config) => {
+                assert_eq!(config.family, DecoderFamily::Qwen3);
+                assert!(matches!(config.hidden_size, 1024 | 4096));
+                match config.hidden_size {
+                    1024 => assert_eq!(config.q_width(), 2048),
+                    4096 => assert_eq!(config.q_width(), 4096),
+                    _ => unreachable!(),
+                }
+                (
+                    config.hidden_size,
+                    config.vocab_size,
+                    config.max_position_embeddings,
+                )
+            }
+            LoadedConfig::Encoder(_) => panic!("Qwen3 must load as a decoder"),
+        };
+
+        let a = decoder_batch(&[3, 5, 2]);
+        let b = decoder_batch(&[7, 11]);
+        let expected_a = pooled_bits(backend.embed(a.clone()).unwrap());
+        let expected_b = pooled_bits(backend.embed(b.clone()).unwrap());
+        assert_eq!(expected_a.len(), a.pooled_indices.len());
+        assert_eq!(expected_b.len(), b.pooled_indices.len());
+        for (_, row) in expected_a.iter().chain(&expected_b) {
+            assert_eq!(row.len(), hidden);
+            assert!(row.iter().all(|bits| f32::from_bits(*bits).is_finite()));
+        }
+        let again_a = pooled_bits(backend.embed(a.clone()).unwrap());
+        assert_pooled_bits(&again_a, &expected_a, hidden);
+
+        // ABA with B completing out of order before A; both held submissions
+        // must be deferred and use at most the two existing slots.
+        let held_a = backend.submit_embed(a.clone()).unwrap();
+        let held_b = backend.submit_embed(b.clone()).unwrap();
+        assert!(matches!(&held_a, Inference::Deferred(_)));
+        assert!(matches!(&held_b, Inference::Deferred(_)));
+        assert_eq!(backend.io.active_leases(), 2);
+        let actual_b = pooled_bits(held_b.complete().unwrap());
+        let actual_a = pooled_bits(held_a.complete().unwrap());
+        assert_pooled_bits(&actual_b, &expected_b, hidden);
+        assert_pooled_bits(&actual_a, &expected_a, hidden);
+        backend.health().unwrap();
+
+        // Drop one deferred request while the other is retained, then
+        // resubmit the dropped shape and recover both slots.
+        let retained_a = backend.submit_embed(a.clone()).unwrap();
+        let dropped_b = backend.submit_embed(b.clone()).unwrap();
+        assert!(matches!(&retained_a, Inference::Deferred(_)));
+        assert!(matches!(&dropped_b, Inference::Deferred(_)));
+        assert_eq!(backend.io.active_leases(), 2);
+        drop(dropped_b);
+        let recovered_b = backend.submit_embed(b.clone()).unwrap();
+        assert!(matches!(&recovered_b, Inference::Deferred(_)));
+        let recovered_b = pooled_bits(recovered_b.complete().unwrap());
+        let retained_a = pooled_bits(retained_a.complete().unwrap());
+        assert_pooled_bits(&recovered_b, &expected_b, hidden);
+        assert_pooled_bits(&retained_a, &expected_a, hidden);
+        backend.health().unwrap();
+
+        // Same token/batch shape, full versus subset [0, 2] readout.
+        let base = decoder_batch(&[4, 6, 2, 5]);
+        let mut subset = base.clone();
+        subset.pooled_indices = vec![0, 2];
+        assert_eq!(base.input_ids.len(), subset.input_ids.len());
+        assert_eq!(base.cumulative_seq_lengths, subset.cumulative_seq_lengths);
+        let expected_base = pooled_bits(backend.embed(base.clone()).unwrap());
+        let expected_subset = pooled_bits(backend.embed(subset.clone()).unwrap());
+        let subset_from_base = expected_base
+            .iter()
+            .filter(|(index, _)| subset.pooled_indices.contains(&(*index as u32)))
+            .cloned()
+            .collect::<Vec<_>>();
+        assert_pooled_bits(&expected_subset, &subset_from_base, hidden);
+
+        let held_base = backend.submit_embed(base.clone()).unwrap();
+        let held_subset = backend.submit_embed(subset.clone()).unwrap();
+        assert!(matches!(&held_base, Inference::Deferred(_)));
+        assert!(matches!(&held_subset, Inference::Deferred(_)));
+        assert_eq!(backend.io.active_leases(), 2);
+        let actual_subset = pooled_bits(held_subset.complete().unwrap());
+        let actual_base = pooled_bits(held_base.complete().unwrap());
+        assert_pooled_bits(&actual_subset, &expected_subset, hidden);
+        assert_pooled_bits(&actual_base, &expected_base, hidden);
+
+        // Existing validation rejects an out-of-vocabulary token and an
+        // out-of-range position before any GPU work; valid work then recovers.
+        let mut invalid_token = base.clone();
+        invalid_token.input_ids[0] = u32::try_from(vocab_size).unwrap();
+        assert!(backend.submit_embed(invalid_token).is_err());
+        let mut invalid_position = base.clone();
+        invalid_position.position_ids[0] = u32::try_from(max_positions).unwrap();
+        assert!(backend.submit_embed(invalid_position).is_err());
+        backend.health().unwrap();
+        let recovered_base = pooled_bits(backend.embed(base).unwrap());
+        assert_pooled_bits(&recovered_base, &expected_base, hidden);
+
+        let final_a = pooled_bits(backend.embed(a).unwrap());
+        assert_pooled_bits(&final_a, &expected_a, hidden);
+        backend.health().unwrap();
+    }
 }

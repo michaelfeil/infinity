@@ -34,6 +34,7 @@ variant of these families.
 | BERT, RoBERTa, XLM-RoBERTa, CamemBERT | Encoder-only absolute position tables, tanh GELU, no cross-attention. BERT position capacity is at most 4096. Head width is at most 256; a matching provider profile is required for FA4. |
 | DistilBERT | The same packed encoder contract, with its checkpoint names/config aliases and fixed LayerNorm epsilon `1e-12`. An optional stored token-type table is validated and preserved; otherwise a zero table is used. |
 | Qwen2 | Dense SiLU text backbone, full split-half NeoX RoPE, global causal or noncausal attention, and a matching FA4 profile. The H896/d64 native RMS/rotary recipe is rejected. The exercised GTE-Qwen2-1.5B-instruct geometry is H1536, 12 Q/2 KV heads, d128, noncausal. |
+| Qwen3 | Dense SiLU text backbones at H1024 or H4096, d128 learned Q/K head norms, full NeoX RoPE, and a matching FA4 profile. Query projection width may differ from hidden width. Qwen3-Embedding-0.6B and 8B are exercised; expert models and other normalization widths are rejected. |
 | Llama | Hidden width 2048, dense SiLU, base unscaled `default` RoPE, causal global attention, and a matching FA4 profile. TinyLlama's 32 Q/4 KV heads at d64 need the appended twentieth profile. H4096, noncausal Llama, and scaled RoPE including Llama3 are rejected. |
 
 Decoder loading also rejects sliding windows, partial rotary dimensions, expert,
@@ -45,7 +46,9 @@ the executor can also use explicit CLS or mean pooling selections.
 Family names alone do not bypass these guards. Arithmetic and concrete methods
 are selected when loading the model: encoder normalization recipes preserve the
 native width/family behavior, and Llama uses the native width-2048 RMS and fused
-RoPE recipe while Qwen2 retains its separate arithmetic.
+RoPE recipe while Qwen2 retains its separate arithmetic. Qwen3 uses the native
+width-1024 four-row RMS recipe or ordinary width-4096 RMS, followed by fused
+Q/K head normalization and BF16 rotary arithmetic.
 
 The Rust kernels fuse embedding normalization and QKV preparation; register-cached
 384-wide normalization specializations and a parallel mean-pool kernel cover the
@@ -210,11 +213,11 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles all 40 Rust kernels separately for `sm_90`,
+`device/build.sh` compiles all 43 Rust kernels separately for `sm_90`,
 `sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
 symbols, and writes a manifest recording source/artifact hashes, target,
 compiler revision, and commands. Every architecture is natively compiled from
-Rust for all 40 exports. The original nine BERT kernels remain byte-identical
+Rust for all 43 exports. The original nine BERT kernels remain byte-identical
 on all three targets. Additional exports provide rounded embedding/residual
 LayerNorm, native width-768/1024 normalization arithmetic, ordinary or rounded RMSNorm with an optional residual output,
 NeoX/interleaved RoPE with separate-product or fused arithmetic, staged or FP32
@@ -246,6 +249,11 @@ on all three targets.
 Vector RMSNorm likewise uses 16-byte transactions on aligned buffers and a
 scalar fallback otherwise. Export availability alone does not expand the serving
 model catalog.
+Three Qwen3 exports add width-1024 ordinary/residual RMS and fused d128 Q/K
+normalization with NeoX RoPE. The latter preserves the native 16-lane centered
+statistics and BF16 multiply/FMA boundaries. All previous 40 machine bodies
+remain byte-identical on all three targets; all five new primitive GPU checks
+match independent native controls and pass memory and initialization checks.
 The row-gather and output-extraction kernels copy storage bits
 or widen them exactly, support independent tensor widths and repeated output
 selections, and need no additional intermediate allocation. Checkpoint loading,
@@ -411,6 +419,20 @@ model execution is not implemented by this initial backend.
 The current framework passed HTTP quality checks on 320 public SciFact texts
 for each of seven checkpoint cases, including changing shapes, order checks and
 sentinels. These are checkpoint cases, not a full MTEB or model-catalog claim.
+
+Qwen3-Embedding-0.6B and 8B additionally pass 320 public-text comparisons each
+with the same numerical guards, shape changes, deferred A/B/A and cancellation,
+invalid-request recovery, and GPU memory/initialization checks. Their first
+balanced H100 controls below use one 128-token sequence and the same native
+graph/vendor settings. Positive latency changes mean slower than LibTorch:
+
+| Qwen3 checkpoint | LibTorch p50 ms | Oxide p50 ms | p50 change | p99 change |
+| --- | ---: | ---: | ---: | ---: |
+| Embedding-0.6B | 1.407 | 1.623 | +15.32% | +14.56% |
+| Embedding-8B | 6.388 | 7.073 | +10.72% | +9.21% |
+
+These Qwen3 paths expand functional coverage; their current performance still
+misses the speed target. Other Qwen3 widths, tasks and dtypes remain unqualified.
 
 The fixed-shape controls below use one 128-token sequence, BF16, the documented
 pool, H100 and eight CPU cores. Each backend has two fresh-process windows of

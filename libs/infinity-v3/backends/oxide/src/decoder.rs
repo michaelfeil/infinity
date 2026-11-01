@@ -58,6 +58,13 @@ const H2048_NORM_GEOMETRY: NormGeometry = NormGeometry {
     rows_per_cta: 4,
     threads: 128,
 };
+const H1024_NORM_GEOMETRY: NormGeometry = NormGeometry {
+    rows_per_cta: 4,
+    threads: 128,
+};
+/// Dense Qwen3 fused per-head Q/K RMSNorm + RoPE launch geometry.
+const QK_NORM_ROPE_THREADS: u32 = 128;
+const QK_NORM_ROPE_HEAD_ROWS_PER_CTA: usize = 8;
 
 /// Native arithmetic recipe resolved once from loaded metadata. Executor
 /// functions and launch geometry are bound from this value; the layer loop
@@ -66,6 +73,8 @@ const H2048_NORM_GEOMETRY: NormGeometry = NormGeometry {
 pub(crate) enum DecoderMath {
     Qwen2FullNeox,
     Qwen2H1536FullNeox,
+    Qwen3H1024Candle,
+    Qwen3H4096Ordinary,
     LlamaH2048Exact,
 }
 impl DecoderMath {
@@ -87,6 +96,26 @@ impl DecoderMath {
                 } else {
                     Self::Qwen2FullNeox
                 })
+            }
+            DecoderFamily::Qwen3 => {
+                if config.rope != DecoderRope::FullNeoX {
+                    return Err(start(
+                        "decoder executor requires the native Qwen3 full split-half NeoX RoPE recipe",
+                    ));
+                }
+                if config.head_dim != 128 {
+                    return Err(start(format!(
+                        "decoder executor implements only Qwen3 head_dim 128; H{} d{} is deferred",
+                        config.hidden_size, config.head_dim
+                    )));
+                }
+                match config.hidden_size {
+                    1024 => Ok(Self::Qwen3H1024Candle),
+                    4096 => Ok(Self::Qwen3H4096Ordinary),
+                    hidden => Err(start(format!(
+                        "decoder executor implements only Qwen3 hidden_size 1024 or 4096; H{hidden} is deferred"
+                    ))),
+                }
             }
             DecoderFamily::Llama => {
                 if config.hidden_size != 2048 {
@@ -113,6 +142,8 @@ impl DecoderMath {
         match self {
             Self::Qwen2FullNeox => "infinity_rms_norm",
             Self::Qwen2H1536FullNeox => "infinity_rms_norm_1536_cached",
+            Self::Qwen3H1024Candle => "infinity_rms_norm_1024_exact_vector",
+            Self::Qwen3H4096Ordinary => "infinity_rms_norm",
             Self::LlamaH2048Exact => "infinity_rms_norm_2048_vector",
         }
     }
@@ -121,6 +152,8 @@ impl DecoderMath {
         match self {
             Self::Qwen2FullNeox => "infinity_add_rms_norm",
             Self::Qwen2H1536FullNeox => "infinity_add_rms_norm_1536_cached",
+            Self::Qwen3H1024Candle => "infinity_add_rms_norm_1024_exact_vector",
+            Self::Qwen3H4096Ordinary => "infinity_add_rms_norm",
             Self::LlamaH2048Exact => "infinity_add_rms_norm_2048_vector",
         }
     }
@@ -128,7 +161,17 @@ impl DecoderMath {
     const fn rope_export(self) -> &'static str {
         match self {
             Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox => "infinity_rope_neox",
+            Self::Qwen3H1024Candle | Self::Qwen3H4096Ordinary => "infinity_rope_neox",
             Self::LlamaH2048Exact => "infinity_rope_neox_hfma",
+        }
+    }
+
+    const fn qk_norm_rope_export(self) -> Option<&'static str> {
+        match self {
+            Self::Qwen3H1024Candle | Self::Qwen3H4096Ordinary => {
+                Some("infinity_qk_norm_rope_128_bf16")
+            }
+            Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox | Self::LlamaH2048Exact => None,
         }
     }
 
@@ -137,15 +180,20 @@ impl DecoderMath {
     /// The scalar and paired exports remain available to other callers.
     const fn activation_export(self) -> &'static str {
         match self {
-            Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox | Self::LlamaH2048Exact => {
-                "infinity_silu_mul_bf16_vector8_native"
-            }
+            Self::Qwen2FullNeox
+            | Self::Qwen2H1536FullNeox
+            | Self::Qwen3H1024Candle
+            | Self::Qwen3H4096Ordinary
+            | Self::LlamaH2048Exact => "infinity_silu_mul_bf16_vector8_native",
         }
     }
 
     const fn norm_geometry(self) -> NormGeometry {
         match self {
-            Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox => GENERIC_NORM_GEOMETRY,
+            Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox | Self::Qwen3H4096Ordinary => {
+                GENERIC_NORM_GEOMETRY
+            }
+            Self::Qwen3H1024Candle => H1024_NORM_GEOMETRY,
             Self::LlamaH2048Exact => H2048_NORM_GEOMETRY,
         }
     }
@@ -156,6 +204,7 @@ struct DecoderKernels {
     rms_norm: Function,
     add_rms_norm: Function,
     rope_neox: Function,
+    qk_norm_rope: Option<Function>,
     silu_mul: Function,
     pool: Function,
     selected_rows: Function,
@@ -178,6 +227,10 @@ impl DecoderKernels {
         };
         let data = std::fs::read(&path).map_err(|e| start(format!("{}: {e}", path.display())))?;
         let module = context.load_module_from_image(&data).map_err(start)?;
+        let qk_norm_rope = math
+            .qk_norm_rope_export()
+            .map(|export| module.load_function(export).map_err(start))
+            .transpose()?;
         Ok(Self {
             gather: module
                 .load_function("infinity_embedding_gather")
@@ -185,6 +238,7 @@ impl DecoderKernels {
             rms_norm: module.load_function(math.rms_export()).map_err(start)?,
             add_rms_norm: module.load_function(math.add_rms_export()).map_err(start)?,
             rope_neox: module.load_function(math.rope_export()).map_err(start)?,
+            qk_norm_rope,
             silu_mul: module
                 .load_function(math.activation_export())
                 .map_err(start)?,
@@ -207,6 +261,8 @@ struct DecoderLinear {
 struct DecoderLayer {
     input_norm: DeviceBuffer<Bf16>,
     post_attention_norm: DeviceBuffer<Bf16>,
+    q_norm: Option<DeviceBuffer<Bf16>>,
+    k_norm: Option<DeviceBuffer<Bf16>>,
     qkv: DecoderLinear,
     attention: DecoderLinear,
     gate_up: DecoderLinear,
@@ -256,9 +312,18 @@ impl DecoderWeightBuffers {
                 .as_ref()
                 .map(|bias| uploader.upload(&[bias]))
                 .transpose()?;
+            let (q_norm, k_norm) = match (&layer.q_norm, &layer.k_norm) {
+                (Some(q), Some(k)) => (Some(uploader.upload(&[q])?), Some(uploader.upload(&[k])?)),
+                (None, None) => (None, None),
+                _ => {
+                    return Err(start("decoder Q/K RMSNorm scales must be a complete pair"));
+                }
+            };
             layers.push(DecoderLayer {
                 input_norm: uploader.upload(&[&layer.input_norm])?,
                 post_attention_norm: uploader.upload(&[&layer.post_attention_norm])?,
+                q_norm,
+                k_norm,
                 qkv: DecoderLinear {
                     weight: uploader.upload(&[
                         &layer.q.weight,
@@ -716,6 +781,49 @@ impl DecoderModel {
         tokens: usize,
         output_elements: usize,
     ) -> Result<(), BackendError> {
+        if self.kernels.qk_norm_rope.is_some() {
+            self.enqueue_impl::<true>(
+                lt,
+                plain_blas,
+                stream,
+                work,
+                batch,
+                pool,
+                max_length,
+                lease,
+                tokens,
+                output_elements,
+            )
+        } else {
+            self.enqueue_impl::<false>(
+                lt,
+                plain_blas,
+                stream,
+                work,
+                batch,
+                pool,
+                max_length,
+                lease,
+                tokens,
+                output_elements,
+            )
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn enqueue_impl<const QK_NORM: bool>(
+        &mut self,
+        lt: &LtProvider,
+        plain_blas: Option<&Blas>,
+        stream: &Stream,
+        work: &mut DecoderWork,
+        batch: &Batch,
+        pool: &Pool,
+        max_length: usize,
+        lease: &mut HostIoLease,
+        tokens: usize,
+        output_elements: usize,
+    ) -> Result<(), BackendError> {
         let c = &self.config;
         let g = self.geometry;
         let sequences = batch
@@ -826,6 +934,31 @@ impl DecoderModel {
         let pairs = product(tokens, c.num_attention_heads + c.num_key_value_heads)?
             .checked_mul(c.head_dim / 2)
             .ok_or_else(|| infer("decoder rotary pair count overflow"))?;
+        // Request-constant Q/K norm launch preparation. The false arm binds the
+        // plain rotary function as a type-compatible placeholder and never
+        // reaches the fused launch.
+        let rope_kernel = if QK_NORM {
+            k.qk_norm_rope
+                .as_ref()
+                .ok_or_else(|| infer("Qwen3 recipe is missing the Q/K norm RoPE kernel"))?
+        } else {
+            &k.rope_neox
+        };
+        let qk_norm_grid = if QK_NORM {
+            let head_rows = product(
+                tokens,
+                c.num_attention_heads
+                    .checked_add(c.num_key_value_heads)
+                    .ok_or_else(|| infer("decoder Q/K norm head count overflow"))?,
+            )?;
+            Some((
+                u32_size(head_rows.div_ceil(QK_NORM_ROPE_HEAD_ROWS_PER_CTA))?,
+                1,
+                1,
+            ))
+        } else {
+            None
+        };
         let batch_count = sequences;
         let mut selected_done = false;
 
@@ -864,27 +997,66 @@ impl DecoderModel {
             let v = key
                 .checked_add(k_offset)
                 .ok_or_else(|| infer("decoder V address overflow"))?;
-            launch(
-                &k.rope_neox,
-                stream,
-                blocks(pairs)?,
-                0,
-                &mut [
-                    arg(&mut q),
-                    arg(&mut key),
-                    arg(&mut cos),
-                    arg(&mut sin),
-                    arg(&mut position_ptr),
-                    arg(&mut rope_tokens),
-                    arg(&mut rope_q_heads),
-                    arg(&mut rope_kv_heads),
-                    arg(&mut rope_head_dim),
-                    arg(&mut rope_rotary_dim),
-                    arg(&mut q_stride),
-                    arg(&mut k_stride),
-                    arg(&mut rope_table_stride),
-                ],
-            )?;
+            if QK_NORM {
+                let q_norm = layer
+                    .q_norm
+                    .as_ref()
+                    .ok_or_else(|| infer("Qwen3 layer is missing q_norm"))?;
+                let k_norm = layer
+                    .k_norm
+                    .as_ref()
+                    .ok_or_else(|| infer("Qwen3 layer is missing k_norm"))?;
+                let grid = qk_norm_grid
+                    .ok_or_else(|| infer("Qwen3 recipe is missing the Q/K norm launch grid"))?;
+                let mut q_gamma = q_norm.cu_deviceptr();
+                let mut k_gamma = k_norm.cu_deviceptr();
+                let mut qk_eps = eps;
+                launch_threads(
+                    rope_kernel,
+                    stream,
+                    grid,
+                    QK_NORM_ROPE_THREADS,
+                    0,
+                    &mut [
+                        arg(&mut q),
+                        arg(&mut key),
+                        arg(&mut q_gamma),
+                        arg(&mut k_gamma),
+                        arg(&mut cos),
+                        arg(&mut sin),
+                        arg(&mut position_ptr),
+                        arg(&mut rope_tokens),
+                        arg(&mut rope_q_heads),
+                        arg(&mut rope_kv_heads),
+                        arg(&mut q_stride),
+                        arg(&mut k_stride),
+                        arg(&mut rope_table_stride),
+                        arg(&mut qk_eps),
+                    ],
+                )?;
+            } else {
+                launch(
+                    rope_kernel,
+                    stream,
+                    blocks(pairs)?,
+                    0,
+                    &mut [
+                        arg(&mut q),
+                        arg(&mut key),
+                        arg(&mut cos),
+                        arg(&mut sin),
+                        arg(&mut position_ptr),
+                        arg(&mut rope_tokens),
+                        arg(&mut rope_q_heads),
+                        arg(&mut rope_kv_heads),
+                        arg(&mut rope_head_dim),
+                        arg(&mut rope_rotary_dim),
+                        arg(&mut q_stride),
+                        arg(&mut k_stride),
+                        arg(&mut rope_table_stride),
+                    ],
+                )?;
+            }
             let attention = fa4::AttentionBatch {
                 q,
                 k: key,
@@ -1661,6 +1833,137 @@ mod tests {
             value[key] = field.clone();
         }
         Fixture::with_config(&serde_json::to_string(&value).unwrap())
+    }
+
+    fn qwen3_fixture(overrides: serde_json::Value) -> Fixture {
+        let mut value = serde_json::json!({
+            "model_type": "qwen3",
+            "architectures": ["Qwen3ForCausalLM"],
+            "hidden_size": 1024,
+            "intermediate_size": 3072,
+            "num_hidden_layers": 28,
+            "num_attention_heads": 16,
+            "num_key_value_heads": 8,
+            "head_dim": 128,
+            "vocab_size": 151936,
+            "max_position_embeddings": 40960,
+            "rms_norm_eps": 1e-6,
+            "rope_theta": 1000000.0,
+            "hidden_act": "silu"
+        });
+        for (key, field) in overrides.as_object().unwrap() {
+            value[key] = field.clone();
+        }
+        Fixture::with_config(&serde_json::to_string(&value).unwrap())
+    }
+
+    #[test]
+    fn qwen3_math_binds_native_and_ordinary_recipes_with_fused_qk_norm() {
+        let h1024 = qwen3_fixture(serde_json::json!({}));
+        let c = h1024.config();
+        assert_eq!(c.family, DecoderFamily::Qwen3);
+        assert_eq!(
+            DecoderMath::select(&c).unwrap(),
+            DecoderMath::Qwen3H1024Candle
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H1024Candle.rms_export(),
+            "infinity_rms_norm_1024_exact_vector"
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H1024Candle.add_rms_export(),
+            "infinity_add_rms_norm_1024_exact_vector"
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H1024Candle.qk_norm_rope_export(),
+            Some("infinity_qk_norm_rope_128_bf16")
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H1024Candle.norm_geometry(),
+            H1024_NORM_GEOMETRY
+        );
+        assert_eq!(H1024_NORM_GEOMETRY.rows_per_cta, 4);
+        assert_eq!(H1024_NORM_GEOMETRY.threads, 128);
+        assert_eq!(QK_NORM_ROPE_THREADS, 128);
+        assert_eq!(QK_NORM_ROPE_HEAD_ROWS_PER_CTA, 8);
+        let g = DecoderGeometry::new(&c).expect("geometry");
+        assert_eq!(
+            (g.hidden, g.q_width, g.kv_width, g.qkv_width),
+            (1024, 2048, 1024, 4096)
+        );
+        assert_eq!(g.projection_width, 6144);
+        assert_eq!(g.activation_width, 3072);
+        assert_eq!(g.silu_groups_per_row, 384);
+
+        let h4096 = qwen3_fixture(serde_json::json!({
+            "hidden_size": 4096,
+            "intermediate_size": 12288,
+            "num_hidden_layers": 36,
+            "num_attention_heads": 32
+        }));
+        let c = h4096.config();
+        assert_eq!(
+            DecoderMath::select(&c).unwrap(),
+            DecoderMath::Qwen3H4096Ordinary
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H4096Ordinary.rms_export(),
+            "infinity_rms_norm"
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H4096Ordinary.add_rms_export(),
+            "infinity_add_rms_norm"
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H4096Ordinary.qk_norm_rope_export(),
+            Some("infinity_qk_norm_rope_128_bf16")
+        );
+        assert_eq!(
+            DecoderMath::Qwen3H4096Ordinary.norm_geometry(),
+            GENERIC_NORM_GEOMETRY
+        );
+        let g = DecoderGeometry::new(&c).expect("geometry");
+        assert_eq!(
+            (g.hidden, g.q_width, g.kv_width, g.qkv_width),
+            (4096, 4096, 1024, 6144)
+        );
+        assert_eq!(g.projection_width, 24576);
+        assert_eq!(g.activation_width, 12288);
+        for (heads, kv_heads) in [(16, 8), (32, 8)] {
+            for causal in [false, true] {
+                assert!(fa4::Fa4::supports(&fa4::AttentionSpec {
+                    heads,
+                    kv_heads,
+                    head_dim: 128,
+                    causal,
+                    window: fa4::Window::Global,
+                    dtype: fa4::DType::Bf16,
+                    scale: fa4::Scale::RsqrtHeadDim,
+                }));
+            }
+        }
+    }
+
+    #[test]
+    fn qwen3_rejects_unqualified_widths_heads_and_rope_recipes() {
+        for (overrides, needle) in [
+            (
+                serde_json::json!({"head_dim": 64}),
+                "only Qwen3 head_dim 128",
+            ),
+            (
+                serde_json::json!({"hidden_size": 2048}),
+                "hidden_size 1024 or 4096",
+            ),
+            (
+                serde_json::json!({"rope_type": "simple"}),
+                "native Qwen3 full split-half NeoX RoPE",
+            ),
+        ] {
+            let fixture = qwen3_fixture(overrides);
+            let error = validate_recipe(&fixture.config()).unwrap_err().to_string();
+            assert!(error.contains(needle), "{error}");
+        }
     }
 
     #[test]
