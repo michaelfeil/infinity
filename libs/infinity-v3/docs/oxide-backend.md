@@ -392,13 +392,35 @@ model execution is not implemented by this initial backend.
 
 ## Current qualification limits
 
-Latest balanced H100 MiniLM comparisons showed about 15% lower median latency,
-but worse p99 latency than the LibTorch control. Earlier TinyLlama regular-vector
-measurements remained slower than the strongest graph-enabled native control
-using all 20 FA4 profiles, which measured approximately 1.74–1.77 ms for the
-128-token case. Selecting the vector8 SiLU export does not by itself establish
-an end-to-end speedup. Quality, tail latency and throughput remain separate
-gates for each checkpoint, batch pattern, precision, device and provider.
+The current framework passed HTTP quality checks on 320 public SciFact texts
+for each of seven checkpoint cases, including changing shapes, order checks and
+sentinels. These are checkpoint cases, not a full MTEB or model-catalog claim.
+
+The fixed-shape controls below use one 128-token sequence, BF16, the documented
+pool, H100 and eight CPU cores. Each backend has two fresh-process windows of
+2,000 timed calls after 20 warmups, in balanced order. LibTorch uses verified
+graph replay; Oxide uses ordinary streams. Both use the same cuBLAS 13.2
+libraries and twenty-profile FA4 provider. Native timing excludes Rust response
+packaging; Oxide timing includes its backend result map. Values are medians
+across each backend's two windows; negative changes mean lower Oxide latency.
+
+| Checkpoint | Oxide p50 µs | LibTorch p50 µs | p50 change | p99 change |
+| --- | ---: | ---: | ---: | ---: |
+| MiniLM-L6, mean | 233.8 | 262.3 | -10.9% | +27.3% |
+| MS MARCO DistilBERT, mean | 291.9 | 328.6 | -11.1% | -14.5% |
+| All-DistilRoBERTa, mean | 290.4 | 329.6 | -11.9% | -12.9% |
+| CamemBERT-base, mean | 567.6 | 547.7 | +3.6% | +2.3% |
+| BGE-M3, CLS | 1155.6 | 1078.6 | +7.1% | +9.3% |
+| GTE-Qwen2-1.5B, last token | 2418.0 | 2047.4 | +18.1% | +18.2% |
+| TinyLlama-1.1B, last token | 1905.6 | 1771.0 | +7.6% | +63.9% |
+
+Performance is mixed. Tail latency varied on the shared host, particularly for
+MiniLM and TinyLlama; a separate old/new Oxide control could not isolate a fixed
+host-dispatch regression. The vector8 SiLU kernel reduced its summed GPU time
+from about 77 to 55 µs across TinyLlama's 22 layers in a diagnostic trace, which
+does not establish a total-latency win. Quality, tail latency and throughput
+remain separate gates for each checkpoint, batch pattern, precision, device and
+provider.
 
 The measurements below describe earlier builds and controls; they are retained
 as historical evidence, not performance claims for every current executor.
