@@ -1096,8 +1096,9 @@ fn get_backend_model_type(
 fn resolve_oxide_dtype(requested: Option<DType>) -> Result<DType> {
     match requested {
         None | Some(DType::Auto | DType::Bfloat16) => Ok(DType::Bfloat16),
+        Some(DType::Float16) => Ok(DType::Float16),
         Some(dtype) => {
-            anyhow::bail!("The oxide backend currently supports only bfloat16; requested {dtype}")
+            anyhow::bail!("The oxide backend supports bfloat16 or float16; requested {dtype}")
         }
     }
 }
@@ -1656,9 +1657,11 @@ mod libtorch_auto_dtype_tests {
             resolve_oxide_dtype(Some(DType::Bfloat16)).unwrap(),
             DType::Bfloat16
         );
-        for dtype in [DType::Float16, DType::Float32] {
-            assert!(resolve_oxide_dtype(Some(dtype)).is_err());
-        }
+        assert_eq!(
+            resolve_oxide_dtype(Some(DType::Float16)).unwrap(),
+            DType::Float16
+        );
+        assert!(resolve_oxide_dtype(Some(DType::Float32)).is_err());
     }
 
     #[test]

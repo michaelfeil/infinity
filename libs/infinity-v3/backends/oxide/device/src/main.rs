@@ -9,6 +9,7 @@ use cuda_device::{convert, cuda_module, kernel, thread, warp, DynamicSharedArray
 mod aten_embedding;
 mod decoder;
 mod dense;
+mod encoder_f16;
 mod encoder_prenorm;
 mod gated;
 mod nomic_embedding;
@@ -1543,6 +1544,120 @@ mod kernels {
         width: u32,
     ) {
         unsafe { crate::readout::bf16_to_f32(input, out, selected, count, width) };
+    }
+
+    /// Native H384 F16 embedding gather plus affine LayerNorm.
+    /// Grid=(ceil(tokens/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_embedding_norm_384_f16(
+        ids: *const u32,
+        positions: *const u32,
+        types: *const u32,
+        word: *const u16,
+        position: *const u16,
+        token_type: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::encoder_f16::embedding_norm_384_f16(
+                ids, positions, types, word, position, token_type, gamma, beta, out, tokens, eps,
+            )
+        };
+    }
+
+    /// Native H384 F16 residual plus affine LayerNorm.
+    /// Grid=(ceil(rows/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_layer_norm_384_f16(
+        input: *const u16,
+        residual: *const u16,
+        bias: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::encoder_f16::layer_norm_384_f16(
+                input, residual, bias, gamma, beta, out, rows, eps,
+            )
+        };
+    }
+
+    /// Native H384 F16 plain affine LayerNorm without a residual.
+    /// Grid=(ceil(rows/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_plain_norm_384_f16(
+        input: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        eps: f32,
+    ) {
+        unsafe { crate::encoder_f16::plain_norm_384_f16(input, gamma, beta, out, rows, eps) };
+    }
+
+    /// Actual spans F16 mean pooling; grid=(selected,ceil(hidden/8)), block=256.
+    #[kernel]
+    pub unsafe fn infinity_mean_pool_f16(
+        input: *const u16,
+        cu_seqlens: *const u32,
+        selected: *const u32,
+        out: *mut f32,
+        count: u32,
+        hidden: u32,
+    ) {
+        unsafe {
+            crate::encoder_f16::mean_pool_384_f16(input, cu_seqlens, selected, out, count, hidden)
+        };
+    }
+
+    /// F16 CLS, mean or last-token selection widened to FP32.
+    #[kernel]
+    pub unsafe fn infinity_pool_f16(
+        input: *const u16,
+        cu_seqlens: *const u32,
+        selected: *const u32,
+        out: *mut f32,
+        count: u32,
+        hidden: u32,
+        mode: u32,
+    ) {
+        unsafe {
+            crate::encoder_f16::pool_f16(input, cu_seqlens, selected, out, count, hidden, mode)
+        };
+    }
+
+    /// Split one fused F16 QKV projection and add its packed bias.
+    #[kernel]
+    pub unsafe fn infinity_qkv_f16(
+        input: *const u16,
+        bias: *const u16,
+        q: *mut u16,
+        k: *mut u16,
+        v: *mut u16,
+        elements: u32,
+        width: u32,
+    ) {
+        unsafe { crate::encoder_f16::qkv_f16(input, bias, q, k, v, elements, width) };
+    }
+
+    /// Widen selected F16 rows to FP32; grid=ceil(count*width/256).
+    #[kernel]
+    pub unsafe fn infinity_f16_to_f32(
+        input: *const u16,
+        out: *mut f32,
+        selected: *const u32,
+        count: u32,
+        width: u32,
+    ) {
+        unsafe { crate::encoder_f16::f16_to_f32(input, out, selected, count, width) };
     }
 }
 

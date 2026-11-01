@@ -5,7 +5,7 @@ use infinity_v3_backend_core::{Backend, Batch, Embedding, ModelType, Pool};
 use std::{path::Path, time::Instant};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     const USAGE: &str =
-        "usage: probe MODEL_PATH [TOKENS] [ITERATIONS] [DEVICE] [POOL mean|cls|last-token]";
+        "usage: probe MODEL_PATH [TOKENS] [ITERATIONS] [DEVICE] [POOL mean|cls|last-token] [DTYPE bfloat16|float16]";
     let args = std::env::args().collect::<Vec<_>>();
     if matches!(args.get(1).map(String::as_str), Some("--help" | "-h")) {
         println!("{USAGE}");
@@ -30,9 +30,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "last-token" | "last_token" => Pool::LastToken,
         other => return Err(format!("unsupported pool: {other}").into()),
     };
+    let dtype = args.get(6).map(String::as_str).unwrap_or("bfloat16");
     let backend = OxideBackend::new(
         Path::new(path),
-        "bfloat16",
+        dtype,
         ModelType::Embedding(pool),
         args.get(4).map(|v| v.parse()).transpose()?.unwrap_or(1),
     )?;

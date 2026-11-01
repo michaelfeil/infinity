@@ -61,7 +61,7 @@ use std::{
         Arc, Mutex,
     },
 };
-use tensor::Bf16;
+use tensor::{Bf16, F16};
 use upload::{UploadElement, WeightUploader};
 
 // Model warmup precedes the HTTP metrics recorder. Track physical ownership
@@ -200,6 +200,33 @@ pub(crate) fn bump_provider_context_query() {
 #[cfg(test)]
 fn request_counters() -> RequestCounters {
     REQUEST_COUNTERS.with(std::cell::Cell::get)
+}
+/// Cold-load storage precision for the generic BERT encoder executor.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) enum EncoderPrecision {
+    #[default]
+    Bf16,
+    F16,
+}
+impl EncoderPrecision {
+    /// Map the server's public dtype names to an encoder storage precision.
+    /// Unsupported names fail before any checkpoint or driver access.
+    pub(crate) fn from_dtype(dtype: &str) -> Result<Self, BackendError> {
+        match dtype {
+            "bfloat16" => Ok(Self::Bf16),
+            "float16" => Ok(Self::F16),
+            other => Err(start(format!(
+                "Oxide requires --dtype bfloat16 or float16, got {other}"
+            ))),
+        }
+    }
+
+    const fn fa4_dtype(self) -> fa4::DType {
+        match self {
+            Self::Bf16 => fa4::DType::Bf16,
+            Self::F16 => fa4::DType::F16,
+        }
+    }
 }
 
 pub fn device_count() -> Result<usize, BackendError> {
@@ -366,11 +393,14 @@ struct Kernels {
     norm_384: Option<Function>,
     embedding_geometry: KernelGeometry,
     norm_geometry: KernelGeometry,
-    qkv: Function,
-    attention: Function,
+    embedding_384_geometry: KernelGeometry,
+    norm_384_geometry: KernelGeometry,
+    qkv: Option<Function>,
+    attention: Option<Function>,
     attention_length_limit: Option<usize>,
     pool: Function,
     mean_pool: Function,
+    mean_pool_tile_width: u32,
     raw_cast: Option<Function>,
     rotary: Option<RotaryFunctions>,
     gated: Option<PreparedGatedActivation>,
@@ -400,11 +430,15 @@ impl Kernels {
             Err(error) => return Err(start(error)),
         };
         let pool = module.load_function("infinity_pool").map_err(start)?;
-        let attention = module.load_function("infinity_attention").map_err(start)?;
+        let attention = Some(module.load_function("infinity_attention").map_err(start)?);
         let attention_length_limit = if fa4 {
             None
         } else {
-            let bytes = attention.max_dynamic_shared_memory_bytes().map_err(start)? as usize;
+            let bytes = attention
+                .as_ref()
+                .ok_or_else(|| start("SIMT attention kernel is unavailable"))?
+                .max_dynamic_shared_memory_bytes()
+                .map_err(start)? as usize;
             let limit = bytes / std::mem::size_of::<f32>();
             if limit == 0 {
                 return Err(start(format!(
@@ -538,12 +572,77 @@ impl Kernels {
             } else {
                 GENERIC_GEOMETRY
             },
-            qkv: module.load_function("infinity_qkv").map_err(start)?,
+            embedding_384_geometry: GENERIC_GEOMETRY,
+            norm_384_geometry: GENERIC_GEOMETRY,
+            qkv: Some(module.load_function("infinity_qkv").map_err(start)?),
             attention,
             attention_length_limit,
             pool,
+            mean_pool_tile_width: 32,
             rotary,
             gated,
+        })
+    }
+
+    /// Load the qualified H384 FP16 elementwise entries from the same module.
+    /// FA4 is mandatory: F16 storage must not be routed through the BF16 SIMT
+    /// attention or BF16 elementwise specializations.
+    fn load_f16(ctx: &Arc<Context>, fa4: bool) -> Result<Self, BackendError> {
+        if !fa4 {
+            return Err(start(
+                "FP16 H384 MiniLM requires INFINITY_OXIDE_ATTENTION=fa4 and an FA4 F16 mha32 profile",
+            ));
+        }
+        let path = std::env::var_os(infinity_v3_config::infinity_env!("OXIDE_KERNEL_MODULE"))
+            .ok_or_else(|| {
+                start("Set INFINITY_OXIDE_KERNEL_MODULE to the artifact compiled by cargo oxide")
+            })?;
+        let path = std::path::PathBuf::from(path);
+        let path = if path.is_dir() {
+            let (major, minor) = ctx.compute_capability().map_err(start)?;
+            path.join(format!("sm_{major}{minor}"))
+                .join("kernels.cubin")
+        } else {
+            path
+        };
+        let data = std::fs::read(&path).map_err(|e| start(format!("{}: {e}", path.display())))?;
+        let module = ctx.load_module_from_image(&data).map_err(start)?;
+        let embedding = module
+            .load_function("infinity_embedding_norm_384_f16")
+            .map_err(start)?;
+        let norm = module
+            .load_function("infinity_layer_norm_384_f16")
+            .map_err(start)?;
+        Ok(Self {
+            embedding: module
+                .load_function("infinity_embedding_norm_384_f16")
+                .map_err(start)?,
+            embedding_384: Some(embedding),
+            norm: module
+                .load_function("infinity_layer_norm_384_f16")
+                .map_err(start)?,
+            norm_384: Some(norm),
+            embedding_geometry: GENERIC_GEOMETRY,
+            norm_geometry: GENERIC_GEOMETRY,
+            embedding_384_geometry: KernelGeometry {
+                rows_per_cta: 4,
+                threads: 128,
+            },
+            norm_384_geometry: KernelGeometry {
+                rows_per_cta: 4,
+                threads: 128,
+            },
+            qkv: None,
+            attention: None,
+            attention_length_limit: None,
+            pool: module.load_function("infinity_pool_f16").map_err(start)?,
+            mean_pool: module
+                .load_function("infinity_mean_pool_f16")
+                .map_err(start)?,
+            mean_pool_tile_width: 8,
+            raw_cast: Some(module.load_function("infinity_f16_to_f32").map_err(start)?),
+            rotary: None,
+            gated: None,
         })
     }
 }
@@ -607,8 +706,8 @@ fn norm<E: UploadElement>(
         return launch_threads(
             kernel,
             s,
-            (rows, 1, 1),
-            256,
+            (rows.div_ceil(k.norm_384_geometry.rows_per_cta), 1, 1),
+            k.norm_384_geometry.threads,
             0,
             &mut [
                 arg(&mut input),
@@ -1014,12 +1113,14 @@ impl<E: UploadElement> IntermediatePlan<E> {
 enum ExecutableModel {
     Modern(Box<ModernEncoder>),
     Encoder(Box<EncoderModel<Bf16>>),
+    EncoderF16(Box<EncoderModel<F16>>),
     Decoder(Box<decoder::DecoderModel>),
 }
 impl ExecutableModel {
     fn supports_raw_output(&self) -> bool {
         match self {
             Self::Encoder(model) => model.kernels.raw_cast.is_some(),
+            Self::EncoderF16(model) => model.kernels.raw_cast.is_some(),
             Self::Modern(_) | Self::Decoder(_) => true,
         }
     }
@@ -1031,6 +1132,7 @@ impl ExecutableModel {
     ) -> Result<(), ShapeError> {
         match self {
             Self::Encoder(model) => model.plans.set_rows(provider, batch.input_ids.len()),
+            Self::EncoderF16(model) => model.plans.set_rows(provider, batch.input_ids.len()),
             Self::Modern(model) => model.preflight(batch.input_ids.len()),
             Self::Decoder(model) => model.preflight(provider, batch, pool),
         }
@@ -1039,6 +1141,7 @@ impl ExecutableModel {
     fn hidden_size(&self) -> usize {
         match self {
             Self::Encoder(model) => model.config.hidden_size,
+            Self::EncoderF16(model) => model.config.hidden_size,
             Self::Modern(model) => model.config.geometry.hidden_size,
             Self::Decoder(model) => model.config.hidden_size,
         }
@@ -1069,12 +1172,29 @@ impl ExecutableModel {
                     )
                 }
             }
+            (Self::EncoderF16(model), Workspace::EncoderF16(work)) => {
+                let width = model.config.hidden_size;
+                // SAFETY: the caller's bound-context contract covers preselection.
+                unsafe {
+                    model.plans.prepare(
+                        provider,
+                        blas,
+                        tokens,
+                        &model.weights.layers,
+                        &work.intermediate,
+                        &mut work.temp,
+                        &work.stream,
+                        width,
+                    )
+                }
+            }
             _ => Ok(()),
         }
     }
     fn workspace_bytes(&self, key: WorkKey) -> Result<usize, BackendError> {
         match self {
             Self::Encoder(model) => Work::<Bf16>::allocation_bytes(key, &model.config),
+            Self::EncoderF16(model) => Work::<F16>::allocation_bytes(key, &model.config),
             Self::Modern(model) => Work::<Bf16>::allocation_bytes(key, &model.config.geometry),
             Self::Decoder(model) => decoder::DecoderWork::allocation_bytes(key, &model.config),
         }
@@ -1082,6 +1202,11 @@ impl ExecutableModel {
     fn workspace(&self, stream: Arc<Stream>, key: WorkKey) -> Result<Workspace, BackendError> {
         match self {
             Self::Encoder(model) => Ok(Workspace::Encoder(Work::<Bf16>::new(
+                stream,
+                &model.config,
+                key,
+            )?)),
+            Self::EncoderF16(model) => Ok(Workspace::EncoderF16(Work::<F16>::new(
                 stream,
                 &model.config,
                 key,
@@ -1113,24 +1238,28 @@ struct EncoderModel<E: UploadElement> {
 
 enum Workspace {
     Encoder(Work<Bf16>),
+    EncoderF16(Work<F16>),
     Decoder(decoder::DecoderWork),
 }
 impl Workspace {
     fn key(&self) -> WorkKey {
         match self {
             Self::Encoder(work) => work.key(),
+            Self::EncoderF16(work) => work.key(),
             Self::Decoder(work) => work.key(),
         }
     }
     fn bytes(&self) -> usize {
         match self {
             Self::Encoder(work) => work.bytes,
+            Self::EncoderF16(work) => work.bytes,
             Self::Decoder(work) => work.bytes(),
         }
     }
     fn fits(&self, key: WorkKey) -> bool {
         match self {
             Self::Encoder(work) => work.fits(key),
+            Self::EncoderF16(work) => work.fits(key),
             Self::Decoder(work) => work.fits(key),
         }
     }
@@ -1142,12 +1271,14 @@ impl Workspace {
     ) -> Result<(usize, usize), BackendError> {
         match self {
             Self::Encoder(work) => work.stage(batch, geometry, lease),
+            Self::EncoderF16(work) => work.stage(batch, geometry, lease),
             Self::Decoder(work) => work.stage(batch, geometry, lease),
         }
     }
     fn upload(&self, host: &[u32], elements: usize) -> Result<(), BackendError> {
         match self {
             Self::Encoder(work) => work.upload(host, elements),
+            Self::EncoderF16(work) => work.upload(host, elements),
             Self::Decoder(work) => work.upload(host, elements),
         }
     }
@@ -1164,6 +1295,15 @@ impl Workspace {
     ) -> Result<(), BackendError> {
         match self {
             Self::Encoder(work) => work.finish(
+                dense,
+                lt,
+                plain_blas,
+                pooled_rows,
+                raw_rows,
+                backbone_width,
+                lease,
+            ),
+            Self::EncoderF16(work) => work.finish(
                 dense,
                 lt,
                 plain_blas,
@@ -2002,6 +2142,9 @@ impl Engine {
             (ExecutableModel::Encoder(model), Workspace::Encoder(w)) => {
                 enqueue_encoder(model, w, lt, plain_blas, s, b, pool, max_length, tokens)
             }
+            (ExecutableModel::EncoderF16(model), Workspace::EncoderF16(w)) => {
+                enqueue_encoder(model, w, lt, plain_blas, s, b, pool, max_length, tokens)
+            }
             _ => Err(infer("Oxide model/workspace mismatch").into()),
         }?;
         let dense = match ((*self.dense).as_mut(), self.dense_workspace.as_mut()) {
@@ -2119,8 +2262,8 @@ fn enqueue_encoder<E: UploadElement>(
         launch_threads(
             kernel,
             s,
-            (t, 1, 1),
-            256,
+            (t.div_ceil(k.embedding_384_geometry.rows_per_cta), 1, 1),
+            k.embedding_384_geometry.threads,
             0,
             &mut [
                 arg(&mut ids),
@@ -2262,6 +2405,14 @@ fn enqueue_encoder<E: UploadElement>(
             // shared int32 data.
             unsafe { provider.forward_batch_bound(s, &attention)? };
         } else {
+            let qkv_kernel = k
+                .qkv
+                .as_ref()
+                .ok_or_else(|| infer("F16 encoder requires FA4 packed attention"))?;
+            let attention_kernel = k
+                .attention
+                .as_ref()
+                .ok_or_else(|| infer("F16 encoder requires FA4 packed attention"))?;
             let mut qkv = w.qkv.cu_deviceptr();
             let (mut q, mut key, mut v) = (
                 w.query.cu_deviceptr(),
@@ -2270,7 +2421,7 @@ fn enqueue_encoder<E: UploadElement>(
             );
             let (mut qkv_bias, mut n) = (zero_bias, u32_size(product(tokens, h)?)?);
             launch(
-                &k.qkv,
+                qkv_kernel,
                 s,
                 blocks(product(tokens, h)?)?,
                 0,
@@ -2286,7 +2437,7 @@ fn enqueue_encoder<E: UploadElement>(
             )?;
             let (mut bounds, mut attn) = (boundaries, w.attention.cu_deviceptr());
             launch(
-                &k.attention,
+                attention_kernel,
                 s,
                 (u32_size(max_length)?, heads, count),
                 u32_size(product(max_length, 4)?)?,
@@ -2487,7 +2638,11 @@ fn enqueue_encoder<E: UploadElement>(
         launch(
             &k.mean_pool,
             s,
-            (count, u32_size(h.div_ceil(32))?, 1),
+            (
+                count,
+                u32_size(h.div_ceil(k.mean_pool_tile_width as usize))?,
+                1,
+            ),
             0,
             &mut [
                 arg(&mut x),
@@ -2608,12 +2763,23 @@ impl OxideBackend {
         device_id: usize,
         dense_paths: Option<Vec<String>>,
     ) -> Result<Self, BackendError> {
-        if dtype != "bfloat16" {
-            return Err(start("Oxide currently requires --dtype bfloat16"));
-        }
+        let precision = EncoderPrecision::from_dtype(dtype)?;
         let pool = match model_type {
             ModelType::Embedding(p @ (Pool::Cls | Pool::Mean | Pool::LastToken)) => p,
             _ => return Err(start("Oxide currently supports dense embeddings only")),
+        };
+        // FP16 admission is host-side policy. Reject every unsupported family
+        // and shape before the driver/device query or any weight upload.
+        let f16_admitted = if precision == EncoderPrecision::F16 {
+            let architecture = detects_architecture(path)?;
+            if architecture != CheckpointArchitecture::Encoder {
+                return Err(start("FP16 Oxide supports only BERT H384 MiniLM"));
+            }
+            let config = BertConfig::load(path)?;
+            config.validate_f16_minilm()?;
+            Some(())
+        } else {
+            None
         };
         if device_id >= device_count()? {
             return Err(start("CUDA device ordinal is not visible"));
@@ -2628,7 +2794,30 @@ impl OxideBackend {
         } else {
             LtProvider::new(context.clone(), stream.clone())?
         };
-        let (model, config, plain_blas, attention_length_limit, dense, output_width) = if decoder {
+        let (model, config, plain_blas, attention_length_limit, dense, output_width) = if precision
+            == EncoderPrecision::F16
+        {
+            f16_admitted.ok_or_else(|| start("Missing admitted FP16 encoder config"))?;
+            let host = BertWeights::load(path)?;
+            let config = loaded_f16_config(&host)?;
+            let dense_host =
+                DenseChainHost::load_with_paths(path, config.hidden_size, dense_paths.clone())?;
+            if dense_host.is_some() {
+                return Err(start("FP16 H384 MiniLM currently requires its backbone pooling without Dense modules"));
+            }
+            let host = EncoderHostWeights::Standard(host);
+            let model = encoder_model::<F16>(host, &context, &stream, &lt, EncoderPrecision::F16)?;
+            let attention_length_limit = model.kernels.attention_length_limit;
+            let output_width = config.hidden_size;
+            (
+                ExecutableModel::EncoderF16(Box::new(model)),
+                LoadedConfig::Encoder(config),
+                None,
+                attention_length_limit,
+                None,
+                output_width,
+            )
+        } else if decoder {
             let host = DecoderWeights::load(path)?;
             let config = host.config.clone();
             let dense_host =
@@ -2689,7 +2878,8 @@ impl OxideBackend {
             let output_width = dense_host
                 .as_ref()
                 .map_or(config.hidden_size, DenseChainHost::output_width);
-            let model = encoder_model(host, &context, &stream, &lt)?;
+            let model =
+                encoder_model::<Bf16>(host, &context, &stream, &lt, EncoderPrecision::Bf16)?;
             let dense = dense_host
                 .map(|host| DenseHead::new(host, &context, &stream, &lt))
                 .transpose()?;
@@ -2737,11 +2927,20 @@ impl OxideBackend {
     }
 }
 
+/// A successful early admission does not pin config.json while weights load.
+/// Revalidate and publish the exact config loaded with those weights, so model
+/// execution and request bounds use the same authoritative metadata.
+fn loaded_f16_config(host: &BertWeights) -> Result<BertConfig, BackendError> {
+    host.config.validate_f16_minilm()?;
+    Ok(host.config.clone())
+}
+
 fn encoder_model<E: UploadElement>(
     host: EncoderHostWeights,
     context: &Arc<Context>,
     stream: &Arc<Stream>,
     lt: &LtProvider,
+    precision: EncoderPrecision,
 ) -> Result<EncoderModel<E>, BackendError> {
     let config = host.config().clone();
     let attention_mode = std::env::var(infinity_v3_config::infinity_env!("OXIDE_ATTENTION"))
@@ -2757,7 +2956,7 @@ fn encoder_model<E: UploadElement>(
         head_dim,
         causal: false,
         window: fa4::Window::Global,
-        dtype: fa4::DType::Bf16,
+        dtype: precision.fa4_dtype(),
         scale: fa4::Scale::RsqrtHeadDim,
     };
     let packed = packed_attention_layout(&config)?;
@@ -2809,7 +3008,10 @@ fn encoder_model<E: UploadElement>(
         ));
     }
     let fa4_layout = if fa4.is_some() { packed } else { None };
-    let mut kernels = Kernels::load(context, &config, fa4.is_some())?;
+    let mut kernels = match precision {
+        EncoderPrecision::Bf16 => Kernels::load(context, &config, fa4.is_some())?,
+        EncoderPrecision::F16 => Kernels::load_f16(context, fa4.is_some())?,
+    };
     let gated = kernels.gated.take();
     let rotary = match config.recipe.positions {
         PositionRecipe::Absolute | PositionRecipe::AlibiModelBias => None,
@@ -3463,6 +3665,158 @@ mod trace {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    fn minilm_f16_config() -> BertConfig {
+        serde_json::from_value(serde_json::json!({
+            "model_type": "bert", "architectures": ["BertModel"],
+            "hidden_size": 384, "intermediate_size": 1536,
+            "num_attention_heads": 12, "num_hidden_layers": 6,
+            "max_position_embeddings": 512, "vocab_size": 30522,
+            "type_vocab_size": 2, "layer_norm_eps": 1e-12,
+            "hidden_act": "gelu", "position_embedding_type": "absolute"
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn encoder_precision_default_and_unsupported_names_are_explicit() {
+        assert_eq!(EncoderPrecision::default(), EncoderPrecision::Bf16);
+        assert_eq!(
+            EncoderPrecision::from_dtype("bfloat16").unwrap(),
+            EncoderPrecision::Bf16
+        );
+        assert_eq!(
+            EncoderPrecision::from_dtype("float16").unwrap(),
+            EncoderPrecision::F16
+        );
+        let error = EncoderPrecision::from_dtype("float32")
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("bfloat16 or float16"), "{error}");
+    }
+
+    #[test]
+    fn f16_admission_is_exactly_h384_minilm() {
+        let config = minilm_f16_config();
+        config.validate_f16_minilm().unwrap();
+        for (label, mutate) in [
+            (
+                "hidden",
+                (|c: &mut BertConfig| c.hidden_size = 768) as fn(&mut BertConfig),
+            ),
+            ("heads", |c: &mut BertConfig| c.num_attention_heads = 8),
+            ("layers", |c: &mut BertConfig| c.num_hidden_layers = 12),
+            ("intermediate", |c: &mut BertConfig| {
+                c.intermediate_size = 3072
+            }),
+            ("eps", |c: &mut BertConfig| c.layer_norm_eps = 1e-5),
+        ] {
+            let mut changed = config.clone();
+            mutate(&mut changed);
+            let error = changed.validate_f16_minilm().unwrap_err().to_string();
+            assert!(error.contains("FP16 Oxide"), "{label}: {error}");
+        }
+        let mut family = config.clone();
+        family.family = model::EncoderFamily::Roberta;
+        let error = family.validate_f16_minilm().unwrap_err().to_string();
+        assert!(error.contains("only BERT"), "{error}");
+    }
+
+    #[test]
+    fn f16_backend_rejects_unsupported_shape_before_the_driver() {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "infinity-oxide-f16-admission-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(
+            path.join("config.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "model_type": "bert", "architectures": ["BertModel"],
+                "hidden_size": 768, "intermediate_size": 3072,
+                "num_attention_heads": 12, "num_hidden_layers": 12,
+                "max_position_embeddings": 512, "vocab_size": 30522,
+                "type_vocab_size": 2, "layer_norm_eps": 1e-12,
+                "hidden_act": "gelu", "position_embedding_type": "absolute"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let error = match OxideBackend::new(&path, "float16", ModelType::Embedding(Pool::Mean), 0) {
+            Ok(_) => panic!("unsupported F16 shape was admitted"),
+            Err(error) => error.to_string(),
+        };
+        std::fs::remove_dir_all(&path).unwrap();
+        assert!(
+            error.contains("FP16 Oxide H384 MiniLM requires"),
+            "expected host-side F16 admission error, got {error}"
+        );
+    }
+
+    #[test]
+    fn f16_loaded_weight_metadata_controls_bounds_and_is_revalidated() {
+        let initial = minilm_f16_config();
+        initial.validate_f16_minilm().unwrap();
+        let mut actual = initial.clone();
+        actual.vocab_size = 16;
+        actual.max_position_embeddings = 8;
+        actual.type_vocab_size = 1;
+        let dummy = WeightSource::zeroed(vec![1]).unwrap();
+        let mut host = BertWeights {
+            config: actual,
+            word: dummy.clone(),
+            position: dummy.clone(),
+            token_type: dummy.clone(),
+            gamma: dummy.clone(),
+            beta: dummy,
+            layers: vec![],
+        };
+        let selected = loaded_f16_config(&host).unwrap();
+        assert_eq!(
+            (
+                selected.vocab_size,
+                selected.max_position_embeddings,
+                selected.type_vocab_size
+            ),
+            (16, 8, 1)
+        );
+        for mutate in [
+            (|b: &mut Batch| b.input_ids[0] = 16) as fn(&mut Batch),
+            |b: &mut Batch| b.position_ids[0] = 8,
+            |b: &mut Batch| b.token_type_ids[0] = 1,
+        ] {
+            let mut request = batch();
+            request.input_ids.fill(1);
+            request.position_ids.fill(0);
+            request.token_type_ids.fill(0);
+            mutate(&mut request);
+            assert!(validate(&request, &initial).is_ok());
+            assert!(validate(&request, &selected).is_err());
+        }
+        host.config.hidden_size = 768;
+        assert!(loaded_f16_config(&host).is_err());
+    }
+
+    #[test]
+    fn f16_arena_and_packed_attention_geometry_match_the_shared_plans() {
+        let config = minilm_f16_config();
+        let key = (64usize, 4, 4);
+        assert_eq!(
+            Work::<F16>::allocation_bytes(key, &config).unwrap(),
+            Work::<Bf16>::allocation_bytes(key, &config).unwrap()
+        );
+        let packed = packed_attention_layout(&config).unwrap().unwrap();
+        assert_eq!(packed.k_offset, 768);
+        assert_eq!(packed.v_offset, 1536);
+        assert_eq!(
+            packed.strides,
+            [1152, 32, 1, 1152, 32, 1, 1152, 32, 1, 384, 32, 1]
+        );
+    }
     #[test]
     fn nomic_validation_uses_native_positions_and_real_token_types() {
         let geometry =
@@ -4026,7 +4380,9 @@ mod tests {
                 let engine = backend.engine.lock().unwrap();
                 let work = match engine.workspace.as_ref().unwrap() {
                     Workspace::Encoder(work) => work,
-                    Workspace::Decoder(_) => panic!("MiniLM must use the encoder workspace"),
+                    Workspace::EncoderF16(_) | Workspace::Decoder(_) => {
+                        panic!("MiniLM must use the BF16 encoder workspace")
+                    }
                 };
                 engine
                     .lt
@@ -4041,7 +4397,9 @@ mod tests {
                 assert!(!engine.io.poisoned());
                 let work = match engine.workspace.as_ref().unwrap() {
                     Workspace::Encoder(work) => work,
-                    Workspace::Decoder(_) => panic!("MiniLM must use the encoder workspace"),
+                    Workspace::EncoderF16(_) | Workspace::Decoder(_) => {
+                        panic!("MiniLM must use the BF16 encoder workspace")
+                    }
                 };
                 assert_eq!(
                     (work.x.cu_deviceptr(), work.key(), backend.io.pinned_bytes()),
@@ -4050,9 +4408,9 @@ mod tests {
                 );
                 let model = match &*engine.model {
                     ExecutableModel::Encoder(model) => model,
-                    ExecutableModel::Decoder(_) | ExecutableModel::Modern(_) => {
-                        panic!("MiniLM must use encoder plans")
-                    }
+                    ExecutableModel::EncoderF16(_)
+                    | ExecutableModel::Decoder(_)
+                    | ExecutableModel::Modern(_) => panic!("MiniLM must use BF16 encoder plans"),
                 };
                 assert_eq!(model.plans.rows, None);
                 assert_eq!(model.plans.qkv.logical_rows(), b.input_ids.len() as i32);
@@ -4225,7 +4583,7 @@ mod tests {
         let arena = || {
             let engine = fresh.engine.lock().unwrap();
             let Workspace::Encoder(work) = engine.workspace.as_ref().unwrap() else {
-                panic!("this test requires an encoder workspace");
+                panic!("this test requires a BF16 encoder workspace");
             };
             (work.key(), work.bytes, work.input.cu_deviceptr())
         };
@@ -4597,6 +4955,8 @@ mod tests {
             let bytes = model
                 .kernels
                 .attention
+                .as_ref()
+                .unwrap()
                 .max_dynamic_shared_memory_bytes()
                 .unwrap() as usize;
             let limit = bytes / std::mem::size_of::<f32>();
@@ -5224,7 +5584,9 @@ mod tests {
         let engine = backend.engine.lock().unwrap();
         let model = match &*engine.model {
             ExecutableModel::Encoder(model) => model,
-            ExecutableModel::Modern(_) | ExecutableModel::Decoder(_) => {
+            ExecutableModel::EncoderF16(_)
+            | ExecutableModel::Modern(_)
+            | ExecutableModel::Decoder(_) => {
                 panic!("GTE must use encoder plans")
             }
         };
@@ -5389,7 +5751,9 @@ mod tests {
             );
             let work = match engine.workspace.as_ref().unwrap() {
                 Workspace::Encoder(work) => work,
-                Workspace::Decoder(_) => panic!("GTE must use the encoder workspace"),
+                Workspace::EncoderF16(_) | Workspace::Decoder(_) => {
+                    panic!("GTE must use the encoder workspace")
+                }
             };
             assert!(
                 work.key().0 >= b.input_ids.len(),

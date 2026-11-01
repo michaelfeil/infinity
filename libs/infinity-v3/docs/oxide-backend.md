@@ -4,30 +4,32 @@
 
 The experimental `oxide` backend executes typed encoder and dense decoder
 backbones using GPU kernels authored in Rust and compiled by NVIDIA's
-cuda-oxide compiler, cuBLAS/cuBLASLt BF16 projections, and FA4 AOT attention.
+cuda-oxide compiler, cuBLAS/cuBLASLt projections, and FA4 AOT attention.
 Its serving process uses NVIDIA's `cuda-core` runtime and has no LibTorch,
 PyTorch, Python, or CUDA C++ model execution dependency. Encoder attention can
 also use the Rust SIMT kernel; decoder attention requires FA4.
 
 Implementation coverage and checkpoint qualification are separate. The current
-catalog below covers pooled BF16 embeddings, with explicit configuration
+catalog below covers BF16 embeddings and the FP16 MiniLM path, with explicit configuration
 guards. It does not establish compatibility or better performance for every
 variant of these families.
 
 ## Current behavior
 
-- BF16 compute with FP32 accumulation for projections and FP32 embedding outputs.
-- Single-file or standard sharded safetensors; F32/F16/BF16 checkpoint weights.
+- BF16 compute, or explicit FP16 for the MiniLM configuration below, with FP32
+  accumulation for projections and FP32 embedding outputs. `auto` selects BF16.
+- Single-file or standard sharded safetensors and supported stored-ZIP PyTorch
+  `.bin` checkpoints; F32/F16/BF16 checkpoint weights.
   Required shapes, finite values, shard paths, and model options are validated.
   Standard Hugging Face cache snapshot symlinks to the same repository's flat
   `blobs/<SHA1-or-SHA256>` directory are supported. Other external weight paths
   and lexical shard traversal are rejected.
-- Packed attention and CLS, mean, or last-token pooled embeddings.
+- Packed attention, CLS/mean/last-token pooling, and raw token embeddings,
+  including mixed pooled/raw selections and repeated sequence selections.
 - Existing HTTP endpoints, tokenizer workers, batching interface, response
   encodings, and request-controlled normalization. When `modules.json` is present,
-  only a Transformer/Pooling chain with an optional final Normalize is accepted.
-  Trained Dense projections, other module chains, raw/token embeddings, classification,
-  SPLADE, quantized weights, and non-BF16 serving fail explicitly.
+  validated BF16 Dense projections are supported in the ordered module chain.
+  Classification, SPLADE, quantized compute and other serving dtypes fail explicitly.
 
 | Typed executor | Accepted configuration |
 | --- | --- |
@@ -36,6 +38,16 @@ variant of these families.
 | Qwen2 | Dense SiLU text backbone, full split-half NeoX RoPE, global causal or noncausal attention, and a matching FA4 profile. The H896/d64 native RMS/rotary recipe is rejected. The exercised GTE-Qwen2-1.5B-instruct geometry is H1536, 12 Q/2 KV heads, d128, noncausal. |
 | Qwen3 | Dense SiLU text backbones at H1024 or H4096, d128 learned Q/K head norms, full NeoX RoPE, and a matching FA4 profile. Query projection width may differ from hidden width. Qwen3-Embedding-0.6B and 8B are exercised; expert models and other normalization widths are rejected. |
 | Llama | Hidden width 2048, dense SiLU, base unscaled `default` RoPE, causal global attention, and a matching FA4 profile. TinyLlama's 32 Q/4 KV heads at d64 need the appended twentieth profile. H4096, noncausal Llama, and scaled RoPE including Llama3 are rejected. |
+
+Additional BF16 encoder paths cover ModernBERT, Nomic BERT and Jina Small with
+their validated geometry, normalization, rotary/ALiBi and activation recipes.
+Their loader guards remain authoritative; family names do not imply all variants.
+
+Explicit `--dtype float16` admits BERT MiniLM with hidden width 384, six layers,
+12 attention heads, intermediate width 1536, absolute positions, tanh GELU and
+LayerNorm epsilon `1e-12`. It supports all three pools and raw/mixed output;
+Dense modules and other FP16 configurations are rejected. FP16 uses the same
+typed encoder loop and workspace ownership as BF16, without CUDA graphs.
 
 Decoder loading also rejects sliding windows, partial rotary dimensions, expert,
 recurrent, media and quantization modifiers. Accepted Model/ForCausalLM checkpoint
@@ -124,7 +136,7 @@ all buffers until completion. There is no dynamic operator dispatcher.
 
 `math::LinearPlan` prepares row-major `X W^T` geometry and cuBLAS parameters once
 per workspace, including optional row padding. BF16, FP16 and FP32 matrix methods
-accumulate in FP32; serving executors still run only in BF16. The backend binds its
+accumulate in FP32; serving uses the admitted BF16 or FP16 path. The backend binds its
 context once per forward, rather than once per matrix operation. FP8/FP4 enum
 variants describe storage sizes only and do not enable arithmetic or quantized
 checkpoint loading. Packed scales and quantization schemes need separate methods.
@@ -147,8 +159,8 @@ Payload reads use at most 64 KiB of conversion scratch. Two reusable pinned
 buffers total 1 MiB; completion events prevent their reuse before H2D finishes.
 Weights go into final device allocations, including Q/K/V ranges within one
 fused destination. The loader retains neither whole shards nor an FP32 copy of
-the model. BF16 bytes are preserved; F16/F32 conversion keeps the original BF16
-rounding and nonfinite-value checks. Startup waits for every upload before the
+the model. Conversion targets the selected model dtype, preserving native BF16
+or FP16 bytes and retaining nonfinite-value checks. Startup waits for every upload before the
 backend becomes ready. Model metadata, device weights, and request workspaces
 are separate from the transient staging budget.
 
@@ -213,11 +225,11 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles all 45 Rust kernels separately for `sm_90`,
+`device/build.sh` compiles all 64 Rust kernels separately for `sm_90`,
 `sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
 symbols, and writes a manifest recording source/artifact hashes, target,
 compiler revision, and commands. Every architecture is natively compiled from
-Rust for all 45 exports. The original nine BERT kernels remain byte-identical
+Rust for all 64 exports, including seven FP16 MiniLM primitives. The original nine BERT kernels remain byte-identical
 on all three targets. Additional exports provide rounded embedding/residual
 LayerNorm, native width-768/1024 normalization arithmetic, ordinary or rounded RMSNorm with an optional residual output,
 NeoX/interleaved RoPE with separate-product or fused arithmetic, staged or FP32
@@ -373,8 +385,8 @@ match a profile (`mha32` for MiniLM, `bert` for standard width-64 MHA). For exam
 12/12 and 24/24 heads can use the width-64 global MHA export compiled with
 16/16 heads. Decoder executors supply their validated Q/KV ratio, head width and
 causality with global attention. Coverage of an export is operator coverage;
-each executor and checkpoint still needs separate qualification. End-to-end
-FP16 serving is not implemented.
+each executor and checkpoint still needs separate qualification. FP16 serving
+is restricted to the MiniLM configuration documented above.
 
 When configured, this is a hybrid executor: oxide-authored Rust kernels plus
 cuBLAS and AOT FA4 attention; it is not a claim that FA4 attention was rewritten
@@ -593,10 +605,10 @@ not a full MTEB evaluation or a general accuracy guarantee.
 
 ## Remaining coverage limits
 
-The typed catalog above does not replace the full LibTorch catalog. ModernBERT,
-MPNet, DeBERTa, other decoder families, scaled/partial/windowed position and
-attention recipes, recurrent/MoE state, media inputs, learned projections and
-task heads remain unsupported. FA4 local/window profiles and standalone device
+The typed catalog above does not replace the full LibTorch catalog. MPNet,
+DeBERTa, other decoder families, unsupported position/attention recipes,
+recurrent/MoE state, media inputs and task heads remain unsupported.
+FA4 local/window profiles and standalone device
 primitives do not enable those model contracts. CPU execution is also outside
 this CUDA backend. See [LibTorch model coverage](libtorch-model-coverage.md) for
 the native compatibility inventory.

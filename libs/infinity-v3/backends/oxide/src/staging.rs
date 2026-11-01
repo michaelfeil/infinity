@@ -580,6 +580,34 @@ mod tests {
     }
 
     #[test]
+    fn two_lease_aba_schedule_admits_second_a_only_after_first_a_returns() {
+        let pool = SlotPool::new([Slot(1), Slot(2)]);
+        let a = pool.acquire().unwrap();
+        let b = pool.acquire().unwrap();
+        assert_eq!(pool.active_leases(), 2);
+        let (started, waiting) = mpsc::channel();
+        let (result, receiver) = mpsc::channel();
+        let waiter = {
+            let pool = pool.clone();
+            thread::spawn(move || {
+                started.send(()).unwrap();
+                result.send(pool.acquire()).unwrap();
+            })
+        };
+        wait_for(&waiting);
+        assert!(receiver.recv_timeout(Duration::from_millis(20)).is_err());
+        pool.release(a);
+        let a2 = wait_for(&receiver).unwrap();
+        assert_eq!(pool.active_leases(), 2);
+        assert_ne!(a2, b);
+        waiter.join().unwrap();
+        pool.release(a2);
+        assert_eq!(pool.active_leases(), 1);
+        pool.release(b);
+        assert_eq!(pool.active_leases(), 0);
+    }
+
+    #[test]
     fn canceled_lease_drop_returns_its_slot_and_wakes_a_waiter() {
         struct Lease {
             pool: Arc<SlotPool<Slot>>,

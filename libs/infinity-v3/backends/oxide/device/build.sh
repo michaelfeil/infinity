@@ -53,6 +53,12 @@ symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_emb
                   "infinity_silu_mul", "infinity_silu_mul_f32",
                   "infinity_embedding_gather", "infinity_embedding_gather_scaled",
                   "infinity_selected_rows", "infinity_bf16_to_f32"])
+# Additive FP16 H384 MiniLM elementwise exports; the original list above is unchanged.
+symbols = sorted(symbols + [
+    "infinity_embedding_norm_384_f16", "infinity_layer_norm_384_f16",
+    "infinity_plain_norm_384_f16", "infinity_mean_pool_f16",
+    "infinity_pool_f16", "infinity_qkv_f16", "infinity_f16_to_f32",
+])
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -70,6 +76,8 @@ manifest = {
     "upstream_revision": "999094fe568fc3080f80d49e9c44e3680ad1c968",
     "toolchain": "1.99.1",
     "compute_dtype": "bfloat16",
+    "compute_dtypes": ["bfloat16", "float16"],
+    "compute_dtype_default_compatibility": "Legacy default retained for existing BF16-only consumers; compute_dtypes is the authoritative mixed-precision kernel set.",
     "output_dtype": "float32",
     "sources": {name: digest(root / name) for name in
                 ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs", "src/norm384.rs", "src/norm512.rs", "src/norm768.rs", "src/norm768_vector.rs", "src/nomic_embedding.rs", "src/norm1024.rs", "src/norm1024_exact_vector.rs", "src/norm2048.rs", "src/norm2048_vector.rs",
@@ -78,6 +86,9 @@ manifest = {
     "qualification": "Every architecture is independently compiled from Rust and assembled to a native cubin; hardware runtime validation is separate.",
     "architectures": [],
 }
+# Hash the additive F16 module without rewriting the phase1 source list above.
+manifest["sources"]["src/encoder_f16.rs"] = digest(root / "src/encoder_f16.rs")
+manifest["sources"] = dict(sorted(manifest["sources"].items()))
 output.mkdir(parents=True, exist_ok=True)
 # Carry the newly adapted primitive's attribution with standalone bundles.
 shutil.copy2(root / "LICENSE-PyTorch-BSD3", output / "LICENSE-PyTorch-BSD3")

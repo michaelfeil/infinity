@@ -297,6 +297,42 @@ impl BertConfig {
         Self::from_raw(raw)
     }
 
+    /// Admit the single FP16 encoder family implemented by the native H384
+    /// MiniLM path. Other BERT widths, families and arithmetic recipes remain on
+    /// BF16 and must fail before any device allocation or weight upload.
+    pub(crate) fn validate_f16_minilm(&self) -> Result<(), BackendError> {
+        if self.family != EncoderFamily::Bert {
+            return Err(start(format!(
+                "FP16 Oxide supports only BERT H384 MiniLM, got family {:?}",
+                self.family
+            )));
+        }
+        if self.hidden_size != 384
+            || self.intermediate_size != 1536
+            || self.num_attention_heads != 12
+            || self.num_hidden_layers != 6
+            || self.recipe.embedding != NormArithmetic::ExactBiased
+            || self.recipe.residual != NormArithmetic::ExactBiased
+            || self.recipe.positions != PositionRecipe::Absolute
+            || self.recipe.feed_forward != FeedForwardRecipe::DenseGelu
+            || self.layer_norm_eps != 1e-12
+        {
+            return Err(start(format!(
+                "FP16 Oxide H384 MiniLM requires hidden_size=384, intermediate_size=1536, num_attention_heads=12, num_hidden_layers=6, absolute positions, dense GELU, exact biased LayerNorm eps=1e-12; got hidden_size={}, intermediate_size={}, num_attention_heads={}, num_hidden_layers={}, embedding={:?}, residual={:?}, positions={:?}, feed_forward={:?}, eps={}",
+                self.hidden_size,
+                self.intermediate_size,
+                self.num_attention_heads,
+                self.num_hidden_layers,
+                self.recipe.embedding,
+                self.recipe.residual,
+                self.recipe.positions,
+                self.recipe.feed_forward,
+                self.layer_norm_eps
+            )));
+        }
+        Ok(())
+    }
+
     /// Arena and request geometry for the separately validated Modern loader.
     /// The prenorm policy owns its biasless math and dual-table schedule.
     #[allow(clippy::too_many_arguments)]

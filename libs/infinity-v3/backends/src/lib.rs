@@ -543,14 +543,7 @@ async fn init_backend(
                 "The plain CUDA backend does not yet support dynamic FP8".into(),
             ));
         }
-        let dtype = match dtype {
-            DType::Auto | DType::Bfloat16 => "bfloat16",
-            _ => {
-                return Err(BackendError::Start(
-                    "The oxide backend currently supports only --dtype bfloat16".into(),
-                ))
-            }
-        };
+        let dtype = oxide_dtype(dtype)?;
         if !matches!(
             &model_type,
             ModelType::Embedding(Pool::Cls | Pool::Mean | Pool::LastToken)
@@ -978,6 +971,16 @@ mod startup_tests {
 
     #[cfg(feature = "oxide")]
     #[test]
+    fn oxide_dtype_factory_defaults_to_bf16_and_admits_explicit_f16() {
+        assert_eq!(oxide_dtype(DType::Auto).unwrap(), "bfloat16");
+        assert_eq!(oxide_dtype(DType::Bfloat16).unwrap(), "bfloat16");
+        assert_eq!(oxide_dtype(DType::Float16).unwrap(), "float16");
+        let error = oxide_dtype(DType::Float32).unwrap_err().to_string();
+        assert!(error.contains("bfloat16 or float16"), "{error}");
+    }
+
+    #[cfg(feature = "oxide")]
+    #[test]
     fn oxide_rejects_unsupported_options_before_loading_checkpoint_or_driver() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -1000,12 +1003,12 @@ mod startup_tests {
                 "dynamic FP8",
             ),
             (
-                DType::Float16,
+                DType::Float32,
                 ModelType::Embedding(Pool::Mean),
                 None,
                 false,
                 TorchDevice::Cuda,
-                "bfloat16",
+                "bfloat16 or float16",
             ),
             (
                 DType::Bfloat16,
@@ -1105,6 +1108,19 @@ async fn parse_dense_paths_from_modules(
     modules_path: &Path,
 ) -> Result<Vec<String>, std::io::Error> {
     parse_dense_paths_from_modules_sync(modules_path)
+}
+
+/// Cold mapping from the public dtype selector to the oxide backend's storage
+/// name. Auto keeps the existing BF16 default; FP16 is explicit.
+#[cfg(feature = "oxide")]
+fn oxide_dtype(dtype: DType) -> Result<&'static str, BackendError> {
+    match dtype {
+        DType::Auto | DType::Bfloat16 => Ok("bfloat16"),
+        DType::Float16 => Ok("float16"),
+        DType::Float32 => Err(BackendError::Start(
+            "The oxide backend supports --dtype bfloat16 or float16".into(),
+        )),
+    }
 }
 
 /// Result of fetching the optional Sentence Transformers `modules.json`.
