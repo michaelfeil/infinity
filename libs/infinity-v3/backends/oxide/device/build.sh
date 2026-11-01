@@ -23,11 +23,11 @@ ptxas = os.environ.get("PTXAS", str(Path(toolkit) / "bin/ptxas") if toolkit else
 cuobjdump = os.environ.get("CUOBJDUMP", str(Path(toolkit) / "bin/cuobjdump") if toolkit else "cuobjdump")
 environment = dict(os.environ, RUSTUP_TOOLCHAIN="1.99.1", RUSTC_BOOTSTRAP="1")
 symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_embedding_norm_384",
-                  "infinity_embedding_norm_768_exact",
+                  "infinity_embedding_norm_768_exact", "infinity_embedding_norm_768_exact_vector",
                   "infinity_embedding_norm_1024_rounded_native",
                   "infinity_embedding_norm_rounded",
                   "infinity_gelu_bias", "infinity_layer_norm", "infinity_layer_norm_384",
-                  "infinity_layer_norm_768_exact",
+                  "infinity_layer_norm_768_exact", "infinity_layer_norm_768_exact_vector",
                   "infinity_layer_norm_1024_rounded_native",
                   "infinity_layer_norm_rounded",
                   "infinity_mean_pool", "infinity_pool", "infinity_qkv",
@@ -62,7 +62,7 @@ manifest = {
     "compute_dtype": "bfloat16",
     "output_dtype": "float32",
     "sources": {name: digest(root / name) for name in
-                ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs", "src/norm384.rs", "src/norm768.rs", "src/norm1024.rs", "src/norm2048.rs", "src/norm2048_vector.rs",
+                ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs", "src/norm384.rs", "src/norm768.rs", "src/norm768_vector.rs", "src/norm1024.rs", "src/norm2048.rs", "src/norm2048_vector.rs",
                  "src/decoder.rs", "src/silu_pairs.rs", "src/silu_vector8.rs", "src/readout.rs"]},
     "kernels": symbols,
     "qualification": "Every architecture is independently compiled from Rust and assembled to a native cubin; hardware runtime validation is separate.",

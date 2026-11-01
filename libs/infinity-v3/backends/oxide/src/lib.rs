@@ -203,7 +203,7 @@ impl Kernels {
             mean_pool: module.load_function("infinity_mean_pool").map_err(start)?,
             embedding: module
                 .load_function(if exact_768_embedding {
-                    "infinity_embedding_norm_768_exact"
+                    "infinity_embedding_norm_768_exact_vector"
                 } else if rounded_1024_embedding {
                     "infinity_embedding_norm_1024_rounded_native"
                 } else {
@@ -215,7 +215,7 @@ impl Kernels {
                 .map_err(start)?,
             norm: module
                 .load_function(if exact_768_norm {
-                    "infinity_layer_norm_768_exact"
+                    "infinity_layer_norm_768_exact_vector"
                 } else if rounded_1024_norm {
                     "infinity_layer_norm_1024_rounded_native"
                 } else {

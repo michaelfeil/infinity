@@ -12,6 +12,7 @@ mod norm2048;
 mod norm2048_vector;
 mod norm384;
 mod norm768;
+mod norm768_vector;
 mod readout;
 mod silu_pairs;
 mod silu_vector8;
@@ -337,6 +338,52 @@ mod kernels {
     ) {
         unsafe {
             crate::norm768::layer_norm_768(
+                input, residual, bias, gamma, beta, out, rows, width, eps,
+            )
+        };
+    }
+
+    /// Vector-memory native width-768 embedding plus affine LayerNorm.
+    /// Grid=(ceil(tokens/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_embedding_norm_768_exact_vector(
+        ids: *const u32,
+        positions: *const u32,
+        types: *const u32,
+        word: *const u16,
+        position: *const u16,
+        token_type: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        hidden: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm768_vector::embedding_norm_768_vector(
+                ids, positions, types, word, position, token_type, gamma, beta, out, tokens,
+                hidden, eps,
+            )
+        };
+    }
+
+    /// Vector-memory native width-768 residual plus affine LayerNorm.
+    /// Grid=(ceil(rows/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_layer_norm_768_exact_vector(
+        input: *const u16,
+        residual: *const u16,
+        bias: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm768_vector::layer_norm_768_vector(
                 input, residual, bias, gamma, beta, out, rows, width, eps,
             )
         };
