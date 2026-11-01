@@ -81,7 +81,8 @@ pub(crate) unsafe fn layer_norm_384(
     while i < PER_LANE {
         let column = lane + i * LANES;
         if column < WIDTH {
-            values[i] = unsafe { norm_value(input, residual, bias, offset + column, column) };
+            values[i] =
+                unsafe { norm_value::<false>(input, residual, bias, offset + column, column) };
         }
         i += 1;
     }
@@ -115,7 +116,7 @@ pub(crate) unsafe fn embedding_norm_384(
         let column = lane + i * LANES;
         if column < WIDTH {
             values[i] = unsafe {
-                embedding_value(
+                embedding_value::<false>(
                     ids, positions, types, word, position, token_type, row, column, WIDTH,
                 )
             };

@@ -6,6 +6,7 @@
 //! Row kernels launch exactly 256 threads; scalar kernels use a 1D grid.
 
 use cuda_device::{DynamicSharedArray, SharedArray, convert, cuda_module, kernel, thread, warp};
+mod decoder;
 mod norm384;
 
 /// Interpret one BF16 storage element without numerical conversion error.
@@ -80,8 +81,9 @@ unsafe fn block_max(value: f32, scratch: *mut f32) -> f32 {
 
 /// Reproduce a projected BF16 row plus optional projection bias and residual.
 /// Linear+bias rounds to BF16 before the residual is added in FP32 for statistics.
+/// ROUND_RESIDUAL also rounds that residual sum before collecting statistics.
 #[inline(always)]
-unsafe fn norm_value(
+unsafe fn norm_value<const ROUND_RESIDUAL: bool>(
     input: *const u16,
     residual: *const u16,
     bias: *const u16,
@@ -94,14 +96,18 @@ unsafe fn norm_value(
     }
     if !residual.is_null() {
         value += unsafe { read(residual, index) };
+        if ROUND_RESIDUAL {
+            value = f32_from_bf16(bf16_from_f32(value));
+        }
     }
     value
 }
 
 /// BERT's embedding recipe rounds word+type to BF16 first.
 /// Position is then added in FP32 for the qualified biased LayerNorm statistics.
+/// ROUND_POSITION rounds the position sum for materialized-add LayerNorm recipes.
 #[inline(always)]
-unsafe fn embedding_value(
+unsafe fn embedding_value<const ROUND_POSITION: bool>(
     ids: *const u32,
     positions: *const u32,
     types: *const u32,
@@ -117,7 +123,127 @@ unsafe fn embedding_value(
     let pos = unsafe { *positions.add(row) } as usize;
     let pair =
         unsafe { read(word, token * hidden + column) + read(token_type, typ * hidden + column) };
-    f32_from_bf16(bf16_from_f32(pair)) + unsafe { read(position, pos * hidden + column) }
+    let value =
+        f32_from_bf16(bf16_from_f32(pair)) + unsafe { read(position, pos * hidden + column) };
+    if ROUND_POSITION {
+        f32_from_bf16(bf16_from_f32(value))
+    } else {
+        value
+    }
+}
+
+#[inline(always)]
+unsafe fn embedding_norm<const ROUND_POSITION: bool>(
+    ids: *const u32,
+    positions: *const u32,
+    types: *const u32,
+    word: *const u16,
+    position: *const u16,
+    token_type: *const u16,
+    gamma: *const u16,
+    beta: *const u16,
+    out: *mut u16,
+    tokens: u32,
+    hidden: u32,
+    eps: f32,
+) {
+    let row = thread::blockIdx_x() as usize;
+    if row >= tokens as usize || hidden == 0 {
+        return;
+    }
+    static mut SCRATCH: SharedArray<f32, 8> = SharedArray::UNINIT;
+    let scratch = unsafe { SharedArray::as_raw_mut_ptr(&raw mut SCRATCH) };
+    let tid = thread::threadIdx_x() as usize;
+    let width = hidden as usize;
+    let mut column = tid;
+    let mut sum = 0.0;
+    while column < width {
+        sum += unsafe {
+            embedding_value::<ROUND_POSITION>(
+                ids, positions, types, word, position, token_type, row, column, width,
+            )
+        };
+        column += 256;
+    }
+    let mean = unsafe { block_sum(sum, scratch) } / hidden as f32;
+    let mut variance = 0.0;
+    column = tid;
+    while column < width {
+        let centered = unsafe {
+            embedding_value::<ROUND_POSITION>(
+                ids, positions, types, word, position, token_type, row, column, width,
+            )
+        } - mean;
+        variance = cuda_device::float::fma_rn_f32(centered, centered, variance);
+        column += 256;
+    }
+    let inv = 1.0
+        / cuda_device::float::sqrt_rn_f32(
+            unsafe { block_sum(variance, scratch) } / hidden as f32 + eps,
+        );
+    column = tid;
+    while column < width {
+        let centered = unsafe {
+            embedding_value::<ROUND_POSITION>(
+                ids, positions, types, word, position, token_type, row, column, width,
+            )
+        } - mean;
+        let value = centered * inv * unsafe { read(gamma, column) } + unsafe { read(beta, column) };
+        unsafe { write(out, row * width + column, value) };
+        column += 256;
+    }
+}
+
+#[inline(always)]
+unsafe fn layer_norm<const ROUND_RESIDUAL: bool>(
+    input: *const u16,
+    residual: *const u16,
+    bias: *const u16,
+    gamma: *const u16,
+    beta: *const u16,
+    out: *mut u16,
+    rows: u32,
+    width: u32,
+    eps: f32,
+) {
+    let row = thread::blockIdx_x() as usize;
+    if row >= rows as usize || width == 0 {
+        return;
+    }
+    static mut SCRATCH: SharedArray<f32, 8> = SharedArray::UNINIT;
+    let scratch = unsafe { SharedArray::as_raw_mut_ptr(&raw mut SCRATCH) };
+    let tid = thread::threadIdx_x() as usize;
+    let offset = row * width as usize;
+    let mut column = tid;
+    let mut sum = 0.0;
+    while column < width as usize {
+        sum +=
+            unsafe { norm_value::<ROUND_RESIDUAL>(input, residual, bias, offset + column, column) };
+        column += 256;
+    }
+    let mean = unsafe { block_sum(sum, scratch) } / width as f32;
+    column = tid;
+    let mut variance = 0.0;
+    while column < width as usize {
+        let centered =
+            unsafe { norm_value::<ROUND_RESIDUAL>(input, residual, bias, offset + column, column) }
+                - mean;
+        variance = cuda_device::float::fma_rn_f32(centered, centered, variance);
+        column += 256;
+    }
+    let inv = 1.0
+        / cuda_device::float::sqrt_rn_f32(
+            unsafe { block_sum(variance, scratch) } / width as f32 + eps,
+        );
+    column = tid;
+    while column < width as usize {
+        let centered =
+            unsafe { norm_value::<ROUND_RESIDUAL>(input, residual, bias, offset + column, column) }
+                - mean;
+        let value = centered * inv * unsafe { read(gamma, column) } + unsafe { read(beta, column) };
+        unsafe { write(out, offset + column, value) };
+        column += 256;
+    }
 }
 
 #[cuda_module]
@@ -227,52 +353,38 @@ mod kernels {
         hidden: u32,
         eps: f32,
     ) {
-        let row = thread::blockIdx_x() as usize;
-        if row >= tokens as usize || hidden == 0 {
-            return;
-        }
-        static mut SCRATCH: SharedArray<f32, 8> = SharedArray::UNINIT;
-        let scratch = unsafe { SharedArray::as_raw_mut_ptr(&raw mut SCRATCH) };
-        let tid = thread::threadIdx_x() as usize;
-        let width = hidden as usize;
-        let mut column = tid;
-        let mut sum = 0.0;
-        while column < width {
-            sum += unsafe {
-                embedding_value(
-                    ids, positions, types, word, position, token_type, row, column, width,
-                )
-            };
-            column += 256;
-        }
-        let mean = unsafe { block_sum(sum, scratch) } / hidden as f32;
-        let mut variance = 0.0;
-        column = tid;
-        while column < width {
-            let centered = unsafe {
-                embedding_value(
-                    ids, positions, types, word, position, token_type, row, column, width,
-                )
-            } - mean;
-            variance = cuda_device::float::fma_rn_f32(centered, centered, variance);
-            column += 256;
-        }
-        let inv = 1.0
-            / cuda_device::float::sqrt_rn_f32(
-                unsafe { block_sum(variance, scratch) } / hidden as f32 + eps,
-            );
-        column = tid;
-        while column < width {
-            let centered = unsafe {
-                embedding_value(
-                    ids, positions, types, word, position, token_type, row, column, width,
-                )
-            } - mean;
-            let value =
-                centered * inv * unsafe { read(gamma, column) } + unsafe { read(beta, column) };
-            unsafe { write(out, row * width + column, value) };
-            column += 256;
-        }
+        unsafe {
+            super::embedding_norm::<false>(
+                ids, positions, types, word, position, token_type, gamma, beta, out, tokens,
+                hidden, eps,
+            )
+        };
+    }
+
+    /// Round word+type, then +position to BF16 before LayerNorm statistics.
+    /// A missing type table is represented by a host-owned zero table.
+    /// Grid=(tokens,1,1), block=(256,1,1); ABI matches infinity_embedding_norm.
+    #[kernel]
+    pub unsafe fn infinity_embedding_norm_rounded(
+        ids: *const u32,
+        positions: *const u32,
+        types: *const u32,
+        word: *const u16,
+        position: *const u16,
+        token_type: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        hidden: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            super::embedding_norm::<true>(
+                ids, positions, types, word, position, token_type, gamma, beta, out, tokens,
+                hidden, eps,
+            )
+        };
     }
 
     /// Affine LayerNorm over optional projection-bias/residual additions.
@@ -289,42 +401,28 @@ mod kernels {
         width: u32,
         eps: f32,
     ) {
-        let row = thread::blockIdx_x() as usize;
-        if row >= rows as usize || width == 0 {
-            return;
-        }
-        static mut SCRATCH: SharedArray<f32, 8> = SharedArray::UNINIT;
-        let scratch = unsafe { SharedArray::as_raw_mut_ptr(&raw mut SCRATCH) };
-        let tid = thread::threadIdx_x() as usize;
-        let offset = row * width as usize;
-        let mut column = tid;
-        let mut sum = 0.0;
-        while column < width as usize {
-            sum += unsafe { norm_value(input, residual, bias, offset + column, column) };
-            column += 256;
-        }
-        let mean = unsafe { block_sum(sum, scratch) } / width as f32;
-        column = tid;
-        let mut variance = 0.0;
-        while column < width as usize {
-            let centered =
-                unsafe { norm_value(input, residual, bias, offset + column, column) } - mean;
-            variance = cuda_device::float::fma_rn_f32(centered, centered, variance);
-            column += 256;
-        }
-        let inv = 1.0
-            / cuda_device::float::sqrt_rn_f32(
-                unsafe { block_sum(variance, scratch) } / width as f32 + eps,
-            );
-        column = tid;
-        while column < width as usize {
-            let centered =
-                unsafe { norm_value(input, residual, bias, offset + column, column) } - mean;
-            let value =
-                centered * inv * unsafe { read(gamma, column) } + unsafe { read(beta, column) };
-            unsafe { write(out, offset + column, value) };
-            column += 256;
-        }
+        unsafe {
+            super::layer_norm::<false>(input, residual, bias, gamma, beta, out, rows, width, eps)
+        };
+    }
+
+    /// Round projection+bias, then +residual to BF16 before LayerNorm statistics.
+    /// Grid=(rows,1,1), block=(256,1,1); ABI matches infinity_layer_norm.
+    #[kernel]
+    pub unsafe fn infinity_layer_norm_rounded(
+        input: *const u16,
+        residual: *const u16,
+        bias: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            super::layer_norm::<true>(input, residual, bias, gamma, beta, out, rows, width, eps)
+        };
     }
 
     /// Add FFN projection bias, apply exact erf GELU in FP32, and write BF16.
@@ -517,6 +615,273 @@ mod kernels {
             unsafe { read(input, token * hidden as usize + column) }
         };
         unsafe { *out.add(index) = value };
+    }
+
+    /// BF16 RMSNorm; grid=(rows,1,1), block=256. See decoder.rs for rounding.
+    #[kernel]
+    pub unsafe fn infinity_rms_norm(
+        input: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::decoder::rms_norm::<false, false>(
+                input,
+                core::ptr::null(),
+                weight,
+                out,
+                core::ptr::null_mut(),
+                rows,
+                width,
+                eps,
+            )
+        };
+    }
+
+    /// BF16 RMSNorm; grid=(rows,1,1), block=256. See decoder.rs for rounding.
+    #[kernel]
+    pub unsafe fn infinity_rms_norm_rounded(
+        input: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::decoder::rms_norm::<false, true>(
+                input,
+                core::ptr::null(),
+                weight,
+                out,
+                core::ptr::null_mut(),
+                rows,
+                width,
+                eps,
+            )
+        };
+    }
+
+    /// BF16 RMSNorm; grid=(rows,1,1), block=256. See decoder.rs for rounding.
+    #[kernel]
+    pub unsafe fn infinity_add_rms_norm(
+        input: *const u16,
+        residual: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        summed: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::decoder::rms_norm::<true, false>(
+                input, residual, weight, out, summed, rows, width, eps,
+            )
+        };
+    }
+
+    /// BF16 RMSNorm; grid=(rows,1,1), block=256. See decoder.rs for rounding.
+    #[kernel]
+    pub unsafe fn infinity_add_rms_norm_rounded(
+        input: *const u16,
+        residual: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        summed: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::decoder::rms_norm::<true, true>(
+                input, residual, weight, out, summed, rows, width, eps,
+            )
+        };
+    }
+
+    /// In-place Q/K rotary pairs; block=256, one scalar thread per pair.
+    #[kernel]
+    pub unsafe fn infinity_rope_neox(
+        q: *mut u16,
+        k: *mut u16,
+        cosine: *const f32,
+        sine: *const f32,
+        positions: *const u32,
+        tokens: u32,
+        q_heads: u32,
+        kv_heads: u32,
+        head_dim: u32,
+        rotary_dim: u32,
+        q_stride: u64,
+        k_stride: u64,
+        table_stride: u32,
+    ) {
+        unsafe {
+            crate::decoder::rope::<false, false>(
+                q,
+                k,
+                cosine,
+                sine,
+                positions,
+                tokens,
+                q_heads,
+                kv_heads,
+                head_dim,
+                rotary_dim,
+                q_stride,
+                k_stride,
+                table_stride,
+            )
+        };
+    }
+
+    /// In-place Q/K rotary pairs; block=256, one scalar thread per pair.
+    #[kernel]
+    pub unsafe fn infinity_rope_neox_hfma(
+        q: *mut u16,
+        k: *mut u16,
+        cosine: *const f32,
+        sine: *const f32,
+        positions: *const u32,
+        tokens: u32,
+        q_heads: u32,
+        kv_heads: u32,
+        head_dim: u32,
+        rotary_dim: u32,
+        q_stride: u64,
+        k_stride: u64,
+        table_stride: u32,
+    ) {
+        unsafe {
+            crate::decoder::rope::<false, true>(
+                q,
+                k,
+                cosine,
+                sine,
+                positions,
+                tokens,
+                q_heads,
+                kv_heads,
+                head_dim,
+                rotary_dim,
+                q_stride,
+                k_stride,
+                table_stride,
+            )
+        };
+    }
+
+    /// In-place Q/K rotary pairs; block=256, one scalar thread per pair.
+    #[kernel]
+    pub unsafe fn infinity_rope_interleaved(
+        q: *mut u16,
+        k: *mut u16,
+        cosine: *const f32,
+        sine: *const f32,
+        positions: *const u32,
+        tokens: u32,
+        q_heads: u32,
+        kv_heads: u32,
+        head_dim: u32,
+        rotary_dim: u32,
+        q_stride: u64,
+        k_stride: u64,
+        table_stride: u32,
+    ) {
+        unsafe {
+            crate::decoder::rope::<true, false>(
+                q,
+                k,
+                cosine,
+                sine,
+                positions,
+                tokens,
+                q_heads,
+                kv_heads,
+                head_dim,
+                rotary_dim,
+                q_stride,
+                k_stride,
+                table_stride,
+            )
+        };
+    }
+
+    /// In-place Q/K rotary pairs; block=256, one scalar thread per pair.
+    #[kernel]
+    pub unsafe fn infinity_rope_interleaved_hfma(
+        q: *mut u16,
+        k: *mut u16,
+        cosine: *const f32,
+        sine: *const f32,
+        positions: *const u32,
+        tokens: u32,
+        q_heads: u32,
+        kv_heads: u32,
+        head_dim: u32,
+        rotary_dim: u32,
+        q_stride: u64,
+        k_stride: u64,
+        table_stride: u32,
+    ) {
+        unsafe {
+            crate::decoder::rope::<true, true>(
+                q,
+                k,
+                cosine,
+                sine,
+                positions,
+                tokens,
+                q_heads,
+                kv_heads,
+                head_dim,
+                rotary_dim,
+                q_stride,
+                k_stride,
+                table_stride,
+            )
+        };
+    }
+
+    /// Gate/up activation; grid=ceil(rows*width/256), block=256.
+    #[kernel]
+    pub unsafe fn infinity_silu_mul(input: *const u16, out: *mut u16, rows: u32, width: u32) {
+        unsafe { crate::decoder::silu_mul::<true>(input, out, rows, width) };
+    }
+
+    /// Gate/up activation; grid=ceil(rows*width/256), block=256.
+    #[kernel]
+    pub unsafe fn infinity_silu_mul_f32(input: *const u16, out: *mut u16, rows: u32, width: u32) {
+        unsafe { crate::decoder::silu_mul::<false>(input, out, rows, width) };
+    }
+
+    /// Word-only BF16 gather; grid=ceil(tokens*width/256), block=256.
+    #[kernel]
+    pub unsafe fn infinity_embedding_gather(
+        ids: *const u32,
+        table: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        width: u32,
+    ) {
+        unsafe { crate::decoder::embedding_gather::<false>(ids, table, out, tokens, width, 1.0) };
+    }
+
+    /// Word gather with one FP32 scale multiply and BF16 output; no normalization.
+    #[kernel]
+    pub unsafe fn infinity_embedding_gather_scaled(
+        ids: *const u32,
+        table: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        width: u32,
+        scale: f32,
+    ) {
+        unsafe { crate::decoder::embedding_gather::<true>(ids, table, out, tokens, width, scale) };
     }
 }
 

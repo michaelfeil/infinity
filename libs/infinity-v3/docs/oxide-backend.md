@@ -124,7 +124,7 @@ NVIDIA CUDA Rust is pinned at
 The Infinity host builds with the repository's Rust **1.93.1** toolchain;
 `cuda-core` requires Rust 1.89 or newer. The separate device package pins
 **1.99.1**, `rustc-dev`, Rust sources, and LLVM tools for cuda-oxide and the
-nine-kernel bundle. Serving does not load the Rust compiler or compile kernels on
+native kernel bundle. Serving does not load the Rust compiler or compile kernels on
 a request.
 
 The compiler bootstrap was exercised with CUDA **13.1**, Rust's bundled
@@ -173,14 +173,21 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles all nine Rust kernels separately for `sm_90`,
+`device/build.sh` compiles all 23 Rust kernels separately for `sm_90`,
 `sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
 symbols, and writes a manifest recording source/artifact hashes, target,
 compiler revision, and commands. Every architecture is natively compiled from
-Rust for all nine exports. The fresh set adds register-cached 384-wide
-embedding/LayerNorm kernels and a parallel mean-pool kernel; the earlier bundle
-exported six. A bundle with these required new entrypoints must be rebuilt, and
-the old six-export bundle fails startup. These are independent target builds;
+Rust for all 23 exports. The original nine BERT kernels remain byte-identical
+on all three targets. Additional exports provide rounded embedding/residual
+LayerNorm, ordinary or rounded RMSNorm with an optional residual output,
+NeoX/interleaved RoPE with separate-product or fused arithmetic, staged or FP32
+SiLU multiplication, and plain or scaled word gathers. These primitives do not
+enable decoder model serving: checkpoint loading, model execution, and full
+quality/performance qualification remain separate work. Generic RMS reductions
+also need qualification against width-specific native reduction recipes.
+
+The original BERT executor still needs its nine entrypoints; the older six-export
+bundle fails startup. These are independent target builds;
 changing a label in a manifest is not an architecture build.
 
 | Target | Deployment family | Qualification |
@@ -194,6 +201,18 @@ changing a label in a manifest is not an architecture build.
 Native code avoids driver compilation at module load; PTX is compiled by the
 driver and must use a supported PTX version. There is no automatic C++ kernel
 substitution when an oxide module is absent.
+
+The added arithmetic recipes pass independent numerical/guard tests on H100.
+Run their GPU tests explicitly against the rebuilt bundle:
+
+```bash
+INFINITY_OXIDE_KERNEL_MODULE=/opt/infinity-oxide-kernels \
+  cargo test --locked -p infinity-backend-oxide --test rounded_norms \
+  -- --ignored --test-threads=1
+INFINITY_OXIDE_KERNEL_MODULE=/opt/infinity-oxide-kernels \
+  cargo test --locked -p infinity-backend-oxide --test decoder_primitives \
+  -- --ignored --test-threads=1
+```
 
 Module entry signatures and launch contracts are defined by
 [the device source](../backends/oxide/device/src/main.rs) and
