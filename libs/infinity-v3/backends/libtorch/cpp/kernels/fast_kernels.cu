@@ -5,6 +5,7 @@
 /// Model adapters select the operation and its rounding contract through these wrappers.
 
 #include "kernels/fast_kernels.h"
+#include "kernels/dependent_launch.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <ATen/ops/_fused_rms_norm.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -99,19 +100,21 @@ __global__ void nomic_topk8_kernel(
   }
 }
 
-__global__ void qk_bf16_bridge(const __nv_bfloat16* q,
-                               const __nv_bfloat16* k,
-                               const __nv_bfloat16* qw,
-                               const __nv_bfloat16* kw,
-                               const __nv_bfloat16* cosine,
-                               const __nv_bfloat16* sine,
-                               __nv_bfloat16* out,
-                               int tokens,
-                               int qheads,
-                               int kheads,
-                               int qstride,
-                               int kstride,
-                               float eps) {
+template <class T>
+__global__ void qk_bridge(const T* q,
+                          const T* k,
+                          const T* qw,
+                          const T* kw,
+                          const T* cosine,
+                          const T* sine,
+                          T* out,
+                          int tokens,
+                          int qheads,
+                          int kheads,
+                          int qstride,
+                          int kstride,
+                          float eps) {
+  wait_for_producer();
   ::fused_qk_norm_rope(
       q, k, qw, kw, cosine, sine, out, tokens, qheads, kheads, qstride, kstride, eps);
 }
@@ -269,6 +272,7 @@ __global__ void add_rms_kernel(const T* x,
                                T* summed,
                                int64_t width,
                                float epsilon) {
+  wait_for_producer();
   const int64_t row = blockIdx.x;
   float variance = 0;
   float values[Columns];
@@ -307,6 +311,7 @@ __global__ void add_rms_bf16_vector_kernel(const __nv_bfloat16* x,
                                            __nv_bfloat16* summed,
                                            int64_t width,
                                            float epsilon) {
+  wait_for_producer();
   __shared__ float values[4096];
   const int64_t row = blockIdx.x;
 #pragma unroll
@@ -353,6 +358,7 @@ __global__ void add_rms_large_kernel(const T* x,
                                      T* summed,
                                      int64_t width,
                                      float epsilon) {
+  wait_for_producer();
   const int64_t row = blockIdx.x;
   float variance = 0;
   for (int64_t col = threadIdx.x; col < width; col += blockDim.x) {
@@ -437,13 +443,14 @@ void run_rms(const at::Tensor& x,
     if (vector_width && reinterpret_cast<uintptr_t>(xp) % 16 == 0 &&
         reinterpret_cast<uintptr_t>(wp) % 16 == 0 &&
         (!rp || reinterpret_cast<uintptr_t>(rp) % 16 == 0)) {
-      add_rms_bf16_vector_kernel<<<rows, 256, 0, stream>>>(xp, rp, wp, op, sp, width, epsilon);
+      launch_dependent<add_rms_bf16_vector_kernel>(
+          rows, 256, stream, xp, rp, wp, op, sp, width, epsilon);
       return;
     }
   }
 
 #define TEI_RMS_COLUMNS(C)                                                                         \
-  add_rms_kernel<T, C><<<rows, 256, 0, stream>>>(xp, rp, wp, op, sp, width, epsilon)
+  launch_dependent<add_rms_kernel<T, C>>(rows, 256, stream, xp, rp, wp, op, sp, width, epsilon)
   if (width <= 256) {
     TEI_RMS_COLUMNS(1);
   } else if (width <= 512) {
@@ -459,7 +466,8 @@ void run_rms(const at::Tensor& x,
   } else if (width <= 8192) {
     TEI_RMS_COLUMNS(32);
   } else
-    add_rms_large_kernel<T><<<rows, 256, 0, stream>>>(xp, rp, wp, op, sp, width, epsilon);
+    launch_dependent<add_rms_large_kernel<T>>(
+        rows, 256, stream, xp, rp, wp, op, sp, width, epsilon);
 #undef TEI_RMS_COLUMNS
 }
 
@@ -522,6 +530,7 @@ template <class T> __device__ __forceinline__ T gated_value(float gate, float up
 template <class T>
 __global__ void
 gated_kernel(const T* x, T* out, int64_t count, int64_t width, int activation, bool gate_first) {
+  wait_for_producer();
   int64_t i = int64_t(blockIdx.x) * blockDim.x + threadIdx.x;
   if (i >= count)
     return;
@@ -558,6 +567,7 @@ template <> __device__ __nv_bfloat162 model_pair_tanh(__nv_bfloat162 value) {
 template <class Pair, class Index>
 __global__ void
 gated_gelu_pairs_kernel(const Pair* x, Pair* out, Index count, Index width, bool gate_first) {
+  wait_for_producer();
   const Index index = Index(blockIdx.x) * blockDim.x + threadIdx.x;
   if (index >= count / 4)
     return;
@@ -586,6 +596,7 @@ __global__ void gated_silu_bf16_pairs_kernel(const __nv_bfloat162* x,
                                              __nv_bfloat162* out,
                                              Index count,
                                              Index width) {
+  wait_for_producer();
   const Index index = Index(blockIdx.x) * blockDim.x + threadIdx.x;
   if (index >= count / 8)
     return;
@@ -606,6 +617,7 @@ __global__ void gated_silu_bf16_pairs_kernel(const __nv_bfloat162* x,
 template <class T, class Index, int Lanes>
 __global__ void
 gated_vector_kernel(const T* x, T* out, Index count, Index width, int activation, bool gate_first) {
+  wait_for_producer();
   Index index = Index(blockIdx.x) * blockDim.x + threadIdx.x;
   if (index >= count / Lanes)
     return;
@@ -1014,7 +1026,10 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
   if (activation == 5 && gate_first && x.scalar_type() == at::kBFloat16 && shape.back() % 8 == 0 &&
       reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 16 == 0) {
 #define TEI_SILU_PAIRS(I)                                                                          \
-  gated_silu_bf16_pairs_kernel<I><<<(output.numel() / 8 + 255) / 256, 256, 0, stream>>>(           \
+  launch_dependent<gated_silu_bf16_pairs_kernel<I>>(                                               \
+      (output.numel() / 8 + 255) / 256,                                                            \
+      256,                                                                                         \
+      stream,                                                                                      \
       reinterpret_cast<const __nv_bfloat162*>(x.const_data_ptr()),                                 \
       reinterpret_cast<__nv_bfloat162*>(output.mutable_data_ptr()),                                \
       I(output.numel()),                                                                           \
@@ -1031,12 +1046,14 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
   if (activation == 4 && (x.scalar_type() == at::kHalf || x.scalar_type() == at::kBFloat16) &&
       shape.back() % 8 == 0 && reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 16 == 0) {
 #define TEI_GATE_PAIRS(T, I)                                                                       \
-  gated_gelu_pairs_kernel<T, I><<<(output.numel() / 8 + 255) / 256, 256, 0, stream>>>(             \
-      reinterpret_cast<const T*>(x.const_data_ptr()),                                              \
-      reinterpret_cast<T*>(output.mutable_data_ptr()),                                             \
-      I(output.numel() / 2),                                                                       \
-      I(shape.back() / 2),                                                                         \
-      gate_first)
+  launch_dependent<gated_gelu_pairs_kernel<T, I>>((output.numel() / 8 + 255) / 256,                \
+                                                  256,                                             \
+                                                  stream,                                          \
+                                                  reinterpret_cast<const T*>(x.const_data_ptr()),  \
+                                                  reinterpret_cast<T*>(output.mutable_data_ptr()), \
+                                                  I(output.numel() / 2),                           \
+                                                  I(shape.back() / 2),                             \
+                                                  gate_first)
     if (x.scalar_type() == at::kHalf) {
       if (x.numel() <= UINT32_MAX) {
         TEI_GATE_PAIRS(__half2, uint32_t);
@@ -1059,7 +1076,10 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
     if (x.element_size() == 2 && shape.back() % 8 == 0 &&                                          \
         reinterpret_cast<uintptr_t>(x.const_data_ptr()) % 16 == 0) {                               \
       if (x.numel() <= UINT32_MAX)                                                                 \
-        gated_vector_kernel<T, uint32_t, 8><<<(output.numel() / 8 + 255) / 256, 256, 0, stream>>>( \
+        launch_dependent<gated_vector_kernel<T, uint32_t, 8>>(                                     \
+            (output.numel() / 8 + 255) / 256,                                                      \
+            256,                                                                                   \
+            stream,                                                                                \
             reinterpret_cast<const T*>(x.const_data_ptr()),                                        \
             reinterpret_cast<T*>(output.mutable_data_ptr()),                                       \
             output.numel(),                                                                        \
@@ -1067,7 +1087,10 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
             activation,                                                                            \
             gate_first);                                                                           \
       else                                                                                         \
-        gated_vector_kernel<T, int64_t, 8><<<(output.numel() / 8 + 255) / 256, 256, 0, stream>>>(  \
+        launch_dependent<gated_vector_kernel<T, int64_t, 8>>(                                      \
+            (output.numel() / 8 + 255) / 256,                                                      \
+            256,                                                                                   \
+            stream,                                                                                \
             reinterpret_cast<const T*>(x.const_data_ptr()),                                        \
             reinterpret_cast<T*>(output.mutable_data_ptr()),                                       \
             output.numel(),                                                                        \
@@ -1077,7 +1100,10 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
     } else if (shape.back() % 4 == 0 &&                                                            \
                reinterpret_cast<uintptr_t>(x.const_data_ptr()) % (4 * x.element_size()) == 0) {    \
       if (x.numel() <= UINT32_MAX)                                                                 \
-        gated_vector_kernel<T, uint32_t, 4><<<(output.numel() / 4 + 255) / 256, 256, 0, stream>>>( \
+        launch_dependent<gated_vector_kernel<T, uint32_t, 4>>(                                     \
+            (output.numel() / 4 + 255) / 256,                                                      \
+            256,                                                                                   \
+            stream,                                                                                \
             reinterpret_cast<const T*>(x.const_data_ptr()),                                        \
             reinterpret_cast<T*>(output.mutable_data_ptr()),                                       \
             output.numel(),                                                                        \
@@ -1085,7 +1111,10 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
             activation,                                                                            \
             gate_first);                                                                           \
       else                                                                                         \
-        gated_vector_kernel<T, int64_t, 4><<<(output.numel() / 4 + 255) / 256, 256, 0, stream>>>(  \
+        launch_dependent<gated_vector_kernel<T, int64_t, 4>>(                                      \
+            (output.numel() / 4 + 255) / 256,                                                      \
+            256,                                                                                   \
+            stream,                                                                                \
             reinterpret_cast<const T*>(x.const_data_ptr()),                                        \
             reinterpret_cast<T*>(output.mutable_data_ptr()),                                       \
             output.numel(),                                                                        \
@@ -1093,13 +1122,15 @@ at::Tensor fused_gated_activation(const at::Tensor& x, int32_t activation, bool 
             activation,                                                                            \
             gate_first);                                                                           \
     } else                                                                                         \
-      gated_kernel<T><<<(output.numel() + 255) / 256, 256, 0, stream>>>(                           \
-          reinterpret_cast<const T*>(x.const_data_ptr()),                                          \
-          reinterpret_cast<T*>(output.mutable_data_ptr()),                                         \
-          output.numel(),                                                                          \
-          shape.back(),                                                                            \
-          activation,                                                                              \
-          gate_first);                                                                             \
+      launch_dependent<gated_kernel<T>>((output.numel() + 255) / 256,                              \
+                                        256,                                                       \
+                                        stream,                                                    \
+                                        reinterpret_cast<const T*>(x.const_data_ptr()),            \
+                                        reinterpret_cast<T*>(output.mutable_data_ptr()),           \
+                                        output.numel(),                                            \
+                                        shape.back(),                                              \
+                                        activation,                                                \
+                                        gate_first);                                               \
   } while (false)
   if (x.scalar_type() == at::kHalf) {
     TEI_GATE(__half);
@@ -1375,25 +1406,30 @@ std::pair<at::Tensor, at::Tensor> fused_qk_norm_rope(const at::Tensor& q,
       auto p = [](const at::Tensor& t) {
         return reinterpret_cast<const __half*>(t.const_data_ptr());
       };
-      qk_norm_rope_f16<<<blocks, 128, 0, stream>>>(
-          p(q),
-          p(k),
-          p(qw),
-          p(kw),
-          p(cosine),
-          p(sine),
-          reinterpret_cast<__half*>(output.mutable_data_ptr()),
-          q.size(0),
-          q.size(1),
-          k.size(1),
-          q.stride(0),
-          k.stride(0),
-          epsilon);
+      launch_dependent<qk_bridge<__half>>(blocks,
+                                          128,
+                                          stream,
+                                          p(q),
+                                          p(k),
+                                          p(qw),
+                                          p(kw),
+                                          p(cosine),
+                                          p(sine),
+                                          reinterpret_cast<__half*>(output.mutable_data_ptr()),
+                                          q.size(0),
+                                          q.size(1),
+                                          k.size(1),
+                                          q.stride(0),
+                                          k.stride(0),
+                                          epsilon);
     } else {
       auto p = [](const at::Tensor& t) {
         return reinterpret_cast<const __nv_bfloat16*>(t.const_data_ptr());
       };
-      qk_bf16_bridge<<<blocks, 128, 0, stream>>>(
+      launch_dependent<qk_bridge<__nv_bfloat16>>(
+          blocks,
+          128,
+          stream,
           p(q),
           p(k),
           p(qw),
