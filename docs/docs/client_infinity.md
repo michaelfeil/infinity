@@ -125,7 +125,10 @@ i_client = Client(
     base_url="https://infinity.modal.michaelfeil.eu",
 )
 # Note that base_url needs to be re-set, as would any shared cookies, headers, etc.
-i_client.set_httpx_client(httpx.Client(base_url="https://infinity.modal.michaelfeil.eu", proxies="http://localhost:8030"))
+transport = httpx.HTTPTransport(proxy=httpx.Proxy("http://localhost:8030"))
+i_client.set_httpx_client(
+    httpx.Client(base_url="https://infinity.modal.michaelfeil.eu", transport=transport)
+)
 ```
 
 ## Building / publishing this package
