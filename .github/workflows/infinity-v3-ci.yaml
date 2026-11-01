@@ -121,3 +121,44 @@ jobs:
         run: |
           cargo test --locked -p infinity-v3-config
           cargo test --locked -p infinity_v3-router --bin infinity_v3
+
+  python-backend:
+    runs-on: ubuntu-latest
+    env:
+      CFLAGS: -std=gnu17
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read Rust toolchain
+        id: toolchain
+        run: |
+          python3 - <<'PYTHON' >> "$GITHUB_OUTPUT"
+          import tomllib
+          with open('rust-toolchain.toml', 'rb') as file:
+              print('version=' + tomllib.load(file)['toolchain']['channel'])
+          PYTHON
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: ${{ steps.toolchain.outputs.version }}
+          components: rustfmt, clippy
+          rust-src-dir: libs/infinity-v3
+          cache-workspaces: libs/infinity-v3
+          rustflags: '-C target-cpu=x86-64'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Python backend build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake protobuf-compiler libssl-dev pkg-config
+          python -m pip install ./python
+      - name: Build Python CPU server without LibTorch
+        run: cargo build --locked -p infinity_v3-router --no-default-features --features python-backend,http
+      - name: Run Python backend and shared frontend tests
+        run: |
+          cargo test --locked -p infinity-v3-backend-python -p infinity_v3-backend-core \
+            -p infinity_v3-backend -p infinity_v3-core -p infinity_v3-router \
+            --no-default-features --features python-backend,http --lib --bins
+      - name: Check frontend without a compiled backend
+        run: cargo check --locked -p infinity_v3-router --no-default-features --features http
+      - name: Check Python feature lints
+        run: cargo clippy --locked -p infinity_v3-router --no-default-features --features python-backend,http --lib --bins
