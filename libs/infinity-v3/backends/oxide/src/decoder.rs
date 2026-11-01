@@ -143,7 +143,7 @@ impl DecoderMath {
             Self::Qwen2FullNeox => "infinity_rms_norm",
             Self::Qwen2H1536FullNeox => "infinity_rms_norm_1536_vector",
             Self::Qwen3H1024Candle => "infinity_rms_norm_1024_exact_vector",
-            Self::Qwen3H4096Ordinary => "infinity_rms_norm",
+            Self::Qwen3H4096Ordinary => "infinity_rms_norm_4096_vector",
             Self::LlamaH2048Exact => "infinity_rms_norm_2048_vector",
         }
     }
@@ -153,7 +153,7 @@ impl DecoderMath {
             Self::Qwen2FullNeox => "infinity_add_rms_norm",
             Self::Qwen2H1536FullNeox => "infinity_add_rms_norm_1536_vector",
             Self::Qwen3H1024Candle => "infinity_add_rms_norm_1024_exact_vector",
-            Self::Qwen3H4096Ordinary => "infinity_add_rms_norm",
+            Self::Qwen3H4096Ordinary => "infinity_add_rms_norm_4096_vector",
             Self::LlamaH2048Exact => "infinity_add_rms_norm_2048_vector",
         }
     }
@@ -1908,11 +1908,11 @@ mod tests {
         );
         assert_eq!(
             DecoderMath::Qwen3H4096Ordinary.rms_export(),
-            "infinity_rms_norm"
+            "infinity_rms_norm_4096_vector"
         );
         assert_eq!(
             DecoderMath::Qwen3H4096Ordinary.add_rms_export(),
-            "infinity_add_rms_norm"
+            "infinity_add_rms_norm_4096_vector"
         );
         assert_eq!(
             DecoderMath::Qwen3H4096Ordinary.qk_norm_rope_export(),
