@@ -141,7 +141,7 @@ impl DecoderMath {
     const fn rms_export(self) -> &'static str {
         match self {
             Self::Qwen2FullNeox => "infinity_rms_norm",
-            Self::Qwen2H1536FullNeox => "infinity_rms_norm_1536_cached",
+            Self::Qwen2H1536FullNeox => "infinity_rms_norm_1536_vector",
             Self::Qwen3H1024Candle => "infinity_rms_norm_1024_exact_vector",
             Self::Qwen3H4096Ordinary => "infinity_rms_norm",
             Self::LlamaH2048Exact => "infinity_rms_norm_2048_vector",
@@ -151,7 +151,7 @@ impl DecoderMath {
     const fn add_rms_export(self) -> &'static str {
         match self {
             Self::Qwen2FullNeox => "infinity_add_rms_norm",
-            Self::Qwen2H1536FullNeox => "infinity_add_rms_norm_1536_cached",
+            Self::Qwen2H1536FullNeox => "infinity_add_rms_norm_1536_vector",
             Self::Qwen3H1024Candle => "infinity_add_rms_norm_1024_exact_vector",
             Self::Qwen3H4096Ordinary => "infinity_add_rms_norm",
             Self::LlamaH2048Exact => "infinity_add_rms_norm_2048_vector",
@@ -2021,11 +2021,11 @@ mod tests {
         );
         assert_eq!(
             DecoderMath::Qwen2H1536FullNeox.rms_export(),
-            "infinity_rms_norm_1536_cached"
+            "infinity_rms_norm_1536_vector"
         );
         assert_eq!(
             DecoderMath::Qwen2H1536FullNeox.add_rms_export(),
-            "infinity_add_rms_norm_1536_cached"
+            "infinity_add_rms_norm_1536_vector"
         );
         let mut other_qwen = qwen.clone();
         other_qwen.hidden_size = 1024;

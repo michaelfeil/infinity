@@ -17,6 +17,7 @@ mod norm768_vector;
 mod qk_norm_rope_128;
 mod readout;
 mod rms1536;
+mod rms1536_vector;
 mod silu_pairs;
 mod silu_vector8;
 
@@ -979,6 +980,51 @@ mod kernels {
     ) {
         unsafe {
             crate::rms1536::rms_norm_1536::<true>(
+                input, residual, weight, out, summed, rows, width, eps,
+            )
+        };
+    }
+
+    /// Ordinary fixed-H1536 RMSNorm with aligned 128-bit vector I/O.
+    /// Grid=(rows,1,1), block=256; arithmetic matches the cached scalar export.
+    #[kernel]
+    pub unsafe fn infinity_rms_norm_1536_vector(
+        input: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::rms1536_vector::rms_norm_1536_vector::<false>(
+                input,
+                core::ptr::null(),
+                weight,
+                out,
+                core::ptr::null_mut(),
+                rows,
+                width,
+                eps,
+            )
+        };
+    }
+
+    /// Ordinary residual fixed-H1536 RMSNorm with aligned 128-bit vector I/O.
+    /// Grid=(rows,1,1), block=256; arithmetic matches the cached scalar export.
+    #[kernel]
+    pub unsafe fn infinity_add_rms_norm_1536_vector(
+        input: *const u16,
+        residual: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        summed: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::rms1536_vector::rms_norm_1536_vector::<true>(
                 input, residual, weight, out, summed, rows, width, eps,
             )
         };

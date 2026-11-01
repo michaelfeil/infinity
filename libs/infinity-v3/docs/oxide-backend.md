@@ -213,11 +213,11 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles all 43 Rust kernels separately for `sm_90`,
+`device/build.sh` compiles all 45 Rust kernels separately for `sm_90`,
 `sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
 symbols, and writes a manifest recording source/artifact hashes, target,
 compiler revision, and commands. Every architecture is natively compiled from
-Rust for all 43 exports. The original nine BERT kernels remain byte-identical
+Rust for all 45 exports. The original nine BERT kernels remain byte-identical
 on all three targets. Additional exports provide rounded embedding/residual
 LayerNorm, native width-768/1024 normalization arithmetic, ordinary or rounded RMSNorm with an optional residual output,
 NeoX/interleaved RoPE with separate-product or fused arithmetic, staged or FP32
@@ -254,6 +254,11 @@ normalization with NeoX RoPE. The latter preserves the native 16-lane centered
 statistics and BF16 multiply/FMA boundaries. All previous 40 machine bodies
 remain byte-identical on all three targets; all five new primitive GPU checks
 match independent native controls and pass memory and initialization checks.
+Two width-1536 RMS exports use aligned 16-byte transfers and shared storage
+to preserve the scalar lane reduction order. Unaligned buffers retain the
+cached scalar recipe. These replace only the prepared H1536 function bindings;
+all previous 43 bodies and resource requirements remain unchanged on all three
+targets. Native/cached bit controls, aliases, bounds and memory checks pass.
 The row-gather and output-extraction kernels copy storage bits
 or widen them exactly, support independent tensor widths and repeated output
 selections, and need no additional intermediate allocation. Checkpoint loading,
@@ -419,6 +424,12 @@ model execution is not implemented by this initial backend.
 The current framework passed HTTP quality checks on 320 public SciFact texts
 for each of seven checkpoint cases, including changing shapes, order checks and
 sentinels. These are checkpoint cases, not a full MTEB or model-catalog claim.
+
+The later H1536 vector RMS control preserves all 320 GTE-Qwen2 vectors bit for
+bit and improves median latency from 2.408 to 2.313 ms (-3.94%), with p99 down
+3.93%. Short one/seven-token diagnostics also improve. Profiling attributes the
+gain to normalization, with no additional dispatch calls or graphs. This GTE
+control remains 13.06% slower than matched native LibTorch at 128 tokens.
 
 Qwen3-Embedding-0.6B and 8B additionally pass 320 public-text comparisons each
 with the same numerical guards, shape changes, deferred A/B/A and cancellation,
