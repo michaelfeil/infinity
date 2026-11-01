@@ -19,10 +19,10 @@ const NONFINITE: &str = "invalid or nonfinite checkpoint weights";
 const MAX_SIDECAR_BYTES: u64 = 16 * 1024 * 1024;
 
 fn start(error: impl std::fmt::Display) -> BackendError {
-    BackendError::Start(format!("Plain CUDA BERT: {error}"))
+    BackendError::Start(format!("Oxide: {error}"))
 }
 
-fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, BackendError> {
+pub(crate) fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, BackendError> {
     let file = File::open(path).map_err(start)?;
     let metadata = file.metadata().map_err(start)?;
     if !metadata.is_file() || metadata.len() > MAX_SIDECAR_BYTES {
@@ -43,27 +43,167 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, BackendEr
     serde_json::from_slice(&bytes).map_err(start)
 }
 
-fn path_present(path: &Path) -> Result<bool, BackendError> {
+pub(crate) fn path_present(path: &Path) -> Result<bool, BackendError> {
     match std::fs::symlink_metadata(path) {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(start(error)),
     }
 }
-fn epsilon() -> f64 {
-    1e-12
+const BERT_MAX_POSITION_EMBEDDINGS: usize = 4096;
+const DISTIL_LAYER_NORM_EPS: f64 = 1e-12;
+const DISTIL_TOKEN_TYPE_ROWS: usize = 2;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum EncoderFamily {
+    Bert,
+    Roberta,
+    XlmRoberta,
+    Camembert,
+    DistilBert,
 }
-fn type_vocab() -> usize {
-    2
-}
-fn gelu() -> String {
-    "gelu".into()
-}
-fn absolute() -> String {
-    "absolute".into()
+impl EncoderFamily {
+    fn from_model_type(model_type: &str) -> Option<Self> {
+        match model_type {
+            "bert" => Some(Self::Bert),
+            "roberta" => Some(Self::Roberta),
+            "xlm-roberta" => Some(Self::XlmRoberta),
+            "camembert" => Some(Self::Camembert),
+            "distilbert" => Some(Self::DistilBert),
+            _ => None,
+        }
+    }
+
+    fn roots(self) -> &'static [&'static str] {
+        match self {
+            Self::Bert => &["bert.", ""],
+            Self::Roberta | Self::XlmRoberta | Self::Camembert => {
+                &["roberta.", "xlm-roberta.", "camembert.", ""]
+            }
+            Self::DistilBert => &["distilbert.", ""],
+        }
+    }
+
+    fn accepts_architecture(self, architecture: &str) -> bool {
+        match self {
+            Self::Bert => matches!(
+                architecture,
+                "BertModel" | "BertForMaskedLM" | "BertForPreTraining"
+            ),
+            Self::Roberta => matches!(
+                architecture,
+                "RobertaModel" | "RobertaForMaskedLM" | "RobertaForPreTraining"
+            ),
+            Self::XlmRoberta => matches!(
+                architecture,
+                "XLMRobertaModel" | "XLMRobertaForMaskedLM" | "XLMRobertaForPreTraining"
+            ),
+            Self::Camembert => matches!(architecture, "CamembertModel" | "CamembertForMaskedLM"),
+            Self::DistilBert => matches!(architecture, "DistilBertModel" | "DistilBertForMaskedLM"),
+        }
+    }
 }
 
-#[derive(Clone, Debug, Deserialize)]
+/// Arithmetic selected at load time for the eventual engine kernels.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum NormArithmetic {
+    /// FP32 residual statistics with the biased BERT-family LayerNorm primitive.
+    ExactBiased,
+    /// Round embedding/residual additions to BF16 before normalization statistics.
+    RoundedAddBeforeStats,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct EncoderRecipe {
+    pub(crate) embedding: NormArithmetic,
+    pub(crate) residual: NormArithmetic,
+}
+impl EncoderRecipe {
+    fn for_family(family: EncoderFamily, hidden_size: usize) -> Self {
+        if family != EncoderFamily::DistilBert && matches!(hidden_size, 384 | 768) {
+            Self {
+                embedding: NormArithmetic::ExactBiased,
+                residual: NormArithmetic::ExactBiased,
+            }
+        } else {
+            Self {
+                embedding: NormArithmetic::RoundedAddBeforeStats,
+                residual: NormArithmetic::RoundedAddBeforeStats,
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawEncoderConfig {
+    model_type: String,
+    architectures: Option<Vec<String>>,
+    hidden_size: Option<usize>,
+    intermediate_size: Option<usize>,
+    num_attention_heads: Option<usize>,
+    num_hidden_layers: Option<usize>,
+    max_position_embeddings: Option<usize>,
+    vocab_size: Option<usize>,
+    type_vocab_size: Option<usize>,
+    layer_norm_eps: Option<f64>,
+    hidden_act: Option<String>,
+    activation: Option<String>,
+    position_embedding_type: Option<String>,
+    is_decoder: Option<bool>,
+    add_cross_attention: Option<bool>,
+    dim: Option<usize>,
+    hidden_dim: Option<usize>,
+    n_heads: Option<usize>,
+    n_layers: Option<usize>,
+    // DistilBERT's sinusoidal flag controls initialization, not lookup of a
+    // checkpoint position table. The stored table remains required below.
+}
+
+impl<'de> Deserialize<'de> for BertConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = RawEncoderConfig::deserialize(deserializer)?;
+        Self::from_raw(raw).map_err(serde::de::Error::custom)
+    }
+}
+
+fn required_usize(value: Option<usize>, name: &str) -> Result<usize, BackendError> {
+    value.ok_or_else(|| start(format!("missing encoder config field {name}")))
+}
+fn aliased_usize(
+    primary: Option<usize>,
+    alias: Option<usize>,
+    primary_name: &str,
+    alias_name: &str,
+) -> Result<usize, BackendError> {
+    match (primary, alias) {
+        (Some(primary), Some(alias)) if primary != alias => Err(start(format!(
+            "ambiguous encoder config {primary_name}={primary} and {alias_name}={alias}"
+        ))),
+        (Some(value), _) | (None, Some(value)) => Ok(value),
+        (None, None) => Err(start(format!(
+            "missing encoder config field {primary_name}"
+        ))),
+    }
+}
+fn aliased_string(
+    primary: Option<String>,
+    alias: Option<String>,
+    primary_name: &str,
+    alias_name: &str,
+) -> Result<String, BackendError> {
+    match (primary, alias) {
+        (Some(primary), Some(alias)) if primary != alias => Err(start(format!(
+            "ambiguous encoder config {primary_name}={primary} and {alias_name}={alias}"
+        ))),
+        (Some(value), _) | (None, Some(value)) => Ok(value),
+        (None, None) => Ok("gelu".into()),
+    }
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct BertConfig {
     pub hidden_size: usize,
     pub intermediate_size: usize,
@@ -71,30 +211,128 @@ pub(crate) struct BertConfig {
     pub num_hidden_layers: usize,
     pub max_position_embeddings: usize,
     pub vocab_size: usize,
-    #[serde(default = "type_vocab")]
     pub type_vocab_size: usize,
-    #[serde(default = "epsilon")]
+    configured_type_vocab_size: Option<usize>,
     pub layer_norm_eps: f64,
-    model_type: String,
-    #[serde(default = "gelu")]
+    pub(crate) family: EncoderFamily,
+    // The encoder executor consumes this once it is integrated into lib.rs.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) recipe: EncoderRecipe,
     hidden_act: String,
-    #[serde(default = "absolute")]
     position_embedding_type: String,
-    #[serde(default)]
     is_decoder: bool,
-    #[serde(default)]
     add_cross_attention: bool,
 }
 impl BertConfig {
+    fn load(path: &Path) -> Result<Self, BackendError> {
+        let raw: RawEncoderConfig = read_json(&path.join("config.json"))?;
+        Self::from_raw(raw)
+    }
+
+    fn from_raw(raw: RawEncoderConfig) -> Result<Self, BackendError> {
+        let family = EncoderFamily::from_model_type(&raw.model_type).ok_or_else(|| {
+            start(format!(
+                "unsupported encoder model_type {}; expected bert, roberta, xlm-roberta, camembert or distilbert",
+                raw.model_type
+            ))
+        })?;
+        if let Some(architectures) = raw.architectures.as_deref() {
+            if let Some(architecture) = architectures
+                .iter()
+                .find(|architecture| !family.accepts_architecture(architecture))
+            {
+                return Err(start(format!(
+                    "unsupported encoder architecture {architecture} for model_type {}",
+                    raw.model_type
+                )));
+            }
+        }
+        let distil = family == EncoderFamily::DistilBert;
+        if distil
+            && raw
+                .layer_norm_eps
+                .is_some_and(|epsilon| epsilon != DISTIL_LAYER_NORM_EPS)
+        {
+            return Err(start("DistilBERT layer_norm_eps must be 1e-12"));
+        }
+        let hidden_size = if distil {
+            aliased_usize(raw.dim, raw.hidden_size, "dim", "hidden_size")?
+        } else {
+            required_usize(raw.hidden_size, "hidden_size")?
+        };
+        let intermediate_size = if distil {
+            aliased_usize(
+                raw.hidden_dim,
+                raw.intermediate_size,
+                "hidden_dim",
+                "intermediate_size",
+            )?
+        } else {
+            required_usize(raw.intermediate_size, "intermediate_size")?
+        };
+        let num_attention_heads = if distil {
+            aliased_usize(
+                raw.n_heads,
+                raw.num_attention_heads,
+                "n_heads",
+                "num_attention_heads",
+            )?
+        } else {
+            required_usize(raw.num_attention_heads, "num_attention_heads")?
+        };
+        let num_hidden_layers = if distil {
+            aliased_usize(
+                raw.n_layers,
+                raw.num_hidden_layers,
+                "n_layers",
+                "num_hidden_layers",
+            )?
+        } else {
+            required_usize(raw.num_hidden_layers, "num_hidden_layers")?
+        };
+        let hidden_act = if distil {
+            aliased_string(raw.activation, raw.hidden_act, "activation", "hidden_act")?
+        } else {
+            raw.hidden_act.unwrap_or_else(|| "gelu".into())
+        };
+        let config = Self {
+            hidden_size,
+            intermediate_size,
+            num_attention_heads,
+            num_hidden_layers,
+            max_position_embeddings: required_usize(
+                raw.max_position_embeddings,
+                "max_position_embeddings",
+            )?,
+            vocab_size: required_usize(raw.vocab_size, "vocab_size")?,
+            type_vocab_size: raw.type_vocab_size.unwrap_or(DISTIL_TOKEN_TYPE_ROWS),
+            configured_type_vocab_size: raw.type_vocab_size,
+            layer_norm_eps: if distil {
+                DISTIL_LAYER_NORM_EPS
+            } else {
+                raw.layer_norm_eps.unwrap_or(1e-12)
+            },
+            family,
+            recipe: EncoderRecipe::for_family(family, hidden_size),
+            hidden_act,
+            position_embedding_type: raw
+                .position_embedding_type
+                .unwrap_or_else(|| "absolute".into()),
+            is_decoder: raw.is_decoder.unwrap_or(false),
+            add_cross_attention: raw.add_cross_attention.unwrap_or(false),
+        };
+        config.validate()?;
+        Ok(config)
+    }
+
     fn validate(&self) -> Result<(), BackendError> {
-        if self.model_type != "bert"
-            || self.is_decoder
+        if self.is_decoder
             || self.add_cross_attention
             || self.position_embedding_type != "absolute"
             || self.hidden_act != "gelu"
         {
             return Err(start(
-                "only encoder BERT with absolute positions and tanh GELU is supported",
+                "only encoder BERT-family models with absolute positions and tanh GELU are supported",
             ));
         }
         if self.hidden_size == 0
@@ -104,7 +342,9 @@ impl BertConfig {
             || self.vocab_size == 0
             || self.type_vocab_size == 0
             || self.max_position_embeddings == 0
-            || self.max_position_embeddings > 4096
+            || u32::try_from(self.max_position_embeddings).is_err()
+            || (self.family == EncoderFamily::Bert
+                && self.max_position_embeddings > BERT_MAX_POSITION_EMBEDDINGS)
             || self.num_hidden_layers > 256
             || self.num_attention_heads > 65535
             || !self.hidden_size.is_multiple_of(self.num_attention_heads)
@@ -118,6 +358,8 @@ impl BertConfig {
                 "invalid or unsupported BERT dimensions / layer_norm_eps",
             ));
         }
+        // CUDA position IDs are u32; checked tensor dimensions bound the actual
+        // lookup allocation. Attention-provider sequence limits are separate.
         for dimensions in [
             [self.vocab_size, self.hidden_size],
             [self.max_position_embeddings, self.hidden_size],
@@ -133,7 +375,7 @@ impl BertConfig {
 
 #[derive(Clone, Debug)]
 pub(crate) struct WeightSource {
-    file: Arc<Mutex<File>>,
+    file: Option<Arc<Mutex<File>>>,
     file_len: u64,
     data_start: u64,
     data_offset: u64,
@@ -184,7 +426,7 @@ impl WeightSource {
             return Err(start(format!("weight {name} exceeds checkpoint file")));
         }
         Ok(Self {
-            file,
+            file: Some(file),
             file_len,
             data_start,
             data_offset,
@@ -192,6 +434,20 @@ impl WeightSource {
             shape: info.shape.clone(),
             count,
             width,
+        })
+    }
+
+    fn zeroed(shape: Vec<usize>) -> Result<Self, BackendError> {
+        let count = elements(&shape)?;
+        Ok(Self {
+            file: None,
+            file_len: 0,
+            data_start: 0,
+            data_offset: 0,
+            dtype: Dtype::BF16,
+            shape,
+            count,
+            width: 2,
         })
     }
 
@@ -222,6 +478,10 @@ impl WeightSource {
         if out.is_empty() {
             return Ok(());
         }
+        let Some(file) = self.file.as_ref() else {
+            out.fill(0);
+            return Ok(());
+        };
         let offset_bytes = offset_elements
             .checked_mul(self.width)
             .ok_or_else(|| start("weight byte offset overflow"))?;
@@ -239,8 +499,7 @@ impl WeightSource {
         if per_read == 0 {
             return Err(start("invalid weight element width"));
         }
-        let mut file = self
-            .file
+        let mut file = file
             .lock()
             .map_err(|_| start("checkpoint shard lock is poisoned"))?;
         let current_len = file
@@ -362,7 +621,7 @@ pub(crate) struct BertWeights {
     pub layers: Vec<LayerWeights>,
 }
 
-fn elements(shape: &[usize]) -> Result<usize, BackendError> {
+pub(crate) fn elements(shape: &[usize]) -> Result<usize, BackendError> {
     let n = shape
         .iter()
         .try_fold(1usize, |n, d| n.checked_mul(*d))
@@ -470,6 +729,121 @@ fn permitted_weight(root: &Path, resolved: &Path) -> bool {
     // directory or blob symlink pointing elsewhere is not a permitted escape.
     resolved.parent() == Some(repo.join("blobs").as_path())
 }
+
+#[derive(Clone, Copy)]
+struct CheckpointLayout {
+    family: EncoderFamily,
+    root: &'static str,
+    layer_prefix: &'static str,
+}
+impl CheckpointLayout {
+    fn actual(&self, canonical: &str) -> Result<String, BackendError> {
+        let body = if self.family == EncoderFamily::DistilBert {
+            self.distil_name(canonical)?
+        } else {
+            canonical.to_owned()
+        };
+        Ok(format!("{}{body}", self.root))
+    }
+
+    fn distil_name(&self, canonical: &str) -> Result<String, BackendError> {
+        let Some(rest) = canonical.strip_prefix("encoder.layer.") else {
+            return Ok(canonical.to_owned());
+        };
+        let (layer, tail) = rest
+            .split_once('.')
+            .ok_or_else(|| start(format!("invalid DistilBERT layer tensor {canonical}")))?;
+        let mapped = [
+            ("attention.self.query.", "attention.q_lin."),
+            ("attention.self.key.", "attention.k_lin."),
+            ("attention.self.value.", "attention.v_lin."),
+            ("attention.output.dense.", "attention.out_lin."),
+            ("intermediate.dense.", "ffn.lin1."),
+            ("output.dense.", "ffn.lin2."),
+            ("attention.output.LayerNorm.", "sa_layer_norm."),
+            ("output.LayerNorm.", "output_layer_norm."),
+        ]
+        .iter()
+        .find_map(|(from, to)| {
+            tail.strip_prefix(from)
+                .map(|suffix| format!("{to}{suffix}"))
+        })
+        .ok_or_else(|| start(format!("unmapped DistilBERT layer tensor {canonical}")))?;
+        Ok(format!("{}.{layer}.{mapped}", self.layer_prefix))
+    }
+}
+
+fn select_root(
+    family: EncoderFamily,
+    names: &BTreeSet<String>,
+) -> Result<&'static str, BackendError> {
+    let suffix = "embeddings.word_embeddings.weight";
+    let anchors = names
+        .iter()
+        .filter(|name| name.ends_with(suffix))
+        .collect::<Vec<_>>();
+    let Some(anchor) = anchors.first() else {
+        return Err(start(format!("missing weight {suffix}")));
+    };
+    if anchors.len() != 1 {
+        return Err(start(
+            "ambiguous checkpoint namespace: multiple embeddings.word_embeddings.weight roots",
+        ));
+    }
+    family
+        .roots()
+        .iter()
+        .copied()
+        .find(|root| format!("{root}{suffix}") == anchor.as_str())
+        .ok_or_else(|| {
+            start(format!(
+                "unsupported checkpoint namespace for model_type {:?}: {anchor}",
+                family
+            ))
+        })
+}
+
+fn select_layer_prefix(
+    family: EncoderFamily,
+    root: &str,
+    names: &BTreeSet<String>,
+) -> Result<&'static str, BackendError> {
+    if family != EncoderFamily::DistilBert {
+        return Ok("encoder.layer");
+    }
+    let transformer = format!("{root}transformer.layer.");
+    let encoder = format!("{root}encoder.layer.");
+    let has_transformer = names.iter().any(|name| name.starts_with(&transformer));
+    let has_encoder = names.iter().any(|name| name.starts_with(&encoder));
+    match (has_transformer, has_encoder) {
+        (true, false) => Ok("transformer.layer"),
+        (false, true) => Ok("encoder.layer"),
+        (true, true) => Err(start(
+            "ambiguous DistilBERT layer namespace: transformer.layer and encoder.layer both present",
+        )),
+        (false, false) => Err(start(
+            "missing DistilBERT transformer.layer or encoder.layer weights",
+        )),
+    }
+}
+
+fn reject_stray_token_types(
+    layout: &CheckpointLayout,
+    names: &BTreeSet<String>,
+) -> Result<(), BackendError> {
+    let suffix = "embeddings.token_type_embeddings.weight";
+    let expected = layout.actual(suffix)?;
+    if let Some(stray) = names
+        .iter()
+        .find(|name| name.ends_with(suffix) && name.as_str() != expected)
+    {
+        return Err(start(format!(
+            "incoherent token-type embedding namespace {stray}"
+        )));
+    }
+    Ok(())
+}
+
 fn required(config: &BertConfig) -> HashMap<String, Vec<usize>> {
     let h = config.hidden_size;
     let mut out = HashMap::new();
@@ -578,6 +952,106 @@ fn open_shard(path: &Path) -> Result<ShardHeader, BackendError> {
     })
 }
 
+/// One validated safetensors checkpoint laid out by the loader.
+///
+/// `open` preserves the shard path, index ownership, header and duplicate
+/// guards used by the encoder loader. `source` then exposes only the requested
+/// tensor metadata; payload bytes are read later by `WeightSource` in bounded
+/// chunks. The helper itself never allocates a whole tensor or model.
+pub(crate) struct Checkpoint {
+    files: Vec<String>,
+    index: Option<BTreeMap<String, String>>,
+    shards: Vec<ShardHeader>,
+    tensors: BTreeMap<String, (usize, TensorHeader)>,
+}
+impl Checkpoint {
+    pub(crate) fn open(path: &Path) -> Result<Self, BackendError> {
+        let (files, index) = checkpoint_files(path)?;
+        let root = path.canonicalize().map_err(start)?;
+        let mut shards = Vec::new();
+        for file in &files {
+            let resolved = path.join(file).canonicalize().map_err(start)?;
+            if !permitted_weight(&root, &resolved) {
+                return Err(start("checkpoint shard escapes model directory"));
+            }
+            shards.push(open_shard(&resolved)?);
+        }
+        let mut tensors = BTreeMap::new();
+        for (shard_index, shard) in shards.iter().enumerate() {
+            for (name, info) in &shard.tensors {
+                if tensors
+                    .insert(name.clone(), (shard_index, info.clone()))
+                    .is_some()
+                {
+                    return Err(start(format!("duplicate checkpoint tensor {name}")));
+                }
+            }
+        }
+        Ok(Self {
+            files,
+            index,
+            shards,
+            tensors,
+        })
+    }
+
+    pub(crate) fn names(&self) -> impl Iterator<Item = &String> {
+        self.tensors.keys()
+    }
+
+    pub(crate) fn contains(&self, name: &str) -> bool {
+        self.tensors.contains_key(name)
+    }
+
+    pub(crate) fn shape(&self, name: &str) -> Option<&[usize]> {
+        self.tensors
+            .get(name)
+            .map(|(_, info)| info.shape.as_slice())
+    }
+
+    pub(crate) fn source(&self, name: &str, shape: &[usize]) -> Result<WeightSource, BackendError> {
+        self.optional_source(name, shape)?
+            .ok_or_else(|| start(format!("missing weight {name}")))
+    }
+
+    pub(crate) fn optional_source(
+        &self,
+        name: &str,
+        shape: &[usize],
+    ) -> Result<Option<WeightSource>, BackendError> {
+        let Some((shard_index, info)) = self.tensors.get(name) else {
+            return Ok(None);
+        };
+        let Some(file) = self.files.get(*shard_index) else {
+            return Err(start(format!("invalid shard ownership for {name}")));
+        };
+        if self
+            .index
+            .as_ref()
+            .is_some_and(|index| index.get(name) != Some(file))
+        {
+            return Err(start(format!("weight {name} is not in its indexed shard")));
+        }
+        if info.shape.as_slice() != shape {
+            return Err(start(format!(
+                "wrong shape for {name}: expected {shape:?}, got {:?}",
+                info.shape
+            )));
+        }
+        let Some(shard) = self.shards.get(*shard_index) else {
+            return Err(start(format!("invalid shard ownership for {name}")));
+        };
+        let source = WeightSource::from_header(
+            Arc::clone(&shard.file),
+            shard.file_len,
+            shard.data_start,
+            info,
+            name,
+        )?;
+        Ok(Some(source))
+    }
+}
+
 fn take(
     weights: &mut HashMap<String, WeightSource>,
     name: &str,
@@ -597,48 +1071,86 @@ fn linear(
 }
 impl BertWeights {
     pub(crate) fn load(path: &Path) -> Result<Self, BackendError> {
-        let config: BertConfig = read_json(&path.join("config.json"))?;
-        config.validate()?;
+        let mut config = BertConfig::load(path)?;
         validate_modules(path)?;
-        let expected = required(&config);
-        let (files, index) = checkpoint_files(path)?;
-        let root = path.canonicalize().map_err(start)?;
-        let mut weights = HashMap::new();
-        for file in files {
-            let resolved = path.join(&file).canonicalize().map_err(start)?;
-            if !permitted_weight(&root, &resolved) {
-                return Err(start("checkpoint shard escapes model directory"));
-            }
-            let shard = open_shard(&resolved)?;
-            for (name, info) in &shard.tensors {
-                let key = name.strip_prefix("bert.").unwrap_or(name);
-                let Some(shape) = expected.get(key) else {
-                    continue;
-                };
-                if index
-                    .as_ref()
-                    .is_some_and(|index| index.get(name) != Some(&file))
-                {
-                    return Err(start(format!("weight {name} is not in its indexed shard")));
+        let checkpoint = Checkpoint::open(path)?;
+        let names = checkpoint.names().cloned().collect::<BTreeSet<_>>();
+        let root_prefix = select_root(config.family, &names)?;
+        let layer_prefix = select_layer_prefix(config.family, root_prefix, &names)?;
+        let layout = CheckpointLayout {
+            family: config.family,
+            root: root_prefix,
+            layer_prefix,
+        };
+        reject_stray_token_types(&layout, &names)?;
+
+        if config.family == EncoderFamily::DistilBert {
+            let name = layout.actual("embeddings.token_type_embeddings.weight")?;
+            let shape = checkpoint.shape(&name);
+            config.type_vocab_size = match shape {
+                Some([rows, width]) if *rows > 0 && *width == config.hidden_size => {
+                    if config
+                        .configured_type_vocab_size
+                        .is_some_and(|configured| configured != *rows)
+                    {
+                        return Err(start(format!(
+                            "wrong shape for {name}: checkpoint rows {rows} disagree with configured type_vocab_size {}",
+                            config.type_vocab_size
+                        )));
+                    }
+                    *rows
                 }
-                if info.shape != *shape {
+                Some(shape) => {
                     return Err(start(format!(
-                        "wrong shape for {name}: expected {shape:?}, got {:?}",
-                        info.shape
-                    )));
+                        "wrong shape for {name}: expected nonempty [rows, {}], got {shape:?}",
+                        config.hidden_size
+                    )))
                 }
-                let source = WeightSource::from_header(
-                    Arc::clone(&shard.file),
-                    shard.file_len,
-                    shard.data_start,
-                    info,
-                    name,
-                )?;
-                if weights.insert(key.to_owned(), source).is_some() {
-                    return Err(start(format!("duplicate weight {key}")));
-                }
+                // No segment embeddings means no contribution for either
+                // ordinary tokenizer pair ID, regardless of a config hint.
+                None => DISTIL_TOKEN_TYPE_ROWS,
+            };
+            config.validate()?;
+        }
+
+        let mut expected = HashMap::new();
+        for (canonical, shape) in required(&config) {
+            let actual = layout.actual(&canonical)?;
+            if expected.insert(actual, (canonical, shape)).is_some() {
+                return Err(start("duplicate expected checkpoint tensor"));
             }
         }
+        let mut weights = HashMap::new();
+        let mut missing = Vec::new();
+        for (name, (canonical, shape)) in expected {
+            if !checkpoint.contains(&name) {
+                if config.family == EncoderFamily::DistilBert
+                    && canonical == "embeddings.token_type_embeddings.weight"
+                {
+                    continue;
+                }
+                missing.push(canonical);
+                continue;
+            }
+            let source = checkpoint.source(&name, &shape)?;
+            if weights.insert(canonical, source).is_some() {
+                return Err(start("duplicate weight in checkpoint mapping"));
+            }
+        }
+        if let Some(canonical) = missing.into_iter().next() {
+            return Err(start(format!("missing weight {canonical}")));
+        }
+        let token_type = match weights.remove("embeddings.token_type_embeddings.weight") {
+            Some(source) => source,
+            None if config.family == EncoderFamily::DistilBert => {
+                WeightSource::zeroed(vec![config.type_vocab_size, config.hidden_size])?
+            }
+            None => {
+                return Err(start(
+                    "missing weight embeddings.token_type_embeddings.weight",
+                ))
+            }
+        };
         let mut layers = Vec::new();
         layers
             .try_reserve_exact(config.num_hidden_layers)
@@ -667,7 +1179,7 @@ impl BertWeights {
         Ok(Self {
             word: take(&mut weights, "embeddings.word_embeddings.weight")?,
             position: take(&mut weights, "embeddings.position_embeddings.weight")?,
-            token_type: take(&mut weights, "embeddings.token_type_embeddings.weight")?,
+            token_type,
             gamma: take(&mut weights, "embeddings.LayerNorm.weight")?,
             beta: take(&mut weights, "embeddings.LayerNorm.bias")?,
             config,
@@ -704,11 +1216,17 @@ mod tests {
             for (key, val) in overrides.as_object().unwrap() {
                 value[key] = val.clone();
             }
+            self.raw_config(value);
+        }
+        fn raw_config(&self, value: serde_json::Value) {
             std::fs::write(
                 self.0.join("config.json"),
                 serde_json::to_vec(&value).unwrap(),
             )
             .unwrap();
+        }
+        fn config_from_disk(&self) -> BertConfig {
+            BertConfig::load(&self.0).unwrap()
         }
         fn weights(&self, dtype: Dtype, prefixed: bool, sharded: bool) {
             self.weight_values(dtype, prefixed, sharded, |name, _| {
@@ -726,18 +1244,55 @@ mod tests {
             sharded: bool,
             value: impl Fn(&str, usize) -> f32,
         ) {
-            let config: BertConfig =
-                serde_json::from_slice(&std::fs::read(self.0.join("config.json")).unwrap())
-                    .unwrap();
-            let mut entries = required(&config).into_iter().collect::<Vec<_>>();
+            let config = self.config_from_disk();
+            let layout = CheckpointLayout {
+                family: EncoderFamily::Bert,
+                root: if prefixed { "bert." } else { "" },
+                layer_prefix: "encoder.layer",
+            };
+            self.write_layout(&config, layout, dtype, sharded, value);
+        }
+        fn write_layout(
+            &self,
+            config: &BertConfig,
+            layout: CheckpointLayout,
+            dtype: Dtype,
+            sharded: bool,
+            value: impl Fn(&str, usize) -> f32,
+        ) {
+            self.write_layout_omitting(config, layout, dtype, sharded, &[], value);
+        }
+        fn write_layout_omitting(
+            &self,
+            config: &BertConfig,
+            layout: CheckpointLayout,
+            dtype: Dtype,
+            sharded: bool,
+            omitted: &[&str],
+            value: impl Fn(&str, usize) -> f32,
+        ) {
+            let mut entries = required(config)
+                .into_iter()
+                .filter(|(canonical, _)| !omitted.contains(&canonical.as_str()))
+                .map(|(canonical, shape)| (layout.actual(&canonical).unwrap(), shape, canonical))
+                .collect::<Vec<_>>();
             entries.sort_by(|a, b| a.0.cmp(&b.0));
+            self.write_entries(dtype, sharded, &entries, value);
+        }
+        fn write_entries(
+            &self,
+            dtype: Dtype,
+            sharded: bool,
+            entries: &[(String, Vec<usize>, String)],
+            value: impl Fn(&str, usize) -> f32,
+        ) {
             let data = entries
                 .iter()
-                .map(|(name, shape)| {
+                .map(|(_, shape, canonical)| {
                     let count = shape.iter().product::<usize>();
                     let mut bytes = Vec::new();
                     for index in 0..count {
-                        let scalar = value(name, index);
+                        let scalar = value(canonical, index);
                         match dtype {
                             Dtype::F32 => bytes.extend_from_slice(&scalar.to_le_bytes()),
                             Dtype::F16 => bytes.extend_from_slice(
@@ -755,9 +1310,9 @@ mod tests {
             let views = entries
                 .iter()
                 .zip(&data)
-                .map(|((name, shape), bytes)| {
+                .map(|((name, shape, _), bytes)| {
                     (
-                        format!("{}{name}", if prefixed { "bert." } else { "" }),
+                        name.clone(),
                         TensorView::new(dtype, shape.clone(), bytes).unwrap(),
                     )
                 })
@@ -946,7 +1501,6 @@ mod tests {
     #[test]
     fn rejects_incompatible_model_before_checkpoint_or_gpu() {
         for overrides in [
-            serde_json::json!({"model_type":"roberta"}),
             serde_json::json!({"is_decoder":true}),
             serde_json::json!({"add_cross_attention":true}),
             serde_json::json!({"hidden_act":"gelu_new"}),
@@ -954,16 +1508,562 @@ mod tests {
             serde_json::json!({"num_attention_heads":0}),
             serde_json::json!({"hidden_size":3,"num_attention_heads":2}),
             serde_json::json!({"max_position_embeddings":8192}),
+            serde_json::json!({"model_type":"custom-encoder"}),
+            serde_json::json!({"architectures":["CustomEncoder"]}),
         ] {
             let fixture = Fixture::new();
             fixture.config(overrides);
             let error = fixture.error();
             assert!(
-                error.contains("only encoder BERT") || error.contains("invalid or unsupported"),
+                error.contains("only encoder BERT")
+                    || error.contains("invalid or unsupported")
+                    || error.contains("unsupported encoder"),
                 "{error}"
             );
         }
     }
+    fn roberta_config(model_type: &str, architecture: &str) -> serde_json::Value {
+        serde_json::json!({
+            "model_type": model_type,
+            "architectures": [architecture],
+            "hidden_size": 2,
+            "intermediate_size": 4,
+            "num_attention_heads": 1,
+            "num_hidden_layers": 1,
+            "max_position_embeddings": 8,
+            "vocab_size": 4,
+            "type_vocab_size": 1,
+            "layer_norm_eps": 1e-5,
+            "hidden_act": "gelu",
+            "position_embedding_type": "absolute"
+        })
+    }
+    fn distil_config() -> serde_json::Value {
+        serde_json::json!({
+            "model_type": "distilbert",
+            "architectures": ["DistilBertModel"],
+            "dim": 2,
+            "hidden_dim": 4,
+            "n_heads": 1,
+            "n_layers": 1,
+            "max_position_embeddings": 8,
+            "vocab_size": 4,
+            "activation": "gelu",
+            "sinusoidal_pos_embds": false,
+            "pad_token_id": 0
+        })
+    }
+    fn fixture_values(name: &str, index: usize) -> f32 {
+        if name.ends_with("LayerNorm.weight") || name.ends_with("LayerNorm.bias") {
+            1.0
+        } else {
+            (index + 1) as f32 / 16.0
+        }
+    }
+    fn with_fields(mut value: serde_json::Value, fields: serde_json::Value) -> serde_json::Value {
+        for (key, field) in fields.as_object().unwrap() {
+            value[key] = field.clone();
+        }
+        value
+    }
+
+    #[test]
+    fn loads_roberta_family_namespaces_and_canonical_layers() {
+        for (model_type, architecture, root, family) in [
+            ("roberta", "RobertaModel", "", EncoderFamily::Roberta),
+            (
+                "roberta",
+                "RobertaForMaskedLM",
+                "roberta.",
+                EncoderFamily::Roberta,
+            ),
+            (
+                "xlm-roberta",
+                "XLMRobertaModel",
+                "xlm-roberta.",
+                EncoderFamily::XlmRoberta,
+            ),
+            (
+                "camembert",
+                "CamembertForMaskedLM",
+                "camembert.",
+                EncoderFamily::Camembert,
+            ),
+        ] {
+            let fixture = Fixture::new();
+            fixture.raw_config(roberta_config(model_type, architecture));
+            let config = fixture.config_from_disk();
+            assert_eq!(config.family, family);
+            assert_eq!(
+                config.recipe.embedding,
+                NormArithmetic::RoundedAddBeforeStats
+            );
+            let layout = CheckpointLayout {
+                family,
+                root,
+                layer_prefix: "encoder.layer",
+            };
+            fixture.write_layout(&config, layout, Dtype::F32, false, fixture_values);
+            let weights = BertWeights::load(&fixture.0).unwrap();
+            assert_eq!(weights.config.family, family);
+            assert_eq!(weights.config.type_vocab_size, 1);
+            assert_eq!(weights.config.layer_norm_eps, 1e-5);
+            assert_eq!(
+                read_all(&weights.word),
+                expected(&(1..=8).map(|value| value as f32 / 16.0).collect::<Vec<_>>())
+            );
+            assert_eq!(
+                read_all(&weights.layers[0].query.weight),
+                expected(&[0.0625, 0.125, 0.1875, 0.25])
+            );
+            assert_eq!(
+                read_all(&weights.layers[0].output_gamma),
+                expected(&[1.0; 2])
+            );
+        }
+    }
+
+    #[test]
+    fn loads_extended_encoder_position_tables_without_checkpoint_specific_caps() {
+        for (value, layout) in [
+            (
+                roberta_config("xlm-roberta", "XLMRobertaModel"),
+                CheckpointLayout {
+                    family: EncoderFamily::XlmRoberta,
+                    root: "xlm-roberta.",
+                    layer_prefix: "encoder.layer",
+                },
+            ),
+            (
+                distil_config(),
+                CheckpointLayout {
+                    family: EncoderFamily::DistilBert,
+                    root: "distilbert.",
+                    layer_prefix: "transformer.layer",
+                },
+            ),
+        ] {
+            for positions in [8194usize, 8195, 16386] {
+                let fixture = Fixture::new();
+                fixture.raw_config(with_fields(
+                    value.clone(),
+                    serde_json::json!({"max_position_embeddings": positions}),
+                ));
+                let config = fixture.config_from_disk();
+                fixture.write_layout(&config, layout, Dtype::F32, false, |_, index| {
+                    (index % 7) as f32
+                });
+                let weights = BertWeights::load(&fixture.0).unwrap();
+                assert_eq!(weights.position.shape(), &[positions, 2]);
+                let mut tail = [0u16; 4];
+                let end = positions * 2;
+                weights.position.read_bf16(end - 4, &mut tail).unwrap();
+                assert_eq!(
+                    tail.to_vec(),
+                    (end - 4..end)
+                        .map(|index| bf16((index % 7) as f32))
+                        .collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_encoder_position_tables_outside_cuda_lookup_dimensions() {
+        for value in [roberta_config("roberta", "RobertaModel"), distil_config()] {
+            let fixture = Fixture::new();
+            fixture.raw_config(with_fields(
+                value.clone(),
+                serde_json::json!({"max_position_embeddings": i32::MAX as usize / 2 + 1}),
+            ));
+            let error = BertConfig::load(&fixture.0).unwrap_err().to_string();
+            assert!(error.contains("CUDA indexing range"), "{error}");
+            fixture.raw_config(with_fields(
+                value,
+                serde_json::json!({"max_position_embeddings": u32::MAX as u64 + 1}),
+            ));
+            let error = BertConfig::load(&fixture.0).unwrap_err().to_string();
+            assert!(error.contains("invalid or unsupported"), "{error}");
+        }
+    }
+
+    #[test]
+    fn defaults_roberta_family_configs_to_reference_norm_and_type_vocabulary() {
+        for (model_type, architecture) in [
+            ("roberta", "RobertaModel"),
+            ("xlm-roberta", "XLMRobertaModel"),
+            ("camembert", "CamembertModel"),
+        ] {
+            let fixture = Fixture::new();
+            let mut value = roberta_config(model_type, architecture);
+            value.as_object_mut().unwrap().remove("type_vocab_size");
+            value.as_object_mut().unwrap().remove("layer_norm_eps");
+            fixture.raw_config(value);
+            let config = fixture.config_from_disk();
+            let layout = CheckpointLayout {
+                family: config.family,
+                root: "roberta.",
+                layer_prefix: "encoder.layer",
+            };
+            fixture.write_layout(&config, layout, Dtype::F32, false, fixture_values);
+            let weights = BertWeights::load(&fixture.0).unwrap();
+            assert_eq!(weights.config.type_vocab_size, 2);
+            assert_eq!(weights.config.layer_norm_eps, 1e-12);
+            assert_eq!(weights.token_type.shape(), &[2, 2]);
+        }
+    }
+
+    #[test]
+    fn loads_distilbert_namespaces_aliases_and_zero_token_types() {
+        let omitted = ["embeddings.token_type_embeddings.weight"];
+        for root in ["", "distilbert."] {
+            for layer_prefix in ["transformer.layer", "encoder.layer"] {
+                let fixture = Fixture::new();
+                fixture.raw_config(distil_config());
+                let config = fixture.config_from_disk();
+                assert_eq!(config.family, EncoderFamily::DistilBert);
+                assert_eq!(config.layer_norm_eps, 1e-12);
+                assert_eq!(config.type_vocab_size, 2);
+                assert_eq!(
+                    config.recipe,
+                    EncoderRecipe {
+                        embedding: NormArithmetic::RoundedAddBeforeStats,
+                        residual: NormArithmetic::RoundedAddBeforeStats,
+                    }
+                );
+                let layout = CheckpointLayout {
+                    family: EncoderFamily::DistilBert,
+                    root,
+                    layer_prefix,
+                };
+                fixture.write_layout_omitting(
+                    &config,
+                    layout,
+                    Dtype::F32,
+                    false,
+                    &omitted,
+                    fixture_values,
+                );
+                let weights = BertWeights::load(&fixture.0).unwrap();
+                assert_eq!(weights.token_type.shape(), &[2, 2]);
+                assert!(read_all(&weights.token_type).iter().all(|bits| *bits == 0));
+                assert_eq!(
+                    read_all(&weights.word),
+                    expected(&(1..=8).map(|value| value as f32 / 16.0).collect::<Vec<_>>())
+                );
+                assert_eq!(
+                    read_all(&weights.layers[0].query.weight),
+                    expected(&[0.0625, 0.125, 0.1875, 0.25])
+                );
+                assert_eq!(
+                    read_all(&weights.layers[0].attention_gamma),
+                    expected(&[1.0; 2])
+                );
+                assert_eq!(weights.layers[0].intermediate.weight.shape(), &[4, 2]);
+            }
+        }
+    }
+
+    #[test]
+    fn validates_and_preserves_optional_distilbert_token_type_tables() {
+        let layout = CheckpointLayout {
+            family: EncoderFamily::DistilBert,
+            root: "distilbert.",
+            layer_prefix: "transformer.layer",
+        };
+        for rows in [1usize, 2, 3] {
+            for explicit in [false, true] {
+                let fixture = Fixture::new();
+                let value = if explicit {
+                    with_fields(
+                        distil_config(),
+                        serde_json::json!({"type_vocab_size": rows}),
+                    )
+                } else {
+                    distil_config()
+                };
+                fixture.raw_config(value);
+                let mut config = fixture.config_from_disk();
+                config.type_vocab_size = rows;
+                fixture.write_layout(&config, layout, Dtype::F32, rows == 3, fixture_values);
+                let weights = BertWeights::load(&fixture.0).unwrap();
+                assert_eq!(weights.config.type_vocab_size, rows);
+                assert_eq!(weights.token_type.shape(), &[rows, 2]);
+                assert_eq!(
+                    read_all(&weights.token_type),
+                    expected(
+                        &(1..=rows * 2)
+                            .map(|value| value as f32 / 16.0)
+                            .collect::<Vec<_>>()
+                    )
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_or_config_mismatched_distilbert_token_type_tables() {
+        let layout = CheckpointLayout {
+            family: EncoderFamily::DistilBert,
+            root: "distilbert.",
+            layer_prefix: "transformer.layer",
+        };
+        for shape in [vec![0, 2], vec![3, 3], vec![3], vec![3, 2]] {
+            let fixture = Fixture::new();
+            fixture.raw_config(with_fields(
+                distil_config(),
+                serde_json::json!({"type_vocab_size": 2}),
+            ));
+            let config = fixture.config_from_disk();
+            let entries = required(&config)
+                .into_iter()
+                .map(|(canonical, expected)| {
+                    let actual_shape = if canonical == "embeddings.token_type_embeddings.weight" {
+                        shape.clone()
+                    } else {
+                        expected
+                    };
+                    (layout.actual(&canonical).unwrap(), actual_shape, canonical)
+                })
+                .collect::<Vec<_>>();
+            fixture.write_entries(Dtype::F32, false, &entries, fixture_values);
+            let error = fixture.error();
+            assert!(error.contains("wrong shape"), "{error}");
+            if shape == [3, 2] {
+                assert!(error.contains("configured type_vocab_size"), "{error}");
+            }
+        }
+    }
+
+    #[test]
+    fn missing_distilbert_token_type_table_keeps_both_tokenizer_pair_ids_zero() {
+        for configured_rows in [1, 3] {
+            let fixture = Fixture::new();
+            fixture.raw_config(with_fields(
+                distil_config(),
+                serde_json::json!({"type_vocab_size": configured_rows}),
+            ));
+            let config = fixture.config_from_disk();
+            fixture.write_layout_omitting(
+                &config,
+                CheckpointLayout {
+                    family: EncoderFamily::DistilBert,
+                    root: "",
+                    layer_prefix: "transformer.layer",
+                },
+                Dtype::F32,
+                false,
+                &["embeddings.token_type_embeddings.weight"],
+                fixture_values,
+            );
+            let weights = BertWeights::load(&fixture.0).unwrap();
+            assert_eq!(weights.config.type_vocab_size, 2);
+            assert_eq!(weights.token_type.shape(), &[2, 2]);
+            assert_eq!(read_all(&weights.token_type), vec![0; 4]);
+        }
+    }
+
+    #[test]
+    fn preserves_explicit_distilbert_sinusoidal_position_table() {
+        let fixture = Fixture::new();
+        fixture.raw_config(with_fields(
+            distil_config(),
+            serde_json::json!({"sinusoidal_pos_embds": true}),
+        ));
+        let config = fixture.config_from_disk();
+        let layout = CheckpointLayout {
+            family: EncoderFamily::DistilBert,
+            root: "distilbert.",
+            layer_prefix: "transformer.layer",
+        };
+        fixture.write_layout(&config, layout, Dtype::F32, false, fixture_values);
+        let weights = BertWeights::load(&fixture.0).unwrap();
+        assert_eq!(
+            read_all(&weights.position),
+            expected(
+                &(1..=16)
+                    .map(|value| value as f32 / 16.0)
+                    .collect::<Vec<_>>()
+            )
+        );
+        fixture.write_layout_omitting(
+            &config,
+            layout,
+            Dtype::F32,
+            false,
+            &["embeddings.position_embeddings.weight"],
+            fixture_values,
+        );
+        let error = fixture.error();
+        assert!(
+            error.contains("missing weight embeddings.position_embeddings.weight"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_incoherent_distilbert_token_type_namespace() {
+        let fixture = Fixture::new();
+        fixture.raw_config(distil_config());
+        let config = fixture.config_from_disk();
+        let layout = CheckpointLayout {
+            family: EncoderFamily::DistilBert,
+            root: "distilbert.",
+            layer_prefix: "transformer.layer",
+        };
+        let mut entries = required(&config)
+            .into_iter()
+            .filter(|(canonical, _)| canonical != "embeddings.token_type_embeddings.weight")
+            .map(|(canonical, shape)| (layout.actual(&canonical).unwrap(), shape, canonical))
+            .collect::<Vec<_>>();
+        entries.push((
+            "embeddings.token_type_embeddings.weight".into(),
+            vec![2, 2],
+            "embeddings.token_type_embeddings.weight".into(),
+        ));
+        fixture.write_entries(Dtype::F32, false, &entries, fixture_values);
+        let error = fixture.error();
+        assert!(error.contains("incoherent token-type"), "{error}");
+    }
+
+    #[test]
+    fn rejects_mixed_distilbert_layer_namespaces() {
+        let fixture = Fixture::new();
+        fixture.raw_config(distil_config());
+        let config = fixture.config_from_disk();
+        let transformer = CheckpointLayout {
+            family: EncoderFamily::DistilBert,
+            root: "distilbert.",
+            layer_prefix: "transformer.layer",
+        };
+        let encoder = CheckpointLayout {
+            family: EncoderFamily::DistilBert,
+            root: "distilbert.",
+            layer_prefix: "encoder.layer",
+        };
+        let canonical = "encoder.layer.0.attention.self.query.weight";
+        let from = transformer.actual(canonical).unwrap();
+        let to = encoder.actual(canonical).unwrap();
+        let mut entries = required(&config)
+            .into_iter()
+            .map(|(canonical, shape)| (transformer.actual(&canonical).unwrap(), shape, canonical))
+            .collect::<Vec<_>>();
+        for (actual, _, _) in &mut entries {
+            if *actual == from {
+                *actual = to.clone();
+            }
+        }
+        fixture.write_entries(Dtype::F32, false, &entries, fixture_values);
+        let error = fixture.error();
+        assert!(
+            error.contains("ambiguous DistilBERT layer namespace"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_ambiguous_encoder_roots() {
+        let fixture = Fixture::new();
+        fixture.raw_config(roberta_config("roberta", "RobertaModel"));
+        let config = fixture.config_from_disk();
+        let layout = CheckpointLayout {
+            family: EncoderFamily::Roberta,
+            root: "roberta.",
+            layer_prefix: "encoder.layer",
+        };
+        let mut entries = required(&config)
+            .into_iter()
+            .map(|(canonical, shape)| (layout.actual(&canonical).unwrap(), shape, canonical))
+            .collect::<Vec<_>>();
+        entries.push((
+            "camembert.embeddings.word_embeddings.weight".into(),
+            vec![4, 2],
+            "embeddings.word_embeddings.weight".into(),
+        ));
+        fixture.write_entries(Dtype::F32, false, &entries, fixture_values);
+        let error = fixture.error();
+        assert!(error.contains("ambiguous checkpoint namespace"), "{error}");
+    }
+
+    #[test]
+    fn rejects_unqualified_distilbert_config_forms() {
+        for (fields, message) in [
+            (
+                serde_json::json!({"type_vocab_size": 0}),
+                "invalid or unsupported",
+            ),
+            (
+                serde_json::json!({"activation": "relu"}),
+                "only encoder BERT",
+            ),
+            (
+                serde_json::json!({"hidden_size": 4}),
+                "ambiguous encoder config dim",
+            ),
+        ] {
+            let fixture = Fixture::new();
+            fixture.raw_config(with_fields(distil_config(), fields));
+            let error = BertConfig::load(&fixture.0).unwrap_err().to_string();
+            assert!(error.contains(message), "{error}");
+        }
+    }
+
+    #[test]
+    fn load_time_recipe_distinguishes_exact_biased_and_rounded_arithmetic() {
+        for (value, expected) in [
+            (
+                serde_json::json!({"model_type":"bert", "hidden_size":768,
+                    "intermediate_size":3072, "num_attention_heads":12,
+                    "num_hidden_layers":1, "max_position_embeddings":512, "vocab_size":4}),
+                EncoderRecipe {
+                    embedding: NormArithmetic::ExactBiased,
+                    residual: NormArithmetic::ExactBiased,
+                },
+            ),
+            (
+                serde_json::json!({"model_type":"bert", "hidden_size":1024,
+                    "intermediate_size":4096, "num_attention_heads":16,
+                    "num_hidden_layers":1, "max_position_embeddings":512, "vocab_size":4}),
+                EncoderRecipe {
+                    embedding: NormArithmetic::RoundedAddBeforeStats,
+                    residual: NormArithmetic::RoundedAddBeforeStats,
+                },
+            ),
+            (
+                serde_json::json!({"model_type":"roberta", "hidden_size":768,
+                    "intermediate_size":3072, "num_attention_heads":12,
+                    "num_hidden_layers":1, "max_position_embeddings":512, "vocab_size":4}),
+                EncoderRecipe {
+                    embedding: NormArithmetic::ExactBiased,
+                    residual: NormArithmetic::ExactBiased,
+                },
+            ),
+            (
+                serde_json::json!({"model_type":"roberta", "hidden_size":1024,
+                    "intermediate_size":4096, "num_attention_heads":16,
+                    "num_hidden_layers":1, "max_position_embeddings":512, "vocab_size":4}),
+                EncoderRecipe {
+                    embedding: NormArithmetic::RoundedAddBeforeStats,
+                    residual: NormArithmetic::RoundedAddBeforeStats,
+                },
+            ),
+            (
+                serde_json::json!({"model_type":"distilbert", "dim":768,
+                    "hidden_dim":3072, "n_heads":12, "n_layers":1,
+                    "max_position_embeddings":512, "vocab_size":4,
+                    "activation":"gelu", "sinusoidal_pos_embds":false}),
+                EncoderRecipe {
+                    embedding: NormArithmetic::RoundedAddBeforeStats,
+                    residual: NormArithmetic::RoundedAddBeforeStats,
+                },
+            ),
+        ] {
+            let fixture = Fixture::new();
+            fixture.raw_config(value);
+            assert_eq!(fixture.config_from_disk().recipe, expected);
+        }
+    }
+
     #[test]
     fn refuses_trained_projection_in_sentence_transformers_pipeline() {
         let fixture = Fixture::new();

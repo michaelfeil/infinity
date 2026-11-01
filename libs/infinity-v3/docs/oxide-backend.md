@@ -2,35 +2,56 @@
 
 # Oxide CUDA backend
 
-The experimental `oxide` backend executes BERT using GPU kernels authored in
-Rust and compiled by NVIDIA's cuda-oxide compiler, with cuBLAS BF16 matrix
-multiplication and an optional FA4 AOT attention provider. Its serving process
-uses NVIDIA's `cuda-core` runtime and has
-no LibTorch, PyTorch, Python, or CUDA C++ model execution dependency.
+The experimental `oxide` backend executes typed encoder and dense decoder
+backbones using GPU kernels authored in Rust and compiled by NVIDIA's
+cuda-oxide compiler, cuBLAS/cuBLASLt BF16 projections, and FA4 AOT attention.
+Its serving process uses NVIDIA's `cuda-core` runtime and has no LibTorch,
+PyTorch, Python, or CUDA C++ model execution dependency. Encoder attention can
+also use the Rust SIMT kernel; decoder attention requires FA4.
 
-This is an experimental first slice of the Infinity model catalog. MiniLM has
-completed repeated H100 performance and small retrieval-quality comparisons
-against LibTorch, described below. Broader model and production qualification
-remain necessary.
+Implementation coverage and checkpoint qualification are separate. The current
+catalog below covers pooled BF16 embeddings, with explicit configuration
+guards. It does not establish compatibility or better performance for every
+variant of these families.
 
 ## Current behavior
 
-- Encoder BERT, absolute position embeddings, LibTorch-compatible tanh GELU, and BF16 compute with
-  FP32 accumulation for projections and FP32 embedding outputs.
+- BF16 compute with FP32 accumulation for projections and FP32 embedding outputs.
 - Single-file or standard sharded safetensors; F32/F16/BF16 checkpoint weights.
   Required shapes, finite values, shard paths, and model options are validated.
   Standard Hugging Face cache snapshot symlinks to the same repository's flat
   `blobs/<SHA1-or-SHA256>` directory are supported. Other external weight paths
   and lexical shard traversal are rejected.
-- Packed bidirectional attention and CLS, mean, or last-token pooled embeddings.
+- Packed attention and CLS, mean, or last-token pooled embeddings.
 - Existing HTTP endpoints, tokenizer workers, batching interface, response
-  encodings, and request-controlled normalization. Unsupported model families,
-  trained Dense projections, module pipelines, dtypes, and tasks fail explicitly.
+  encodings, and request-controlled normalization. When `modules.json` is present,
+  only a Transformer/Pooling chain with an optional final Normalize is accepted.
+  Trained Dense projections, other module chains, raw/token embeddings, classification,
+  SPLADE, quantized weights, and non-BF16 serving fail explicitly.
+
+| Typed executor | Accepted configuration |
+| --- | --- |
+| BERT, RoBERTa, XLM-RoBERTa, CamemBERT | Encoder-only absolute position tables, tanh GELU, no cross-attention. BERT position capacity is at most 4096. Head width is at most 256; a matching provider profile is required for FA4. |
+| DistilBERT | The same packed encoder contract, with its checkpoint names/config aliases and fixed LayerNorm epsilon `1e-12`. An optional stored token-type table is validated and preserved; otherwise a zero table is used. |
+| Qwen2 | Dense SiLU text backbone, full split-half NeoX RoPE, global causal or noncausal attention, and a matching FA4 profile. The H896/d64 native RMS/rotary recipe is rejected. The exercised GTE-Qwen2-1.5B-instruct geometry is H1536, 12 Q/2 KV heads, d128, noncausal. |
+| Llama | Hidden width 2048, dense SiLU, base unscaled `default` RoPE, causal global attention, and a matching FA4 profile. TinyLlama's 32 Q/4 KV heads at d64 need the appended twentieth profile. H4096, noncausal Llama, and scaled RoPE including Llama3 are rejected. |
+
+Decoder loading also rejects sliding windows, partial rotary dimensions, expert,
+recurrent, media and quantization modifiers. Accepted Model/ForCausalLM checkpoint
+backbones provide embeddings only; they do not enable generation or a KV cache.
+Required tensor shapes and complete Q/K/V and gate/up bias groups are checked.
+Decoder sentence-transformers pooling metadata must select last-token only;
+the executor can also use explicit CLS or mean pooling selections.
+Family names alone do not bypass these guards. Arithmetic and concrete methods
+are selected when loading the model: encoder normalization recipes preserve the
+native width/family behavior, and Llama uses the native width-2048 RMS and fused
+RoPE recipe while Qwen2 retains its separate arithmetic.
 
 The Rust kernels fuse embedding normalization and QKV preparation; register-cached
 384-wide normalization specializations and a parallel mean-pool kernel cover the
-MiniLM geometry. The model executor retains at most eight workspaces: one active
-plus up to seven inactive device and pinned-host arenas. Each capacity dimension
+MiniLM geometry. Encoder and decoder executors share one ordered-stream engine,
+at most eight GPU workspaces, and two owned pinned input/output slots. One GPU
+workspace is active and up to seven are cached. Each capacity dimension
 is the next power of two at or above a minimum: 32 tokens, two packed boundary
 entries, and one pooled selection. Arenas therefore grow geometrically, and an
 in-budget active arena is reused whenever all three capacities suffice. Otherwise
@@ -41,10 +62,20 @@ selections drive the kernels. Inputs and metadata use a compact H2D copy, and
 only actual pooled rows are copied D2H. There is no maximum-length allocation or
 cache dimension. Unused capacity is neither transferred nor treated as a sequence.
 Inactive workspaces are evicted LRU under the count limit and a 256 MiB budget
-covering active plus cached arena buffers. Model weights and driver/provider
-metadata sit outside that budget. One active request may exceed the budget; doing
-so empties the inactive cache, and that oversized active arena is reused only for
-an identical capacity key and otherwise released rather than cached.
+covering active and cached GPU arenas plus both pinned slots. Model weights,
+immutable RoPE tables and driver/provider metadata sit outside that budget.
+An oversized GPU arena empties the inactive cache but remains available to
+ordered submissions with the same token capacity and sufficient boundary and
+selection capacities. A different token capacity releases that arena rather
+than caching it. Oversized host staging requires an exclusive lease. Idle pinned
+slots are reclaimed before growth; exceptional pinned allocations are released
+after completion.
+
+`submit_embed` returns a deferred result whose lease owns its pinned buffers and
+completion event. Up to two results may remain outstanding and complete in
+either order while GPU work remains ordered on one stream. Completing or dropping
+a result drains its work before returning the slot; a third submission waits for
+a slot. Shared GPU scratch is never used as the deferred result's storage.
 
 Arena event counters start when the serving metrics recorder is installed. The
 live-byte gauge also includes arenas allocated during earlier model warmup.
@@ -68,16 +99,16 @@ only; LibTorch CUDA graph support is unchanged. Kernel modules, allocations, the
 primary context, and streams remain owned until outstanding work drains, including
 on errors. Arena storage is prepared on allocation; exact-row matrix plans are
 prepared when the logical token count changes, outside the layer loop.
-Without an explicitly selected AOT provider, attention uses the Rust SIMT kernel.
-PDL is not implemented yet.
+PDL is not implemented.
 
-PDL is the intended optional scheduling extension. Enable it only for qualified
-producer/consumer pairs with explicit dependency synchronization, checked native
-artifacts and measured gains; opaque provider calls keep ordinary stream
-ordering until their launch contract is verified. Correctness must hold without
-overlap. PDL does not eliminate host launch calls, so fusion and prepared dispatch
-remain separate optimizations. It introduces no capture/replay or fixed-shape
-requirement. See [NVIDIA's PDL contract](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/programmatic-dependent-launch.html).
+Matrix preflight uses typed `ShapeError::Rejected` and `ShapeError::Fatal`
+outcomes. A rejected geometry or unsupported tactic returns an inference error
+before request GPU work, restores affected descriptors or invalidates their row
+cache, and leaves the engine usable for the next supported shape. Invalid packed
+IDs/boundaries and SIMT sequence limits are also checked before dispatch. A fatal
+provider/descriptor failure or uncertain execution completion makes the engine
+unhealthy and drains or retains owned resources safely; it is not silently
+retried through another math method.
 
 ## Tensor and matrix foundations
 
@@ -90,7 +121,7 @@ all buffers until completion. There is no dynamic operator dispatcher.
 
 `math::LinearPlan` prepares row-major `X W^T` geometry and cuBLAS parameters once
 per workspace, including optional row padding. BF16, FP16 and FP32 matrix methods
-accumulate in FP32; the BERT model still runs only in BF16. The backend binds its
+accumulate in FP32; serving executors still run only in BF16. The backend binds its
 context once per forward, rather than once per matrix operation. FP8/FP4 enum
 variants describe storage sizes only and do not enable arithmetic or quantized
 checkpoint loading. Packed scales and quantization schemes need separate methods.
@@ -167,7 +198,7 @@ INFINITY_OXIDE_KERNEL_MODULE=/opt/infinity-oxide-kernels \
 
 The existing `--torch-device` CLI name selects CUDA here without introducing a
 Torch dependency. Runtime requirements are a compatible NVIDIA driver,
-`libcublas.so.13` and its dependencies, and the prepared kernel bundle. A build
+`libcublas.so.13`, `libcublasLt.so.13`, their dependencies, and the prepared kernel bundle. A build
 containing only `oxide` selects it by default; `--backend oxide` is explicit
 when the binary contains multiple backends.
 
@@ -183,26 +214,33 @@ LayerNorm, native width-768/1024 normalization arithmetic, ordinary or rounded R
 NeoX/interleaved RoPE with separate-product or fused arithmetic, staged or FP32
 SiLU multiplication, plain or scaled word gathers, paired CLS/last-row gathers,
 native width-2048 decoder RMSNorm, selected BF16-to-FP32 output extraction,
-aligned vector width-2048 RMSNorm, and paired BF16 SiLU multiplication with
-retained round-to-nearest and native BF16 division recipes, plus an eight-value
-version with 16-byte input/output transactions.
+aligned vector width-2048 RMSNorm, and paired/vector8 BF16 SiLU multiplication
+with retained round-to-nearest and native BF16 division recipes.
 The packed-operation exports preserve their qualified BF16 arithmetic. The
-eight-value SiLU export leaves all previous 35 kernel machine
+additional native-division SiLU export leaves all previous 34 kernel machine
 bodies unchanged on all three targets; an exhaustive finite-BF16 gate sweep
 with unit up-values matches the scalar control and native operator bit for bit.
-Vector RMSNorm uses 16-byte transactions on aligned buffers and a
-scalar fallback otherwise. Paired SiLU handles odd widths and unaligned buffers
-without reading outside a row. These are standalone primitives; they do not
-expand the serving model catalog.
+The additional `infinity_silu_mul_bf16_vector8_native` export processes eight
+values per thread with 16-byte aligned transactions and leaves all previous 35
+machine bodies unchanged. Both decoder recipes select it at load time, using
+`ceil(rows * ceil(width / 8) / 256)` blocks of 256 threads for full and reduced
+readout rows. Odd widths, unaligned pointers and tail chunks fall back safely
+within each row. This changes the selected SiLU export and launch geometry;
+projection methods and the qualified regular-cuBLAS path remain unchanged.
+Vector RMSNorm likewise uses 16-byte transactions on aligned buffers and a
+scalar fallback otherwise. Export availability alone does not expand the serving
+model catalog.
 The row-gather and output-extraction kernels copy storage bits
 or widen them exactly, support independent tensor widths and repeated output
-selections, and need no additional intermediate allocation. These primitives do not
-enable decoder model serving: checkpoint loading, model execution, and full
-quality/performance qualification remain separate work. Generic RMS reductions
-also need qualification against width-specific native reduction recipes.
+selections, and need no additional intermediate allocation. Checkpoint loading,
+executor guards and full quality/performance qualification remain separate
+contracts. Generic RMS reductions need qualification against width-specific
+native reduction recipes.
 
-The original BERT executor still needs its nine entrypoints; the older six-export
-bundle fails startup. These are independent target builds;
+MiniLM still needs the original nine entrypoints; the older six-export bundle
+fails startup. Wider encoders require their selected normalization exports, and
+the current decoder selector requires the new vector8 entrypoint. Use the current
+36-export bundle for the full typed catalog. These are independent target builds;
 changing a label in a manifest is not an architecture build.
 
 | Target | Deployment family | Qualification |
@@ -220,7 +258,7 @@ substitution when an oxide module is absent.
 The added arithmetic recipes pass independent numerical/guard tests on H100.
 The width-2048 RMS kernels also match the unchanged native library bit-for-bit
 on 16 same-input fixtures, including residual halfways, subnormals and partial
-blocks. Their presence does not enable the Llama executor.
+blocks. The guarded H2048 Llama executor uses their vector variants.
 Run their GPU tests explicitly against the rebuilt bundle:
 
 ```bash
@@ -265,7 +303,8 @@ and [dynamic tensor layouts](https://github.com/Dao-AILab/flash-attention/blob/e
 
 Existing 19-profile bundles remain valid for their original modes. The appended
 causal, global d64/GQA8 profile requires its own manifest entry and capability
-bit; it does not change earlier mode indices or enable a model executor.
+bit; it does not change earlier mode indices. TinyLlama's causal d64/GQA8
+executor requires this 20-profile bundle.
 
 | Export | Example Q heads | Example KV heads | Width | Causal | Window |
 | --- | ---: | ---: | ---: | --- | --- |
@@ -298,24 +337,27 @@ and the longest query sequence; the BERT wrapper uses shared boundaries. On SM10
 (`capability / 10 == 10`), width-256 profiles reject separate Q/K boundaries and
 require shared boundaries; other exported profiles accept them.
 
-The pooled BF16 BERT executor supplies query heads equal to KV heads, head width
+The pooled BF16 encoder executor supplies query heads equal to KV heads, head width
 `hidden_size / num_attention_heads`, noncausal global attention, and
 `1 / sqrt(head_dim)` scaling. It can use FA4 only when its ratio, width, and mask
-match one of the 19 profiles (`mha32` for MiniLM, `bert` for standard width-64 MHA). For example,
+match a profile (`mha32` for MiniLM, `bert` for standard width-64 MHA). For example,
 12/12 and 24/24 heads can use the width-64 global MHA export compiled with
-16/16 heads. Coverage of every export is operator coverage, not
-new model-family execution: the pooled BF16 BERT executor remains the only model
-executor, and end-to-end FP16 serving is not implemented.
+16/16 heads. Decoder executors supply their validated Q/KV ratio, head width and
+causality with global attention. Coverage of an export is operator coverage;
+each executor and checkpoint still needs separate qualification. End-to-end
+FP16 serving is not implemented.
 
 When configured, this is a hybrid executor: oxide-authored Rust kernels plus
 cuBLAS and AOT FA4 attention; it is not a claim that FA4 attention was rewritten
 in Rust. `INFINITY_OXIDE_ATTENTION=auto` is the default. It selects FA4 when
-`INFINITY_FA4_ROOT=/path/to/infinityfa4` is present and the BERT geometry
-matches a compiled profile; other geometries use oxide SIMT attention. `simt`
-explicitly selects the Rust attention kernel. `fa4` requires the provider and a
+`INFINITY_FA4_ROOT=/path/to/infinityfa4` is present and the encoder geometry and
+packed row alignment match a compiled profile; other encoder geometries use
+oxide SIMT attention. `simt` explicitly selects the Rust attention kernel.
+`fa4` requires the provider and a
 matching compiled profile, and rejects unsupported models instead of silently
-changing implementations. The per-SM directory must contain the native ABI
-1/export ABI 7 manifest, portable-host marker, matching compute capability and
+changing implementations. These modes configure encoder attention; decoders
+always require the matching FA4 provider. The per-SM directory must contain the
+native ABI 1/export ABI 7 manifest, portable-host marker, matching compute capability and
 an advertised mode for the selected export. A selected provider's load or launch
 failure is an error rather than a retry through another attention path.
 Warm up provider initialization before serving requests. Preserve its adjacent
@@ -336,21 +378,32 @@ geometries include 12/12 and 24/24 heads at width 64, 32/32 heads at width 128,
 and GQA with runtime 24/12, 16/4, and 6/1 head counts. This validates operator
 geometry; each new model still needs checkpoint-level parity and performance.
 
-FA4 is the target production attention provider as model coverage expands; an
-FA2 compatibility backend is outside the oxide roadmap. The pinned provider
-declares the 19 profile cases above spanning causal/noncausal, global/local and
+FA4 is the AOT attention provider; FA2 is not implemented. The pinned provider
+declares the 20 profile cases above spanning causal/noncausal, global/local and
 MHA/GQA attention at widths 32, 64, 72, 128, and 256. The adapter now selects
 every compiled profile, including runtime head-count variations, but operator
 coverage is not by itself model or end-to-end qualification. Windows,
-score modifications, and separate
-Q/K boundaries remain explicit capabilities. Runtime head-count matching uses
-validated ratios; the remaining semantics are checked independently. Keep SIMT
-useful for reference and bring-up; extend FA4 exports for required model semantics where practical.
+score modifications, and separate Q/K boundaries remain explicit capabilities.
+Runtime head-count matching uses
+validated ratios; the remaining semantics are checked independently.
 
 The existing GDN provider also exposes reusable AOT kernels, but GDN/Qwen3.5
 model execution is not implemented by this initial backend.
 
-## Changing-shape serving replay
+## Current qualification limits
+
+Latest balanced H100 MiniLM comparisons showed about 15% lower median latency,
+but worse p99 latency than the LibTorch control. Earlier TinyLlama regular-vector
+measurements remained slower than the strongest graph-enabled native control
+using all 20 FA4 profiles, which measured approximately 1.74–1.77 ms for the
+128-token case. Selecting the vector8 SiLU export does not by itself establish
+an end-to-end speedup. Quality, tail latency and throughput remain separate
+gates for each checkpoint, batch pattern, precision, device and provider.
+
+The measurements below describe earlier builds and controls; they are retained
+as historical evidence, not performance claims for every current executor.
+
+## Earlier changing-shape serving replay
 
 On 2026-10-31, a local HTTP replay used 64 public SciFact queries and 256
 documents, with natural-text substrings, batch sizes 1–32, and long/short
@@ -457,51 +510,21 @@ backend's queries with the other's document index preserved recall and top-1
 on this fixture. The vectors are not bit-identical, and this small fixture is
 not a full MTEB evaluation or a general accuracy guarantee.
 
-## Extending model coverage
+## Remaining coverage limits
 
-The compatibility floor is every model family and task currently supported by
-Infinity's LibTorch backend, including its checkpoint aliases, module chains,
-precision policies, and state/media behavior. Pooled BF16 BERT is the first
-vertical, not the intended coverage limit. Broader model support can extend this
-catalog; a family name alone is not evidence that all its variants work.
-Keep this catalog synchronized as LibTorch gains families and tasks.
+The typed catalog above does not replace the full LibTorch catalog. ModernBERT,
+MPNet, DeBERTa, other decoder families, scaled/partial/windowed position and
+attention recipes, recurrent/MoE state, media inputs, learned projections and
+task heads remain unsupported. FA4 local/window profiles and standalone device
+primitives do not enable those model contracts. CPU execution is also outside
+this CUDA backend. See [LibTorch model coverage](libtorch-model-coverage.md) for
+the native compatibility inventory.
 
-| Coverage track | Families and contracts to port |
-| --- | --- |
-| Encoders | BERT/RoBERTa/XLM-R/CamemBERT, DistilBERT, ModernBERT, GTE, Nomic, Jina/JinaCode, MPNet and DeBERTa |
-| Dense decoders | Llama, Mistral/Ministral, Qwen2/Qwen3 and UltraBERT variants |
-| Hybrid and MoE | Qwen3.5 recurrent/convolution history, Qwen3/Qwen3.5/Gemma4 experts, routing and prefix/state reuse |
-| Gemma | Gemma3, Gemma4 and EmbeddingGemma2 normalization, position, shared-KV and readout variants |
-| Media and multi-vector | Qwen-VL, Pixtral/Mistral3, UltraVBERT/SigLIP and Gemma towers, where their checkpoints support image/video/audio; ColBERT/ColQwen wrappers |
-| Task heads | Pooled/raw embeddings, Dense/projection chains, classification/NER, SPLADE, reranking, multi-vector and learned decision readouts |
-
-Keep tensor storage, layout, accumulation, and quantization contracts independent
-of the BERT recipe. The next shared operations are LayerNorm/RMSNorm, positional
-transforms, attention masks/windows/GQA, activation variants, gated MLPs, reductions, gather/
-scatter and task readouts. Add recurrent state, expert routing and media
-operators with their first family. Methods and provider capabilities are
-resolved at load/workspace preparation; forward uses concrete operations and
-borrowed views without a dynamic operator registry on each call.
-
-Track qualification by family, task, precision, device and provider, using exact
-checkpoint fixtures and LibTorch parity, quality, latency/throughput, memory and
-failure checks. Retiring a model is a separate product decision and does not
-count as implementing compatibility. GPU migration can proceed per family;
-LibTorch CPU remains during the transition until the CPU strategy is resolved.
-Full LibTorch replacement requires resolving that CPU dependency as well.
-
-Preserve checkpoint, pooling, HTTP, precision, and error-isolation contracts as
-coverage grows:
-
-1. Establish BERT quality and repeated throughput/latency controls against
-   LibTorch, including graph-enabled controls and variable sequence lengths.
-2. Refine arena reuse, asynchronous completion, BF16/cuBLASLt projection
-   dispatch, and matrix preparation using measured bottlenecks.
-3. Qualify the hybrid AOT attention path where its measured benefit warrants
-   the additional provider. Avoid a device-to-host copy between kernels.
-4. Add Qwen RMSNorm, RoPE, grouped-query attention, gated MLPs and readouts.
-5. Integrate GDN and Qwen3.5/D3 state plus typed-decision semantics.
-6. Validate MoE, multimodal inputs, and remaining typed heads independently.
+Methods and provider capabilities are resolved at model/workspace preparation;
+forward uses concrete typed operations and borrowed views without a dynamic
+operator registry. New coverage requires exact checkpoint fixtures plus native
+parity, quality, memory, failure-isolation and balanced performance checks. No
+all-models-faster or full LibTorch replacement claim is made.
 
 NVIDIA describes cuda-oxide as experimental. Pin compiler and runtime changes
 and revalidate emitted artifacts. NVIDIA CUDA Rust remains **Apache-2.0** with

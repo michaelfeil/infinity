@@ -6,7 +6,10 @@ use std::{path::Path, time::Instant};
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = std::env::args().collect::<Vec<_>>();
     let Some(path) = args.get(1) else {
-        return Err("usage: probe MODEL_PATH [TOKENS] [ITERATIONS]".into());
+        return Err(
+            "usage: probe MODEL_PATH [TOKENS] [ITERATIONS] [DEVICE] [POOL mean|cls|last-token]"
+                .into(),
+        );
     };
     let len = args
         .get(2)
@@ -18,10 +21,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map(|v| v.parse::<usize>())
         .transpose()?
         .unwrap_or(100);
+    let pool = match args.get(5).map(String::as_str).unwrap_or("mean") {
+        "mean" => Pool::Mean,
+        "cls" => Pool::Cls,
+        "last-token" | "last_token" => Pool::LastToken,
+        other => return Err(format!("unsupported pool: {other}").into()),
+    };
     let backend = OxideBackend::new(
         Path::new(path),
         "bfloat16",
-        ModelType::Embedding(Pool::Mean),
+        ModelType::Embedding(pool),
         args.get(4).map(|v| v.parse()).transpose()?.unwrap_or(1),
     )?;
     let ids = (0..len).map(|i| 20 + (i * 13 % 20000) as u32).collect();

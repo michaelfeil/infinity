@@ -370,6 +370,7 @@ fn resolve_scale(spec: &AttentionSpec) -> Result<f64, BackendError> {
     }
 }
 
+#[cfg(test)]
 fn contiguous_strides(spec: &AttentionSpec) -> Option<[i64; 12]> {
     let head_dim = i64::try_from(spec.head_dim).ok()?;
     let q_width = i64::try_from(spec.heads.checked_mul(spec.head_dim)?).ok()?;
@@ -487,6 +488,7 @@ pub(crate) struct Fa4 {
     left: i32,
     right: i32,
     spec: AttentionSpec,
+    #[cfg(test)]
     contiguous_strides: [i64; 12],
     _library: Library,
 }
@@ -526,6 +528,7 @@ impl Fa4 {
         let (mode, declared) = profile_selection(&manifest, &spec)?;
         let mode = i32::try_from(mode).map_err(start)?;
         let scale = resolve_scale(&spec)?;
+        #[cfg(test)]
         let contiguous_strides =
             contiguous_strides(&spec).ok_or_else(|| start("attention strides overflow"))?;
         let (left, right) = match spec.window {
@@ -583,6 +586,7 @@ impl Fa4 {
             left,
             right,
             spec,
+            #[cfg(test)]
             contiguous_strides,
             _library: library,
         })
@@ -591,6 +595,7 @@ impl Fa4 {
     /// Contiguous packed self-attention using the selected spec. The engine
     /// retains Q/K/V/output allocations and the int32 boundaries through stream
     /// completion. This preserves the existing BERT call shape.
+    #[cfg(test)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn forward(
         &self,
@@ -634,11 +639,46 @@ impl Fa4 {
     /// unmodified until this stream work completes, must provide `batch + 1`
     /// int32 entries at each offsets pointer, and must ensure output storage
     /// does not alias an input. All pointers must remain valid for the launch.
+    #[allow(dead_code)] // Safe binding entry retained for tests and non-engine callers.
     pub(crate) unsafe fn forward_batch(
         &self,
         stream: &Stream,
         batch: &AttentionBatch,
     ) -> Result<(), BackendError> {
+        let args = self.validate_forward(stream, batch)?;
+        self.context.bind_to_thread().map_err(infer)?;
+        // SAFETY: validation passed and the context is current on this thread;
+        // no context switch occurs below.
+        unsafe { self.launch_forward(stream, batch, args) }
+    }
+
+    /// Enqueue one generalized packed attention launch on an already-bound
+    /// context.
+    ///
+    /// # Safety
+    ///
+    /// The provider's context MUST be current on the calling thread before
+    /// entry and MUST remain current for the entire call. The caller must keep
+    /// all Q/K/V/output and cumulative-length device allocations alive and
+    /// unmodified until this stream work completes, must provide `batch + 1`
+    /// int32 entries at each offsets pointer, and must ensure output storage
+    /// does not alias an input. All pointers must remain valid for the launch.
+    pub(crate) unsafe fn forward_batch_bound(
+        &self,
+        stream: &Stream,
+        batch: &AttentionBatch,
+    ) -> Result<(), BackendError> {
+        let args = self.validate_forward(stream, batch)?;
+        // SAFETY: the caller guarantees the context remains current; validation
+        // above upholds the remaining launch contract.
+        unsafe { self.launch_forward(stream, batch, args) }
+    }
+
+    fn validate_forward(
+        &self,
+        stream: &Stream,
+        batch: &AttentionBatch,
+    ) -> Result<(i64, i64, i32, i32), BackendError> {
         if self.context.cu_ctx() != stream.context().cu_ctx() {
             return Err(infer("stream belongs to another CUDA context"));
         }
@@ -650,7 +690,15 @@ impl Fa4 {
             .checked_add(1)
             .ok_or_else(|| infer("boundary count overflow"))?;
         let max_q = i32::try_from(batch.max_q).map_err(infer)?;
-        self.context.bind_to_thread().map_err(infer)?;
+        Ok((total, total_k, count, max_q))
+    }
+
+    unsafe fn launch_forward(
+        &self,
+        stream: &Stream,
+        batch: &AttentionBatch,
+        (total, total_k, count, max_q): (i64, i64, i32, i32),
+    ) -> Result<(), BackendError> {
         // SAFETY: check_batch validated geometry, pointer alignment and the
         // element strides. The selected profile is immutable, and the caller
         // upholds the lifetime/context contract documented above. Stack
