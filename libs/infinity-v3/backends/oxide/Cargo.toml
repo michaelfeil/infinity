@@ -18,5 +18,6 @@ serde_json = { workspace = true }
 metrics = { workspace = true }
 
 [dev-dependencies]
+base64 = "0.22"
 sha2 = "0.10"
 zip = { version = "=8.6.0", features = ["deflate-flate2-zlib-rs"], default-features = false }

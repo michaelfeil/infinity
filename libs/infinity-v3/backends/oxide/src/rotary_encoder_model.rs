@@ -272,6 +272,7 @@ pub(crate) fn load(path: &Path, config: BertConfig) -> Result<BertWeights, Backe
     }
     reject_unexpected(&checkpoint, root, &used)?;
     Ok(BertWeights {
+        relative_bias: None,
         config,
         word,
         position,

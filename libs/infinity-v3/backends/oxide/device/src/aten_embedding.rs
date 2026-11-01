@@ -109,15 +109,15 @@ const NUM_THREADS: usize = BLOCK_X * BLOCK_Y;
 const SMEM_FLOATS: usize = BLOCK_Y * 3 / 2;
 
 #[derive(Copy, Clone)]
-struct WelfordData {
-    mean: f32,
-    sigma2: f32,
-    count: f32,
+pub(crate) struct WelfordData {
+    pub(crate) mean: f32,
+    pub(crate) sigma2: f32,
+    pub(crate) count: f32,
 }
 
 impl WelfordData {
     #[inline(always)]
-    fn zero() -> Self {
+    pub(crate) fn zero() -> Self {
         Self {
             mean: 0.0,
             sigma2: 0.0,
@@ -127,7 +127,7 @@ impl WelfordData {
 }
 
 #[inline(always)]
-fn welford_online_sum(value: f32, current: WelfordData) -> WelfordData {
+pub(crate) fn welford_online_sum(value: f32, current: WelfordData) -> WelfordData {
     let delta = value - current.mean;
     let new_count = current.count + 1.0;
     let reciprocal = float::div_rn_f32(1.0, new_count);
@@ -141,7 +141,7 @@ fn welford_online_sum(value: f32, current: WelfordData) -> WelfordData {
 }
 
 #[inline(always)]
-fn welford_combine(data_b: WelfordData, data_a: WelfordData) -> WelfordData {
+pub(crate) fn welford_combine(data_b: WelfordData, data_a: WelfordData) -> WelfordData {
     let delta = data_b.mean - data_a.mean;
     let count = data_a.count + data_b.count;
     if count > 0.0 {

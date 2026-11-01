@@ -1,0 +1,5 @@
+Standalone MPNet native-derived attention
+
+The adapter and patched kernel_forward.h derive from PyTorch commit5c4886908584029761b579af026dcfb627c84070, BSD-3-Clause. The source dependency manifest resolves CUTLASS e05f953a5b3d38adc240df2ff928e0421c2abba3, BSD-3-Clause. Full license texts are included beside this notice and preserved by the builder. All upstream file notices remain intact. Only learned32-bucket bias lookup and standalone caller-owned prepared ABI are added; native attention score/softmax/reduction staging is retained. No LibTorch, ATen or c10 runtime is linked.
+
+This source package does not include model weights or private FA4 code. Build dependencies are fetched only with explicit --fetch and verified against the pinned public SHA256 manifest.

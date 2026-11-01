@@ -63,6 +63,8 @@ symbols = sorted(symbols + [
 
 symbols = sorted(symbols + ["infinity_classifier_bias_bf16", "infinity_classifier_gather_first_bf16", "infinity_classifier_embedding_norm_384_exact", "infinity_classifier_layer_norm_384_exact"])
 
+symbols = sorted(symbols + ["infinity_embedding_norm_mpnet_768_aten", "infinity_layer_norm_mpnet_768_aten", "infinity_gelu_exact"])
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -84,7 +86,7 @@ manifest = {
     "output_dtype": "float32",
     "sources": {name: digest(root / name) for name in
                 ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs", "src/norm384.rs", "src/norm512.rs", "src/norm768.rs", "src/norm768_vector.rs", "src/nomic_embedding.rs", "src/norm1024.rs", "src/norm1024_exact_vector.rs", "src/norm2048.rs", "src/norm2048_vector.rs",
-                 "src/decoder.rs", "src/dense.rs", "src/encoder_prenorm.rs", "src/gated.rs", "src/aten_embedding.rs", "src/rms1536.rs", "src/rms1536_vector.rs", "src/rms4096_vector.rs", "src/silu_pairs.rs", "src/silu_vector8.rs", "src/readout.rs", "src/qk_norm_rope_128.rs"]},
+                 "src/decoder.rs", "src/dense.rs", "src/encoder_prenorm.rs", "src/gated.rs", "src/aten_embedding.rs", "src/mpnet_norm.rs", "src/gelu_exact.rs", "src/rms1536.rs", "src/rms1536_vector.rs", "src/rms4096_vector.rs", "src/silu_pairs.rs", "src/silu_vector8.rs", "src/readout.rs", "src/qk_norm_rope_128.rs"]},
     "kernels": symbols,
     "qualification": "Every architecture is independently compiled from Rust and assembled to a native cubin; hardware runtime validation is separate.",
     "architectures": [],

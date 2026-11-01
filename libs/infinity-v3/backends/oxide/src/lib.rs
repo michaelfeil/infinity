@@ -24,6 +24,10 @@ pub(crate) mod lt;
 pub mod math;
 mod model;
 mod modern_encoder_model;
+mod mpnet;
+mod mpnet_attention;
+#[cfg(test)]
+mod mpnet_numerics;
 mod native_rope_tables;
 mod nomic_encoder_model;
 #[cfg(test)]
@@ -291,6 +295,7 @@ struct Weights<E: UploadElement> {
     beta: DeviceBuffer<E>,
     qkv_zero_bias: Option<DeviceBuffer<E>>,
     layers: Vec<Layer<E>>,
+    relative_bias: Option<DeviceBuffer<E>>,
 }
 impl<E: UploadElement> Linear<E> {
     fn upload(u: &mut WeightUploader, w: &LinearWeights) -> Result<Self, BackendError> {
@@ -478,6 +483,16 @@ const H768_GEOMETRY: KernelGeometry = KernelGeometry {
     rows_per_cta: 4,
     threads: 128,
 };
+const MPNET_H768_GEOMETRY: KernelGeometry = KernelGeometry {
+    rows_per_cta: 1,
+    threads: 128,
+};
+fn selects_mpnet_h768(c: &BertConfig) -> bool {
+    c.family == EncoderFamily::Mpnet
+        && c.hidden_size == 768
+        && c.recipe.embedding == NormArithmetic::RoundedAddBeforeStats
+        && c.recipe.residual == NormArithmetic::RoundedAddBeforeStats
+}
 
 struct Kernels {
     embedding: Function,
@@ -498,6 +513,7 @@ struct Kernels {
     rotary: Option<RotaryFunctions>,
     gated: Option<PreparedGatedActivation>,
     qk_norm_768: Option<Function>,
+    gelu_exact: Option<Function>,
 }
 impl Kernels {
     fn load(ctx: &Arc<Context>, config: &BertConfig, fa4: bool) -> Result<Self, BackendError> {
@@ -547,6 +563,7 @@ impl Kernels {
             config.hidden_size == 768 && config.recipe.embedding == NormArithmetic::ExactBiased;
         let exact_768_norm =
             config.hidden_size == 768 && config.recipe.residual == NormArithmetic::ExactBiased;
+        let mpnet_768_rounded = selects_mpnet_h768(config);
         let rounded_512_norm = config.family == EncoderFamily::Jina
             && config.hidden_size == 512
             && config.recipe.residual == NormArithmetic::RoundedAddBeforeStats;
@@ -574,6 +591,9 @@ impl Kernels {
             NormArithmetic::ExactBiased if exact_768_embedding => {
                 "infinity_embedding_norm_768_exact_vector"
             }
+            NormArithmetic::RoundedAddBeforeStats if mpnet_768_rounded => {
+                "infinity_embedding_norm_mpnet_768_aten"
+            }
             NormArithmetic::RoundedAddBeforeStats if rounded_1024_embedding => {
                 "infinity_embedding_norm_1024_rounded_native"
             }
@@ -593,6 +613,9 @@ impl Kernels {
                 "infinity_classifier_layer_norm_384_exact"
             }
             NormArithmetic::ExactBiased if exact_768_norm => "infinity_layer_norm_768_exact_vector",
+            NormArithmetic::RoundedAddBeforeStats if mpnet_768_rounded => {
+                "infinity_layer_norm_mpnet_768_aten"
+            }
             NormArithmetic::RoundedAddBeforeStats if rounded_512_norm => {
                 "infinity_layer_norm_512_rounded_native"
             }
@@ -608,7 +631,7 @@ impl Kernels {
             }
         };
         let gated = match config.recipe.feed_forward {
-            FeedForwardRecipe::DenseGelu => None,
+            FeedForwardRecipe::DenseGelu | FeedForwardRecipe::DenseGeluErf => None,
             recipe @ (FeedForwardRecipe::GatedGeluUpFirst
             | FeedForwardRecipe::GatedSiluGateFirst) => {
                 let name = if recipe == FeedForwardRecipe::GatedSiluGateFirst {
@@ -630,7 +653,9 @@ impl Kernels {
             None
         };
         let rotary = match config.recipe.positions {
-            PositionRecipe::Absolute | PositionRecipe::AlibiModelBias => None,
+            PositionRecipe::Absolute
+            | PositionRecipe::AlibiModelBias
+            | PositionRecipe::LearnedRelative { .. } => None,
             PositionRecipe::Rotary(_) => Some(RotaryFunctions {
                 rope_hfma: module
                     .load_function("infinity_rope_neox_hfma")
@@ -646,7 +671,13 @@ impl Kernels {
                 },
             }),
         };
+        let gelu_exact = if config.recipe.feed_forward == FeedForwardRecipe::DenseGeluErf {
+            Some(module.load_function("infinity_gelu_exact").map_err(start)?)
+        } else {
+            None
+        };
         Ok(Self {
+            gelu_exact,
             raw_cast,
             embedding_384: if !exact_classifier_384
                 && config.hidden_size == 384
@@ -675,12 +706,16 @@ impl Kernels {
             mean_pool: module.load_function("infinity_mean_pool").map_err(start)?,
             embedding: module.load_function(embedding_name).map_err(start)?,
             norm: module.load_function(norm_name).map_err(start)?,
-            embedding_geometry: if exact_768_embedding || exact_classifier_384 {
+            embedding_geometry: if mpnet_768_rounded {
+                MPNET_H768_GEOMETRY
+            } else if exact_768_embedding || exact_classifier_384 {
                 H768_GEOMETRY
             } else {
                 GENERIC_GEOMETRY
             },
-            norm_geometry: if exact_768_norm || exact_classifier_384 {
+            norm_geometry: if mpnet_768_rounded {
+                MPNET_H768_GEOMETRY
+            } else if exact_768_norm || exact_classifier_384 {
                 H768_GEOMETRY
             } else {
                 GENERIC_GEOMETRY
@@ -758,6 +793,7 @@ impl Kernels {
             rotary: None,
             gated: None,
             qk_norm_768: None,
+            gelu_exact: None,
         })
     }
 }
@@ -900,6 +936,7 @@ fn packed_attention_layout(c: &BertConfig) -> Result<Option<PackedAttention>, Ba
 
 enum IntermediatePlan<E: UploadElement> {
     Dense(Box<LtPlan<E>>),
+    DenseExact(Box<LtPlan<E>>),
     Gated {
         plan: Box<Option<math::LinearPlan<E>>>,
         input: usize,
@@ -1134,6 +1171,9 @@ impl<E: UploadElement> Plans<E> {
             FeedForwardRecipe::DenseGelu => IntermediatePlan::Dense(Box::new(
                 provider.prepare_native_small_gelu_bias_shape::<E>(h, c.intermediate_size)?,
             )),
+            FeedForwardRecipe::DenseGeluErf => IntermediatePlan::DenseExact(Box::new(
+                provider.prepare_native_small_bias_shape::<E>(h, c.intermediate_size)?,
+            )),
             FeedForwardRecipe::GatedGeluUpFirst | FeedForwardRecipe::GatedSiluGateFirst => {
                 IntermediatePlan::Gated {
                     plan: Box::new(None),
@@ -1163,7 +1203,9 @@ impl<E: UploadElement> Plans<E> {
             self.qkv.set_rows(provider, rows)?;
             self.attention.set_rows(provider, rows)?;
             match &mut self.intermediate {
-                IntermediatePlan::Dense(plan) => provider.set_logical_rows(plan, rows)?,
+                IntermediatePlan::Dense(plan) | IntermediatePlan::DenseExact(plan) => {
+                    provider.set_logical_rows(plan, rows)?
+                }
                 IntermediatePlan::Gated { plan, input, width } => {
                     **plan = Some(
                         math::LinearPlan::contiguous(rows, *input, *width)
@@ -1223,7 +1265,7 @@ impl<E: UploadElement> Plans<E> {
 impl<E: UploadElement> IntermediatePlan<E> {
     fn logical_rows(&self) -> i32 {
         match self {
-            Self::Dense(plan) => plan.logical_rows(),
+            Self::Dense(plan) | Self::DenseExact(plan) => plan.logical_rows(),
             Self::Gated { plan, .. } => plan
                 .as_ref()
                 .as_ref()
@@ -1390,6 +1432,7 @@ struct EncoderModel<E: UploadElement> {
     rotary: Option<RotaryEncoder>,
     gated: Option<PreparedGatedActivation>,
     fa4: Option<fa4::Fa4>,
+    mpnet_native: Option<mpnet_attention::NativeMpnetAttention>,
     fa4_layout: Option<PackedAttention>,
     classifier: Option<ClassifierHead>,
 }
@@ -1631,6 +1674,7 @@ fn input_elements(
         .and_then(|n| n.checked_add(selected))
         .ok_or_else(|| infer("Input staging layout overflow"))
 }
+#[cfg(test)]
 fn pack_input(
     out: &mut [u32],
     tokens: usize,
@@ -1639,6 +1683,28 @@ fn pack_input(
     token_type_ids: &[u32],
     boundaries: &[u32],
     selected: &[u32],
+) -> Result<(), BackendError> {
+    pack_input_with_position_offset(
+        out,
+        tokens,
+        input_ids,
+        position_ids,
+        token_type_ids,
+        boundaries,
+        selected,
+        0,
+    )
+}
+#[allow(clippy::too_many_arguments)]
+fn pack_input_with_position_offset(
+    out: &mut [u32],
+    tokens: usize,
+    input_ids: &[u32],
+    position_ids: &[u32],
+    token_type_ids: &[u32],
+    boundaries: &[u32],
+    selected: &[u32],
+    position_offset: u32,
 ) -> Result<(), BackendError> {
     let layout = product(tokens, 3)?
         .checked_add(boundaries.len())
@@ -1652,14 +1718,25 @@ fn pack_input(
         return Err(infer("Invalid input staging layout"));
     }
     let mut rest = out;
-    for source in [input_ids, position_ids, token_type_ids] {
+    for (section, source) in [input_ids, position_ids, token_type_ids]
+        .into_iter()
+        .enumerate()
+    {
         let (row, tail) = rest
             .split_at_mut_checked(tokens)
             .ok_or_else(|| infer("Invalid input staging layout"))?;
         let (head, padding) = row
             .split_at_mut_checked(source.len())
             .ok_or_else(|| infer("Invalid input staging layout"))?;
-        head.copy_from_slice(source);
+        if section == 1 && position_offset != 0 {
+            for (out, value) in head.iter_mut().zip(source) {
+                *out = value
+                    .checked_add(position_offset)
+                    .ok_or_else(|| infer("Position staging offset overflow"))?;
+            }
+        } else {
+            head.copy_from_slice(source);
+        }
         padding.fill(0);
         rest = tail;
     }
@@ -1681,6 +1758,14 @@ fn stage_batch(
     b: &Batch,
     geometry: output::OutputGeometry,
     lease: &mut HostIoLease,
+) -> Result<(usize, usize), BackendError> {
+    stage_batch_with_position_offset(b, geometry, lease, 0)
+}
+fn stage_batch_with_position_offset(
+    b: &Batch,
+    geometry: output::OutputGeometry,
+    lease: &mut HostIoLease,
+    position_offset: u32,
 ) -> Result<(usize, usize), BackendError> {
     let rows = output::rows(b)?;
     let elements = input_elements(b.input_ids.len(), b.cumulative_seq_lengths.len(), rows)?;
@@ -1704,7 +1789,7 @@ fn stage_batch(
     let (pooled_input, raw_input) = host
         .split_at_mut_checked(pooled_metadata)
         .ok_or_else(|| infer("Invalid raw selection staging layout"))?;
-    pack_input(
+    pack_input_with_position_offset(
         pooled_input,
         b.input_ids.len(),
         &b.input_ids,
@@ -1712,6 +1797,7 @@ fn stage_batch(
         &b.token_type_ids,
         &b.cumulative_seq_lengths,
         &b.pooled_indices,
+        position_offset,
     )?;
     output::write_raw_indices(b, raw_input)?;
     if output > lease.slot()?.output.len() {
@@ -1973,7 +2059,7 @@ impl<E: UploadElement> Work<E> {
         let attention = alloc(hidden)?;
         let intermediate = alloc(product(tokens, c.intermediate_size)?)?;
         let gated = match c.recipe.feed_forward {
-            FeedForwardRecipe::DenseGelu => None,
+            FeedForwardRecipe::DenseGelu | FeedForwardRecipe::DenseGeluErf => None,
             FeedForwardRecipe::GatedGeluUpFirst | FeedForwardRecipe::GatedSiluGateFirst => {
                 Some(alloc(product(product(tokens, c.intermediate_size)?, 2)?)?)
             }
@@ -2359,10 +2445,24 @@ impl Engine {
             lease.mark_exclusive();
         }
         lease.prepare(plan, host_elements, host_oversized)?;
+        let position_offset = match &*self.model {
+            ExecutableModel::Encoder(m) if m.config.family == EncoderFamily::Mpnet => {
+                mpnet::POSITION_OFFSET as u32
+            }
+            _ => 0,
+        };
         let (input_elements, _) = if readout_mode.is_some() {
             w.stage_classifier(b, geometry, lease)?
-        } else {
+        } else if position_offset == 0 {
             w.stage(b, geometry, lease)?
+        } else {
+            let Workspace::Encoder(work) = w else {
+                return Err(infer("MPNet staging requires BF16 encoder workspace").into());
+            };
+            if geometry.backbone_elements(b)? > work.pooled.len() {
+                return Err(infer("Backbone output exceeds retained arena").into());
+            }
+            stage_batch_with_position_offset(b, geometry, lease, position_offset)?
         };
         let s = &*self.stream;
         // Ordinary ordered-stream dispatch; concrete plans were refreshed for
@@ -2445,6 +2545,7 @@ fn enqueue_encoder<E: UploadElement>(
     let k = &model.kernels;
     let weights = &model.weights;
     let fa4 = model.fa4.as_ref();
+    let mpnet_native = model.mpnet_native.as_ref();
     let fa4_layout = model.fa4_layout;
     let rotary = model.rotary.as_ref();
     let gated = model.gated.as_ref();
@@ -2698,7 +2799,33 @@ fn enqueue_encoder<E: UploadElement>(
                 );
             }
         }
-        if let Some(provider) = fa4 {
+        if let Some(provider) = mpnet_native {
+            let layout = fa4_layout.ok_or_else(|| infer("Missing MPNet packed layout"))?;
+            let table = weights
+                .relative_bias
+                .as_ref()
+                .ok_or_else(|| infer("Missing MPNet learned bucket table"))?;
+            let q = w.qkv.cu_deviceptr();
+            let attention = mpnet_attention::RelativeAttentionBatch {
+                q,
+                k: q.checked_add(layout.k_offset)
+                    .ok_or_else(|| infer("MPNet K address overflow"))?,
+                v: q.checked_add(layout.v_offset)
+                    .ok_or_else(|| infer("MPNet V address overflow"))?,
+                out: w.attention.cu_deviceptr(),
+                offsets: boundaries,
+                table: table.cu_deviceptr(),
+                tokens,
+                batch: batch_count,
+                max_q: max_length,
+                strides: layout.strides,
+            };
+            unsafe {
+                provider.forward_batch_bound(s, &attention)?;
+            }
+        } else if c.family == EncoderFamily::Mpnet {
+            return Err(infer("Missing MPNet native attention").into());
+        } else if let Some(provider) = fa4 {
             let layout = fa4_layout.ok_or_else(|| infer("Missing FA4 packed layout"))?;
             let q = w.qkv.cu_deviceptr();
             let attention = fa4::AttentionBatch {
@@ -2900,8 +3027,14 @@ fn enqueue_encoder<E: UploadElement>(
                 ],
             )?;
         } else {
-            let IntermediatePlan::Dense(plan) = &plans.intermediate else {
-                return Err(infer("Dense feed-forward requires a dense intermediate plan").into());
+            let (plan, _exact) = match &plans.intermediate {
+                IntermediatePlan::Dense(plan) => (plan, false),
+                IntermediatePlan::DenseExact(plan) => (plan, true),
+                _ => {
+                    return Err(
+                        infer("Dense feed-forward requires a dense intermediate plan").into(),
+                    )
+                }
             };
             // SAFETY: same retained-buffer/context contract as the QKV call.
             unsafe {
@@ -2917,6 +3050,21 @@ fn enqueue_encoder<E: UploadElement>(
                     &mut w.intermediate,
                 )?;
             }
+        }
+        if c.recipe.feed_forward == FeedForwardRecipe::DenseGeluErf {
+            let function = k
+                .gelu_exact
+                .as_ref()
+                .ok_or_else(|| infer("Missing exact GELU kernel"))?;
+            let mut data = w.intermediate.cu_deviceptr();
+            let mut n = u32_size(product(tokens, c.intermediate_size)?)?;
+            launch(
+                function,
+                s,
+                blocks(n as usize)?,
+                0,
+                &mut [arg(&mut data), arg(&mut n)],
+            )?;
         }
         #[cfg(test)]
         if let Some(trace) = trace.as_mut() {
@@ -3415,42 +3563,82 @@ fn encoder_model<E: UploadElement>(
             "Jina requires packed QKV and attention row strides divisible by 8 elements",
         ));
     }
-    let fa4 = match attention_mode.as_str() {
-        "fa4" => {
-            if packed.is_none() {
-                return Err(start(
-                    "FA4 requires packed QKV and output row strides divisible by 8 elements",
-                ));
-            }
-            let root = fa4_root
-                .as_ref()
-                .ok_or_else(|| start("FA4 attention requires INFINITY_FA4_ROOT"))?;
-            let root = Path::new(root);
-            Some(if config.family == EncoderFamily::JinaCode {
-                fa4::Fa4::new_alibi_native12(context.clone(), stream.clone(), root, attention_spec)?
-            } else if alibi_family {
-                fa4::Fa4::new_alibi(context.clone(), stream.clone(), root, attention_spec)?
-            } else {
-                fa4::Fa4::new(context.clone(), root, attention_spec)?
-            })
+    let mpnet_native = if config.family == EncoderFamily::Mpnet {
+        if !matches!(attention_mode.as_str(), "auto" | "fa4") {
+            return Err(start("MPNet requires native bucket attention"));
         }
-        "auto"
-            if fa4_root.is_some()
-                && (alibi_family || fa4::Fa4::supports(&attention_spec))
-                && packed.is_some() =>
+        if packed.is_none()
+            || !selects_mpnet_h768(&config)
+            || config.num_attention_heads != 12
+            || config.intermediate_size != 3072
+            || mpnet::position_capacity(&config)? > 512
         {
-            let root = fa4_root.as_ref().ok_or_else(|| start("Missing FA4 root"))?;
-            let root = Path::new(root);
-            Some(if config.family == EncoderFamily::JinaCode {
-                fa4::Fa4::new_alibi_native12(context.clone(), stream.clone(), root, attention_spec)?
-            } else if alibi_family {
-                fa4::Fa4::new_alibi(context.clone(), stream.clone(), root, attention_spec)?
-            } else {
-                fa4::Fa4::new(context.clone(), root, attention_spec)?
-            })
+            return Err(start(
+                "MPNet native attention requires BF16 H768/I3072/12 heads and at most512 positions",
+            ));
         }
-        "auto" | "simt" => None,
-        _ => return Err(start("INFINITY_OXIDE_ATTENTION must be auto,simt or fa4")),
+        let root = std::env::var_os(infinity_v3_config::infinity_env!(
+            "OXIDE_MPNET_ATTENTION_ROOT"
+        ))
+        .ok_or_else(|| start("MPNet requires INFINITY_OXIDE_MPNET_ATTENTION_ROOT"))?;
+        Some(mpnet_attention::NativeMpnetAttention::new(
+            context.clone(),
+            Path::new(&root),
+            precision.fa4_dtype(),
+        )?)
+    } else {
+        None
+    };
+    let fa4 = if mpnet_native.is_some() {
+        None
+    } else {
+        match attention_mode.as_str() {
+            "fa4" => {
+                if packed.is_none() {
+                    return Err(start(
+                        "FA4 requires packed QKV and output row strides divisible by 8 elements",
+                    ));
+                }
+                let root = fa4_root
+                    .as_ref()
+                    .ok_or_else(|| start("FA4 attention requires INFINITY_FA4_ROOT"))?;
+                let root = Path::new(root);
+                Some(if config.family == EncoderFamily::JinaCode {
+                    fa4::Fa4::new_alibi_native12(
+                        context.clone(),
+                        stream.clone(),
+                        root,
+                        attention_spec,
+                    )?
+                } else if alibi_family {
+                    fa4::Fa4::new_alibi(context.clone(), stream.clone(), root, attention_spec)?
+                } else {
+                    fa4::Fa4::new(context.clone(), root, attention_spec)?
+                })
+            }
+            "auto"
+                if fa4_root.is_some()
+                    && (alibi_family || fa4::Fa4::supports(&attention_spec))
+                    && packed.is_some() =>
+            {
+                let root = fa4_root.as_ref().ok_or_else(|| start("Missing FA4 root"))?;
+                let root = Path::new(root);
+                Some(if config.family == EncoderFamily::JinaCode {
+                    fa4::Fa4::new_alibi_native12(
+                        context.clone(),
+                        stream.clone(),
+                        root,
+                        attention_spec,
+                    )?
+                } else if alibi_family {
+                    fa4::Fa4::new_alibi(context.clone(), stream.clone(), root, attention_spec)?
+                } else {
+                    fa4::Fa4::new(context.clone(), root, attention_spec)?
+                })
+            }
+            "auto" | "simt" => None,
+            _ => return Err(start("INFINITY_OXIDE_ATTENTION must be auto,simt or fa4")),
+        }
     };
     if config.family == EncoderFamily::Nomic && fa4.is_none() {
         return Err(start("Dense Nomic requires prepared FA4 attention"));
@@ -3460,14 +3648,22 @@ fn encoder_model<E: UploadElement>(
             "Jina ALiBi attention requires prepared FA4 attention",
         ));
     }
-    let fa4_layout = if fa4.is_some() { packed } else { None };
+    let fa4_layout = if fa4.is_some() || mpnet_native.is_some() {
+        packed
+    } else {
+        None
+    };
     let mut kernels = match precision {
-        EncoderPrecision::Bf16 => Kernels::load(context, &config, fa4.is_some())?,
+        EncoderPrecision::Bf16 => {
+            Kernels::load(context, &config, fa4.is_some() || mpnet_native.is_some())?
+        }
         EncoderPrecision::F16 => Kernels::load_f16(context, fa4.is_some())?,
     };
     let gated = kernels.gated.take();
     let rotary = match config.recipe.positions {
-        PositionRecipe::Absolute | PositionRecipe::AlibiModelBias => None,
+        PositionRecipe::Absolute
+        | PositionRecipe::AlibiModelBias
+        | PositionRecipe::LearnedRelative { .. } => None,
         PositionRecipe::Rotary(recipe) => {
             let functions = kernels
                 .rotary
@@ -3480,6 +3676,11 @@ fn encoder_model<E: UploadElement>(
     let mut uploader = WeightUploader::new(stream.clone())?;
     let weights = match host {
         EncoderHostWeights::Standard(host) => Weights::<E> {
+            relative_bias: host
+                .relative_bias
+                .as_ref()
+                .map(|table| uploader.upload_typed::<E>(&[table]))
+                .transpose()?,
             word: uploader.upload_typed::<E>(&[&host.word])?,
             position: Some(uploader.upload_typed::<E>(&[&host.position])?),
             token_type: uploader.upload_typed::<E>(&[&host.token_type])?,
@@ -3496,6 +3697,7 @@ fn encoder_model<E: UploadElement>(
                 .collect::<Result<_, _>>()?,
         },
         EncoderHostWeights::Nomic(host) => Weights::<E> {
+            relative_bias: None,
             word: uploader.upload_typed::<E>(&[&host.word])?,
             position: None,
             token_type: uploader.upload_typed::<E>(&[&host.token_type])?,
@@ -3509,6 +3711,7 @@ fn encoder_model<E: UploadElement>(
                 .collect::<Result<_, _>>()?,
         },
         EncoderHostWeights::Jina(host) => Weights::<E> {
+            relative_bias: None,
             word: uploader.upload_typed::<E>(&[&host.word])?,
             position: None,
             token_type: uploader.upload_typed::<E>(&[&host.token_type])?,
@@ -3522,6 +3725,7 @@ fn encoder_model<E: UploadElement>(
                 .collect::<Result<_, _>>()?,
         },
         EncoderHostWeights::JinaCode(host) => Weights::<E> {
+            relative_bias: None,
             word: uploader.upload_typed::<E>(&[&host.weights.word])?,
             position: None,
             token_type: uploader.upload_typed::<E>(&[&host.weights.token_type])?,
@@ -3545,6 +3749,7 @@ fn encoder_model<E: UploadElement>(
         rotary,
         gated,
         fa4,
+        mpnet_native,
         fa4_layout,
         classifier: None,
     })
@@ -3567,6 +3772,11 @@ fn validate_encoder_inputs(
 ) -> Result<usize, BackendError> {
     let fail = || infer("Invalid or unsupported packed oxide BERT batch");
     let tokens = batch.input_ids.len();
+    let position_limit = if c.family == EncoderFamily::Mpnet {
+        mpnet::position_capacity(c)? as usize
+    } else {
+        c.max_position_embeddings
+    };
     let sequences = batch
         .cumulative_seq_lengths
         .len()
@@ -3597,7 +3807,7 @@ fn validate_encoder_inputs(
             return Err(fail());
         };
         let length = end.checked_sub(start).filter(|n| *n > 0).ok_or_else(fail)? as usize;
-        if length > c.max_position_embeddings {
+        if length > position_limit {
             return Err(fail());
         }
         max_length = max_length.max(length);
@@ -3618,7 +3828,7 @@ fn validate_encoder_inputs(
         || batch
             .position_ids
             .iter()
-            .any(|&i| i as usize >= c.max_position_embeddings)
+            .any(|&i| i as usize >= position_limit)
     {
         return Err(fail());
     }
@@ -4377,6 +4587,7 @@ mod tests {
         actual.type_vocab_size = 1;
         let dummy = WeightSource::zeroed(vec![1]).unwrap();
         let mut host = BertWeights {
+            relative_bias: None,
             config: actual,
             word: dummy.clone(),
             position: dummy.clone(),
@@ -6796,6 +7007,78 @@ mod tests {
         drop(held_tokens);
         let _ = held_sequence.complete().unwrap();
         backend.health().unwrap();
+    }
+    fn shared_mpnet_config() -> BertConfig {
+        serde_json::from_value(serde_json::json!({"model_type":"mpnet","architectures":["MPNetModel"],"hidden_size":768,"intermediate_size":3072,"num_attention_heads":12,"num_hidden_layers":12,"max_position_embeddings":514,"vocab_size":30527,"layer_norm_eps":1e-5,"relative_attention_num_buckets":32})).unwrap()
+    }
+    #[test]
+    fn shared_mpnet_stages_plus_two_once_without_changing_source() {
+        let ids = [4, 5, 6];
+        let positions = [0, 1, 511];
+        let types = [0, 0, 0];
+        let mut out = [0u32; 12];
+        pack_input_with_position_offset(&mut out, 3, &ids, &positions, &types, &[0, 3], &[0], 2)
+            .unwrap();
+        assert_eq!(&out[..3], &ids);
+        assert_eq!(&out[3..6], &[2, 3, 513]);
+        assert_eq!(&out[6..9], &types);
+        assert_eq!(&out[9..], &[0, 3, 0]);
+        assert_eq!(positions, [0, 1, 511]);
+        let mut plain = [0u32; 12];
+        pack_input(&mut plain, 3, &ids, &positions, &types, &[0, 3], &[0]).unwrap();
+        assert_eq!(&plain[3..6], &positions);
+        assert!(pack_input_with_position_offset(
+            &mut out,
+            3,
+            &ids,
+            &[0, u32::MAX, 1],
+            &types,
+            &[0, 3],
+            &[0],
+            2
+        )
+        .is_err());
+    }
+    #[test]
+    fn shared_mpnet_erf_recipe_uses_dense_scratch_and_real_position_capacity() {
+        let c = shared_mpnet_config();
+        assert_eq!(c.recipe.feed_forward, FeedForwardRecipe::DenseGeluErf);
+        assert!(!c.recipe.feed_forward.is_gated());
+        assert_eq!(mpnet::position_capacity(&c).unwrap(), 512);
+        assert!(c.validate_f16_minilm().is_err());
+        assert!(selects_mpnet_h768(&c));
+        let mut b = Batch {
+            input_ids: vec![0, 1],
+            position_ids: vec![0, 511],
+            token_type_ids: vec![0, 0],
+            cumulative_seq_lengths: vec![0, 2],
+            max_length: 2,
+            pooled_indices: vec![0],
+            ..batch()
+        };
+        assert_eq!(validate(&b, &c).unwrap(), 2);
+        assert!(packed_attention_layout(&c).unwrap().is_some());
+        let complete_positions = b.position_ids.clone();
+        b.position_ids.clear();
+        assert!(validate(&b, &c).is_err());
+        b.position_ids = vec![0];
+        assert!(validate(&b, &c).is_err());
+        b.position_ids = complete_positions;
+        b.position_ids[1] = 512;
+        assert!(validate(&b, &c).is_err());
+        b.position_ids[1] = 511;
+        for kind in [1, u32::MAX] {
+            b.token_type_ids[1] = kind;
+            assert!(validate(&b, &c).is_err());
+        }
+        b.token_type_ids[1] = 0;
+        assert_eq!(validate(&b, &c).unwrap(), 2);
+        b.input_ids = vec![0; 513];
+        b.position_ids = vec![0; 513];
+        b.token_type_ids = vec![0; 513];
+        b.cumulative_seq_lengths = vec![0, 513];
+        b.max_length = 513;
+        assert!(validate(&b, &c).is_err());
     }
 }
 

@@ -7,6 +7,8 @@
 
 use cuda_device::{convert, cuda_module, kernel, thread, warp, DynamicSharedArray, SharedArray};
 mod aten_embedding;
+mod mpnet_norm;
+mod gelu_exact;
 mod classifier;
 mod classifier_norm384;
 mod decoder;
@@ -1725,6 +1727,53 @@ mod kernels {
     ) {
         unsafe { crate::encoder_f16::f16_to_f32(input, out, selected, count, width) };
     }
+    #[kernel]
+    pub unsafe fn infinity_embedding_norm_mpnet_768_aten(
+        ids: *const u32,
+        positions: *const u32,
+        types: *const u32,
+        word: *const u16,
+        position: *const u16,
+        token_type: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::mpnet_norm::embedding_norm_mpnet_768_aten(
+                ids, positions, types, word, position, token_type, gamma, beta, out, rows, width,
+                eps,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_layer_norm_mpnet_768_aten(
+        input: *const u16,
+        residual: *const u16,
+        bias: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::mpnet_norm::layer_norm_mpnet_768_aten(
+                input, residual, bias, gamma, beta, out, rows, width, eps,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gelu_exact(input: *mut u16, elements: u32) {
+        unsafe { crate::gelu_exact::gelu_exact(input, elements) };
+    }
+
 }
 
 fn main() {}

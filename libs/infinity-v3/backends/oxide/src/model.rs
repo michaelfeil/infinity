@@ -64,6 +64,7 @@ pub(crate) enum EncoderFamily {
     XlmRoberta,
     Camembert,
     DistilBert,
+    Mpnet,
     Gte,
     Modern,
     Nomic,
@@ -78,6 +79,7 @@ impl EncoderFamily {
             "xlm-roberta" => Some(Self::XlmRoberta),
             "camembert" => Some(Self::Camembert),
             "distilbert" => Some(Self::DistilBert),
+            "mpnet" => Some(Self::Mpnet),
             "new" | "gte" => Some(Self::Gte),
             _ => None,
         }
@@ -90,6 +92,7 @@ impl EncoderFamily {
                 &["roberta.", "xlm-roberta.", "camembert.", ""]
             }
             Self::DistilBert => &["distilbert.", ""],
+            Self::Mpnet => &["mpnet.", ""],
             Self::Gte => &["new.", ""],
             Self::Modern => &["model.", ""],
             Self::Nomic => &[""],
@@ -114,6 +117,10 @@ impl EncoderFamily {
             ),
             Self::Camembert => matches!(architecture, "CamembertModel" | "CamembertForMaskedLM"),
             Self::DistilBert => matches!(architecture, "DistilBertModel" | "DistilBertForMaskedLM"),
+            Self::Mpnet => matches!(
+                architecture,
+                "MPNetModel" | "MPNetForMaskedLM" | "MPNetForPreTraining"
+            ),
             Self::Gte => matches!(architecture, "NewModel"),
             Self::Modern => matches!(architecture, "ModernBertModel" | "ModernBertForMaskedLM"),
             Self::Nomic => matches!(architecture, "NomicBertModel"),
@@ -147,17 +154,19 @@ pub(crate) enum PositionRecipe {
     Absolute,
     Rotary(RotaryRecipe),
     AlibiModelBias,
+    LearnedRelative { buckets: usize },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum FeedForwardRecipe {
     DenseGelu,
+    DenseGeluErf,
     GatedGeluUpFirst,
     GatedSiluGateFirst,
 }
 impl FeedForwardRecipe {
     pub(crate) fn is_gated(self) -> bool {
-        self != Self::DenseGelu
+        matches!(self, Self::GatedGeluUpFirst | Self::GatedSiluGateFirst)
     }
 }
 
@@ -189,23 +198,23 @@ impl EncoderRecipe {
 }
 
 #[derive(Debug, Deserialize)]
-struct RawEncoderConfig {
-    model_type: String,
-    architectures: Option<Vec<String>>,
-    hidden_size: Option<usize>,
-    intermediate_size: Option<usize>,
-    num_attention_heads: Option<usize>,
-    num_hidden_layers: Option<usize>,
-    max_position_embeddings: Option<usize>,
-    vocab_size: Option<usize>,
-    type_vocab_size: Option<usize>,
-    layer_norm_eps: Option<f64>,
+pub(crate) struct RawEncoderConfig {
+    pub(crate) model_type: String,
+    pub(crate) architectures: Option<Vec<String>>,
+    pub(crate) hidden_size: Option<usize>,
+    pub(crate) intermediate_size: Option<usize>,
+    pub(crate) num_attention_heads: Option<usize>,
+    pub(crate) num_hidden_layers: Option<usize>,
+    pub(crate) max_position_embeddings: Option<usize>,
+    pub(crate) vocab_size: Option<usize>,
+    pub(crate) type_vocab_size: Option<usize>,
+    pub(crate) layer_norm_eps: Option<f64>,
     layer_norm_type: Option<String>,
-    hidden_act: Option<String>,
+    pub(crate) hidden_act: Option<String>,
     activation: Option<String>,
-    position_embedding_type: Option<String>,
-    is_decoder: Option<bool>,
-    add_cross_attention: Option<bool>,
+    pub(crate) position_embedding_type: Option<String>,
+    pub(crate) is_decoder: Option<bool>,
+    pub(crate) add_cross_attention: Option<bool>,
     dim: Option<usize>,
     hidden_dim: Option<usize>,
     n_heads: Option<usize>,
@@ -217,6 +226,7 @@ struct RawEncoderConfig {
     logn_attention_clip1: Option<bool>,
     // DistilBERT's sinusoidal flag controls initialization, not lookup of a
     // checkpoint position table. The stored table remains required below.
+    pub(crate) relative_attention_num_buckets: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -238,7 +248,7 @@ impl<'de> Deserialize<'de> for BertConfig {
     }
 }
 
-fn required_usize(value: Option<usize>, name: &str) -> Result<usize, BackendError> {
+pub(crate) fn required_usize(value: Option<usize>, name: &str) -> Result<usize, BackendError> {
     value.ok_or_else(|| start(format!("missing encoder config field {name}")))
 }
 fn aliased_usize(
@@ -283,17 +293,17 @@ pub(crate) struct BertConfig {
     pub(crate) rotary_table_positions: Option<usize>,
     pub vocab_size: usize,
     pub type_vocab_size: usize,
-    configured_type_vocab_size: Option<usize>,
+    pub(crate) configured_type_vocab_size: Option<usize>,
     pub layer_norm_eps: f64,
     pub(crate) family: EncoderFamily,
     // The encoder executor consumes this once it is integrated into lib.rs.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) recipe: EncoderRecipe,
     pub(crate) architectures: Vec<String>,
-    hidden_act: String,
-    position_embedding_type: String,
-    is_decoder: bool,
-    add_cross_attention: bool,
+    pub(crate) hidden_act: String,
+    pub(crate) position_embedding_type: String,
+    pub(crate) is_decoder: bool,
+    pub(crate) add_cross_attention: bool,
 }
 impl BertConfig {
     #[cfg_attr(not(test), allow(dead_code))]
@@ -522,6 +532,12 @@ impl BertConfig {
                 raw.model_type
             ))
         })?;
+        if family == EncoderFamily::Mpnet {
+            if classifier {
+                return Err(start("MPNet classifier heads are not qualified"));
+            }
+            return crate::mpnet::config(&raw);
+        }
         if classifier {
             let admitted = family == EncoderFamily::Bert
                 && raw.architectures.as_deref().is_some_and(|architectures| {
@@ -693,12 +709,16 @@ impl BertConfig {
         Ok(config)
     }
 
-    fn validate(&self) -> Result<(), BackendError> {
+    pub(crate) fn validate(&self) -> Result<(), BackendError> {
         let positions_supported = match (self.family, self.recipe.positions) {
             (EncoderFamily::Gte, PositionRecipe::Rotary(_)) => {
                 self.position_embedding_type == "rope"
             }
             (EncoderFamily::Gte, _) => false,
+            (EncoderFamily::Mpnet, PositionRecipe::LearnedRelative { buckets: 32 }) => {
+                self.position_embedding_type == "absolute"
+            }
+            (EncoderFamily::Mpnet, _) => false,
             (EncoderFamily::Jina | EncoderFamily::JinaCode, PositionRecipe::AlibiModelBias) => {
                 self.position_embedding_type == "alibi"
             }
@@ -1299,6 +1319,7 @@ pub(crate) struct BertWeights {
     pub token_type: WeightSource,
     pub gamma: WeightSource,
     pub beta: WeightSource,
+    pub relative_bias: Option<WeightSource>,
     pub layers: Vec<LayerWeights>,
 }
 
@@ -1877,6 +1898,9 @@ impl BertWeights {
         if config.family == EncoderFamily::Gte {
             return crate::rotary_encoder_model::load(path, config).map(|weights| (weights, None));
         }
+        if config.family == EncoderFamily::Mpnet {
+            return crate::mpnet::load(path, config).map(|weights| (weights, None));
+        }
         let checkpoint = Checkpoint::open(path)?;
         let names = checkpoint.names().cloned().collect::<BTreeSet<_>>();
         let root_prefix = select_root(config.family, &names)?;
@@ -1986,6 +2010,7 @@ impl BertWeights {
             token_type,
             gamma: take(&mut weights, "embeddings.LayerNorm.weight")?,
             beta: take(&mut weights, "embeddings.LayerNorm.bias")?,
+            relative_bias: None,
             config,
             layers,
         };

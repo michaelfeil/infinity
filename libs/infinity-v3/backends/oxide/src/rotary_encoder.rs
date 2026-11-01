@@ -39,7 +39,7 @@ impl PreparedGatedActivation {
         let units_per_row = match recipe {
             FeedForwardRecipe::GatedGeluUpFirst => config.intermediate_size,
             FeedForwardRecipe::GatedSiluGateFirst => config.intermediate_size.div_ceil(8),
-            FeedForwardRecipe::DenseGelu => {
+            FeedForwardRecipe::DenseGelu | FeedForwardRecipe::DenseGeluErf => {
                 return Err(start(
                     "Gated activation requires a gated feed-forward recipe",
                 ))
