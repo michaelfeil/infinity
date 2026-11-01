@@ -1,8 +1,13 @@
+from types import SimpleNamespace
+
 import torch
 from transformers import pipeline  # type: ignore
 
 from infinity_emb.args import EngineArgs
-from infinity_emb.transformer.classifier.torch import SentenceClassifier
+from infinity_emb.transformer.classifier.torch import (
+    SentenceClassifier,
+    _set_pad_token_id_if_missing,
+)
 
 
 def test_classifier(model_name: str = "SamLowe/roberta-base-go_emotions"):
@@ -40,3 +45,37 @@ def test_classifier(model_name: str = "SamLowe/roberta-base-go_emotions"):
 
             if pred_orig_i["score"] > 0.005:
                 assert pred_orig_i["label"] == pred_i["label"]
+
+
+def test_set_pad_token_id_if_missing_adopts_tokenizer_value():
+    """decoder-only seq-cls checkpoints often ship without config.pad_token_id.
+
+    transformers then raises `Cannot handle batch sizes > 1 if no padding token is
+    defined.`, which infinity hits during warmup (batch_size 32) before serving a
+    single request. michaelfeil/Qwen3-Reranker-0.6B-seq is such a checkpoint.
+    """
+    model = SimpleNamespace(config=SimpleNamespace(pad_token_id=None))
+    tokenizer = SimpleNamespace(pad_token_id=151643)
+
+    _set_pad_token_id_if_missing(model, tokenizer)
+
+    assert model.config.pad_token_id == 151643
+
+
+def test_set_pad_token_id_if_missing_is_noop_when_already_set():
+    """strict no-op for every model that works today (BERT rerankers, mxbai-*-seq)."""
+    model = SimpleNamespace(config=SimpleNamespace(pad_token_id=0))
+    tokenizer = SimpleNamespace(pad_token_id=151643)
+
+    _set_pad_token_id_if_missing(model, tokenizer)
+
+    assert model.config.pad_token_id == 0
+
+
+def test_set_pad_token_id_if_missing_tolerates_tokenizer_without_pad():
+    model = SimpleNamespace(config=SimpleNamespace(pad_token_id=None))
+    tokenizer = SimpleNamespace(pad_token_id=None)
+
+    _set_pad_token_id_if_missing(model, tokenizer)
+
+    assert model.config.pad_token_id is None
