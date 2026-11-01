@@ -272,7 +272,8 @@ fn validate_profile_order(
         .ok_or_else(|| start("manifest lacks a kernels array"))?;
     let deberta_symbol = format!("fa4_deberta_{}", dtype.name());
     let mut deberta_seen = false;
-    let mut alibi_seen = false;
+    let mut alibi_eight_seen = false;
+    let mut alibi_native_twelve_seen = false;
     let mut seen = 0usize;
     for kernel in kernels {
         if kernel.get("dtype").and_then(serde_json::Value::as_str) != Some(dtype.name()) {
@@ -289,13 +290,19 @@ fn validate_profile_order(
             deberta_seen = true;
             continue;
         }
-        if kernel.get("symbol").and_then(serde_json::Value::as_str)
-            == Some(format!("fa4_alibi_model_bias_{}", dtype.name()).as_str())
+        if let Some(profile) = kernel
+            .get("symbol")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|symbol| crate::fa4_alibi::profile_for_symbol(symbol, dtype.name()))
         {
-            if alibi_seen || !crate::fa4_alibi::kernel_matches(kernel, dtype.name()) {
+            let seen = match profile {
+                crate::fa4_alibi::AlibiProfile::Eight => &mut alibi_eight_seen,
+                crate::fa4_alibi::AlibiProfile::TwelveNativeFlash => &mut alibi_native_twelve_seen,
+            };
+            if *seen || !crate::fa4_alibi::kernel_matches(kernel, dtype.name(), profile) {
                 return Err(start("invalid or duplicate ALiBi model-bias export"));
             }
-            alibi_seen = true;
+            *seen = true;
             continue;
         }
         if seen >= PROFILES.len() {
@@ -612,15 +619,44 @@ impl Fa4 {
         root: &Path,
         spec: AttentionSpec,
     ) -> Result<Self, BackendError> {
-        if spec.heads != 8
-            || spec.kv_heads != 8
+        let profile = crate::fa4_alibi::AlibiProfile::for_heads(spec.heads)
+            .ok_or_else(|| start("Legacy ALiBi model-bias requires exactly8 attention heads"))?;
+        Self::new_alibi_profile(context, stream, root, spec, profile)
+    }
+
+    pub(crate) fn new_alibi_native12(
+        context: Arc<Context>,
+        stream: Arc<Stream>,
+        root: &Path,
+        spec: AttentionSpec,
+    ) -> Result<Self, BackendError> {
+        Self::new_alibi_profile(
+            context,
+            stream,
+            root,
+            spec,
+            crate::fa4_alibi::AlibiProfile::TwelveNativeFlash,
+        )
+    }
+
+    fn new_alibi_profile(
+        context: Arc<Context>,
+        stream: Arc<Stream>,
+        root: &Path,
+        spec: AttentionSpec,
+        profile: crate::fa4_alibi::AlibiProfile,
+    ) -> Result<Self, BackendError> {
+        if profile.heads() != spec.heads {
+            return Err(start("ALiBi recipe/head geometry differs"));
+        }
+        if spec.kv_heads != spec.heads
             || spec.head_dim != 64
             || spec.causal
             || spec.window != Window::Global
             || resolve_scale(&spec)? != 0.125
         {
             return Err(start(
-                "ALiBi model-bias requires noncausal 8x64 self-attention at scale0.125",
+                "ALiBi model-bias requires noncausal 8/12x64 self-attention at scale0.125",
             ));
         }
         let mut result = Self::new(context.clone(), root, spec)?;
@@ -634,7 +670,7 @@ impl Fa4 {
             .ok_or_else(|| start("manifest lacks kernels"))?;
         if kernels
             .iter()
-            .filter(|k| crate::fa4_alibi::kernel_matches(k, spec.dtype.name()))
+            .filter(|k| crate::fa4_alibi::kernel_matches(k, spec.dtype.name(), profile))
             .count()
             != 1
         {
@@ -646,6 +682,7 @@ impl Fa4 {
             context,
             stream,
             &path.join("libinfinityfa4.so"),
+            profile,
         )?);
         Ok(result)
     }
@@ -745,7 +782,7 @@ impl Fa4 {
             alibi.check_stream(stream)?;
             if batch.q_offsets != batch.k_offsets
                 || batch.q_tokens != batch.k_tokens
-                || batch.q_tokens > i32::MAX as usize / 512
+                || batch.q_tokens > alibi.token_limit()
             {
                 return Err(infer(
                     "ALiBi requires shared packed self-attention boundaries within int32 geometry",

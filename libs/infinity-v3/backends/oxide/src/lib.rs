@@ -15,6 +15,10 @@ mod encoder_policy;
 mod fa4;
 mod fa4_alibi;
 pub mod fp8;
+mod jina_code_encoder_model;
+#[cfg(test)]
+#[path = "jina_code_host_tests.rs"]
+mod jina_code_host_tests;
 mod jina_encoder_model;
 pub(crate) mod lt;
 pub mod math;
@@ -52,6 +56,7 @@ use infinity_v3_backend_core::{
     result_memory, Backend, BackendError, Batch, Embedding, Embeddings, Inference, ModelType, Pool,
     Predictions, TokenPredictions,
 };
+use jina_code_encoder_model::{JinaCodeLayerWeights, JinaCodeWeights};
 use jina_encoder_model::{JinaLayerWeights, JinaWeights};
 use lt::{LtPlan, LtProvider, ShapeError, NATIVE_DEFAULT_SEED_ROWS};
 use model::{
@@ -265,6 +270,18 @@ struct Layer<E: UploadElement> {
     attention_beta: DeviceBuffer<E>,
     output_gamma: DeviceBuffer<E>,
     output_beta: DeviceBuffer<E>,
+    qk_norm: Option<Box<QkNorm<E>>>,
+    extra_norm: Option<Box<PreparedLayerNorm<E>>>,
+}
+struct QkNorm<E: UploadElement> {
+    query_gamma: DeviceBuffer<E>,
+    query_beta: DeviceBuffer<E>,
+    key_gamma: DeviceBuffer<E>,
+    key_beta: DeviceBuffer<E>,
+}
+struct PreparedLayerNorm<E: UploadElement> {
+    gamma: DeviceBuffer<E>,
+    beta: DeviceBuffer<E>,
 }
 struct Weights<E: UploadElement> {
     word: DeviceBuffer<E>,
@@ -297,6 +314,8 @@ impl<E: UploadElement> Layer<E> {
             attention_beta: u.upload_typed::<E>(&[&w.attention_beta])?,
             output_gamma: u.upload_typed::<E>(&[&w.output_gamma])?,
             output_beta: u.upload_typed::<E>(&[&w.output_beta])?,
+            qk_norm: None,
+            extra_norm: None,
         })
     }
 }
@@ -306,6 +325,18 @@ enum EncoderHostWeights {
     Standard(BertWeights),
     Nomic(NomicWeights),
     Jina(JinaWeights),
+    JinaCode(JinaCodeHost),
+}
+struct JinaCodeHost {
+    geometry: BertConfig,
+    weights: JinaCodeWeights,
+}
+impl JinaCodeHost {
+    fn load(path: &Path) -> Result<Self, BackendError> {
+        let weights = jina_code_encoder_model::load(path)?;
+        let geometry = weights.config.geometry();
+        Ok(Self { geometry, weights })
+    }
 }
 impl EncoderHostWeights {
     fn config(&self) -> &BertConfig {
@@ -313,6 +344,7 @@ impl EncoderHostWeights {
             Self::Standard(host) => &host.config,
             Self::Nomic(host) => &host.config,
             Self::Jina(host) => &host.geometry,
+            Self::JinaCode(host) => &host.geometry,
         }
     }
 }
@@ -356,6 +388,8 @@ impl<E: UploadElement> Layer<E> {
             attention_beta: u.upload_typed::<E>(&[&host.attention_beta])?,
             output_gamma: u.upload_typed::<E>(&[&host.output_gamma])?,
             output_beta: u.upload_typed::<E>(&[&host.output_beta])?,
+            qk_norm: None,
+            extra_norm: None,
         })
     }
 
@@ -385,6 +419,48 @@ impl<E: UploadElement> Layer<E> {
             attention_beta: u.upload_typed::<E>(&[&host.attention_beta])?,
             output_gamma: u.upload_typed::<E>(&[&host.output_gamma])?,
             output_beta: u.upload_typed::<E>(&[&host.output_beta])?,
+            qk_norm: None,
+            extra_norm: None,
+        })
+    }
+
+    fn upload_jina_code(
+        u: &mut WeightUploader,
+        host: &JinaCodeLayerWeights,
+    ) -> Result<Self, BackendError> {
+        Ok(Self {
+            qkv: Linear {
+                weight: u.upload_typed::<E>(&[
+                    &host.query.weight,
+                    &host.key.weight,
+                    &host.value.weight,
+                ])?,
+                bias: Some(u.upload_typed::<E>(&[
+                    &host.query.bias,
+                    &host.key.bias,
+                    &host.value.bias,
+                ])?),
+            },
+            attention: Linear::<E>::upload(u, &host.attention)?,
+            intermediate: Linear {
+                weight: u.upload_typed::<E>(&[&host.mlp_up_gated])?,
+                bias: None,
+            },
+            output: Linear::<E>::upload(u, &host.mlp_down)?,
+            attention_gamma: u.upload_typed::<E>(&[&host.attention_norm.gamma])?,
+            attention_beta: u.upload_typed::<E>(&[&host.attention_norm.beta])?,
+            output_gamma: u.upload_typed::<E>(&[&host.layer_norm_2.gamma])?,
+            output_beta: u.upload_typed::<E>(&[&host.layer_norm_2.beta])?,
+            qk_norm: Some(Box::new(QkNorm {
+                query_gamma: u.upload_typed::<E>(&[&host.query_norm.gamma])?,
+                query_beta: u.upload_typed::<E>(&[&host.query_norm.beta])?,
+                key_gamma: u.upload_typed::<E>(&[&host.key_norm.gamma])?,
+                key_beta: u.upload_typed::<E>(&[&host.key_norm.beta])?,
+            })),
+            extra_norm: Some(Box::new(PreparedLayerNorm {
+                gamma: u.upload_typed::<E>(&[&host.layer_norm_1.gamma])?,
+                beta: u.upload_typed::<E>(&[&host.layer_norm_1.beta])?,
+            })),
         })
     }
 }
@@ -421,6 +497,7 @@ struct Kernels {
     raw_cast: Option<Function>,
     rotary: Option<RotaryFunctions>,
     gated: Option<PreparedGatedActivation>,
+    qk_norm_768: Option<Function>,
 }
 impl Kernels {
     fn load(ctx: &Arc<Context>, config: &BertConfig, fa4: bool) -> Result<Self, BackendError> {
@@ -543,6 +620,15 @@ impl Kernels {
                 Some(PreparedGatedActivation::new(recipe, config, function)?)
             }
         };
+        let qk_norm_768 = if config.family == EncoderFamily::JinaCode {
+            Some(
+                module
+                    .load_function("infinity_jina_code_qk_norm_768")
+                    .map_err(start)?,
+            )
+        } else {
+            None
+        };
         let rotary = match config.recipe.positions {
             PositionRecipe::Absolute | PositionRecipe::AlibiModelBias => None,
             PositionRecipe::Rotary(_) => Some(RotaryFunctions {
@@ -608,6 +694,7 @@ impl Kernels {
             mean_pool_tile_width: 32,
             rotary,
             gated,
+            qk_norm_768,
         })
     }
 
@@ -670,6 +757,7 @@ impl Kernels {
             raw_cast: Some(module.load_function("infinity_f16_to_f32").map_err(start)?),
             rotary: None,
             gated: None,
+            qk_norm_768: None,
         })
     }
 }
@@ -2557,8 +2645,58 @@ fn enqueue_encoder<E: UploadElement>(
                 &w.qkv,
                 tokens,
                 product(h, 3).unwrap(),
-                &format!("layer_{_layer_index:02}_qkv"),
+                &format!(
+                    "layer_{_layer_index:02}_{}",
+                    if layer.qk_norm.is_some() {
+                        "qkv_pre_norm"
+                    } else {
+                        "qkv"
+                    }
+                ),
             );
+        }
+        if let Some(qk_norm) = &layer.qk_norm {
+            let function = k
+                .qk_norm_768
+                .as_ref()
+                .ok_or_else(|| infer("Missing JinaCode Q/K norm kernel"))?;
+            // The dedicated kernel owns the 3*H packed row stride and normalizes
+            // only the full-width Q and K regions; V is deliberately untouched.
+            let mut qkv = w.qkv.cu_deviceptr();
+            let mut query_gamma = qk_norm.query_gamma.cu_deviceptr();
+            let mut query_beta = qk_norm.query_beta.cu_deviceptr();
+            let mut key_gamma = qk_norm.key_gamma.cu_deviceptr();
+            let mut key_beta = qk_norm.key_beta.cu_deviceptr();
+            let mut qk_rows = t;
+            let mut qk_eps = eps;
+            launch_threads(
+                function,
+                s,
+                (qk_rows.div_ceil(4), 1, 1),
+                128,
+                0,
+                &mut [
+                    arg(&mut qkv),
+                    arg(&mut query_gamma),
+                    arg(&mut query_beta),
+                    arg(&mut key_gamma),
+                    arg(&mut key_beta),
+                    arg(&mut qk_rows),
+                    arg(&mut qk_eps),
+                ],
+            )?;
+        }
+        #[cfg(test)]
+        if layer.qk_norm.is_some() {
+            if let Some(trace) = trace.as_mut() {
+                trace.tensor(
+                    s,
+                    &w.qkv,
+                    tokens,
+                    product(h, 3).unwrap(),
+                    &format!("layer_{_layer_index:02}_qkv"),
+                );
+            }
         }
         if let Some(provider) = fa4 {
             let layout = fa4_layout.ok_or_else(|| infer("Missing FA4 packed layout"))?;
@@ -2665,6 +2803,14 @@ fn enqueue_encoder<E: UploadElement>(
             );
         }
         let temp = w.temp.cu_deviceptr();
+        // Ordinary families normalize straight back into the residual stream.
+        // JinaCode must retain X0 through two residual sums, so X1 is staged in
+        // the now-free attention output buffer and only X2 replaces Work.x.
+        let attention_norm = if layer.extra_norm.is_some() {
+            w.attention.cu_deviceptr()
+        } else {
+            x
+        };
         norm(
             k,
             s,
@@ -2673,20 +2819,50 @@ fn enqueue_encoder<E: UploadElement>(
             0,
             &layer.attention_gamma,
             &layer.attention_beta,
-            x,
+            attention_norm,
             t,
             width,
             eps,
         )?;
         #[cfg(test)]
         if let Some(trace) = trace.as_mut() {
+            let normalized = if layer.extra_norm.is_some() {
+                &w.attention
+            } else {
+                &w.x
+            };
             trace.tensor(
                 s,
-                &w.x,
+                normalized,
                 tokens,
                 h,
                 &format!("layer_{_layer_index:02}_attention_norm"),
             );
+        }
+        if let Some(extra_norm) = &layer.extra_norm {
+            norm(
+                k,
+                s,
+                w.attention.cu_deviceptr(),
+                x,
+                0,
+                &extra_norm.gamma,
+                &extra_norm.beta,
+                x,
+                t,
+                width,
+                eps,
+            )?;
+            #[cfg(test)]
+            if let Some(trace) = trace.as_mut() {
+                trace.tensor(
+                    s,
+                    &w.x,
+                    tokens,
+                    h,
+                    &format!("layer_{_layer_index:02}_layer_norm_1"),
+                );
+            }
         }
         if let Some(gated) = gated {
             let IntermediatePlan::Gated { plan, .. } = &plans.intermediate else {
@@ -2884,6 +3060,7 @@ enum CheckpointArchitecture {
     Modern,
     Nomic,
     Jina,
+    JinaCode,
     Gte,
     Encoder,
 }
@@ -2901,6 +3078,9 @@ fn selects_architecture(
     };
     if DecoderFamily::from_model_type(model_type).is_some() {
         return Ok(CheckpointArchitecture::Decoder);
+    }
+    if jina_encoder_model::is_jina_code_marker(head) {
+        return Ok(CheckpointArchitecture::JinaCode);
     }
     match model_type {
         "modernbert" => Ok(CheckpointArchitecture::Modern),
@@ -2982,6 +3162,11 @@ impl OxideBackend {
         let context = Context::new(device_id).map_err(start)?;
         let stream = context.new_stream().map_err(start)?;
         let architecture = detects_architecture(path)?;
+        if architecture == CheckpointArchitecture::JinaCode && dtype != "bfloat16" {
+            return Err(start(
+                "JinaCode is admitted only for the BF16 runtime until F16 kernels are qualified",
+            ));
+        }
         let decoder = architecture == CheckpointArchitecture::Decoder;
         let native_default = classifier || architecture.uses_native_default();
         let lt = if native_default {
@@ -3102,6 +3287,9 @@ impl OxideBackend {
                             CheckpointArchitecture::Jina => {
                                 EncoderHostWeights::Jina(JinaWeights::load(path)?)
                             }
+                            CheckpointArchitecture::JinaCode => {
+                                EncoderHostWeights::JinaCode(JinaCodeHost::load(path)?)
+                            }
                             CheckpointArchitecture::Nomic => {
                                 EncoderHostWeights::Nomic(NomicWeights::load(path)?)
                             }
@@ -3197,6 +3385,13 @@ fn encoder_model<E: UploadElement>(
     precision: EncoderPrecision,
 ) -> Result<EncoderModel<E>, BackendError> {
     let config = host.config().clone();
+    if config.family == EncoderFamily::JinaCode
+        && <E as crate::tensor::Element>::FORMAT != crate::tensor::ScalarFormat::Bf16
+    {
+        return Err(start(
+            "JinaCode requires the BF16 runtime; F16 Q/K normalization is not qualified",
+        ));
+    }
     let attention_mode = std::env::var(infinity_v3_config::infinity_env!("OXIDE_ATTENTION"))
         .unwrap_or_else(|_| "auto".into());
     let fa4_root = std::env::var_os(infinity_v3_config::infinity_env!("FA4_ROOT"));
@@ -3214,8 +3409,8 @@ fn encoder_model<E: UploadElement>(
         scale: fa4::Scale::RsqrtHeadDim,
     };
     let packed = packed_attention_layout(&config)?;
-    let jina = config.family == EncoderFamily::Jina;
-    if jina && packed.is_none() {
+    let alibi_family = matches!(config.family, EncoderFamily::Jina | EncoderFamily::JinaCode);
+    if alibi_family && packed.is_none() {
         return Err(start(
             "Jina requires packed QKV and attention row strides divisible by 8 elements",
         ));
@@ -3231,7 +3426,9 @@ fn encoder_model<E: UploadElement>(
                 .as_ref()
                 .ok_or_else(|| start("FA4 attention requires INFINITY_FA4_ROOT"))?;
             let root = Path::new(root);
-            Some(if jina {
+            Some(if config.family == EncoderFamily::JinaCode {
+                fa4::Fa4::new_alibi_native12(context.clone(), stream.clone(), root, attention_spec)?
+            } else if alibi_family {
                 fa4::Fa4::new_alibi(context.clone(), stream.clone(), root, attention_spec)?
             } else {
                 fa4::Fa4::new(context.clone(), root, attention_spec)?
@@ -3239,12 +3436,14 @@ fn encoder_model<E: UploadElement>(
         }
         "auto"
             if fa4_root.is_some()
-                && (jina || fa4::Fa4::supports(&attention_spec))
+                && (alibi_family || fa4::Fa4::supports(&attention_spec))
                 && packed.is_some() =>
         {
             let root = fa4_root.as_ref().ok_or_else(|| start("Missing FA4 root"))?;
             let root = Path::new(root);
-            Some(if jina {
+            Some(if config.family == EncoderFamily::JinaCode {
+                fa4::Fa4::new_alibi_native12(context.clone(), stream.clone(), root, attention_spec)?
+            } else if alibi_family {
                 fa4::Fa4::new_alibi(context.clone(), stream.clone(), root, attention_spec)?
             } else {
                 fa4::Fa4::new(context.clone(), root, attention_spec)?
@@ -3256,7 +3455,7 @@ fn encoder_model<E: UploadElement>(
     if config.family == EncoderFamily::Nomic && fa4.is_none() {
         return Err(start("Dense Nomic requires prepared FA4 attention"));
     }
-    if jina && fa4.is_none() {
+    if alibi_family && fa4.is_none() {
         return Err(start(
             "Jina ALiBi attention requires prepared FA4 attention",
         ));
@@ -3320,6 +3519,20 @@ fn encoder_model<E: UploadElement>(
                 .layers
                 .iter()
                 .map(|layer| Layer::<E>::upload_jina(&mut uploader, layer))
+                .collect::<Result<_, _>>()?,
+        },
+        EncoderHostWeights::JinaCode(host) => Weights::<E> {
+            word: uploader.upload_typed::<E>(&[&host.weights.word])?,
+            position: None,
+            token_type: uploader.upload_typed::<E>(&[&host.weights.token_type])?,
+            gamma: uploader.upload_typed::<E>(&[&host.weights.embedding_norm.gamma])?,
+            beta: uploader.upload_typed::<E>(&[&host.weights.embedding_norm.beta])?,
+            qkv_zero_bias: None,
+            layers: host
+                .weights
+                .layers
+                .iter()
+                .map(|layer| Layer::<E>::upload_jina_code(&mut uploader, layer))
                 .collect::<Result<_, _>>()?,
         },
     };
@@ -6596,3 +6809,6 @@ mod jina_primitive_schema;
 #[cfg(test)]
 #[path = "../tests/support/jina_alibi.rs"]
 mod jina_alibi;
+
+#[cfg(test)]
+mod jina_code_loader_tests;

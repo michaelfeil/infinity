@@ -32,6 +32,7 @@ phase.add_argument("--export-only", action="store_true", help="Export kernels be
 phase.add_argument("--link-only", action="store_true", help="Link existing exports; no Python GPU packages required")
 p.add_argument("--deberta", action="store_true", help="Also export packed DeBERTa relative attention")
 p.add_argument("--alibi", action="store_true", help="Also export packed Jina ALiBi model-bias attention")
+p.add_argument("--jinacode", action="store_true", help="Also export native JinaCode F32-FMA ALiBi attention")
 p.add_argument("--compile-only", action="store_true", help="Export using fake tensors without a build GPU; runtime validation is still required")
 p.add_argument("--arch", choices=["sm_80", "sm_86", "sm_89", "sm_90a", "sm_100a", "sm_120"], default="sm_90a", help="Target architecture; one native bundle per architecture")
 a = p.parse_args()
@@ -151,6 +152,37 @@ if not a.link_only:
                                     kind="alibi_model_bias", score_source="alibi_score.py",
                                     score_abi=1, qk_scale=0.125, external_softmax_scale=1.0,
                                     bias_rounding="model_dtype"))
+        if a.jinacode:
+            # The model's native Flash recipe retains F32 bias/FMA precision.
+            # Packed Q/K/V row strides match the shared encoder workspace.
+            from alibi12_native_score import alibi12_native_flash_bf16, alibi12_native_flash_fp16
+            for dtype_name, dtype, score_mod in [
+                    ("fp16", torch.float16, alibi12_native_flash_fp16),
+                    ("bf16", torch.bfloat16, alibi12_native_flash_bf16)]:
+                packed = torch.zeros((256, 2304), device="cuda", dtype=dtype)
+                q = packed[:, :768].view(256, 12, 64)
+                k = packed[:, 768:1536].view(256, 12, 64)
+                v = packed[:, 1536:].view(256, 12, 64)
+                slopes = torch.zeros(12, device="cuda", dtype=torch.float32)
+                previous = set(interface._flash_attn_fwd.compile_cache.cache)
+                interface.flash_attn_varlen_func(q, k, v, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                    max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
+                    score_mod=score_mod, aux_tensors=[slopes],
+                    disable_scheduler_metadata=True)
+                fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
+                if len(fresh) != 1:
+                    raise RuntimeError("Unexpected native JinaCode compilation count")
+                compiled = interface._flash_attn_fwd.compile_cache.cache[fresh.pop()]
+                symbol = f"fa4_jinacode_flash_alibi_{dtype_name}"
+                obj = a.output / f"{symbol}.o"
+                export_portable(compiled, obj, symbol)
+                objects.append(str(obj))
+                kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
+                                    causal=False, window=[None, None], dtype=dtype_name,
+                                    kind="alibi12_native_flash", score_source="alibi12_native_score.py",
+                                    score_abi=1, qk_scale=0.125, external_softmax_scale=1.0,
+                                    bias_rounding="float32_fma_unscaled_then_pow2_scale",
+                                    alibi_heads=12, alibi_slope_count=12))
     manifest = {
         "abi_version": 7,
         "host_target": host_target(),
@@ -168,6 +200,8 @@ if not a.link_only:
     }
     if a.alibi:
         manifest["alibi_score_sha256"] = digest(pathlib.Path(__file__).with_name("alibi_score.py"))
+    if a.jinacode:
+        manifest["alibi12_native_score_sha256"] = digest(pathlib.Path(__file__).with_name("alibi12_native_score.py"))
     (a.output / "manifest.json").write_text(json.dumps(manifest, indent=2))
 else:
     manifest = json.loads((a.output / "manifest.json").read_text())
@@ -191,7 +225,7 @@ if manifest["architecture"] not in ["sm_80", "sm_86", "sm_89", "sm_90a", "sm_100
     raise RuntimeError("Unsupported bundle architecture")
 capability = int(manifest["architecture"].removeprefix("sm_").removesuffix("a"))
 bridge = pathlib.Path(__file__).with_name("bridge.cpp")
-if any(k["symbol"].startswith("fa4_alibi_model_bias_") for k in manifest["kernels"]):
+if any(k["symbol"].startswith(("fa4_alibi_model_bias_", "fa4_jinacode_flash_alibi_")) for k in manifest["kernels"]):
     from alibi_score import native_link_defines
     link_defines = native_link_defines(manifest["kernels"])
 else:

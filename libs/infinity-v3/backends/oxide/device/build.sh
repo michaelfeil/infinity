@@ -33,6 +33,7 @@ symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_emb
                   "infinity_base_rope_tables_64_bf16",
                   "infinity_gelu_bias", "infinity_layer_norm", "infinity_layer_norm_384",
                   "infinity_layer_norm_768_exact", "infinity_layer_norm_768_exact_vector",
+                  "infinity_jina_code_qk_norm_768",
                   "infinity_layer_norm_1024_rounded_native",
                   "infinity_layer_norm_rounded",
                   "infinity_mean_pool", "infinity_pool", "infinity_qkv",
@@ -90,6 +91,7 @@ manifest = {
 }
 # Hash the additive F16 module without rewriting the phase1 source list above.
 manifest["sources"]["src/encoder_f16.rs"] = digest(root / "src/encoder_f16.rs")
+manifest["sources"]["src/jina_code_qk.rs"] = digest(root / "src/jina_code_qk.rs")
 manifest["sources"]["src/classifier.rs"] = digest(root / "src/classifier.rs")
 manifest["sources"]["src/classifier_norm384.rs"] = digest(root / "src/classifier_norm384.rs")
 manifest["sources"] = dict(sorted(manifest["sources"].items()))

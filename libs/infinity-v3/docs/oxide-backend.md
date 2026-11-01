@@ -44,6 +44,14 @@ Additional BF16 encoder paths cover ModernBERT, Nomic BERT and Jina Small with
 their validated geometry, normalization, rotary/ALiBi and activation recipes.
 Their loader guards remain authoritative; family names do not imply all variants.
 
+Jina embeddings v2 base code uses a separate BF16 recipe at H768, 12 layers,
+12 heads and 8192 positions, loading its F16 checkpoint weights. It supports
+CLS/mean/last-token pooling and raw/mixed output. Token types `0` and `1` are meaningful;
+out-of-range IDs are rejected. Full-width Q/K LayerNorm, the double residual
+schedule, and native F32 FMA ALiBi scores are retained without a quadratic bias
+allocation. Export its separate FA4 pair with `build.py --jinacode` or
+`build_all.py --jinacode`; `--alibi` selects the distinct Jina Small recipe.
+
 Explicit `--dtype float16` admits BERT MiniLM with hidden width 384, six layers,
 12 attention heads, intermediate width 1536, absolute positions, tanh GELU and
 LayerNorm epsilon `1e-12`. It supports all three pools and raw/mixed output;
@@ -238,11 +246,11 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles all 68 Rust kernels separately for `sm_90`,
+`device/build.sh` compiles all 69 Rust kernels separately for `sm_90`,
 `sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
 symbols, and writes a manifest recording source/artifact hashes, target,
 compiler revision, and commands. Every architecture is natively compiled from
-Rust for all 68 exports, including seven FP16 MiniLM and four classifier
+Rust for all 69 exports, including seven FP16 MiniLM and four classifier
 primitives. The original nine BERT kernels remain byte-identical
 on all three targets. Additional exports provide rounded embedding/residual
 LayerNorm, native width-768/1024 normalization arithmetic, ordinary or rounded RMSNorm with an optional residual output,
@@ -295,7 +303,7 @@ native reduction recipes.
 MiniLM still needs the original nine entrypoints; the older six-export bundle
 fails startup. Wider encoders require their selected normalization exports, and
 the current decoder selector requires the new vector8 entrypoint. Use the current
-40-export bundle for the full typed catalog. These are independent target builds;
+complete kernel bundle for the typed catalog. These are independent target builds;
 changing a label in a manifest is not an architecture build.
 
 | Target | Deployment family | Qualification |

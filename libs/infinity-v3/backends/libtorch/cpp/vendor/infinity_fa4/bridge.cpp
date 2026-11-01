@@ -47,7 +47,15 @@ std::mutex export_init_mutex;
 // Slots: [0, 2*attention_modes) profiles, then the two DeBERTa slots, then the
 // two ALiBi slots.  The DeBERTa reservations are kept even when FA4_DEBERTA is
 // not defined so the additive ALiBi indices do not move between build variants.
+// The native JinaCode pair follows the two reserved DeBERTa and published
+// Jina8 slots. Derive its base from the profile count so ordinary additions
+// cannot collide with a score-modifier family.
+constexpr unsigned ALIBI_NATIVE12_BASE_SLOT = 2 * attention_modes + 4;
+#ifdef FA4_ALIBI12_NATIVE_FLASH
+std::atomic<bool> export_initialized[2 * attention_modes + 6]{};
+#else
 std::atomic<bool> export_initialized[2 * attention_modes + 4]{};
+#endif
 std::exception_ptr export_init_failure;
 
 template <typename F>
@@ -204,6 +212,57 @@ extern "C" int infinity_fa4_alibi_model_bias_v1(int dtype,int device,void* strea
   tvm::ffi::Array<tvm::ffi::Any> aux{tensors,nullptr};
   StreamScope scope(device,stream);
   invoke_export(2 * attention_modes + 2 + dtype, [&] {
+#if FA4_COMPUTE_CAPABILITY == 100
+   fns[dtype](&qt,&kt,&vt,&ot,nullptr,1.0,&ct,&ct,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,
+      nullptr,nullptr,aux,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,int64_t(max_q));
+#else
+   fns[dtype](&qt,&kt,&vt,&ot,nullptr,1.0,&ct,&ct,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,aux,nullptr,nullptr);
+#endif
+  });
+  last_error.clear();return 0;
+ } catch(const std::exception& e){last_error=e.what();return -1;}
+}
+#endif
+
+#ifdef FA4_ALIBI12_NATIVE_FLASH
+extern "C" int __tvm_ffi_fa4_jinacode_flash_alibi_fp16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
+extern "C" int __tvm_ffi_fa4_jinacode_flash_alibi_bf16(void*,const TVMFFIAny*,int32_t,TVMFFIAny*);
+// Additive JinaCode ALiBi public ABI: packed non-causal self-attention with
+// 12 Q/K/V/output heads, head_dim 64, and no local window.  It reuses the
+// native F32 FMA score hook (no model-dtype bias rounding) and borrows one F32[12] slope vector; no
+// O(T*T) bias is materialized.  Q/K/V/output strides are the caller's
+// strides[12] in the ordinary Q,K,V,O order.  The caller owns the slope,
+// model, and context storage until the stream drains.
+extern "C" int infinity_fa4_jinacode_flash_alibi_v1(int dtype,int device,void* stream,
+ void* q,void* k,void* v,void* o,void* offsets,const float* slopes,
+ int64_t total,int64_t batch,int64_t heads,const int64_t* strides,int max_q) {
+ try {
+  if(dtype<0||dtype>1||device<0||!q||!k||!v||!o||!offsets||!slopes||!strides
+     ||total<=0||total>INT32_MAX/(12*64)||batch<=0||batch>=INT32_MAX
+     ||heads!=12||max_q<=0||max_q>INT32_MAX||max_q>total)
+    throw std::runtime_error("invalid ALiBi12 geometry");
+  for(int j=0;j<12;j++) if(strides[j]<=0) throw std::runtime_error("invalid ALiBi12 strides");
+  auto fits=[&](const int64_t* s){
+   __int128 extent=(__int128)(total-1)*s[0]+(__int128)(heads-1)*s[1]+(__int128)(64-1)*s[2];
+   return extent<=std::numeric_limits<int64_t>::max();
+  };
+  for(int base=0;base<12;base+=3) if(!fits(strides+base)) throw std::runtime_error("ALiBi12 stride extent overflows int64");
+  static tvm::ffi::Function fns[]={
+   tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_jinacode_flash_alibi_fp16,nullptr),
+   tvm::ffi::Function::FromExternC(nullptr,__tvm_ffi_fa4_jinacode_flash_alibi_bf16,nullptr)};
+  DLDataType dt{static_cast<uint8_t>(dtype==0?kDLFloat:kDLBfloat),16,1},it{kDLInt,32,1},ft{kDLFloat,32,1};
+  int64_t shape[]={total,heads,64},cs[]={batch+1},one[]={1},ss[]={12},st[12];
+  for(int j=0;j<12;j++)st[j]=strides[j];
+  auto tensor=[&](void* p,int n,int64_t* sh,int64_t* stride,DLDataType type){return DLTensor{p,{kDLCUDA,device},n,type,sh,stride,0};};
+  auto qt=tensor(q,3,shape,st,dt),kt=tensor(k,3,shape,st+3,dt),vt=tensor(v,3,shape,st+6,dt),ot=tensor(o,3,shape,st+9,dt);
+  auto ct=tensor(offsets,1,cs,one,it),stl=tensor(const_cast<float*>(slopes),1,ss,one,ft);
+  // Borrowed storage stays owned by the caller.  The stack DLPack wrappers
+  // live through the synchronous launch, and no deleter frees their data.
+  DLManagedTensor sm{stl,nullptr,nullptr};
+  tvm::ffi::Array<tvm::ffi::Any> tensors{tvm::ffi::Tensor::FromDLPack(&sm)};
+  tvm::ffi::Array<tvm::ffi::Any> aux{tensors,nullptr};
+  StreamScope scope(device,stream);
+  invoke_export(ALIBI_NATIVE12_BASE_SLOT + dtype, [&] {
 #if FA4_COMPUTE_CAPABILITY == 100
    fns[dtype](&qt,&kt,&vt,&ot,nullptr,1.0,&ct,&ct,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,
       nullptr,nullptr,aux,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,int64_t(max_q));

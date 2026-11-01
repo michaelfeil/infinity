@@ -126,6 +126,19 @@ pub(crate) fn classify_marker(raw: &RawJinaMarker) -> Result<bool, BackendError>
         ))
 }
 
+/// Native selection order checks the JinaCode name marker before the ordinary
+/// Jina implementation marker. Keep this query non-mutating so the legacy
+/// `classify_marker` rejection remains correct for callers that assume the
+/// QK-post-norm executor is still absent.
+pub(crate) fn is_jina_code_marker(raw: &RawJinaMarker) -> bool {
+    raw.model_type.as_deref() == Some("bert")
+        && marker_in(
+            raw.name_or_path.as_deref(),
+            raw.auto_map.as_ref(),
+            JINA_CODE_MARKER,
+        )
+}
+
 #[cfg(test)]
 pub(crate) fn detects(path: &Path) -> Result<bool, BackendError> {
     let raw: RawJinaMarker = read_json(&path.join("config.json"))?;

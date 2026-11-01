@@ -14,6 +14,7 @@ mod dense;
 mod encoder_f16;
 mod encoder_prenorm;
 mod gated;
+mod jina_code_qk;
 mod nomic_embedding;
 mod norm1024;
 mod norm1024_exact_vector;
@@ -460,6 +461,23 @@ mod kernels {
             crate::norm768_vector::layer_norm_768_vector(
                 input, residual, bias, gamma, beta, out, rows, width, eps,
             )
+        };
+    }
+
+    /// JinaCode full-hidden Q/K affine norm in packed BF16 QKV storage.
+    /// Grid=ceil(rows/4), block128; Q/K slices normalize independently, V stays.
+    #[kernel]
+    pub unsafe fn infinity_jina_code_qk_norm_768(
+        qkv: *mut u16,
+        q_gamma: *const u16,
+        q_beta: *const u16,
+        k_gamma: *const u16,
+        k_beta: *const u16,
+        rows: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::jina_code_qk::qk_norm_768(qkv, q_gamma, q_beta, k_gamma, k_beta, rows, eps)
         };
     }
 

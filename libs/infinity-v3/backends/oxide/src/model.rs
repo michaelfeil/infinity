@@ -68,6 +68,7 @@ pub(crate) enum EncoderFamily {
     Modern,
     Nomic,
     Jina,
+    JinaCode,
 }
 impl EncoderFamily {
     fn from_model_type(model_type: &str) -> Option<Self> {
@@ -93,6 +94,7 @@ impl EncoderFamily {
             Self::Modern => &["model.", ""],
             Self::Nomic => &[""],
             Self::Jina => &["bert.", ""],
+            Self::JinaCode => &["", "bert."],
         }
     }
 
@@ -116,6 +118,7 @@ impl EncoderFamily {
             Self::Modern => matches!(architecture, "ModernBertModel" | "ModernBertForMaskedLM"),
             Self::Nomic => matches!(architecture, "NomicBertModel"),
             Self::Jina => architecture.starts_with("JinaBert"),
+            Self::JinaCode => architecture.starts_with("JinaBert"),
         }
     }
 }
@@ -467,6 +470,47 @@ impl BertConfig {
             add_cross_attention: false,
         }
     }
+    /// Geometry for the separately validated JinaCode QK post-norm loader.
+    /// JinaCode keeps `model_type = "bert"` in the source config and is selected
+    /// from the native `jina-bert-v2-qk-post-norm` marker before ordinary BERT
+    /// validation. The recipe selects the prepared full-width Q/K normalization
+    /// and native ALiBi score arithmetic.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn jina_code_geometry(
+        hidden_size: usize,
+        intermediate_size: usize,
+        num_attention_heads: usize,
+        num_hidden_layers: usize,
+        max_position_embeddings: usize,
+        vocab_size: usize,
+        type_vocab_size: usize,
+        layer_norm_eps: f64,
+    ) -> Self {
+        Self {
+            architectures: Vec::new(),
+            hidden_size,
+            intermediate_size,
+            num_attention_heads,
+            num_hidden_layers,
+            max_position_embeddings,
+            rotary_table_positions: None,
+            vocab_size,
+            type_vocab_size,
+            configured_type_vocab_size: Some(type_vocab_size),
+            layer_norm_eps,
+            family: EncoderFamily::JinaCode,
+            recipe: EncoderRecipe {
+                embedding: NormArithmetic::ExactWordTypeBiased,
+                residual: NormArithmetic::ExactBiased,
+                positions: PositionRecipe::AlibiModelBias,
+                feed_forward: FeedForwardRecipe::GatedGeluUpFirst,
+            },
+            hidden_act: "gelu".into(),
+            position_embedding_type: "alibi".into(),
+            is_decoder: false,
+            add_cross_attention: false,
+        }
+    }
     fn from_raw(raw: RawEncoderConfig) -> Result<Self, BackendError> {
         Self::from_raw_admitted(raw, false)
     }
@@ -655,10 +699,10 @@ impl BertConfig {
                 self.position_embedding_type == "rope"
             }
             (EncoderFamily::Gte, _) => false,
-            (EncoderFamily::Jina, PositionRecipe::AlibiModelBias) => {
+            (EncoderFamily::Jina | EncoderFamily::JinaCode, PositionRecipe::AlibiModelBias) => {
                 self.position_embedding_type == "alibi"
             }
-            (EncoderFamily::Jina, _) => false,
+            (EncoderFamily::Jina | EncoderFamily::JinaCode, _) => false,
             (_, PositionRecipe::Absolute) => self.position_embedding_type == "absolute",
             _ => false,
         };
@@ -724,6 +768,26 @@ impl BertConfig {
             if !recipe_valid {
                 return Err(start(
                     "invalid or unsupported Jina dimensions / arithmetic recipe",
+                ));
+            }
+        }
+        if self.family == EncoderFamily::JinaCode {
+            let recipe_valid = self.hidden_size == 768
+                && self.num_attention_heads == 12
+                && self.hidden_size / self.num_attention_heads == 64
+                && self.intermediate_size == 3072
+                && self.num_hidden_layers == 12
+                && self.vocab_size == 61056
+                && self.type_vocab_size == 2
+                && self.max_position_embeddings == 8192
+                && self.layer_norm_eps == 1e-12
+                && self.recipe.embedding == NormArithmetic::ExactWordTypeBiased
+                && self.recipe.residual == NormArithmetic::ExactBiased
+                && self.recipe.positions == PositionRecipe::AlibiModelBias
+                && self.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst;
+            if !recipe_valid {
+                return Err(start(
+                    "invalid or unsupported JinaCode dimensions / arithmetic recipe",
                 ));
             }
         }
@@ -943,7 +1007,6 @@ impl WeightSource {
         self.count
     }
 
-    #[cfg(test)]
     pub(crate) fn dtype(&self) -> Dtype {
         self.dtype
     }
