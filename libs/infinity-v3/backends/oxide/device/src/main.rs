@@ -8,6 +8,7 @@
 use cuda_device::{DynamicSharedArray, SharedArray, convert, cuda_module, kernel, thread, warp};
 mod decoder;
 mod norm1024;
+mod norm2048;
 mod norm384;
 mod norm768;
 mod readout;
@@ -380,6 +381,40 @@ mod kernels {
         unsafe {
             crate::norm1024::layer_norm_1024_rounded(
                 input, residual, bias, gamma, beta, out, rows, width, eps,
+            )
+        };
+    }
+
+    /// Exact width-2048 BF16 RMSNorm.
+    /// Grid=(ceil(rows/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_rms_norm_2048_exact(
+        input: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe { crate::norm2048::exact_rms_norm_2048(input, weight, out, rows, width, eps) };
+    }
+
+    /// Exact width-2048 BF16 residual RMSNorm with a separate rounded BF16 sum.
+    /// Grid=(ceil(rows/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_add_rms_norm_2048_exact(
+        input: *const u16,
+        residual: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        summed: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm2048::exact_add_rms_norm_2048(
+                input, residual, weight, out, summed, rows, width, eps,
             )
         };
     }
