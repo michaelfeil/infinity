@@ -9,9 +9,11 @@ use cuda_device::{DynamicSharedArray, SharedArray, convert, cuda_module, kernel,
 mod decoder;
 mod norm1024;
 mod norm2048;
+mod norm2048_vector;
 mod norm384;
 mod norm768;
 mod readout;
+mod silu_pairs;
 
 /// Interpret one BF16 storage element without numerical conversion error.
 /// The upper16 bits are the exponent, sign and significant FP32 bits.
@@ -414,6 +416,42 @@ mod kernels {
     ) {
         unsafe {
             crate::norm2048::exact_add_rms_norm_2048(
+                input, residual, weight, out, summed, rows, width, eps,
+            )
+        };
+    }
+
+    /// Exact width-2048 BF16 RMSNorm with aligned 128-bit transactions.
+    /// Grid=(ceil(rows/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_rms_norm_2048_vector(
+        input: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm2048_vector::exact_rms_norm_2048_vector(input, weight, out, rows, width, eps)
+        };
+    }
+
+    /// Exact width-2048 BF16 residual RMSNorm with aligned 128-bit transactions.
+    /// Grid=(ceil(rows/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_add_rms_norm_2048_vector(
+        input: *const u16,
+        residual: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        summed: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm2048_vector::exact_add_rms_norm_2048_vector(
                 input, residual, weight, out, summed, rows, width, eps,
             )
         };
@@ -987,6 +1025,17 @@ mod kernels {
     #[kernel]
     pub unsafe fn infinity_silu_mul_f32(input: *const u16, out: *mut u16, rows: u32, width: u32) {
         unsafe { crate::decoder::silu_mul::<false>(input, out, rows, width) };
+    }
+
+    /// Rounded BF16 paired gate/up activation; grid=ceil(rows*ceil(width/2)/256).
+    #[kernel]
+    pub unsafe fn infinity_silu_mul_bf16_pairs(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::silu_pairs::silu_mul_bf16_pairs(input, out, rows, width) };
     }
 
     /// Word-only BF16 gather; grid=ceil(tokens*width/256), block=256.

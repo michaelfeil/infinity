@@ -173,16 +173,23 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles all 31 Rust kernels separately for `sm_90`,
+`device/build.sh` compiles all 34 Rust kernels separately for `sm_90`,
 `sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
 symbols, and writes a manifest recording source/artifact hashes, target,
 compiler revision, and commands. Every architecture is natively compiled from
-Rust for all 31 exports. The original nine BERT kernels remain byte-identical
+Rust for all 34 exports. The original nine BERT kernels remain byte-identical
 on all three targets. Additional exports provide rounded embedding/residual
 LayerNorm, native width-768/1024 normalization arithmetic, ordinary or rounded RMSNorm with an optional residual output,
 NeoX/interleaved RoPE with separate-product or fused arithmetic, staged or FP32
 SiLU multiplication, plain or scaled word gathers, paired CLS/last-row gathers,
-native width-2048 decoder RMSNorm, and selected BF16-to-FP32 output extraction.
+native width-2048 decoder RMSNorm, selected BF16-to-FP32 output extraction,
+aligned vector width-2048 RMSNorm, and paired BF16 SiLU multiplication.
+The three packed-operation exports preserve the arithmetic of their scalar
+controls; all previous 31 kernel machine bodies remain unchanged on all three
+targets. Vector RMSNorm uses 16-byte transactions on aligned buffers and a
+scalar fallback otherwise. Paired SiLU handles odd widths and unaligned buffers
+without reading outside a row. These are standalone primitives; they do not
+expand the serving model catalog.
 The row-gather and output-extraction kernels copy storage bits
 or widen them exactly, support independent tensor widths and repeated output
 selections, and need no additional intermediate allocation. These primitives do not
