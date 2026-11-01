@@ -47,8 +47,10 @@ The frontend pads each batch to its longest sequence. `input_ids`,
 `attention_mask`, `token_type_ids`, and `position_ids` are flattened row-major
 arrays that reshape to `[batch_size, seq_len]`. The mask is 1 for real tokens
 and 0 for padding; `lengths` contains the unpadded length of each sequence.
-Input arrays are numpy views over Rust-owned buffers; the payload keeps those
-buffers alive while the request is queued. Treat the arrays as read-only.
+Input arrays are read-only numpy views over Rust-owned buffers; the payload
+keeps those buffers alive while the request is queued. Writing to a view or
+re-enabling its write flag is rejected. Plugins that need in-place preprocessing
+must first copy the affected arrays into their own storage.
 The plugin owns model loading, device placement, and model-specific preprocessing.
 The response is one contiguous `float32` numpy array.
 
@@ -140,9 +142,10 @@ release model resources.
 
 ## Buffer ownership
 
-- **Rust to Python:** input arrays are borrowed numpy views over the Rust
-  `PaddedInputs` buffers. A Python owner object keeps the `Arc` alive while the
-  executor queue holds the payload.
+- **Rust to Python:** input arrays are borrowed, read-only numpy views over the
+  Rust `PaddedInputs` buffers. A Python owner object keeps the `Arc` alive while
+  the executor queue holds the payload. Derived views inherit read-only access;
+  plugins must copy arrays before mutating them.
 - **Python to Rust:** `set_result` validates the array and copies its values into
   one Rust-owned snapshot. Making a numpy view read-only cannot prevent writes
   through its base array, so Python-owned output memory is never shared with
