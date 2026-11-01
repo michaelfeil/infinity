@@ -12,3 +12,9 @@ Retain the dependency license notices when packaging native kernel artifacts.
 
 The kernel producer also uses libm under its published MIT OR Apache-2.0
 license. CUDA, cuBLAS, and optional attention providers retain their own terms.
+
+The word-only width-768 embedding LayerNorm in device/src/aten_embedding.rs
+is adapted from PyTorch aten/src/ATen/native/cuda/layer_norm_kernel.cu at
+5c4886908584029761b579af026dcfb627c84070. Its complete copyright and BSD
+license are retained in that source and device/LICENSE-PyTorch-BSD3. Include
+that license when redistributing the compiled device kernels.

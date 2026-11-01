@@ -22,20 +22,27 @@ pub(crate) fn input_capacity(key: WorkKey) -> Result<usize, BackendError> {
         .and_then(|n| n.checked_add(key.2))
         .ok_or_else(|| infer("Input staging layout overflow"))
 }
-fn output_elements(key: WorkKey, hidden: usize) -> Result<usize, BackendError> {
-    product(key.2, hidden)
-}
-pub(crate) fn pinned_bytes(key: WorkKey, hidden: usize) -> Result<usize, BackendError> {
+pub(crate) fn pinned_bytes(key: WorkKey, output_elements: usize) -> Result<usize, BackendError> {
     product(input_capacity(key)?, 4)?
-        .checked_add(product(output_elements(key, hidden)?, 4)?)
+        .checked_add(product(output_elements, 4)?)
         .ok_or_else(|| infer("Host I/O staging overflow"))
 }
 fn slot_fits(capacity: WorkKey, request: WorkKey, bytes: usize) -> bool {
     capacity_fits(capacity, request, bytes) && (bytes <= PIN_RETAIN_BYTES || capacity == request)
 }
+fn host_slot_fits(
+    capacity: WorkKey,
+    capacity_output: usize,
+    request: WorkKey,
+    request_output: usize,
+    bytes: usize,
+) -> bool {
+    slot_fits(capacity, request, bytes) && request_output <= capacity_output
+}
 
 pub(crate) struct HostIo {
     key: WorkKey,
+    output_elements: usize,
     pub(crate) input: PinnedHostBuffer<u32>,
     pub(crate) output: PinnedHostBuffer<f32>,
     pub(crate) event: Event,
@@ -62,6 +69,7 @@ impl HostIo {
     fn empty(context: &Arc<Context>) -> Result<Self, BackendError> {
         Ok(Self {
             key: (0, 0, 0),
+            output_elements: 0,
             input: PinnedHostBuffer::zeroed(context, 0).map_err(infer)?,
             output: PinnedHostBuffer::zeroed(context, 0).map_err(infer)?,
             event: context.new_event_with_flags(None).map_err(infer)?,
@@ -79,26 +87,34 @@ impl HostIo {
             .num_bytes()
             .saturating_add(self.output.num_bytes())
     }
-    fn fits(&self, key: WorkKey) -> bool {
-        slot_fits(self.key, key, self.bytes())
+    fn fits(&self, key: WorkKey, output_elements: usize) -> bool {
+        host_slot_fits(
+            self.key,
+            self.output_elements,
+            key,
+            output_elements,
+            self.bytes(),
+        )
     }
     fn allocate(
         context: &Arc<Context>,
         key: WorkKey,
-        hidden: usize,
+        output_elements: usize,
     ) -> Result<(PinnedHostBuffer<u32>, PinnedHostBuffer<f32>), BackendError> {
         Ok((
             PinnedHostBuffer::zeroed(context, input_capacity(key)?).map_err(infer)?,
-            PinnedHostBuffer::zeroed(context, output_elements(key, hidden)?).map_err(infer)?,
+            PinnedHostBuffer::zeroed(context, output_elements).map_err(infer)?,
         ))
     }
     fn replace(
         &mut self,
         key: WorkKey,
+        output_elements: usize,
         input: PinnedHostBuffer<u32>,
         output: PinnedHostBuffer<f32>,
     ) {
         self.key = key;
+        self.output_elements = output_elements;
         self.input = input;
         self.output = output;
         self.resident.replace(self.bytes());
@@ -113,7 +129,7 @@ impl SlotBytes for HostIo {
             return;
         }
         if let Ok((input, output)) = HostIo::allocate(self.input.context(), (0, 0, 0), 0) {
-            self.replace((0, 0, 0), input, output);
+            self.replace((0, 0, 0), 0, input, output);
         }
     }
 }
@@ -340,23 +356,27 @@ impl HostIoLease {
     pub(crate) fn required_bytes(
         &self,
         key: WorkKey,
-        hidden: usize,
+        output_elements: usize,
     ) -> Result<Option<usize>, BackendError> {
-        if self.slot()?.fits(key) {
+        if self.slot()?.fits(key, output_elements) {
             Ok(None)
         } else {
-            pinned_bytes(key, hidden).map(Some)
+            pinned_bytes(key, output_elements).map(Some)
         }
     }
     pub(crate) fn mark_exclusive(&mut self) {
         self.exclusive = true;
     }
-    pub(crate) fn discard_for_resize(&mut self, key: WorkKey) -> Result<(), BackendError> {
+    pub(crate) fn discard_for_resize(
+        &mut self,
+        key: WorkKey,
+        output_elements: usize,
+    ) -> Result<(), BackendError> {
         let slot = self
             .slot
             .as_mut()
             .ok_or_else(|| infer("Missing host I/O lease"))?;
-        if !slot.fits(key) && slot.bytes() > 0 {
+        if !slot.fits(key, output_elements) && slot.bytes() > 0 {
             let old = slot.bytes();
             slot.shrink();
             self.pool.adjust_pinned(old, slot.bytes())?;
@@ -366,30 +386,30 @@ impl HostIoLease {
     pub(crate) fn prepare(
         &mut self,
         key: WorkKey,
-        hidden: usize,
+        output_elements: usize,
         exclusive: bool,
     ) -> Result<(), BackendError> {
-        self.discard_for_resize(key)?;
+        self.discard_for_resize(key, output_elements)?;
         let Self {
             slot, pool, stream, ..
         } = self;
         let slot = slot
             .as_mut()
             .ok_or_else(|| infer("Missing host I/O lease"))?;
-        if slot.fits(key) {
+        if slot.fits(key, output_elements) {
             return Ok(());
         }
         let base = slot.bytes();
-        let new = pinned_bytes(key, hidden)?;
+        let new = pinned_bytes(key, output_elements)?;
         pool.grow(base, new, exclusive)?;
-        let (input, output) = match HostIo::allocate(stream.context(), key, hidden) {
+        let (input, output) = match HostIo::allocate(stream.context(), key, output_elements) {
             Ok(buffers) => buffers,
             Err(error) => {
                 let _ = pool.adjust_pinned(new, base);
                 return Err(error);
             }
         };
-        slot.replace(key, input, output);
+        slot.replace(key, output_elements, input, output);
         Ok(())
     }
     pub(crate) fn slot(&self) -> Result<&HostIo, BackendError> {
@@ -473,7 +493,7 @@ impl HostIoLease {
         let Ok((input, output)) = HostIo::allocate(stream.context(), (0, 0, 0), 0) else {
             return;
         };
-        slot.replace((0, 0, 0), input, output);
+        slot.replace((0, 0, 0), 0, input, output);
         // Keep accounting conservative until the old physical pins are freed;
         // a submission can project its reservation concurrently with completion.
         let _ = pool.adjust_pinned(old, 0);
@@ -641,6 +661,21 @@ mod tests {
         pool.release(first);
         assert_eq!(dropped.load(Ordering::Relaxed), 2);
         assert!(matches!(pool.acquire(), Err(BackendError::Unhealthy)));
+    }
+
+    #[test]
+    fn output_capacity_is_independent_of_the_backbone_key() {
+        let key = (32, 4, 16);
+        let exact = pinned_bytes(key, 45).unwrap();
+        let max = pinned_bytes(key, 16 * 7).unwrap();
+        let input = input_capacity(key).unwrap();
+        assert_eq!(exact, input * 4 + 45 * 4);
+        assert!(exact < max);
+        assert!(host_slot_fits(key, 45, key, 45, exact));
+        assert!(!host_slot_fits(key, 45, key, 46, exact));
+        assert!(!host_slot_fits(key, 45, key, 16 * 7, exact));
+        assert!(host_slot_fits((32, 4, 16), 77, (32, 4, 8), 45, 1024));
+        assert!(!host_slot_fits((32, 4, 8), 45, (32, 4, 16), 45, 77));
     }
 
     #[test]

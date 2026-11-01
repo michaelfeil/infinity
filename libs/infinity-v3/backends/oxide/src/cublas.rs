@@ -1,6 +1,10 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 //! The small cuBLAS ABI boundary; tensor ownership stays in cuda-core.
-use crate::{math::LinearPlan, tensor::Element};
+use crate::{
+    lt::ShapeError,
+    math::{GemmArguments, LinearPlan, MathError},
+    tensor::Element,
+};
 use cuda_core::{Context, Stream};
 use infinity_v3_backend_core::BackendError;
 use libloading::Library;
@@ -32,6 +36,7 @@ type GemmEx = unsafe extern "C" fn(
     i32,
 ) -> i32;
 type SetWorkspace = unsafe extern "C" fn(Handle, *mut c_void, usize) -> i32;
+const CUBLAS_GEMM_DEFAULT_TENSOR_OP: i32 = 99;
 
 // CUDA 13.1 recommends 32 MiB for SM90/SM10x/SM12x split-K workspaces, which
 // matches the cuBLAS default capacity. cuMemAlloc_v2 returns 256-byte-aligned
@@ -152,6 +157,52 @@ fn cleanup_failed_start(
         }
     }
     cause
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct NativeM1Arguments {
+    pub arguments: GemmArguments,
+    pub bias: u64,
+    pub bytes: usize,
+    pub stream: usize,
+}
+
+fn classify_m1_preflight_math(error: MathError) -> ShapeError {
+    match error {
+        MathError::ContextMismatch | MathError::UnsupportedFormat => {
+            ShapeError::Fatal(super::infer(error))
+        }
+        MathError::ShapeMismatch
+        | MathError::EmptyMatrix
+        | MathError::UnsupportedLayout
+        | MathError::DimensionOverflow
+        | MathError::Tensor(_) => ShapeError::Rejected(super::infer(error)),
+    }
+}
+
+fn check_native_m1_prepared(
+    prepared: &NativeM1Arguments,
+    stream: usize,
+    x: u64,
+    weight: u64,
+    bias: u64,
+    output: u64,
+) -> Result<(), ShapeError> {
+    if stream != prepared.stream {
+        return Err(ShapeError::Fatal(super::infer(
+            "GTE down M1 launch stream differs from prepared metadata",
+        )));
+    }
+    if x != prepared.arguments.x
+        || weight != prepared.arguments.weight
+        || bias != prepared.bias
+        || output != prepared.arguments.output
+    {
+        return Err(ShapeError::Fatal(super::infer(
+            "GTE down M1 launch buffers differ from prepared metadata",
+        )));
+    }
+    Ok(())
 }
 
 impl Blas {
@@ -276,6 +327,231 @@ impl Blas {
                 a.output_stride,
                 68, // CUBLAS_COMPUTE_32F
                 -1, // CUBLAS_GEMM_DEFAULT
+            )
+        })
+    }
+
+    /// Cheap metadata preflight for the native-biased beta=1 path.
+    ///
+    /// This checks the handle context and the prepared plan's storage without
+    /// binding the context, allocating, creating descriptors, or enqueueing.
+    /// The caller can therefore reject cross-context/cross-stream use before a
+    /// bias-preseed copy and then call [`Self::enqueue_native_n1`] once.
+    #[allow(dead_code)]
+    pub(crate) fn preflight_beta_one<E: Element>(
+        &self,
+        plan: &LinearPlan<E>,
+        x: &cuda_core::DeviceBuffer<E::Storage>,
+        w: &cuda_core::DeviceBuffer<E::Storage>,
+        y: &mut cuda_core::DeviceBuffer<E::Storage>,
+    ) -> Result<GemmArguments, BackendError> {
+        if !Arc::ptr_eq(x.context(), &self.context) {
+            return Err(super::infer(
+                "Linear input belongs to a different CUDA context",
+            ));
+        }
+        if !Arc::ptr_eq(w.context(), &self.context) {
+            return Err(super::infer(
+                "Linear weight belongs to a different CUDA context",
+            ));
+        }
+        if !Arc::ptr_eq(y.context(), &self.context) {
+            return Err(super::infer(
+                "Linear output belongs to a different CUDA context",
+            ));
+        }
+        plan.bind(x, w, y).map_err(super::infer)
+    }
+
+    /// Pure preflight for the native non-Lt N=1 biased GEMM.
+    ///
+    /// Validates the real GEMM arguments plus the bias-copy shape, context and
+    /// stream before any request work is submitted. Context/ownership/format
+    /// invariants stay fatal; only genuine bias/geometry failures are rejected.
+    /// The returned data contains no ownership; the caller retains every
+    /// allocation until launch drains.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn preflight_native_m1<E: Element>(
+        &self,
+        plan: &LinearPlan<E>,
+        x: &cuda_core::DeviceBuffer<E::Storage>,
+        weight: &cuda_core::DeviceBuffer<E::Storage>,
+        bias: &cuda_core::DeviceBuffer<E::Storage>,
+        output: &mut cuda_core::DeviceBuffer<E::Storage>,
+        stream: &Stream,
+        width: usize,
+    ) -> Result<NativeM1Arguments, ShapeError> {
+        if width == 0 || bias.len() < width {
+            return Err(ShapeError::Rejected(super::infer(format!(
+                "GTE down M1 bias length {} is shorter than output width {width}",
+                bias.len()
+            ))));
+        }
+        let bytes = width
+            .checked_mul(std::mem::size_of::<E::Storage>())
+            .ok_or_else(|| {
+                ShapeError::Fatal(super::infer("GTE down M1 bias copy size overflow"))
+            })?;
+        for context in [
+            x.context(),
+            weight.context(),
+            bias.context(),
+            output.context(),
+        ] {
+            if !Arc::ptr_eq(context, &self.context) {
+                return Err(ShapeError::Fatal(super::infer(
+                    "GTE down M1 buffers belong to a different CUDA context",
+                )));
+            }
+        }
+        if !std::ptr::eq(self.stream.as_ref(), stream) {
+            return Err(ShapeError::Fatal(super::infer(
+                "GTE down M1 requires the plain cuBLAS stream",
+            )));
+        }
+        let arguments = plan
+            .bind(x, weight, output)
+            .map_err(classify_m1_preflight_math)?;
+        Ok(NativeM1Arguments {
+            arguments,
+            bias: bias.cu_deviceptr(),
+            bytes,
+            stream: stream.cu_stream() as usize,
+        })
+    }
+
+    /// Enqueue the actual bias D2D preseed and native `GemmEx(99)` selected by
+    /// [`Self::preflight_native_m1`]. No metadata query or allocation runs here.
+    ///
+    /// # Safety
+    /// `prepared` must come from this handle's preflight, the context must be
+    /// bound on this thread, every allocation must remain alive without
+    /// conflicting access until this stream drains, and the caller must pass the
+    /// same current buffers and stream used for preflight.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn launch_native_m1<E: Element>(
+        &self,
+        plan: &LinearPlan<E>,
+        prepared: &NativeM1Arguments,
+        x: &cuda_core::DeviceBuffer<E::Storage>,
+        weight: &cuda_core::DeviceBuffer<E::Storage>,
+        bias: &cuda_core::DeviceBuffer<E::Storage>,
+        output: &mut cuda_core::DeviceBuffer<E::Storage>,
+        stream: &Stream,
+    ) -> Result<(), ShapeError> {
+        if !std::ptr::eq(self.stream.as_ref(), stream) {
+            return Err(ShapeError::Fatal(super::infer(
+                "GTE down M1 requires the plain cuBLAS stream",
+            )));
+        }
+        for context in [
+            x.context(),
+            weight.context(),
+            bias.context(),
+            output.context(),
+        ] {
+            if !Arc::ptr_eq(context, &self.context) {
+                return Err(ShapeError::Fatal(super::infer(
+                    "GTE down M1 buffers belong to a different CUDA context",
+                )));
+            }
+        }
+        check_native_m1_prepared(
+            prepared,
+            stream.cu_stream() as usize,
+            x.cu_deviceptr(),
+            weight.cu_deviceptr(),
+            bias.cu_deviceptr(),
+            output.cu_deviceptr(),
+        )?;
+        let arguments = plan
+            .bind(x, weight, output)
+            .map_err(|error| ShapeError::Fatal(super::infer(error)))?;
+        if arguments != prepared.arguments {
+            return Err(ShapeError::Fatal(super::infer(
+                "GTE down M1 plan arguments changed after preflight",
+            )));
+        }
+        let width = usize::try_from(arguments.width)
+            .map_err(|error| ShapeError::Fatal(super::infer(error)))?;
+        if width == 0 || bias.len() < width {
+            return Err(ShapeError::Fatal(super::infer(format!(
+                "GTE down M1 bias length {} is shorter than output width {width}",
+                bias.len()
+            ))));
+        }
+        let bytes = width
+            .checked_mul(std::mem::size_of::<E::Storage>())
+            .ok_or_else(|| {
+                ShapeError::Fatal(super::infer("GTE down M1 bias copy size overflow"))
+            })?;
+        if bytes != prepared.bytes {
+            return Err(ShapeError::Fatal(super::infer(
+                "GTE down M1 bias copy size differs from prepared metadata",
+            )));
+        }
+        // SAFETY: preflight and the checks above validated the current buffers,
+        // stream and bias-copy range; the copy and GEMM are ordered on the same
+        // plain cuBLAS stream.
+        unsafe {
+            cuda_core::memory::memcpy_dtod_async(
+                arguments.output,
+                bias.cu_deviceptr(),
+                bytes,
+                stream.cu_stream(),
+            )
+        }
+        .map_err(|error| ShapeError::Fatal(super::infer(error)))?;
+        // SAFETY: the caller's retained-buffer contract covers the current
+        // arguments, and the private handle remains serialized in default math.
+        unsafe { self.enqueue_native_n1(&arguments) }
+            .map_err(|error| ShapeError::Fatal(super::infer(error)))
+    }
+
+    /// Enqueue the native non-Lt N=1 biased GEMM.
+    ///
+    /// BF16 storage, FP32 accumulation, beta=1 over a pre-seeded bias output,
+    /// `CUBLAS_GEMM_DEFAULT_TENSOR_OP`, and the default math mode.
+    ///
+    /// The handle is private to this `Blas`, is created by `cublasCreate_v2`
+    /// with the primary CUDA default (`CUBLAS_DEFAULT_MATH`), and is never
+    /// exposed or passed to another method that changes math mode. This method
+    /// therefore uses the known handle invariant directly and performs no
+    /// per-request `cublasGetMathMode`/`cublasSetMathMode` metadata call.
+    ///
+    /// # Safety
+    /// `arguments` must come from [`Self::preflight_beta_one`], the context
+    /// must be bound on this thread, and every allocation must remain alive
+    /// without conflicting access until this stream drains.
+    pub(crate) unsafe fn enqueue_native_n1(
+        &self,
+        arguments: &GemmArguments,
+    ) -> Result<(), BackendError> {
+        let (alpha, beta) = (1.0f32, 1.0f32);
+        // SAFETY: the caller's contract covers the prepared arguments and owner
+        // lifetimes; the private handle remains exclusively owned and
+        // serialized in its default math mode.
+        check(unsafe {
+            (self.gemm)(
+                self.handle,
+                1,
+                0,
+                arguments.width,
+                arguments.rows,
+                arguments.input,
+                &alpha,
+                arguments.weight as *const c_void,
+                arguments.cuda_type,
+                arguments.weight_stride,
+                arguments.x as *const c_void,
+                arguments.cuda_type,
+                arguments.x_stride,
+                &beta,
+                arguments.output as *mut c_void,
+                arguments.cuda_type,
+                arguments.output_stride,
+                68, // CUBLAS_COMPUTE_32F
+                CUBLAS_GEMM_DEFAULT_TENSOR_OP,
             )
         })
     }
@@ -448,5 +724,64 @@ mod tests {
                 <Bf16 as FixtureElement>::decode(*value)
             );
         }
+    }
+    #[test]
+    fn native_m1_preflight_classifies_shape_rejected_and_invariants_fatal() {
+        for error in [
+            MathError::ShapeMismatch,
+            MathError::EmptyMatrix,
+            MathError::UnsupportedLayout,
+            MathError::DimensionOverflow,
+            MathError::Tensor(crate::tensor::TensorError::BufferTooSmall),
+        ] {
+            assert!(
+                matches!(classify_m1_preflight_math(error), ShapeError::Rejected(_)),
+                "{error:?} must remain a recoverable shape rejection"
+            );
+        }
+        for error in [MathError::ContextMismatch, MathError::UnsupportedFormat] {
+            assert!(
+                matches!(classify_m1_preflight_math(error), ShapeError::Fatal(_)),
+                "{error:?} must stay fatal"
+            );
+        }
+    }
+
+    #[test]
+    fn native_m1_prepared_identity_rejects_stream_and_buffer_mismatches() {
+        let prepared = NativeM1Arguments {
+            arguments: GemmArguments {
+                x: 0x1000,
+                weight: 0x2000,
+                output: 0x3000,
+                rows: 1,
+                input: 3072,
+                width: 768,
+                x_stride: 3072,
+                weight_stride: 3072,
+                output_stride: 768,
+                cuda_type: 14,
+            },
+            bias: 0x4000,
+            bytes: 1536,
+            stream: 0x5000,
+        };
+        check_native_m1_prepared(&prepared, 0x5000, 0x1000, 0x2000, 0x4000, 0x3000).unwrap();
+        assert!(matches!(
+            check_native_m1_prepared(&prepared, 0x5001, 0x1000, 0x2000, 0x4000, 0x3000),
+            Err(ShapeError::Fatal(_))
+        ));
+        assert!(matches!(
+            check_native_m1_prepared(&prepared, 0x5000, 0x1001, 0x2000, 0x4000, 0x3000),
+            Err(ShapeError::Fatal(_))
+        ));
+        assert!(matches!(
+            check_native_m1_prepared(&prepared, 0x5000, 0x1000, 0x2000, 0x4001, 0x3000),
+            Err(ShapeError::Fatal(_))
+        ));
+        assert!(matches!(
+            check_native_m1_prepared(&prepared, 0x5000, 0x1000, 0x2000, 0x4000, 0x3001),
+            Err(ShapeError::Fatal(_))
+        ));
     }
 }

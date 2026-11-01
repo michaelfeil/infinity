@@ -5,11 +5,15 @@ mod cache;
 mod cublas;
 mod decoder;
 mod decoder_model;
+mod dense;
 mod fa4;
 pub(crate) mod lt;
 pub mod math;
 mod model;
+mod output;
 mod rotary;
+mod rotary_encoder;
+mod rotary_encoder_model;
 mod staging;
 pub mod tensor;
 mod upload;
@@ -17,12 +21,17 @@ mod upload;
 use cublas::Blas;
 use cuda_core::{launch_kernel, Context, DeviceBuffer, Function, Stream};
 use decoder_model::{DecoderConfig, DecoderFamily, DecoderWeights};
+use dense::{DenseChainHost, DenseHead, DenseWork};
 use infinity_v3_backend_core::{
     result_memory, Backend, BackendError, Batch, Embedding, Embeddings, Inference, ModelType, Pool,
     Predictions, TokenPredictions,
 };
-use lt::{LtPlan, LtProvider, ShapeError};
-use model::{BertConfig, BertWeights, LayerWeights, LinearWeights, NormArithmetic};
+use lt::{LtPlan, LtProvider, ShapeError, NATIVE_DEFAULT_SEED_ROWS};
+use model::{
+    BertConfig, BertWeights, EncoderFamily, FeedForwardRecipe, LayerWeights, LinearWeights,
+    NormArithmetic, PositionRecipe,
+};
+use rotary_encoder::{RotaryEncoder, RotaryFunctions};
 use staging::{HostIo, HostIoLease, SlotPool};
 use std::{
     ffi::c_void,
@@ -55,6 +64,123 @@ fn product(a: usize, b: usize) -> Result<usize, BackendError> {
 }
 fn u32_size(value: usize) -> Result<u32, BackendError> {
     u32::try_from(value).map_err(infer)
+}
+
+/// Private Engine classification. Rejected shape work has not submitted this
+/// request's kernels and can recover after one failure-owned drain; admission
+/// pressure remains non-fatal; every other error closes the Engine as before.
+#[derive(Debug)]
+enum EnqueueError {
+    /// Pure preflight rejection before any arena reservation or request body.
+    PreflightRejected(BackendError),
+    /// Post-reservation shape rejection whose failure owns one stream drain.
+    Rejected(BackendError),
+    Fatal(BackendError),
+    Admission(BackendError),
+}
+impl EnqueueError {
+    fn classify_backend(error: BackendError) -> Self {
+        match error {
+            BackendError::Overloaded(_) => Self::Admission(error),
+            _ => Self::Fatal(error),
+        }
+    }
+    #[cfg(test)]
+    fn poisons(&self) -> bool {
+        matches!(self, Self::Fatal(_))
+    }
+}
+impl From<ShapeError> for EnqueueError {
+    fn from(error: ShapeError) -> Self {
+        match error {
+            ShapeError::Rejected(error) => Self::Rejected(error),
+            ShapeError::Fatal(error) => Self::classify_backend(error),
+        }
+    }
+}
+impl From<BackendError> for EnqueueError {
+    fn from(error: BackendError) -> Self {
+        Self::classify_backend(error)
+    }
+}
+
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct RequestCounters {
+    pub(crate) lease_begins: usize,
+    pub(crate) uploads: usize,
+    pub(crate) launches: usize,
+    pub(crate) engine_context_binds: usize,
+    pub(crate) provider_context_queries: usize,
+    pub(crate) recovery_drains: usize,
+}
+#[cfg(test)]
+thread_local! {
+    static REQUEST_COUNTERS: std::cell::Cell<RequestCounters> =
+        const { std::cell::Cell::new(RequestCounters {
+            lease_begins: 0,
+            uploads: 0,
+            launches: 0,
+            engine_context_binds: 0,
+            provider_context_queries: 0,
+            recovery_drains: 0,
+        }) };
+}
+#[cfg(test)]
+fn reset_request_counters() {
+    REQUEST_COUNTERS.with(|counters| counters.set(RequestCounters::default()));
+}
+#[cfg(test)]
+fn bump_lease_begin() {
+    REQUEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.lease_begins += 1;
+        counters.set(value);
+    });
+}
+#[cfg(test)]
+fn bump_upload() {
+    REQUEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.uploads += 1;
+        counters.set(value);
+    });
+}
+#[cfg(test)]
+fn bump_launch() {
+    REQUEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.launches += 1;
+        counters.set(value);
+    });
+}
+#[cfg(test)]
+fn bump_engine_context_bind() {
+    REQUEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.engine_context_binds += 1;
+        counters.set(value);
+    });
+}
+#[cfg(test)]
+fn bump_recovery_drain() {
+    REQUEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.recovery_drains += 1;
+        counters.set(value);
+    });
+}
+#[cfg(test)]
+pub(crate) fn bump_provider_context_query() {
+    REQUEST_COUNTERS.with(|counters| {
+        let mut value = counters.get();
+        value.provider_context_queries += 1;
+        counters.set(value);
+    });
+}
+#[cfg(test)]
+fn request_counters() -> RequestCounters {
+    REQUEST_COUNTERS.with(std::cell::Cell::get)
 }
 
 pub fn device_count() -> Result<usize, BackendError> {
@@ -138,6 +264,8 @@ struct Kernels {
     attention_length_limit: Option<usize>,
     pool: Function,
     mean_pool: Function,
+    raw_cast: Option<Function>,
+    rotary: Option<RotaryFunctions>,
 }
 impl Kernels {
     fn load(ctx: &Arc<Context>, config: &BertConfig, fa4: bool) -> Result<Self, BackendError> {
@@ -155,6 +283,14 @@ impl Kernels {
         };
         let data = std::fs::read(&path).map_err(|e| start(format!("{}: {e}", path.display())))?;
         let module = ctx.load_module_from_image(&data).map_err(start)?;
+        // Old encoder-only bundles may omit the token-output export. Preserve
+        // pooled startup while reporting that capability before submitting a
+        // raw request. Other driver errors still fail construction.
+        let raw_cast = match module.load_function("infinity_bf16_to_f32") {
+            Ok(function) => Some(function),
+            Err(error) if error.0 == cuda_core::sys::cudaError_enum_CUDA_ERROR_NOT_FOUND => None,
+            Err(error) => return Err(start(error)),
+        };
         let pool = module.load_function("infinity_pool").map_err(start)?;
         let attention = module.load_function("infinity_attention").map_err(start)?;
         let attention_length_limit = if fa4 {
@@ -177,7 +313,52 @@ impl Kernels {
             && config.recipe.embedding == NormArithmetic::RoundedAddBeforeStats;
         let rounded_1024_norm = config.hidden_size == 1024
             && config.recipe.residual == NormArithmetic::RoundedAddBeforeStats;
+        let aten_768_embedding =
+            config.hidden_size == 768 && config.recipe.embedding == NormArithmetic::AtenEmbedding;
+        let embedding_name = match config.recipe.embedding {
+            NormArithmetic::ExactBiased if exact_768_embedding => {
+                "infinity_embedding_norm_768_exact_vector"
+            }
+            NormArithmetic::RoundedAddBeforeStats if rounded_1024_embedding => {
+                "infinity_embedding_norm_1024_rounded_native"
+            }
+            NormArithmetic::AtenEmbedding if aten_768_embedding => {
+                "infinity_embedding_norm_word_768_aten"
+            }
+            NormArithmetic::AtenEmbedding => {
+                return Err(start(
+                    "AtenEmbedding requires the GTE 768 word-only embedding kernel",
+                ))
+            }
+            NormArithmetic::ExactBiased => "infinity_embedding_norm",
+            NormArithmetic::RoundedAddBeforeStats => "infinity_embedding_norm_rounded",
+        };
+        let norm_name = match config.recipe.residual {
+            NormArithmetic::ExactBiased if exact_768_norm => "infinity_layer_norm_768_exact_vector",
+            NormArithmetic::RoundedAddBeforeStats if rounded_1024_norm => {
+                "infinity_layer_norm_1024_rounded_native"
+            }
+            NormArithmetic::ExactBiased => "infinity_layer_norm",
+            NormArithmetic::RoundedAddBeforeStats => "infinity_layer_norm_rounded",
+            NormArithmetic::AtenEmbedding => {
+                return Err(start(
+                    "AtenEmbedding is only valid for the GTE word-only embedding norm",
+                ))
+            }
+        };
+        let rotary = match config.recipe.positions {
+            PositionRecipe::Absolute => None,
+            PositionRecipe::Rotary(_) => Some(RotaryFunctions {
+                rope_hfma: module
+                    .load_function("infinity_rope_neox_hfma")
+                    .map_err(start)?,
+                gated_gelu: module
+                    .load_function("infinity_gated_gelu_up_first")
+                    .map_err(start)?,
+            }),
+        };
         Ok(Self {
+            raw_cast,
             embedding_384: if config.hidden_size == 384
                 && config.recipe.embedding == NormArithmetic::ExactBiased
             {
@@ -201,30 +382,8 @@ impl Kernels {
                 None
             },
             mean_pool: module.load_function("infinity_mean_pool").map_err(start)?,
-            embedding: module
-                .load_function(if exact_768_embedding {
-                    "infinity_embedding_norm_768_exact_vector"
-                } else if rounded_1024_embedding {
-                    "infinity_embedding_norm_1024_rounded_native"
-                } else {
-                    match config.recipe.embedding {
-                        NormArithmetic::ExactBiased => "infinity_embedding_norm",
-                        NormArithmetic::RoundedAddBeforeStats => "infinity_embedding_norm_rounded",
-                    }
-                })
-                .map_err(start)?,
-            norm: module
-                .load_function(if exact_768_norm {
-                    "infinity_layer_norm_768_exact_vector"
-                } else if rounded_1024_norm {
-                    "infinity_layer_norm_1024_rounded_native"
-                } else {
-                    match config.recipe.residual {
-                        NormArithmetic::ExactBiased => "infinity_layer_norm",
-                        NormArithmetic::RoundedAddBeforeStats => "infinity_layer_norm_rounded",
-                    }
-                })
-                .map_err(start)?,
+            embedding: module.load_function(embedding_name).map_err(start)?,
+            norm: module.load_function(norm_name).map_err(start)?,
             embedding_geometry: if exact_768_embedding {
                 H768_GEOMETRY
             } else {
@@ -239,6 +398,7 @@ impl Kernels {
             attention,
             attention_length_limit,
             pool,
+            rotary,
         })
     }
 }
@@ -264,6 +424,8 @@ fn launch_threads(
     shared: u32,
     args: &mut [*mut c_void],
 ) -> Result<(), BackendError> {
+    #[cfg(test)]
+    bump_launch();
     // SAFETY: fixed ABI signatures and validated dimensions; arenas and modules
     // stay retained. Prepared kernel geometry supplies the block width.
     unsafe {
@@ -377,22 +539,232 @@ fn packed_attention_layout(c: &BertConfig) -> Result<Option<PackedAttention>, Ba
     }))
 }
 
+enum IntermediatePlan {
+    Dense(Box<LtPlan<Bf16>>),
+    Gated {
+        plan: Box<Option<math::LinearPlan<Bf16>>>,
+        input: usize,
+        width: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum DownPolicy {
+    NativeDefault,
+    Existing,
+}
+
+fn down_policy(c: &BertConfig) -> DownPolicy {
+    if c.family == EncoderFamily::Gte {
+        DownPolicy::NativeDefault
+    } else {
+        DownPolicy::Existing
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DownInvocation {
+    M1(cublas::NativeM1Arguments),
+    Lt(lt::NativeDefaultPrepared),
+}
+
+enum PreparedDown {
+    NativeDefault {
+        m1: Box<math::LinearPlan<Bf16>>,
+        lt_native: Box<LtPlan<Bf16>>,
+        invocations: Vec<Option<DownInvocation>>,
+        pending: Box<lt::NativeDefaultPending>,
+    },
+    Existing(Box<LtPlan<Bf16>>),
+}
+impl PreparedDown {
+    fn new(provider: &LtProvider, c: &BertConfig) -> Result<Self, BackendError> {
+        Ok(match down_policy(c) {
+            DownPolicy::NativeDefault => Self::NativeDefault {
+                m1: Box::new(
+                    math::LinearPlan::contiguous(1, c.intermediate_size, c.hidden_size)
+                        .map_err(infer)?,
+                ),
+                lt_native: Box::new(provider.prepare_native_default_bias_shape::<Bf16>(
+                    c.intermediate_size,
+                    c.hidden_size,
+                    NATIVE_DEFAULT_SEED_ROWS,
+                )?),
+                invocations: vec![None; c.num_hidden_layers],
+                pending: Box::<lt::NativeDefaultPending>::default(),
+            },
+            DownPolicy::Existing => Self::Existing(Box::new(
+                provider
+                    .prepare_native_small_bias_shape::<Bf16>(c.intermediate_size, c.hidden_size)?,
+            )),
+        })
+    }
+
+    fn set_rows(&mut self, provider: &LtProvider, rows: usize) -> Result<(), ShapeError> {
+        match self {
+            Self::NativeDefault { .. } => Ok(()),
+            Self::Existing(plan) => provider.set_logical_rows(plan, rows),
+        }
+    }
+
+    fn begin_prepare(&mut self) {
+        if let Self::NativeDefault {
+            invocations,
+            pending,
+            ..
+        } = self
+        {
+            invocations.fill(None);
+            pending.clear();
+        }
+    }
+
+    fn end_prepare(&mut self) {
+        if let Self::NativeDefault { pending, .. } = self {
+            pending.clear();
+        }
+    }
+
+    /// Validate and preselect one layer's actual-M down invocation. The caller
+    /// supplies the already-reserved arena buffers, so all pointers, bounds and
+    /// alignments are known before any request kernel is submitted.
+    ///
+    /// # Safety
+    /// The provider/engine CUDA context must already be bound on this thread
+    /// and remain current through the later bound down launch. This method
+    /// performs no context bind or `cuCtxGetCurrent` query.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn prepare_layer(
+        &mut self,
+        provider: &LtProvider,
+        blas: Option<&Blas>,
+        tokens: usize,
+        x: &DeviceBuffer<Bf16>,
+        weight: &DeviceBuffer<Bf16>,
+        bias: &DeviceBuffer<Bf16>,
+        output: &mut DeviceBuffer<Bf16>,
+        stream: &Stream,
+        width: usize,
+        index: usize,
+    ) -> Result<(), ShapeError> {
+        let Self::NativeDefault {
+            m1,
+            lt_native,
+            invocations,
+            pending,
+        } = self
+        else {
+            return Ok(());
+        };
+        let invocation = if tokens == 1 {
+            let blas =
+                blas.ok_or_else(|| ShapeError::Fatal(infer("GTE down M1 requires plain cuBLAS")))?;
+            DownInvocation::M1(
+                blas.preflight_native_m1(m1, x, weight, bias, output, stream, width)?,
+            )
+        } else {
+            // SAFETY: the caller's bound-context contract covers this prepare.
+            DownInvocation::Lt(unsafe {
+                provider.prepare_native_default_bound(
+                    lt_native, pending, tokens, x, weight, bias, output,
+                )?
+            })
+        };
+        *invocations.get_mut(index).ok_or_else(|| {
+            ShapeError::Fatal(infer("GTE down layer index exceeds prepared slots"))
+        })? = Some(invocation);
+        Ok(())
+    }
+}
+
+/// Launch the preselected down invocation.
+///
+/// # Safety
+/// The caller must have bound the provider/engine CUDA context once on this
+/// thread, keep every buffer alive without conflicting access until the stream
+/// drains, and pass the same buffers used during `prepare_layer`.
+#[allow(clippy::too_many_arguments)]
+unsafe fn enqueue_down(
+    prepared: &mut PreparedDown,
+    provider: &LtProvider,
+    blas: Option<&Blas>,
+    tokens: usize,
+    index: usize,
+    x: &DeviceBuffer<Bf16>,
+    weight: &DeviceBuffer<Bf16>,
+    bias: &DeviceBuffer<Bf16>,
+    output: &mut DeviceBuffer<Bf16>,
+    stream: &Stream,
+) -> Result<(), ShapeError> {
+    match prepared {
+        PreparedDown::NativeDefault {
+            m1,
+            lt_native,
+            invocations,
+            ..
+        } => {
+            let invocation = invocations
+                .get(index)
+                .and_then(Option::as_ref)
+                .ok_or_else(|| {
+                    ShapeError::Fatal(infer(
+                        "GTE down metadata was not prepared before the prefix",
+                    ))
+                })?;
+            match invocation {
+                DownInvocation::M1(plan) if tokens == 1 => {
+                    let blas = blas.ok_or_else(|| {
+                        ShapeError::Fatal(infer("GTE down M1 requires plain cuBLAS"))
+                    })?;
+                    // SAFETY: the caller's bound-context and retained-buffer
+                    // contract covers the revalidated M1 invocation.
+                    unsafe { blas.launch_native_m1(m1, plan, x, weight, bias, output, stream) }
+                }
+                DownInvocation::Lt(plan) if tokens != 1 => {
+                    // SAFETY: the caller's bound-context and retained-buffer
+                    // contract covers the preselected invocation.
+                    unsafe {
+                        provider.launch_native_default_bound(lt_native, plan, x, weight, output)
+                    }
+                }
+                _ => Err(ShapeError::Fatal(infer(
+                    "GTE down metadata does not match the launched M",
+                ))),
+            }
+        }
+        PreparedDown::Existing(plan) => {
+            // SAFETY: the caller retains every buffer through stream drain.
+            unsafe { provider.enqueue(plan, x, weight, bias, output) }.map_err(ShapeError::Fatal)
+        }
+    }
+}
+
 struct Plans {
     rows: Option<usize>,
     qkv: LtPlan<Bf16>,
     attention: LtPlan<Bf16>,
-    intermediate: LtPlan<Bf16>,
-    output: LtPlan<Bf16>,
+    intermediate: IntermediatePlan,
+    output: PreparedDown,
 }
 impl Plans {
     fn new(provider: &LtProvider, c: &BertConfig) -> Result<Self, BackendError> {
         let h = c.hidden_size;
+        let intermediate = match c.recipe.feed_forward {
+            FeedForwardRecipe::DenseGelu => IntermediatePlan::Dense(Box::new(
+                provider.prepare_native_small_gelu_bias_shape::<Bf16>(h, c.intermediate_size)?,
+            )),
+            FeedForwardRecipe::GatedGeluUpFirst => IntermediatePlan::Gated {
+                plan: Box::new(None),
+                input: h,
+                width: product(c.intermediate_size, 2)?,
+            },
+        };
         Ok(Self {
             rows: None,
-            qkv: provider.prepare_bias_shape::<Bf16>(h, product(h, 3)?)?,
-            attention: provider.prepare_bias_shape::<Bf16>(h, h)?,
-            intermediate: provider.prepare_gelu_bias_shape::<Bf16>(h, c.intermediate_size)?,
-            output: provider.prepare_bias_shape::<Bf16>(c.intermediate_size, h)?,
+            qkv: provider.prepare_native_small_bias_shape::<Bf16>(h, product(h, 3)?)?,
+            attention: provider.prepare_native_small_bias_shape::<Bf16>(h, h)?,
+            intermediate,
+            output: PreparedDown::new(provider, c)?,
         })
     }
 
@@ -400,10 +772,73 @@ impl Plans {
         math::refresh_plan_rows(&mut self.rows, rows, || {
             provider.set_logical_rows(&mut self.qkv, rows)?;
             provider.set_logical_rows(&mut self.attention, rows)?;
-            provider.set_logical_rows(&mut self.intermediate, rows)?;
-            provider.set_logical_rows(&mut self.output, rows)?;
+            match &mut self.intermediate {
+                IntermediatePlan::Dense(plan) => provider.set_logical_rows(plan, rows)?,
+                IntermediatePlan::Gated { plan, input, width } => {
+                    **plan = Some(
+                        math::LinearPlan::contiguous(rows, *input, *width)
+                            .map_err(|error| ShapeError::Fatal(infer(error)))?,
+                    );
+                }
+            }
+            self.output.set_rows(provider, rows)?;
             Ok(())
         })
+    }
+
+    /// Preselect every layer's down invocation after the request arenas are
+    /// reserved. This runs before `lease.begin()`, H2D upload, or any kernel.
+    ///
+    /// # Safety
+    /// The provider/engine CUDA context must already be bound on this thread.
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn prepare(
+        &mut self,
+        provider: &LtProvider,
+        blas: Option<&Blas>,
+        tokens: usize,
+        layers: &[Layer],
+        x: &DeviceBuffer<Bf16>,
+        output: &mut DeviceBuffer<Bf16>,
+        stream: &Stream,
+        width: usize,
+    ) -> Result<(), ShapeError> {
+        self.output.begin_prepare();
+        let result = (|| {
+            for (index, layer) in layers.iter().enumerate() {
+                // SAFETY: the caller's bound-context contract covers every
+                // layer preselection.
+                unsafe {
+                    self.output.prepare_layer(
+                        provider,
+                        blas,
+                        tokens,
+                        x,
+                        &layer.output.weight,
+                        &layer.output.bias,
+                        output,
+                        stream,
+                        width,
+                        index,
+                    )?;
+                }
+            }
+            Ok(())
+        })();
+        self.output.end_prepare();
+        result
+    }
+}
+#[cfg(test)]
+impl IntermediatePlan {
+    fn logical_rows(&self) -> i32 {
+        match self {
+            Self::Dense(plan) => plan.logical_rows(),
+            Self::Gated { plan, .. } => plan
+                .as_ref()
+                .as_ref()
+                .map_or(0, |plan| plan.arguments(0, 0, 0).rows),
+        }
     }
 }
 
@@ -414,6 +849,12 @@ enum ExecutableModel {
     Decoder(Box<decoder::DecoderModel>),
 }
 impl ExecutableModel {
+    fn supports_raw_output(&self) -> bool {
+        match self {
+            Self::Encoder(model) => model.kernels.raw_cast.is_some(),
+            Self::Decoder(_) => true,
+        }
+    }
     fn preflight(
         &mut self,
         provider: &LtProvider,
@@ -430,6 +871,35 @@ impl ExecutableModel {
         match self {
             Self::Encoder(model) => model.config.hidden_size,
             Self::Decoder(model) => model.config.hidden_size,
+        }
+    }
+    /// # Safety
+    /// The provider/engine CUDA context must already be bound on this thread.
+    unsafe fn prepare(
+        &mut self,
+        provider: &LtProvider,
+        blas: Option<&Blas>,
+        tokens: usize,
+        workspace: &mut Workspace,
+    ) -> Result<(), ShapeError> {
+        match (self, workspace) {
+            (Self::Encoder(model), Workspace::Encoder(work)) => {
+                let width = model.config.hidden_size;
+                // SAFETY: the caller's bound-context contract covers preselection.
+                unsafe {
+                    model.plans.prepare(
+                        provider,
+                        blas,
+                        tokens,
+                        &model.weights.layers,
+                        &work.intermediate,
+                        &mut work.temp,
+                        &work.stream,
+                        width,
+                    )
+                }
+            }
+            _ => Ok(()),
         }
     }
     fn workspace_bytes(&self, key: WorkKey) -> Result<usize, BackendError> {
@@ -455,6 +925,7 @@ struct EncoderModel {
     plans: Plans,
     kernels: Kernels,
     weights: Weights,
+    rotary: Option<RotaryEncoder>,
     fa4: Option<fa4::Fa4>,
     fa4_layout: Option<PackedAttention>,
 }
@@ -485,12 +956,12 @@ impl Workspace {
     fn stage(
         &self,
         batch: &Batch,
-        hidden: usize,
+        geometry: output::OutputGeometry,
         lease: &mut HostIoLease,
     ) -> Result<(usize, usize), BackendError> {
         match self {
-            Self::Encoder(work) => work.stage(batch, hidden, lease),
-            Self::Decoder(work) => work.stage(batch, hidden, lease),
+            Self::Encoder(work) => work.stage(batch, geometry, lease),
+            Self::Decoder(work) => work.stage(batch, geometry, lease),
         }
     }
     fn upload(&self, host: &[u32], elements: usize) -> Result<(), BackendError> {
@@ -499,16 +970,50 @@ impl Workspace {
             Self::Decoder(work) => work.upload(host, elements),
         }
     }
+    #[allow(clippy::too_many_arguments)]
+    fn finish(
+        &mut self,
+        dense: Option<(&mut DenseHead, &mut DenseWork)>,
+        lt: &LtProvider,
+        plain_blas: Option<&Blas>,
+        pooled_rows: usize,
+        raw_rows: usize,
+        backbone_width: usize,
+        lease: &mut HostIoLease,
+    ) -> Result<(), BackendError> {
+        match self {
+            Self::Encoder(work) => work.finish(
+                dense,
+                lt,
+                plain_blas,
+                pooled_rows,
+                raw_rows,
+                backbone_width,
+                lease,
+            ),
+            Self::Decoder(work) => work.finish(
+                dense,
+                lt,
+                plain_blas,
+                pooled_rows,
+                raw_rows,
+                backbone_width,
+                lease,
+            ),
+        }
+    }
 }
 
 struct Engine {
     lt: ManuallyDrop<LtProvider>,
     model: ManuallyDrop<ExecutableModel>,
+    dense: ManuallyDrop<Option<DenseHead>>,
     plain_blas: ManuallyDrop<Option<Blas>>,
     context: Arc<Context>,
     stream: Arc<Stream>,
     io: Arc<SlotPool<HostIo>>,
     workspace: Option<Workspace>,
+    dense_workspace: Option<DenseWork>,
     cached: cache::WorkspaceCache<WorkKey, Workspace>,
     failed: bool,
 }
@@ -518,14 +1023,22 @@ impl Drop for Engine {
         self.workspace.take();
         drop(self.cached.drain());
         if complete {
+            if let Some(mut dense) = self.dense_workspace.take() {
+                // SAFETY: the drain above proved every queued Dense use done.
+                unsafe { dense.drop_after_drain() };
+            }
             // SAFETY: Engine is dropped once, and all GPU uses have finished.
             // If drain fails, retaining these owners also retains their CUDA
             // context/modules/libraries while completion is uncertain.
             unsafe {
                 ManuallyDrop::drop(&mut self.model);
+                ManuallyDrop::drop(&mut self.dense);
                 ManuallyDrop::drop(&mut self.plain_blas);
                 ManuallyDrop::drop(&mut self.lt);
             }
+        } else if let Some(dense) = self.dense_workspace.take() {
+            metrics::counter!("oxide_arena_retained_bytes_total").increment(dense.bytes() as u64);
+            std::mem::forget(dense);
         }
     }
 }
@@ -543,8 +1056,25 @@ fn work_key(b: &Batch) -> Result<WorkKey, BackendError> {
     Ok((
         bucketed(b.input_ids.len(), MIN_TOKEN_CAPACITY)?,
         bucketed(b.cumulative_seq_lengths.len(), 2)?,
-        bucketed(b.pooled_indices.len(), 1)?,
+        bucketed(output::rows(b)?, 1)?,
     ))
+}
+/// Dense scratch follows pooled selection capacity only. A raw-only request
+/// (`pooled_rows == 0`) retains any existing allocation without executing or
+/// growing it, and pooled growth is independent of the backbone key.
+fn plan_dense_workspace(
+    pooled_rows: usize,
+    existing: Option<(usize, usize)>,
+    bytes_for: impl FnOnce(usize) -> Result<usize, BackendError>,
+) -> Result<(Option<usize>, usize), BackendError> {
+    match existing {
+        Some((capacity, bytes)) if pooled_rows <= capacity => Ok((None, bytes)),
+        _ if pooled_rows == 0 => Ok((None, 0)),
+        _ => {
+            let capacity = bucketed(pooled_rows, 1)?;
+            Ok((Some(capacity), bytes_for(capacity)?))
+        }
+    }
 }
 fn capacity_fits(capacity: WorkKey, request: WorkKey, bytes: usize) -> bool {
     capacity.0 >= request.0 && capacity.1 >= request.1 && capacity.2 >= request.2
@@ -618,23 +1148,33 @@ fn pack_input(
 /// the model consumes it.
 fn stage_batch(
     b: &Batch,
-    hidden: usize,
+    geometry: output::OutputGeometry,
     lease: &mut HostIoLease,
 ) -> Result<(usize, usize), BackendError> {
-    let elements = input_elements(
-        b.input_ids.len(),
-        b.cumulative_seq_lengths.len(),
-        b.pooled_indices.len(),
-    )?;
-    let output = product(b.pooled_indices.len(), hidden)?;
+    let rows = output::rows(b)?;
+    let elements = input_elements(b.input_ids.len(), b.cumulative_seq_lengths.len(), rows)?;
+    // The backbone keeps every selected row at its native width, while the
+    // host payload uses the narrower/wider Dense width for the pooled prefix.
+    let backbone = geometry.backbone_elements(b)?;
+    let output = geometry.host_elements(b)?;
+    u32_size(backbone)?;
+    u32_size(output)?;
     let host = lease
         .slot_mut()?
         .input
         .as_mut_slice()
         .get_mut(..elements)
         .ok_or_else(|| infer("Input exceeds retained host I/O arena"))?;
+    let pooled_metadata = input_elements(
+        b.input_ids.len(),
+        b.cumulative_seq_lengths.len(),
+        b.pooled_indices.len(),
+    )?;
+    let (pooled_input, raw_input) = host
+        .split_at_mut_checked(pooled_metadata)
+        .ok_or_else(|| infer("Invalid raw selection staging layout"))?;
     pack_input(
-        host,
+        pooled_input,
         b.input_ids.len(),
         &b.input_ids,
         &b.position_ids,
@@ -642,6 +1182,7 @@ fn stage_batch(
         &b.cumulative_seq_lengths,
         &b.pooled_indices,
     )?;
+    output::write_raw_indices(b, raw_input)?;
     if output > lease.slot()?.output.len() {
         return Err(infer("Output exceeds retained host I/O arena"));
     }
@@ -657,6 +1198,8 @@ fn upload_input(
     if elements > host.len() {
         return Err(infer("Input exceeds host I/O arena"));
     }
+    #[cfg(test)]
+    bump_upload();
     // SAFETY: pinned staging and destination are retained by the workspace;
     // no host edits occur before the lease drains, including error paths.
     unsafe {
@@ -670,26 +1213,77 @@ fn upload_input(
     .map_err(infer)
 }
 
-fn download_output(
+/// Copy one checked subrange to a checked destination inside the pinned output.
+/// Mixed Dense requests chain the projected prefix and raw suffix on the same
+/// ordered stream before recording a single completion event.
+fn download_output_range(
     stream: &Stream,
     buffer: &DeviceBuffer<f32>,
+    source_offset: usize,
     host: &mut [f32],
+    host_offset: usize,
     elements: usize,
 ) -> Result<(), BackendError> {
-    if elements > host.len() {
-        return Err(infer("Output exceeds host I/O arena"));
-    }
-    // SAFETY: output sizes agree; pinned staging stays owned by the lease
-    // until its event or fallback stream drain succeeds.
+    source_offset
+        .checked_add(elements)
+        .filter(|end| *end <= buffer.len())
+        .ok_or_else(|| infer("Output source range exceeds retained arena"))?;
+    let destination = host_offset
+        .checked_add(elements)
+        .ok_or_else(|| infer("Output host range overflow"))?;
+    let slice = host
+        .get_mut(host_offset..destination)
+        .ok_or_else(|| infer("Output exceeds retained host I/O arena"))?;
+    let bytes = product(elements, std::mem::size_of::<f32>())?;
+    let offset = product(source_offset, std::mem::size_of::<f32>())?;
+    let address = u64::try_from(offset)
+        .ok()
+        .and_then(|offset| buffer.cu_deviceptr().checked_add(offset))
+        .ok_or_else(|| infer("Output source address overflow"))?;
+    // SAFETY: the source range was checked against the retained device buffer
+    // and the destination slice is borrowed from the lease's pinned output.
     unsafe {
-        cuda_core::memory::memcpy_dtoh_async(
-            host.as_mut_ptr(),
-            buffer.cu_deviceptr(),
-            product(elements, 4)?,
-            stream.cu_stream(),
-        )
+        cuda_core::memory::memcpy_dtoh_async(slice.as_mut_ptr(), address, bytes, stream.cu_stream())
     }
     .map_err(infer)
+}
+
+/// Emit only the requested token rows after the pooled prefix. Both selection
+/// tables and output buffers belong to the request's retained arena/lease.
+fn enqueue_raw_output(
+    function: &Function,
+    stream: &Stream,
+    input: u64,
+    output: u64,
+    selected: u64,
+    batch: &Batch,
+    hidden: usize,
+) -> Result<(), BackendError> {
+    let mut count = u32_size(output::raw_rows(batch)?)?;
+    let mut width = u32_size(hidden)?;
+    let mut input = input;
+    let mut output = output
+        .checked_add(
+            u64::try_from(product(product(batch.pooled_indices.len(), hidden)?, 4)?)
+                .map_err(infer)?,
+        )
+        .ok_or_else(|| infer("Raw output address overflow"))?;
+    let mut selected = selected
+        .checked_add(u64::try_from(product(batch.pooled_indices.len(), 4)?).map_err(infer)?)
+        .ok_or_else(|| infer("Raw selection address overflow"))?;
+    launch(
+        function,
+        stream,
+        blocks(product(count as usize, hidden)?)?,
+        0,
+        &mut [
+            arg(&mut input),
+            arg(&mut output),
+            arg(&mut selected),
+            arg(&mut count),
+            arg(&mut width),
+        ],
+    )
 }
 
 struct Work {
@@ -707,6 +1301,7 @@ struct Work {
     value: ManuallyDrop<DeviceBuffer<Bf16>>,
     attention: ManuallyDrop<DeviceBuffer<Bf16>>,
     intermediate: ManuallyDrop<DeviceBuffer<Bf16>>,
+    gated: ManuallyDrop<Option<DeviceBuffer<Bf16>>>,
     pooled: ManuallyDrop<DeviceBuffer<f32>>,
 }
 #[cfg(test)]
@@ -744,6 +1339,7 @@ impl Drop for Work {
                 ManuallyDrop::drop(&mut self.value);
                 ManuallyDrop::drop(&mut self.attention);
                 ManuallyDrop::drop(&mut self.intermediate);
+                ManuallyDrop::drop(&mut self.gated);
                 ManuallyDrop::drop(&mut self.pooled);
             }
             LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
@@ -770,7 +1366,14 @@ impl Work {
         let input = staging::input_capacity(key)?;
         let output = product(key.2, c.hidden_size)?;
         let hidden = product(product(tokens, c.hidden_size)?, 18)?;
-        let intermediate = product(product(tokens, c.intermediate_size)?, 2)?;
+        let mut intermediate = product(product(tokens, c.intermediate_size)?, 2)?;
+        if c.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst {
+            let gated_elements = product(tokens, product(c.intermediate_size, 2)?)?;
+            u32_size(gated_elements)?;
+            intermediate = intermediate
+                .checked_add(product(gated_elements, 2)?)
+                .ok_or_else(|| infer("Workspace arena overflow"))?;
+        }
         product(input, 4)?
             .checked_add(product(output, 4)?)
             .and_then(|n| n.checked_add(hidden))
@@ -815,6 +1418,12 @@ impl Work {
         let value = alloc(hidden)?;
         let attention = alloc(hidden)?;
         let intermediate = alloc(product(tokens, c.intermediate_size)?)?;
+        let gated = match c.recipe.feed_forward {
+            FeedForwardRecipe::DenseGelu => None,
+            FeedForwardRecipe::GatedGeluUpFirst => {
+                Some(alloc(product(product(tokens, c.intermediate_size)?, 2)?)?)
+            }
+        };
         // SAFETY: the pooling kernel writes every element before D2H.
         let pooled =
             unsafe { DeviceBuffer::<f32>::uninitialized_async(&s, output) }.map_err(infer)?;
@@ -835,6 +1444,7 @@ impl Work {
             value: ManuallyDrop::new(value),
             attention: ManuallyDrop::new(attention),
             intermediate: ManuallyDrop::new(intermediate),
+            gated: ManuallyDrop::new(gated),
             pooled: ManuallyDrop::new(pooled),
             stream: s,
         })
@@ -842,19 +1452,119 @@ impl Work {
     fn stage(
         &self,
         b: &Batch,
-        hidden: usize,
+        geometry: output::OutputGeometry,
         lease: &mut HostIoLease,
     ) -> Result<(usize, usize), BackendError> {
-        stage_batch(b, hidden, lease)
+        if geometry.backbone_elements(b)? > self.pooled.len() {
+            return Err(infer("Backbone output exceeds retained arena"));
+        }
+        stage_batch(b, geometry, lease)
     }
     fn upload(&self, host: &[u32], elements: usize) -> Result<(), BackendError> {
         upload_input(&self.stream, &self.input, host, elements)
     }
-    fn download(&self, host: &mut [f32], elements: usize) -> Result<(), BackendError> {
-        download_output(&self.stream, &self.pooled, host, elements)
+    #[allow(clippy::too_many_arguments)]
+    fn finish(
+        &mut self,
+        dense: Option<(&mut DenseHead, &mut DenseWork)>,
+        lt: &LtProvider,
+        plain_blas: Option<&Blas>,
+        pooled_rows: usize,
+        raw_rows: usize,
+        backbone_width: usize,
+        lease: &mut HostIoLease,
+    ) -> Result<(), BackendError> {
+        finish_pooled(
+            dense,
+            lt,
+            plain_blas,
+            &self.stream,
+            &self.pooled,
+            pooled_rows,
+            raw_rows,
+            backbone_width,
+            lease,
+        )
     }
 }
+
+#[allow(clippy::too_many_arguments)]
+fn finish_pooled(
+    dense: Option<(&mut DenseHead, &mut DenseWork)>,
+    lt: &LtProvider,
+    plain_blas: Option<&Blas>,
+    stream: &Stream,
+    source: &DeviceBuffer<f32>,
+    pooled_rows: usize,
+    raw_rows: usize,
+    backbone_width: usize,
+    lease: &mut HostIoLease,
+) -> Result<(), BackendError> {
+    let pooled_width = dense
+        .as_ref()
+        .map_or(backbone_width, |(head, _)| head.output_width());
+    let geometry = output::OutputGeometry {
+        pooled_width,
+        raw_width: backbone_width,
+    };
+    let raw_elements = product(raw_rows, geometry.raw_width)?;
+    let raw_offset = geometry.raw_source_offset(pooled_rows)?;
+    let raw_host_offset = geometry.raw_host_offset(pooled_rows)?;
+    let host = lease.slot_mut()?.output.as_mut_slice();
+    match dense {
+        Some((head, work)) if pooled_rows > 0 => {
+            if !work.fits(pooled_rows) {
+                return Err(infer("Dense request exceeds retained arena capacity"));
+            }
+            head.apply(lt, plain_blas, stream, source, pooled_rows, work)?;
+            let pooled_elements = product(pooled_rows, head.output_width())?;
+            download_output_range(stream, work.output(), 0, host, 0, pooled_elements)?;
+            if raw_rows > 0 {
+                download_output_range(
+                    stream,
+                    source,
+                    raw_offset,
+                    host,
+                    raw_host_offset,
+                    raw_elements,
+                )?;
+            }
+        }
+        _ => {
+            // Raw-only Dense requests execute no Dense work and keep the raw
+            // rows native. Without Dense, D == H so the combined prefix and
+            // suffix remain one contiguous transfer as before.
+            let total = product(
+                pooled_rows
+                    .checked_add(raw_rows)
+                    .ok_or_else(|| infer("Output row count overflow"))?,
+                backbone_width,
+            )?;
+            download_output_range(stream, source, 0, host, 0, total)?;
+        }
+    }
+    lease.record()
+}
 impl Engine {
+    fn retain_uncertain_workspaces(&mut self) {
+        if let Some(work) = self.workspace.take() {
+            metrics::counter!("oxide_arena_retained_bytes_total").increment(work.bytes() as u64);
+            std::mem::forget(work);
+        }
+        if let Some(dense) = self.dense_workspace.take() {
+            metrics::counter!("oxide_arena_retained_bytes_total").increment(dense.bytes() as u64);
+            std::mem::forget(dense);
+        }
+    }
+    fn fail_closed(&mut self) {
+        self.failed = true;
+        // Close before the fallback drain so blocked acquirers wake even while
+        // this thread waits for an uncertain stream.
+        self.io.close();
+        if self.stream.synchronize().is_err() {
+            self.retain_uncertain_workspaces();
+        }
+    }
     fn enqueue(
         &mut self,
         b: &Batch,
@@ -865,34 +1575,58 @@ impl Engine {
         if self.failed || self.io.poisoned() {
             return Err(BackendError::Unhealthy);
         }
-        // Descriptor-only preflight precedes arena allocation/zeroing and
-        // every operation that can submit this request's GPU work. Keep the
-        // same Engine mutex held through preparation and execution.
-        // Lt setters bind before descriptor mutation; pure geometry failures
-        // can return before even binding the dispatch context.
-        let result = match self.model.preflight(&self.lt, b, pool) {
-            Ok(()) => self
-                .context
-                .bind_to_thread()
-                .map_err(infer)
-                .and_then(|()| self.enqueue_inner(b, pool, max_length, lease)),
-            Err(ShapeError::Rejected(error)) => return Err(error),
-            Err(ShapeError::Fatal(error)) => Err(error),
-        };
-        if result.is_err() && !matches!(&result, Err(BackendError::Overloaded(_))) {
-            self.failed = true;
-            // Close before the fallback drain so blocked acquirers wake even
-            // while this thread waits for an uncertain stream.
-            self.io.close();
-            if self.stream.synchronize().is_err() {
-                if let Some(work) = self.workspace.take() {
-                    metrics::counter!("oxide_arena_retained_bytes_total")
-                        .increment(work.bytes() as u64);
-                    std::mem::forget(work);
+        #[cfg(test)]
+        reset_request_counters();
+        match self.enqueue_request(b, pool, max_length, lease) {
+            Ok(()) => Ok(()),
+            Err(EnqueueError::PreflightRejected(error)) => Err(error),
+            Err(EnqueueError::Admission(error)) => Err(error),
+            Err(EnqueueError::Rejected(error)) => {
+                // The request submitted no body kernels. One failure-owned
+                // drain covers arena initialization queued by reservation and
+                // earlier held Deferred work; success preserves Engine/Io.
+                #[cfg(test)]
+                bump_recovery_drain();
+                if self.stream.synchronize().is_err() {
+                    self.failed = true;
+                    self.io.close();
+                    self.retain_uncertain_workspaces();
+                    return Err(BackendError::Unhealthy);
                 }
+                Err(error)
+            }
+            Err(EnqueueError::Fatal(error)) => {
+                self.fail_closed();
+                Err(error)
             }
         }
-        result
+    }
+    fn enqueue_request(
+        &mut self,
+        b: &Batch,
+        pool: &Pool,
+        max_length: usize,
+        lease: &mut HostIoLease,
+    ) -> Result<(), EnqueueError> {
+        // Descriptor-only preflight precedes arena allocation/zeroing. The
+        // actual-M down metadata is prepared later, after the reserved arena
+        // exposes every scratch/weight/bias pointer but before lease.begin.
+        let preflight =
+            self.model
+                .preflight(&self.lt, b, pool)
+                .and_then(|()| match (*self.dense).as_mut() {
+                    Some(dense) => dense.preflight(&self.lt, b.pooled_indices.len()),
+                    None => Ok(()),
+                });
+        match preflight {
+            Ok(()) => {}
+            Err(ShapeError::Rejected(error)) => return Err(EnqueueError::PreflightRejected(error)),
+            Err(ShapeError::Fatal(error)) => return Err(EnqueueError::classify_backend(error)),
+        }
+        #[cfg(test)]
+        bump_engine_context_bind();
+        self.context.bind_to_thread().map_err(infer)?;
+        self.enqueue_inner(b, pool, max_length, lease)
     }
     fn enqueue_inner(
         &mut self,
@@ -900,13 +1634,22 @@ impl Engine {
         pool: &Pool,
         max_length: usize,
         lease: &mut HostIoLease,
-    ) -> Result<(), BackendError> {
+    ) -> Result<(), EnqueueError> {
         metrics::counter!("oxide_arena_requests_total").increment(1);
         record_live_arena_bytes();
         let hidden = self.model.hidden_size();
+        let pooled_width = (*self.dense)
+            .as_ref()
+            .map_or(hidden, DenseHead::output_width);
+        let geometry = output::OutputGeometry::new(pooled_width, hidden)?;
+        let pooled_rows = b.pooled_indices.len();
+        let raw_rows = output::raw_rows(b)?;
+        let host_elements = geometry.host_elements(b)?;
         let plan = work_key(b)?;
         let host_before = lease.bytes()?;
-        let host_after = lease.required_bytes(plan, hidden)?.unwrap_or(host_before);
+        let host_after = lease
+            .required_bytes(plan, host_elements)?
+            .unwrap_or(host_before);
         let mut pinned = self.io.pinned_after(host_before, host_after)?;
         let reuse_active = self.workspace.as_ref().is_some_and(|w| w.fits(plan));
         let mut next = None;
@@ -926,12 +1669,28 @@ impl Engine {
                 None => self.model.workspace_bytes(plan)?,
             }
         };
-        let mut exclusive = needs_exclusive_staging(workspace_bytes, pinned);
+        // Dense scratch is sized by pooled selections only. Raw token rows may
+        // grow without touching this allocation, and raw-only requests execute
+        // no Dense work while retaining any previous pooled capacity.
+        let (dense_capacity, dense_bytes) = match (*self.dense).as_ref() {
+            Some(head) => plan_dense_workspace(
+                pooled_rows,
+                self.dense_workspace
+                    .as_ref()
+                    .map(|work| (work.capacity(), work.bytes())),
+                |capacity| head.work_bytes(capacity),
+            )?,
+            None => (None, 0),
+        };
+        let gpu_bytes = workspace_bytes
+            .checked_add(dense_bytes)
+            .ok_or_else(|| infer("Workspace arena overflow"))?;
+        let mut exclusive = needs_exclusive_staging(gpu_bytes, pinned);
         if exclusive {
             let reclaimed = self.io.shrink_free();
             metrics::counter!("oxide_host_io_shrunk_bytes_total").increment(reclaimed as u64);
             pinned = self.io.pinned_after(host_before, host_after)?;
-            exclusive = needs_exclusive_staging(workspace_bytes, pinned);
+            exclusive = needs_exclusive_staging(gpu_bytes, pinned);
             if exclusive && self.io.active_leases() > 1 {
                 if let Some(work) = next.take() {
                     let (key, bytes) = (work.key(), work.bytes());
@@ -942,15 +1701,16 @@ impl Engine {
                 }
                 return Err(BackendError::Overloaded(
                     "Oxide workspace and host staging memory is busy".into(),
-                ));
+                )
+                .into());
             }
         }
-        let reserve = workspace_bytes
+        let reserve = gpu_bytes
             .checked_add(pinned)
             .ok_or_else(|| infer("Workspace arena overflow"))?;
         // Drop mismatched idle pins before allocating future GPU scratch, then
         // allocate future pins only after the previous scratch is accounted.
-        lease.discard_for_resize(plan)?;
+        lease.discard_for_resize(plan, host_elements)?;
         let evicted = self.cached.reserve(reserve);
         metrics::counter!("oxide_arena_evictions_total").increment(evicted.len() as u64);
         drop(evicted);
@@ -969,45 +1729,54 @@ impl Engine {
                 None => self.model.workspace(self.stream.clone(), plan)?,
             });
         }
+        if let Some(capacity) = dense_capacity {
+            let head = (*self.dense)
+                .as_ref()
+                .ok_or_else(|| infer("Missing Dense chain"))?;
+            // Dense growth is independent of the backbone arena. Dropping the
+            // previous workspace drains its ordered uses before reallocation.
+            drop(self.dense_workspace.take());
+            self.dense_workspace = Some(head.work(self.stream.clone(), capacity)?);
+        }
+        // All request arena pointers are now fixed. Preselect the actual-M
+        // GTE down metadata before host staging, H2D upload, or request kernels.
+        let tokens = b.input_ids.len();
+        let w = self
+            .workspace
+            .as_mut()
+            .ok_or_else(|| infer("Missing oxide workspace"))?;
+        let lt = &*self.lt;
+        let plain_blas = (*self.plain_blas).as_ref();
+        // SAFETY: enqueue_request bound the engine context above and keeps it
+        // current through the ordered body.
+        unsafe { self.model.prepare(lt, plain_blas, tokens, w)? };
         // Retire/cache the previous GPU arena before allocating larger pins;
         // otherwise old scratch plus future staging can exceed the projection.
         let host_oversized = pinned > cache::BYTE_BUDGET;
         if host_oversized {
             lease.mark_exclusive();
         }
-        lease.prepare(plan, hidden, host_oversized)?;
-        let tokens = b.input_ids.len();
-        let w = self
-            .workspace
-            .as_mut()
-            .ok_or_else(|| infer("Missing oxide workspace"))?;
-        let (input_elements, output_elements) = w.stage(b, hidden, lease)?;
+        lease.prepare(plan, host_elements, host_oversized)?;
+        let (input_elements, _) = w.stage(b, geometry, lease)?;
         let s = &*self.stream;
-        // Ordinary ordered-stream dispatch; concrete plans are prepared with
-        // the arena and refreshed once for the exact logical row count.
+        // Ordinary ordered-stream dispatch; concrete plans were refreshed for
+        // the exact logical row count and down metadata was preselected above.
         lease.begin();
+        #[cfg(test)]
+        bump_lease_begin();
         w.upload(lease.slot()?.input.as_slice(), input_elements)?;
-        let lt = &*self.lt;
-        let plain_blas = (*self.plain_blas).as_ref();
-        match (&mut *self.model, w) {
-            (ExecutableModel::Decoder(model), Workspace::Decoder(work)) => model.enqueue(
-                lt,
-                plain_blas,
-                s,
-                work,
-                b,
-                pool,
-                max_length,
-                lease,
-                tokens,
-                output_elements,
-            ),
+        match (&mut *self.model, &mut *w) {
+            (ExecutableModel::Decoder(model), Workspace::Decoder(work)) => {
+                model.enqueue(lt, plain_blas, s, work, b, pool, max_length, tokens)?;
+                Ok(())
+            }
             (ExecutableModel::Encoder(model), Workspace::Encoder(w)) => {
                 let c = &model.config;
                 let k = &model.kernels;
                 let weights = &model.weights;
                 let fa4 = model.fa4.as_ref();
                 let fa4_layout = model.fa4_layout;
+                let rotary = model.rotary.as_ref();
                 let plans = &mut model.plans;
                 let h = c.hidden_size;
                 let batch_count = b
@@ -1043,7 +1812,25 @@ impl Engine {
                 let (mut gamma, mut beta) =
                     (weights.gamma.cu_deviceptr(), weights.beta.cu_deviceptr());
                 let (mut x, mut eps) = (w.x.cu_deviceptr(), c.layer_norm_eps as f32);
-                if let Some(kernel) = &k.embedding_384 {
+                if rotary.is_some() {
+                    launch_threads(
+                        &k.embedding,
+                        s,
+                        (t, 1, 1),
+                        128,
+                        0,
+                        &mut [
+                            arg(&mut ids),
+                            arg(&mut word),
+                            arg(&mut gamma),
+                            arg(&mut beta),
+                            arg(&mut x),
+                            arg(&mut t),
+                            arg(&mut width),
+                            arg(&mut eps),
+                        ],
+                    )?;
+                } else if let Some(kernel) = &k.embedding_384 {
                     launch_threads(
                         kernel,
                         s,
@@ -1091,11 +1878,7 @@ impl Engine {
                 if let Some(trace) = trace.as_mut() {
                     trace.tensor(s, &w.x, tokens, h, "embedding");
                 }
-                #[cfg(test)]
-                let layers = weights.layers.iter().enumerate();
-                #[cfg(not(test))]
-                let layers = weights.layers.iter().map(|layer| (0usize, layer));
-                for (_layer_index, layer) in layers {
+                for (layer_index, layer) in weights.layers.iter().enumerate() {
                     // SAFETY: this thread bound the engine context once above. The
                     // engine retains all buffers until stream completion/error drain;
                     // input/output buffers are distinct and access is stream-ordered.
@@ -1114,8 +1897,69 @@ impl Engine {
                             s,
                             &w.qkv,
                             tokens,
+                            product(h, 3)?,
+                            &format!("layer_{layer_index:02}_qkv_pre_rope"),
+                        );
+                    }
+                    if let Some(rotary) = rotary {
+                        let mut q = w.qkv.cu_deviceptr();
+                        let mut key = q
+                            .checked_add(
+                                u64::try_from(product(h, 2)?)
+                                    .map_err(|_| infer("GTE rotary K offset overflow"))?,
+                            )
+                            .ok_or_else(|| infer("GTE rotary K offset overflow"))?;
+                        let mut cosine = rotary.cosine.cu_deviceptr();
+                        let mut sine = rotary.sine.cu_deviceptr();
+                        let mut positions = pos;
+                        let mut rotary_tokens = t;
+                        let mut q_heads = heads;
+                        let mut kv_heads = heads;
+                        let mut head_dim = rotary.head_dim;
+                        let mut rotary_dim = rotary.head_dim;
+                        let row = product(h, 3)?;
+                        let mut q_stride =
+                            u64::try_from(row).map_err(|_| infer("GTE rotary stride overflow"))?;
+                        let mut k_stride = q_stride;
+                        let mut table_stride = rotary.table_stride;
+                        let twice_heads = c
+                            .num_attention_heads
+                            .checked_mul(2)
+                            .ok_or_else(|| infer("GTE rotary grid overflow"))?;
+                        let rotary_work =
+                            product(product(tokens, twice_heads)?, rotary.head_dim as usize / 2)?;
+                        let rope_grid = blocks(rotary_work)?;
+                        launch_threads(
+                            &rotary.rope_hfma,
+                            s,
+                            rope_grid,
+                            256,
+                            0,
+                            &mut [
+                                arg(&mut q),
+                                arg(&mut key),
+                                arg(&mut cosine),
+                                arg(&mut sine),
+                                arg(&mut positions),
+                                arg(&mut rotary_tokens),
+                                arg(&mut q_heads),
+                                arg(&mut kv_heads),
+                                arg(&mut head_dim),
+                                arg(&mut rotary_dim),
+                                arg(&mut q_stride),
+                                arg(&mut k_stride),
+                                arg(&mut table_stride),
+                            ],
+                        )?;
+                    }
+                    #[cfg(test)]
+                    if let Some(trace) = trace.as_mut() {
+                        trace.tensor(
+                            s,
+                            &w.qkv,
+                            tokens,
                             product(h, 3).unwrap(),
-                            &format!("layer_{_layer_index:02}_qkv"),
+                            &format!("layer_{layer_index:02}_qkv"),
                         );
                     }
                     if let Some(provider) = fa4 {
@@ -1191,7 +2035,7 @@ impl Engine {
                             &w.attention,
                             tokens,
                             h,
-                            &format!("layer_{_layer_index:02}_attention"),
+                            &format!("layer_{layer_index:02}_attention"),
                         );
                     }
                     // SAFETY: same retained-buffer/context contract as the QKV call.
@@ -1211,7 +2055,7 @@ impl Engine {
                             &w.temp,
                             tokens,
                             h,
-                            &format!("layer_{_layer_index:02}_attention_projection"),
+                            &format!("layer_{layer_index:02}_attention_projection"),
                         );
                     }
                     let temp = w.temp.cu_deviceptr();
@@ -1235,18 +2079,74 @@ impl Engine {
                             &w.x,
                             tokens,
                             h,
-                            &format!("layer_{_layer_index:02}_attention_norm"),
+                            &format!("layer_{layer_index:02}_attention_norm"),
                         );
                     }
-                    // SAFETY: same retained-buffer/context contract as the QKV call.
-                    unsafe {
-                        lt.enqueue(
-                            &plans.intermediate,
-                            &w.x,
-                            &layer.intermediate.weight,
-                            &layer.intermediate.bias,
-                            &mut w.intermediate,
+                    if let Some(rotary) = rotary {
+                        let IntermediatePlan::Gated { plan, .. } = &plans.intermediate else {
+                            return Err(infer(
+                                "GTE gated feed-forward requires a gated intermediate plan",
+                            )
+                            .into());
+                        };
+                        let plan = plan
+                            .as_ref()
+                            .as_ref()
+                            .ok_or_else(|| infer("Gated feed-forward plan is not prepared"))?;
+                        let blas = plain_blas
+                            .ok_or_else(|| infer("Gated feed-forward requires plain cuBLAS"))?;
+                        let mut input = {
+                            let scratch = (*w.gated)
+                                .as_mut()
+                                .ok_or_else(|| infer("Missing gated feed-forward scratch"))?;
+                            // SAFETY: same retained-buffer/context contract as the QKV call.
+                            unsafe {
+                                blas.linear(plan, &w.x, &layer.intermediate.weight, scratch)?;
+                            }
+                            #[cfg(test)]
+                            if let Some(trace) = trace.as_mut() {
+                                trace.tensor(
+                                    s,
+                                    scratch,
+                                    tokens,
+                                    product(c.intermediate_size, 2)?,
+                                    &format!("layer_{layer_index:02}_up_gate"),
+                                );
+                            }
+                            scratch.cu_deviceptr()
+                        };
+                        let mut output = w.intermediate.cu_deviceptr();
+                        let mut rows = t;
+                        let mut gate_width = u32_size(c.intermediate_size)?;
+                        launch(
+                            &rotary.gated_gelu,
+                            s,
+                            blocks(product(tokens, c.intermediate_size)?)?,
+                            0,
+                            &mut [
+                                arg(&mut input),
+                                arg(&mut output),
+                                arg(&mut rows),
+                                arg(&mut gate_width),
+                            ],
                         )?;
+                    } else {
+                        let IntermediatePlan::Dense(plan) = &plans.intermediate else {
+                            return Err(infer(
+                                "Dense feed-forward requires a dense intermediate plan",
+                            )
+                            .into());
+                        };
+                        // SAFETY: same retained-buffer/context contract as the QKV call.
+                        unsafe {
+                            lt.enqueue(
+                                plan,
+                                &w.x,
+                                &layer.intermediate.weight,
+                                &layer.intermediate.bias,
+                                &mut w.intermediate,
+                            )?;
+                        }
                     }
                     #[cfg(test)]
                     if let Some(trace) = trace.as_mut() {
@@ -1255,17 +2155,22 @@ impl Engine {
                             &w.intermediate,
                             tokens,
                             c.intermediate_size,
-                            &format!("layer_{_layer_index:02}_gelu"),
+                            &format!("layer_{layer_index:02}_gelu"),
                         );
                     }
                     // SAFETY: same retained-buffer/context contract as the QKV call.
                     unsafe {
-                        lt.enqueue(
-                            &plans.output,
+                        enqueue_down(
+                            &mut plans.output,
+                            lt,
+                            plain_blas,
+                            tokens,
+                            layer_index,
                             &w.intermediate,
                             &layer.output.weight,
                             &layer.output.bias,
                             &mut w.temp,
+                            s,
                         )?;
                     }
                     #[cfg(test)]
@@ -1275,7 +2180,7 @@ impl Engine {
                             &w.temp,
                             tokens,
                             h,
-                            &format!("layer_{_layer_index:02}_output_projection"),
+                            &format!("layer_{layer_index:02}_output_projection"),
                         );
                     }
                     norm(
@@ -1298,7 +2203,7 @@ impl Engine {
                             &w.x,
                             tokens,
                             h,
-                            &format!("layer_{_layer_index:02}_output_norm"),
+                            &format!("layer_{layer_index:02}_output_norm"),
                         );
                     }
                 }
@@ -1313,9 +2218,9 @@ impl Engine {
                     Pool::Cls => 0u32,
                     Pool::Mean => 1,
                     Pool::LastToken => 2,
-                    Pool::Splade => return Err(infer("Oxide SPLADE unsupported")),
+                    Pool::Splade => return Err(infer("Oxide SPLADE unsupported").into()),
                 };
-                if mode == 1 {
+                if count > 0 && mode == 1 {
                     launch(
                         &k.mean_pool,
                         s,
@@ -1330,7 +2235,7 @@ impl Engine {
                             arg(&mut width),
                         ],
                     )?;
-                } else {
+                } else if count > 0 {
                     launch(
                         &k.pool,
                         s,
@@ -1347,12 +2252,29 @@ impl Engine {
                         ],
                     )?;
                 }
-                w.download(lease.slot_mut()?.output.as_mut_slice(), output_elements)?;
-                lease.record()?;
+                if !b.raw_indices.is_empty() {
+                    let function = k
+                        .raw_cast
+                        .as_ref()
+                        .ok_or_else(|| infer("Raw output kernel is unavailable"))?;
+                    enqueue_raw_output(function, s, x, w.pooled.cu_deviceptr(), selected, b, h)?;
+                }
                 Ok(())
             }
             _ => Err(infer("Oxide model/workspace mismatch")),
-        }
+        }?;
+        let dense = match ((*self.dense).as_mut(), self.dense_workspace.as_mut()) {
+            (Some(_), _) if pooled_rows == 0 => None,
+            (Some(head), Some(work)) => {
+                if !work.fits(pooled_rows) {
+                    return Err(infer("Dense request exceeds retained arena capacity").into());
+                }
+                Some((head, work))
+            }
+            (Some(_), None) => return Err(infer("Missing Dense workspace").into()),
+            (None, _) => None,
+        };
+        Ok(w.finish(dense, lt, plain_blas, pooled_rows, raw_rows, hidden, lease)?)
     }
 }
 
@@ -1361,6 +2283,7 @@ enum LoadedConfig {
     Decoder(DecoderConfig),
 }
 impl LoadedConfig {
+    #[cfg_attr(not(test), allow(dead_code))]
     fn hidden_size(&self) -> usize {
         match self {
             Self::Encoder(config) => config.hidden_size,
@@ -1380,8 +2303,10 @@ fn detects_decoder(path: &Path) -> Result<bool, BackendError> {
 
 pub struct OxideBackend {
     config: LoadedConfig,
+    output_width: usize,
     pool: Pool,
     attention_length_limit: Option<usize>,
+    raw_output_supported: bool,
     engine: Arc<Mutex<Engine>>,
     stream: Arc<Stream>,
     io: Arc<SlotPool<HostIo>>,
@@ -1393,24 +2318,56 @@ impl OxideBackend {
         model_type: ModelType,
         device_id: usize,
     ) -> Result<Self, BackendError> {
+        Self::new_with_dense_paths(path, dtype, model_type, device_id, None)
+    }
+
+    /// Construct an Oxide backend with an explicit ordered Dense module list.
+    /// `None` discovers admitted Dense entries from `modules.json`.
+    pub fn new_with_dense_paths(
+        path: &Path,
+        dtype: &str,
+        model_type: ModelType,
+        device_id: usize,
+        dense_paths: Option<Vec<String>>,
+    ) -> Result<Self, BackendError> {
         if dtype != "bfloat16" {
             return Err(start("Oxide currently requires --dtype bfloat16"));
         }
         let pool = match model_type {
             ModelType::Embedding(p @ (Pool::Cls | Pool::Mean | Pool::LastToken)) => p,
-            _ => return Err(start("Oxide currently supports pooled embeddings only")),
+            _ => return Err(start("Oxide currently supports dense embeddings only")),
         };
         if device_id >= device_count()? {
             return Err(start("CUDA device ordinal is not visible"));
         }
         let context = Context::new(device_id).map_err(start)?;
         let stream = context.new_stream().map_err(start)?;
-        let lt = LtProvider::new(context.clone(), stream.clone())?;
-        let (model, config, plain_blas, attention_length_limit) = if detects_decoder(path)? {
+        let decoder = detects_decoder(path)?;
+        let native_default = if decoder {
+            false
+        } else {
+            model::read_json::<BertConfig>(&path.join("config.json"))?.family == EncoderFamily::Gte
+        };
+        let lt = if native_default {
+            LtProvider::new_native_default(context.clone(), stream.clone())?
+        } else {
+            LtProvider::new(context.clone(), stream.clone())?
+        };
+        let (model, config, plain_blas, attention_length_limit, dense, output_width) = if decoder {
             let host = DecoderWeights::load(path)?;
             let config = host.config.clone();
+            let dense_host =
+                DenseChainHost::load_with_paths(path, config.hidden_size, dense_paths.clone())?;
+            let output_width = dense_host
+                .as_ref()
+                .map_or(config.hidden_size, DenseChainHost::output_width);
             let model = decoder::DecoderModel::new(host, &context, &stream, &lt)?;
-            let plain_blas = if model.needs_plain() {
+            let needs_plain =
+                model.needs_plain() || dense_host.as_ref().is_some_and(DenseChainHost::uses_plain);
+            let dense = dense_host
+                .map(|host| DenseHead::new(host, &context, &stream, &lt))
+                .transpose()?;
+            let plain_blas = if needs_plain {
                 Some(Blas::new(context.clone(), stream.clone())?)
             } else {
                 None
@@ -1420,32 +2377,56 @@ impl OxideBackend {
                 LoadedConfig::Decoder(config),
                 plain_blas,
                 None,
+                dense,
+                output_width,
             )
         } else {
             let host = BertWeights::load(path)?;
             let config = host.config.clone();
+            let dense_host =
+                DenseChainHost::load_with_paths(path, config.hidden_size, dense_paths.clone())?;
+            let output_width = dense_host
+                .as_ref()
+                .map_or(config.hidden_size, DenseChainHost::output_width);
             let model = encoder_model(host, &context, &stream, &lt)?;
+            let dense = dense_host
+                .map(|host| DenseHead::new(host, &context, &stream, &lt))
+                .transpose()?;
+            let plain_blas = if dense.as_ref().is_some_and(DenseHead::uses_plain)
+                || config.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst
+            {
+                Some(Blas::new(context.clone(), stream.clone())?)
+            } else {
+                None
+            };
             let attention_length_limit = model.kernels.attention_length_limit;
             (
                 ExecutableModel::Encoder(Box::new(model)),
                 LoadedConfig::Encoder(config),
-                None,
+                plain_blas,
                 attention_length_limit,
+                dense,
+                output_width,
             )
         };
         let io = HostIo::pool(&context)?;
+        let raw_output_supported = model.supports_raw_output();
         Ok(Self {
             config,
+            output_width,
             pool,
             attention_length_limit,
+            raw_output_supported,
             engine: Arc::new(Mutex::new(Engine {
                 lt: ManuallyDrop::new(lt),
                 model: ManuallyDrop::new(model),
+                dense: ManuallyDrop::new(dense),
                 plain_blas: ManuallyDrop::new(plain_blas),
                 context,
                 stream: stream.clone(),
                 io: io.clone(),
                 workspace: None,
+                dense_workspace: None,
                 cached: cache::WorkspaceCache::new(),
                 failed: false,
             })),
@@ -1505,7 +2486,17 @@ fn encoder_model(
         _ => return Err(start("INFINITY_OXIDE_ATTENTION must be auto,simt or fa4")),
     };
     let fa4_layout = if fa4.is_some() { packed } else { None };
-    let kernels = Kernels::load(context, &config, fa4.is_some())?;
+    let mut kernels = Kernels::load(context, &config, fa4.is_some())?;
+    let rotary = match config.recipe.positions {
+        PositionRecipe::Absolute => None,
+        PositionRecipe::Rotary(recipe) => {
+            let functions = kernels
+                .rotary
+                .take()
+                .ok_or_else(|| start("Missing prepared GTE rotary kernels"))?;
+            Some(RotaryEncoder::new(recipe, &config, stream, functions)?)
+        }
+    };
     let plans = Plans::new(lt, &config)?;
     let mut uploader = WeightUploader::new(stream.clone())?;
     let weights = Weights {
@@ -1528,6 +2519,7 @@ fn encoder_model(
         plans,
         kernels,
         weights,
+        rotary,
         fa4,
         fa4_layout,
     })
@@ -1552,7 +2544,6 @@ fn validate(batch: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
             != Some(tokens)
         || batch.position_ids.len() != tokens
         || batch.token_type_ids.len() != tokens
-        || !batch.raw_indices.is_empty()
         || batch.multimodal.iter().any(Option::is_some)
         || batch.compact_input_ids.is_some()
         || batch.compact_position_ids.is_some()
@@ -1572,16 +2563,20 @@ fn validate(batch: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
         }
         max_length = max_length.max(length);
     }
+    let ignores_token_type_ids = c.family == model::EncoderFamily::Gte
+        && c.recipe.embedding == NormArithmetic::AtenEmbedding;
     if sequences > 65535
         || batch
             .pooled_indices
             .iter()
+            .chain(&batch.raw_indices)
             .any(|&i| i as usize >= sequences)
         || batch.input_ids.iter().any(|&i| i as usize >= c.vocab_size)
-        || batch
-            .token_type_ids
-            .iter()
-            .any(|&i| i as usize >= c.type_vocab_size)
+        || (!ignores_token_type_ids
+            && batch
+                .token_type_ids
+                .iter()
+                .any(|&i| i as usize >= c.type_vocab_size))
         || batch
             .position_ids
             .iter()
@@ -1590,6 +2585,13 @@ fn validate(batch: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
         return Err(fail());
     }
     u32_size(product(tokens, c.intermediate_size)?)?;
+    if c.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst {
+        let gate_width = product(c.intermediate_size, 2)?;
+        u32_size(product(tokens, gate_width)?)?;
+        // Bucket padding is admitted here as well: rejecting it after engine
+        // submission would turn an unsupported request into a poisoned engine.
+        u32_size(product(bucketed(tokens, MIN_TOKEN_CAPACITY)?, gate_width)?)?;
+    }
     u32_size(product(tokens, c.hidden_size)?)?;
     Ok(max_length)
 }
@@ -1620,7 +2622,6 @@ fn validate_decoder(batch: &Batch, c: &DecoderConfig) -> Result<usize, BackendEr
             != Some(tokens)
         || batch.position_ids.len() != tokens
         || batch.token_type_ids.len() != tokens
-        || !batch.raw_indices.is_empty()
         || batch.multimodal.iter().any(Option::is_some)
         || batch.compact_input_ids.is_some()
         || batch.compact_position_ids.is_some()
@@ -1645,6 +2646,7 @@ fn validate_decoder(batch: &Batch, c: &DecoderConfig) -> Result<usize, BackendEr
         || batch
             .pooled_indices
             .iter()
+            .chain(&batch.raw_indices)
             .any(|&i| i as usize >= sequences)
         || batch.input_ids.iter().any(|&i| i as usize >= c.vocab_size)
         || batch
@@ -1696,17 +2698,26 @@ impl Backend for OxideBackend {
                 )));
             }
         }
-        if batch.pooled_indices.is_empty() {
+        if batch.pooled_indices.is_empty() && batch.raw_indices.is_empty() {
             return Ok(Inference::Ready(Embeddings::default()));
         }
-        let hidden = self.config.hidden_size();
-        if hidden == 0 {
-            return Err(infer("Invalid oxide embedding output"));
+        if !batch.raw_indices.is_empty() && !self.raw_output_supported {
+            return Err(infer(
+                "This oxide kernel bundle does not support token outputs",
+            ));
         }
-        let elements = product(batch.pooled_indices.len(), hidden)?;
+        let hidden = self.config.hidden_size();
+        let output_width = self.output_width;
+        let geometry = output::OutputGeometry::new(output_width, hidden)?;
+        let elements = geometry.host_elements(&batch)?;
+        u32_size(elements)?;
         // Only the packed result rows are result-memory. Input/output pins are
         // charged to the backend's bounded host I/O arena.
-        let memory = result_memory::global_pool()?.reserve(product(elements, 4)?)?;
+        let memory = result_memory::global_pool()?.reserve(output::result_bytes(
+            &batch,
+            output_width,
+            hidden,
+        )?)?;
         let slot = self.io.acquire()?;
         let mut lease = HostIoLease::new(
             slot,
@@ -1728,6 +2739,23 @@ impl Backend for OxideBackend {
             }
             engine.enqueue(&batch, &self.pool, max_length, &mut lease)?;
         }
+        if !batch.raw_indices.is_empty() {
+            let pooled = batch.pooled_indices;
+            let raw = batch.raw_indices;
+            let boundaries = batch.cumulative_seq_lengths;
+            return Ok(Inference::Deferred(Box::new(move || {
+                lease.wait()?;
+                let output = lease.output(elements)?;
+                if output.iter().any(|value| !value.is_finite()) {
+                    lease.poison();
+                    return Err(infer("Invalid oxide token output"));
+                }
+                let mut result =
+                    output::pack(output, output_width, hidden, &pooled, &raw, &boundaries)?;
+                result.memory = Some(memory);
+                Ok(result)
+            })));
+        }
         let pooled = batch.pooled_indices;
         Ok(Inference::Deferred(Box::new(move || {
             // The lease owns the exact output size and pins; never consult the
@@ -1740,7 +2768,7 @@ impl Backend for OxideBackend {
             }
             let mut result = Embeddings::default();
             result.memory = Some(memory);
-            for (&index, row) in pooled.iter().zip(output.chunks_exact(hidden)) {
+            for (&index, row) in pooled.iter().zip(output.chunks_exact(output_width)) {
                 result.insert(index as usize, Embedding::Pooled(row.to_vec()));
             }
             Ok(result)
@@ -1892,12 +2920,231 @@ mod trace {
         )
         .unwrap();
     }
+
+    fn raw_span(batch: &Batch, index: u32) -> Result<usize, String> {
+        let sequences = batch
+            .cumulative_seq_lengths
+            .len()
+            .checked_sub(1)
+            .ok_or_else(|| "raw trace batch has no sequences".to_string())?;
+        let index = usize::try_from(index)
+            .map_err(|_| format!("raw index {index} is out of bounds for {sequences} sequences"))?;
+        if index >= sequences {
+            return Err(format!(
+                "raw index {index} is out of bounds for {sequences} sequences"
+            ));
+        }
+        let start = batch.cumulative_seq_lengths[index] as usize;
+        let end = batch.cumulative_seq_lengths[index + 1] as usize;
+        let span = end
+            .checked_sub(start)
+            .ok_or_else(|| format!("raw index {index} has a reversed token span"))?;
+        if end > batch.input_ids.len() {
+            return Err(format!(
+                "raw index {index} span ends at {end}, beyond {} tokens",
+                batch.input_ids.len()
+            ));
+        }
+        Ok(span)
+    }
+
+    pub(super) fn validate_outputs(
+        batch: &Batch,
+        result: &Embeddings,
+        output_width: usize,
+        hidden: usize,
+    ) -> Result<(), String> {
+        let mut by_index = std::collections::BTreeMap::new();
+        for (&index, embedding) in result.iter() {
+            if by_index.insert(index, embedding).is_some() {
+                return Err(format!("duplicate trace result index {index}"));
+            }
+        }
+        let mut expected: std::collections::BTreeMap<u32, &'static str> =
+            std::collections::BTreeMap::new();
+        for &index in &batch.pooled_indices {
+            expected.insert(index, "pooled");
+        }
+        for &index in &batch.raw_indices {
+            expected.insert(index, "raw");
+        }
+        if by_index.len() != expected.len() {
+            return Err(format!(
+                "trace result has {} indices, expected {}",
+                by_index.len(),
+                expected.len()
+            ));
+        }
+        for (&index, &kind) in &expected {
+            let Some(embedding) = by_index.get(&(index as usize)).copied() else {
+                return Err(format!("missing {kind} trace index {index}"));
+            };
+            match (kind, embedding) {
+                ("pooled", Embedding::Pooled(values)) => {
+                    if values.len() != output_width {
+                        return Err(format!(
+                            "pooled trace index {index} has width {}, expected {output_width}",
+                            values.len()
+                        ));
+                    }
+                    if values.iter().any(|value| !value.is_finite()) {
+                        return Err(format!("pooled trace index {index} is not finite"));
+                    }
+                }
+                ("pooled", Embedding::All(_)) => {
+                    return Err(format!("pooled trace index {index} has raw kind"));
+                }
+                ("raw", Embedding::All(rows)) => {
+                    let span = raw_span(batch, index)?;
+                    if rows.len() != span {
+                        return Err(format!(
+                            "raw trace index {index} has {} rows, expected {span}",
+                            rows.len()
+                        ));
+                    }
+                    for row in rows {
+                        if row.len() != hidden {
+                            return Err(format!(
+                                "raw trace index {index} has width {}, expected {hidden}",
+                                row.len()
+                            ));
+                        }
+                        if row.iter().any(|value| !value.is_finite()) {
+                            return Err(format!("raw trace index {index} is not finite"));
+                        }
+                    }
+                }
+                ("raw", Embedding::Pooled(_)) => {
+                    return Err(format!("raw trace index {index} has pooled kind"));
+                }
+                _ => unreachable!("trace kind is pooled or raw"),
+            }
+        }
+        for &index in by_index.keys() {
+            if !expected.contains_key(&(index as u32)) {
+                return Err(format!("unrequested trace result index {index}"));
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn outputs_json(
+        batch: &Batch,
+        result: &Embeddings,
+        output_width: usize,
+        hidden: usize,
+        physical_batch: serde_json::Value,
+    ) -> Result<serde_json::Value, String> {
+        validate_outputs(batch, result, output_width, hidden)?;
+        let mut rows: Vec<_> = result.iter().collect();
+        rows.sort_unstable_by_key(|(&index, _)| index);
+        let mut outputs = Vec::with_capacity(rows.len());
+        for (&index, embedding) in rows {
+            let (kind, shape, values) = match embedding {
+                Embedding::Pooled(values) => ("pooled", vec![1, output_width], values.clone()),
+                Embedding::All(rows) => {
+                    let mut values = Vec::with_capacity(rows.len() * hidden);
+                    for row in rows {
+                        values.extend_from_slice(row);
+                    }
+                    ("raw", vec![rows.len(), hidden], values)
+                }
+            };
+            outputs.push(serde_json::json!({
+                "index": index,
+                "kind": kind,
+                "shape": shape,
+                "values": values,
+            }));
+        }
+        Ok(serde_json::json!({
+            "outputs": outputs,
+            "physical_batch": physical_batch,
+        }))
+    }
+
+    pub(super) fn write_outputs(
+        dir: &Path,
+        batch: &Batch,
+        result: &Embeddings,
+        output_width: usize,
+        hidden: usize,
+        physical_batch: serde_json::Value,
+    ) {
+        std::fs::create_dir_all(dir).unwrap();
+        let outputs = outputs_json(batch, result, output_width, hidden, physical_batch).unwrap();
+        std::fs::write(
+            dir.join("outputs.json"),
+            serde_json::to_vec_pretty(&outputs).unwrap(),
+        )
+        .unwrap();
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::time::Instant;
+    #[test]
+    fn gte_request_validation_and_arena_account_for_packed_gates() {
+        let config: BertConfig = serde_json::from_value(serde_json::json!({
+            "model_type": "new", "architectures": ["NewModel"],
+            "hidden_size": 768, "intermediate_size": 3072,
+            "num_attention_heads": 12, "num_hidden_layers": 12,
+            "max_position_embeddings": 8192, "vocab_size": 30528,
+            "type_vocab_size": 0, "rope_theta": 500000.0,
+            "rope_scaling": {"type": "ntk", "factor": 2.0}
+        }))
+        .unwrap();
+        let mut request = batch();
+        request.token_type_ids.fill(0);
+        request.position_ids[0] = 8191;
+        assert!(validate(&request, &config).is_ok());
+        request.position_ids[0] = 8192;
+        assert!(validate(&request, &config).is_err());
+        request.position_ids[0] = 0;
+        request.token_type_ids = vec![1, 0, u32::MAX];
+        assert!(validate(&request, &config).is_ok());
+        request.token_type_ids.pop();
+        assert!(validate(&request, &config).is_err());
+        request.token_type_ids = vec![0; 3];
+        assert!(validate(&request, &config).is_ok());
+
+        let bert = self::config();
+        let mut bert_request = batch();
+        bert_request.token_type_ids = vec![1, 0, 0];
+        assert!(validate(&bert_request, &bert).is_ok());
+        bert_request.token_type_ids = vec![u32::MAX, 0, 0];
+        assert!(validate(&bert_request, &bert).is_err());
+
+        let tokens = (1usize << 19) + 1;
+        let mut oversized = batch();
+        oversized.input_ids = vec![1; tokens];
+        oversized.position_ids = (0..tokens).map(|index| (index % 8192) as u32).collect();
+        oversized.token_type_ids = vec![0; tokens];
+        oversized.cumulative_seq_lengths = (0..tokens)
+            .step_by(8192)
+            .map(|index| index as u32)
+            .collect();
+        oversized.cumulative_seq_lengths.push(tokens as u32);
+        oversized.max_length = 8192;
+        // Actual gates fit u32; their next-power-of-two arena does not. This
+        // must fail in CPU admission, before submit_embed touches the engine.
+        assert!(u32::try_from(tokens * 6144).is_ok());
+        assert!(validate(&oversized, &config).is_err());
+        assert!(validate(&request, &config).is_ok());
+
+        let key = (32, 4, 2);
+        let mut dense = config.clone();
+        dense.recipe.feed_forward = FeedForwardRecipe::DenseGelu;
+        let gate_bytes = Work::allocation_bytes(key, &config).unwrap();
+        let dense_bytes = Work::allocation_bytes(key, &dense).unwrap();
+        assert_eq!(
+            gate_bytes - dense_bytes,
+            32 * 2 * 3072 * size_of::<half::bf16>()
+        );
+    }
+
     fn config() -> BertConfig {
         serde_json::from_value(serde_json::json!({"model_type":"bert","hidden_size":4,
             "intermediate_size":8,"num_attention_heads":2,"num_hidden_layers":1,
@@ -2127,6 +3374,8 @@ mod tests {
         assert!(validate(&b, &c).is_ok());
         let mut b = batch();
         b.raw_indices = vec![0];
+        assert!(validate(&b, &c).is_ok());
+        b.raw_indices = vec![2];
         assert!(validate(&b, &c).is_err());
     }
     #[test]
@@ -2509,11 +3758,40 @@ mod tests {
         assert!(needs_exclusive_staging(budget / 2, budget / 2 + 1));
     }
     #[test]
+    fn dense_capacity_tracks_pooled_selections_not_raw_rows_or_backbone_key() {
+        let bytes = |capacity: usize| Ok::<usize, BackendError>(capacity * 100);
+        assert_eq!(plan_dense_workspace(0, None, bytes).unwrap(), (None, 0));
+        assert_eq!(
+            plan_dense_workspace(3, None, bytes).unwrap(),
+            (Some(4), 400)
+        );
+        // Raw growth (R) never changes the pooled capacity P=3.
+        assert_eq!(
+            plan_dense_workspace(3, Some((4, 400)), bytes).unwrap(),
+            (None, 400)
+        );
+        // Raw-only requests retain an existing allocation without growth.
+        assert_eq!(
+            plan_dense_workspace(0, Some((4, 400)), bytes).unwrap(),
+            (None, 400)
+        );
+        // Only pooled capacity growth reallocates Dense scratch.
+        assert_eq!(
+            plan_dense_workspace(6, Some((4, 400)), bytes).unwrap(),
+            (Some(8), 800)
+        );
+        assert_eq!(
+            plan_dense_workspace(2, Some((8, 800)), bytes).unwrap(),
+            (None, 800)
+        );
+    }
+
+    #[test]
     fn gpu_and_both_host_slots_are_charged_once() {
         let c = config();
         let key = (32, 4, 2);
         let gpu = Work::allocation_bytes(key, &c).unwrap();
-        let pin = staging::pinned_bytes(key, c.hidden_size).unwrap();
+        let pin = staging::pinned_bytes(key, key.2 * c.hidden_size).unwrap();
         let input = staging::input_capacity(key).unwrap();
         let output = key.2 * c.hidden_size;
         // Old Work bytes included one host input/output pair. The split charges
@@ -2536,7 +3814,63 @@ mod tests {
         position_ids: Vec<u32>,
         token_type_ids: Vec<u32>,
         cumulative_seq_lengths: Vec<u32>,
+        #[serde(default)]
+        max_length: u32,
+        #[serde(default)]
         pooled_indices: Vec<u32>,
+        #[serde(default)]
+        raw_indices: Vec<u32>,
+        #[serde(default)]
+        compact_input_ids: Option<Vec<u32>>,
+        #[serde(default)]
+        compact_position_ids: Option<Vec<u32>>,
+        #[serde(default)]
+        scatter_unfold: Option<Vec<u32>>,
+        #[serde(default)]
+        fold_gather: Option<Vec<u32>>,
+        #[serde(default)]
+        tokens: Vec<String>,
+        #[serde(default)]
+        offsets: Vec<(usize, usize)>,
+        #[serde(default)]
+        multimodal: Vec<serde_json::Value>,
+    }
+    impl TraceBatch {
+        fn into_batch(self) -> Batch {
+            assert!(
+                self.multimodal.is_empty(),
+                "raw trace requires a text-only batch"
+            );
+            Batch {
+                multimodal: vec![],
+                input_ids: self.input_ids,
+                position_ids: self.position_ids,
+                token_type_ids: self.token_type_ids,
+                cumulative_seq_lengths: self.cumulative_seq_lengths,
+                max_length: self.max_length,
+                pooled_indices: self.pooled_indices,
+                raw_indices: self.raw_indices,
+                compact_input_ids: self.compact_input_ids,
+                compact_position_ids: self.compact_position_ids,
+                scatter_unfold: self.scatter_unfold,
+                fold_gather: self.fold_gather,
+                tokens: self.tokens,
+                offsets: self.offsets,
+            }
+        }
+    }
+    fn trace_pool() -> Pool {
+        match std::env::var("INFINITY_OXIDE_TRACE_POOL")
+            .unwrap_or_else(|_| "mean".into())
+            .as_str()
+        {
+            "mean" => Pool::Mean,
+            "cls" => Pool::Cls,
+            "last_token" | "last-token" => Pool::LastToken,
+            other => {
+                panic!("INFINITY_OXIDE_TRACE_POOL must be mean, cls, or last_token, got {other}")
+            }
+        }
     }
     #[test]
     #[ignore = "Requires CUDA plus INFINITY_OXIDE_TEST_MODEL, INFINITY_OXIDE_TRACE_DIR, and INFINITY_OXIDE_TRACE_BATCH_JSON"]
@@ -2571,24 +3905,159 @@ mod tests {
             tokens: vec![],
             offsets: vec![],
         };
-        let pool = match std::env::var("INFINITY_OXIDE_TRACE_POOL")
-            .unwrap_or_else(|_| "mean".into())
-            .as_str()
-        {
-            "mean" => Pool::Mean,
-            "cls" => Pool::Cls,
-            other => panic!("INFINITY_OXIDE_TRACE_POOL must be mean or cls, got {other}"),
-        };
         let backend = OxideBackend::new(
             std::path::Path::new(&model),
             "bfloat16",
-            ModelType::Embedding(pool),
+            ModelType::Embedding(trace_pool()),
             0,
         )
         .unwrap();
         let hidden = backend.config.hidden_size();
         let embeddings = backend.embed(batch).unwrap();
         trace::write_pooled(std::path::Path::new(&trace_dir), &embeddings, hidden);
+    }
+    #[test]
+    #[ignore = "Requires CUDA plus INFINITY_OXIDE_TEST_MODEL, INFINITY_OXIDE_TRACE_DIR, and INFINITY_OXIDE_TRACE_BATCH_JSON"]
+    fn trace_gte_raw_batch() {
+        let model = std::env::var_os("INFINITY_OXIDE_TEST_MODEL")
+            .expect("Set INFINITY_OXIDE_TEST_MODEL to a GTE checkpoint");
+        let batch_path = std::env::var_os("INFINITY_OXIDE_TRACE_BATCH_JSON")
+            .expect("Set INFINITY_OXIDE_TRACE_BATCH_JSON to a batch JSON file");
+        let trace_dir = std::env::var_os("INFINITY_OXIDE_TRACE_DIR")
+            .expect("Set INFINITY_OXIDE_TRACE_DIR for raw trace output");
+        let bytes = std::fs::read(batch_path).unwrap();
+        let physical_batch: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        let input: TraceBatch = serde_json::from_slice(&bytes).unwrap();
+        let batch = input.into_batch();
+        let backend = OxideBackend::new(
+            std::path::Path::new(&model),
+            "bfloat16",
+            ModelType::Embedding(trace_pool()),
+            0,
+        )
+        .unwrap();
+        let hidden = backend.config.hidden_size();
+        assert_eq!(
+            hidden, 768,
+            "the GTE raw trace requires the qualified hidden size"
+        );
+        let embeddings = backend.embed(batch.clone()).unwrap();
+        trace::write_outputs(
+            std::path::Path::new(&trace_dir),
+            &batch,
+            &embeddings,
+            backend.output_width,
+            hidden,
+            physical_batch,
+        );
+    }
+    #[test]
+    fn raw_and_pooled_trace_outputs_use_actual_widths_and_validate() {
+        let mut request = batch();
+        request.pooled_indices = vec![0];
+        request.raw_indices = vec![1];
+        let mut result = Embeddings::default();
+        result.insert(0, Embedding::Pooled(vec![1.25, -2.5, 3.75]));
+        result.insert(
+            1,
+            Embedding::All(vec![vec![4.0, 5.0, 6.0, 7.0], vec![8.0, 9.0, 10.0, 11.0]]),
+        );
+        let physical = serde_json::json!({
+            "input_ids": request.input_ids.clone(),
+            "max_length": request.max_length,
+            "raw_indices": request.raw_indices.clone(),
+            "extra": {"preserved": true},
+        });
+        let outputs = trace::outputs_json(&request, &result, 3, 4, physical.clone()).unwrap();
+        assert_eq!(outputs["physical_batch"], physical);
+        let entries = outputs["outputs"].as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0]["index"], 0);
+        assert_eq!(entries[0]["kind"], "pooled");
+        assert_eq!(entries[0]["shape"], serde_json::json!([1, 3]));
+        assert_eq!(entries[0]["values"], serde_json::json!([1.25, -2.5, 3.75]));
+        assert_eq!(entries[1]["index"], 1);
+        assert_eq!(entries[1]["kind"], "raw");
+        assert_eq!(entries[1]["shape"], serde_json::json!([2, 4]));
+        assert_eq!(
+            entries[1]["values"],
+            serde_json::json!([4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0])
+        );
+        assert!(trace::validate_outputs(&request, &result, 3, 4).is_ok());
+        assert!(trace::validate_outputs(&request, &result, 4, 4).is_err());
+        let mut missing = Embeddings::default();
+        missing.insert(0, Embedding::Pooled(vec![1.25, -2.5, 3.75]));
+        assert!(trace::validate_outputs(&request, &missing, 3, 4).is_err());
+        let mut short = Embeddings::default();
+        short.insert(0, Embedding::Pooled(vec![1.25, -2.5, 3.75]));
+        short.insert(1, Embedding::All(vec![vec![4.0, 5.0, 6.0, 7.0]]));
+        assert!(trace::validate_outputs(&request, &short, 3, 4).is_err());
+        let mut out_of_bounds = request.clone();
+        out_of_bounds.raw_indices = vec![2];
+        assert!(trace::validate_outputs(&out_of_bounds, &result, 3, 4).is_err());
+        let mut duplicate = request.clone();
+        duplicate.raw_indices = vec![1, 1];
+        assert!(trace::validate_outputs(&duplicate, &result, 3, 4).is_ok());
+        let mut duplicate_pooled = request;
+        duplicate_pooled.pooled_indices = vec![0, 0];
+        assert!(trace::validate_outputs(&duplicate_pooled, &result, 3, 4).is_ok());
+    }
+    #[test]
+    fn raw_trace_canonical_map_deduplicates_and_overrides_pooled() {
+        let mut request = changed_shape_batch();
+        request.pooled_indices = vec![2];
+        request.raw_indices = vec![1, 0, 2, 1];
+        let raw = |index: usize, rows: usize| {
+            Embedding::All(
+                (0..rows)
+                    .map(|row| vec![(index * 100 + row) as f32; 4])
+                    .collect(),
+            )
+        };
+        let mut result = Embeddings::default();
+        for index in 0..3 {
+            result.insert(index, raw(index, 10));
+        }
+        assert!(trace::validate_outputs(&request, &result, 3, 4).is_ok());
+        let physical = serde_json::json!({
+            "pooled_indices": request.pooled_indices.clone(),
+            "raw_indices": request.raw_indices.clone(),
+        });
+        let outputs = trace::outputs_json(&request, &result, 3, 4, physical.clone()).unwrap();
+        assert_eq!(outputs["physical_batch"], physical);
+        let entries = outputs["outputs"].as_array().unwrap();
+        assert_eq!(entries.len(), 3);
+        for (entry, index) in entries.iter().zip(0..3usize) {
+            assert_eq!(entry["index"], index);
+            assert_eq!(entry["kind"], "raw");
+            assert_eq!(entry["shape"], serde_json::json!([10, 4]));
+            assert_eq!(entry["values"].as_array().unwrap().len(), 40);
+        }
+
+        let mut pooled_request = request.clone();
+        pooled_request.pooled_indices = vec![2, 2];
+        pooled_request.raw_indices.clear();
+        let mut pooled = Embeddings::default();
+        pooled.insert(2, Embedding::Pooled(vec![1.0, 2.0, 3.0]));
+        assert!(trace::validate_outputs(&pooled_request, &pooled, 3, 4).is_ok());
+
+        let mut missing = Embeddings::default();
+        for index in 0..2 {
+            missing.insert(index, raw(index, 10));
+        }
+        assert!(trace::validate_outputs(&request, &missing, 3, 4).is_err());
+
+        let mut extra = Embeddings::default();
+        for index in 0..4 {
+            extra.insert(index, raw(index, 10));
+        }
+        assert!(trace::validate_outputs(&request, &extra, 3, 4).is_err());
+
+        let mut wrong_shape = Embeddings::default();
+        for index in 0..3 {
+            wrong_shape.insert(index, raw(index, if index == 1 { 9 } else { 10 }));
+        }
+        assert!(trace::validate_outputs(&request, &wrong_shape, 3, 4).is_err());
     }
     #[test]
     #[ignore = "Requires CUDA, INFINITY_OXIDE_TEST_MODEL (MiniLM) and INFINITY_OXIDE_KERNEL_MODULE"]
@@ -3002,5 +4471,649 @@ mod tests {
         let final_a = pooled_bits(backend.embed(a).unwrap());
         assert_pooled_bits(&final_a, &expected_a, hidden);
         backend.health().unwrap();
+    }
+
+    #[test]
+    fn only_the_gte_family_selects_the_native_default_down_policy() {
+        let gte: BertConfig = serde_json::from_value(serde_json::json!({
+            "model_type": "new", "architectures": ["NewModel"],
+            "hidden_size": 768, "intermediate_size": 3072,
+            "num_attention_heads": 12, "num_hidden_layers": 12,
+            "max_position_embeddings": 8192, "vocab_size": 30528,
+            "type_vocab_size": 0, "rope_theta": 500000.0,
+            "rope_scaling": {"type": "ntk", "factor": 2.0}
+        }))
+        .unwrap();
+        assert_eq!(down_policy(&gte), DownPolicy::NativeDefault);
+        assert_eq!(down_policy(&config()), DownPolicy::Existing);
+        let roberta: BertConfig = serde_json::from_value(serde_json::json!({
+            "model_type": "roberta", "architectures": ["RobertaModel"],
+            "hidden_size": 4, "intermediate_size": 8,
+            "num_attention_heads": 2, "num_hidden_layers": 1,
+            "max_position_embeddings": 8, "vocab_size": 4, "type_vocab_size": 1
+        }))
+        .unwrap();
+        assert_eq!(down_policy(&roberta), DownPolicy::Existing);
+    }
+
+    #[test]
+    fn enqueue_classification_keeps_rejections_recoverable_and_fatal_pressure_typed() {
+        let preflight = EnqueueError::PreflightRejected(infer("pure preflight rejected"));
+        assert!(matches!(preflight, EnqueueError::PreflightRejected(_)));
+        assert!(!preflight.poisons());
+
+        let rejected: EnqueueError =
+            ShapeError::Rejected(infer("cold GTE down shape rejected")).into();
+        assert!(matches!(rejected, EnqueueError::Rejected(_)));
+        assert!(!rejected.poisons());
+
+        let fatal: EnqueueError = ShapeError::Fatal(infer("descriptor rollback failed")).into();
+        assert!(matches!(fatal, EnqueueError::Fatal(_)));
+        assert!(fatal.poisons());
+
+        let admission: EnqueueError = BackendError::Overloaded("staging busy".into()).into();
+        assert!(matches!(admission, EnqueueError::Admission(_)));
+        assert!(!admission.poisons());
+
+        let fatal_overloaded: EnqueueError =
+            ShapeError::Fatal(BackendError::Overloaded("fatal pressure".into())).into();
+        assert!(matches!(
+            fatal_overloaded,
+            EnqueueError::Admission(BackendError::Overloaded(_))
+        ));
+        assert!(!fatal_overloaded.poisons());
+
+        let internal: EnqueueError = infer("unexpected runtime failure").into();
+        assert!(matches!(internal, EnqueueError::Fatal(_)));
+        assert!(internal.poisons());
+    }
+
+    fn bf16_bit_mismatch(actual: &[u16], gold: &[u16]) -> Option<(usize, u16, u16)> {
+        if actual.len() != gold.len() {
+            return Some((actual.len().min(gold.len()), 0, 0));
+        }
+        actual
+            .iter()
+            .zip(gold)
+            .enumerate()
+            .find_map(|(index, (&actual, &gold))| (actual != gold).then_some((index, actual, gold)))
+    }
+
+    #[test]
+    fn negative_gold_checker_rejects_one_corrupted_bf16_bit() {
+        let actual = (0..9216u32)
+            .map(|index| index.wrapping_mul(37).rotate_left(3) as u16)
+            .collect::<Vec<_>>();
+        assert!(bf16_bit_mismatch(&actual, &actual).is_none());
+        let mut corrupted = actual.clone();
+        corrupted[9215] ^= 1;
+        assert_eq!(
+            bf16_bit_mismatch(&actual, &corrupted).map(|mismatch| mismatch.0),
+            Some(9215)
+        );
+        assert!(bf16_bit_mismatch(&actual[..9216], &actual[..9215]).is_some());
+    }
+
+    fn read_bf16_bits(path: &Path) -> Vec<u16> {
+        let bytes =
+            std::fs::read(path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+        assert_eq!(
+            bytes.len() % 2,
+            0,
+            "{} is not a raw little-endian BF16 file",
+            path.display()
+        );
+        bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect()
+    }
+
+    fn bf16_bits_finite(bits: u16) -> bool {
+        f32::from_bits(u32::from(bits) << 16).is_finite()
+    }
+
+    fn native_down_queries(provider: &LtProvider, prepared: &PreparedDown) -> usize {
+        match prepared {
+            PreparedDown::NativeDefault { lt_native, .. } => {
+                provider.native_default_queries(lt_native)
+            }
+            PreparedDown::Existing(_) => {
+                panic!("GTE down primitive requires a native-default plan")
+            }
+        }
+    }
+
+    fn native_down_cache_len(provider: &LtProvider, prepared: &PreparedDown) -> usize {
+        match prepared {
+            PreparedDown::NativeDefault { lt_native, .. } => {
+                provider.native_default_cache_len(lt_native)
+            }
+            PreparedDown::Existing(_) => {
+                panic!("GTE down primitive requires a native-default plan")
+            }
+        }
+    }
+
+    fn engine_down_state(backend: &OxideBackend) -> (usize, usize) {
+        let engine = backend.engine.lock().unwrap();
+        let model = match &*engine.model {
+            ExecutableModel::Encoder(model) => model,
+            ExecutableModel::Decoder(_) => panic!("GTE must use encoder plans"),
+        };
+        (
+            native_down_queries(&engine.lt, &model.plans.output),
+            native_down_cache_len(&engine.lt, &model.plans.output),
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_down_result(
+        prepared: &mut PreparedDown,
+        provider: &LtProvider,
+        blas: Option<&Blas>,
+        tokens: usize,
+        x: &DeviceBuffer<Bf16>,
+        weight: &DeviceBuffer<Bf16>,
+        bias: &DeviceBuffer<Bf16>,
+        output: &mut DeviceBuffer<Bf16>,
+        stream: &Stream,
+        width: usize,
+    ) -> Result<(), ShapeError> {
+        prepared.begin_prepare();
+        provider.bind_context().unwrap();
+        // SAFETY: the primitive helper bound the provider context once above;
+        // every buffer remains alive until the readback stream drains.
+        let result = unsafe {
+            prepared.prepare_layer(
+                provider, blas, tokens, x, weight, bias, output, stream, width, 0,
+            )
+        };
+        prepared.end_prepare();
+        result?;
+        // SAFETY: all buffers belong to this provider context and remain alive
+        // until the readback stream drains.
+        unsafe {
+            enqueue_down(
+                prepared, provider, blas, tokens, 0, x, weight, bias, output, stream,
+            )
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn run_down(
+        prepared: &mut PreparedDown,
+        provider: &LtProvider,
+        blas: Option<&Blas>,
+        tokens: usize,
+        x: &DeviceBuffer<Bf16>,
+        weight: &DeviceBuffer<Bf16>,
+        bias: &DeviceBuffer<Bf16>,
+        output: &mut DeviceBuffer<Bf16>,
+        stream: &Stream,
+        width: usize,
+    ) -> Vec<u16> {
+        run_down_result(
+            prepared, provider, blas, tokens, x, weight, bias, output, stream, width,
+        )
+        .unwrap();
+        output
+            .to_host_vec(stream)
+            .unwrap()
+            .iter()
+            .take(tokens * width)
+            .map(|value| value.to_bits())
+            .collect()
+    }
+
+    fn assert_gold_bits(actual: &[u16], gold: &[u16], label: &str) {
+        if let Some((index, actual, gold)) = bf16_bit_mismatch(actual, gold) {
+            panic!("{label} BF16 mismatch at {index}: actual {actual:#06x}, gold {gold:#06x}");
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires CUDA, an actual GTE INFINITY_OXIDE_TEST_MODEL, and INFINITY_OXIDE_KERNEL_MODULE"]
+    fn gte_down_cold_rejection_preserves_held_deferred_and_recovers() {
+        let path = std::env::var_os("INFINITY_OXIDE_TEST_MODEL")
+            .expect("Set INFINITY_OXIDE_TEST_MODEL to a real GTE checkpoint");
+        let new_backend = || {
+            OxideBackend::new(
+                Path::new(&path),
+                "bfloat16",
+                ModelType::Embedding(Pool::Mean),
+                0,
+            )
+            .unwrap()
+        };
+        let a = batch();
+        let b = repeated_sequences(1, 65);
+        let reference = new_backend();
+        let hidden = reference.config.hidden_size();
+        assert_eq!(hidden, 768, "this recovery test requires the GTE 768 shape");
+        assert_eq!(
+            down_policy(match &reference.config {
+                LoadedConfig::Encoder(config) => config,
+                LoadedConfig::Decoder(_) => panic!("GTE must use the encoder executor"),
+            }),
+            DownPolicy::NativeDefault
+        );
+        let expected_a = pooled_bits(reference.embed(a.clone()).unwrap());
+        let expected_b = pooled_bits(reference.embed(b.clone()).unwrap());
+        drop(reference);
+
+        let backend = new_backend();
+        let held_a = backend.submit_embed(a.clone()).unwrap();
+        assert!(matches!(&held_a, Inference::Deferred(_)));
+        let (queries_before, cache_before) = engine_down_state(&backend);
+        {
+            let engine = backend.engine.lock().unwrap();
+            engine.lt.reject_down_shape_once_after(b.input_ids.len(), 0);
+        }
+        let failed = backend.submit_embed(b.clone());
+        let message = match &failed {
+            Err(BackendError::Inference(message)) => message.clone(),
+            _ => panic!("cold B must be rejected as a recoverable inference error"),
+        };
+        assert!(
+            message.contains("algo check status 15"),
+            "the down-only injected AlgoCheck must be the rejection source: {message}"
+        );
+        let rejected = request_counters();
+        assert_eq!(
+            rejected.recovery_drains, 1,
+            "the post-reservation rejection must own exactly one recovery drain"
+        );
+        assert_eq!(
+            (rejected.lease_begins, rejected.uploads, rejected.launches),
+            (0, 0, 0),
+            "rejected B must not reach lease.begin, H2D upload, or a request kernel"
+        );
+        assert_eq!(
+            rejected.engine_context_binds, 1,
+            "the rejected request still uses the regular outer Engine binding"
+        );
+        {
+            let engine = backend.engine.lock().unwrap();
+            assert!(!engine.failed, "recoverable down rejection must not poison");
+            assert!(
+                !engine.io.poisoned(),
+                "recoverable down rejection keeps Io open"
+            );
+            let work = match engine.workspace.as_ref().unwrap() {
+                Workspace::Encoder(work) => work,
+                Workspace::Decoder(_) => panic!("GTE must use the encoder workspace"),
+            };
+            assert!(
+                work.key().0 >= b.input_ids.len(),
+                "the rejected cold shape must have reserved the grown arena first"
+            );
+            assert!(
+                work.key().0 > a.input_ids.len(),
+                "the held result must exercise the arena initialization growth path"
+            );
+        }
+        let (queries_after, cache_after) = engine_down_state(&backend);
+        assert_eq!(
+            queries_after,
+            queries_before + 1,
+            "the rejected cold B must query the heuristic exactly once"
+        );
+        assert_eq!(
+            cache_after, cache_before,
+            "the rejected cold B must not publish or evict persistent cache metadata"
+        );
+
+        let actual_a_held = pooled_bits(held_a.complete().unwrap());
+        assert_pooled_bits(&actual_a_held, &expected_a, hidden);
+        backend.health().unwrap();
+
+        let first_b = pooled_bits(backend.embed(b.clone()).unwrap());
+        assert_pooled_bits(&first_b, &expected_b, hidden);
+        let repeat_b = pooled_bits(backend.embed(b.clone()).unwrap());
+        assert_pooled_bits(&repeat_b, &expected_b, hidden);
+        let hot = request_counters();
+        assert_eq!(
+            hot.recovery_drains, 0,
+            "a hot successful request must not perform a recovery drain"
+        );
+        assert_eq!(
+            hot.engine_context_binds, 1,
+            "the regular outer Engine binding must remain for every request"
+        );
+        assert_eq!(
+            hot.provider_context_queries, 0,
+            "a hot Engine request must not query provider context from any down layer"
+        );
+        assert_eq!(
+            (hot.lease_begins, hot.uploads),
+            (1, 1),
+            "the hot request still reaches exactly one lease begin and H2D upload"
+        );
+        assert!(hot.launches > 0, "the hot request must execute its body");
+        let a_again = pooled_bits(backend.embed(a).unwrap());
+        assert_pooled_bits(&a_again, &expected_a, hidden);
+        backend.health().unwrap();
+    }
+
+    #[test]
+    #[ignore = "Requires CUDA, an actual GTE INFINITY_OXIDE_TEST_MODEL, and INFINITY_OXIDE_KERNEL_MODULE"]
+    fn gte_preflight_rejection_on_fresh_thread_returns_without_recovery_drain() {
+        let path = std::env::var_os("INFINITY_OXIDE_TEST_MODEL")
+            .expect("Set INFINITY_OXIDE_TEST_MODEL to a real GTE checkpoint");
+        std::thread::spawn(move || {
+            let backend = OxideBackend::new(
+                Path::new(&path),
+                "bfloat16",
+                ModelType::Embedding(Pool::Mean),
+                0,
+            )
+            .unwrap();
+            let request = batch();
+            {
+                let engine = backend.engine.lock().unwrap();
+                engine
+                    .lt
+                    .reject_shape_once_after(request.input_ids.len(), 0);
+            }
+            let failed = backend.submit_embed(request.clone());
+            let message = match &failed {
+                Err(BackendError::Inference(message)) => message.clone(),
+                _ => panic!("fresh preflight rejection must be a recoverable inference error"),
+            };
+            assert!(
+                message.contains("algo check status 15"),
+                "the generic preflight AlgoCheck must be the rejection source: {message}"
+            );
+            let counters = request_counters();
+            assert_eq!(
+                counters.recovery_drains, 0,
+                "a pure preflight rejection must return immediately without draining"
+            );
+            assert_eq!(
+                (counters.lease_begins, counters.uploads, counters.launches),
+                (0, 0, 0)
+            );
+            assert_eq!(
+                counters.engine_context_binds, 0,
+                "preflight rejection returns before the outer Engine bind"
+            );
+            {
+                let engine = backend.engine.lock().unwrap();
+                assert!(!engine.failed);
+                assert!(!engine.io.poisoned());
+                assert!(
+                    engine.workspace.is_none(),
+                    "preflight rejection must not reserve an arena"
+                );
+            }
+            backend.health().unwrap();
+            let recovered = pooled_bits(backend.embed(request).unwrap());
+            assert_eq!(recovered.len(), 2);
+            backend.health().unwrap();
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    #[ignore = "Requires CUDA, INFINITY_OXIDE_TEST_MODEL (GTE), INFINITY_OXIDE_GTE_DOWN_INPUT and INFINITY_OXIDE_GTE_DOWN_GOLD"]
+    fn trained_gte_down_default_matches_full_bf16_gold() {
+        const PRESSURE_ROWS: usize = 70;
+        let model = std::env::var_os("INFINITY_OXIDE_TEST_MODEL")
+            .expect("Set INFINITY_OXIDE_TEST_MODEL to a GTE checkpoint");
+        let input_path = std::env::var_os("INFINITY_OXIDE_GTE_DOWN_INPUT")
+            .expect("Set INFINITY_OXIDE_GTE_DOWN_INPUT to raw little-endian BF16 input");
+        let gold_path = std::env::var_os("INFINITY_OXIDE_GTE_DOWN_GOLD")
+            .expect("Set INFINITY_OXIDE_GTE_DOWN_GOLD to raw little-endian BF16 gold");
+        let tokens = std::env::var("INFINITY_OXIDE_GTE_DOWN_TOKENS")
+            .ok()
+            .map(|value| {
+                value
+                    .parse::<usize>()
+                    .expect("GTE down tokens must be a usize")
+            })
+            .unwrap_or(12);
+        assert!(tokens > 0, "GTE down tokens must be nonzero");
+        let hidden: usize = 768;
+        let intermediate: usize = 3072;
+        let host = BertWeights::load(Path::new(&model)).unwrap();
+        assert_eq!(host.config.family, EncoderFamily::Gte);
+        assert_eq!(
+            (host.config.intermediate_size, host.config.hidden_size),
+            (intermediate, hidden)
+        );
+        let input = read_bf16_bits(Path::new(&input_path));
+        let gold = read_bf16_bits(Path::new(&gold_path));
+        assert_eq!(input.len(), tokens * intermediate);
+        assert_eq!(gold.len(), tokens * hidden);
+
+        let context = Context::new(0).unwrap();
+        let stream = context.new_stream().unwrap();
+        let provider = LtProvider::new_native_default(context.clone(), stream.clone()).unwrap();
+        let mut prepared = PreparedDown::new(&provider, &host.config).unwrap();
+        assert!(matches!(prepared, PreparedDown::NativeDefault { .. }));
+        let mut uploader = WeightUploader::new(stream.clone()).unwrap();
+        let layer = host.layers.first().unwrap();
+        let weight = uploader.upload(&[&layer.output.weight]).unwrap();
+        let bias = uploader.upload(&[&layer.output.bias]).unwrap();
+        uploader.finish().unwrap();
+        let host_input = input.into_iter().map(Bf16::from_bits).collect::<Vec<_>>();
+        let capacity_rows = PRESSURE_ROWS.max(tokens);
+        let mut pressure = Vec::with_capacity(capacity_rows * intermediate);
+        for row in 0..capacity_rows {
+            let start = (row % tokens) * intermediate;
+            pressure.extend_from_slice(&host_input[start..start + intermediate]);
+        }
+        let x = DeviceBuffer::from_host(&stream, &pressure).unwrap();
+        let mut output = DeviceBuffer::<Bf16>::zeroed(&stream, capacity_rows * hidden).unwrap();
+        let blas = (tokens == 1).then(|| Blas::new(context.clone(), stream.clone()).unwrap());
+
+        let actual = run_down(
+            &mut prepared,
+            &provider,
+            blas.as_ref(),
+            tokens,
+            &x,
+            &weight,
+            &bias,
+            &mut output,
+            &stream,
+            hidden,
+        );
+        assert_gold_bits(&actual, &gold, &format!("GTE down M={tokens}"));
+
+        if tokens == 1 {
+            assert_eq!(
+                native_down_queries(&provider, &prepared),
+                0,
+                "M1 must use GemmEx without an Lt algorithm query"
+            );
+            let repeated = run_down(
+                &mut prepared,
+                &provider,
+                blas.as_ref(),
+                tokens,
+                &x,
+                &weight,
+                &bias,
+                &mut output,
+                &stream,
+                hidden,
+            );
+            assert_eq!(native_down_queries(&provider, &prepared), 0);
+            assert_gold_bits(&repeated, &gold, "repeated GTE down M=1");
+            let mut corrupted = gold.clone();
+            let corrupted_index = gold.len() / 2;
+            corrupted[corrupted_index] ^= 1;
+            assert_eq!(
+                bf16_bit_mismatch(&repeated, &corrupted).map(|mismatch| mismatch.0),
+                Some(corrupted_index),
+                "a one-bit corrupted M1 gold must be rejected"
+            );
+            let mut wrong_output =
+                DeviceBuffer::<Bf16>::zeroed(&stream, capacity_rows * hidden).unwrap();
+            // SAFETY: the prepared invocation still belongs to this provider
+            // context; the deliberately different output must be rejected before
+            // any bias copy or GEMM.
+            let mismatch = unsafe {
+                enqueue_down(
+                    &mut prepared,
+                    &provider,
+                    blas.as_ref(),
+                    tokens,
+                    0,
+                    &x,
+                    &weight,
+                    &bias,
+                    &mut wrong_output,
+                    &stream,
+                )
+            };
+            assert!(
+                matches!(&mismatch, Err(ShapeError::Fatal(_))),
+                "a mismatched M1 launch buffer must fail closed: {mismatch:?}"
+            );
+            assert!(
+                wrong_output
+                    .to_host_vec(&stream)
+                    .unwrap()
+                    .iter()
+                    .all(|value| value.to_bits() == 0),
+                "a mismatched M1 launch must not copy bias into the wrong output"
+            );
+            return;
+        }
+
+        let queries = native_down_queries(&provider, &prepared);
+        assert_eq!(queries, 1, "first actual M must query the heuristic once");
+        let repeated = run_down(
+            &mut prepared,
+            &provider,
+            blas.as_ref(),
+            tokens,
+            &x,
+            &weight,
+            &bias,
+            &mut output,
+            &stream,
+            hidden,
+        );
+        assert_eq!(
+            native_down_queries(&provider, &prepared),
+            queries,
+            "repeated actual M must reuse the prepared cache entry"
+        );
+        assert_gold_bits(&repeated, &gold, "repeated GTE down M");
+
+        let rejected_rows = if tokens == 65 { 66 } else { 65 };
+        provider.reject_down_shape_once_after(rejected_rows, 0);
+        let rejected = run_down_result(
+            &mut prepared,
+            &provider,
+            blas.as_ref(),
+            rejected_rows,
+            &x,
+            &weight,
+            &bias,
+            &mut output,
+            &stream,
+            hidden,
+        );
+        match &rejected {
+            Err(ShapeError::Rejected(BackendError::Inference(message))) => assert!(
+                message.contains("algo check status 15"),
+                "injected AlgoCheck must be the rejection source: {message}"
+            ),
+            _ => panic!("injected AlgoCheck rejection must roll back: {rejected:?}"),
+        }
+        let after_reject = native_down_queries(&provider, &prepared);
+        assert_eq!(
+            after_reject,
+            queries + 1,
+            "the rejected cold shape must make exactly one heuristic query"
+        );
+        let recovered = run_down(
+            &mut prepared,
+            &provider,
+            blas.as_ref(),
+            tokens,
+            &x,
+            &weight,
+            &bias,
+            &mut output,
+            &stream,
+            hidden,
+        );
+        assert_eq!(
+            native_down_queries(&provider, &prepared),
+            after_reject,
+            "a rejected cold entry must not publish or evict the cached shape"
+        );
+        assert_gold_bits(&recovered, &gold, "recovered GTE down M");
+
+        let queries_before_pressure = native_down_queries(&provider, &prepared);
+        let order = (2..=PRESSURE_ROWS)
+            .filter(|rows| *rows != tokens)
+            .chain(std::iter::once(tokens))
+            .collect::<Vec<_>>();
+        for rows in &order {
+            let bits = run_down(
+                &mut prepared,
+                &provider,
+                blas.as_ref(),
+                *rows,
+                &x,
+                &weight,
+                &bias,
+                &mut output,
+                &stream,
+                hidden,
+            );
+            if let Some(index) = bits.iter().position(|bits| !bf16_bits_finite(*bits)) {
+                panic!("GTE down M={rows} pressure output is non-finite at {index}");
+            }
+            if *rows == tokens {
+                assert_gold_bits(&bits, &gold, "pressure-recovered GTE down M");
+            }
+        }
+        let after_pressure = native_down_queries(&provider, &prepared);
+        assert_eq!(
+            after_pressure,
+            queries_before_pressure + order.len(),
+            "each distinct pressure shape must make exactly one heuristic query"
+        );
+        assert_eq!(
+            native_down_cache_len(&provider, &prepared),
+            64,
+            "bounded metadata cache must evict without rejecting legal shapes"
+        );
+        let returned = run_down(
+            &mut prepared,
+            &provider,
+            blas.as_ref(),
+            tokens,
+            &x,
+            &weight,
+            &bias,
+            &mut output,
+            &stream,
+            hidden,
+        );
+        assert_eq!(
+            native_down_queries(&provider, &prepared),
+            after_pressure,
+            "returning to the trained M must hit the bounded cache"
+        );
+        assert_gold_bits(&returned, &gold, "cache-hit GTE down M");
+
+        let mut corrupted = gold.clone();
+        let corrupted_index = gold.len() / 2;
+        corrupted[corrupted_index] ^= 1;
+        assert_eq!(
+            bf16_bit_mismatch(&returned, &corrupted).map(|mismatch| mismatch.0),
+            Some(corrupted_index),
+            "a one-bit corrupted gold must be rejected"
+        );
     }
 }

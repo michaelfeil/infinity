@@ -10,8 +10,10 @@ use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{instrument, Span};
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "oxide"))]
 use serde::Deserialize;
+#[cfg(any(feature = "libtorch", feature = "oxide"))]
+use std::path::Path;
 
 pub use crate::dtype::DType;
 pub use infinity_v3_backend_core::{block_attention_config, result_memory};
@@ -541,11 +543,6 @@ async fn init_backend(
                 "The plain CUDA backend does not yet support dynamic FP8".into(),
             ));
         }
-        if dense_path.is_some() {
-            return Err(BackendError::Start(
-                "The plain CUDA backend does not yet support Dense projection modules".into(),
-            ));
-        }
         let dtype = match dtype {
             DType::Auto | DType::Bfloat16 => "bfloat16",
             _ => {
@@ -562,27 +559,29 @@ async fn init_backend(
                 "The plain CUDA backend currently supports pooled BERT embeddings only".into(),
             ));
         }
-        if let Some(repo) = api_repo.as_ref() {
-            // Preserve task metadata so the backend can reject unsupported
-            // projection/custom modules instead of silently skipping them.
-            match repo.get("modules.json").await {
-                Ok(_) => {}
-                Err(ApiError::RequestError(error))
-                    if error.status().is_some_and(|status| status.as_u16() == 404) => {}
-                Err(error) => {
-                    return Err(BackendError::Start(format!(
-                        "Could not download Sentence Transformers module metadata: {error}"
-                    )))
-                }
-            }
+        let dense_paths = if let Some(repo) = api_repo.as_ref() {
+            // Oxide must distinguish a genuinely absent `modules.json` from a
+            // failed fetch: a transient error cannot silently drop a trained
+            // projection. The native downloader keeps its existing tolerance.
+            let paths = resolve_oxide_dense_modules(repo.as_ref(), dense_path.clone()).await?;
             download_safetensors(Arc::clone(repo))
                 .await
                 .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
-        }
+            paths
+        } else {
+            local_dense_paths(&model_path.join("modules.json"), dense_path)
+                .map_err(|e| BackendError::Start(e.to_string()))?
+        };
         let startup_span = Span::current();
         let model = tokio::task::spawn_blocking(move || {
             startup_span.in_scope(|| {
-                infinity_backend_oxide::OxideBackend::new(&model_path, dtype, model_type, device_id)
+                infinity_backend_oxide::OxideBackend::new_with_dense_paths(
+                    &model_path,
+                    dtype,
+                    model_type,
+                    device_id,
+                    dense_paths,
+                )
             })
         })
         .await
@@ -642,22 +641,9 @@ async fn init_libtorch_backend(
             } else {
                 Some(paths)
             }
-        } else if let Some(override_path) = dense_path {
-            let modules = model_path.join("modules.json");
-            if modules.exists() {
-                let paths = parse_dense_paths_from_modules(&modules)
-                    .await
-                    .map_err(|e| BackendError::Start(e.to_string()))?;
-                if paths.len() > 1 {
-                    Some(paths)
-                } else {
-                    Some(vec![override_path])
-                }
-            } else {
-                Some(vec![override_path])
-            }
         } else {
-            None
+            local_dense_paths(&model_path.join("modules.json"), dense_path)
+                .map_err(|e| BackendError::Start(e.to_string()))?
         };
         let device = torch_device.resolved()?.name(device_id);
         let startup_span = Span::current();
@@ -1014,14 +1000,6 @@ mod startup_tests {
                 "dynamic FP8",
             ),
             (
-                DType::Bfloat16,
-                ModelType::Embedding(Pool::Mean),
-                Some("dense".into()),
-                false,
-                TorchDevice::Cuda,
-                "Dense projection",
-            ),
-            (
                 DType::Float16,
                 ModelType::Embedding(Pool::Mean),
                 None,
@@ -1056,7 +1034,8 @@ mod startup_tests {
     }
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "oxide"))]
+#[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 enum ModuleType {
     // Output quantization is omitted when serving floating-point embeddings.
@@ -1088,7 +1067,7 @@ enum ModuleType {
     Transformer,
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "oxide"))]
 #[derive(Debug, Clone, Deserialize)]
 struct ModuleConfig {
     #[allow(dead_code)]
@@ -1102,16 +1081,14 @@ struct ModuleConfig {
     module_type: ModuleType,
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "oxide"))]
 async fn download_file(api: &ApiRepo, file_path: &str) -> Result<PathBuf, ApiError> {
     tracing::info!("Downloading `{}`", file_path);
     api.get(file_path).await
 }
 
-#[cfg(feature = "libtorch")]
-async fn parse_dense_paths_from_modules(
-    modules_path: &PathBuf,
-) -> Result<Vec<String>, std::io::Error> {
+#[cfg(any(feature = "libtorch", feature = "oxide"))]
+fn parse_dense_paths_from_modules_sync(modules_path: &Path) -> Result<Vec<String>, std::io::Error> {
     let content = std::fs::read_to_string(modules_path)?;
     let modules: Vec<ModuleConfig> = serde_json::from_str(&content)
         .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
@@ -1123,7 +1100,225 @@ async fn parse_dense_paths_from_modules(
         .collect::<Vec<String>>())
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "oxide"))]
+async fn parse_dense_paths_from_modules(
+    modules_path: &Path,
+) -> Result<Vec<String>, std::io::Error> {
+    parse_dense_paths_from_modules_sync(modules_path)
+}
+
+/// Result of fetching the optional Sentence Transformers `modules.json`.
+#[cfg(feature = "oxide")]
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ModulesFetch {
+    /// The checkpoint genuinely has no `modules.json` (HTTP 404).
+    Absent,
+    /// The file was fetched successfully.
+    Contents(String),
+    /// Fetching or reading the file failed for any reason other than absence.
+    Failed(String),
+}
+
+/// Classify a fetch status. Only a genuine 404 means the optional metadata is
+/// absent; every other failure must stop startup instead of dropping Dense.
+#[cfg(feature = "oxide")]
+fn classify_modules_status(status: Option<u16>, message: String) -> ModulesFetch {
+    match status {
+        Some(404) => ModulesFetch::Absent,
+        Some(status) => ModulesFetch::Failed(format!("HTTP {status}: {message}")),
+        None => ModulesFetch::Failed(message),
+    }
+}
+
+#[cfg(feature = "oxide")]
+fn api_error_status(error: &ApiError) -> Option<u16> {
+    match error {
+        ApiError::RequestError(error) => error.status().map(|status| status.as_u16()),
+        ApiError::TooManyRetries(error) => api_error_status(error),
+        _ => None,
+    }
+}
+
+/// Metadata entry owned by the Oxide discovery path. Unlike `ModuleConfig`,
+/// non-Dense modules may omit `path` (notably a valid root Transformer), while
+/// a Dense entry without a path is rejected before any model starts.
+#[cfg(feature = "oxide")]
+#[derive(Debug, Deserialize)]
+struct OxideModuleMetadata {
+    #[serde(rename = "type")]
+    kind: String,
+    #[serde(default)]
+    path: Option<String>,
+}
+
+#[cfg(feature = "oxide")]
+fn is_oxide_dense_module_type(kind: &str) -> bool {
+    kind.starts_with("sentence_transformers.") && kind.rsplit('.').next() == Some("Dense")
+}
+
+#[cfg(feature = "oxide")]
+fn validate_oxide_dense_path(path: &str) -> Result<(), String> {
+    use std::path::Component;
+    if path.is_empty()
+        || path.contains('\\')
+        || !Path::new(path)
+            .components()
+            .all(|part| matches!(part, Component::Normal(_)))
+    {
+        return Err(
+            "Dense module path must be a nonempty relative path inside the model directory".into(),
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "oxide")]
+fn oxide_declared_dense_paths(contents: &str) -> Result<Vec<String>, String> {
+    let modules: Vec<OxideModuleMetadata> = serde_json::from_str(contents)
+        .map_err(|error| format!("malformed modules.json: {error}"))?;
+    let mut paths = Vec::new();
+    for module in modules {
+        if !is_oxide_dense_module_type(&module.kind) {
+            continue;
+        }
+        let path = module
+            .path
+            .ok_or_else(|| "Dense module metadata is missing its path".to_string())?;
+        validate_oxide_dense_path(&path)?;
+        paths.push(path);
+    }
+    Ok(paths)
+}
+
+/// Resolve the ordered Dense path list from a strict metadata fetch plus the
+/// explicit `--dense-path` policy: a single discovered module may be
+/// overridden, multiple modules keep authoritative metadata order, and any
+/// absence/zero-Dense result uses the explicit override when present.
+#[cfg(feature = "oxide")]
+fn oxide_dense_paths(
+    fetched: ModulesFetch,
+    override_path: Option<String>,
+) -> Result<Option<Vec<String>>, String> {
+    let declared = match fetched {
+        ModulesFetch::Absent => Vec::new(),
+        ModulesFetch::Contents(contents) => oxide_declared_dense_paths(&contents)?,
+        ModulesFetch::Failed(error) => {
+            return Err(format!("could not fetch modules.json: {error}"));
+        }
+    };
+    if declared.len() <= 1 {
+        if let Some(path) = override_path.as_deref() {
+            validate_oxide_dense_path(path)?;
+        }
+    }
+    match declared.len() {
+        0 => Ok(override_path.map(|path| vec![path])),
+        1 => {
+            let Some(discovered) = declared.into_iter().next() else {
+                return Err("Dense module metadata disappeared during resolution".into());
+            };
+            Ok(Some(vec![override_path.unwrap_or(discovered)]))
+        }
+        _ => Ok(Some(declared)),
+    }
+}
+
+#[cfg(feature = "oxide")]
+trait DenseModuleSource {
+    type ModulesFuture<'a>: std::future::Future<Output = ModulesFetch> + Send + 'a
+    where
+        Self: 'a;
+    type DownloadFuture<'a>: std::future::Future<Output = Result<(), String>> + Send + 'a
+    where
+        Self: 'a;
+
+    fn fetch_modules(&self) -> Self::ModulesFuture<'_>;
+    fn download_module<'a>(&'a self, path: &'a str) -> Self::DownloadFuture<'a>;
+}
+
+#[cfg(feature = "oxide")]
+impl DenseModuleSource for ApiRepo {
+    type ModulesFuture<'a>
+        = std::pin::Pin<Box<dyn std::future::Future<Output = ModulesFetch> + Send + 'a>>
+    where
+        Self: 'a;
+    type DownloadFuture<'a>
+        = std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>>
+    where
+        Self: 'a;
+
+    fn fetch_modules(&self) -> Self::ModulesFuture<'_> {
+        Box::pin(async move {
+            match download_file(self, "modules.json").await {
+                Ok(path) => match std::fs::read_to_string(&path) {
+                    Ok(contents) => ModulesFetch::Contents(contents),
+                    Err(error) => ModulesFetch::Failed(format!(
+                        "could not read `{}`: {error}",
+                        path.display()
+                    )),
+                },
+                Err(error) => classify_modules_status(api_error_status(&error), error.to_string()),
+            }
+        })
+    }
+
+    fn download_module<'a>(&'a self, path: &'a str) -> Self::DownloadFuture<'a> {
+        Box::pin(async move {
+            download_dense_module(self, path)
+                .await
+                .map(|_| ())
+                .map_err(|error| error.to_string())
+        })
+    }
+}
+
+/// Strict Oxide remote Dense discovery. Metadata failures and required module
+/// download failures surface as typed startup errors; only genuine absence or
+/// a metadata file with zero Dense modules can resolve to no projection.
+#[cfg(feature = "oxide")]
+async fn resolve_oxide_dense_modules<S: DenseModuleSource + Sync>(
+    source: &S,
+    override_path: Option<String>,
+) -> Result<Option<Vec<String>>, BackendError> {
+    let paths = oxide_dense_paths(source.fetch_modules().await, override_path)
+        .map_err(|error| BackendError::Start(format!("Oxide Dense discovery failed: {error}")))?;
+    if let Some(paths) = &paths {
+        for path in paths {
+            source.download_module(path).await.map_err(|error| {
+                BackendError::Start(format!(
+                    "Oxide Dense module `{path}` could not be downloaded: {error}"
+                ))
+            })?;
+        }
+    }
+    Ok(paths)
+}
+
+/// Local `--dense-path` policy shared with the native loader: one discovered
+/// Dense module may be overridden, while multiple sequential modules must all
+/// come from `modules.json`. With no Sentence Transformers metadata, the
+/// explicit path is used as the only module.
+#[cfg(any(feature = "libtorch", feature = "oxide"))]
+fn local_dense_paths(
+    modules_path: &Path,
+    override_path: Option<String>,
+) -> Result<Option<Vec<String>>, std::io::Error> {
+    let Some(override_path) = override_path else {
+        return Ok(None);
+    };
+    if modules_path.exists() {
+        let paths = parse_dense_paths_from_modules_sync(modules_path)?;
+        if paths.len() > 1 {
+            Ok(Some(paths))
+        } else {
+            Ok(Some(vec![override_path]))
+        }
+    } else {
+        Ok(Some(vec![override_path]))
+    }
+}
+
+#[cfg(any(feature = "libtorch", feature = "oxide"))]
 #[instrument(skip_all)]
 pub async fn download_dense_modules(
     api: &ApiRepo,
@@ -1203,7 +1398,7 @@ pub async fn download_dense_modules(
     }
 }
 
-#[cfg(feature = "libtorch")]
+#[cfg(any(feature = "libtorch", feature = "oxide"))]
 async fn download_dense_module(api: &ApiRepo, dense_path: &str) -> Result<PathBuf, ApiError> {
     // Download `config.json` for the Dense module
     let config_file = format!("{}/config.json", dense_path);
@@ -1484,5 +1679,326 @@ mod completion_tests {
         assert!(commands.is_closed());
         assert_eq!(dropped.load(Ordering::SeqCst), 1);
         assert_eq!(completed.load(Ordering::SeqCst), 3);
+    }
+}
+
+#[cfg(all(test, any(feature = "libtorch", feature = "oxide")))]
+mod dense_module_tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    struct Fixture(PathBuf);
+
+    impl Fixture {
+        fn new() -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
+            let path = std::env::temp_dir().join(format!(
+                "infinity-dense-paths-{}-{}",
+                std::process::id(),
+                NEXT.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+
+        fn modules(&self, paths: &[&str]) {
+            let entries = paths
+                .iter()
+                .map(|path| {
+                    serde_json::json!({
+                        "type": "sentence_transformers.models.Dense",
+                        "path": path
+                    })
+                })
+                .collect::<Vec<_>>();
+            self.write_modules(serde_json::Value::Array(entries));
+        }
+
+        fn write_modules(&self, modules: serde_json::Value) {
+            fs::write(
+                self.0.join("modules.json"),
+                serde_json::to_vec(&modules).unwrap(),
+            )
+            .unwrap();
+        }
+
+        fn modules_path(&self) -> PathBuf {
+            self.0.join("modules.json")
+        }
+    }
+
+    impl Drop for Fixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn local_override_replaces_a_single_discovered_dense_module() {
+        let fixture = Fixture::new();
+        fixture.modules(&["2_Dense"]);
+        assert_eq!(
+            local_dense_paths(&fixture.modules_path(), Some("override_Dense".into())).unwrap(),
+            Some(vec!["override_Dense".into()])
+        );
+    }
+
+    #[test]
+    fn local_override_is_ignored_for_multiple_dense_modules() {
+        let fixture = Fixture::new();
+        fixture.modules(&["2_Dense", "3_Dense"]);
+        assert_eq!(
+            local_dense_paths(&fixture.modules_path(), Some("override_Dense".into())).unwrap(),
+            Some(vec!["2_Dense".into(), "3_Dense".into()])
+        );
+    }
+
+    #[test]
+    fn explicit_dense_path_works_without_sentence_transformer_metadata() {
+        let fixture = Fixture::new();
+        assert_eq!(
+            local_dense_paths(&fixture.modules_path(), Some("2_Dense".into())).unwrap(),
+            Some(vec!["2_Dense".into()])
+        );
+        assert_eq!(
+            local_dense_paths(&fixture.modules_path(), None).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn malformed_dense_metadata_is_reported_for_local_overrides() {
+        let fixture = Fixture::new();
+        fs::write(fixture.modules_path(), b"not json").unwrap();
+        assert!(local_dense_paths(&fixture.modules_path(), Some("2_Dense".into())).is_err());
+    }
+}
+
+#[cfg(all(test, feature = "oxide"))]
+mod oxide_dense_discovery_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct FakeDenseSource {
+        modules: ModulesFetch,
+        available: Vec<String>,
+        downloads: Mutex<Vec<String>>,
+    }
+
+    impl FakeDenseSource {
+        fn new(modules: ModulesFetch, available: &[&str]) -> Self {
+            Self {
+                modules,
+                available: available.iter().map(|path| (*path).into()).collect(),
+                downloads: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn downloaded(&self) -> Vec<String> {
+            self.downloads.lock().unwrap().clone()
+        }
+    }
+
+    impl DenseModuleSource for FakeDenseSource {
+        type ModulesFuture<'a>
+            = std::future::Ready<ModulesFetch>
+        where
+            Self: 'a;
+        type DownloadFuture<'a>
+            = std::future::Ready<Result<(), String>>
+        where
+            Self: 'a;
+
+        fn fetch_modules(&self) -> Self::ModulesFuture<'_> {
+            std::future::ready(self.modules.clone())
+        }
+
+        fn download_module<'a>(&'a self, path: &'a str) -> Self::DownloadFuture<'a> {
+            self.downloads.lock().unwrap().push(path.to_owned());
+            let available = self.available.iter().any(|available| available == path);
+            std::future::ready(if available {
+                Ok(())
+            } else {
+                Err(format!("module `{path}` is missing"))
+            })
+        }
+    }
+
+    fn contents(modules: serde_json::Value) -> ModulesFetch {
+        ModulesFetch::Contents(serde_json::to_string(&modules).unwrap())
+    }
+
+    #[test]
+    fn fetch_status_classifies_only_genuine_404_as_absent() {
+        assert_eq!(
+            classify_modules_status(Some(404), "not found".into()),
+            ModulesFetch::Absent
+        );
+        assert_eq!(
+            classify_modules_status(Some(503), "unavailable".into()),
+            ModulesFetch::Failed("HTTP 503: unavailable".into())
+        );
+        assert_eq!(
+            classify_modules_status(None, "connection reset".into()),
+            ModulesFetch::Failed("connection reset".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn non_404_metadata_failure_fails_closed_even_with_override() {
+        for override_path in [None, Some("2_Dense".to_owned())] {
+            let source =
+                FakeDenseSource::new(ModulesFetch::Failed("HTTP 503".into()), &["2_Dense"]);
+            let error = resolve_oxide_dense_modules(&source, override_path)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, BackendError::Start(_)));
+            assert!(error.to_string().contains("modules.json"), "{error}");
+            assert!(source.downloaded().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn remote_404_without_override_discovers_no_dense() {
+        let source = FakeDenseSource::new(ModulesFetch::Absent, &[]);
+        assert_eq!(
+            resolve_oxide_dense_modules(&source, None).await.unwrap(),
+            None
+        );
+        assert!(source.downloaded().is_empty());
+    }
+
+    #[tokio::test]
+    async fn remote_404_with_explicit_override_downloads_and_forwards_it() {
+        let source = FakeDenseSource::new(ModulesFetch::Absent, &["2_Dense"]);
+        assert_eq!(
+            resolve_oxide_dense_modules(&source, Some("2_Dense".into()))
+                .await
+                .unwrap(),
+            Some(vec!["2_Dense".into()])
+        );
+        assert_eq!(source.downloaded(), ["2_Dense"]);
+    }
+
+    #[tokio::test]
+    async fn explicit_override_that_cannot_be_downloaded_fails_startup() {
+        let source = FakeDenseSource::new(ModulesFetch::Absent, &[]);
+        let error = resolve_oxide_dense_modules(&source, Some("2_Dense".into()))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, BackendError::Start(_)));
+        assert!(error.to_string().contains("2_Dense"), "{error}");
+        assert_eq!(source.downloaded(), ["2_Dense"]);
+    }
+
+    #[tokio::test]
+    async fn zero_dense_metadata_uses_explicit_override_but_auto_empty_stays_none() {
+        let modules = serde_json::json!([
+            {"type": "sentence_transformers.models.Transformer"},
+            {"type": "sentence_transformers.models.Pooling", "path": "1_Pooling"}
+        ]);
+        let source = FakeDenseSource::new(contents(modules.clone()), &[]);
+        assert_eq!(
+            resolve_oxide_dense_modules(&source, None).await.unwrap(),
+            None
+        );
+        assert!(source.downloaded().is_empty());
+
+        let source = FakeDenseSource::new(contents(modules), &["2_Dense"]);
+        assert_eq!(
+            resolve_oxide_dense_modules(&source, Some("2_Dense".into()))
+                .await
+                .unwrap(),
+            Some(vec!["2_Dense".into()])
+        );
+        assert_eq!(source.downloaded(), ["2_Dense"]);
+    }
+
+    #[tokio::test]
+    async fn single_discovered_dense_module_can_be_overridden() {
+        let modules = serde_json::json!([
+            {"type": "sentence_transformers.models.Transformer"},
+            {"type": "sentence_transformers.models.Pooling", "path": "1_Pooling"},
+            {"type": "sentence_transformers.models.Dense", "path": "2_Dense_1024"}
+        ]);
+        let source = FakeDenseSource::new(contents(modules.clone()), &["2_Dense_1024"]);
+        assert_eq!(
+            resolve_oxide_dense_modules(&source, None).await.unwrap(),
+            Some(vec!["2_Dense_1024".into()])
+        );
+        assert_eq!(source.downloaded(), ["2_Dense_1024"]);
+
+        let source = FakeDenseSource::new(contents(modules), &["2_Dense", "2_Dense_1024"]);
+        assert_eq!(
+            resolve_oxide_dense_modules(&source, Some("2_Dense".into()))
+                .await
+                .unwrap(),
+            Some(vec!["2_Dense".into()])
+        );
+        assert_eq!(source.downloaded(), ["2_Dense"]);
+    }
+
+    #[tokio::test]
+    async fn multiple_dense_modules_keep_metadata_order_and_ignore_override() {
+        let modules = serde_json::json!([
+            {"type": "sentence_transformers.models.Dense", "path": "3_Dense"},
+            {"type": "sentence_transformers.models.Transformer"},
+            {"type": "sentence_transformers.models.Pooling", "path": "1_Pooling"},
+            {"type": "sentence_transformers.models.Dense", "path": "2_Dense"}
+        ]);
+        let source =
+            FakeDenseSource::new(contents(modules), &["3_Dense", "2_Dense", "override_Dense"]);
+        assert_eq!(
+            // Multiple authoritative modules ignore even an unusable override.
+            resolve_oxide_dense_modules(&source, Some("../ignored_Dense".into()))
+                .await
+                .unwrap(),
+            Some(vec!["3_Dense".into(), "2_Dense".into()])
+        );
+        assert_eq!(source.downloaded(), ["3_Dense", "2_Dense"]);
+    }
+
+    #[tokio::test]
+    async fn valid_transformer_without_path_and_three_dense_modules_load_in_order() {
+        let modules = serde_json::json!([
+            {"type": "sentence_transformers.models.Transformer"},
+            {"type": "sentence_transformers.models.Pooling", "path": "1_Pooling"},
+            {"type": "sentence_transformers.models.Dense", "path": "2_Dense"},
+            {"type": "sentence_transformers.base.modules.dense.Dense", "path": "3_Dense"},
+            {"type": "sentence_transformers.models.Dense", "path": "4_Dense"}
+        ]);
+        let source = FakeDenseSource::new(contents(modules), &["2_Dense", "3_Dense", "4_Dense"]);
+        assert_eq!(
+            resolve_oxide_dense_modules(&source, None).await.unwrap(),
+            Some(vec!["2_Dense".into(), "3_Dense".into(), "4_Dense".into()])
+        );
+        assert_eq!(source.downloaded(), ["2_Dense", "3_Dense", "4_Dense"]);
+    }
+
+    #[tokio::test]
+    async fn malformed_metadata_and_invalid_dense_paths_fail_before_startup() {
+        for contents in [
+            "not json".to_owned(),
+            serde_json::json!([{"type": "sentence_transformers.models.Dense"}]).to_string(),
+            serde_json::json!([{
+                "type": "sentence_transformers.models.Dense",
+                "path": "../escape"
+            }])
+            .to_string(),
+            serde_json::json!([{
+                "type": "sentence_transformers.models.Dense",
+                "path": ""
+            }])
+            .to_string(),
+        ] {
+            let source = FakeDenseSource::new(ModulesFetch::Contents(contents), &["2_Dense"]);
+            let error = resolve_oxide_dense_modules(&source, Some("2_Dense".into()))
+                .await
+                .unwrap_err();
+            assert!(matches!(error, BackendError::Start(_)));
+            assert!(source.downloaded().is_empty());
+        }
     }
 }

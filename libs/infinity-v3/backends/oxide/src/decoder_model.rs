@@ -614,7 +614,13 @@ fn validate_decoder_modules(path: &Path) -> Result<(), BackendError> {
         path: Option<String>,
     }
     let modules: Vec<Module> = read_json(&file)?;
+    // Admitted Dense projections are validated and executed by the shared Dense
+    // chain loader. Every other module keeps the strict legacy pipeline order.
+    let mut strict = Vec::new();
     for module in &modules {
+        if crate::dense::is_dense_module_type(&module.kind) {
+            continue;
+        }
         if !matches!(
             module.kind.as_str(),
             "sentence_transformers.models.Transformer"
@@ -626,8 +632,9 @@ fn validate_decoder_modules(path: &Path) -> Result<(), BackendError> {
                 module.kind
             )));
         }
+        strict.push(module);
     }
-    let transformer = modules
+    let transformer = strict
         .iter()
         .find(|module| module.kind == "sentence_transformers.models.Transformer")
         .ok_or_else(|| start("missing sentence-transformers Transformer module"))?;
@@ -640,7 +647,7 @@ fn validate_decoder_modules(path: &Path) -> Result<(), BackendError> {
             "sentence-transformers Transformer module path must be the checkpoint root",
         ));
     }
-    let kinds = modules
+    let kinds = strict
         .iter()
         .map(|module| module.kind.as_str())
         .collect::<Vec<_>>();
@@ -660,7 +667,7 @@ fn validate_decoder_modules(path: &Path) -> Result<(), BackendError> {
             ))
         }
     }
-    let pooling = modules
+    let pooling = strict
         .iter()
         .find(|module| module.kind == "sentence_transformers.models.Pooling")
         .ok_or_else(|| start("missing sentence-transformers Pooling module"))?;
@@ -1413,7 +1420,7 @@ mod tests {
         let fixture = Fixture::new();
         fixture.write_modules(serde_json::json!([
             {"type": "sentence_transformers.models.Transformer"},
-            {"type": "sentence_transformers.models.Dense"}
+            {"type": "sentence_transformers.models.CustomProjection"}
         ]));
         let error = fixture.error();
         assert!(error.contains("must not be ignored"), "{error}");
@@ -1447,6 +1454,21 @@ mod tests {
             error.contains("Transformer module path must be the checkpoint root"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn admits_dense_entries_for_the_shared_dense_loader() {
+        let fixture = Fixture::new();
+        let config = fixture.config_from_disk();
+        fixture.write_entries(&entries(&config, "model.", Biases::default()), false);
+        fixture.write_modules(serde_json::json!([
+            {"type": "sentence_transformers.models.Transformer", "path": ""},
+            {"type": "sentence_transformers.models.Pooling", "path": "1_Pooling"},
+            {"type": "sentence_transformers.models.Dense", "path": "2_Dense"}
+        ]));
+        fixture.write_pooling(true, false);
+        let loaded = DecoderWeights::load(&fixture.0).unwrap();
+        assert_eq!(loaded.layers.len(), config.num_hidden_layers);
     }
 
     #[test]

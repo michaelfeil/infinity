@@ -6,7 +6,10 @@
 //! Row kernels launch exactly 256 threads; scalar kernels use a 1D grid.
 
 use cuda_device::{DynamicSharedArray, SharedArray, convert, cuda_module, kernel, thread, warp};
+mod aten_embedding;
 mod decoder;
+mod dense;
+mod gated;
 mod norm1024;
 mod norm1024_exact_vector;
 mod norm2048;
@@ -681,6 +684,40 @@ mod kernels {
     ) {
         unsafe {
             super::layer_norm::<true>(input, residual, bias, gamma, beta, out, rows, width, eps)
+        };
+    }
+
+    /// Rounded BF16 gated GELU with gate in the second packed half.
+    /// Grid=ceil(rows*width/256), block=256; input and output must not alias.
+    #[kernel]
+    pub unsafe fn infinity_gated_gelu_up_first(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::gated::gated_gelu_up_first(input, out, rows, width) };
+    }
+
+    // Derived from public PyTorch ATen layer_norm_kernel.cu at commit
+    // 5c4886908584029761b579af026dcfb627c84070. The full BSD-3-Clause
+    // notice is preserved in aten_embedding.rs.
+
+    #[kernel]
+    pub unsafe fn infinity_embedding_norm_word_768_aten(
+        ids: *const u32,
+        word: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::aten_embedding::embedding_norm_word_768_aten(
+                ids, word, gamma, beta, out, rows, width, eps,
+            )
         };
     }
 
@@ -1377,6 +1414,18 @@ mod kernels {
                 mode,
             )
         };
+    }
+
+    /// Convert contiguous FP32 to BF16; grid=ceil(count/256), block=256.
+    #[kernel]
+    pub unsafe fn infinity_f32_to_bf16(input: *const f32, out: *mut u16, count: u32) {
+        unsafe { crate::dense::f32_to_bf16(input, out, count) };
+    }
+
+    /// Apply float Tanh to BF16 storage in place; grid=ceil(count/256), block=256.
+    #[kernel]
+    pub unsafe fn infinity_dense_tanh_bf16_inplace(input: *mut u16, count: u32) {
+        unsafe { crate::dense::tanh_bf16_inplace(input, count) };
     }
 
     /// Widen selected BF16 rows to FP32; grid=ceil(count*width/256).

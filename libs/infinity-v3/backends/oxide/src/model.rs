@@ -18,7 +18,7 @@ const READ_SCRATCH_BYTES: usize = 64 * 1024;
 const NONFINITE: &str = "invalid or nonfinite checkpoint weights";
 const MAX_SIDECAR_BYTES: u64 = 16 * 1024 * 1024;
 
-fn start(error: impl std::fmt::Display) -> BackendError {
+pub(crate) fn start(error: impl std::fmt::Display) -> BackendError {
     BackendError::Start(format!("Oxide: {error}"))
 }
 
@@ -61,6 +61,7 @@ pub(crate) enum EncoderFamily {
     XlmRoberta,
     Camembert,
     DistilBert,
+    Gte,
 }
 impl EncoderFamily {
     fn from_model_type(model_type: &str) -> Option<Self> {
@@ -70,6 +71,7 @@ impl EncoderFamily {
             "xlm-roberta" => Some(Self::XlmRoberta),
             "camembert" => Some(Self::Camembert),
             "distilbert" => Some(Self::DistilBert),
+            "new" | "gte" => Some(Self::Gte),
             _ => None,
         }
     }
@@ -81,6 +83,7 @@ impl EncoderFamily {
                 &["roberta.", "xlm-roberta.", "camembert.", ""]
             }
             Self::DistilBert => &["distilbert.", ""],
+            Self::Gte => &["new.", ""],
         }
     }
 
@@ -100,6 +103,7 @@ impl EncoderFamily {
             ),
             Self::Camembert => matches!(architecture, "CamembertModel" | "CamembertForMaskedLM"),
             Self::DistilBert => matches!(architecture, "DistilBertModel" | "DistilBertForMaskedLM"),
+            Self::Gte => matches!(architecture, "NewModel"),
         }
     }
 }
@@ -111,25 +115,51 @@ pub(crate) enum NormArithmetic {
     ExactBiased,
     /// Round embedding/residual additions to BF16 before normalization statistics.
     RoundedAddBeforeStats,
+    /// ATen vectorized Welford statistics for the GTE word-only embedding norm.
+    AtenEmbedding,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct RotaryRecipe {
+    pub(crate) theta: f64,
+    pub(crate) ntk_factor: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum PositionRecipe {
+    Absolute,
+    Rotary(RotaryRecipe),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum FeedForwardRecipe {
+    DenseGelu,
+    GatedGeluUpFirst,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct EncoderRecipe {
     pub(crate) embedding: NormArithmetic,
     pub(crate) residual: NormArithmetic,
+    pub(crate) positions: PositionRecipe,
+    pub(crate) feed_forward: FeedForwardRecipe,
 }
 impl EncoderRecipe {
     fn for_family(family: EncoderFamily, hidden_size: usize) -> Self {
-        if family != EncoderFamily::DistilBert && matches!(hidden_size, 384 | 768) {
-            Self {
-                embedding: NormArithmetic::ExactBiased,
-                residual: NormArithmetic::ExactBiased,
-            }
-        } else {
-            Self {
-                embedding: NormArithmetic::RoundedAddBeforeStats,
-                residual: NormArithmetic::RoundedAddBeforeStats,
-            }
+        let (embedding, residual) =
+            if family != EncoderFamily::DistilBert && matches!(hidden_size, 384 | 768) {
+                (NormArithmetic::ExactBiased, NormArithmetic::ExactBiased)
+            } else {
+                (
+                    NormArithmetic::RoundedAddBeforeStats,
+                    NormArithmetic::RoundedAddBeforeStats,
+                )
+            };
+        Self {
+            embedding,
+            residual,
+            positions: PositionRecipe::Absolute,
+            feed_forward: FeedForwardRecipe::DenseGelu,
         }
     }
 }
@@ -146,6 +176,7 @@ struct RawEncoderConfig {
     vocab_size: Option<usize>,
     type_vocab_size: Option<usize>,
     layer_norm_eps: Option<f64>,
+    layer_norm_type: Option<String>,
     hidden_act: Option<String>,
     activation: Option<String>,
     position_embedding_type: Option<String>,
@@ -155,8 +186,22 @@ struct RawEncoderConfig {
     hidden_dim: Option<usize>,
     n_heads: Option<usize>,
     n_layers: Option<usize>,
+    rope_theta: Option<f64>,
+    rope_scaling: Option<RawRopeScaling>,
+    pack_qkv: Option<bool>,
+    logn_attention_scale: Option<bool>,
+    logn_attention_clip1: Option<bool>,
     // DistilBERT's sinusoidal flag controls initialization, not lookup of a
     // checkpoint position table. The stored table remains required below.
+}
+
+#[derive(Debug, Deserialize)]
+struct RawRopeScaling {
+    #[serde(rename = "type")]
+    kind: Option<String>,
+    factor: Option<f64>,
+    #[serde(flatten)]
+    extra: BTreeMap<String, serde_json::Value>,
 }
 
 impl<'de> Deserialize<'de> for BertConfig {
@@ -232,7 +277,7 @@ impl BertConfig {
     fn from_raw(raw: RawEncoderConfig) -> Result<Self, BackendError> {
         let family = EncoderFamily::from_model_type(&raw.model_type).ok_or_else(|| {
             start(format!(
-                "unsupported encoder model_type {}; expected bert, roberta, xlm-roberta, camembert or distilbert",
+                "unsupported encoder model_type {}; expected bert, roberta, xlm-roberta, camembert, distilbert or GTE NewModel",
                 raw.model_type
             ))
         })?;
@@ -295,6 +340,74 @@ impl BertConfig {
         } else {
             raw.hidden_act.unwrap_or_else(|| "gelu".into())
         };
+        let gte = family == EncoderFamily::Gte;
+        if gte
+            && raw
+                .layer_norm_type
+                .as_deref()
+                .is_some_and(|kind| kind != "layer_norm")
+        {
+            return Err(start("GTE NewModel requires layer_norm normalization"));
+        }
+        if gte && raw.pack_qkv == Some(false) {
+            return Err(start("GTE NewModel requires packed QKV weights"));
+        }
+        if gte && (raw.logn_attention_scale == Some(true) || raw.logn_attention_clip1 == Some(true))
+        {
+            return Err(start("GTE logn attention scaling is not supported"));
+        }
+        let type_vocab_size = if gte {
+            match raw.type_vocab_size {
+                None | Some(0) => 1,
+                Some(value) => {
+                    return Err(start(format!(
+                        "GTE NewModel type_vocab_size must be 0, got {value}"
+                    )))
+                }
+            }
+        } else {
+            raw.type_vocab_size.unwrap_or(DISTIL_TOKEN_TYPE_ROWS)
+        };
+        let position_embedding_type = raw.position_embedding_type.unwrap_or_else(|| {
+            if gte {
+                "rope".into()
+            } else {
+                "absolute".into()
+            }
+        });
+        let recipe = if gte {
+            let ntk_factor = match raw.rope_scaling.as_ref() {
+                None => None,
+                Some(scaling) => {
+                    if let Some(field) = scaling.extra.keys().next() {
+                        return Err(start(format!("unsupported GTE rope_scaling field {field}")));
+                    }
+                    if matches!(scaling.kind.as_deref(), Some(kind) if kind != "ntk") {
+                        return Err(start("GTE rope_scaling type must be ntk"));
+                    }
+                    match scaling.factor {
+                        Some(factor) if factor.is_finite() && factor > 0.0 => Some(factor),
+                        Some(_) => {
+                            return Err(start(
+                                "GTE rope scaling factor must be finite and positive",
+                            ))
+                        }
+                        None => None,
+                    }
+                }
+            };
+            EncoderRecipe {
+                embedding: NormArithmetic::AtenEmbedding,
+                residual: NormArithmetic::ExactBiased,
+                positions: PositionRecipe::Rotary(RotaryRecipe {
+                    theta: raw.rope_theta.unwrap_or(10_000.0),
+                    ntk_factor,
+                }),
+                feed_forward: FeedForwardRecipe::GatedGeluUpFirst,
+            }
+        } else {
+            EncoderRecipe::for_family(family, hidden_size)
+        };
         let config = Self {
             hidden_size,
             intermediate_size,
@@ -305,7 +418,7 @@ impl BertConfig {
                 "max_position_embeddings",
             )?,
             vocab_size: required_usize(raw.vocab_size, "vocab_size")?,
-            type_vocab_size: raw.type_vocab_size.unwrap_or(DISTIL_TOKEN_TYPE_ROWS),
+            type_vocab_size,
             configured_type_vocab_size: raw.type_vocab_size,
             layer_norm_eps: if distil {
                 DISTIL_LAYER_NORM_EPS
@@ -313,11 +426,9 @@ impl BertConfig {
                 raw.layer_norm_eps.unwrap_or(1e-12)
             },
             family,
-            recipe: EncoderRecipe::for_family(family, hidden_size),
+            recipe,
             hidden_act,
-            position_embedding_type: raw
-                .position_embedding_type
-                .unwrap_or_else(|| "absolute".into()),
+            position_embedding_type,
             is_decoder: raw.is_decoder.unwrap_or(false),
             add_cross_attention: raw.add_cross_attention.unwrap_or(false),
         };
@@ -326,13 +437,21 @@ impl BertConfig {
     }
 
     fn validate(&self) -> Result<(), BackendError> {
+        let positions_supported = match (self.family, self.recipe.positions) {
+            (EncoderFamily::Gte, PositionRecipe::Rotary(_)) => {
+                self.position_embedding_type == "rope"
+            }
+            (EncoderFamily::Gte, _) => false,
+            (_, PositionRecipe::Absolute) => self.position_embedding_type == "absolute",
+            _ => false,
+        };
         if self.is_decoder
             || self.add_cross_attention
-            || self.position_embedding_type != "absolute"
+            || !positions_supported
             || self.hidden_act != "gelu"
         {
             return Err(start(
-                "only encoder BERT-family models with absolute positions and tanh GELU are supported",
+                "only encoder BERT-family models with supported positions and tanh GELU are supported",
             ));
         }
         if self.hidden_size == 0
@@ -358,6 +477,24 @@ impl BertConfig {
                 "invalid or unsupported BERT dimensions / layer_norm_eps",
             ));
         }
+        if self.family == EncoderFamily::Gte {
+            let recipe_valid = self.hidden_size == 768
+                && self.num_attention_heads == 12
+                && self.intermediate_size == 3072
+                && self.max_position_embeddings <= 8192
+                && self.recipe.embedding == NormArithmetic::AtenEmbedding
+                && self.recipe.residual == NormArithmetic::ExactBiased
+                && self.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst;
+            let PositionRecipe::Rotary(rotary) = self.recipe.positions else {
+                return Err(start("invalid or unsupported GTE NewModel position recipe"));
+            };
+            if !recipe_valid {
+                return Err(start(
+                    "invalid or unsupported GTE NewModel dimensions / arithmetic recipe",
+                ));
+            }
+            validate_gte_rotary(&rotary, self.hidden_size / self.num_attention_heads)?;
+        }
         // CUDA position IDs are u32; checked tensor dimensions bound the actual
         // lookup allocation. Attention-provider sequence limits are separate.
         for dimensions in [
@@ -371,6 +508,49 @@ impl BertConfig {
         }
         Ok(())
     }
+}
+
+fn validate_gte_rotary(recipe: &RotaryRecipe, head_dim: usize) -> Result<(), BackendError> {
+    let base = recipe.theta as f32;
+    if !recipe.theta.is_finite()
+        || recipe.theta <= 1.0
+        || !base.is_finite()
+        || base <= 1.0
+        || head_dim == 0
+        || !head_dim.is_multiple_of(2)
+    {
+        return Err(start(
+            "GTE rope theta must be finite, greater than one and F32",
+        ));
+    }
+    if let Some(factor) = recipe.ntk_factor {
+        let factor_f32 = factor as f32;
+        let scaled_base = base * factor_f32;
+        let exponent = 2.0f32 / head_dim as f32;
+        let scale = factor_f32.powf(exponent);
+        let multiplier = (1.0f64 / scale as f64) as f32;
+        if !factor.is_finite()
+            || factor <= 0.0
+            || !factor_f32.is_finite()
+            || !factor_f32.is_normal()
+            || !scaled_base.is_normal()
+            || !scale.is_normal()
+            || !multiplier.is_normal()
+        {
+            return Err(start("invalid or underflowing GTE NTK rope scaling"));
+        }
+        for lane in 0..head_dim / 2 {
+            let numerator = lane
+                .checked_mul(2)
+                .ok_or_else(|| start("GTE rope frequency index overflow"))?;
+            let frequency =
+                (1.0f32 / scaled_base.powf(numerator as f32 / head_dim as f32)) * multiplier;
+            if !frequency.is_normal() {
+                return Err(start("invalid or underflowing GTE NTK rope frequency"));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug)]
@@ -437,7 +617,7 @@ impl WeightSource {
         })
     }
 
-    fn zeroed(shape: Vec<usize>) -> Result<Self, BackendError> {
+    pub(crate) fn zeroed(shape: Vec<usize>) -> Result<Self, BackendError> {
         let count = elements(&shape)?;
         Ok(Self {
             file: None,
@@ -448,6 +628,56 @@ impl WeightSource {
             shape,
             count,
             width: 2,
+        })
+    }
+
+    /// View a sub-tensor of an existing source without copying or materializing
+    /// its payload. The returned view keeps the original shard owner alive.
+    pub(crate) fn slice(
+        &self,
+        offset_elements: usize,
+        shape: Vec<usize>,
+    ) -> Result<Self, BackendError> {
+        let count = elements(&shape)?;
+        let end = offset_elements
+            .checked_add(count)
+            .ok_or_else(|| start("weight slice range overflow"))?;
+        if end > self.count {
+            return Err(start("weight slice exceeds source tensor"));
+        }
+        let offset_bytes = offset_elements
+            .checked_mul(self.width)
+            .ok_or_else(|| start("weight slice byte offset overflow"))?;
+        let offset_bytes =
+            u64::try_from(offset_bytes).map_err(|_| start("weight slice byte offset overflow"))?;
+        let data_offset = self
+            .data_offset
+            .checked_add(offset_bytes)
+            .ok_or_else(|| start("weight slice file offset overflow"))?;
+        if self.file.is_some() {
+            let byte_len = count
+                .checked_mul(self.width)
+                .ok_or_else(|| start("weight slice byte size overflow"))?;
+            let byte_len =
+                u64::try_from(byte_len).map_err(|_| start("weight slice byte size overflow"))?;
+            let absolute_end = self
+                .data_start
+                .checked_add(data_offset)
+                .and_then(|base| base.checked_add(byte_len))
+                .ok_or_else(|| start("weight slice file offset overflow"))?;
+            if absolute_end > self.file_len {
+                return Err(start("weight slice exceeds checkpoint file"));
+            }
+        }
+        Ok(Self {
+            file: self.file.clone(),
+            file_len: self.file_len,
+            data_start: self.data_start,
+            data_offset,
+            dtype: self.dtype,
+            shape,
+            count,
+            width: self.width,
         })
     }
 
@@ -644,7 +874,14 @@ fn validate_modules(path: &Path) -> Result<(), BackendError> {
         kind: String,
     }
     let modules: Vec<Module> = read_json(&file)?;
+    // Admitted Dense projections are loaded and executed by the dedicated
+    // Dense chain. Keep the legacy pipeline order strict for every other
+    // module instead of silently ignoring unsupported projections.
+    let mut kinds = Vec::new();
     for module in &modules {
+        if crate::dense::is_dense_module_type(&module.kind) {
+            continue;
+        }
         if !matches!(
             module.kind.as_str(),
             "sentence_transformers.models.Transformer"
@@ -656,12 +893,9 @@ fn validate_modules(path: &Path) -> Result<(), BackendError> {
                 module.kind
             )));
         }
+        kinds.push(module.kind.as_str());
     }
     // Normalize is recognized here; the HTTP request owns output normalization.
-    let kinds = modules
-        .iter()
-        .map(|module| module.kind.as_str())
-        .collect::<Vec<_>>();
     match kinds.as_slice() {
         ["sentence_transformers.models.Transformer", "sentence_transformers.models.Pooling"] => Ok(()),
         ["sentence_transformers.models.Transformer", "sentence_transformers.models.Pooling", "sentence_transformers.models.Normalize"] => Ok(()),
@@ -700,8 +934,15 @@ fn checkpoint_files(path: &Path) -> Result<CheckpointFiles, BackendError> {
 /// Hub snapshots use ../../blobs/<digest> symlinks within one cached repo.
 /// All other checkpoints remain confined to their canonical model directory.
 fn permitted_weight(root: &Path, resolved: &Path) -> bool {
+    resolved.starts_with(root) || permitted_cache_blob(root, resolved)
+}
+
+/// Accept only a digest-named blob in the same Hub cache repository as `root`.
+/// The exact snapshot/blobs relationship is checked; arbitrary ancestors are
+/// deliberately not searched.
+fn permitted_cache_blob(root: &Path, resolved: &Path) -> bool {
     if resolved.starts_with(root) {
-        return true;
+        return false;
     }
     let Some(digest) = resolved.file_name().and_then(|name| name.to_str()) else {
         return false;
@@ -773,7 +1014,7 @@ impl CheckpointLayout {
     }
 }
 
-fn select_root(
+pub(crate) fn select_root(
     family: EncoderFamily,
     names: &BTreeSet<String>,
 ) -> Result<&'static str, BackendError> {
@@ -976,6 +1217,40 @@ impl Checkpoint {
             }
             shards.push(open_shard(&resolved)?);
         }
+        Self::from_shards(files, index, shards)
+    }
+
+    /// Open a nested module checkpoint while keeping the enclosing model root as
+    /// the trusted Hub snapshot boundary.
+    ///
+    /// The module itself must canonicalize inside the model directory. Its
+    /// shards may either stay inside the module or use the model snapshot's
+    /// exact same-repository cache blob exception; symlinks to unrelated model
+    /// files, other repositories, or arbitrary ancestors are rejected.
+    pub(crate) fn open_module(model_root: &Path, module_root: &Path) -> Result<Self, BackendError> {
+        let model_root = model_root.canonicalize().map_err(start)?;
+        let module_root = module_root.canonicalize().map_err(start)?;
+        if !module_root.starts_with(&model_root) {
+            return Err(start("Dense module path escapes the model directory"));
+        }
+        let (files, index) = checkpoint_files(&module_root)?;
+        let mut shards = Vec::new();
+        for file in &files {
+            let resolved = module_root.join(file).canonicalize().map_err(start)?;
+            if !resolved.starts_with(&module_root) && !permitted_cache_blob(&model_root, &resolved)
+            {
+                return Err(start("checkpoint shard escapes model directory"));
+            }
+            shards.push(open_shard(&resolved)?);
+        }
+        Self::from_shards(files, index, shards)
+    }
+
+    fn from_shards(
+        files: Vec<String>,
+        index: Option<BTreeMap<String, String>>,
+        shards: Vec<ShardHeader>,
+    ) -> Result<Self, BackendError> {
         let mut tensors = BTreeMap::new();
         for (shard_index, shard) in shards.iter().enumerate() {
             for (name, info) in &shard.tensors {
@@ -1073,6 +1348,9 @@ impl BertWeights {
     pub(crate) fn load(path: &Path) -> Result<Self, BackendError> {
         let mut config = BertConfig::load(path)?;
         validate_modules(path)?;
+        if config.family == EncoderFamily::Gte {
+            return crate::rotary_encoder_model::load(path, config);
+        }
         let checkpoint = Checkpoint::open(path)?;
         let names = checkpoint.names().cloned().collect::<BTreeSet<_>>();
         let root_prefix = select_root(config.family, &names)?;
@@ -1366,6 +1644,21 @@ mod tests {
     }
     fn expected(values: &[f32]) -> Vec<u16> {
         values.iter().map(|value| bf16(*value)).collect()
+    }
+    fn nested_checkpoint_bytes() -> Vec<u8> {
+        let values = [0.0f32, 0.25, 0.5, 0.75];
+        let data = values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect::<Vec<_>>();
+        serialize(
+            [(
+                "linear.weight",
+                TensorView::new(Dtype::F32, vec![2, 2], &data).unwrap(),
+            )],
+            None,
+        )
+        .unwrap()
     }
 
     #[test]
@@ -1729,6 +2022,8 @@ mod tests {
                     EncoderRecipe {
                         embedding: NormArithmetic::RoundedAddBeforeStats,
                         residual: NormArithmetic::RoundedAddBeforeStats,
+                        positions: PositionRecipe::Absolute,
+                        feed_forward: FeedForwardRecipe::DenseGelu,
                     }
                 );
                 let layout = CheckpointLayout {
@@ -2018,6 +2313,8 @@ mod tests {
                 EncoderRecipe {
                     embedding: NormArithmetic::ExactBiased,
                     residual: NormArithmetic::ExactBiased,
+                    positions: PositionRecipe::Absolute,
+                    feed_forward: FeedForwardRecipe::DenseGelu,
                 },
             ),
             (
@@ -2027,6 +2324,8 @@ mod tests {
                 EncoderRecipe {
                     embedding: NormArithmetic::RoundedAddBeforeStats,
                     residual: NormArithmetic::RoundedAddBeforeStats,
+                    positions: PositionRecipe::Absolute,
+                    feed_forward: FeedForwardRecipe::DenseGelu,
                 },
             ),
             (
@@ -2036,6 +2335,8 @@ mod tests {
                 EncoderRecipe {
                     embedding: NormArithmetic::ExactBiased,
                     residual: NormArithmetic::ExactBiased,
+                    positions: PositionRecipe::Absolute,
+                    feed_forward: FeedForwardRecipe::DenseGelu,
                 },
             ),
             (
@@ -2045,6 +2346,8 @@ mod tests {
                 EncoderRecipe {
                     embedding: NormArithmetic::RoundedAddBeforeStats,
                     residual: NormArithmetic::RoundedAddBeforeStats,
+                    positions: PositionRecipe::Absolute,
+                    feed_forward: FeedForwardRecipe::DenseGelu,
                 },
             ),
             (
@@ -2055,6 +2358,8 @@ mod tests {
                 EncoderRecipe {
                     embedding: NormArithmetic::RoundedAddBeforeStats,
                     residual: NormArithmetic::RoundedAddBeforeStats,
+                    positions: PositionRecipe::Absolute,
+                    feed_forward: FeedForwardRecipe::DenseGelu,
                 },
             ),
         ] {
@@ -2065,9 +2370,20 @@ mod tests {
     }
 
     #[test]
-    fn refuses_trained_projection_in_sentence_transformers_pipeline() {
+    fn admits_dense_entries_for_the_shared_dense_loader() {
         let fixture = Fixture::new();
-        std::fs::write(fixture.0.join("modules.json"),br#"[{"type":"sentence_transformers.models.Transformer"},{"type":"sentence_transformers.models.Dense"}]"#).unwrap();
+        fixture.weights(Dtype::F32, false, false);
+        std::fs::write(
+            fixture.0.join("modules.json"),
+            br#"[{"type":"sentence_transformers.models.Transformer"},{"type":"sentence_transformers.models.Pooling"},{"type":"sentence_transformers.models.Dense","path":"2_Dense"}]"#,
+        )
+        .unwrap();
+        assert!(BertWeights::load(&fixture.0).is_ok());
+    }
+    #[test]
+    fn refuses_unknown_projection_in_sentence_transformers_pipeline() {
+        let fixture = Fixture::new();
+        std::fs::write(fixture.0.join("modules.json"),br#"[{"type":"sentence_transformers.models.Transformer"},{"type":"sentence_transformers.models.CustomProjection"}]"#).unwrap();
         assert!(fixture.error().contains("projections must not be ignored"));
     }
     #[test]
@@ -2203,6 +2519,92 @@ mod tests {
             }
         }
     }
+    #[cfg(unix)]
+    #[test]
+    fn opens_nested_module_from_the_same_hub_cache_blob() {
+        let cache = Fixture::new();
+        let repo = cache.0.join("models--owner--repo");
+        let snapshot = repo.join("snapshots").join("a".repeat(40));
+        let module = snapshot.join("2_Dense");
+        let blobs = repo.join("blobs");
+        std::fs::create_dir_all(&module).unwrap();
+        std::fs::create_dir_all(&blobs).unwrap();
+        let digest = "c".repeat(64);
+        std::fs::write(blobs.join(&digest), nested_checkpoint_bytes()).unwrap();
+        std::os::unix::fs::symlink(
+            Path::new("../../../blobs").join(&digest),
+            module.join("model.safetensors"),
+        )
+        .unwrap();
+
+        let checkpoint = Checkpoint::open_module(&snapshot, &module).unwrap();
+        assert_eq!(
+            checkpoint.source("linear.weight", &[2, 2]).unwrap().len(),
+            4
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_nested_module_blobs_outside_the_model_cache_repo() {
+        let cache = Fixture::new();
+        let repo = cache.0.join("models--owner--repo");
+        let snapshot = repo.join("snapshots").join("a".repeat(40));
+        let blobs = repo.join("blobs");
+        std::fs::create_dir_all(&snapshot).unwrap();
+        std::fs::create_dir_all(&blobs).unwrap();
+
+        let foreign = Fixture::new();
+        let foreign_repo = foreign.0.join("models--foreign--repo");
+        let foreign_blob = foreign_repo.join("blobs").join("d".repeat(64));
+        std::fs::create_dir_all(foreign_blob.parent().unwrap()).unwrap();
+        std::fs::write(&foreign_blob, nested_checkpoint_bytes()).unwrap();
+        let outside = cache.0.join("outside.safetensors");
+        std::fs::write(&outside, nested_checkpoint_bytes()).unwrap();
+        let nondigest = blobs.join("not-a-digest");
+        std::fs::write(&nondigest, nested_checkpoint_bytes()).unwrap();
+
+        for (name, target) in [
+            ("2_Dense_foreign", foreign_blob),
+            ("2_Dense_outside", outside),
+            ("2_Dense_nondigest", nondigest),
+        ] {
+            let module = snapshot.join(name);
+            std::fs::create_dir_all(&module).unwrap();
+            std::os::unix::fs::symlink(&target, module.join("model.safetensors")).unwrap();
+            let error = Checkpoint::open_module(&snapshot, &module)
+                .err()
+                .expect("unsafe nested module blob must be rejected")
+                .to_string();
+            assert!(error.contains("escapes model directory"), "{name}: {error}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_module_directory_symlink_outside_the_model_root() {
+        let cache = Fixture::new();
+        let repo = cache.0.join("models--owner--repo");
+        let snapshot = repo.join("snapshots").join("a".repeat(40));
+        std::fs::create_dir_all(&snapshot).unwrap();
+        let external = Fixture::new();
+        let external_module = external.0.join("2_Dense");
+        std::fs::create_dir_all(&external_module).unwrap();
+        std::fs::write(
+            external_module.join("model.safetensors"),
+            nested_checkpoint_bytes(),
+        )
+        .unwrap();
+        let escaped = snapshot.join("2_Dense");
+        std::os::unix::fs::symlink(&external_module, &escaped).unwrap();
+
+        let error = Checkpoint::open_module(&snapshot, &escaped)
+            .err()
+            .expect("module symlink escape must be rejected")
+            .to_string();
+        assert!(error.contains("escapes the model directory"), "{error}");
+    }
+
     #[test]
     fn rejects_wrong_shape_weights() {
         let fixture = Fixture::new();

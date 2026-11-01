@@ -26,6 +26,8 @@ symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_emb
                   "infinity_embedding_norm_768_exact", "infinity_embedding_norm_768_exact_vector",
                   "infinity_embedding_norm_1024_rounded_native",
                   "infinity_embedding_norm_rounded",
+                  "infinity_dense_tanh_bf16_inplace", "infinity_f32_to_bf16",
+                  "infinity_embedding_norm_word_768_aten", "infinity_gated_gelu_up_first",
                   "infinity_gelu_bias", "infinity_layer_norm", "infinity_layer_norm_384",
                   "infinity_layer_norm_768_exact", "infinity_layer_norm_768_exact_vector",
                   "infinity_layer_norm_1024_rounded_native",
@@ -68,12 +70,15 @@ manifest = {
     "output_dtype": "float32",
     "sources": {name: digest(root / name) for name in
                 ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs", "src/norm384.rs", "src/norm768.rs", "src/norm768_vector.rs", "src/norm1024.rs", "src/norm1024_exact_vector.rs", "src/norm2048.rs", "src/norm2048_vector.rs",
-                 "src/decoder.rs", "src/rms1536.rs", "src/rms1536_vector.rs", "src/rms4096_vector.rs", "src/silu_pairs.rs", "src/silu_vector8.rs", "src/readout.rs", "src/qk_norm_rope_128.rs"]},
+                 "src/decoder.rs", "src/dense.rs", "src/gated.rs", "src/aten_embedding.rs", "src/rms1536.rs", "src/rms1536_vector.rs", "src/rms4096_vector.rs", "src/silu_pairs.rs", "src/silu_vector8.rs", "src/readout.rs", "src/qk_norm_rope_128.rs"]},
     "kernels": symbols,
     "qualification": "Every architecture is independently compiled from Rust and assembled to a native cubin; hardware runtime validation is separate.",
     "architectures": [],
 }
 output.mkdir(parents=True, exist_ok=True)
+# Carry the newly adapted primitive's attribution with standalone bundles.
+shutil.copy2(root / "LICENSE-PyTorch-BSD3", output / "LICENSE-PyTorch-BSD3")
+shutil.copy2(root.parent / "NOTICE", output / "NOTICE")
 for arch, hardware in [("sm_90", "H100"), ("sm_100", "B200"),
                        ("sm_120", "RTX PRO 6000 Blackwell")]:
     directory = output / arch

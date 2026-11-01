@@ -1,5 +1,5 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
-//! Graph-free BF16 dense Qwen2/Llama pooled-embedding executor.
+//! Graph-free BF16 dense Qwen2/Llama embedding executor.
 //!
 //! The loader in `decoder_model` validates configuration and checkpoint
 //! metadata. This module selects concrete kernel/plan geometry once, uploads
@@ -14,14 +14,15 @@
 //! H1536 retains the six lane values through the same generic reduction.
 
 use super::{
-    arg, blocks, download_output, fa4, infer, launch, launch_threads, product, stage_batch, start,
-    u32_size, upload_input, HostIoLease, LtPlan, LtProvider, WorkKey,
+    arg, blocks, fa4, infer, launch, launch_threads, product, stage_batch, start, u32_size,
+    upload_input, HostIoLease, LtPlan, LtProvider, WorkKey,
 };
 use crate::{
     cublas::Blas,
     decoder_model::{
         DecoderConfig, DecoderFamily, DecoderLayerWeights, DecoderRope, DecoderWeights,
     },
+    dense::DenseHead,
     lt::ShapeError,
     math::LinearPlan,
     rotary::BaseRopeTables,
@@ -753,7 +754,9 @@ impl DecoderModel {
         pool: &Pool,
     ) -> Result<(), ShapeError> {
         self.plans.set_rows(provider, batch.input_ids.len())?;
-        if selected_readout(pool, batch.pooled_indices.len()).is_some() {
+        if batch.raw_indices.is_empty()
+            && selected_readout(pool, batch.pooled_indices.len()).is_some()
+        {
             let sequences = batch
                 .cumulative_seq_lengths
                 .len()
@@ -777,35 +780,15 @@ impl DecoderModel {
         batch: &Batch,
         pool: &Pool,
         max_length: usize,
-        lease: &mut HostIoLease,
         tokens: usize,
-        output_elements: usize,
     ) -> Result<(), BackendError> {
         if self.kernels.qk_norm_rope.is_some() {
             self.enqueue_impl::<true>(
-                lt,
-                plain_blas,
-                stream,
-                work,
-                batch,
-                pool,
-                max_length,
-                lease,
-                tokens,
-                output_elements,
+                lt, plain_blas, stream, work, batch, pool, max_length, tokens,
             )
         } else {
             self.enqueue_impl::<false>(
-                lt,
-                plain_blas,
-                stream,
-                work,
-                batch,
-                pool,
-                max_length,
-                lease,
-                tokens,
-                output_elements,
+                lt, plain_blas, stream, work, batch, pool, max_length, tokens,
             )
         }
     }
@@ -820,9 +803,7 @@ impl DecoderModel {
         batch: &Batch,
         pool: &Pool,
         max_length: usize,
-        lease: &mut HostIoLease,
         tokens: usize,
-        output_elements: usize,
     ) -> Result<(), BackendError> {
         let c = &self.config;
         let g = self.geometry;
@@ -832,8 +813,14 @@ impl DecoderModel {
             .checked_sub(1)
             .ok_or_else(|| infer("Missing decoder sequence boundaries"))?;
         let selections = batch.pooled_indices.len();
-        work.check(tokens, sequences, selections, &g)?;
-        let readout = selected_readout(pool, selections);
+        work.check(tokens, sequences, super::output::rows(batch)?, &g)?;
+        // Token outputs need every final hidden row; pooled-only requests keep
+        // the canonical-B final-layer optimization unchanged.
+        let readout = if batch.raw_indices.is_empty() {
+            selected_readout(pool, selections)
+        } else {
+            None
+        };
         let h = g.hidden;
         let rows = u32_size(tokens)?;
         let width = u32_size(h)?;
@@ -1481,24 +1468,36 @@ impl DecoderModel {
                 Pool::LastToken => 2,
                 Pool::Splade => return Err(infer("Oxide SPLADE unsupported")),
             };
-            launch(
-                &k.pool,
-                stream,
-                blocks(product(selections, h)?)?,
-                0,
-                &mut [
-                    arg(&mut pool_input),
-                    arg(&mut pool_bounds),
-                    arg(&mut pool_indices),
-                    arg(&mut pool_out),
-                    arg(&mut pool_count),
-                    arg(&mut pool_width),
-                    arg(&mut mode),
-                ],
-            )?;
+            if selections > 0 {
+                launch(
+                    &k.pool,
+                    stream,
+                    blocks(product(selections, h)?)?,
+                    0,
+                    &mut [
+                        arg(&mut pool_input),
+                        arg(&mut pool_bounds),
+                        arg(&mut pool_indices),
+                        arg(&mut pool_out),
+                        arg(&mut pool_count),
+                        arg(&mut pool_width),
+                        arg(&mut mode),
+                    ],
+                )?;
+            }
+            if !batch.raw_indices.is_empty() {
+                super::enqueue_raw_output(
+                    &k.bf16_to_f32,
+                    stream,
+                    normalized,
+                    work.pooled.cu_deviceptr(),
+                    selected,
+                    batch,
+                    h,
+                )?;
+            }
         }
-        work.download(lease.slot_mut()?.output.as_mut_slice(), output_elements)?;
-        lease.record()
+        Ok(())
     }
 }
 
@@ -1640,16 +1639,40 @@ impl DecoderWork {
     pub(crate) fn stage(
         &self,
         b: &Batch,
-        hidden: usize,
+        geometry: super::output::OutputGeometry,
         lease: &mut HostIoLease,
     ) -> Result<(usize, usize), BackendError> {
-        stage_batch(b, hidden, lease)
+        if geometry.backbone_elements(b)? > self.pooled.len() {
+            return Err(infer("Decoder backbone output exceeds retained arena"));
+        }
+        stage_batch(b, geometry, lease)
     }
     pub(crate) fn upload(&self, host: &[u32], elements: usize) -> Result<(), BackendError> {
         upload_input(&self.stream, &self.input, host, elements)
     }
-    pub(crate) fn download(&self, host: &mut [f32], elements: usize) -> Result<(), BackendError> {
-        download_output(&self.stream, &self.pooled, host, elements)
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn finish(
+        &mut self,
+        dense: Option<(&mut DenseHead, &mut super::DenseWork)>,
+        lt: &LtProvider,
+        plain_blas: Option<&Blas>,
+        pooled_rows: usize,
+        raw_rows: usize,
+        backbone_width: usize,
+        lease: &mut HostIoLease,
+    ) -> Result<(), BackendError> {
+        let Self { pooled, stream, .. } = self;
+        super::finish_pooled(
+            dense,
+            lt,
+            plain_blas,
+            stream,
+            pooled,
+            pooled_rows,
+            raw_rows,
+            backbone_width,
+            lease,
+        )
     }
 }
 impl Drop for DecoderWork {

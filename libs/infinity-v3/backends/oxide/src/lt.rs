@@ -2,13 +2,22 @@
 //! Prepared cuBLASLt fused projection plans.
 //!
 //! A plan owns a complete opaque algorithm selected by the current GPU for one
-//! `(K, N, epilogue)` tuple at a seed row count of 128. Logical row changes only
-//! resize the B/D descriptors and call `cublasLtMatmulAlgoCheck`; they never run
-//! the heuristic again or replace the algorithm. The provider retains the loaded
+//! `(K, N, epilogue)` tuple at a seed row count of 128. For rows above 32,
+//! logical row changes only resize the B/D descriptors and call
+//! `cublasLtMatmulAlgoCheck`; they never run the heuristic again or replace the
+//! algorithm. Encoder plans additionally cache one heuristic-selected algorithm
+//! per actual row count 1 through 32, prepared under the same 64 KiB provider
+//! workspace. The provider retains the loaded
 //! library, context, stream, and cuBLASLt handle, while each plan retains the API
 //! vtable and drains its stream before destroying host descriptors. One fixed
 //! provider workspace is reused in stream order, including when a zero-workspace
 //! seed algorithm requires a small auxiliary buffer at a different row count.
+//!
+//! The GTE down projection uses a separate native-default plan. Its provider
+//! owns a 32 MiB zeroed backing allocation, keeps the audited 1 MiB Lt
+//! workspace preference, and caches one heuristic result per actual
+//! `(M, K, N, epilogue, alignment)` key in at most 64 entries. Repeated keys
+//! perform no heuristic query or allocation.
 //!
 //! ABI provenance (CUDA 13.1 primary header):
 //! `/usr/local/cuda-13.1/include/cublasLt.h`; enum values, descriptor sizes, and
@@ -146,12 +155,21 @@ const MATMUL_DESC_EPILOGUE: i32 = 7;
 const MATMUL_DESC_BIAS_POINTER: i32 = 8;
 const MATMUL_DESC_BIAS_DATA_TYPE: i32 = 26;
 const PREFERENCE_MAX_WORKSPACE_BYTES: i32 = 1;
+const PREFERENCE_MIN_ALIGNMENT_A_BYTES: i32 = 5;
+const PREFERENCE_MIN_ALIGNMENT_B_BYTES: i32 = 6;
+const PREFERENCE_MIN_ALIGNMENT_C_BYTES: i32 = 7;
+const PREFERENCE_MIN_ALIGNMENT_D_BYTES: i32 = 8;
 const EPILOGUE_BIAS: i32 = 4;
 const EPILOGUE_GELU_BIAS: i32 = 36;
 
 const SEED_ROWS: usize = 128;
 const SEED_WORKSPACE_BYTES: usize = 0;
+const SMALL_ROWS: usize = 32;
 const WORKSPACE_BYTES: usize = 64 * 1024;
+pub(crate) const NATIVE_DEFAULT_WORKSPACE_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const NATIVE_DEFAULT_SEED_ROWS: usize = SEED_ROWS;
+const NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES: usize = 1024 * 1024;
+const NATIVE_DEFAULT_CACHE_ENTRIES: usize = 64;
 const HEURISTIC_CHOICES: usize = 8;
 // cuBLASLt never dereferences the bias pointer during heuristic selection, but
 // uses its value to filter algorithms by expected alignment. A non-null,
@@ -181,6 +199,210 @@ const _: () = {
     assert!(size_of::<HeuristicResult>() == 96);
     assert!(align_of::<HeuristicResult>() == 8);
 };
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct PreparedAlgorithm {
+    algo: Algo,
+    workspace: usize,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct NativeDefaultAlignment {
+    a: u32,
+    b: u32,
+    c: u32,
+    d: u32,
+}
+
+const NATIVE_DEFAULT_ALIGNMENT: NativeDefaultAlignment = NativeDefaultAlignment {
+    a: 256,
+    b: 256,
+    c: 256,
+    d: 256,
+};
+
+#[derive(Clone, Copy)]
+struct NativeDefaultSnapshot {
+    rows: i32,
+    algo: Algo,
+    workspace: usize,
+    bias_pointer: *const c_void,
+    alignment: NativeDefaultAlignment,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct NativeDefaultCacheKey {
+    rows: i32,
+    input: i32,
+    width: i32,
+    x_stride: i32,
+    weight_stride: i32,
+    output_stride: i32,
+    element_type: i32,
+    epilogue: Epilogue,
+    workspace_preference: usize,
+    alignment: NativeDefaultAlignment,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct NativeDefaultCacheEntry {
+    key: NativeDefaultCacheKey,
+    prepared: PreparedAlgorithm,
+}
+
+struct NativeDefaultCache {
+    entries: [Option<NativeDefaultCacheEntry>; NATIVE_DEFAULT_CACHE_ENTRIES],
+    next: usize,
+    #[cfg(test)]
+    queries: usize,
+}
+
+impl Default for NativeDefaultCache {
+    fn default() -> Self {
+        Self {
+            entries: [None; NATIVE_DEFAULT_CACHE_ENTRIES],
+            next: 0,
+            #[cfg(test)]
+            queries: 0,
+        }
+    }
+}
+
+impl NativeDefaultCache {
+    fn get(&self, key: &NativeDefaultCacheKey) -> Option<PreparedAlgorithm> {
+        self.entries
+            .iter()
+            .flatten()
+            .find(|entry| entry.key == *key)
+            .map(|entry| entry.prepared)
+    }
+
+    fn insert(&mut self, key: NativeDefaultCacheKey, prepared: PreparedAlgorithm) {
+        let index = self
+            .entries
+            .iter()
+            .position(|entry| entry.as_ref().is_some_and(|entry| entry.key == key))
+            .unwrap_or_else(|| {
+                let index = self.next;
+                self.next = (self.next + 1) % NATIVE_DEFAULT_CACHE_ENTRIES;
+                index
+            });
+        self.entries[index] = Some(NativeDefaultCacheEntry { key, prepared });
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.iter().flatten().count()
+    }
+}
+
+/// Request-scoped cold results that are not visible to later requests until
+/// their corresponding matmul launch succeeds. The store is fixed-size and
+/// evicts like the persistent cache, so a full store never rejects a legal
+/// shape; each invocation already owns the prepared `Copy` data it needs.
+pub(crate) struct NativeDefaultPending {
+    entries: [Option<NativeDefaultCacheEntry>; NATIVE_DEFAULT_CACHE_ENTRIES],
+    next: usize,
+}
+
+impl Default for NativeDefaultPending {
+    fn default() -> Self {
+        Self {
+            entries: [None; NATIVE_DEFAULT_CACHE_ENTRIES],
+            next: 0,
+        }
+    }
+}
+
+impl NativeDefaultPending {
+    fn get(&self, key: &NativeDefaultCacheKey) -> Option<PreparedAlgorithm> {
+        self.entries
+            .iter()
+            .flatten()
+            .find(|entry| entry.key == *key)
+            .map(|entry| entry.prepared)
+    }
+
+    fn insert(&mut self, key: NativeDefaultCacheKey, prepared: PreparedAlgorithm) {
+        let index = self
+            .entries
+            .iter()
+            .position(|entry| entry.as_ref().is_some_and(|entry| entry.key == key))
+            .unwrap_or_else(|| {
+                let index = self.next;
+                self.next = (self.next + 1) % NATIVE_DEFAULT_CACHE_ENTRIES;
+                index
+            });
+        self.entries[index] = Some(NativeDefaultCacheEntry { key, prepared });
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.entries = [None; NATIVE_DEFAULT_CACHE_ENTRIES];
+        self.next = 0;
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.entries.iter().flatten().count()
+    }
+}
+
+/// The bounded metadata selected for one already-validated down invocation.
+/// It is produced before any request kernel and consumed by the launch site.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct NativeDefaultPrepared {
+    rows: i32,
+    key: NativeDefaultCacheKey,
+    prepared: PreparedAlgorithm,
+    bias_pointer: u64,
+    alignment: NativeDefaultAlignment,
+    x_pointer: u64,
+    weight_pointer: u64,
+    output_pointer: u64,
+    pending: bool,
+}
+
+fn get_alignment(address: u64) -> u32 {
+    let mut alignment = 256u32;
+    while alignment > 1 && !address.is_multiple_of(u64::from(alignment)) {
+        alignment /= 2;
+    }
+    alignment
+}
+
+fn prepared_for_rows(
+    base: PreparedAlgorithm,
+    small: &[Option<PreparedAlgorithm>; SMALL_ROWS],
+    small_prepared: bool,
+    rows: usize,
+) -> Result<PreparedAlgorithm, BackendError> {
+    let Some(index) = rows.checked_sub(1) else {
+        return Ok(base);
+    };
+    let Some(prepared) = small.get(index) else {
+        return Ok(base);
+    };
+    match *prepared {
+        Some(prepared) => Ok(prepared),
+        None if small_prepared => Err(super::infer(format!(
+            "qualified small-row algorithm is missing for M={rows}"
+        ))),
+        None => Ok(base),
+    }
+}
+
+fn check_algorithm(
+    algo: Algo,
+    check: impl FnOnce(&Algo) -> Result<usize, ShapeError>,
+) -> Result<PreparedAlgorithm, ShapeError> {
+    let workspace = check(&algo)?;
+    Ok(PreparedAlgorithm { algo, workspace })
+}
+
+fn restore_prepared(previous: PreparedAlgorithm, algo: &mut Algo, workspace: &mut usize) {
+    *algo = previous.algo;
+    *workspace = previous.workspace;
+}
 
 #[derive(Clone, Copy)]
 struct DescriptorDestructors {
@@ -302,25 +524,46 @@ impl Api {
 // This synchronous allocation is freed explicitly so the live-byte gauge is
 // decremented only after physical deallocation, rather than a deferred free.
 // It is a fixed provider cost charged once alongside arenas, not per plan or
-// per logical row count. No initialization is needed by cuBLASLt's workspace ABI.
+// per logical row count. The current cuBLASLt split-K path reads scratch bytes
+// that algorithms do not promise to initialize, so construction zeros the whole
+// buffer once on the owned stream before the provider is published.
 struct Workspace {
     pointer: u64,
+    bytes: usize,
     context: Arc<Context>,
 }
 
 impl Workspace {
-    fn new(context: Arc<Context>) -> Result<Self, BackendError> {
+    fn new(context: Arc<Context>, bytes: usize) -> Result<Self, BackendError> {
+        if bytes == 0 {
+            return Err(super::start("cuBLASLt workspace must be nonzero"));
+        }
         context.bind_to_thread().map_err(super::start)?;
         // SAFETY: the allocation's context is bound, and Drop uses free_sync.
-        let pointer =
-            unsafe { cuda_core::memory::malloc_sync(WORKSPACE_BYTES) }.map_err(super::start)?;
-        super::LIVE_ARENA_BYTES.fetch_add(WORKSPACE_BYTES, Ordering::Relaxed);
+        let pointer = unsafe { cuda_core::memory::malloc_sync(bytes) }.map_err(super::start)?;
+        super::LIVE_ARENA_BYTES.fetch_add(bytes, Ordering::Relaxed);
         super::record_live_arena_bytes();
-        Ok(Self { pointer, context })
+        Ok(Self {
+            pointer,
+            bytes,
+            context,
+        })
     }
 
-    fn record_retained() {
-        metrics::counter!("oxide_arena_retained_bytes_total").increment(WORKSPACE_BYTES as u64);
+    fn initialize(&self, stream: &Arc<Stream>) -> Result<(), BackendError> {
+        // One-time stream-ordered zero on the provider's own stream. The
+        // existing teardown drain makes the initialized contents deterministic
+        // before any plan is published or any provider resource is released.
+        // SAFETY: the allocation covers self.bytes in the bound context, and
+        // stream is the provider's valid stream for that context.
+        unsafe {
+            cuda_core::memory::memset_d8_async(self.pointer, 0, self.bytes, stream.cu_stream())
+        }
+        .map_err(super::start)
+    }
+
+    fn record_retained(bytes: usize) {
+        metrics::counter!("oxide_arena_retained_bytes_total").increment(bytes as u64);
     }
 }
 
@@ -331,11 +574,11 @@ impl Drop for Workspace {
             // construction failures have not submitted any users of the pointer.
             || unsafe { cuda_core::memory::free_sync(self.pointer) }.is_err()
         {
-            Self::record_retained();
+            Self::record_retained(self.bytes);
             std::mem::forget(self.context.clone());
             return;
         }
-        super::LIVE_ARENA_BYTES.fetch_sub(WORKSPACE_BYTES, Ordering::Relaxed);
+        super::LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
         super::record_live_arena_bytes();
     }
 }
@@ -350,6 +593,8 @@ struct Core {
     workspace: ManuallyDrop<Workspace>,
     #[cfg(test)]
     shape_rejection: Cell<Option<ShapeRejection>>,
+    #[cfg(test)]
+    down_shape_rejection: Cell<Option<ShapeRejection>>,
 }
 
 impl Drop for Core {
@@ -359,13 +604,13 @@ impl Drop for Core {
             // Retain the handle, library, context, and stream after an uncertain
             // completion instead of releasing resources still used by the GPU.
             retain_failed_resources(&self.api, &self.context, &self.stream);
-            Workspace::record_retained();
+            Workspace::record_retained(self.workspace.bytes);
             return;
         }
         if unsafe { (self.api.handle_destroy)(self.handle) } != STATUS_SUCCESS {
             self.descriptors_safe.store(false, Ordering::Release);
             retain_failed_resources(&self.api, &self.context, &self.stream);
-            Workspace::record_retained();
+            Workspace::record_retained(self.workspace.bytes);
             return;
         }
         // SAFETY: the stream has drained and the handle has been destroyed.
@@ -386,6 +631,37 @@ unsafe impl Send for LtProvider {}
 
 impl LtProvider {
     pub(crate) fn new(context: Arc<Context>, stream: Arc<Stream>) -> Result<Self, BackendError> {
+        Self::with_workspace_bytes(context, stream, WORKSPACE_BYTES)
+    }
+
+    /// Native-default provider with the dedicated 32 MiB backing allocation.
+    pub(crate) fn new_native_default(
+        context: Arc<Context>,
+        stream: Arc<Stream>,
+    ) -> Result<Self, BackendError> {
+        Self::new_native_default_workspace_bytes(context, stream, NATIVE_DEFAULT_WORKSPACE_BYTES)
+    }
+
+    /// Native-default-only provider constructor. The caller owns the actual backing
+    /// byte count, which is zeroed, accounted, and released at this exact size.
+    pub(crate) fn new_native_default_workspace_bytes(
+        context: Arc<Context>,
+        stream: Arc<Stream>,
+        workspace_bytes: usize,
+    ) -> Result<Self, BackendError> {
+        if workspace_bytes < NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES {
+            return Err(super::start(format!(
+                "native-default cuBLASLt workspace {workspace_bytes} is below the 1 MiB preference"
+            )));
+        }
+        Self::with_workspace_bytes(context, stream, workspace_bytes)
+    }
+
+    fn with_workspace_bytes(
+        context: Arc<Context>,
+        stream: Arc<Stream>,
+        workspace_bytes: usize,
+    ) -> Result<Self, BackendError> {
         context.bind_to_thread().map_err(super::start)?;
         if !Arc::ptr_eq(stream.context(), &context) {
             return Err(super::start(
@@ -393,7 +669,7 @@ impl LtProvider {
             ));
         }
         let api = Arc::new(Api::load()?);
-        let workspace = Workspace::new(context.clone())?;
+        let workspace = Workspace::new(context.clone(), workspace_bytes)?;
         let mut handle = ptr::null_mut();
         let status = unsafe { (api.create)(&mut handle) };
         if status != STATUS_SUCCESS {
@@ -404,19 +680,32 @@ impl LtProvider {
         if handle.is_null() {
             return Err(super::start("cuBLASLt returned a null handle"));
         }
-        Ok(Self {
-            core: Box::new(Core {
-                api,
-                handle,
-                context,
-                stream,
-                descriptors_safe: Arc::new(AtomicBool::new(true)),
-                owner_token: Arc::new(()),
-                workspace: ManuallyDrop::new(workspace),
-                #[cfg(test)]
-                shape_rejection: Cell::new(None),
-            }),
-        })
+        let core = Box::new(Core {
+            api,
+            handle,
+            context,
+            stream,
+            descriptors_safe: Arc::new(AtomicBool::new(true)),
+            owner_token: Arc::new(()),
+            workspace: ManuallyDrop::new(workspace),
+            #[cfg(test)]
+            shape_rejection: Cell::new(None),
+            #[cfg(test)]
+            down_shape_rejection: Cell::new(None),
+        });
+        core.workspace.initialize(&core.stream)?;
+        Ok(Self { core })
+    }
+
+    /// Bind this provider's CUDA context once for a safe standalone operation.
+    ///
+    /// Engine-driven requests bind once before their body and use the bound
+    /// prepare/launch variants directly; this helper is the boundary for the
+    /// safe convenience wrapper and standalone primitive callers.
+    pub(crate) fn bind_context(&self) -> Result<(), BackendError> {
+        #[cfg(test)]
+        super::bump_provider_context_query();
+        self.core.context.bind_to_thread().map_err(super::infer)
     }
 
     // Strided entry point retained for operator qualification and future callers.
@@ -457,7 +746,43 @@ impl LtProvider {
         )
     }
 
+    pub(crate) fn prepare_native_small_bias_shape<E: Element>(
+        &self,
+        input: usize,
+        output: usize,
+    ) -> Result<LtPlan<E>, BackendError> {
+        self.prepare_encoder_small(Geometry::contiguous::<E>(input, output)?, Epilogue::Bias)
+    }
+
+    pub(crate) fn prepare_native_small_gelu_bias_shape<E: Element>(
+        &self,
+        input: usize,
+        output: usize,
+    ) -> Result<LtPlan<E>, BackendError> {
+        self.prepare_encoder_small(
+            Geometry::contiguous::<E>(input, output)?,
+            Epilogue::GeluBias,
+        )
+    }
+
+    fn prepare_encoder_small<E: Element>(
+        &self,
+        geometry: Geometry,
+        epilogue: Epilogue,
+    ) -> Result<LtPlan<E>, BackendError> {
+        self.prepare_inner(geometry, epilogue, true)
+            .map_err(|error| super::start(format!("native small-row preparation failed: {error}")))
+    }
+
     fn prepare<E: Element>(
+        &self,
+        geometry: Geometry,
+        epilogue: Epilogue,
+    ) -> Result<LtPlan<E>, BackendError> {
+        self.prepare_inner(geometry, epilogue, false)
+    }
+
+    fn allocate_plan<E: Element>(
         &self,
         geometry: Geometry,
         epilogue: Epilogue,
@@ -477,6 +802,12 @@ impl LtProvider {
             y: ptr::null_mut(),
             pref: ptr::null_mut(),
             algo: Algo::default(),
+            base: PreparedAlgorithm::default(),
+            small: [None; SMALL_ROWS],
+            small_prepared: false,
+            native_default_cache: None,
+            native_default_bias_pointer: ptr::null(),
+            native_default_alignment: NATIVE_DEFAULT_ALIGNMENT,
             geometry,
             epilogue,
             rows: geometry.seed_rows,
@@ -519,13 +850,6 @@ impl LtProvider {
             &element_type,
             "bias data type",
         )?;
-        set_desc(
-            &api,
-            plan.op,
-            MATMUL_DESC_BIAS_POINTER,
-            &SEED_BIAS_POINTER,
-            "seed bias pointer",
-        )?;
 
         plan.a = create_layout(
             &api,
@@ -561,19 +885,85 @@ impl LtProvider {
                 "cuBLASLt returned a null preference descriptor",
             ));
         }
+        Ok(plan)
+    }
+
+    fn prepare_inner<E: Element>(
+        &self,
+        geometry: Geometry,
+        epilogue: Epilogue,
+        small: bool,
+    ) -> Result<LtPlan<E>, BackendError> {
+        let mut plan = self.allocate_plan(geometry, epilogue)?;
+        set_desc(
+            &plan.api,
+            plan.op,
+            MATMUL_DESC_BIAS_POINTER,
+            &SEED_BIAS_POINTER,
+            "seed bias pointer",
+        )?;
         let workspace_limit = SEED_WORKSPACE_BYTES as u64;
         set_preference(
-            &api,
+            &plan.api,
             plan.pref,
             PREFERENCE_MAX_WORKSPACE_BYTES,
             &workspace_limit,
             "workspace preference",
         )?;
 
+        let (choices, count) = self.heuristic(&plan)?;
+        let algo = select_zero_workspace_algorithm(&choices[..count])?;
+        let base = check_algorithm(algo, |algo| {
+            plan.algo = *algo;
+            self.verify(&plan, plan.rows, WORKSPACE_BYTES)
+        })
+        .map_err(ShapeError::into_backend)?;
+        plan.base = base;
+        plan.algo = base.algo;
+        plan.workspace = base.workspace;
+        if small {
+            self.prepare_small_rows(&mut plan)?;
+        }
+        self.set_logical_rows(&mut plan, geometry.initial_rows as usize)
+            .map_err(ShapeError::into_backend)?;
+        Ok(plan)
+    }
+
+    pub(crate) fn prepare_native_default_bias_shape<E: Element>(
+        &self,
+        input: usize,
+        output: usize,
+        rows: usize,
+    ) -> Result<LtPlan<E>, BackendError> {
+        if self.core.workspace.bytes < NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES {
+            return Err(super::infer(
+                "native-default cuBLASLt provider does not own the required backing workspace",
+            ));
+        }
+        let geometry = Geometry::contiguous_rows::<E>(input, output, rows)?;
+        let mut plan = self.allocate_plan(geometry, Epilogue::Bias)?;
+        let workspace_limit = NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES as u64;
+        set_preference(
+            &plan.api,
+            plan.pref,
+            PREFERENCE_MAX_WORKSPACE_BYTES,
+            &workspace_limit,
+            "native-default workspace preference",
+        )?;
+        set_native_default_alignment(&plan.api, plan.pref, NATIVE_DEFAULT_ALIGNMENT)?;
+        plan.native_default_alignment = NATIVE_DEFAULT_ALIGNMENT;
+        plan.native_default_cache = Some(Box::<NativeDefaultCache>::default());
+        Ok(plan)
+    }
+
+    fn heuristic<E: Element>(
+        &self,
+        plan: &LtPlan<E>,
+    ) -> Result<([HeuristicResult; HEURISTIC_CHOICES], usize), BackendError> {
         let mut choices = [HeuristicResult::default(); HEURISTIC_CHOICES];
         let mut count = 0i32;
         let status = unsafe {
-            (api.heuristic)(
+            (self.core.api.heuristic)(
                 self.core.handle,
                 plan.op,
                 plan.a,
@@ -596,13 +986,37 @@ impl LtProvider {
             .ok()
             .filter(|count| *count > 0 && *count <= choices.len())
             .ok_or_else(|| super::infer("cuBLASLt returned an invalid heuristic count"))?;
-        plan.algo = select_zero_workspace_algorithm(&choices[..count])?;
-        plan.workspace = self
-            .verify(&plan, plan.rows)
+        Ok((choices, count))
+    }
+
+    fn prepare_small_rows<E: Element>(&self, plan: &mut LtPlan<E>) -> Result<(), BackendError> {
+        let workspace_limit = WORKSPACE_BYTES as u64;
+        set_preference(
+            &plan.api,
+            plan.pref,
+            PREFERENCE_MAX_WORKSPACE_BYTES,
+            &workspace_limit,
+            "small-row workspace preference",
+        )?;
+        let mut small = [None; SMALL_ROWS];
+        for (index, slot) in small.iter_mut().enumerate() {
+            let rows = dimension(index + 1)?;
+            set_columns(&plan.api, plan, rows)?;
+            let (choices, count) = self.heuristic(plan)?;
+            let algo = select_small_algorithm(&choices[..count], WORKSPACE_BYTES)?;
+            let prepared = check_algorithm(algo, |algo| {
+                plan.algo = *algo;
+                self.verify(plan, rows, WORKSPACE_BYTES)
+            })
             .map_err(ShapeError::into_backend)?;
-        self.set_logical_rows(&mut plan, geometry.initial_rows as usize)
-            .map_err(ShapeError::into_backend)?;
-        Ok(plan)
+            *slot = Some(prepared);
+        }
+        set_columns(&plan.api, plan, SEED_ROWS as i32)?;
+        plan.algo = plan.base.algo;
+        plan.workspace = plan.base.workspace;
+        plan.small = small;
+        plan.small_prepared = true;
+        Ok(())
     }
 
     pub(crate) fn set_logical_rows<E: Element>(
@@ -621,20 +1035,28 @@ impl LtProvider {
         if rows == plan.rows {
             return Ok(());
         }
-        self.core.context.bind_to_thread().map_err(super::infer)?;
-        let previous = plan.rows;
+        let target = prepared_for_rows(plan.base, &plan.small, plan.small_prepared, rows as usize)
+            .map_err(ShapeError::Fatal)?;
+        self.bind_context()?;
+        let previous_rows = plan.rows;
+        let previous = PreparedAlgorithm {
+            algo: plan.algo,
+            workspace: plan.workspace,
+        };
         if let Err(error) = set_columns(&plan.api, plan, rows) {
-            let restored = set_columns(&plan.api, plan, previous);
+            let restored = set_columns(&plan.api, plan, previous_rows);
             return Err(after_rollback(error.into(), restored, &mut plan.usable));
         }
-        match self.verify(plan, rows) {
+        plan.algo = target.algo;
+        match self.verify(plan, rows, self.core.workspace.bytes) {
             Ok(workspace) => {
                 plan.rows = rows;
                 plan.workspace = workspace;
                 Ok(())
             }
             Err(error) => {
-                let restored = set_columns(&plan.api, plan, previous);
+                restore_prepared(previous, &mut plan.algo, &mut plan.workspace);
+                let restored = set_columns(&plan.api, plan, previous_rows);
                 Err(after_rollback(error, restored, &mut plan.usable))
             }
         }
@@ -648,7 +1070,72 @@ impl LtProvider {
         }));
     }
 
-    fn verify<E: Element>(&self, plan: &LtPlan<E>, rows: i32) -> Result<usize, ShapeError> {
+    #[cfg(test)]
+    pub(crate) fn reject_down_shape_once_after(&self, rows: usize, successful_checks: usize) {
+        self.core.down_shape_rejection.set(Some(ShapeRejection {
+            rows: i32::try_from(rows).expect("test shape must fit cuBLAS row count"),
+            successful_checks_left: successful_checks,
+        }));
+    }
+
+    fn verify<E: Element>(
+        &self,
+        plan: &LtPlan<E>,
+        rows: i32,
+        workspace_limit: usize,
+    ) -> Result<usize, ShapeError> {
+        self.verify_with(plan, rows, workspace_limit, |status, checked| {
+            // Test-only rejection occurs after a real successful check, while
+            // descriptors contain the requested rows. Normal rollback handles it.
+            #[cfg(test)]
+            if status == STATUS_SUCCESS
+                && checked.state == STATUS_SUCCESS
+                && checked.workspace_size <= workspace_limit
+                && inject_shape_rejection(&self.core.shape_rejection, rows)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+            let _ = (status, checked);
+            status
+        })
+    }
+
+    #[cfg(test)]
+    fn verify_down<E: Element>(
+        &self,
+        plan: &LtPlan<E>,
+        rows: i32,
+        workspace_limit: usize,
+    ) -> Result<usize, ShapeError> {
+        self.verify_with(plan, rows, workspace_limit, |status, checked| {
+            if status == STATUS_SUCCESS
+                && checked.state == STATUS_SUCCESS
+                && checked.workspace_size <= workspace_limit
+                && inject_shape_rejection(&self.core.down_shape_rejection, rows)
+            {
+                return STATUS_NOT_SUPPORTED;
+            }
+            status
+        })
+    }
+
+    #[cfg(not(test))]
+    fn verify_down<E: Element>(
+        &self,
+        plan: &LtPlan<E>,
+        rows: i32,
+        workspace_limit: usize,
+    ) -> Result<usize, ShapeError> {
+        self.verify(plan, rows, workspace_limit)
+    }
+
+    fn verify_with<E: Element>(
+        &self,
+        plan: &LtPlan<E>,
+        rows: i32,
+        workspace_limit: usize,
+        inject: impl FnOnce(i32, &HeuristicResult) -> i32,
+    ) -> Result<usize, ShapeError> {
         let geometry = || {
             format!(
                 "M={rows} K={} N={} epilogue={:?}",
@@ -668,19 +1155,8 @@ impl LtProvider {
                 &mut checked,
             )
         };
-        // Test-only rejection occurs after a real successful check, while
-        // descriptors contain the requested rows. Normal rollback handles it.
-        #[cfg(test)]
-        let status = if status == STATUS_SUCCESS
-            && checked.state == STATUS_SUCCESS
-            && checked.workspace_size <= WORKSPACE_BYTES
-            && inject_shape_rejection(&self.core.shape_rejection, rows)
-        {
-            STATUS_NOT_SUPPORTED
-        } else {
-            status
-        };
-        checked_workspace(status, &checked, geometry)
+        let status = inject(status, &checked);
+        checked_workspace_with_limit(status, &checked, workspace_limit, geometry)
     }
 
     fn belongs<E: Element>(&self, plan: &LtPlan<E>) -> Result<(), BackendError> {
@@ -712,10 +1188,15 @@ impl LtProvider {
                 "fused plan is unusable after a failed descriptor rollback",
             ));
         }
-        if plan.workspace > WORKSPACE_BYTES {
+        if plan.workspace > self.core.workspace.bytes {
             return Err(super::infer(format!(
-                "fused plan requires {} workspace bytes, provider limit {WORKSPACE_BYTES} (M={} K={} N={} epilogue={:?})",
-                plan.workspace, plan.rows, plan.geometry.input, plan.geometry.width, plan.epilogue
+                "fused plan requires {} workspace bytes, provider limit {} (M={} K={} N={} epilogue={:?})",
+                plan.workspace,
+                self.core.workspace.bytes,
+                plan.rows,
+                plan.geometry.input,
+                plan.geometry.width,
+                plan.epilogue
             )));
         }
         plan.geometry.check_bias(bias.len())?;
@@ -749,37 +1230,429 @@ impl LtProvider {
             "bias pointer",
         )?;
 
+        self.matmul_prepared(
+            plan,
+            weight_view.device_ptr(),
+            x_view.device_ptr(),
+            output_view.device_ptr(),
+        )
+    }
+
+    unsafe fn matmul_prepared<E: Element>(
+        &self,
+        plan: &LtPlan<E>,
+        weight: u64,
+        x: u64,
+        output: u64,
+    ) -> Result<(), BackendError> {
         let alpha = 1.0f32;
         let beta = 0.0f32;
         // All submissions use the same ordered stream and are externally
         // serialized, so this one provider allocation can serve every plan.
         let workspace = self.core.workspace.pointer as *mut c_void;
         let stream = self.core.stream.cu_stream().cast();
-        let status = (self.core.api.matmul)(
-            self.core.handle,
-            plan.op,
-            &alpha,
-            weight_view.device_ptr() as *const c_void,
-            plan.a,
-            x_view.device_ptr() as *const c_void,
-            plan.b,
-            &beta,
-            output_view.device_ptr() as *const c_void,
-            plan.y,
-            output_view.device_ptr() as *mut c_void,
-            plan.y,
-            &plan.algo,
-            workspace,
-            plan.workspace,
-            stream,
-        );
+        // SAFETY: callers validated every buffer view and retained its owner.
+        let status = unsafe {
+            (self.core.api.matmul)(
+                self.core.handle,
+                plan.op,
+                &alpha,
+                weight as *const c_void,
+                plan.a,
+                x as *const c_void,
+                plan.b,
+                &beta,
+                output as *const c_void,
+                plan.y,
+                output as *mut c_void,
+                plan.y,
+                &plan.algo,
+                workspace,
+                plan.workspace,
+                stream,
+            )
+        };
         check(status, "fused matmul")
+    }
+
+    fn heuristic_one<E: Element>(&self, plan: &LtPlan<E>) -> Result<HeuristicResult, ShapeError> {
+        let mut choice = HeuristicResult::default();
+        let mut count = 0i32;
+        let status = unsafe {
+            (self.core.api.heuristic)(
+                self.core.handle,
+                plan.op,
+                plan.a,
+                plan.b,
+                plan.y,
+                plan.y,
+                plan.pref,
+                1,
+                &mut choice,
+                &mut count,
+            )
+        };
+        if status == STATUS_NOT_SUPPORTED {
+            return Err(ShapeError::Rejected(super::infer(
+                "cuBLASLt has no fused bias heuristic for this native-default shape",
+            )));
+        }
+        if status != STATUS_SUCCESS {
+            return Err(ShapeError::Fatal(super::infer(format!(
+                "cuBLASLt native-default heuristic status {status}"
+            ))));
+        }
+        if count != 1 || choice.state != STATUS_SUCCESS {
+            return Err(ShapeError::Rejected(super::infer(
+                "cuBLASLt returned no successful native-default heuristic",
+            )));
+        }
+        Ok(choice)
+    }
+
+    /// Prepare the native-default policy with an actual-M/alignment cache.
+    ///
+    /// This is the pure planning half of the shared executor: it validates all
+    /// real arguments, reuses the persistent cache or the bounded request-scoped
+    /// pending store, and runs the existing heuristic plus `AlgoCheck` only on a
+    /// cold key. It submits no GPU work and allocates nothing. A successful cold
+    /// result remains pending until [`Self::launch_native_default_bound`] proves
+    /// the vendor matmul launched.
+    ///
+    /// # Safety
+    /// The caller must have bound this provider's CUDA context on the current
+    /// thread and keep it current for the subsequent bound launch. This method
+    /// performs no context bind or `cuCtxGetCurrent` query.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn prepare_native_default_bound<E: Element>(
+        &self,
+        plan: &mut LtPlan<E>,
+        pending: &mut NativeDefaultPending,
+        rows: usize,
+        x: &DeviceBuffer<E::Storage>,
+        weight: &DeviceBuffer<E::Storage>,
+        bias: &DeviceBuffer<E::Storage>,
+        output: &mut DeviceBuffer<E::Storage>,
+    ) -> Result<NativeDefaultPrepared, ShapeError> {
+        self.belongs(plan).map_err(ShapeError::Fatal)?;
+        if !plan.usable {
+            return Err(ShapeError::Fatal(super::infer(
+                "native-default plan is unusable after a failed descriptor rollback",
+            )));
+        }
+        if plan.native_default_cache.is_none() {
+            return Err(ShapeError::Fatal(super::infer(
+                "native-default plan was not prepared with the default ATen policy",
+            )));
+        }
+        let rows = plan.geometry.rows(rows).map_err(ShapeError::Rejected)?;
+        plan.geometry
+            .check_bias(bias.len())
+            .map_err(ShapeError::Fatal)?;
+        for context in [
+            x.context(),
+            weight.context(),
+            bias.context(),
+            output.context(),
+        ] {
+            if !Arc::ptr_eq(context, &self.core.context) {
+                return Err(ShapeError::Fatal(super::infer(
+                    "native-default projection buffers belong to a different CUDA context",
+                )));
+            }
+        }
+
+        let (x_layout, weight_layout, output_layout) =
+            plan.geometry.layouts(rows).map_err(ShapeError::Fatal)?;
+        let x_view = TensorRef::<E, 2>::new(x, x_layout)
+            .map_err(|error| ShapeError::Fatal(super::infer(error)))?;
+        let weight_view = TensorRef::<E, 2>::new(weight, weight_layout)
+            .map_err(|error| ShapeError::Fatal(super::infer(error)))?;
+        let bias_layout = Layout::<1>::contiguous([plan.geometry.width as usize])
+            .map_err(|error| ShapeError::Fatal(super::infer(error)))?;
+        let bias_view = TensorRef::<E, 1>::new(bias, bias_layout)
+            .map_err(|error| ShapeError::Fatal(super::infer(error)))?;
+        let output_view = TensorMut::<E, 2>::new(output, output_layout)
+            .map_err(|error| ShapeError::Fatal(super::infer(error)))?;
+
+        let alignment = NativeDefaultAlignment {
+            a: get_alignment(weight_view.device_ptr()),
+            b: get_alignment(x_view.device_ptr()),
+            c: get_alignment(output_view.device_ptr()),
+            d: get_alignment(output_view.device_ptr()),
+        };
+        let key = NativeDefaultCacheKey {
+            rows,
+            input: plan.geometry.input,
+            width: plan.geometry.width,
+            x_stride: plan.geometry.x_stride,
+            weight_stride: plan.geometry.weight_stride,
+            output_stride: plan.geometry.output_stride,
+            element_type: element_type::<E>().map_err(ShapeError::Fatal)?,
+            epilogue: plan.epilogue,
+            workspace_preference: NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES,
+            alignment,
+        };
+        let bias_pointer = bias_view.device_ptr();
+        let invocation = |prepared, pending| NativeDefaultPrepared {
+            rows,
+            key,
+            prepared,
+            bias_pointer,
+            alignment,
+            x_pointer: x_view.device_ptr(),
+            weight_pointer: weight_view.device_ptr(),
+            output_pointer: output_view.device_ptr(),
+            pending,
+        };
+
+        if let Some(prepared) = plan
+            .native_default_cache
+            .as_ref()
+            .and_then(|cache| cache.get(&key))
+        {
+            return Ok(invocation(prepared, false));
+        }
+        if let Some(prepared) = pending.get(&key) {
+            return Ok(invocation(prepared, true));
+        }
+
+        let snapshot = snapshot_native_default(plan);
+        if rows != snapshot.rows {
+            if let Err(error) = set_columns(&plan.api, plan, rows) {
+                return Err(fail_native_default(
+                    &self.core.api,
+                    plan,
+                    snapshot,
+                    error.into(),
+                ));
+            }
+        }
+        let bias_descriptor = bias_pointer as *const c_void;
+        if let Err(error) = set_desc(
+            &self.core.api,
+            plan.op,
+            MATMUL_DESC_BIAS_POINTER,
+            &bias_descriptor,
+            "native-default bias pointer",
+        ) {
+            return Err(fail_native_default(
+                &self.core.api,
+                plan,
+                snapshot,
+                error.into(),
+            ));
+        }
+        if let Err(error) = set_native_default_alignment(&self.core.api, plan.pref, alignment) {
+            return Err(fail_native_default(
+                &self.core.api,
+                plan,
+                snapshot,
+                error.into(),
+            ));
+        }
+        #[cfg(test)]
+        if let Some(cache) = plan.native_default_cache.as_mut() {
+            cache.queries += 1;
+        }
+        let choice = match self.heuristic_one(plan) {
+            Ok(choice) => choice,
+            Err(error) => return Err(fail_native_default(&self.core.api, plan, snapshot, error)),
+        };
+        plan.algo = choice.algo;
+        let workspace_limit = self
+            .core
+            .workspace
+            .bytes
+            .min(NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES);
+        let prepared = match self.verify_down(plan, rows, workspace_limit) {
+            Ok(workspace) => PreparedAlgorithm {
+                algo: choice.algo,
+                workspace,
+            },
+            Err(error) => return Err(fail_native_default(&self.core.api, plan, snapshot, error)),
+        };
+        // Keep the descriptor fields consistent with the validated pending
+        // metadata. Publication to the persistent cache still waits for launch.
+        plan.rows = rows;
+        plan.workspace = prepared.workspace;
+        plan.native_default_bias_pointer = bias_descriptor;
+        plan.native_default_alignment = alignment;
+        pending.insert(key, prepared);
+        Ok(invocation(prepared, true))
+    }
+
+    /// Launch one prepared native-default invocation. No heuristic or
+    /// `AlgoCheck` runs here, and a cold pending entry is published only after
+    /// the vendor matmul itself succeeds.
+    ///
+    /// # Safety
+    /// The caller must have bound this provider's CUDA context on the current
+    /// thread, keep it current through launch, and keep every buffer and the
+    /// output free of conflicting access until this provider's stream drains.
+    /// `prepared` must have been produced by
+    /// [`Self::prepare_native_default_bound`] for the same buffers. This method
+    /// performs no context bind or `cuCtxGetCurrent` query.
+    pub(crate) unsafe fn launch_native_default_bound<E: Element>(
+        &self,
+        plan: &mut LtPlan<E>,
+        prepared: &NativeDefaultPrepared,
+        x: &DeviceBuffer<E::Storage>,
+        weight: &DeviceBuffer<E::Storage>,
+        output: &mut DeviceBuffer<E::Storage>,
+    ) -> Result<(), ShapeError> {
+        self.belongs(plan).map_err(ShapeError::Fatal)?;
+        if !plan.usable {
+            return Err(ShapeError::Fatal(super::infer(
+                "native-default plan is unusable after a failed descriptor rollback",
+            )));
+        }
+        if plan.native_default_cache.is_none() {
+            return Err(ShapeError::Fatal(super::infer(
+                "native-default plan was not prepared with the default ATen policy",
+            )));
+        }
+        if x.cu_deviceptr() != prepared.x_pointer
+            || weight.cu_deviceptr() != prepared.weight_pointer
+            || output.cu_deviceptr() != prepared.output_pointer
+        {
+            return Err(ShapeError::Fatal(super::infer(
+                "native-default launch buffers differ from prepared metadata",
+            )));
+        }
+        let snapshot = snapshot_native_default(plan);
+        if prepared.rows != snapshot.rows {
+            if let Err(error) = set_columns(&plan.api, plan, prepared.rows) {
+                return Err(fail_native_default(
+                    &self.core.api,
+                    plan,
+                    snapshot,
+                    error.into(),
+                ));
+            }
+        }
+        let bias_descriptor = prepared.bias_pointer as *const c_void;
+        if let Err(error) = set_desc(
+            &self.core.api,
+            plan.op,
+            MATMUL_DESC_BIAS_POINTER,
+            &bias_descriptor,
+            "native-default bias pointer",
+        ) {
+            return Err(fail_native_default(
+                &self.core.api,
+                plan,
+                snapshot,
+                error.into(),
+            ));
+        }
+        if snapshot.alignment != prepared.alignment {
+            if let Err(error) =
+                set_native_default_alignment(&self.core.api, plan.pref, prepared.alignment)
+            {
+                return Err(fail_native_default(
+                    &self.core.api,
+                    plan,
+                    snapshot,
+                    error.into(),
+                ));
+            }
+        }
+        plan.rows = prepared.rows;
+        plan.algo = prepared.prepared.algo;
+        plan.workspace = prepared.prepared.workspace;
+        plan.native_default_bias_pointer = bias_descriptor;
+        plan.native_default_alignment = prepared.alignment;
+        // SAFETY: the caller's retained-buffer contract covers these pointers,
+        // which were validated to match the prepared metadata.
+        if let Err(error) = unsafe {
+            self.matmul_prepared(
+                plan,
+                prepared.weight_pointer,
+                prepared.x_pointer,
+                prepared.output_pointer,
+            )
+        } {
+            return Err(fail_native_default(
+                &self.core.api,
+                plan,
+                snapshot,
+                ShapeError::Fatal(error),
+            ));
+        }
+        if prepared.pending {
+            let Some(cache) = plan.native_default_cache.as_mut() else {
+                return Err(fail_native_default(
+                    &self.core.api,
+                    plan,
+                    snapshot,
+                    ShapeError::Fatal(super::infer("native-default cache disappeared")),
+                ));
+            };
+            cache.insert(prepared.key, prepared.prepared);
+        }
+        Ok(())
+    }
+
+    /// Unbound standalone native-default convenience entry point: bind once,
+    /// then reuse the same bound prepare/launch implementation used by the
+    /// Engine. Only the usual asynchronous buffer-lifetime contract is unsafe.
+    ///
+    /// # Safety
+    /// The caller must keep every buffer and the output free of conflicting
+    /// access until this provider's stream drains.
+    #[allow(dead_code, clippy::too_many_arguments)]
+    pub(crate) unsafe fn enqueue_native_default<E: Element>(
+        &self,
+        plan: &mut LtPlan<E>,
+        rows: usize,
+        x: &DeviceBuffer<E::Storage>,
+        weight: &DeviceBuffer<E::Storage>,
+        bias: &DeviceBuffer<E::Storage>,
+        output: &mut DeviceBuffer<E::Storage>,
+    ) -> Result<(), ShapeError> {
+        self.bind_context().map_err(ShapeError::Fatal)?;
+        let mut pending = NativeDefaultPending::default();
+        // SAFETY: this thread bound the provider context above, and the caller's
+        // retained-buffer contract covers both prepare and launch.
+        let prepared = unsafe {
+            self.prepare_native_default_bound(plan, &mut pending, rows, x, weight, bias, output)?
+        };
+        // SAFETY: the context remains bound; the prepared invocation was built
+        // from these exact buffers.
+        unsafe { self.launch_native_default_bound(plan, &prepared, x, weight, output) }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_default_queries<E: Element>(&self, plan: &LtPlan<E>) -> usize {
+        let _ = self;
+        plan.native_default_cache
+            .as_ref()
+            .map_or(0, |cache| cache.queries)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn native_default_cache_len<E: Element>(&self, plan: &LtPlan<E>) -> usize {
+        let _ = self;
+        plan.native_default_cache
+            .as_ref()
+            .map_or(0, |cache| cache.len())
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn checked_workspace(
     status: i32,
     checked: &HeuristicResult,
+    geometry: impl FnOnce() -> String,
+) -> Result<usize, ShapeError> {
+    checked_workspace_with_limit(status, checked, WORKSPACE_BYTES, geometry)
+}
+
+fn checked_workspace_with_limit(
+    status: i32,
+    checked: &HeuristicResult,
+    workspace_limit: usize,
     geometry: impl FnOnce() -> String,
 ) -> Result<usize, ShapeError> {
     if status != STATUS_SUCCESS {
@@ -805,14 +1678,157 @@ fn checked_workspace(
             ShapeError::Fatal(error)
         });
     }
-    if checked.workspace_size > WORKSPACE_BYTES {
+    if checked.workspace_size > workspace_limit {
         return Err(ShapeError::Rejected(super::infer(format!(
-            "fused algorithm requires {} workspace bytes, provider limit {WORKSPACE_BYTES} ({})",
+            "fused algorithm requires {} workspace bytes, provider limit {workspace_limit} ({})",
             checked.workspace_size,
             geometry()
         ))));
     }
     Ok(checked.workspace_size)
+}
+
+fn set_native_default_alignment(
+    api: &Api,
+    preference: Descriptor,
+    alignment: NativeDefaultAlignment,
+) -> Result<(), BackendError> {
+    for (attribute, value) in [
+        (PREFERENCE_MIN_ALIGNMENT_A_BYTES, alignment.a),
+        (PREFERENCE_MIN_ALIGNMENT_B_BYTES, alignment.b),
+        (PREFERENCE_MIN_ALIGNMENT_C_BYTES, alignment.c),
+        (PREFERENCE_MIN_ALIGNMENT_D_BYTES, alignment.d),
+    ] {
+        set_preference(
+            api,
+            preference,
+            attribute,
+            &value,
+            "native-default alignment preference",
+        )?;
+    }
+    Ok(())
+}
+
+fn snapshot_native_default<E: Element>(plan: &LtPlan<E>) -> NativeDefaultSnapshot {
+    NativeDefaultSnapshot {
+        rows: plan.rows,
+        algo: plan.algo,
+        workspace: plan.workspace,
+        bias_pointer: plan.native_default_bias_pointer,
+        alignment: plan.native_default_alignment,
+    }
+}
+
+#[derive(Clone, Copy)]
+struct NativeDefaultMutableState {
+    rows: i32,
+    algo: Algo,
+    workspace: usize,
+    bias_pointer: *const c_void,
+    alignment: NativeDefaultAlignment,
+}
+
+fn native_default_state<E: Element>(plan: &LtPlan<E>) -> NativeDefaultMutableState {
+    NativeDefaultMutableState {
+        rows: plan.rows,
+        algo: plan.algo,
+        workspace: plan.workspace,
+        bias_pointer: plan.native_default_bias_pointer,
+        alignment: plan.native_default_alignment,
+    }
+}
+
+fn apply_native_default_snapshot(
+    state: &mut NativeDefaultMutableState,
+    snapshot: NativeDefaultSnapshot,
+) {
+    state.rows = snapshot.rows;
+    state.algo = snapshot.algo;
+    state.workspace = snapshot.workspace;
+    state.bias_pointer = snapshot.bias_pointer;
+    state.alignment = snapshot.alignment;
+}
+
+fn write_native_default_state<E: Element>(plan: &mut LtPlan<E>, state: NativeDefaultMutableState) {
+    plan.rows = state.rows;
+    plan.algo = state.algo;
+    plan.workspace = state.workspace;
+    plan.native_default_bias_pointer = state.bias_pointer;
+    plan.native_default_alignment = state.alignment;
+}
+
+fn run_native_default_rollback(
+    state: &mut NativeDefaultMutableState,
+    snapshot: NativeDefaultSnapshot,
+    mut restore_columns: impl FnMut() -> Result<(), BackendError>,
+    mut restore_bias: impl FnMut() -> Result<(), BackendError>,
+    mut restore_alignment: impl FnMut() -> Result<(), BackendError>,
+) -> Result<(), BackendError> {
+    let mut result = Ok(());
+    if let Err(error) = restore_columns() {
+        result = Err(error);
+    }
+    apply_native_default_snapshot(state, snapshot);
+    if let Err(error) = restore_bias() {
+        result = Err(error);
+    }
+    if let Err(error) = restore_alignment() {
+        result = Err(error);
+    }
+    result
+}
+
+fn restore_native_default<E: Element>(
+    api: &Api,
+    plan: &mut LtPlan<E>,
+    snapshot: NativeDefaultSnapshot,
+) -> Result<(), BackendError> {
+    let mut state = native_default_state(plan);
+    let result = run_native_default_rollback(
+        &mut state,
+        snapshot,
+        || set_columns(api, plan, snapshot.rows),
+        || {
+            set_desc(
+                api,
+                plan.op,
+                MATMUL_DESC_BIAS_POINTER,
+                &snapshot.bias_pointer,
+                "native-default bias pointer rollback",
+            )
+        },
+        || set_native_default_alignment(api, plan.pref, snapshot.alignment),
+    );
+    write_native_default_state(plan, state);
+    result
+}
+
+fn native_default_failure(
+    error: ShapeError,
+    rollback: Result<(), BackendError>,
+    usable: &mut bool,
+) -> ShapeError {
+    match rollback {
+        Ok(()) => error,
+        Err(rollback) => {
+            *usable = false;
+            ShapeError::Fatal(super::infer(format!(
+                "{}; failed to restore native-default transaction: {rollback}",
+                error.into_backend()
+            )))
+        }
+    }
+}
+
+fn fail_native_default<E: Element>(
+    api: &Api,
+    plan: &mut LtPlan<E>,
+    snapshot: NativeDefaultSnapshot,
+    error: ShapeError,
+) -> ShapeError {
+    let rollback = restore_native_default(api, plan, snapshot);
+    native_default_failure(error, rollback, &mut plan.usable)
 }
 
 fn after_rollback(
@@ -866,6 +1882,18 @@ impl Geometry {
         let width = dimension(width)?;
         let seed_rows = dimension(SEED_ROWS)?;
         Self::checked(input, width, seed_rows, input, input, width)
+    }
+
+    fn contiguous_rows<E: Element>(
+        input: usize,
+        width: usize,
+        rows: usize,
+    ) -> Result<Self, BackendError> {
+        element_type::<E>()?;
+        let input = dimension(input)?;
+        let width = dimension(width)?;
+        let rows = dimension(rows)?;
+        Self::checked(input, width, rows, input, input, width)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -970,6 +1998,12 @@ pub(crate) struct LtPlan<E: Element> {
     y: Descriptor,
     pref: Descriptor,
     algo: Algo,
+    base: PreparedAlgorithm,
+    small: [Option<PreparedAlgorithm>; SMALL_ROWS],
+    small_prepared: bool,
+    native_default_cache: Option<Box<NativeDefaultCache>>,
+    native_default_bias_pointer: *const c_void,
+    native_default_alignment: NativeDefaultAlignment,
     geometry: Geometry,
     epilogue: Epilogue,
     rows: i32,
@@ -982,6 +2016,10 @@ pub(crate) struct LtPlan<E: Element> {
 impl<E: Element> LtPlan<E> {
     pub(crate) fn logical_rows(&self) -> i32 {
         self.rows
+    }
+
+    pub(crate) fn prepared_small_rows(&self) -> usize {
+        self.small.iter().flatten().count()
     }
 }
 
@@ -1063,6 +2101,23 @@ fn select_zero_workspace_algorithm(choices: &[HeuristicResult]) -> Result<Algo, 
         .map(|choice| choice.algo)
         .ok_or_else(|| {
             super::infer("cuBLASLt returned no successful zero-workspace fused algorithm")
+        })
+}
+
+fn select_small_algorithm(
+    choices: &[HeuristicResult],
+    workspace_limit: usize,
+) -> Result<Algo, BackendError> {
+    choices
+        .iter()
+        .find(|choice| {
+            choice.state == STATUS_SUCCESS && choice.workspace_size <= workspace_limit
+        })
+        .map(|choice| choice.algo)
+        .ok_or_else(|| {
+            super::infer(format!(
+                "cuBLASLt returned no successful small-row algorithm within {workspace_limit} workspace bytes"
+            ))
         })
 }
 
@@ -1391,6 +2446,270 @@ mod tests {
     }
 
     #[test]
+    fn native_default_cache_reuses_exact_keys_and_stays_bounded() {
+        let key = |rows: i32| NativeDefaultCacheKey {
+            rows,
+            input: 768,
+            width: 9,
+            x_stride: 768,
+            weight_stride: 768,
+            output_stride: 9,
+            element_type: CUDA_R_16BF,
+            epilogue: Epilogue::Bias,
+            workspace_preference: NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES,
+            alignment: NativeDefaultAlignment {
+                a: 256,
+                b: 128,
+                c: 64,
+                d: 64,
+            },
+        };
+        let prepared = |value: u64| PreparedAlgorithm {
+            algo: Algo { data: [value; 8] },
+            workspace: value as usize,
+        };
+        let mut cache = NativeDefaultCache::default();
+        cache.insert(key(1), prepared(11));
+        assert_eq!(cache.get(&key(1)).unwrap().algo.data, [11; 8]);
+        cache.insert(key(1), prepared(12));
+        assert_eq!(cache.get(&key(1)).unwrap().algo.data, [12; 8]);
+        assert_eq!(cache.len(), 1);
+        for rows in 2..=NATIVE_DEFAULT_CACHE_ENTRIES as i32 + 5 {
+            cache.insert(key(rows), prepared(rows as u64));
+        }
+        assert_eq!(cache.len(), NATIVE_DEFAULT_CACHE_ENTRIES);
+        assert_eq!(
+            cache
+                .get(&key(NATIVE_DEFAULT_CACHE_ENTRIES as i32 + 5))
+                .unwrap()
+                .algo
+                .data,
+            [(NATIVE_DEFAULT_CACHE_ENTRIES as u64 + 5); 8]
+        );
+        assert!(cache.get(&key(1)).is_none(), "oldest metadata was evicted");
+        cache.insert(key(1), prepared(13));
+        assert_eq!(cache.len(), NATIVE_DEFAULT_CACHE_ENTRIES);
+        assert_eq!(cache.get(&key(1)).unwrap().algo.data, [13; 8]);
+    }
+
+    #[test]
+    fn native_default_pending_reuses_cold_keys_without_publishing_and_stays_bounded() {
+        let key = |rows: i32| NativeDefaultCacheKey {
+            rows,
+            input: 768,
+            width: 9,
+            x_stride: 768,
+            weight_stride: 768,
+            output_stride: 9,
+            element_type: CUDA_R_16BF,
+            epilogue: Epilogue::Bias,
+            workspace_preference: NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES,
+            alignment: NativeDefaultAlignment {
+                a: 256,
+                b: 128,
+                c: 64,
+                d: 64,
+            },
+        };
+        let prepared = |value: u64| PreparedAlgorithm {
+            algo: Algo { data: [value; 8] },
+            workspace: value as usize,
+        };
+        let mut pending = NativeDefaultPending::default();
+        assert!(pending.get(&key(3)).is_none());
+        pending.insert(key(3), prepared(33));
+        assert_eq!(pending.get(&key(3)).unwrap().algo.data, [33; 8]);
+        pending.insert(key(3), prepared(34));
+        assert_eq!(pending.get(&key(3)).unwrap().algo.data, [34; 8]);
+        assert_eq!(pending.len(), 1);
+        for rows in 4..=NATIVE_DEFAULT_CACHE_ENTRIES as i32 + 8 {
+            pending.insert(key(rows), prepared(rows as u64));
+        }
+        assert_eq!(pending.len(), NATIVE_DEFAULT_CACHE_ENTRIES);
+        assert_eq!(
+            pending
+                .get(&key(NATIVE_DEFAULT_CACHE_ENTRIES as i32 + 8))
+                .unwrap()
+                .algo
+                .data,
+            [(NATIVE_DEFAULT_CACHE_ENTRIES as u64 + 8); 8]
+        );
+        pending.clear();
+        assert_eq!(pending.len(), 0);
+        assert!(pending.get(&key(3)).is_none());
+    }
+
+    #[test]
+    fn native_default_cache_does_not_publish_rejected_pending_entry_or_evict_existing() {
+        let key = |rows: i32, alignment: NativeDefaultAlignment| NativeDefaultCacheKey {
+            rows,
+            input: 768,
+            width: 9,
+            x_stride: 768,
+            weight_stride: 768,
+            output_stride: 9,
+            element_type: CUDA_R_16BF,
+            epilogue: Epilogue::Bias,
+            workspace_preference: NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES,
+            alignment,
+        };
+        let prepared = |value: u64| PreparedAlgorithm {
+            algo: Algo { data: [value; 8] },
+            workspace: value as usize,
+        };
+        let first_alignment = NativeDefaultAlignment {
+            a: 256,
+            b: 256,
+            c: 256,
+            d: 256,
+        };
+        let second_alignment = NativeDefaultAlignment {
+            a: 128,
+            b: 64,
+            c: 64,
+            d: 64,
+        };
+        let third_alignment = NativeDefaultAlignment {
+            a: 64,
+            b: 64,
+            c: 32,
+            d: 32,
+        };
+        let first = key(1, first_alignment);
+        let second = key(3, second_alignment);
+        let rejected = key(5, third_alignment);
+        let mut cache = NativeDefaultCache::default();
+        cache.insert(first, prepared(11));
+        cache.insert(second, prepared(22));
+        let before_first = cache.get(&first).unwrap();
+        let before_second = cache.get(&second).unwrap();
+
+        // A rejected cold miss never publishes its pending entry and must not
+        // disturb either previously cached shape/alignment tuple.
+        assert!(cache.get(&rejected).is_none());
+        assert_eq!(cache.len(), 2);
+        assert_eq!(cache.get(&first).unwrap(), before_first);
+        assert_eq!(cache.get(&second).unwrap(), before_second);
+
+        cache.insert(rejected, prepared(55));
+        assert_eq!(cache.len(), 3);
+        assert_eq!(cache.get(&first).unwrap(), before_first);
+        assert_eq!(cache.get(&second).unwrap(), before_second);
+        assert_eq!(cache.get(&rejected).unwrap().algo.data, [55; 8]);
+    }
+
+    #[test]
+    fn native_default_rollback_restores_every_mutable_stage_and_fails_closed() {
+        let snapshot = NativeDefaultSnapshot {
+            rows: 3,
+            algo: Algo { data: [7; 8] },
+            workspace: 123,
+            bias_pointer: 0x2000usize as *const c_void,
+            alignment: NativeDefaultAlignment {
+                a: 256,
+                b: 128,
+                c: 64,
+                d: 64,
+            },
+        };
+        let dirty = NativeDefaultMutableState {
+            rows: 5,
+            algo: Algo { data: [9; 8] },
+            workspace: 999,
+            bias_pointer: 0x3000usize as *const c_void,
+            alignment: NativeDefaultAlignment {
+                a: 64,
+                b: 32,
+                c: 16,
+                d: 8,
+            },
+        };
+        for failing_stage in 0..3 {
+            let mut state = dirty;
+            let result = run_native_default_rollback(
+                &mut state,
+                snapshot,
+                || {
+                    if failing_stage == 0 {
+                        Err(super::super::infer("injected column rollback failure"))
+                    } else {
+                        Ok(())
+                    }
+                },
+                || {
+                    if failing_stage == 1 {
+                        Err(super::super::infer("injected bias rollback failure"))
+                    } else {
+                        Ok(())
+                    }
+                },
+                || {
+                    if failing_stage == 2 {
+                        Err(super::super::infer("injected alignment rollback failure"))
+                    } else {
+                        Ok(())
+                    }
+                },
+            );
+            assert!(result.is_err());
+            assert_eq!(state.rows, snapshot.rows);
+            assert_eq!(state.algo, snapshot.algo);
+            assert_eq!(state.workspace, snapshot.workspace);
+            assert_eq!(state.bias_pointer, snapshot.bias_pointer);
+            assert_eq!(state.alignment, snapshot.alignment);
+
+            let mut usable = true;
+            let failure = native_default_failure(
+                ShapeError::Rejected(super::super::infer("injected cold miss")),
+                result,
+                &mut usable,
+            );
+            assert!(matches!(failure, ShapeError::Fatal(_)));
+            assert!(!usable);
+        }
+
+        let mut state = dirty;
+        let result =
+            run_native_default_rollback(&mut state, snapshot, || Ok(()), || Ok(()), || Ok(()));
+        assert!(result.is_ok());
+        assert_eq!(state.rows, snapshot.rows);
+        assert_eq!(state.algo, snapshot.algo);
+        assert_eq!(state.workspace, snapshot.workspace);
+        assert_eq!(state.bias_pointer, snapshot.bias_pointer);
+        assert_eq!(state.alignment, snapshot.alignment);
+
+        let mut usable = true;
+        let failure = native_default_failure(
+            ShapeError::Rejected(super::super::infer("injected cold miss")),
+            result,
+            &mut usable,
+        );
+        assert!(matches!(failure, ShapeError::Rejected(_)));
+        assert!(usable);
+    }
+
+    #[test]
+    fn native_default_alignment_matches_the_upstream_256_to_one_halving_rule() {
+        assert_eq!(get_alignment(0), 256);
+        assert_eq!(get_alignment(4096), 256);
+        assert_eq!(get_alignment(257), 1);
+        assert_eq!(get_alignment(2 * 256 + 128), 128);
+        assert_eq!(get_alignment(64 * 3), 64);
+        assert_eq!(get_alignment(31), 1);
+    }
+
+    #[test]
+    fn native_default_backing_and_preference_are_distinct_and_seeded() {
+        assert_eq!(NATIVE_DEFAULT_WORKSPACE_BYTES, 32 * 1024 * 1024);
+        assert_eq!(NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES, 1024 * 1024);
+        assert_eq!(NATIVE_DEFAULT_SEED_ROWS, SEED_ROWS);
+        const {
+            assert!(NATIVE_DEFAULT_WORKSPACE_BYTES > NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES);
+            assert!(WORKSPACE_BYTES < NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES);
+        }
+    }
+
+    #[test]
     fn selects_a_successful_zero_workspace_candidate_after_ineligible_results() {
         let choices = [
             HeuristicResult {
@@ -1413,6 +2732,110 @@ mod tests {
             choices[2].algo
         );
         assert!(select_zero_workspace_algorithm(&choices[..2]).is_err());
+    }
+
+    #[test]
+    fn small_row_algorithm_is_first_success_within_the_workspace_bound() {
+        let choices = [
+            HeuristicResult {
+                algo: Algo { data: [1; 8] },
+                workspace_size: WORKSPACE_BYTES + 1,
+                ..HeuristicResult::default()
+            },
+            HeuristicResult {
+                algo: Algo { data: [2; 8] },
+                workspace_size: WORKSPACE_BYTES + 8,
+                ..HeuristicResult::default()
+            },
+            HeuristicResult {
+                algo: Algo { data: [3; 8] },
+                state: STATUS_NOT_SUPPORTED,
+                ..HeuristicResult::default()
+            },
+            HeuristicResult {
+                algo: Algo { data: [4; 8] },
+                workspace_size: 30_736,
+                ..HeuristicResult::default()
+            },
+        ];
+        assert_eq!(
+            select_small_algorithm(&choices, WORKSPACE_BYTES).unwrap(),
+            choices[3].algo
+        );
+        assert!(select_small_algorithm(&choices[..2], WORKSPACE_BYTES).is_err());
+        assert!(select_small_algorithm(&[], WORKSPACE_BYTES).is_err());
+    }
+
+    #[test]
+    fn small_row_cache_covers_only_actual_rows_one_through_thirty_two() {
+        let base = PreparedAlgorithm {
+            algo: Algo { data: [99; 8] },
+            workspace: 0,
+        };
+        let mut small = [None; SMALL_ROWS];
+        for (index, prepared) in small.iter_mut().enumerate() {
+            *prepared = Some(PreparedAlgorithm {
+                algo: Algo {
+                    data: [index as u64 + 1; 8],
+                },
+                workspace: index + 1,
+            });
+        }
+        assert_eq!(prepared_for_rows(base, &small, true, 0).unwrap(), base);
+        for rows in 1..=SMALL_ROWS {
+            let actual = prepared_for_rows(base, &small, true, rows).unwrap();
+            assert_eq!(actual.algo.data, [rows as u64; 8]);
+            assert_eq!(actual.workspace, rows);
+        }
+        assert_eq!(
+            prepared_for_rows(base, &small, true, SMALL_ROWS + 1).unwrap(),
+            base
+        );
+        assert_eq!(
+            prepared_for_rows(base, &small, true, usize::MAX).unwrap(),
+            base
+        );
+        let mut hole = small;
+        hole[4] = None;
+        assert!(prepared_for_rows(base, &hole, true, 5).is_err());
+        assert_eq!(prepared_for_rows(base, &hole, false, 5).unwrap(), base);
+    }
+
+    #[test]
+    fn prepared_algorithm_check_receives_the_selected_algorithm() {
+        let selected = Algo { data: [7; 8] };
+        let seen = Cell::new(None);
+        let prepared = check_algorithm(selected, |algorithm| {
+            seen.set(Some(*algorithm));
+            Ok(30_736)
+        })
+        .unwrap();
+        assert_eq!(seen.get(), Some(selected));
+        assert_eq!(prepared.algo, selected);
+        assert_eq!(prepared.workspace, 30_736);
+        assert!(check_algorithm(selected, |_| {
+            Err(ShapeError::Rejected(super::super::infer(
+                "mock provider rejected the selected algorithm",
+            )))
+        })
+        .is_err());
+    }
+
+    #[test]
+    fn rejected_algorithm_refresh_restores_algorithm_and_workspace() {
+        let previous = PreparedAlgorithm {
+            algo: Algo { data: [7; 8] },
+            workspace: 12,
+        };
+        let target = PreparedAlgorithm {
+            algo: Algo { data: [8; 8] },
+            workspace: 30_736,
+        };
+        let mut algo = target.algo;
+        let mut workspace = target.workspace;
+        restore_prepared(previous, &mut algo, &mut workspace);
+        assert_eq!(algo, previous.algo);
+        assert_eq!(workspace, previous.workspace);
     }
 
     #[test]
@@ -1735,6 +3158,109 @@ mod tests {
     #[ignore = "requires CUDA 13 GPU runtime"]
     fn gpu_fused_f16_changing_rows_same_algo_and_bias_pointers() {
         gpu_fixture::<F16>();
+    }
+
+    #[test]
+    #[ignore = "requires CUDA 13 GPU runtime"]
+    fn gpu_native_small_rows_select_prepared_algorithms_and_share_workspace() {
+        const INPUT: usize = 3072;
+        const WIDTH: usize = 768;
+        const MAX_ROWS: usize = 128;
+        let context = Context::new(0).unwrap();
+        let stream = context.new_stream().unwrap();
+        let provider = LtProvider::new(context.clone(), stream.clone()).unwrap();
+        let workspace_pointer = provider.core.workspace.pointer;
+        stream.synchronize().unwrap();
+        let mut workspace = vec![0xffu8; WORKSPACE_BYTES];
+        // SAFETY: the provider stream is drained, the allocation covers the full
+        // workspace, and the destination is a live host vector of that length.
+        unsafe {
+            cuda_core::memory::memcpy_dtoh_async(
+                workspace.as_mut_ptr(),
+                workspace_pointer,
+                WORKSPACE_BYTES,
+                stream.cu_stream(),
+            )
+        }
+        .unwrap();
+        stream.synchronize().unwrap();
+        let first_nonzero = workspace.iter().position(|byte| *byte != 0);
+        assert!(
+            first_nonzero.is_none(),
+            "workspace {workspace_pointer:#x} was not zeroed at construction: {first_nonzero:?}"
+        );
+        let mut bias_plan = provider
+            .prepare_native_small_bias_shape::<Bf16>(INPUT, WIDTH)
+            .unwrap();
+        let mut gelu_plan = provider
+            .prepare_native_small_gelu_bias_shape::<Bf16>(INPUT, WIDTH)
+            .unwrap();
+        for plan in [&bias_plan, &gelu_plan] {
+            assert_eq!(plan.prepared_small_rows(), SMALL_ROWS);
+        }
+        let host_x = values::<Bf16>(MAX_ROWS * INPUT, 17, 0.5);
+        let host_weight = values::<Bf16>(WIDTH * INPUT, 911, 0.0625);
+        let host_bias_a = values::<Bf16>(WIDTH, 1919, 0.125);
+        let host_bias_b = values::<Bf16>(WIDTH, 2027, 0.25);
+        let x = DeviceBuffer::from_host(&stream, &host_x).unwrap();
+        let weight = DeviceBuffer::from_host(&stream, &host_weight).unwrap();
+        let bias_a = DeviceBuffer::from_host(&stream, &host_bias_a).unwrap();
+        let bias_b = DeviceBuffer::from_host(&stream, &host_bias_b).unwrap();
+        let sentinel = Bf16::encode(-99.0);
+        let mut saw_small_workspace = false;
+        let mut saw_base_algorithm = false;
+        for &rows in &[5usize, 1, SMALL_ROWS, 33, 128, 5, SMALL_ROWS] {
+            let base = bias_plan.base;
+            let expected =
+                prepared_for_rows(base, &bias_plan.small, bias_plan.small_prepared, rows).unwrap();
+            provider.set_logical_rows(&mut bias_plan, rows).unwrap();
+            assert_eq!(bias_plan.logical_rows(), rows as i32);
+            assert_eq!(bias_plan.algo, expected.algo);
+            assert_eq!(provider.core.workspace.pointer, workspace_pointer);
+            assert!(bias_plan.workspace <= WORKSPACE_BYTES);
+            saw_small_workspace |= rows <= SMALL_ROWS && bias_plan.workspace != 0;
+            saw_base_algorithm |= rows > SMALL_ROWS && bias_plan.algo == base.algo;
+            let mut output_a =
+                DeviceBuffer::from_host(&stream, &[sentinel; MAX_ROWS * WIDTH]).unwrap();
+            let mut output_b =
+                DeviceBuffer::from_host(&stream, &[sentinel; MAX_ROWS * WIDTH]).unwrap();
+            // SAFETY: buffers stay alive, bias pointer replacement is checked
+            // through distinct outputs, and the host copies drain the stream.
+            unsafe {
+                provider
+                    .enqueue(&bias_plan, &x, &weight, &bias_a, &mut output_a)
+                    .unwrap();
+                provider
+                    .enqueue(&bias_plan, &x, &weight, &bias_b, &mut output_b)
+                    .unwrap();
+            }
+            let output_a = output_a.to_host_vec(&stream).unwrap();
+            let output_b = output_b.to_host_vec(&stream).unwrap();
+            let mut bias_changed_output = false;
+            for row in 0..rows {
+                for column in 0..WIDTH {
+                    let actual_a = Bf16::decode(output_a[row * WIDTH + column]);
+                    let actual_b = Bf16::decode(output_b[row * WIDTH + column]);
+                    assert!(actual_a.is_finite() && actual_b.is_finite());
+                    bias_changed_output |= actual_a != actual_b;
+                }
+            }
+            assert!(
+                bias_changed_output,
+                "bias alias was not applied at M={rows}"
+            );
+            let expected_gelu = prepared_for_rows(
+                gelu_plan.base,
+                &gelu_plan.small,
+                gelu_plan.small_prepared,
+                rows,
+            )
+            .unwrap();
+            provider.set_logical_rows(&mut gelu_plan, rows).unwrap();
+            assert_eq!(gelu_plan.algo, expected_gelu.algo);
+        }
+        assert!(saw_small_workspace);
+        assert!(saw_base_algorithm);
     }
 
     // Real encoder widths exercise the shape-dependent auxiliary workspace that
