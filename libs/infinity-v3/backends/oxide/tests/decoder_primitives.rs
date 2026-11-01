@@ -259,6 +259,7 @@ fn rms_norm_and_residual_rounding_match_independent_reference() {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn rope_reference(
     storage: &mut [bf16],
     positions: &[u32],
@@ -322,7 +323,7 @@ fn rope_preserves_strided_gqa_values_tails_and_rounding() {
     for token in 0..positions.len() {
         for column in 0..64 {
             original[GUARD + token * stride + column] =
-                bf16::from_f32(((token * 79 + column * 31) % 101) as f32 / 19.0 - 2.6315789);
+                bf16::from_f32(((token * 79 + column * 31) % 101) as f32 / 19.0 - 2.631_579);
         }
     }
     for rotary in [6usize, 8] {
@@ -497,7 +498,13 @@ fn embedding_gather_preserves_ids_bits_scale_and_guards() {
         table[3 * width] = bf16::from_f32(1024.0);
         let table_device = DeviceBuffer::from_host(&stream, &table).expect("upload word table");
         let elements = ids.len() * width;
-        for scale in [None, Some(0.0f32), Some(0.5), Some(-1.25), Some(1.00390625)] {
+        for scale in [
+            None,
+            Some(0.0f32),
+            Some(0.5),
+            Some(-1.25),
+            Some(1.0 + 1.0 / 256.0),
+        ] {
             let name = if scale.is_some() {
                 "infinity_embedding_gather_scaled"
             } else {
