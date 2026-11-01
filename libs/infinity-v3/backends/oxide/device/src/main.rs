@@ -7,7 +7,9 @@
 
 use cuda_device::{DynamicSharedArray, SharedArray, convert, cuda_module, kernel, thread, warp};
 mod decoder;
+mod norm1024;
 mod norm384;
+mod norm768;
 
 /// Interpret one BF16 storage element without numerical conversion error.
 /// The upper16 bits are the exponent, sign and significant FP32 bits.
@@ -286,6 +288,98 @@ mod kernels {
     ) {
         unsafe {
             crate::norm384::layer_norm_384(input, residual, bias, gamma, beta, out, rows, eps)
+        };
+    }
+
+    /// Native width-768 embedding plus affine LayerNorm.
+    /// Grid=(ceil(tokens/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_embedding_norm_768_exact(
+        ids: *const u32,
+        positions: *const u32,
+        types: *const u32,
+        word: *const u16,
+        position: *const u16,
+        token_type: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        hidden: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm768::embedding_norm_768(
+                ids, positions, types, word, position, token_type, gamma, beta, out, tokens,
+                hidden, eps,
+            )
+        };
+    }
+
+    /// Native width-768 residual plus affine LayerNorm.
+    /// Grid=(ceil(rows/4),1,1), block=(128,1,1); one warp per row.
+    #[kernel]
+    pub unsafe fn infinity_layer_norm_768_exact(
+        input: *const u16,
+        residual: *const u16,
+        bias: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm768::layer_norm_768(
+                input, residual, bias, gamma, beta, out, rows, width, eps,
+            )
+        };
+    }
+
+    /// Native width-1024 rounded embedding plus affine LayerNorm.
+    /// Grid=(tokens,1,1), block=(256,1,1); one row per CTA.
+    #[kernel]
+    pub unsafe fn infinity_embedding_norm_1024_rounded_native(
+        ids: *const u32,
+        positions: *const u32,
+        types: *const u32,
+        word: *const u16,
+        position: *const u16,
+        token_type: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        hidden: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm1024::embedding_norm_1024_rounded(
+                ids, positions, types, word, position, token_type, gamma, beta, out, tokens,
+                hidden, eps,
+            )
+        };
+    }
+
+    /// Native width-1024 rounded residual plus affine LayerNorm.
+    /// Grid=(rows,1,1), block=(256,1,1); one row per CTA.
+    #[kernel]
+    pub unsafe fn infinity_layer_norm_1024_rounded_native(
+        input: *const u16,
+        residual: *const u16,
+        bias: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::norm1024::layer_norm_1024_rounded(
+                input, residual, bias, gamma, beta, out, rows, width, eps,
+            )
         };
     }
 
