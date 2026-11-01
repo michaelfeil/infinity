@@ -1,0 +1,44 @@
+# Vendored bounded-reader-v3 copy for the Oxide backend.
+#
+# Upstream: pytorch-reader 0.22.0 from tracel-ai/burn at
+# b8d75ad07f426537594a5beb9309d62d916bcf05. See provenance.json.
+# The main workspace excludes this directory so its original integration tests
+# do not join the workspace run; Oxide tests exercise the integrated API.
+[package]
+name = "pytorch-reader"
+version = "0.22.0"
+edition = "2024"
+authors = ["Dilshod Tadjibaev (@antimora)"]
+description = "Reader for PyTorch checkpoint files (.pt/.pth) that depends on neither PyTorch nor Burn"
+documentation = "https://docs.rs/pytorch-reader"
+keywords = ["pytorch", "checkpoint", "pickle", "deep-learning", "machine-learning"]
+categories = ["science", "parser-implementations"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tracel-ai/burn/tree/main/crates/pytorch-reader"
+readme = "README.md"
+
+[lib]
+name = "pytorch_reader"
+path = "src/lib.rs"
+
+[[test]]
+name = "nested_de_miri"
+path = "tests/nested_de_miri.rs"
+
+[[test]]
+name = "nested_de_robustness"
+path = "tests/nested_de_robustness.rs"
+
+[dependencies]
+byteorder = { version = "=1.5.0", features = ["std"], default-features = false }
+crc32fast = "=1.5.2"
+num-traits = { version = "=0.2.19", features = ["libm", "std"], default-features = false }
+serde = { version = "=1.0.229", features = ["derive", "alloc", "std"], default-features = false }
+tar = "=0.4.46"
+thiserror = { version = "=2.0.21", features = ["std"], default-features = false }
+zip = { version = "=8.6.0", features = ["deflate-flate2-zlib-rs"], default-features = false }
+
+[dev-dependencies]
+bytemuck = { version = "=1.22.0", features = ["extern_crate_alloc"] }
+half = { version = "=2.7.1", features = ["alloc", "num-traits", "bytemuck", "std"], default-features = false }
+tempfile = "=3.19.1"

@@ -741,6 +741,7 @@ async fn initialize_model(
             &config.model_type,
             torch_device == infinity_v3_backend::TorchDevice::Cpu,
         ),
+        infinity_v3_backend::BackendKind::Oxide => resolve_oxide_dtype(dtype)?,
     };
 
     anyhow::ensure!(
@@ -1092,6 +1093,16 @@ fn get_backend_model_type(
 }
 
 // Resolve Auto before passing a concrete dtype to the backend or reporting /info.
+fn resolve_oxide_dtype(requested: Option<DType>) -> Result<DType> {
+    match requested {
+        None | Some(DType::Auto | DType::Bfloat16) => Ok(DType::Bfloat16),
+        Some(DType::Float16) => Ok(DType::Float16),
+        Some(dtype) => {
+            anyhow::bail!("The oxide backend supports bfloat16 or float16; requested {dtype}")
+        }
+    }
+}
+
 fn resolve_libtorch_dtype(
     requested: Option<DType>,
     model_dtype: Option<&str>,
@@ -1634,6 +1645,24 @@ impl From<ResponseMetadata> for HeaderMap {
 #[cfg(test)]
 mod libtorch_auto_dtype_tests {
     use super::*;
+
+    #[test]
+    fn oxide_dtype_policy_preserves_explicit_precision_and_reports_effective_default() {
+        assert_eq!(resolve_oxide_dtype(None).unwrap(), DType::Bfloat16);
+        assert_eq!(
+            resolve_oxide_dtype(Some(DType::Auto)).unwrap(),
+            DType::Bfloat16
+        );
+        assert_eq!(
+            resolve_oxide_dtype(Some(DType::Bfloat16)).unwrap(),
+            DType::Bfloat16
+        );
+        assert_eq!(
+            resolve_oxide_dtype(Some(DType::Float16)).unwrap(),
+            DType::Float16
+        );
+        assert!(resolve_oxide_dtype(Some(DType::Float32)).is_err());
+    }
 
     #[test]
     fn nomic_accepts_current_and_legacy_context_fields() {

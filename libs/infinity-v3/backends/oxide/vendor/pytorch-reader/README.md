@@ -1,0 +1,54 @@
+# pytorch-reader
+
+Read PyTorch checkpoint files (`.pt`, `.pth`) without PyTorch or Burn.
+
+[![Current Crates.io Version](https://img.shields.io/crates/v/pytorch-reader.svg)](https://crates.io/crates/pytorch-reader)
+[![Documentation](https://docs.rs/pytorch-reader/badge.svg)](https://docs.rs/pytorch-reader)
+[![license](https://shields.io/badge/license-MIT%2FApache--2.0-blue)](https://github.com/tracel-ai/burn/blob/main/LICENSE-MIT)
+
+The crate parses the pickle inside a checkpoint and hands back each tensor's name, element
+type and shape, with the bytes produced only when asked for. It reads every container
+`torch.save` has written: the ZIP archive of PyTorch 1.6 and later, the legacy pickle stream
+of 0.1.10 through 1.5, the TAR archive before that, and the plain pickle some tools write
+for configuration on its own.
+
+```rust
+use pytorch_reader::PytorchReader;
+
+let reader = PytorchReader::new("model.pt")?;
+for tensor in reader.tensors().values() {
+    println!("{}: {:?} {:?}", tensor.name, tensor.dtype(), tensor.shape());
+}
+
+// Bytes are read from the file here, not at open.
+let weight = reader.get("fc.weight").unwrap();
+let bytes: Vec<u8> = weight.read()?;
+
+// A row-major slice of exactly what `read()` returns. Each storage read is capped at
+// 64 KiB and strided holes are not spanned. TAR is already held whole in memory.
+let first_row: Vec<u8> = weight.read_range(0, 4)?;
+
+// A range is explicitly unverified. Before publishing bytes gathered this way, verify the
+// whole backing storage entry once: it streams the entry in bounded chunks and checks a
+// stored-ZIP CRC. Stored-ZIP CRC 0 is NoChecksum; deflated ZIP is always Unsupported, as are
+// legacy and TAR.
+let checksum = weight.verify_storage()?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+A checkpoint that nests its weights under a key (`"state_dict"`, `"model"`, ...) is opened
+with `PytorchReader::with_top_level_key("checkpoint.pt", "state_dict")`. A full-model save
+(`torch.save(model)` rather than `torch.save(model.state_dict())`) is read as the module's
+parameters and buffers under the names `state_dict()` gives them; extra state
+(`get_extra_state()`) and state dict hooks are not run. Non-tensor values (configuration dictionaries, say) can be deserialized into
+any `serde` type with `PytorchReader::load_config`.
+
+This is the reader behind [`burn-store`](https://crates.io/crates/burn-store), which wraps
+its tensors for loading into [Burn](https://github.com/tracel-ai/burn) modules.
+
+<!-- burn-crate-footer -->
+
+---
+
+Part of the [Burn](https://github.com/tracel-ai/burn) deep learning framework. See the
+[Burn Book](https://burn.dev/books/burn/) and the [API documentation](https://docs.rs/burn).

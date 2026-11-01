@@ -104,12 +104,15 @@ async fn models(Extension(registry): Extension<ModelRegistry>) -> Json<ServedMod
             id: model.info.model_id.clone(),
             object: "model",
             checkpoint_id: model.checkpoint_id.clone(),
-            backend: match model.backend_kind {
-                infinity_v3_backend::BackendKind::Libtorch => "libtorch",
-            },
+            backend: model.backend_kind.as_str(),
             capabilities: match &model.info.model_type {
                 ModelType::Embedding(model) if model.pooling == "splade" => {
                     vec!["embed_sparse", "tokenize", "decode"]
+                }
+                ModelType::Embedding(_)
+                    if model.backend_kind == infinity_v3_backend::BackendKind::Oxide =>
+                {
+                    vec!["embed", "similarity", "tokenize", "decode"]
                 }
                 ModelType::Embedding(_) => {
                     vec!["embed", "embed_all", "similarity", "tokenize", "decode"]

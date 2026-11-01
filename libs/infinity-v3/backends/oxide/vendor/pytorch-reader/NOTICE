@@ -1,0 +1,17 @@
+pytorch-reader 0.22.0 vendored for the Oxide backend
+
+Original project: tracel-ai/burn, crates/pytorch-reader, revision
+b8d75ad07f426537594a5beb9309d62d916bcf05.
+Licensed under MIT OR Apache-2.0; the complete upstream texts are retained
+verbatim in LICENSE-MIT and LICENSE-APACHE.
+
+The source files are based on the independently reviewed bounded-reader-v3
+prototype. Cargo.toml is adapted for the Oxide-scoped path build; storage.rs
+shares bounded whole-storage CRC verification across tensor aliases belonging
+to the same retained archive owner, with real ZIP alias/corruption tests. Deflated
+ZIP verification remains unsupported in the prototype API; Oxide rejects
+compressed entries for bounded backend publication. See provenance.json for the
+original file hashes and the exact modified files.
+
+No author, copyright holder or license text was invented for this vendor
+component.

@@ -3,14 +3,15 @@ members = [
     "config",
     "backends",
     "backends/core",
+    "backends/oxide",
     "backends/libtorch",
     "core",
     "router",
 ]
+exclude = ["backends/oxide/vendor/pytorch-reader"]
 default-members = [
     "backends",
     "backends/core",
-    "backends/libtorch",
     "core",
     "router",
 ]
