@@ -5,7 +5,7 @@
 #include <cuda_runtime.h>
 
 namespace infinity {
-/// Consumer kernels must call this before reading any preceding kernel's output.
+/// Wait before dependent reads or writes, including writes to allocator-reused outputs.
 __device__ inline void wait_for_producer() {
 #if __CUDA_ARCH__ >= 900
   cudaGridDependencySynchronize();
