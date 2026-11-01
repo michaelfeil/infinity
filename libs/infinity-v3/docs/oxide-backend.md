@@ -204,11 +204,11 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles all 38 Rust kernels separately for `sm_90`,
+`device/build.sh` compiles all 40 Rust kernels separately for `sm_90`,
 `sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
 symbols, and writes a manifest recording source/artifact hashes, target,
 compiler revision, and commands. Every architecture is natively compiled from
-Rust for all 38 exports. The original nine BERT kernels remain byte-identical
+Rust for all 40 exports. The original nine BERT kernels remain byte-identical
 on all three targets. Additional exports provide rounded embedding/residual
 LayerNorm, native width-768/1024 normalization arithmetic, ordinary or rounded RMSNorm with an optional residual output,
 NeoX/interleaved RoPE with separate-product or fused arithmetic, staged or FP32
@@ -232,6 +232,11 @@ The exact width-768 embedding and residual LayerNorm recipes also select
 statistics, rounding and affine arithmetic. Each required or non-null optional
 BF16 pointer must be aligned; otherwise the unchanged scalar implementation
 runs. All previous 36 machine bodies remain byte-identical on all three targets.
+Width-1536 Qwen2 RMSNorm retains six lane values in registers through the
+reduction, using the same 256-thread row geometry, FP32 accumulation, rounded
+division and BF16 output boundaries. Other Qwen2 widths keep the generic
+exports. These two cached exports leave all previous 38 machine bodies unchanged
+on all three targets.
 Vector RMSNorm likewise uses 16-byte transactions on aligned buffers and a
 scalar fallback otherwise. Export availability alone does not expand the serving
 model catalog.
@@ -245,7 +250,7 @@ native reduction recipes.
 MiniLM still needs the original nine entrypoints; the older six-export bundle
 fails startup. Wider encoders require their selected normalization exports, and
 the current decoder selector requires the new vector8 entrypoint. Use the current
-38-export bundle for the full typed catalog. These are independent target builds;
+40-export bundle for the full typed catalog. These are independent target builds;
 changing a label in a manifest is not an architecture build.
 
 | Target | Deployment family | Qualification |
@@ -416,16 +421,21 @@ across each backend's two windows; negative changes mean lower Oxide latency.
 | All-DistilRoBERTa, mean | 271.6 | 328.2 | -17.2% | -20.7% |
 | CamemBERT-base, mean | 531.9 | 549.1 | -3.1% | -1.8% |
 | BGE-M3, CLS | 1155.6 | 1078.6 | +7.1% | +9.3% |
-| GTE-Qwen2-1.5B, last token | 2418.0 | 2047.4 | +18.1% | +18.2% |
+| GTE-Qwen2-1.5B, last token | 2429.3 | 2046.7 | +18.7% | +18.1% |
 | TinyLlama-1.1B, last token | 1905.6 | 1771.0 | +7.6% | +63.9% |
 
 Performance is mixed. Tail latency varied on the shared host, particularly for
 MiniLM and TinyLlama; a separate old/new Oxide control could not isolate a fixed
-host-dispatch regression. The two H768 rows use subsequent balanced controls
+host-dispatch regression. The H768 and GTE rows use subsequent balanced controls
 that also bracketed the candidate with the previous Oxide build. Vector
-LayerNorm reduced their medians by 7.9% and 6.1%, respectively, while all 640
+LayerNorm reduced the RoBERTa and CamemBERT medians by 7.9% and 6.1%, while all 640
 HTTP vectors remained bit-identical to that build. CamemBERT's diagnostic
 normalization time fell from about 112 to 74 µs per forward.
+The GTE cache reduced its median by 0.9% and normalization GPU time from about
+248 to 220 µs; its 320 HTTP vectors match both previous Oxide and native outputs
+bit for bit. GTE still trails native latency. The combined 40-export build
+preserves all 960 previous Oxide HTTP vectors bit for bit and passes the
+operator memory checks.
 The vector8 SiLU kernel reduced its summed GPU time
 from about 77 to 55 µs across TinyLlama's 22 layers in a diagnostic trace, which
 does not establish a total-latency win. Quality, tail latency and throughput

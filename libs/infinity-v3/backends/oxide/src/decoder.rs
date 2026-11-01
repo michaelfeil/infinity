@@ -10,7 +10,8 @@
 //! The only Llama recipe qualified here is the base-unscaled, causal global,
 //! hidden-2048 dense SiLU backbone. It binds the native width-2048 Candle RMS
 //! exports, HFMA NeoX RoPE and the rounded DenseMlp SiLU export at load time;
-//! Qwen2 keeps its generic RMS, non-HFMA RoPE and launch geometry.
+//! Qwen2 keeps its ordinary RMS recipe, non-HFMA RoPE and launch geometry;
+//! H1536 retains the six lane values through the same generic reduction.
 
 use super::{
     arg, blocks, download_output, fa4, infer, launch, launch_threads, product, stage_batch, start,
@@ -64,6 +65,7 @@ const H2048_NORM_GEOMETRY: NormGeometry = NormGeometry {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum DecoderMath {
     Qwen2FullNeox,
+    Qwen2H1536FullNeox,
     LlamaH2048Exact,
 }
 impl DecoderMath {
@@ -80,7 +82,11 @@ impl DecoderMath {
                         "decoder executor requires the native Qwen2 full split-half NeoX RoPE recipe",
                     ));
                 }
-                Ok(Self::Qwen2FullNeox)
+                Ok(if config.hidden_size == 1536 {
+                    Self::Qwen2H1536FullNeox
+                } else {
+                    Self::Qwen2FullNeox
+                })
             }
             DecoderFamily::Llama => {
                 if config.hidden_size != 2048 {
@@ -106,6 +112,7 @@ impl DecoderMath {
     const fn rms_export(self) -> &'static str {
         match self {
             Self::Qwen2FullNeox => "infinity_rms_norm",
+            Self::Qwen2H1536FullNeox => "infinity_rms_norm_1536_cached",
             Self::LlamaH2048Exact => "infinity_rms_norm_2048_vector",
         }
     }
@@ -113,13 +120,14 @@ impl DecoderMath {
     const fn add_rms_export(self) -> &'static str {
         match self {
             Self::Qwen2FullNeox => "infinity_add_rms_norm",
+            Self::Qwen2H1536FullNeox => "infinity_add_rms_norm_1536_cached",
             Self::LlamaH2048Exact => "infinity_add_rms_norm_2048_vector",
         }
     }
 
     const fn rope_export(self) -> &'static str {
         match self {
-            Self::Qwen2FullNeox => "infinity_rope_neox",
+            Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox => "infinity_rope_neox",
             Self::LlamaH2048Exact => "infinity_rope_neox_hfma",
         }
     }
@@ -129,13 +137,15 @@ impl DecoderMath {
     /// The scalar and paired exports remain available to other callers.
     const fn activation_export(self) -> &'static str {
         match self {
-            Self::Qwen2FullNeox | Self::LlamaH2048Exact => "infinity_silu_mul_bf16_vector8_native",
+            Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox | Self::LlamaH2048Exact => {
+                "infinity_silu_mul_bf16_vector8_native"
+            }
         }
     }
 
     const fn norm_geometry(self) -> NormGeometry {
         match self {
-            Self::Qwen2FullNeox => GENERIC_NORM_GEOMETRY,
+            Self::Qwen2FullNeox | Self::Qwen2H1536FullNeox => GENERIC_NORM_GEOMETRY,
             Self::LlamaH2048Exact => H2048_NORM_GEOMETRY,
         }
     }
@@ -1700,6 +1710,24 @@ mod tests {
         assert_eq!(qwen.rope, DecoderRope::FullNeoX);
         assert_eq!(
             DecoderMath::select(&qwen).unwrap(),
+            DecoderMath::Qwen2H1536FullNeox
+        );
+        assert_eq!(
+            DecoderMath::Qwen2H1536FullNeox.norm_geometry(),
+            GENERIC_NORM_GEOMETRY
+        );
+        assert_eq!(
+            DecoderMath::Qwen2H1536FullNeox.rms_export(),
+            "infinity_rms_norm_1536_cached"
+        );
+        assert_eq!(
+            DecoderMath::Qwen2H1536FullNeox.add_rms_export(),
+            "infinity_add_rms_norm_1536_cached"
+        );
+        let mut other_qwen = qwen.clone();
+        other_qwen.hidden_size = 1024;
+        assert_eq!(
+            DecoderMath::select(&other_qwen).unwrap(),
             DecoderMath::Qwen2FullNeox
         );
         assert_eq!(
