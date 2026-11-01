@@ -1035,7 +1035,18 @@ mod kernels {
         rows: u32,
         width: u32,
     ) {
-        unsafe { crate::silu_pairs::silu_mul_bf16_pairs(input, out, rows, width) };
+        unsafe { crate::silu_pairs::silu_mul_bf16_pairs::<false>(input, out, rows, width) };
+    }
+
+    /// Native BF16 division recipe; ABI/grid match infinity_silu_mul_bf16_pairs.
+    #[kernel]
+    pub unsafe fn infinity_silu_mul_bf16_pairs_native(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::silu_pairs::silu_mul_bf16_pairs::<true>(input, out, rows, width) };
     }
 
     /// Word-only BF16 gather; grid=ceil(tokens*width/256), block=256.

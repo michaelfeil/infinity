@@ -5,6 +5,9 @@
 //! two 32-bit gate/up words and written as one 32-bit result word. The final
 //! odd column, or a misaligned pointer, takes a scalar path without reading or
 //! writing past the validated row width.
+//! The native division specialization independently expresses CUDA's BF16
+//! division recipe: non-FTZ approximate F32 division with a large-denominator
+//! rescale, then BF16 rounding. The retained specialization uses RN division.
 
 use cuda_device::{bf16x2, convert, float, ptx_asm, thread};
 
@@ -67,7 +70,51 @@ unsafe fn load_pair(pointer: *const u16, column: usize, width: usize) -> (u16, u
 }
 
 #[inline(always)]
-unsafe fn pair_result(gate: (u16, u16, bool), up: (u16, u16, bool)) -> u32 {
+unsafe fn divide<const NATIVE_DIVISION: bool>(numerator: f32, denominator: f32) -> f32 {
+    if NATIVE_DIVISION {
+        // BF16 hdiv rescales at |denominator| >= 2^126, including infinity.
+        // Keep an ordered float comparison so NaN follows native fabs semantics.
+        let magnitude = f32::from_bits(denominator.to_bits() & 0x7fff_ffff);
+        let large = magnitude >= f32::from_bits(0x7e80_0000);
+        let denominator = if large {
+            float::mul_rn_f32(denominator, 0.25)
+        } else {
+            denominator
+        };
+        let quotient: f32;
+        unsafe {
+            ptx_asm!(
+                "div.approx.f32 %0, %1, %2;",
+                out("=f") quotient,
+                in("f") numerator,
+                in("f") denominator,
+            );
+        }
+        if large {
+            // Explicit IEEE FMA keeps subnormal results and negative zero.
+            // Inline PTX prevents the importer folding the zero add into mul.
+            let scaled: f32;
+            unsafe {
+                ptx_asm!(
+                    "fma.rn.f32 %0, %1, 0f3E800000, 0f80000000;",
+                    out("=f") scaled,
+                    in("f") quotient,
+                );
+            }
+            scaled
+        } else {
+            quotient
+        }
+    } else {
+        float::div_rn_f32(numerator, denominator)
+    }
+}
+
+#[inline(always)]
+unsafe fn pair_result<const NATIVE_DIVISION: bool>(
+    gate: (u16, u16, bool),
+    up: (u16, u16, bool),
+) -> u32 {
     let first_gate = f32_from_bf16(gate.0);
     let first_exponential = rounded(float::ex2_approx_f32(float::mul_rn_f32(
         -first_gate,
@@ -88,10 +135,12 @@ unsafe fn pair_result(gate: (u16, u16, bool), up: (u16, u16, bool)) -> u32 {
     }
     let denominator = bf16x2::add_bf16x2(ONE_PACKED, exponential);
     let (first_denominator, second_denominator) = convert::cvt_f32x2_bf16x2(denominator);
-    let first_activated = rounded(float::div_rn_f32(first_gate, first_denominator));
+    let first_activated =
+        rounded(unsafe { divide::<NATIVE_DIVISION>(first_gate, first_denominator) });
     let mut activated = bf16_from_f32(first_activated) as u32;
     if gate.2 && up.2 {
-        let second_activated = rounded(float::div_rn_f32(second_gate, second_denominator));
+        let second_activated =
+            rounded(unsafe { divide::<NATIVE_DIVISION>(second_gate, second_denominator) });
         activated |= (bf16_from_f32(second_activated) as u32) << 16;
     } else {
         activated |= activated << 16;
@@ -101,7 +150,12 @@ unsafe fn pair_result(gate: (u16, u16, bool), up: (u16, u16, bool)) -> u32 {
 
 /// Rounded BF16 paired gate/up activation; grid=ceil(rows*ceil(width/2)/256).
 #[inline(always)]
-pub(crate) unsafe fn silu_mul_bf16_pairs(input: *const u16, out: *mut u16, rows: u32, width: u32) {
+pub(crate) unsafe fn silu_mul_bf16_pairs<const NATIVE_DIVISION: bool>(
+    input: *const u16,
+    out: *mut u16,
+    rows: u32,
+    width: u32,
+) {
     if width == 0 {
         return;
     }
@@ -116,7 +170,7 @@ pub(crate) unsafe fn silu_mul_bf16_pairs(input: *const u16, out: *mut u16, rows:
     let row_input = unsafe { input.add(row * 2 * width) };
     let gate = unsafe { load_pair(row_input, column, width) };
     let up = unsafe { load_pair(row_input.add(width), column, width) };
-    let result = unsafe { pair_result(gate, up) };
+    let result = unsafe { pair_result::<NATIVE_DIVISION>(gate, up) };
     let row_output = unsafe { out.add(row * width + column) };
     if gate.2 && up.2 && aligned_pair(row_output) {
         unsafe { store_word(row_output, result) };

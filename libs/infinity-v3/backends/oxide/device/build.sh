@@ -35,6 +35,7 @@ symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_emb
                   "infinity_rms_norm_2048_exact", "infinity_add_rms_norm_2048_exact",
                   "infinity_rms_norm_2048_vector", "infinity_add_rms_norm_2048_vector",
                   "infinity_silu_mul_bf16_pairs",
+                  "infinity_silu_mul_bf16_pairs_native",
                   "infinity_add_rms_norm", "infinity_add_rms_norm_rounded",
                   "infinity_rope_neox", "infinity_rope_neox_hfma",
                   "infinity_rope_interleaved", "infinity_rope_interleaved_hfma",
