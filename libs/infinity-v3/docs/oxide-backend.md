@@ -241,7 +241,7 @@ requires Tile IR **13.3 for Hopper**. The current CUDA 13.1 compiler environment
 does not provide that producer, so cuTile is optional and does not determine
 this backend's runtime baseline.
 
-The repository's FA4 provider has 19 compile profiles in both F16 and BF16,
+The repository's FA4 provider has 20 compile profiles in both F16 and BF16,
 using native ABI 1/export ABI 7. The optional adapter uses its raw C ABI, passing
 device pointers, tensor strides, packed sequence boundaries, and the same CUDA
 stream without ATen or a LibTorch model call. It selects a profile only from the
@@ -251,6 +251,10 @@ compile exemplars. The pinned provider specializes on the GQA ratio and dynamic
 tensor layouts, as does the existing native selector. Family names alone do not
 establish compatibility. See the pinned [FA4 specialization key](https://github.com/Dao-AILab/flash-attention/blob/e9cf2c1651d2303191eb40a739a3c135fda00999/flash_attn/cute/interface.py#L1125)
 and [dynamic tensor layouts](https://github.com/Dao-AILab/flash-attention/blob/e9cf2c1651d2303191eb40a739a3c135fda00999/flash_attn/cute/cute_dsl_utils.py#L131).
+
+Existing 19-profile bundles remain valid for their original modes. The appended
+causal, global d64/GQA8 profile requires its own manifest entry and capability
+bit; it does not change earlier mode indices or enable a model executor.
 
 | Export | Example Q heads | Example KV heads | Width | Causal | Window |
 | --- | ---: | ---: | ---: | --- | --- |
@@ -273,6 +277,7 @@ and [dynamic tensor layouts](https://github.com/Dao-AILab/flash-attention/blob/e
 | `wide_gqa6` | 24 | 4 | 256 | No | Global |
 | `causal_wide6` | 24 | 4 | 256 | Yes | Global |
 | `causal_wide4` | 16 | 4 | 256 | Yes | Global |
+| `causal_gqa8_d64` | 32 | 4 | 64 | Yes | Global |
 
 Score scaling is either `1 / sqrt(head_dim)`, resolved at load, or an explicit
 finite positive scalar. Score softcap, relative bias, and DeBERTa modifiers are

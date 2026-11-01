@@ -3,8 +3,9 @@
 //!
 //! Profile order and exported windows mirror the repository's ABI7
 //! `vendor/infinity_fa4/profiles.inc` and `build.py`. A bundle is accepted only
-//! when its manifest exports that known mode order exactly for the selected
-//! dtype. Absolute head counts are runtime tensor dimensions; selection uses
+//! when its manifest exports the full legacy-19 or appended-20 mode prefix in
+//! that known order for the selected dtype. Absolute head counts are runtime
+//! tensor dimensions; selection uses
 //! the exported Q/KV grouping with the exact dimension and mask.
 //!
 //! Softcap, relative-bias and DeBERTa score modifiers are not represented by
@@ -166,7 +167,8 @@ impl Profile {
 
 // Exact ABI7 export order. Local windows follow build.py: noncausal locals are
 // `[64, 64]` and causal locals are `[64, 0]`.
-const PROFILES: [Profile; 19] = [
+const LEGACY_PROFILE_COUNT: usize = 19;
+const PROFILES: [Profile; 20] = [
     Profile::new("bert", 16, 16, 64, false, Window::Global),
     Profile::new(
         "modern_local",
@@ -213,6 +215,7 @@ const PROFILES: [Profile; 19] = [
     Profile::new("wide_gqa6", 24, 4, 256, false, Window::Global),
     Profile::new("causal_wide6", 24, 4, 256, true, Window::Global),
     Profile::new("causal_wide4", 16, 4, 256, true, Window::Global),
+    Profile::new("causal_gqa8_d64", 32, 4, 64, true, Window::Global),
 ];
 
 fn start(e: impl std::fmt::Display) -> BackendError {
@@ -259,18 +262,37 @@ fn kernel_matches(kernel: &serde_json::Value, profile: &Profile, dtype: DType) -
         && kernel.get("dtype").and_then(serde_json::Value::as_str) == Some(dtype.name())
 }
 
-fn validate_profile_order(manifest: &serde_json::Value, dtype: DType) -> Result<(), BackendError> {
+fn validate_profile_order(
+    manifest: &serde_json::Value,
+    dtype: DType,
+) -> Result<usize, BackendError> {
     let kernels = manifest
         .get("kernels")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| start("manifest lacks a kernels array"))?;
+    let deberta_symbol = format!("fa4_deberta_{}", dtype.name());
+    let mut deberta_seen = false;
     let mut seen = 0usize;
     for kernel in kernels {
         if kernel.get("dtype").and_then(serde_json::Value::as_str) != Some(dtype.name()) {
             continue;
         }
-        if seen == PROFILES.len() {
-            break;
+        if kernel.get("symbol").and_then(serde_json::Value::as_str) == Some(deberta_symbol.as_str())
+        {
+            if deberta_seen {
+                return Err(start(format!(
+                    "manifest has duplicate DeBERTa {} exports",
+                    dtype.name()
+                )));
+            }
+            deberta_seen = true;
+            continue;
+        }
+        if seen >= PROFILES.len() {
+            return Err(start(format!(
+                "manifest has unknown extra {} exports",
+                dtype.name()
+            )));
         }
         let profile = PROFILES
             .get(seen)
@@ -284,25 +306,55 @@ fn validate_profile_order(manifest: &serde_json::Value, dtype: DType) -> Result<
         }
         seen += 1;
     }
-    if seen != PROFILES.len() {
+    if seen < LEGACY_PROFILE_COUNT {
         return Err(start(format!(
             "manifest lacks {} declared {} exports",
-            PROFILES.len(),
+            LEGACY_PROFILE_COUNT,
             dtype.name()
         )));
+    }
+    Ok(seen)
+}
+
+fn mode_mask(declared: usize) -> Result<i32, BackendError> {
+    let bits = u32::try_from(declared).map_err(start)?;
+    let mask = 1i64
+        .checked_shl(bits)
+        .and_then(|value| value.checked_sub(1))
+        .ok_or_else(|| start("provider mode count overflow"))?;
+    i32::try_from(mask).map_err(start)
+}
+
+fn validate_mode_mask(declared: usize, modes: i32) -> Result<(), BackendError> {
+    if modes != mode_mask(declared)? {
+        return Err(start("provider mode mask does not match manifest exports"));
     }
     Ok(())
 }
 
+fn profile_selection(
+    manifest: &serde_json::Value,
+    spec: &AttentionSpec,
+) -> Result<(usize, usize), BackendError> {
+    let mode = profile_index(spec).ok_or_else(|| {
+        start("selected attention grouping, dimension or mask has no ABI7 export")
+    })?;
+    let declared = validate_profile_order(manifest, spec.dtype)?;
+    if mode >= declared {
+        return Err(start(format!(
+            "manifest lacks the selected {} export",
+            spec.dtype.name()
+        )));
+    }
+    Ok((mode, declared))
+}
+
+#[cfg(test)]
 fn select_profile(
     manifest: &serde_json::Value,
     spec: &AttentionSpec,
 ) -> Result<usize, BackendError> {
-    let mode = profile_index(spec).ok_or_else(|| {
-        start("selected attention grouping, dimension or mask has no ABI7 export")
-    })?;
-    validate_profile_order(manifest, spec.dtype)?;
-    Ok(mode)
+    profile_selection(manifest, spec).map(|(mode, _)| mode)
 }
 
 fn resolve_scale(spec: &AttentionSpec) -> Result<f64, BackendError> {
@@ -471,7 +523,7 @@ impl Fa4 {
         {
             return Err(start("expected native ABI1/export ABI7"));
         }
-        let mode = select_profile(&manifest, &spec)?;
+        let (mode, declared) = profile_selection(&manifest, &spec)?;
         let mode = i32::try_from(mode).map_err(start)?;
         let scale = resolve_scale(&spec)?;
         let contiguous_strides =
@@ -509,7 +561,12 @@ impl Fa4 {
         if unsafe { architecture() } != capability {
             return Err(start("incompatible native compute capability"));
         }
-        if unsafe { modes() } & (1i32 << mode) == 0 {
+        let modes = unsafe { modes() };
+        validate_mode_mask(declared, modes)?;
+        let selected = 1i32
+            .checked_shl(u32::try_from(mode).map_err(start)?)
+            .ok_or_else(|| start("provider mode index overflow"))?;
+        if modes & selected == 0 {
             return Err(start("selected attention mode is not exported"));
         }
         Ok(Self {
@@ -666,9 +723,13 @@ mod tests {
     }
 
     fn manifest_for(dtypes: &[DType]) -> Value {
+        manifest_prefix(dtypes, PROFILES.len())
+    }
+
+    fn manifest_prefix(dtypes: &[DType], count: usize) -> Value {
         let mut kernels = Vec::new();
         for dtype in dtypes {
-            for profile in &PROFILES {
+            for profile in PROFILES.iter().take(count) {
                 kernels.push(kernel(profile, *dtype));
             }
         }
@@ -677,6 +738,22 @@ mod tests {
 
     fn mha32() -> Profile {
         PROFILES[7]
+    }
+
+    fn appended_profile() -> Profile {
+        PROFILES[LEGACY_PROFILE_COUNT]
+    }
+
+    fn deberta_kernel(dtype: DType) -> Value {
+        json!({
+            "symbol": format!("fa4_deberta_{}", dtype.name()),
+            "heads": 12,
+            "kv_heads": 12,
+            "d": 64,
+            "causal": false,
+            "window": json!([null, null]),
+            "dtype": dtype.name(),
+        })
     }
 
     fn fake_batch(spec: &AttentionSpec, q_tokens: usize, k_tokens: usize) -> AttentionBatch {
@@ -707,6 +784,148 @@ mod tests {
     }
 
     #[test]
+    fn accepts_full_legacy_19_and_appended_20_export_prefixes() {
+        let mut legacy = manifest_prefix(&[DType::F16, DType::Bf16], LEGACY_PROFILE_COUNT);
+        let mut appended = manifest_for(&[DType::F16, DType::Bf16]);
+        for dtype in [DType::F16, DType::Bf16] {
+            legacy["kernels"]
+                .as_array_mut()
+                .expect("test manifest has kernels")
+                .push(deberta_kernel(dtype));
+            appended["kernels"]
+                .as_array_mut()
+                .expect("test manifest has kernels")
+                .push(deberta_kernel(dtype));
+        }
+        for dtype in [DType::F16, DType::Bf16] {
+            for (mode, profile) in PROFILES.iter().take(LEGACY_PROFILE_COUNT).enumerate() {
+                let spec = spec_for(profile, dtype);
+                assert_eq!(select_profile(&legacy, &spec).ok(), Some(mode));
+                assert_eq!(select_profile(&appended, &spec).ok(), Some(mode));
+            }
+            assert!(select_profile(&legacy, &spec_for(&appended_profile(), dtype)).is_err());
+            assert_eq!(
+                select_profile(&appended, &spec_for(&appended_profile(), dtype)).ok(),
+                Some(LEGACY_PROFILE_COUNT)
+            );
+        }
+        assert!(validate_mode_mask(
+            LEGACY_PROFILE_COUNT,
+            mode_mask(LEGACY_PROFILE_COUNT).expect("legacy mode mask")
+        )
+        .is_ok());
+        assert!(validate_mode_mask(
+            PROFILES.len(),
+            mode_mask(PROFILES.len()).expect("appended mode mask")
+        )
+        .is_ok());
+        assert!(validate_mode_mask(
+            LEGACY_PROFILE_COUNT,
+            mode_mask(PROFILES.len()).expect("appended mode mask")
+        )
+        .is_err());
+        assert!(validate_mode_mask(
+            PROFILES.len(),
+            mode_mask(LEGACY_PROFILE_COUNT).expect("legacy mode mask")
+        )
+        .is_err());
+        assert!(validate_mode_mask(
+            PROFILES.len(),
+            mode_mask(PROFILES.len()).expect("appended mode mask") | (1 << 25)
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn selects_causal_d64_gqa8_only_for_matching_ratio_dimension_and_mask() {
+        let manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        let profile = appended_profile();
+        for dtype in [DType::F16, DType::Bf16] {
+            let mode = Some(LEGACY_PROFILE_COUNT);
+            assert_eq!(
+                select_profile(&manifest, &spec_for(&profile, dtype)).ok(),
+                mode
+            );
+            for (heads, kv_heads) in [(32, 4), (16, 2), (8, 1), (64, 8)] {
+                let mut spec = spec_for(&profile, dtype);
+                spec.heads = heads;
+                spec.kv_heads = kv_heads;
+                assert_eq!(select_profile(&manifest, &spec).ok(), mode);
+            }
+            for (heads, kv_heads) in [(32, 8), (24, 4), (16, 4)] {
+                let mut spec = spec_for(&profile, dtype);
+                spec.heads = heads;
+                spec.kv_heads = kv_heads;
+                assert!(select_profile(&manifest, &spec).is_err());
+            }
+            let mut wrong_dim = spec_for(&profile, dtype);
+            wrong_dim.head_dim = 128;
+            assert!(select_profile(&manifest, &wrong_dim).is_err());
+            let mut noncausal = spec_for(&profile, dtype);
+            noncausal.causal = false;
+            assert!(select_profile(&manifest, &noncausal).is_err());
+            let mut local = spec_for(&profile, dtype);
+            local.window = Window::Local { left: 64, right: 0 };
+            assert!(select_profile(&manifest, &local).is_err());
+        }
+    }
+
+    #[test]
+    fn rejects_truncated_reordered_tampered_and_unknown_exports() {
+        let truncated = manifest_prefix(&[DType::F16, DType::Bf16], LEGACY_PROFILE_COUNT - 1);
+        assert!(select_profile(&truncated, &spec_for(&mha32(), DType::F16)).is_err());
+
+        let mut reordered = manifest_for(&[DType::F16, DType::Bf16]);
+        reordered["kernels"]
+            .as_array_mut()
+            .expect("test manifest has kernels")
+            .swap(18, 19);
+        assert!(select_profile(&reordered, &spec_for(&mha32(), DType::F16)).is_err());
+        assert!(select_profile(&reordered, &spec_for(&appended_profile(), DType::F16)).is_err());
+        assert!(select_profile(&reordered, &spec_for(&mha32(), DType::Bf16)).is_ok());
+        assert!(select_profile(&reordered, &spec_for(&appended_profile(), DType::Bf16)).is_ok());
+
+        for (field, value) in [
+            ("symbol", json!("fa4_causal_gqa8_d64_extra")),
+            ("heads", json!(16)),
+            ("kv_heads", json!(8)),
+            ("d", json!(128)),
+            ("causal", json!(false)),
+            ("window", json!([64, 0])),
+        ] {
+            let mut manifest = manifest_for(&[DType::F16, DType::Bf16]);
+            manifest["kernels"]
+                .as_array_mut()
+                .expect("test manifest has kernels")[19][field] = value;
+            assert!(
+                select_profile(&manifest, &spec_for(&appended_profile(), DType::F16)).is_err(),
+                "accepted corrupt {field}"
+            );
+        }
+
+        let mut extra = manifest_for(&[DType::F16, DType::Bf16]);
+        extra["kernels"]
+            .as_array_mut()
+            .expect("test manifest has kernels")
+            .push(kernel(&appended_profile(), DType::F16));
+        assert!(select_profile(&extra, &spec_for(&appended_profile(), DType::F16)).is_err());
+
+        let mut unknown = manifest_for(&[DType::F16, DType::Bf16]);
+        unknown["kernels"]
+            .as_array_mut()
+            .expect("test manifest has kernels")[19] = kernel(&mha32(), DType::F16);
+        assert!(select_profile(&unknown, &spec_for(&appended_profile(), DType::F16)).is_err());
+
+        let mut duplicate_deberta = manifest_for(&[DType::F16, DType::Bf16]);
+        let kernels = duplicate_deberta["kernels"]
+            .as_array_mut()
+            .expect("test manifest has kernels");
+        kernels.push(deberta_kernel(DType::F16));
+        kernels.push(deberta_kernel(DType::F16));
+        assert!(select_profile(&duplicate_deberta, &spec_for(&mha32(), DType::F16)).is_err());
+    }
+
+    #[test]
     fn selects_runtime_head_counts_with_original_manifest_exemplars() {
         let manifest = manifest_for(&[DType::F16, DType::Bf16]);
         for dtype in [DType::F16, DType::Bf16] {
@@ -717,6 +936,9 @@ mod tests {
                 (3, 24, 12),
                 (2, 16, 4),
                 (4, 6, 1),
+                (19, 32, 4),
+                (19, 16, 2),
+                (19, 8, 1),
             ] {
                 let mut spec = spec_for(&PROFILES[mode], dtype);
                 spec.heads = heads;
@@ -1156,6 +1378,34 @@ mod tests {
                 run_case::<bf16>(
                     &context, &root, &stream, spec, &offsets, &offsets, 130, wrapper,
                 );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires INFINITY_FA4_ROOT and a matching CUDA device"]
+    fn gpu_causal_d64_gqa8_matches_cpu_reference_across_tile_tails() {
+        let (root, context, stream) = gpu_setup();
+        let ragged = [0i32, 3, 133];
+        let longer = [0i32, 130, 390];
+        let tile_tail = [0i32, 1, 257];
+        for dtype in [DType::F16, DType::Bf16] {
+            let spec = spec_for(&appended_profile(), dtype);
+            for (offsets, max_q) in [
+                (&ragged[..], 130),
+                (&longer[..], 260),
+                (&tile_tail[..], 256),
+            ] {
+                for wrapper in [true, false] {
+                    match dtype {
+                        DType::F16 => run_case::<f16>(
+                            &context, &root, &stream, spec, offsets, offsets, max_q, wrapper,
+                        ),
+                        DType::Bf16 => run_case::<bf16>(
+                            &context, &root, &stream, spec, offsets, offsets, max_q, wrapper,
+                        ),
+                    }
+                }
             }
         }
     }
