@@ -111,7 +111,7 @@ unsafe fn divide<const NATIVE_DIVISION: bool>(numerator: f32, denominator: f32) 
 }
 
 #[inline(always)]
-unsafe fn pair_result<const NATIVE_DIVISION: bool>(
+pub(super) unsafe fn pair_result<const NATIVE_DIVISION: bool>(
     gate: (u16, u16, bool),
     up: (u16, u16, bool),
 ) -> u32 {

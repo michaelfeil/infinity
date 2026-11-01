@@ -36,6 +36,7 @@ symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_emb
                   "infinity_rms_norm_2048_vector", "infinity_add_rms_norm_2048_vector",
                   "infinity_silu_mul_bf16_pairs",
                   "infinity_silu_mul_bf16_pairs_native",
+                  "infinity_silu_mul_bf16_vector8_native",
                   "infinity_add_rms_norm", "infinity_add_rms_norm_rounded",
                   "infinity_rope_neox", "infinity_rope_neox_hfma",
                   "infinity_rope_interleaved", "infinity_rope_interleaved_hfma",
@@ -62,7 +63,7 @@ manifest = {
     "output_dtype": "float32",
     "sources": {name: digest(root / name) for name in
                 ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src/main.rs", "src/norm384.rs", "src/norm768.rs", "src/norm1024.rs", "src/norm2048.rs", "src/norm2048_vector.rs",
-                 "src/decoder.rs", "src/silu_pairs.rs", "src/readout.rs"]},
+                 "src/decoder.rs", "src/silu_pairs.rs", "src/silu_vector8.rs", "src/readout.rs"]},
     "kernels": symbols,
     "qualification": "Every architecture is independently compiled from Rust and assembled to a native cubin; hardware runtime validation is separate.",
     "architectures": [],

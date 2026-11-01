@@ -1,5 +1,5 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
-//! Controls for the retained and native-division paired rounded BF16 SiLU exports.
+//! Controls for the paired and vector8 rounded BF16 SiLU exports.
 
 use cuda_core::{launch_kernel, Context, DeviceBuffer, Function, Module, Stream};
 use half::bf16;
@@ -8,9 +8,14 @@ use std::{ffi::c_void, path::PathBuf, sync::Arc};
 const GUARD: usize = 16;
 const SENTINEL: u16 = 0x4242;
 const NATIVE_EXPORT: &str = "infinity_silu_mul_bf16_pairs_native";
-const PAIRED_EXPORTS: [&str; 2] = ["infinity_silu_mul_bf16_pairs", NATIVE_EXPORT];
+const VECTOR8_EXPORT: &str = "infinity_silu_mul_bf16_vector8_native";
+const PAIRED_EXPORTS: [&str; 3] = [
+    "infinity_silu_mul_bf16_pairs",
+    NATIVE_EXPORT,
+    VECTOR8_EXPORT,
+];
 
-fn paired_exports(module: &Arc<Module>) -> [(&'static str, Function); 2] {
+fn paired_exports(module: &Arc<Module>) -> [(&'static str, Function); 3] {
     PAIRED_EXPORTS.map(|name| {
         (
             name,
@@ -19,6 +24,14 @@ fn paired_exports(module: &Arc<Module>) -> [(&'static str, Function); 2] {
                 .unwrap_or_else(|error| panic!("bundle must export {name}: {error}")),
         )
     })
+}
+
+fn columns_per_thread(export: &str) -> usize {
+    if export == VECTOR8_EXPORT {
+        8
+    } else {
+        2
+    }
 }
 
 fn setup() -> (Arc<Module>, Arc<Stream>) {
@@ -102,9 +115,11 @@ fn dump_raw_case(export: &str, rows: usize, width: usize, input: &[bf16], output
     assert_eq!(output.len(), rows * width);
     let directory = std::path::PathBuf::from(directory);
     // Keep the existing root-level fixture contract for the retained export.
-    // The native division results must never overwrite those baseline outputs.
+    // Additional recipes must never overwrite the retained baseline outputs.
     let directory = if export == NATIVE_EXPORT {
         directory.join("native")
+    } else if export == VECTOR8_EXPORT {
+        directory.join("vector8")
     } else {
         directory
     };
@@ -211,7 +226,7 @@ fn check_staging(got: &[f32], expected: &[f32], alternate: &[f32], label: &str) 
 }
 
 fn run_pair(
-    function: &Function,
+    export: (&str, &Function),
     stream: &Stream,
     input: &DeviceBuffer<bf16>,
     out: &DeviceBuffer<bf16>,
@@ -219,7 +234,8 @@ fn run_pair(
     width: usize,
     extra_blocks: usize,
 ) {
-    let pairs = rows * width.div_ceil(2);
+    let (name, function) = export;
+    let chunks = rows * width.div_ceil(columns_per_thread(name));
     let mut input_ptr = input.cu_deviceptr();
     let mut out_ptr = out.cu_deviceptr() + (2 * GUARD) as u64;
     let mut count = rows as u32;
@@ -227,7 +243,7 @@ fn run_pair(
     launch(
         function,
         stream,
-        pairs.div_ceil(256) + extra_blocks,
+        chunks.div_ceil(256) + extra_blocks,
         &mut [
             arg(&mut input_ptr),
             arg(&mut out_ptr),
@@ -275,7 +291,7 @@ fn paired_silu_matches_scalar_export_and_independent_staging() {
         for (name, function) in &paired {
             let paired_out = guarded(&stream, rows * width);
             run_pair(
-                function,
+                (name, function),
                 &stream,
                 &input_device,
                 &paired_out,
@@ -356,7 +372,7 @@ fn paired_silu_matches_scalar_for_every_finite_bf16_gate_with_unit_up() {
     for (name, function) in &paired {
         let paired_out = guarded(&stream, width);
         run_pair(
-            function,
+            (name, function),
             &stream,
             &input_device,
             &paired_out,
@@ -437,11 +453,11 @@ fn paired_silu_unaligned_odd_widths_fall_back_without_oob() {
             );
             let mut input_ptr = input_device.cu_deviceptr() + offset as u64 * 2;
             let mut paired_ptr = paired_out.cu_deviceptr() + offset as u64 * 2;
-            let pairs = rows * width.div_ceil(2);
+            let chunks = rows * width.div_ceil(columns_per_thread(name));
             launch(
                 function,
                 &stream,
-                pairs.div_ceil(256) + 1,
+                chunks.div_ceil(256) + 1,
                 &mut [
                     arg(&mut input_ptr),
                     arg(&mut paired_ptr),
@@ -499,48 +515,58 @@ fn paired_silu_guards_zero_rows_zero_width_and_partial_ctas() {
         }
     }
 
-    // 258 pairs span a full CTA plus two live lanes in a second CTA. Extra
-    // CTAs must remain idle, including the odd tail column of each row.
-    let (rows, width) = (3usize, 171usize);
-    let elements = rows * width;
-    let input = fixture(rows, width);
-    let input_device = upload(&stream, &input);
-    let scalar = module
-        .load_function("infinity_silu_mul")
-        .expect("bundle must export the retained scalar SiLU");
-    let scalar_out = guarded(&stream, elements);
-    let mut input_ptr = input_device.cu_deviceptr();
-    let mut out_ptr = scalar_out.cu_deviceptr() + (2 * GUARD) as u64;
-    let mut count = rows as u32;
-    let mut columns = width as u32;
-    launch(
-        &scalar,
-        &stream,
-        elements.div_ceil(256) + 2,
-        &mut [
-            arg(&mut input_ptr),
-            arg(&mut out_ptr),
-            arg(&mut count),
-            arg(&mut columns),
-        ],
-    );
-    let scalar_values = download(&stream, &scalar_out);
-    guard_at(&scalar_values, GUARD, elements);
-    for (name, function) in &paired {
-        let out = guarded(&stream, elements);
-        run_pair(function, &stream, &input_device, &out, rows, width, 2);
-        let values = download(&stream, &out);
-        guard_at(&values, GUARD, elements);
-        assert_eq!(
-            values[GUARD..GUARD + elements]
-                .iter()
-                .map(|value| value.to_bits())
-                .collect::<Vec<_>>(),
-            scalar_values[GUARD..GUARD + elements]
-                .iter()
-                .map(|value| value.to_bits())
-                .collect::<Vec<_>>(),
-            "{name}: partial active CTA and excess blocks must match scalar output"
+    // Each launch geometry gets 258 chunks: one full CTA and two live lanes
+    // in a second CTA. The odd-width case also exercises row tails; width688
+    // keeps every vector8 load/store aligned. Excess CTAs must remain idle.
+    for (rows, width) in [(3usize, 171usize), (3, 688)] {
+        let elements = rows * width;
+        let input = fixture(rows, width);
+        let input_device = upload(&stream, &input);
+        let scalar = module
+            .load_function("infinity_silu_mul")
+            .expect("bundle must export the retained scalar SiLU");
+        let scalar_out = guarded(&stream, elements);
+        let mut input_ptr = input_device.cu_deviceptr();
+        let mut out_ptr = scalar_out.cu_deviceptr() + (2 * GUARD) as u64;
+        let mut count = rows as u32;
+        let mut columns = width as u32;
+        launch(
+            &scalar,
+            &stream,
+            elements.div_ceil(256) + 2,
+            &mut [
+                arg(&mut input_ptr),
+                arg(&mut out_ptr),
+                arg(&mut count),
+                arg(&mut columns),
+            ],
         );
+        let scalar_values = download(&stream, &scalar_out);
+        guard_at(&scalar_values, GUARD, elements);
+        for (name, function) in &paired {
+            let out = guarded(&stream, elements);
+            run_pair(
+                (name, function),
+                &stream,
+                &input_device,
+                &out,
+                rows,
+                width,
+                2,
+            );
+            let values = download(&stream, &out);
+            guard_at(&values, GUARD, elements);
+            assert_eq!(
+                values[GUARD..GUARD + elements]
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                scalar_values[GUARD..GUARD + elements]
+                    .iter()
+                    .map(|value| value.to_bits())
+                    .collect::<Vec<_>>(),
+                "{name}: partial active CTA and excess blocks must match scalar output"
+            );
+        }
     }
 }

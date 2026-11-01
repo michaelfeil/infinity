@@ -14,6 +14,7 @@ mod norm384;
 mod norm768;
 mod readout;
 mod silu_pairs;
+mod silu_vector8;
 
 /// Interpret one BF16 storage element without numerical conversion error.
 /// The upper16 bits are the exponent, sign and significant FP32 bits.
@@ -1047,6 +1048,17 @@ mod kernels {
         width: u32,
     ) {
         unsafe { crate::silu_pairs::silu_mul_bf16_pairs::<true>(input, out, rows, width) };
+    }
+
+    /// Native BF16 SiLU; eight values/thread, grid=ceil(rows*ceil(width/8)/256).
+    #[kernel]
+    pub unsafe fn infinity_silu_mul_bf16_vector8_native(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::silu_vector8::silu_mul_bf16_vector8_native(input, out, rows, width) };
     }
 
     /// Word-only BF16 gather; grid=ceil(tokens*width/256), block=256.

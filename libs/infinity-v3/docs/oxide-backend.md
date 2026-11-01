@@ -173,22 +173,24 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles all 35 Rust kernels separately for `sm_90`,
+`device/build.sh` compiles all 36 Rust kernels separately for `sm_90`,
 `sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
 symbols, and writes a manifest recording source/artifact hashes, target,
 compiler revision, and commands. Every architecture is natively compiled from
-Rust for all 35 exports. The original nine BERT kernels remain byte-identical
+Rust for all 36 exports. The original nine BERT kernels remain byte-identical
 on all three targets. Additional exports provide rounded embedding/residual
 LayerNorm, native width-768/1024 normalization arithmetic, ordinary or rounded RMSNorm with an optional residual output,
 NeoX/interleaved RoPE with separate-product or fused arithmetic, staged or FP32
 SiLU multiplication, plain or scaled word gathers, paired CLS/last-row gathers,
 native width-2048 decoder RMSNorm, selected BF16-to-FP32 output extraction,
 aligned vector width-2048 RMSNorm, and paired BF16 SiLU multiplication with
-retained round-to-nearest and native BF16 division recipes.
+retained round-to-nearest and native BF16 division recipes, plus an eight-value
+version with 16-byte input/output transactions.
 The packed-operation exports preserve their qualified BF16 arithmetic. The
-additional native-division SiLU export leaves all previous 34 kernel machine
+eight-value SiLU export leaves all previous 35 kernel machine
 bodies unchanged on all three targets; an exhaustive finite-BF16 gate sweep
-with unit up-values matches the scalar control and native operator bit for bit. Vector RMSNorm uses 16-byte transactions on aligned buffers and a
+with unit up-values matches the scalar control and native operator bit for bit.
+Vector RMSNorm uses 16-byte transactions on aligned buffers and a
 scalar fallback otherwise. Paired SiLU handles odd widths and unaligned buffers
 without reading outside a row. These are standalone primitives; they do not
 expand the serving model catalog.
