@@ -27,9 +27,12 @@
 //! heuristic result; 64-byte/8-byte `cublasLtMatmulAlgo_t`; and offsets 0, 64,
 //! 72, 76, 80 for algo, workspaceSize, state, wavesCount, and reserved.
 //!
-//! Only BF16 and F16 storage are claimed. FP8/FP4 `ScalarFormat` values have no
-//! `Element` marker and therefore cannot reach this module; F32 is also rejected
-//! rather than silently selecting an unqualified method.
+//! Ordinary plans admit only BF16 and F16. The E4M3FN tensor storage marker
+//! cannot reach an ordinary plan; F32 is also rejected rather than silently
+//! selecting an unqualified method.
+
+mod fp8;
+pub(crate) use fp8::{Fp8Geometry, Fp8Plan, Fp8Recipe};
 
 use crate::{
     math::{LinearPlan, MathError},
@@ -695,6 +698,14 @@ impl LtProvider {
         });
         core.workspace.initialize(&core.stream)?;
         Ok(Self { core })
+    }
+
+    /// FP8 reuses this provider core with one shared initialized 32 MiB workspace.
+    pub(crate) fn new_fp8(
+        context: Arc<Context>,
+        stream: Arc<Stream>,
+    ) -> Result<Self, BackendError> {
+        Self::with_workspace_bytes(context, stream, NATIVE_DEFAULT_WORKSPACE_BYTES)
     }
 
     /// Bind this provider's CUDA context once for a safe standalone operation.

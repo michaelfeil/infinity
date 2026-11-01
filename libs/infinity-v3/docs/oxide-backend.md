@@ -146,9 +146,13 @@ all buffers until completion. There is no dynamic operator dispatcher.
 `math::LinearPlan` prepares row-major `X W^T` geometry and cuBLAS parameters once
 per workspace, including optional row padding. BF16, FP16 and FP32 matrix methods
 accumulate in FP32; serving uses the admitted BF16 or FP16 path. The backend binds its
-context once per forward, rather than once per matrix operation. FP8/FP4 enum
-variants describe storage sizes only and do not enable arithmetic or quantized
-checkpoint loading. Packed scales and quantization schemes need separate methods.
+context once per forward, rather than once per matrix operation.
+
+The `fp8` library foundation owns canonical E4M3FN rows and F32 scales, using the
+existing LtCore implementation and one shared workspace per provider. H100 operator
+checks match native quantization, BF16/FP16 projection and separate bias rounding;
+SM100/120 paths are compile-qualified only. Quantized model serving and checkpoint
+loading remain rejected. Other packed formats remain metadata-only.
 
 The regular cuBLAS handle owns a 32 MiB workspace, initialized once before the
 backend becomes ready. This avoids uninitialized split-K scratch reads observed

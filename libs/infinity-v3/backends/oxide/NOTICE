@@ -34,3 +34,9 @@ provenance.json). The vendored source is the frozen V3 prototype unchanged;
 only Cargo.toml is adapted for the Oxide path build. Deflated ZIP remains
 unsupported by the prototype verifier, and Oxide rejects compressed entries for
 backend publication rather than accepting its quadratic range access.
+
+The prepared FP8 descriptor recipe in src/lt/fp8.rs follows the public native
+helpers/fp8_linear.cpp scaled-mm implementation, which retains its PyTorch BSD
+attribution. The complete inherited notice/license remains in
+device/LICENSE-PyTorch-BSD3; original Rust ownership/binding code follows the
+repository license.

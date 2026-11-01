@@ -31,8 +31,8 @@ impl fmt::Display for TensorError {
 
 impl std::error::Error for TensorError {}
 
-/// Storage encodings descriptors may name. Only `F32`, `F16`, and `Bf16` have
-/// `Element` markers; packed formats are metadata-only here.
+/// Storage encodings descriptors may name. `F32`, `F16`, `Bf16`, and `E4M3Fn` have
+/// `Element` markers; all other formats remain metadata-only here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ScalarFormat {
     F32,
@@ -109,6 +109,27 @@ impl sealed::Sealed for F16 {}
 impl Element for F16 {
     type Storage = F16;
     const FORMAT: ScalarFormat = ScalarFormat::F16;
+}
+
+/// One E4M3FN encoded byte. This is internal quantized matrix storage;
+/// serving/model output dtypes remain independently constrained to F16/BF16.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct E4M3Fn(u8);
+impl E4M3Fn {
+    pub const fn from_bits(bits: u8) -> Self {
+        Self(bits)
+    }
+    pub const fn to_bits(self) -> u8 {
+        self.0
+    }
+}
+// SAFETY: transparent u8 storage; all bit patterns are valid storage values.
+unsafe impl DeviceCopy for E4M3Fn {}
+impl sealed::Sealed for E4M3Fn {}
+impl Element for E4M3Fn {
+    type Storage = E4M3Fn;
+    const FORMAT: ScalarFormat = ScalarFormat::F8E4M3FN;
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]

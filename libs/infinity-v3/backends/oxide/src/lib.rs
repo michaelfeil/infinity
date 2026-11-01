@@ -14,6 +14,7 @@ mod encoder_linear;
 mod encoder_policy;
 mod fa4;
 mod fa4_alibi;
+pub mod fp8;
 mod jina_encoder_model;
 pub(crate) mod lt;
 pub mod math;
