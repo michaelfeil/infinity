@@ -3,6 +3,7 @@
 // Original ggml attribution retained below. Match default FMA, no fast math.
 #include "qwen35_vision.h"
 #include <climits>
+#include <cstdint>
 #include <ATen/ATen.h>
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
@@ -160,6 +161,38 @@ __global__ void exact_ln_kernel(const __half* x,
 
 namespace infinity {
 namespace {
+template <typename T>
+__global__ void position_corners_kernel(const T* table,
+                                        T* output,
+                                        int64_t count,
+                                        int hidden,
+                                        int side,
+                                        int height,
+                                        int width,
+                                        int merge,
+                                        float row_scale,
+                                        float column_scale) {
+  const uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+  if (index >= count)
+    return;
+  const uint32_t token = index / uint32_t(hidden), channel = index % uint32_t(hidden);
+  const uint32_t column = token % merge + token / (merge * merge) % (width / merge) * merge;
+  const uint32_t row = token / merge % merge + token / (merge * width) % (height / merge) * merge;
+  const float r = __fmul_rn(float(row), row_scale), c = __fmul_rn(float(column), column_scale);
+  const int r0 = int(floorf(r)), r1 = min(int(ceilf(r)), side - 1), c0 = int(floorf(c)),
+            c1 = min(int(ceilf(c)), side - 1);
+  const float dr = __fsub_rn(r, float(r0)), dc = __fsub_rn(c, float(c0));
+  const float scales[4] = {__fmul_rn(__fsub_rn(1.f, dr), __fsub_rn(1.f, dc)),
+                           __fmul_rn(__fsub_rn(1.f, dr), dc),
+                           __fmul_rn(dr, __fsub_rn(1.f, dc)),
+                           __fmul_rn(dr, dc)};
+  const int offsets[4] = {r0 * side + c0, r0 * side + c1, r1 * side + c0, r1 * side + c1};
+#pragma unroll
+  for (int corner = 0; corner < 4; ++corner)
+    output[int64_t(corner) * count + index] = T(__fmul_rn(
+        float(table[int64_t(offsets[corner]) * hidden + channel]), float(T(scales[corner]))));
+}
+
 template <typename Input, typename Output>
 __global__ void vision_rotary_kernel(const Input* qkv,
                                      const float* cosine,
@@ -185,6 +218,45 @@ __global__ void vision_rotary_kernel(const Input* qkv,
   }
   output[2 * count + index] = Output(qkv[source + 2 * heads * dim + lane]);
 }
+}
+
+at::Tensor vision_position_corners(const at::Tensor& table,
+                                   int64_t side,
+                                   int64_t frames,
+                                   int64_t height,
+                                   int64_t width,
+                                   int64_t merge) {
+  TORCH_CHECK(table.is_cuda() && table.dim() == 2 && table.is_contiguous() && side > 0 &&
+                  side <= 46340 && table.size(0) == side * side && table.size(1) > 0 &&
+                  table.size(1) <= INT_MAX &&
+                  (table.scalar_type() == at::kHalf || table.scalar_type() == at::kBFloat16 ||
+                   table.scalar_type() == at::kFloat) &&
+                  frames > 0 && height > 0 && height <= INT_MAX / frames && width > 0 &&
+                  width <= INT_MAX / (frames * height) && merge > 0 && height % merge == 0 &&
+                  width % merge == 0,
+              "Invalid vision position table or grid");
+  c10::cuda::CUDAGuard guard(table.device());
+  const int64_t tokens = frames * height * width, count = tokens * table.size(1);
+  TORCH_CHECK(count <= INT_MAX, "Vision position grid exceeds CUDA indexing range");
+  auto output = at::empty({4, tokens, table.size(1)}, table.options());
+  if (!count)
+    return output;
+  AT_DISPATCH_FLOATING_TYPES_AND2(
+      at::kHalf, at::kBFloat16, table.scalar_type(), "vision_position_corners", [&] {
+        position_corners_kernel<<<(count + 255) / 256, 256, 0, at::cuda::getCurrentCUDAStream()>>>(
+            table.const_data_ptr<scalar_t>(),
+            output.mutable_data_ptr<scalar_t>(),
+            count,
+            int(table.size(1)),
+            int(side),
+            int(height),
+            int(width),
+            int(merge),
+            height == 1 ? 0.f : float(side - 1) / float(height - 1),
+            width == 1 ? 0.f : float(side - 1) / float(width - 1));
+      });
+  C10_CUDA_KERNEL_LAUNCH_CHECK();
+  return output;
 }
 
 at::Tensor vision_rotary_qkv(const at::Tensor& qkv,
