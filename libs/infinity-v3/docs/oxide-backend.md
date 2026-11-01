@@ -36,9 +36,14 @@ variant of these families.
 | --- | --- |
 | BERT, RoBERTa, XLM-RoBERTa, CamemBERT | Encoder-only absolute position tables, tanh GELU, no cross-attention. BERT position capacity is at most 4096. Head width is at most 256; a matching provider profile is required for FA4. |
 | DistilBERT | The same packed encoder contract, with its checkpoint names/config aliases and fixed LayerNorm epsilon `1e-12`. An optional stored token-type table is validated and preserved; otherwise a zero table is used. |
+| MPNet | BF16 H768, intermediate width 3072, 12 attention heads, 32 relative buckets and at most 512 positions. Uses exact GELU, learned bucket attention and the native `positions + 2` lookup. Only token type `0` is accepted; classifier and MLM heads are rejected. |
 | Qwen2 | Dense SiLU text backbone, full split-half NeoX RoPE, global causal or noncausal attention, and a matching FA4 profile. The H896/d64 native RMS/rotary recipe is rejected. The exercised GTE-Qwen2-1.5B-instruct geometry is H1536, 12 Q/2 KV heads, d128, noncausal. |
 | Qwen3 | Dense SiLU text backbones at H1024 or H4096, d128 learned Q/K head norms, full NeoX RoPE, and a matching FA4 profile. Query projection width may differ from hidden width. Qwen3-Embedding-0.6B and 8B are exercised; expert models and other normalization widths are rejected. |
 | Llama | Hidden width 2048, dense SiLU, base unscaled `default` RoPE, causal global attention, and a matching FA4 profile. TinyLlama's 32 Q/4 KV heads at d64 need the appended twentieth profile. H4096, noncausal Llama, and scaled RoPE including Llama3 are rejected. |
+
+MPNet uses a separate [native attention provider](../backends/oxide/vendor/mpnet_attention/README.md),
+selected with `INFINITY_OXIDE_MPNET_ATTENTION_ROOT`. It shares the encoder
+workspace, deferred results, pooling, raw output and Dense-module handling.
 
 Additional BF16 encoder paths cover ModernBERT, Nomic BERT and Jina Small with
 their validated geometry, normalization, rotary/ALiBi and activation recipes.
@@ -627,8 +632,8 @@ not a full MTEB evaluation or a general accuracy guarantee.
 
 ## Remaining coverage limits
 
-The typed catalog above does not replace the full LibTorch catalog. MPNet,
-DeBERTa, other decoder families, unsupported position/attention recipes,
+The typed catalog above does not replace the full LibTorch catalog. DeBERTa,
+other decoder families, unsupported position/attention recipes,
 recurrent/MoE state, media inputs and other task heads remain unsupported.
 FA4 local/window profiles and standalone device
 primitives do not enable those model contracts. CPU execution is also outside
