@@ -2,6 +2,7 @@
 // RMS arithmetic adapted from the Apache-2.0 fast_kernels.cu implementation.
 // Preserve its reduction order and BF16 rounding before row quantization.
 #include "kernels/fp8_fusions.h"
+#include "kernels/dependent_launch.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
@@ -55,6 +56,7 @@ __device__ float row_scale(float value) {
 
 template <class T, int Columns>
 __global__ void swiglu_quant_kernel(const T* input, __nv_fp8_e4m3* out, float* scales, int width) {
+  wait_for_producer();
   const int64_t row = blockIdx.x;
   float values[Columns], amax = 0;
 #pragma unroll
@@ -93,6 +95,7 @@ __global__ __launch_bounds__(512) void swiglu_quant_vector_kernel(const T* input
                                                                   __nv_fp8_e4m3* out,
                                                                   float* scales,
                                                                   int width) {
+  wait_for_producer();
   const int64_t row = blockIdx.x;
   float values[Groups][8], amax = 0;
   auto source = reinterpret_cast<const Packed<T, 8>*>(input);
@@ -140,6 +143,7 @@ __global__ void rms_quant_kernel(const __nv_bfloat16* x,
                                  float* scales,
                                  int width,
                                  float epsilon) {
+  wait_for_producer();
   const int64_t row = blockIdx.x;
   float variance = 0, values[Columns];
 #pragma unroll
@@ -185,6 +189,7 @@ __global__ void rms_quant_vector(const __nv_bfloat16* x,
                                  float* scales,
                                  int width,
                                  float epsilon) {
+  wait_for_producer();
   __shared__ float original[Groups * 2048];
   float values[Groups][8];
   const int64_t row = blockIdx.x;
@@ -264,8 +269,8 @@ void launch_swiglu(const at::Tensor& input, at::Tensor& output, at::Tensor& scal
   if (width % 8 == 0 && reinterpret_cast<uintptr_t>(x) % alignof(Packed<T, 8>) == 0) {
     const int threads = width <= 4096 ? 256 : 512;
 #define VECTOR(C)                                                                                  \
-  swiglu_quant_vector_kernel<T, C>                                                                 \
-      <<<input.size(0), threads, 0, stream>>>(x, y, scales.data_ptr<float>(), width)
+  launch_dependent<swiglu_quant_vector_kernel<T, C>>(                                              \
+      input.size(0), threads, stream, x, y, scales.data_ptr<float>(), width)
     if (width <= 2048) {
       VECTOR(1);
     } else if (width <= 8192) {
@@ -287,8 +292,8 @@ void launch_swiglu(const at::Tensor& input, at::Tensor& output, at::Tensor& scal
     return;
   }
 #define RUN(C)                                                                                     \
-  swiglu_quant_kernel<T, C>                                                                        \
-      <<<input.size(0), 256, 0, stream>>>(x, y, scales.data_ptr<float>(), width)
+  launch_dependent<swiglu_quant_kernel<T, C>>(                                                     \
+      input.size(0), 256, stream, x, y, scales.data_ptr<float>(), width)
   if (width <= 256) {
     RUN(1);
   } else if (width <= 1024) {
@@ -355,15 +360,18 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> fp8_add_rms_quantize(const at::Te
         reinterpret_cast<uintptr_t>(ptr(weight)) % 16 == 0 &&
         (!residual.defined() || reinterpret_cast<uintptr_t>(ptr(residual)) % 16 == 0)) {
 #define RUN_VECTOR(G)                                                                              \
-  rms_quant_vector<G>                                                                              \
-      <<<x.size(0), 256, 0, stream>>>(ptr(x),                                                      \
-                                      residual.defined() ? ptr(residual) : nullptr,                \
-                                      ptr(weight),                                                 \
-                                      reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr()), \
-                                      reinterpret_cast<__nv_bfloat16*>(summed.mutable_data_ptr()), \
-                                      scales.data_ptr<float>(),                                    \
-                                      x.size(1),                                                   \
-                                      epsilon)
+  launch_dependent<rms_quant_vector<G>>(                                                           \
+      x.size(0),                                                                                   \
+      256,                                                                                         \
+      stream,                                                                                      \
+      ptr(x),                                                                                      \
+      residual.defined() ? ptr(residual) : nullptr,                                                \
+      ptr(weight),                                                                                 \
+      reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr()),                                 \
+      reinterpret_cast<__nv_bfloat16*>(summed.mutable_data_ptr()),                                 \
+      scales.data_ptr<float>(),                                                                    \
+      x.size(1),                                                                                   \
+      epsilon)
       if (x.size(1) <= 2048) {
         RUN_VECTOR(1);
       } else if (x.size(1) <= 4096) {
@@ -378,15 +386,18 @@ std::tuple<at::Tensor, at::Tensor, at::Tensor> fp8_add_rms_quantize(const at::Te
       return {output, summed, scales};
     }
 #define RUN(C)                                                                                     \
-  rms_quant_kernel<C>                                                                              \
-      <<<x.size(0), 256, 0, stream>>>(ptr(x),                                                      \
-                                      residual.defined() ? ptr(residual) : nullptr,                \
-                                      ptr(weight),                                                 \
-                                      reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr()), \
-                                      reinterpret_cast<__nv_bfloat16*>(summed.mutable_data_ptr()), \
-                                      scales.data_ptr<float>(),                                    \
-                                      x.size(1),                                                   \
-                                      epsilon)
+  launch_dependent<rms_quant_kernel<C>>(                                                           \
+      x.size(0),                                                                                   \
+      256,                                                                                         \
+      stream,                                                                                      \
+      ptr(x),                                                                                      \
+      residual.defined() ? ptr(residual) : nullptr,                                                \
+      ptr(weight),                                                                                 \
+      reinterpret_cast<__nv_fp8_e4m3*>(output.mutable_data_ptr()),                                 \
+      reinterpret_cast<__nv_bfloat16*>(summed.mutable_data_ptr()),                                 \
+      scales.data_ptr<float>(),                                                                    \
+      x.size(1),                                                                                   \
+      epsilon)
     auto width = x.size(1);
     if (width <= 256) {
       RUN(1);
