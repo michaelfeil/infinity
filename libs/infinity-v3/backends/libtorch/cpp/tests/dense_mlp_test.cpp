@@ -109,6 +109,19 @@ void check(const c10::Device& device, at::ScalarType dtype) {
   auto up = at::randn_like(wi) * .03, bu = at::randn_like(bi) * .1;
   infinity::DenseMlp separate({wi, bi}, {up, bu}, {wo, bo}, {infinity::MlpActivation::Silu});
   auto x = at::randn({7, 32}, opts);
+  infinity::ProjectionRecipe separate_bias;
+  separate_bias.separate_bias = true;
+  infinity::MlpActivationRecipe rounded(infinity::MlpActivation::RoundedGelu);
+  rounded.fusion = infinity::MlpFusion::RoundedBiasGelu;
+  auto strided_bias = at::stack({bi, bi}, -1).select(-1, 0);
+  infinity::DenseMlp rounded_mlp(
+      {wi, strided_bias, separate_bias}, {wo, bo, separate_bias}, rounded);
+  for (const auto& input : {x, x.unsqueeze(0)})
+    check_equal(rounded_mlp.forward(input),
+                at::linear(infinity::mlp_activation(at::linear(input, wi) + strided_bias,
+                                                    infinity::MlpActivation::RoundedGelu),
+                           wo) +
+                    bo);
   check_equal(separate.forward(x),
               at::linear(at::silu(at::linear(x, wi, bi)) * at::linear(x, up, bu), wo, bo));
   if (device.is_cuda()) {

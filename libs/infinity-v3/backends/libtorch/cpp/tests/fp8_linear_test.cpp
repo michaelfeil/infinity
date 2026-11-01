@@ -245,21 +245,24 @@ int main() {
             "Vector quantization or misaligned fallback changed CPU reference bytes/scales");
       }
     for (int64_t width :
-         {256, 2048, 4096, 6144, 8192, 12288, 14336, 17408, 18432, 24576, 28672, 32768}) {
-      auto gate_up = at::randn({17, 2 * width}, options) * 8;
-      gate_up.select(0, 0).zero_();
-      auto activated = infinity::fused_gated_activation(gate_up, 5);
-      auto reference = infinity::fp8_quantize_rows(activated);
-      auto fused = infinity::fp8_swiglu_quantize(gate_up);
-      TORCH_CHECK(at::equal(fused.first.view(at::kByte), reference.first.view(at::kByte)) &&
-                      at::equal(fused.second, reference.second),
-                  "Fused SwiGLU changed FP8 bytes/scales");
-      infinity::Fp8Linear down(at::randn({256, width}, options) * .05);
-      auto bias = at::randn({256}, options) * .01;
-      TORCH_CHECK(at::equal(down.forward_quantized(fused.first, fused.second, bias),
-                            down.forward(activated, bias)),
-                  "Fused MLP changed output or bias rounding");
-    }
+         {256, 2048, 4096, 6144, 8192, 12288, 14336, 17408, 18432, 24576, 28672, 32768})
+      for (bool aligned : {false, true}) {
+        // A contiguous storage offset exercises the scalar fallback as well as vector PDL.
+        auto storage = at::randn({17 * 2 * width + 1}, options) * 8;
+        auto gate_up = storage.narrow(0, aligned ? 0 : 1, 17 * 2 * width).view({17, 2 * width});
+        gate_up.select(0, 0).zero_();
+        auto activated = infinity::fused_gated_activation(gate_up, 5);
+        auto reference = infinity::fp8_quantize_rows(activated);
+        auto fused = infinity::fp8_swiglu_quantize(gate_up);
+        TORCH_CHECK(at::equal(fused.first.view(at::kByte), reference.first.view(at::kByte)) &&
+                        at::equal(fused.second, reference.second),
+                    "Fused SwiGLU changed FP8 bytes/scales");
+        infinity::Fp8Linear down(at::randn({256, width}, options) * .05);
+        auto bias = at::randn({256}, options) * .01;
+        TORCH_CHECK(at::equal(down.forward_quantized(fused.first, fused.second, bias),
+                              down.forward(activated, bias)),
+                    "Fused MLP changed output or bias rounding");
+      }
     if (dtype == at::kBFloat16) {
       for (int64_t width : {768, 896, 2560, 4096, 5120, 8192})
         for (int64_t rows : {1, 17})

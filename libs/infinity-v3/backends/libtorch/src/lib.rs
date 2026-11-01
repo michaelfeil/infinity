@@ -313,7 +313,18 @@ fn resolve_fp8_scope(
 ) -> Result<String, BackendError> {
     let dense_decoder = matches!(
         family,
-        "llama" | "mistral" | "mistral3" | "qwen2" | "qwen3" | "qwen3_5" | "qwen3_5_text"
+        "llama"
+            | "llama_bidirec"
+            | "mistral"
+            | "ministral3"
+            | "mistral3"
+            | "qwen2"
+            | "qwen3"
+            | "qwen3_5"
+            | "qwen3_5_text"
+            | "qwen3_vl"
+            | "ultrabert"
+            | "ultravbert"
     );
     let scope = requested.unwrap_or(if enabled && dense_decoder {
         "all"
@@ -672,15 +683,14 @@ impl LibtorchBackend {
         }
         .to_owned();
         options["model_type"] = normalized_family.clone().into();
-        if matches!(family.as_str(), "colqwen3" | "qwen3_vl_nemotron_embed")
-            || (!enable_fp8_dynamic
-                && family == "ministral3"
-                && options["is_causal"] == false
-                && options["pooling"] == "avg")
+        if !enable_fp8_dynamic
+            && (matches!(family.as_str(), "colqwen3" | "qwen3_vl_nemotron_embed")
+                || (family == "ministral3"
+                    && options["is_causal"] == false
+                    && options["pooling"] == "avg"))
         {
-            // Nemotron 3's frozen text encoder must use the same rounding as
-            // its Mistral3 wrapper in Nemotron 3.5, including BF16 RMSNorm.
-            // Dynamic FP8 keeps its existing native arithmetic contract.
+            // Preserve reference rounding for frozen text encoders; dynamic
+            // FP8 uses the native decoder arithmetic contract.
             options["_transformers_math"] = true.into();
         }
         if family == "qwen3_vl_nemotron_embed" {
@@ -712,29 +722,8 @@ impl LibtorchBackend {
             {
                 return Err(start("Dynamic FP8 requires an unquantized checkpoint"));
             }
-            if !matches!(dtype, "float16" | "bfloat16")
-                || device == "cpu"
-                || !matches!(
-                    normalized_family.as_str(),
-                    "bert"
-                        | "roberta"
-                        | "xlm-roberta"
-                        | "camembert"
-                        | "modernbert"
-                        | "llama"
-                        | "mistral"
-                        | "mistral3"
-                        | "qwen2"
-                        | "qwen3"
-                        | "qwen3_5"
-                        | "qwen3_5_text"
-                        | "gemma4"
-                        | "gemma4_text"
-                )
-            {
-                return Err(start(
-                    "Dynamic FP8 requires CUDA float16/bfloat16 and a supported dense MLP family",
-                ));
+            if !matches!(dtype, "float16" | "bfloat16") || device == "cpu" {
+                return Err(start("Dynamic FP8 requires CUDA float16/bfloat16"));
             }
         }
         options["_fp8_dynamic"] = enable_fp8_dynamic.into();
@@ -2288,7 +2277,9 @@ mod tests {
     fn values(value: &Embedding) -> Vec<f32> {
         match value {
             Embedding::Pooled(v) => v.clone(),
+            Embedding::Shared(v) => v.to_vec(),
             Embedding::All(v) => v.iter().flatten().copied().collect(),
+            Embedding::SharedAll(v) => v.iter().flat_map(|row| row.iter().copied()).collect(),
         }
     }
 
@@ -2552,7 +2543,9 @@ mod tests {
                 assert!(got.iter().zip(want).all(|(a, b)| (a - b).abs() < 0.02));
                 match embedding {
                     Embedding::Pooled(v) => assert_eq!(v.len(), 3),
+                    Embedding::Shared(v) => assert_eq!(v.len(), 3),
                     Embedding::All(v) => assert!(v.iter().all(|token| token.len() == 16)),
+                    Embedding::SharedAll(v) => assert!(v.iter().all(|token| token.len() == 16)),
                 }
             }
         }
@@ -2596,11 +2589,17 @@ mod tests {
     fn dynamic_fp8_scope_defaults_and_overrides() {
         for family in [
             "llama",
+            "llama_bidirec",
             "mistral",
+            "ministral3",
+            "mistral3",
             "qwen2",
             "qwen3",
             "qwen3_5",
             "qwen3_5_text",
+            "qwen3_vl",
+            "ultrabert",
+            "ultravbert",
         ] {
             assert_eq!(resolve_fp8_scope(None, true, family).unwrap(), "all");
             assert_eq!(resolve_fp8_scope(Some("all"), true, family).unwrap(), "all");
@@ -2672,6 +2671,133 @@ mod tests {
         .err()
         .unwrap();
         assert!(quantized.to_string().contains("unquantized checkpoint"));
+    }
+
+    #[test]
+    #[ignore = "Requires an FP8 GPU and FP8_MULTIVECTOR_MODELS checkpoint directory"]
+    fn cuda_dynamic_fp8_multivector_aliases_load_through_backend() {
+        let root = std::path::PathBuf::from(std::env::var("FP8_MULTIVECTOR_MODELS").unwrap());
+        for name in [
+            "TomoroAI--tomoro-colqwen3-embed-4b",
+            "nvidia--nemotron-colembed-vl-4b-v2",
+        ] {
+            let path = root.join(name);
+            let kind = ModelType::Embedding(Pool::LastToken);
+            let mut input = batch();
+            // Use ordinary checkpoint word tokens; these aliases have a
+            // single token type and return one normalized vector per token.
+            let tokenizer: serde_json::Value =
+                serde_json::from_slice(&fs::read(path.join("tokenizer.json")).unwrap()).unwrap();
+            let vocab = &tokenizer["model"]["vocab"];
+            let first = ["The", "Ġred", "Ġcar", "Ġis", "Ġparked", "."];
+            let second = [
+                "A",
+                "Ġshort",
+                "Ġsentence",
+                "Ġabout",
+                "Ġneural",
+                "Ġnetworks",
+                ".",
+            ];
+            input.input_ids = first
+                .iter()
+                .chain(&second)
+                .map(|token| vocab[token].as_u64().unwrap() as u32)
+                .collect();
+            input.token_type_ids = vec![0; input.input_ids.len()];
+            input.position_ids = (0..first.len() as u32)
+                .chain(0..second.len() as u32)
+                .collect();
+            input.cumulative_seq_lengths =
+                vec![0, first.len() as u32, input.input_ids.len() as u32];
+            input.max_length = second.len() as u32;
+            input.pooled_indices.clear();
+            input.raw_indices = vec![0, 1];
+            let baseline = LibtorchBackend::new(&path, "bfloat16", kind.clone(), "cuda:0")
+                .unwrap()
+                .embed(input.clone())
+                .unwrap();
+            let fp8 = LibtorchBackend::new_with_dense_paths_and_fp8(
+                &path, "bfloat16", kind, "cuda:0", None, true,
+            )
+            .unwrap()
+            .embed(input)
+            .unwrap();
+            let mut minimum_cosine = 1.0f32;
+            for (row, embedding) in &fp8 {
+                let Embedding::All(actual) = embedding else {
+                    panic!("Expected token vectors")
+                };
+                let Embedding::All(expected) = &baseline[row] else {
+                    panic!("Expected token vectors")
+                };
+                assert_eq!(actual.len(), expected.len());
+                for (a, b) in actual.iter().zip(expected) {
+                    assert_eq!(a.len(), b.len());
+                    assert!(a.iter().all(|value| value.is_finite()));
+                    let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+                    let aa: f32 = a.iter().map(|x| x * x).sum();
+                    let bb: f32 = b.iter().map(|x| x * x).sum();
+                    let cosine = dot / (aa * bb).sqrt();
+                    minimum_cosine = minimum_cosine.min(cosine);
+                    assert!(cosine > 0.95, "{name}: FP8 token cosine {cosine}");
+                }
+            }
+            eprintln!("{name}: minimum FP8 token cosine {minimum_cosine}");
+        }
+    }
+
+    #[test]
+    #[ignore = "Requires an FP8-capable NVIDIA GPU and CUDA LibTorch 2.14.1"]
+    fn cuda_dynamic_fp8_deberta_loads_through_backend() {
+        let fixture = fixture_with_intermediate("", false, 32);
+        let config_file = fixture.0.join("config.json");
+        let mut config: serde_json::Value =
+            serde_json::from_slice(&fs::read(&config_file).unwrap()).unwrap();
+        config["model_type"] = "deberta-v2".into();
+        fs::write(&config_file, serde_json::to_vec(&config).unwrap()).unwrap();
+        let file = fixture.0.join("model.safetensors");
+        let bytes = fs::read(&file).unwrap();
+        let tensors = SafeTensors::deserialize(&bytes).unwrap();
+        let renamed = tensors.tensors().into_iter().map(|(name, tensor)| {
+            (
+                name.replace(".query.", ".query_proj.")
+                    .replace(".key.", ".key_proj.")
+                    .replace(".value.", ".value_proj."),
+                tensor,
+            )
+        });
+        fs::write(&file, serialize(renamed, None).unwrap()).unwrap();
+        let kind = ModelType::Embedding(Pool::Mean);
+        let baseline = LibtorchBackend::new(&fixture.0, "bfloat16", kind.clone(), "cuda:0")
+            .unwrap()
+            .embed(batch())
+            .unwrap();
+        let fp8 = LibtorchBackend::new_with_dense_paths_and_fp8(
+            &fixture.0, "bfloat16", kind, "cuda:0", None, true,
+        )
+        .unwrap()
+        .embed(batch())
+        .unwrap();
+        let mut changed = false;
+        for (row, embedding) in &fp8 {
+            let actual = values(embedding);
+            let expected = values(&baseline[row]);
+            assert_eq!(actual.len(), expected.len());
+            assert!(actual.iter().all(|value| value.is_finite()));
+            let error: f32 = actual
+                .iter()
+                .zip(&expected)
+                .map(|(a, b)| (a - b).powi(2))
+                .sum();
+            let norm: f32 = expected.iter().map(|v| v.powi(2)).sum();
+            assert!((error / norm.max(1e-12)).sqrt() < 0.1);
+            changed |= actual != expected;
+        }
+        assert!(
+            changed,
+            "Loader accepted FP8 without quantizing the new encoder"
+        );
     }
 
     #[test]

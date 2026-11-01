@@ -184,13 +184,6 @@ struct Engine {
     dense = std::make_unique<infinity::DenseChain>(options, weights);
     auto family = options.string("model_type", "bert");
     if (options.boolean("_fp8_dynamic", false)) {
-      TORCH_CHECK(family == "bert" || family == "roberta" || family == "xlm-roberta" ||
-                      family == "camembert" || family == "modernbert" || family == "llama" ||
-                      family == "llama_bidirec" || family == "mistral" || family == "mistral3" ||
-                      family == "ministral3" || family == "qwen2" || family == "qwen3" ||
-                      family == "qwen3_5" || family == "qwen3_5_text" || family == "gemma4" ||
-                      family == "gemma4_text",
-                  "Dynamic FP8 is unsupported for this model family");
       TORCH_CHECK(!options.values.count("quantization_config") &&
                       !options.values.count("quantization_config.quant_method"),
                   "Dynamic FP8 requires an unquantized checkpoint");

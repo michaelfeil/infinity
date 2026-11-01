@@ -80,6 +80,7 @@ tokio::task_local! { static OUTPUTS: Arc<Semaphore>; static SHAPE: ErrorShape; }
 fn overloaded(path: &str) -> Response {
     SHAPE.sync_scope(ErrorShape::for_path(path), || {
         let error = ErrorResponse {
+            available_tiers: None,
             error: "HTTP memory admission capacity exhausted".into(),
             error_type: ErrorType::Overloaded,
         };

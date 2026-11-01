@@ -35,6 +35,19 @@ namespace infinity {
 namespace {
 enum class Family { Distil, Modern, Nomic, Gte, Jina, JinaCode };
 
+void prepare_mlp(DenseMlp& mlp,
+                 const Options& options,
+                 Weights& weights,
+                 const std::string& prefix,
+                 std::initializer_list<std::string> projections) {
+  if (!options.boolean("_fp8_dynamic", false))
+    return;
+  TORCH_CHECK(options.string("_fp8_scope", "mlp") == "mlp", "Encoder FP8 supports MLP scope only");
+  mlp.prepare(MlpPrecision::Fp8);
+  for (const auto& name : projections)
+    weights.erase(prefix + name + ".weight");
+}
+
 /// Build GTE's scaled rotary frequencies from head dimension,
 /// base theta, and the NTK scaling factor.
 at::Tensor
@@ -75,6 +88,12 @@ struct Encoder final : Model {
   bool exact_norm = false;
   bool exact_cpu_half = false;
   bool exact_moe = false;
+
+  bool routed_layer(int64_t layer) const {
+    const auto every = o.integer("moe_every_n_layers", 0);
+    return family == Family::Nomic && every > 0 && layer % every == 1;
+  }
+
   at::Tensor nomic_split_policy;
   size_t nomic_policy_workspace = 0;
 
@@ -134,8 +153,11 @@ struct Encoder final : Model {
     // An explicit zero opts into the ATen diagnostic path.
     exact_norm = f == Family::Modern &&
                  (!norm_mode || std::string(norm_mode) == "1" || std::string(norm_mode) == "true");
-    TORCH_CHECK(!o.boolean("_fp8_dynamic", false) || family == Family::Modern,
-                "Dynamic FP8 is unsupported for this encoder family");
+    if (o.boolean("_fp8_dynamic", false))
+      for (int64_t layer = 0; layer < layers; ++layer)
+        TORCH_CHECK(
+            !routed_layer(layer),
+            "Dynamic FP8 encoder MLPs require a dense checkpoint; routed experts are unsupported");
   }
 
   int64_t output_width() const override {
@@ -479,8 +501,7 @@ struct Encoder final : Model {
     fused.resize(layers);
     for (int64_t i = 0; i < layers; ++i) {
       const auto p = layer_name(i);
-      const auto every = o.integer("moe_every_n_layers", 0);
-      if (family == Family::Nomic && every > 0 && i % every == 1) {
+      if (routed_layer(i)) {
         const auto experts = o.integer("num_experts", 0), inner = o.integer("n_inner", 0);
         TORCH_CHECK(experts > 0 && inner > 0, "Invalid Nomic expert count/width");
         // Validate the reshape used by nomic_moe() at load time. Division
@@ -517,16 +538,13 @@ struct Encoder final : Model {
         fused[i].qkv_weight = w(a + ".weight");
         fused[i].qkv_bias = bias(a);
       }
-      if (family == Family::Nomic && activation != "gelu" &&
-          !(o.integer("moe_every_n_layers", 0) > 0 &&
-            i % o.integer("moe_every_n_layers", 1) == 1)) {
+      if (family == Family::Nomic && activation != "gelu" && !routed_layer(i)) {
         const auto gate = p + "mlp.fc12", up = p + "mlp.fc11";
         fused[i].gate_weight = at::cat({w(gate + ".weight"), w(up + ".weight")}, 0);
         if (has(gate + ".bias"))
           fused[i].gate_bias = at::cat({w(gate + ".bias"), w(up + ".bias")}, 0);
       }
-      const bool routed = family == Family::Nomic && o.integer("moe_every_n_layers", 0) > 0 &&
-                          i % o.integer("moe_every_n_layers", 1) == 1;
+      const bool routed = routed_layer(i);
       if (!routed) {
         const bool is_gated =
             family != Family::Distil && !(family == Family::Nomic && activation == "gelu");
@@ -557,11 +575,11 @@ struct Encoder final : Model {
                                  up},
                                 {w(down + ".weight"), bias(down), {}, down},
                                 std::move(recipe));
-      }
-      if (o.boolean("_fp8_dynamic", false)) {
-        fused[i].mlp.prepare(MlpPrecision::Fp8);
-        for (const auto& name : {p + "mlp.Wi", p + "mlp.Wo"}) {
-          weights.erase(prefix + name + ".weight");
+        prepare_mlp(fused[i].mlp, o, weights, prefix, {up, down});
+        if (fused_gate && o.boolean("_fp8_dynamic", false)) {
+          fused[i].gate_weight = at::Tensor();
+          weights.erase(prefix + p + "mlp.fc11.weight");
+          weights.erase(prefix + p + "mlp.fc12.weight");
         }
       }
     }
@@ -915,8 +933,7 @@ struct Encoder final : Model {
         h = residual_norm(mlp(h, i, p), h, p + "output_layer_norm");
       } else if (family == Family::Nomic) {
         h = residual_norm(projected, h, p + "norm1");
-        const auto every = o.integer("moe_every_n_layers", 0);
-        if (every > 0 && i % every == 1)
+        if (routed_layer(i))
           h = residual_norm(nomic_moe(h, p), h, p + "norm2");
         else {
           h = residual_norm(mlp(h, i, p), h, p + "norm2");
@@ -1142,6 +1159,8 @@ struct Mpnet final : Model {
                               : act == "silu" ? MlpActivation::Silu
                               : act == "gelu" ? MlpActivation::Gelu
                                               : MlpActivation::GeluTanh});
+      prepare_mlp(
+          mlps.back(), o, weights, prefix, {block + "intermediate.dense", block + "output.dense"});
     }
   }
 
@@ -1349,6 +1368,7 @@ struct Deberta final : Model {
           MlpActivationRecipe::numerical([this](const at::Tensor& rows) {
             return activation(rows, o.string("hidden_act", "gelu"));
           }));
+      prepare_mlp(mlps.back(), o, weights, prefix, {in, out});
       const auto p = block + "attention.self.";
       qkv_weight.push_back(at::cat(
           {w(p + "query_proj.weight"), w(p + "key_proj.weight"), w(p + "value_proj.weight")}, 0));

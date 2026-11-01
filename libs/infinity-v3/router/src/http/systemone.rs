@@ -739,10 +739,16 @@ fn error(status: StatusCode, message: impl ToString) -> ApiError {
     (
         status,
         Json(ErrorResponse {
+            available_tiers: None,
             error: message.to_string(),
             error_type,
         }),
     )
+}
+
+fn inference_error(status: StatusCode, err: infinity_v3_core::TextEmbeddingsError) -> ApiError {
+    metrics::counter!("infinity_request_failure", "err" => "systemone").increment(1);
+    (status, Json(err.into()))
 }
 
 #[utoipa::path(post, path = "/v1/systemone", request_body(content = SystemOneRequestBody, examples(
@@ -968,12 +974,13 @@ pub(crate) async fn systemone_inner(
                     infinity_v3_core::TextEmbeddingsError::Validation(_) => {
                         StatusCode::UNPROCESSABLE_ENTITY
                     }
-                    infinity_v3_core::TextEmbeddingsError::Backend(
+                    infinity_v3_core::TextEmbeddingsError::QueueFull { .. }
+                    | infinity_v3_core::TextEmbeddingsError::Backend(
                         infinity_v3_backend::BackendError::Overloaded(_),
                     ) => StatusCode::TOO_MANY_REQUESTS,
                     _ => StatusCode::INTERNAL_SERVER_ERROR,
                 };
-                error(status, e)
+                inference_error(status, e)
             })?
     } else {
         Vec::new()
@@ -1010,15 +1017,16 @@ pub(crate) async fn systemone_inner(
                     .map_err(|e| {
                         let status = if matches!(
                             e,
-                            infinity_v3_core::TextEmbeddingsError::Backend(
-                                infinity_v3_backend::BackendError::Overloaded(_)
-                            )
+                            infinity_v3_core::TextEmbeddingsError::QueueFull { .. }
+                                | infinity_v3_core::TextEmbeddingsError::Backend(
+                                    infinity_v3_backend::BackendError::Overloaded(_)
+                                )
                         ) {
                             StatusCode::TOO_MANY_REQUESTS
                         } else {
                             StatusCode::INTERNAL_SERVER_ERROR
                         };
-                        error(status, e)
+                        inference_error(status, e)
                     })?
             };
             let answer = service
@@ -1116,6 +1124,33 @@ pub(crate) async fn systemone_inner(
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn queue_rejections_expose_only_tier_hints() {
+        for tiers in [vec![ServiceTier::Priority], vec![]] {
+            let (status, Json(body)) = inference_error(
+                StatusCode::TOO_MANY_REQUESTS,
+                infinity_v3_core::TextEmbeddingsError::QueueFull {
+                    tier: "default",
+                    available_tiers: tiers.clone(),
+                },
+            );
+            assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(
+                serde_json::to_value(body).unwrap(),
+                json!({
+                    "error": "Queue is full for the default tier",
+                    "error_type": "Overloaded",
+                    "available_tiers": tiers,
+                })
+            );
+        }
+        let (_, Json(body)) = error(StatusCode::TOO_MANY_REQUESTS, "busy");
+        assert!(serde_json::to_value(body)
+            .unwrap()
+            .get("available_tiers")
+            .is_none());
+    }
 
     fn usage_question(prefix: usize, suffix: usize) -> Question {
         let length = prefix + suffix;

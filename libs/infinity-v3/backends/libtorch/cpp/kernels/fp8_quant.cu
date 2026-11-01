@@ -27,6 +27,7 @@ IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 */
 #include "helpers/fp8_linear.h"
+#include "kernels/dependent_launch.cuh"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAException.h>
@@ -70,6 +71,7 @@ __device__ void tei_fp8_quant_row(const T* x, __nv_fp8_e4m3* y, float* scales, i
 
 template <typename T>
 __global__ void quant_kernel(const T* x, __nv_fp8_e4m3* y, float* scales, int width) {
+  wait_for_producer();
   tei_fp8_quant_row(x, y, scales, width);
 }
 
@@ -80,6 +82,7 @@ template <class T, int N> struct alignas(sizeof(T) * N) QuantPack {
 
 template <class T>
 __global__ void quant_vector(const T* x, __nv_fp8_e4m3* y, float* scales, int width) {
+  wait_for_producer();
   __shared__ float partial[8];
   const int64_t row = blockIdx.x;
   const int lane = threadIdx.x % 32, warp = threadIdx.x / 32;
@@ -145,13 +148,18 @@ std::pair<at::Tensor, at::Tensor> fp8_quantize_rows(const at::Tensor& input) {
     if (input.size(1) >= 1024 && input.size(1) <= 6144 && input.size(1) % 8 == 0 &&
         reinterpret_cast<uintptr_t>(input.const_data_ptr()) % 16 == 0) {
       if (input.scalar_type() == at::kHalf)
-        quant_vector<<<input.size(0), 256, 0, stream>>>(
-            reinterpret_cast<const half*>(input.const_data_ptr()),
-            target,
-            scales.data_ptr<float>(),
-            static_cast<int>(input.size(1)));
+        launch_dependent<quant_vector<half>>(input.size(0),
+                                             256,
+                                             stream,
+                                             reinterpret_cast<const half*>(input.const_data_ptr()),
+                                             target,
+                                             scales.data_ptr<float>(),
+                                             static_cast<int>(input.size(1)));
       else
-        quant_vector<<<input.size(0), 256, 0, stream>>>(
+        launch_dependent<quant_vector<__nv_bfloat16>>(
+            input.size(0),
+            256,
+            stream,
             reinterpret_cast<const __nv_bfloat16*>(input.const_data_ptr()),
             target,
             scales.data_ptr<float>(),
@@ -160,13 +168,18 @@ std::pair<at::Tensor, at::Tensor> fp8_quantize_rows(const at::Tensor& input) {
       return {output, scales};
     }
     if (input.scalar_type() == at::kHalf)
-      quant_kernel<<<input.size(0), 128, 0, stream>>>(
-          reinterpret_cast<const half*>(input.data_ptr()),
-          target,
-          scales.data_ptr<float>(),
-          static_cast<int>(input.size(1)));
+      launch_dependent<quant_kernel<half>>(input.size(0),
+                                           128,
+                                           stream,
+                                           reinterpret_cast<const half*>(input.data_ptr()),
+                                           target,
+                                           scales.data_ptr<float>(),
+                                           static_cast<int>(input.size(1)));
     else
-      quant_kernel<<<input.size(0), 128, 0, stream>>>(
+      launch_dependent<quant_kernel<__nv_bfloat16>>(
+          input.size(0),
+          128,
+          stream,
           reinterpret_cast<const __nv_bfloat16*>(input.data_ptr()),
           target,
           scales.data_ptr<float>(),

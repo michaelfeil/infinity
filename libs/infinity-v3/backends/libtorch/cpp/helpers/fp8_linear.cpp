@@ -577,6 +577,17 @@ at::Tensor scaled_mm_cached(const at::Tensor& input,
 }
 #endif
 
+bool fp8_device_supported(const c10::Device& device) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+  if (device.is_cuda()) {
+    const auto* props = at::cuda::getDeviceProperties(device.index());
+    const auto capability = props->major * 10 + props->minor;
+    return capability == 89 || capability == 90 || capability == 100 || capability == 120;
+  }
+#endif
+  return false;
+}
+
 Fp8Linear::Fp8Linear(const at::Tensor& weight) : dtype_(weight.scalar_type()), rowwise_(false) {
   TORCH_CHECK(weight.is_cuda() && weight.dim() == 2 && weight.size(0) > 0 && weight.size(1) > 0,
               "Dynamic FP8 requires nonempty CUDA matrix weights");
@@ -590,8 +601,7 @@ Fp8Linear::Fp8Linear(const at::Tensor& weight) : dtype_(weight.scalar_type()), r
   c10::cuda::CUDAGuard guard(weight.device());
   const auto* props = at::cuda::getDeviceProperties(weight.device().index());
   const int capability = props->major * 10 + props->minor;
-  TORCH_CHECK(capability == 89 || capability == 90 || capability == 100 || capability == 120,
-              "Dynamic FP8 requires SM89/90/100/120");
+  TORCH_CHECK(fp8_device_supported(weight.device()), "Dynamic FP8 requires SM89/90/100/120");
   rowwise_ = capability == 90;
 #else
   TORCH_CHECK(false, "Dynamic FP8 requires a CUDA LibTorch build");

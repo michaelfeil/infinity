@@ -1,6 +1,7 @@
 #include "batching/prefix_cache.h"
 #include "prefix_cache_test.h"
 #include "helpers/prefix_linear.h"
+#include "helpers/fp8_linear.h"
 #include "bridge.h"
 // Native packed decoder regression tests; no Python runtime or padded tokens.
 #include "models/decoder_models.h"
@@ -710,7 +711,7 @@ void selected_classifier_rows_test(c10::Device device, at::ScalarType dtype) {
         for (auto scope : {"", "mlp", "all"}) {
           const bool fp8 = *scope != '\0';
           const bool moe = std::string(family) == "qwen3_moe";
-          if (fp8 && (!device.is_cuda() || moe))
+          if (fp8 && (moe || !fp8_device_supported(device)))
             continue;
           auto cfg = config(family, moe);
           cfg.values["architectures.0"] =
@@ -2776,6 +2777,60 @@ ultrabert_reference(const Options& cfg, const Weights& weights, const std::vecto
   return norm(x, "model.norm.weight");
 }
 
+void ultrabert_fp8_test(const c10::Device& device) {
+  if (!fp8_device_supported(device))
+    return;
+  auto cfg = config("ultrabert");
+  cfg.values["num_attention_heads"] = "2";
+  cfg.values["num_key_value_heads"] = "1";
+  cfg.values["head_dim"] = "8";
+  cfg.values["rope_theta"] = "[10000,2560000]";
+  cfg.values["attention_windows"] = "[2,null]";
+  cfg.values["intermediate_size"] = "32";
+  auto checkpoint = weights(cfg);
+  for (int i = 0; i < 2; ++i) {
+    auto p = "model.layers." + std::to_string(i) + ".mlp.";
+    for (const auto* name : {"gate_proj", "up_proj"})
+      checkpoint[p + name + ".weight"] = at::randn({32, 16}) * .05;
+    checkpoint[p + "down_proj.weight"] = at::randn({16, 32}) * .05;
+  }
+  for (auto& [name, value] : checkpoint)
+    value = value.to(device, at::kBFloat16);
+  auto build = [&](const Options& options) {
+    auto loader = checkpoint;
+    auto model = create_decoder(options, loader, device, at::kBFloat16);
+    model->ready();
+    return model;
+  };
+  auto reference = build(cfg);
+  std::vector<int32_t> offsets{0, 3, 7};
+  auto options = at::TensorOptions().device(device).dtype(at::kLong);
+  auto ids = at::tensor({3, 4, 5, 6, 7, 8, 9}, options);
+  PackedInput input{ids,
+                    at::zeros_like(ids),
+                    at::tensor({0, 1, 2, 0, 1, 2, 3}, options),
+                    at::tensor(offsets, options.dtype(at::kInt)),
+                    offsets.data(),
+                    2,
+                    4};
+  auto expected = reference->forward(input).to(at::kFloat);
+  for (const auto* scope : {"mlp", "all"}) {
+    cfg.values["_fp8_dynamic"] = "true";
+    cfg.values["_fp8_scope"] = scope;
+    auto quantized = build(cfg);
+    auto actual = quantized->forward(input).to(at::kFloat);
+    TORCH_CHECK(at::isfinite(actual).all().item<bool>() &&
+                    ((actual - expected).norm() / expected.norm()).item<double>() < .08,
+                "UltraBERT FP8 changed packed outputs beyond tolerance");
+    CudaGraphCache graphs(1, 4096, 1);
+    for (int repeat = 0; repeat < 3; ++repeat)
+      TORCH_CHECK(at::allclose(actual, graphs.forward(*quantized, input).to(at::kFloat), .01, .01),
+                  "UltraBERT FP8 graph replay changed outputs");
+    TORCH_CHECK(graphs.stats().captures == 1 && graphs.stats().hits >= 2,
+                "UltraBERT FP8 graphs did not capture and replay");
+  }
+}
+
 void ultrabert_test() {
   auto cfg = config("ultrabert");
   cfg.values["rope_theta"] = "[10000,2560000]";
@@ -2918,6 +2973,8 @@ int main(int argc, char** argv) {
     indexed_stream_test(c10::Device(argv[1]));
 #endif
   ultrabert_test();
+  if (argc > 1)
+    ultrabert_fp8_test(c10::Device(argv[1]));
   {
     auto surviving_policy = configure_workspace_admission(0, 256);
     auto policy = configure_workspace_admission(0, 128);

@@ -104,17 +104,8 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
       auto first = at::linear(patch.select(2, 0).contiguous().view({-1, 768}), temporal_first);
       auto second = at::linear(patch.select(2, 1).contiguous().view({-1, 768}), temporal_second);
       states = (first + second) + w("patch_embed.proj.bias");
-    } else if (multi_vector) {
-      const auto& kernel = w("patch_embed.proj.weight");
-      TORCH_CHECK(kernel.dim() == 5, "Invalid Qwen3-VL patch kernel");
-      states = at::conv3d(
-                   image.pixels.to(device, dtype)
-                       .view({-1, kernel.size(1), kernel.size(2), kernel.size(3), kernel.size(4)}),
-                   kernel,
-                   w("patch_embed.proj.bias"),
-                   {kernel.size(2), kernel.size(3), kernel.size(4)})
-                   .view({-1, hidden});
     } else {
+      // Every row already contains one complete nonoverlapping Conv3D patch.
       states = at::linear(image.pixels.to(device, dtype),
                           w("patch_embed.proj.weight").reshape({hidden, patch_dim}),
                           w("patch_embed.proj.bias"));
@@ -130,21 +121,29 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
         ix.remainder(merge) + at::floor_divide(ix, merge * merge).remainder(width / merge) * merge;
     auto r = at::floor_divide(ix, merge).remainder(merge) +
              at::floor_divide(ix, merge * width).remainder(height / merge) * merge;
-    auto rf = r.to(at::kFloat) * (height == 1 ? 0.f : float(side - 1) / float(height - 1));
-    auto cf = c.to(at::kFloat) * (width == 1 ? 0.f : float(side - 1) / float(width - 1));
-    auto r0 = rf.floor().to(at::kLong), r1 = rf.ceil().clamp_max(side - 1).to(at::kLong);
-    auto c0 = cf.floor().to(at::kLong), c1 = cf.ceil().clamp_max(side - 1).to(at::kLong);
-    auto dr = rf - r0.to(at::kFloat), dc = cf - c0.to(at::kFloat);
     auto table = w("pos_embed.weight");
-    auto interpolate = [&](const at::Tensor& rr, const at::Tensor& cc, const at::Tensor& scale) {
-      return table.index_select(0, rr * side + cc) * scale.to(dtype).unsqueeze(-1);
-    };
-    // Sum in table dtype, matching the four-corner interpolation stages.
-    auto corners = at::stack({interpolate(r0, c0, (1 - dr) * (1 - dc)),
-                              interpolate(r0, c1, (1 - dr) * dc),
-                              interpolate(r1, c0, dr * (1 - dc)),
-                              interpolate(r1, c1, dr * dc)},
-                             0);
+    at::Tensor corners;
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if (device.is_cuda())
+      corners = vision_position_corners(table.contiguous(), side, frames, height, width, merge);
+    else
+#endif
+    {
+      auto rf = r.to(at::kFloat) * (height == 1 ? 0.f : float(side - 1) / float(height - 1));
+      auto cf = c.to(at::kFloat) * (width == 1 ? 0.f : float(side - 1) / float(width - 1));
+      auto r0 = rf.floor().to(at::kLong), r1 = rf.ceil().clamp_max(side - 1).to(at::kLong);
+      auto c0 = cf.floor().to(at::kLong), c1 = cf.ceil().clamp_max(side - 1).to(at::kLong);
+      auto dr = rf - r0.to(at::kFloat), dc = cf - c0.to(at::kFloat);
+      auto interpolate = [&](const at::Tensor& rr, const at::Tensor& cc, const at::Tensor& scale) {
+        return table.index_select(0, rr * side + cc) * scale.to(dtype).unsqueeze(-1);
+      };
+      // Sum in table dtype, matching the four-corner interpolation stages.
+      corners = at::stack({interpolate(r0, c0, (1 - dr) * (1 - dc)),
+                           interpolate(r0, c1, (1 - dr) * dc),
+                           interpolate(r1, c0, dr * (1 - dc)),
+                           interpolate(r1, c1, dr * dc)},
+                          0);
+    }
     auto positional = multi_vector
                           ? ((corners.select(0, 0) + corners.select(0, 1)) + corners.select(0, 2)) +
                                 corners.select(0, 3)
@@ -186,15 +185,21 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
     auto p = "blocks." + std::to_string(layer) + ".";
     auto normalized = ln(states, p + "norm1");
     auto qkv = linear(normalized, p + "attn.qkv").view({states.size(0), 3, heads, dim});
-    auto q = rotate(qkv.select(1, 0)), k = rotate(qkv.select(1, 1)),
-         v = qkv.select(1, 2).to(at::kFloat);
-
-    // Preserve the vision fallback's operand precision and frame grouping.
-    auto aq = q, ak = k, av = v;
-    if (device.is_cuda() && (multi_vector || dtype == at::kBFloat16)) {
-      aq = q.to(dtype).contiguous();
-      ak = k.to(dtype).contiguous();
-      av = v.to(dtype).contiguous();
+    at::Tensor q, k, v;
+#ifdef TEI_TORCH_CUDA_KERNELS
+    if (device.is_cuda()) {
+      // Preserve the attention provider's operand precision while fusing FP32 rotation and casts.
+      auto packed = vision_rotary_qkv(
+          qkv, cos, sin, multi_vector || dtype == at::kBFloat16 ? dtype : at::kFloat);
+      q = packed.select(0, 0);
+      k = packed.select(0, 1);
+      v = packed.select(0, 2);
+    } else
+#endif
+    {
+      q = rotate(qkv.select(1, 0));
+      k = rotate(qkv.select(1, 1));
+      v = qkv.select(1, 2).to(at::kFloat);
     }
     auto fallback = [&]() -> at::Tensor {
       if (multi_vector) {
@@ -209,9 +214,9 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
               rows.push_back(x.narrow(0, offsets[frame], length));
             return at::stack(rows, 0).transpose(1, 2).to(dtype);
           };
-          auto result = at::scaled_dot_product_attention(group(aq),
-                                                         group(ak),
-                                                         group(av),
+          auto result = at::scaled_dot_product_attention(group(q),
+                                                         group(k),
+                                                         group(v),
                                                          std::nullopt,
                                                          0.,
                                                          false,
@@ -225,15 +230,8 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
         return at::cat(outputs, 0);
       }
       if (device.is_cuda())
-        return packed_aten_attention(dtype == at::kBFloat16 ? aq : q,
-                                     dtype == at::kBFloat16 ? ak : k,
-                                     dtype == at::kBFloat16 ? av : v,
-                                     cu,
-                                     cu,
-                                     max_frame,
-                                     max_frame,
-                                     1. / std::sqrt(double(dim)),
-                                     false);
+        return packed_aten_attention(
+            q, k, v, cu, cu, max_frame, max_frame, 1. / std::sqrt(double(dim)), false);
       std::vector<at::Tensor> outputs;
       for (size_t t = 0; t + 1 < offsets.size(); ++t) {
         auto slice = [&](const at::Tensor& x) {
@@ -247,9 +245,9 @@ Qwen3VL::vision(const std::vector<ImageInput>& images) const {
       }
       return at::cat(outputs, 0);
     };
-    auto attention = device.is_cuda() ? packed_cuda_attention(aq,
-                                                              ak,
-                                                              av,
+    auto attention = device.is_cuda() ? packed_cuda_attention(q,
+                                                              k,
+                                                              v,
                                                               cu,
                                                               cu,
                                                               max_frame,
@@ -322,6 +320,8 @@ Qwen3VL::Qwen3VL(const Options& options,
       text_weights[name.substr(15)] = value;
   TORCH_CHECK(!text_weights.empty(), "Qwen3-VL language model weights missing");
   text = create_decoder(tc, text_weights, device, dtype);
+  if (cfg.boolean("_fp8_dynamic", false))
+    weights.clear();
 }
 
 /// Prepare vision frequencies and optional temporal projection slices, then validate interleaved
@@ -338,6 +338,8 @@ void Qwen3VL::ready() {
     TORCH_CHECK(layer >= 0 && layer < depth, "Invalid vision deepstack layer index");
   }
   const auto& patch_kernel = w("patch_embed.proj.weight");
+  TORCH_CHECK(!cfg.boolean("_multi_vector", false) || patch_kernel.dim() == 5,
+              "Invalid Qwen3-VL patch kernel");
   w("pos_embed.weight");
 #ifdef TEI_TORCH_CUDA_KERNELS
   exact_vision =
@@ -370,6 +372,8 @@ void Qwen3VL::ready() {
 #endif
       return at::gelu(rows, multi_vector ? "none" : "tanh");
     });
+    if (exact)
+      activation.fusion = MlpFusion::RoundedBiasGelu;
     mlps.insert_or_assign(p,
                           DenseMlp(projection(p + ".linear_fc1"),
                                    projection(p + ".linear_fc2"),
@@ -391,6 +395,8 @@ void Qwen3VL::ready() {
 #endif
       return act == "silu" ? at::silu(rows) : at::gelu(rows, act == "gelu" ? "none" : "tanh");
     });
+    if (exact && act != "silu" && act != "gelu")
+      activation.fusion = MlpFusion::RoundedBiasGelu;
     mlps.insert_or_assign(p,
                           DenseMlp(projection(p + ".linear_fc1"),
                                    projection(p + ".linear_fc2"),

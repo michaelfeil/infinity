@@ -47,6 +47,7 @@ if(TARGET torch_cuda AND TEI_REQUESTED_CUDA_ARCHITECTURES)
   set(CMAKE_CUDA_ARCHITECTURES "${TEI_REQUESTED_CUDA_ARCHITECTURES}")
 endif()
 add_library(tei_torch SHARED bridge.cpp batching/radix.cpp helpers/fp8_linear.cpp helpers/dense_mlp.cpp helpers/modern_cpu_math.cpp models/decoder_models.cpp models/decision_models.cpp models/dense_models.cpp models/encoder_models.cpp models/gemma_models.cpp models/qwen3_vl_models.cpp models/mistral3_models.cpp models/qwen35_models.cpp batching/cuda_graph.cpp kernels/moe_kernels.cpp)
+target_sources(tei_torch PRIVATE kernels/block_paged.cpp)
 # Keep separately rounded adapted CPU products and sums.
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
   set_source_files_properties(helpers/modern_cpu_math.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")

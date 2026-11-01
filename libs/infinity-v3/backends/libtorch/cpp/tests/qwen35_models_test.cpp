@@ -6,8 +6,10 @@
 #include "batching/radix.h"
 #include "helpers/workspace_admission.h"
 #include "batching/cuda_graph.h"
+#include <ATen/ops/_flash_attention_forward.h>
 #ifdef TEI_TORCH_CUDA_KERNELS
 #include <ATen/cuda/CUDAContext.h>
+#include <ATen/cuda/CUDAGraph.h>
 #endif
 #include <iostream>
 using namespace infinity;
@@ -309,7 +311,166 @@ void radix_workspace_recovery_test(const c10::Device& device) {
               "Qwen3.5 workspace regression did not exercise a workspace-requiring supported plan");
 }
 
+void paged_block_test(const c10::Device& device) {
+#ifdef TEI_TORCH_CUDA_KERNELS
+  const std::vector<int32_t> prefixes{0, 1025, 1537, 1792}, suffixes{0, 3, 260, 261, 266, 283, 284};
+  const std::vector<int64_t> sources{0, 1, 0, 2, 1, 0};
+  std::vector<int32_t> kv{0};
+  std::vector<int64_t> expanded;
+  for (size_t row = 0; row < sources.size(); ++row) {
+    for (int64_t i = prefixes[sources[row]]; i < prefixes[sources[row] + 1]; ++i)
+      expanded.push_back(i);
+    for (int64_t i = suffixes[row]; i < suffixes[row + 1]; ++i)
+      expanded.push_back(prefixes.back() + i);
+    kv.push_back(expanded.size());
+  }
+  auto integer = at::TensorOptions().device(device).dtype(at::kInt);
+  auto pages = prepare_block_pages(prefixes, suffixes, sources, integer);
+  TORCH_CHECK(pages.gather.defined() && pages.gather.numel() < kv.back(),
+              "Paged block fixture did not share prefix storage");
+  auto cuq = at::tensor(suffixes, integer), cuk = at::tensor(kv, integer);
+  auto rows = at::tensor(expanded, integer.dtype(at::kLong));
+  for (auto dtype : {at::kHalf, at::kBFloat16}) {
+    for (auto [heads, dim] :
+         std::vector<std::pair<int64_t, int64_t>>{{16, 256}, {24, 256}, {16, 64}, {24, 128}}) {
+      auto options = integer.dtype(dtype);
+      auto q = at::randn({suffixes.back(), heads, dim}, options);
+      auto k = at::randn({prefixes.back() + suffixes.back(), 4, dim}, options);
+      auto v = at::randn_like(k);
+      const auto scale = 1. / std::sqrt(double(dim));
+      auto run = [&] {
+        return block_paged_attention(q,
+                                     k.narrow(0, prefixes.back(), suffixes.back()),
+                                     v.narrow(0, prefixes.back(), suffixes.back()),
+                                     k.narrow(0, 0, prefixes.back()),
+                                     v.narrow(0, 0, prefixes.back()),
+                                     cuq,
+                                     cuk,
+                                     pages,
+                                     257,
+                                     scale);
+      };
+      auto reference = [&] {
+        return std::get<0>(at::_flash_attention_forward(q,
+                                                        k.index_select(0, rows),
+                                                        v.index_select(0, rows),
+                                                        cuq,
+                                                        cuk,
+                                                        257,
+                                                        pages.max_k,
+                                                        0.,
+                                                        false,
+                                                        false,
+                                                        scale));
+      };
+      TORCH_CHECK(at::equal(reference(), run()),
+                  "Paged prefix/tail/suffix attention differs from contiguous attention");
+      auto stream = at::cuda::getStreamFromPool(false, device.index());
+      at::cuda::CUDAStreamGuard guard(stream);
+      c10::cuda::device_synchronize();
+      at::Tensor captured;
+      at::cuda::CUDAGraph graph;
+      run();
+      stream.synchronize();
+      graph.capture_begin();
+      captured = run();
+      graph.capture_end();
+      q.mul_(2.);
+      k.add_(.125);
+      v.mul_(.5);
+      graph.replay();
+      TORCH_CHECK(at::equal(reference(), captured), "Paged block graph replay used stale rows");
+      std::cout << "Paged block exact parity and graph replay passed heads=" << heads
+                << " dim=" << dim << " dtype=" << dtype << "\n";
+    }
+  }
+#endif
+}
+
+void paged_model_test(Options cfg, Weights weights, const c10::Device& device) {
+  cfg.values["head_dim"] = "64";
+  cfg.values["max_position_embeddings"] = "1024";
+  cfg.values["_decision_attention_mode"] = "block_bidirectional";
+  const std::string attention = "model.layers.1.self_attn.";
+  weights[attention + "q_proj.weight"] = at::randn({256, 16}) * .05;
+  for (auto name : {"k_proj", "v_proj"})
+    weights[attention + name + ".weight"] = at::randn({64, 16}) * .05;
+  weights[attention + "o_proj.weight"] = at::randn({16, 128}) * .05;
+  for (auto name : {"q_norm", "k_norm"})
+    weights[attention + name + ".weight"] = at::zeros({64});
+  auto build = [&] {
+    Weights loader;
+    for (const auto& [name, value] : weights)
+      loader[name] = value.to(device, at::kBFloat16).clone();
+    auto model = create_qwen35(cfg, loader, device, at::kBFloat16);
+    model->ready();
+    return model;
+  };
+  unsetenv(INFINITY_ENV("TORCH_BLOCK_PAGED"));
+  unsetenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
+  auto paged = build();
+  setenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"), "1", 1);
+  auto explicit_prefill = build();
+  unsetenv(INFINITY_ENV("TORCH_GDN_SUFFIX_PREFILL"));
+  setenv(INFINITY_ENV("TORCH_BLOCK_PAGED"), "0", 1);
+  auto packed = build();
+  unsetenv(INFINITY_ENV("TORCH_BLOCK_PAGED"));
+
+  // Three ragged suffixes share two full pages and an incomplete prefix tail.
+  const std::vector<int32_t> ends{0, 609, 1219, 1830};
+  auto options = at::TensorOptions().device(device).dtype(at::kLong);
+  auto positions =
+      at::cat({at::arange(609, options), at::arange(610, options), at::arange(611, options)});
+  auto ids = positions.remainder(32);
+  PackedInput input{ids,
+                    at::zeros_like(ids),
+                    positions,
+                    at::tensor(ends, options.dtype(at::kInt)),
+                    ends.data(),
+                    3,
+                    611};
+  input.block_prefix_lengths = {513, 513, 513};
+  input.block_prefix_sources = {0, 0, 0};
+  auto prepared = input, disabled = input;
+  paged->prepare_input(prepared);
+  packed->prepare_input(disabled);
+  TORCH_CHECK(prepared.block_layout->pages.gather.defined() &&
+                  !disabled.block_layout->pages.gather.defined(),
+              "Default paging or its disable override did not select the expected model path");
+  TORCH_CHECK(at::allclose(packed->forward(input), paged->forward(input), 1e-2, 1e-2),
+              "Model paging changed ragged shared-prefix outputs");
+  TORCH_CHECK(at::equal(paged->forward(input), explicit_prefill->forward(input)),
+              "Default cached suffix prefill differs from explicit opt-in");
+  CudaGraphCache graphs(2, 4096, 1);
+  for (int operation : {0, 3})
+    for (int iteration = 0; iteration < 3; ++iteration) {
+      auto replay = input;
+      replay.ids = (input.ids + iteration).remainder(32);
+      auto expected = packed->forward(replay);
+      if (operation == 3)
+        expected = expected.index_select(0, pooled_token_rows(replay, true));
+      TORCH_CHECK(at::allclose(expected, graphs.forward(*paged, replay, operation), 1e-2, 1e-2),
+                  "Paged model graph replay changed full or pooled outputs");
+    }
+  TORCH_CHECK(graphs.stats().captures == 2 && graphs.stats().hits >= 4,
+              "Paged model did not capture and replay full and pooled graphs");
+  std::cout << "Qwen3.5 default/disabled model paging and full/pooled graph replay passed\n";
+}
+
 int main(int argc, char** argv) {
+  std::vector<int32_t> fanout_suffixes{0};
+  for (int i = 0; i < 50; ++i)
+    fanout_suffixes.push_back(fanout_suffixes.back() + 185);
+  auto pages = prepare_block_pages({0, 13045},
+                                   fanout_suffixes,
+                                   std::vector<int64_t>(50, 0),
+                                   at::TensorOptions().dtype(at::kLong));
+  TORCH_CHECK(pages.gather.numel() < 50000,
+              "13K/50-question paged storage expanded the shared prefix");
+  TORCH_CHECK(!prepare_block_pages({0, 2}, {0, 3}, {0}, at::TensorOptions()).gather.defined(),
+              "Small unshared block should use packed attention");
+  if (argc > 1)
+    paged_block_test(c10::Device(argv[1]));
   at::manual_seed(1451);
   Options cfg;
   cfg.values = {{"model_type", "qwen3_5"},
@@ -668,6 +829,7 @@ int main(int argc, char** argv) {
   std::cout << "Qwen3.5 MoE/shared expert, stable routing ties and packed isolation passed\n";
   if (argc > 1) {
     c10::Device device(argv[1]);
+    paged_model_test(cfg, weights, device);
     dynamic_fp8_test(cfg, weights, device);
     for (auto& [key, value] : weights)
       value = value.to(at::kBFloat16);

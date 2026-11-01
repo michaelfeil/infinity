@@ -2,15 +2,70 @@
 // Native actual-length image/deepstack regression; no Python or token padding.
 #include "models/qwen3_vl_models.h"
 #include "helpers/vision_batch.h"
+#include "helpers/fp8_linear.h"
 #include "models/qwen35_models.h"
 #include <c10/core/InferenceMode.h>
 #include <ATen/Parallel.h>
 #include <iostream>
 #ifdef TEI_TORCH_CUDA_KERNELS
+#include "kernels/qwen35_vision.h"
 #include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #endif
 using namespace infinity;
+
+#ifdef TEI_TORCH_CUDA_KERNELS
+void vision_position_test(const c10::Device& device) {
+  for (auto dtype : {at::kHalf, at::kBFloat16, at::kFloat})
+    for (auto grid : {std::array<int64_t, 3>{4, 6, 2}, {6, 4, 2}, {1, 1, 1}}) {
+      auto [height, width, merge] = grid;
+      auto options = at::TensorOptions().device(device).dtype(dtype);
+      auto table = at::randn({25, 24}, options);
+      auto ix = at::arange(2 * height * width, options.dtype(at::kLong));
+      auto c = ix.remainder(merge) +
+               at::floor_divide(ix, merge * merge).remainder(width / merge) * merge;
+      auto r = at::floor_divide(ix, merge).remainder(merge) +
+               at::floor_divide(ix, merge * width).remainder(height / merge) * merge;
+      auto rf = r.to(at::kFloat) * (height == 1 ? 0.f : 4.f / float(height - 1));
+      auto cf = c.to(at::kFloat) * (width == 1 ? 0.f : 4.f / float(width - 1));
+      auto r0 = rf.floor().to(at::kLong), r1 = rf.ceil().clamp_max(4).to(at::kLong);
+      auto c0 = cf.floor().to(at::kLong), c1 = cf.ceil().clamp_max(4).to(at::kLong);
+      auto dr = rf - r0.to(at::kFloat), dc = cf - c0.to(at::kFloat);
+      auto corner = [&](const at::Tensor& rr, const at::Tensor& cc, const at::Tensor& scale) {
+        return table.index_select(0, rr * 5 + cc) * scale.to(dtype).unsqueeze(-1);
+      };
+      auto expected = at::stack({corner(r0, c0, (1 - dr) * (1 - dc)),
+                                 corner(r0, c1, (1 - dr) * dc),
+                                 corner(r1, c0, dr * (1 - dc)),
+                                 corner(r1, c1, dr * dc)});
+      auto actual = vision_position_corners(table, 5, 2, height, width, merge);
+      TORCH_CHECK(at::equal(actual.view(at::kByte), expected.view(at::kByte)),
+                  "Vision interpolation changed corner order or model-dtype rounding");
+    }
+}
+
+void vision_rotary_test(const c10::Device& device) {
+  for (auto dtype : {at::kHalf, at::kBFloat16, at::kFloat})
+    for (int64_t dim : {8, 64, 72, 128}) {
+      auto options = at::TensorOptions().device(device).dtype(dtype);
+      auto qkv = at::randn({7, 3, 3, dim}, options);
+      auto phase = at::randn({7, 1, dim / 2}, options.dtype(at::kFloat));
+      auto cosine = phase.cos(), sine = phase.sin();
+      auto rotate = [&](const at::Tensor& x) {
+        auto fp32 = x.to(at::kFloat);
+        auto a = fp32.narrow(-1, 0, dim / 2), b = fp32.narrow(-1, dim / 2, dim / 2);
+        return at::cat({a * cosine - b * sine, b * cosine + a * sine}, -1);
+      };
+      for (auto output_type : {dtype, at::kFloat}) {
+        auto expected = at::stack({rotate(qkv.select(1, 0)).to(output_type),
+                                   rotate(qkv.select(1, 1)).to(output_type),
+                                   qkv.select(1, 2).to(output_type)});
+        TORCH_CHECK(at::equal(vision_rotary_qkv(qkv, cosine, sine, output_type), expected),
+                    "Fused vision rotary changed reference arithmetic or QKV layout");
+      }
+    }
+}
+#endif
 
 void batched_tower_test(Qwen3VL& tower, const at::Tensor& pixels) {
   std::vector<ImageInput> images{{pixels.repeat({2, 1}), {1, 2, 4}, 2, 0, 2, 0},
@@ -363,6 +418,10 @@ int main(int argc, char** argv) {
   std::cout << "Qwen3.5 FP16 vision, BF16-compatible injection and mRoPE packed isolation passed\n";
   if (argc > 1) {
     c10::Device device(argv[1]);
+#ifdef TEI_TORCH_CUDA_KERNELS
+    vision_position_test(device);
+    vision_rotary_test(device);
+#endif
     Weights hw, cw;
     for (const auto& [name, value] : weights) {
       hw[name] = value.to(at::kHalf);
@@ -384,6 +443,36 @@ int main(int argc, char** argv) {
     packed_images_test(*native, dev);
     auto expected = reference->forward(host).to(at::kFloat),
          actual = native->forward(dev).cpu().to(at::kFloat);
+    if (fp8_device_supported(device)) {
+      auto fp8_config = cfg;
+      fp8_config.values["text_config.intermediate_size"] = "32";
+      Weights checkpoint;
+      for (const auto& [name, value] : weights)
+        checkpoint[name] = value.to(device, at::kHalf);
+      for (int i = 0; i < 2; ++i) {
+        auto p = "model.language_model.layers." + std::to_string(i) + ".mlp.";
+        for (const auto* name : {"gate_proj", "up_proj"})
+          checkpoint[p + name + ".weight"] =
+              at::randn({32, 16}, checkpoint.begin()->second.options()) * .05;
+        checkpoint[p + "down_proj.weight"] =
+            at::randn({16, 32}, checkpoint.begin()->second.options()) * .05;
+      }
+      auto reference_weights = checkpoint;
+      auto baseline = create_qwen3_vl(fp8_config, reference_weights, device, at::kHalf);
+      baseline->ready();
+      fp8_config.values["_fp8_dynamic"] = "true";
+      auto quantized = create_qwen3_vl(fp8_config, checkpoint, device, at::kHalf);
+      quantized->ready();
+      TORCH_CHECK(checkpoint.empty(), "Qwen3-VL retained redundant text checkpoint weights");
+      auto expected_fp8 = baseline->forward(dev).to(at::kFloat);
+      auto actual_fp8 = quantized->forward(dev).to(at::kFloat);
+      TORCH_CHECK(at::isfinite(actual_fp8).all().item<bool>() &&
+                      ((actual_fp8 - expected_fp8).norm() / expected_fp8.norm()).item<double>() <
+                          .08,
+                  "Qwen3-VL FP8 text MLPs changed image outputs beyond tolerance");
+      check_prefix_cache(*quantized, dev, 0, .01, .02);
+      std::cout << "Qwen3-VL FP8 image inference, released weights and prefix cache passed\n";
+    }
     check_prefix_cache(*native, dev, 0, .003, .003);
     PrefixCache context_cache(1 << 20, 64, 8);
     context_cache.run(*native, dev, 0);

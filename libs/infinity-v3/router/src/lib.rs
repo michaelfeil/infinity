@@ -18,7 +18,7 @@ use hf_hub::{Repo, RepoType};
 use infinity_v3_backend::{DType, Pool};
 use infinity_v3_core::download::{download_artifacts, ST_CONFIG_NAMES};
 use infinity_v3_core::infer::Infer;
-use infinity_v3_core::queue_actor::{Queue, ServiceTier as QueueTier};
+use infinity_v3_core::queue_actor::{Queue, ServiceTier, ServiceTier as QueueTier};
 use infinity_v3_core::tokenization::{Tokenization, MAX_TOKENIZATION_WORKERS};
 use infinity_v3_core::TextEmbeddingsError;
 use serde::Deserialize;
@@ -858,6 +858,15 @@ async fn initialize_model(
         tracing::info!("RadixMLP disabled");
     }
 
+    let queue_limits =
+        match std::env::var(infinity_v3_config::infinity_env!("QUEUE_TOKEN_LIMITS_K")) {
+            Ok(value) => Some(
+                infinity_v3_core::queue_budget::QueueTokenLimits::from_thousands(&value)
+                    .map_err(anyhow::Error::msg)?,
+            ),
+            Err(std::env::VarError::NotPresent) => None,
+            Err(error) => return Err(error.into()),
+        };
     let queue = Queue::with_service_tiers_named(
         max_batch_tokens,
         max_batch_requests,
@@ -868,7 +877,8 @@ async fn initialize_model(
         std::time::Duration::from_millis(priority_queue_bonus_ms),
         std::time::Duration::from_millis(flex_queue_offset_ms),
         max_batch_expanded_tokens,
-    );
+    )
+    .with_token_limits(queue_limits);
 
     // Create infer task
     let infer = Infer::with_pool(tokenization, queue, max_concurrent_requests, backend);
@@ -1386,15 +1396,20 @@ pub enum ErrorType {
 pub struct ErrorResponse {
     pub error: String,
     pub error_type: ErrorType,
+    /// Higher tiers that could admit this work at rejection time; not a reservation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_tiers: Option<Vec<ServiceTier>>,
 }
 
 impl From<TextEmbeddingsError> for ErrorResponse {
     fn from(err: TextEmbeddingsError) -> Self {
-        let error_type = match err {
+        let error_type = match &err {
             TextEmbeddingsError::Tokenizer(_) => ErrorType::Tokenizer,
             TextEmbeddingsError::Validation(_) => ErrorType::Validation,
             TextEmbeddingsError::Empty(_) => ErrorType::Empty,
-            TextEmbeddingsError::Overloaded(_) => ErrorType::Overloaded,
+            TextEmbeddingsError::Overloaded(_) | TextEmbeddingsError::QueueFull { .. } => {
+                ErrorType::Overloaded
+            }
             TextEmbeddingsError::Backend(infinity_v3_backend::BackendError::Overloaded(_)) => {
                 ErrorType::Overloaded
             }
@@ -1403,6 +1418,12 @@ impl From<TextEmbeddingsError> for ErrorResponse {
         Self {
             error: err.to_string(),
             error_type,
+            available_tiers: match err {
+                TextEmbeddingsError::QueueFull {
+                    available_tiers, ..
+                } => Some(available_tiers),
+                _ => None,
+            },
         }
     }
 }

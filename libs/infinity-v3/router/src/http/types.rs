@@ -446,6 +446,9 @@ pub(crate) struct ClassifyResponse {
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct ClassifyErrorResponse {
+    /// Higher tiers that could admit this work at rejection time; not a reservation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_tiers: Option<Vec<ServiceTier>>,
     pub object: &'static str,
     pub message: String,
     #[serde(rename = "type")]
@@ -949,6 +952,9 @@ pub(crate) struct EmbedAllResponse(pub Vec<AllEmbedding>);
 
 #[derive(Serialize, ToSchema)]
 pub(crate) struct OpenAICompatErrorResponse {
+    /// Higher tiers that could admit this work at rejection time; not a reservation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub available_tiers: Option<Vec<ServiceTier>>,
     pub message: String,
     pub code: u16,
     #[serde(rename(serialize = "type"))]

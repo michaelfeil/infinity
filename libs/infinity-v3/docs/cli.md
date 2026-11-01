@@ -101,8 +101,17 @@ and 657,500 expanded tokens. Template and image tokens also count. Prefixes must
 match IDs, types, positions and prepared image identity; independent image
 allocations are conservatively charged separately. Existing deployments may
 need a larger expanded limit for requests that previously spanned batches.
-Measure peak GPU memory before raising it: backend K/V storage still expands
-across questions, and startup warmup does not validate this fanout shape.
+Measure peak GPU memory before raising it: unsupported layouts still expand
+K/V across questions, and startup warmup does not validate this fanout shape.
+
+For roughly 13K prefix tokens and 256 suffixes of 185 tokens, the budgets grow
+to about 60.4K compute tokens and 3.39M expanded tokens. With the default
+paged attention path, a validation configuration is
+`--max-batch-tokens 65536 --max-batch-expanded-tokens 3500000`, with the
+per-sequence limit kept at `--max-sequence-length 16000`. Set
+`--max-decision-questions` and any `--max-batch-requests` to at least 256.
+OneJev's separate 512-option limit caps all-yes/no requests at 256 questions;
+questions with more answer options reach that limit earlier.
 
 Suffix attention assembles K/V in whole-question chunks targeting 500,000
 expanded tokens, reusing the prefix without another prefill. Set
@@ -114,6 +123,20 @@ Last-token decisions select their final hidden rows directly from shared
 execution storage, including during CUDA graph replay. They do not reconstruct
 the prefix's hidden states for every question. Full-token outputs still require
 the expanded layout.
+
+CUDA suffix attention uses shared prefix pages by default when supported.
+Set `INFINITY_TORCH_BLOCK_PAGED=0` to disable paging. Complete prefix pages are stored once; each question owns only its
+suffix, the incomplete prefix tail, and page padding. The attention operator
+reads those pages with one softmax over prefix plus suffix. Small, unshared or
+unsupported layouts retain the chunked path.
+
+For one shared prefix of length P and suffix lengths S, row-local work scales
+with P + sum(S), but full attention still evaluates P² + sum(S × (P + S)) pairs.
+Unique-token counts therefore do not measure all attention work or GPU memory.
+For the verified Qwen tokenizer used by Elephant and Mammoth, multi-question
+preparation tokenizes the first full prompt and reuses its prefix for subsequent
+questions with identical rendered prefix text. Each template is still rendered
+in full; other tokenizer configurations retain full-prompt tokenization.
 
 `INFINITY_MAX_BATCH_EXPANDED_TOKENS` is the environment alternative. Values
 broadcast or align with models; `none` uses the compute limit. An explicit limit
@@ -168,3 +191,40 @@ as `file_id` are rejected. These aliases apply to the shared message content
 parser, including `state.messages[].content`; they do not add a top-level `input`
 alias, image interpretation of plain `state` arrays, or OpenAI Decisions question
 and response formats. Existing content parts retain their canonical serialization.
+
+### Shared queue token admission
+
+Set `INFINITY_QUEUE_TOKEN_LIMITS_K="5000,10000,12000"` to cap queued compute
+work at 5M tokens for incoming flex requests, 10M for default, and 12M for
+priority. Values are **thousands of tokens**, ordered `flex,default,priority`;
+they must be nonnegative integers in ascending order. Zero rejects positive-token
+work for that tier. Unset leaves token admission unlimited.
+
+All tiers contribute to one atomic total per model queue, shared across that
+model's replicas. The same configured limits apply separately to each model in
+this process, not across processes or deployments. Admission checks the total
+**including** the incoming work and returns HTTP 429 if its tier's ceiling would
+be exceeded. Queue-full responses include `available_tiers` with higher tiers
+that could admit this work at rejection time (or `[]` if none). This is a hint,
+not reserved capacity; clients must explicitly retry with a different tier.
+Responses expose no token counts or configured queue limits.
+Existing admitted work is not evicted. Scheduling still uses the
+existing priority bonus and flex age offset; these limits do not add preemption
+or a strict priority scheduler.
+
+An owned reservation charges prepared inputs before sending them to the queue actor,
+including blocked channel senders and batches waiting for a replica. Tokens
+are returned when execution starts, or when the request is canceled or
+fails to enqueue. Whole OneJev block requests reserve atomically using the same
+compute charge as batch admission: shared prefix once plus suffixes when
+prefix-aware batching is enabled. Ordinary batched inputs reserve per input at
+their full encoded length. Tokenization and media preparation happen before token admission;
+existing HTTP concurrency and memory limits still apply and can reject any tier.
+
+Read the authoritative total through `Queue::queued_compute_tokens()` or observe
+`infinity_queue_compute_tokens{model="..."}` in Prometheus. Admission and release
+use signed atomics without locks. Reservation ownership pairs each admission with
+exactly one subtraction, including when dispatch and cancellation race. Metrics
+use matching deltas; concurrent scrapes can briefly lag the authoritative total.
+The batch token limit remains a separate memory guard. Queue limits do not
+guarantee a latency deadline; size them from measured service time and replica capacity.

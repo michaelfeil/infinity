@@ -93,11 +93,13 @@ impl Infer {
             ));
         }
         let (response_tx, response_rx) = oneshot::channel();
-        self.queue
+        let _queue_lease = self
+            .queue
             .append(Entry {
                 metadata: Metadata {
                     service_tier: self.service_tier,
                     input_memory: None,
+                    queue_reservation: None,
                     client_batch: Some(batch_counter.clone()),
                     response_tx,
                     tokenization,
@@ -109,7 +111,7 @@ impl Infer {
                 },
                 encoding,
             })
-            .await;
+            .await?;
         drop(preparation);
         match response_rx.await.map_err(|_| BackendError::Unhealthy)?? {
             InferResult::Decision(output) => {
@@ -148,6 +150,7 @@ impl Infer {
                 metadata: Metadata {
                     service_tier: self.service_tier,
                     input_memory: None,
+                    queue_reservation: None,
                     client_batch: None,
                     response_tx,
                     tokenization,
@@ -165,7 +168,7 @@ impl Infer {
             remaining: None,
             notify: &self.notify_batching_task,
         };
-        self.queue.append_group(group).await?;
+        let _queue_lease = self.queue.append_group(group).await?;
         drop(preparation);
         let mut outputs = Vec::with_capacity(responses.len());
         for response in responses {
@@ -549,11 +552,13 @@ impl Infer {
         let (response_tx, response_rx) = oneshot::channel();
 
         // Append the request to the queue
-        self.queue
+        let _queue_lease = self
+            .queue
             .append(Entry {
                 metadata: Metadata {
                     service_tier: self.service_tier,
                     input_memory: None,
+                    queue_reservation: None,
                     client_batch: batch_counter.clone(),
                     response_tx,
                     tokenization: start_time.elapsed(),
@@ -565,7 +570,7 @@ impl Infer {
                 },
                 encoding,
             })
-            .await;
+            .await?;
 
         drop(preparation);
 
@@ -630,11 +635,13 @@ impl Infer {
         let (response_tx, response_rx) = oneshot::channel();
 
         // Append the request to the queue
-        self.queue
+        let _queue_lease = self
+            .queue
             .append(Entry {
                 metadata: Metadata {
                     service_tier: self.service_tier,
                     input_memory: None,
+                    queue_reservation: None,
                     client_batch: batch_counter.clone(),
                     response_tx,
                     tokenization: start_time.elapsed(),
@@ -646,7 +653,7 @@ impl Infer {
                 },
                 encoding,
             })
-            .await;
+            .await?;
 
         drop(preparation);
 
@@ -754,11 +761,13 @@ impl Infer {
 
         let (response_tx, response_rx) = oneshot::channel();
 
-        self.queue
+        let _queue_lease = self
+            .queue
             .append(Entry {
                 metadata: Metadata {
                     service_tier: self.service_tier,
                     input_memory: None,
+                    queue_reservation: None,
                     client_batch: batch_counter.clone(),
                     response_tx,
                     tokenization: start_time.elapsed(),
@@ -770,7 +779,7 @@ impl Infer {
                 },
                 encoding,
             })
-            .await;
+            .await?;
 
         drop(preparation);
 
@@ -968,6 +977,9 @@ async fn complete_batch(
     model_type: ModelType,
     (entries, mut batch): NextBatch,
 ) {
+    for entry in &entries {
+        entry.mark_dispatched();
+    }
     match model_type {
         ModelType::Decision => {
             let inputs = entries
@@ -1286,7 +1298,7 @@ mod completion_tests {
                     notify: &notify,
                 };
                 let (response_tx, response) = oneshot::channel();
-                queue
+                let _queue_lease = queue
                     .append(Entry {
                         encoding: crate::tokenization::ValidEncoding {
                             multimodal: None,
@@ -1299,6 +1311,7 @@ mod completion_tests {
                         metadata: Metadata {
                             service_tier: ServiceTier::Default,
                             input_memory: None,
+                            queue_reservation: None,
                             decision: None,
                             client_batch: Some(remaining.clone()),
                             response_tx,
@@ -1309,7 +1322,8 @@ mod completion_tests {
                             token_classification: false,
                         },
                     })
-                    .await;
+                    .await
+                    .unwrap();
                 drop(preparation);
                 assert!(response.await.unwrap().is_err());
             }
@@ -1375,6 +1389,7 @@ mod completion_tests {
             let entry = Metadata {
                 service_tier: ServiceTier::Default,
                 input_memory: None,
+                queue_reservation: None,
                 decision: None,
                 client_batch: None,
                 response_tx,
@@ -1431,6 +1446,7 @@ mod completion_tests {
             entries.push(Metadata {
                 service_tier: ServiceTier::Default,
                 input_memory: None,
+                queue_reservation: None,
                 decision: None,
                 client_batch: None,
                 response_tx,

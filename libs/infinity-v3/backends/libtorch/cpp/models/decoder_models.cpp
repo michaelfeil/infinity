@@ -734,9 +734,10 @@ public:
       TORCH_CHECK(device.is_cuda() && (dtype == at::kHalf || dtype == at::kBFloat16),
                   "Dynamic FP8 decoder MLPs require CUDA float16/bfloat16");
       TORCH_CHECK(
-          (family == "llama" || family == "mistral" || family == "qwen2" || family == "qwen3") &&
+          (family == "llama" || family == "mistral" || family == "qwen2" || family == "qwen3" ||
+           family == "ultrabert") &&
               options.integer("num_experts", 0) == 0,
-          "Dynamic FP8 decoder MLPs support dense Llama/Mistral/Qwen2/Qwen3 only; routed experts are unsupported");
+          "Dynamic FP8 decoder MLPs require a supported dense checkpoint; routed experts are unsupported");
       for (const auto& [key, value] : options.values)
         TORCH_CHECK(
             key != "quantization_config" && key.rfind("quantization_config.", 0) != 0,

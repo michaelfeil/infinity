@@ -9,7 +9,7 @@
     "license": {
       "name": "Infinity Restricted MIT License 1.0 (see scope and retained licenses)"
     },
-    "version": "3.0.1"
+    "version": "3.0.2-beta.1"
   },
   "paths": {
     "/decode": {
@@ -1814,6 +1814,14 @@
           },
           "error_type": {
             "$ref": "#/components/schemas/ErrorType"
+          },
+          "available_tiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceTier"
+            },
+            "description": "Higher tiers that could admit this work at rejection time; not a reservation.",
+            "nullable": true
           }
         }
       },
@@ -2043,6 +2051,14 @@
           },
           "message": {
             "type": "string"
+          },
+          "available_tiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceTier"
+            },
+            "description": "Higher tiers that could admit this work at rejection time; not a reservation.",
+            "nullable": true
           }
         }
       },
@@ -3133,6 +3149,14 @@
           },
           "type": {
             "type": "string"
+          },
+          "available_tiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceTier"
+            },
+            "description": "Higher tiers that could admit this work at rejection time; not a reservation.",
+            "nullable": true
           }
         }
       },
