@@ -79,7 +79,9 @@ def registry_metadata():
         h, hk, d, causal, local = map(int, fields)
         rows.append((name.strip(), h, hk, d, bool(causal), bool(local)))
     namespaces = {19: "legacy19", 20: "published20", 21: "private23", 22: "private23",
-                  23: "private23", 24: "registry24", 25: "canonical26", 26: "canonical26"}
+                  23: "private23", 24: "registry24", 25: "canonical26", 26: "canonical26",
+                  27: "canonical27", 28: "canonical28", 29: "canonical29", 30: "canonical30",
+                  31: "canonical31"}
     namespace = namespaces.get(len(rows))
     if namespace is None:
         raise RuntimeError(f"unsupported canonical profile count {len(rows)}")
@@ -113,11 +115,11 @@ def clear_compile_cache(label):
         raise RuntimeError(f"{label}: compile cache did not clear after export")
 
 if not a.link_only:
-    # Canonical26 is an AOT source build. Reject a visible GPU, a persistent
+    # Canonical31 is an AOT source build. Reject a visible GPU, a persistent
     # JIT cache, and external ptxas before importing torch/flash_attn.
     export_env = build_contract.validate_compile_env(os.environ, a.compile_only)
     if a.runtime_dir is None or a.ffi_root is None:
-        p.error("canonical26 export requires --runtime-dir and --ffi-root")
+        p.error("canonical31 export requires --runtime-dir and --ffi-root")
     profiles_inc = pathlib.Path(__file__).with_name("profiles.inc")
     profile_rows = build_contract.validate_profiles_inc(profiles_inc)
     os.environ["FLASH_ATTENTION_ARCH"] = a.arch
@@ -399,7 +401,7 @@ if not a.link_only:
     exported_object_order = [pathlib.Path(obj).name for obj in objects]
     if exported_object_order != link_object_order:
         raise RuntimeError(
-            "canonical26 export/link object order changed: "
+            "canonical31 export/link object order changed: "
             f"expected={link_object_order} actual={exported_object_order}")
     export_runtime_pins = build_contract.runtime_pins(a.ffi_root, a.runtime_dir)
     manifest = {
@@ -419,7 +421,7 @@ if not a.link_only:
             "after_import": source_identity_after,
         },
         "export_runtime_pins": export_runtime_pins,
-        "canonical26_inventory": {
+        "canonical31_inventory": {
             "exact_order": True,
             "symbols": expected_symbols,
         },

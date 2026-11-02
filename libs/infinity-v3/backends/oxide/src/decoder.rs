@@ -80,6 +80,12 @@ const H1024_NORM_GEOMETRY: NormGeometry = NormGeometry {
     rows_per_cta: 4,
     threads: 128,
 };
+/// Ordinary H5120 RMS uses the qualified ATen128 vectorized reduction.
+/// Add-RMS remains on its separately qualified generic256 recipe.
+const H5120_RMS_GEOMETRY: NormGeometry = NormGeometry {
+    rows_per_cta: 1,
+    threads: 128,
+};
 /// Dense Qwen3 fused per-head Q/K RMSNorm + RoPE launch geometry.
 const QK_NORM_ROPE_THREADS: u32 = 128;
 const QK_NORM_ROPE_HEAD_ROWS_PER_CTA: usize = 8;
@@ -95,6 +101,7 @@ pub(crate) enum DecoderMath {
     Qwen3H2048Ordinary,
     Qwen3H2560Ordinary,
     Qwen3H4096Ordinary,
+    Qwen3H5120Ordinary,
     LlamaH2048Exact,
     MistralH4096Ordinary,
     Qwen3MoeH2048Exact,
@@ -137,8 +144,9 @@ impl DecoderMath {
                     2048 => Ok(Self::Qwen3H2048Ordinary),
                     2560 => Ok(Self::Qwen3H2560Ordinary),
                     4096 => Ok(Self::Qwen3H4096Ordinary),
+                    5120 => qwen3_h5120_admission(config).map(|()| Self::Qwen3H5120Ordinary),
                     hidden => Err(start(format!(
-                        "decoder executor implements only Qwen3 hidden_size 1024, 2048, 2560 or 4096; H{hidden} is deferred"
+                        "decoder executor implements only Qwen3 hidden_size 1024, 2048, 2560, 4096 or 5120; H{hidden} is deferred"
                     ))),
                 }
             }
@@ -217,6 +225,7 @@ impl DecoderMath {
             Self::Qwen2H1536FullNeox => "infinity_rms_norm_1536_vector",
             Self::Qwen3H1024Candle => "infinity_rms_norm_1024_exact_vector",
             Self::Qwen3H2048Ordinary | Self::Qwen3H2560Ordinary => "infinity_rms_norm",
+            Self::Qwen3H5120Ordinary => "infinity_rms_norm_5120_aten",
             Self::Qwen3H4096Ordinary | Self::MistralH4096Ordinary => {
                 "infinity_rms_norm_4096_vector"
             }
@@ -230,7 +239,9 @@ impl DecoderMath {
             Self::Qwen2FullNeox => "infinity_add_rms_norm",
             Self::Qwen2H1536FullNeox => "infinity_add_rms_norm_1536_vector",
             Self::Qwen3H1024Candle => "infinity_add_rms_norm_1024_exact_vector",
-            Self::Qwen3H2048Ordinary | Self::Qwen3H2560Ordinary => "infinity_add_rms_norm",
+            Self::Qwen3H2048Ordinary | Self::Qwen3H2560Ordinary | Self::Qwen3H5120Ordinary => {
+                "infinity_add_rms_norm"
+            }
             Self::Qwen3H4096Ordinary | Self::MistralH4096Ordinary => {
                 "infinity_add_rms_norm_4096_vector"
             }
@@ -246,6 +257,7 @@ impl DecoderMath {
             | Self::Qwen3H2048Ordinary
             | Self::Qwen3H2560Ordinary
             | Self::Qwen3H4096Ordinary
+            | Self::Qwen3H5120Ordinary
             | Self::MistralH4096Ordinary
             | Self::Qwen3MoeH2048Exact
             | Self::Qwen3MoeH4096Ordinary => "infinity_rope_neox",
@@ -259,6 +271,7 @@ impl DecoderMath {
             | Self::Qwen3H2048Ordinary
             | Self::Qwen3H2560Ordinary
             | Self::Qwen3H4096Ordinary
+            | Self::Qwen3H5120Ordinary
             | Self::Qwen3MoeH2048Exact
             | Self::Qwen3MoeH4096Ordinary => Some("infinity_qk_norm_rope_128_bf16"),
             Self::Qwen2FullNeox
@@ -279,6 +292,7 @@ impl DecoderMath {
             | Self::Qwen3H2048Ordinary
             | Self::Qwen3H2560Ordinary
             | Self::Qwen3H4096Ordinary
+            | Self::Qwen3H5120Ordinary
             | Self::LlamaH2048Exact
             | Self::MistralH4096Ordinary
             | Self::Qwen3MoeH2048Exact
@@ -293,11 +307,30 @@ impl DecoderMath {
             | Self::Qwen3H2048Ordinary
             | Self::Qwen3H2560Ordinary
             | Self::Qwen3H4096Ordinary
+            | Self::Qwen3H5120Ordinary
             | Self::MistralH4096Ordinary
             | Self::Qwen3MoeH4096Ordinary => GENERIC_NORM_GEOMETRY,
             Self::Qwen3H1024Candle => H1024_NORM_GEOMETRY,
             Self::LlamaH2048Exact | Self::Qwen3MoeH2048Exact => H2048_NORM_GEOMETRY,
         }
+    }
+
+    const fn rms_geometry(self) -> NormGeometry {
+        match self {
+            Self::Qwen3H5120Ordinary => H5120_RMS_GEOMETRY,
+            _ => self.norm_geometry(),
+        }
+    }
+}
+
+/// H5120 Qwen3 dense uses the two Native d128/GQA topologies. Query
+/// width is independently checked as heads*head_dim; Q64 is wider than H5120.
+fn qwen3_h5120_admission(config: &DecoderConfig) -> Result<(), BackendError> {
+    match (config.num_attention_heads, config.num_key_value_heads) {
+        (40, 8) | (64, 8) => Ok(()),
+        (heads, kv_heads) => Err(start(format!(
+            "decoder Qwen3 H5120 admits only Native Q40/KV8 (q_width 5120) or Q64/KV8 (q_width 8192) at head_dim 128; Q{heads}/KV{kv_heads} is not admitted"
+        ))),
     }
 }
 
@@ -339,6 +372,7 @@ struct DecoderKernels {
     mean_kernel: Option<Function>,
     selected_rows: Function,
     bf16_to_f32: Function,
+    rms_geometry: NormGeometry,
     norm_geometry: NormGeometry,
 }
 impl DecoderKernels {
@@ -413,6 +447,7 @@ impl DecoderKernels {
             bf16_to_f32: module
                 .load_function("infinity_bf16_to_f32")
                 .map_err(start)?,
+            rms_geometry: math.rms_geometry(),
             norm_geometry: math.norm_geometry(),
         })
     }
@@ -1388,8 +1423,8 @@ impl DecoderModel {
         launch_threads(
             &k.rms_norm,
             stream,
-            (rms_rows.div_ceil(k.norm_geometry.rows_per_cta), 1, 1),
-            k.norm_geometry.threads,
+            (rms_rows.div_ceil(k.rms_geometry.rows_per_cta), 1, 1),
+            k.rms_geometry.threads,
             0,
             &mut [
                 arg(&mut norm_input),
@@ -2905,6 +2940,205 @@ mod tests {
     }
 
     #[test]
+    fn qwen3_h5120_qualified_aten_rms_keeps_add256_and_checked_qkv_grouping() {
+        for (heads, intermediate, expected) in [
+            (
+                40usize,
+                17408usize,
+                (
+                    5120usize, 5120usize, 1024usize, 7168usize, 34816usize, 17408usize, 2176usize,
+                ),
+            ),
+            (64, 25600, (5120, 8192, 1024, 10240, 51200, 25600, 3200)),
+        ] {
+            let fixture = qwen3_fixture(serde_json::json!({
+                "hidden_size": 5120,
+                "intermediate_size": intermediate,
+                "num_attention_heads": heads,
+                "num_key_value_heads": 8,
+                "head_dim": 128
+            }));
+            let c = fixture.config();
+            assert_eq!(
+                DecoderMath::select(&c).unwrap(),
+                DecoderMath::Qwen3H5120Ordinary
+            );
+            assert_eq!(
+                DecoderMath::Qwen3H5120Ordinary.rms_export(),
+                "infinity_rms_norm_5120_aten"
+            );
+            assert_eq!(
+                DecoderMath::Qwen3H5120Ordinary.add_rms_export(),
+                "infinity_add_rms_norm"
+            );
+            assert_eq!(
+                DecoderMath::Qwen3H5120Ordinary.rope_export(),
+                "infinity_rope_neox"
+            );
+            assert_eq!(
+                DecoderMath::Qwen3H5120Ordinary.qk_norm_rope_export(),
+                Some("infinity_qk_norm_rope_128_bf16")
+            );
+            assert_eq!(
+                DecoderMath::Qwen3H5120Ordinary.activation_export(),
+                "infinity_silu_mul_bf16_vector8_native"
+            );
+            assert_eq!(
+                DecoderMath::Qwen3H5120Ordinary.norm_geometry(),
+                GENERIC_NORM_GEOMETRY
+            );
+            assert_eq!(GENERIC_NORM_GEOMETRY.rows_per_cta, 1);
+            assert_eq!(GENERIC_NORM_GEOMETRY.threads, 256);
+            let g = DecoderGeometry::new(&c).expect("geometry");
+            assert_eq!(
+                (
+                    g.hidden,
+                    g.q_width,
+                    g.kv_width,
+                    g.qkv_width,
+                    g.projection_width,
+                    g.activation_width,
+                    g.silu_groups_per_row
+                ),
+                expected
+            );
+            assert_eq!(
+                DecoderMath::Qwen3H5120Ordinary.rms_geometry(),
+                H5120_RMS_GEOMETRY
+            );
+            assert_eq!(DecoderMath::Qwen3H5120Ordinary.rms_geometry().threads, 128);
+            assert_eq!(DecoderMath::Qwen3H5120Ordinary.norm_geometry().threads, 256);
+            assert_eq!(c.q_width(), heads * 128);
+            assert_eq!(c.kv_width(), 1024);
+            for causal in [false, true] {
+                let mut requested = c.clone();
+                requested.is_causal = causal;
+                let spec = attention_spec(&requested).expect("attention spec");
+                assert_eq!(spec.heads, heads);
+                assert_eq!(spec.kv_heads, 8);
+                assert_eq!(spec.head_dim, 128);
+                assert_eq!(spec.causal, causal);
+                assert_eq!(spec.window, fa4::Window::Global);
+                assert_eq!(spec.dtype, fa4::DType::Bf16);
+                assert_eq!(spec.scale, fa4::Scale::RsqrtHeadDim);
+            }
+        }
+    }
+
+    #[test]
+    fn qwen3_h5120_admission_is_limited_to_the_two_native_topologies() {
+        for (heads, kv_heads, needle) in [
+            (32usize, 8usize, "Q32/KV8"),
+            (40, 4, "Q40/KV4"),
+            (48, 8, "Q48/KV8"),
+        ] {
+            let fixture = qwen3_fixture(serde_json::json!({
+                "hidden_size": 5120,
+                "intermediate_size": 17408,
+                "num_attention_heads": heads,
+                "num_key_value_heads": kv_heads,
+                "head_dim": 128
+            }));
+            let error = validate_recipe(&fixture.config()).unwrap_err().to_string();
+            assert!(error.contains("Qwen3 H5120 admits only"), "{error}");
+            assert!(error.contains(needle), "{error}");
+        }
+
+        let d256 = qwen3_fixture(serde_json::json!({
+            "hidden_size": 5120,
+            "intermediate_size": 17408,
+            "num_attention_heads": 40,
+            "num_key_value_heads": 8,
+            "head_dim": 256
+        }));
+        let error = validate_recipe(&d256.config()).unwrap_err().to_string();
+        assert!(error.contains("only Qwen3 head_dim 128"), "{error}");
+
+        let h6144 = qwen3_fixture(serde_json::json!({
+            "hidden_size": 6144,
+            "intermediate_size": 17408,
+            "num_attention_heads": 40,
+            "num_key_value_heads": 8,
+            "head_dim": 128
+        }));
+        let error = validate_recipe(&h6144.config()).unwrap_err().to_string();
+        assert!(error.contains("4096 or 5120"), "{error}");
+
+        for (hidden, intermediate, heads, expected) in [
+            (1024usize, 3072usize, 16usize, DecoderMath::Qwen3H1024Candle),
+            (2048, 6144, 16, DecoderMath::Qwen3H2048Ordinary),
+            (2560, 9728, 32, DecoderMath::Qwen3H2560Ordinary),
+            (4096, 12288, 32, DecoderMath::Qwen3H4096Ordinary),
+        ] {
+            let fixture = qwen3_fixture(serde_json::json!({
+                "hidden_size": hidden,
+                "intermediate_size": intermediate,
+                "num_attention_heads": heads,
+                "num_key_value_heads": 8,
+                "head_dim": 128
+            }));
+            assert_eq!(DecoderMath::select(&fixture.config()).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn qwen3_h5120_workspace_bytes_follow_query_width_and_positive_intermediate() {
+        let q40 = qwen3_fixture(serde_json::json!({
+            "hidden_size": 5120,
+            "intermediate_size": 17408,
+            "num_attention_heads": 40,
+            "num_key_value_heads": 8,
+            "head_dim": 128
+        }));
+        let q64 = qwen3_fixture(serde_json::json!({
+            "hidden_size": 5120,
+            "intermediate_size": 25600,
+            "num_attention_heads": 64,
+            "num_key_value_heads": 8,
+            "head_dim": 128
+        }));
+        let key = (5usize, 2, 1);
+        for fixture in [&q40, &q64] {
+            let c = fixture.config();
+            let g = DecoderGeometry::new(&c).expect("geometry");
+            let input = staging::input_capacity(key).unwrap();
+            let expected = input * 4
+                + key.2 * g.hidden * 4
+                + key.0 * g.hidden * 8
+                + key.0 * g.projection_width * 2
+                + key.0 * g.activation_width * 2;
+            assert_eq!(
+                DecoderWork::allocation_bytes(key, &c).expect("bytes"),
+                expected
+            );
+            let strides = g.attention_strides(c.head_dim).expect("strides");
+            assert_eq!(
+                &strides[0..3],
+                &[i64::try_from(g.qkv_width).unwrap(), 128, 1][..]
+            );
+            assert_eq!(strides[9], i64::try_from(g.q_width).unwrap());
+        }
+
+        let mut narrow40 = q40.config();
+        narrow40.intermediate_size = 1024;
+        let mut narrow64 = q64.config();
+        narrow64.intermediate_size = 1024;
+        let bytes40 = DecoderWork::allocation_bytes(key, &narrow40).expect("q40 bytes");
+        let bytes64 = DecoderWork::allocation_bytes(key, &narrow64).expect("q64 bytes");
+        assert_eq!(
+            bytes64 - bytes40,
+            key.0 * ((10240 - 7168) + (8192 - 5120)) * 2,
+            "projection and activation slabs follow q_width, not hidden_size"
+        );
+
+        let mut overflow = q40.config();
+        overflow.intermediate_size = usize::MAX;
+        assert!(DecoderGeometry::new(&overflow).is_err());
+        assert!(DecoderWork::allocation_bytes(key, &overflow).is_err());
+        assert!(DecoderWork::allocation_bytes((usize::MAX, 2, 1), &q40.config()).is_err());
+    }
+
+    #[test]
     fn qwen3_4b_actual_config_selects_h2560_ordinary_geometry() {
         // Exact metadata from the Qwen3-4B BF16/FP8 comparison checkpoint.
         let fixture = Fixture::with_config(
@@ -3014,8 +3248,8 @@ mod tests {
                 "only Qwen3 head_dim 128",
             ),
             (
-                serde_json::json!({"hidden_size": 5120}),
-                "hidden_size 1024, 2048, 2560 or 4096",
+                serde_json::json!({"hidden_size": 6144}),
+                "hidden_size 1024, 2048, 2560, 4096 or 5120",
             ),
             (
                 serde_json::json!({"rope_type": "simple"}),

@@ -186,6 +186,12 @@ qwen35_exports = [
     if line.strip()
 ]
 symbols = sorted(symbols + qwen35_exports)
+rms5120_aten_exports = [
+    line.strip()
+    for line in (root / "rms5120_aten_exports.txt").read_text().splitlines()
+    if line.strip()
+]
+symbols = sorted(symbols + rms5120_aten_exports)
 duplicates = sorted(name for name in set(symbols) if symbols.count(name) > 1)
 if duplicates:
     raise SystemExit("Duplicate kernel exports: " + ", ".join(duplicates))
@@ -227,6 +233,8 @@ manifest["sources"]["src/gemma2.rs"] = digest(root / "src/gemma2.rs")
 manifest["sources"]["src/encoder_activation.rs"] = digest(root / "src/encoder_activation.rs")
 manifest["sources"]["encoder_activation_exports.txt"] = digest(root / "encoder_activation_exports.txt")
 manifest["sources"]["qwen35_exports.txt"] = digest(root / "qwen35_exports.txt")
+manifest["sources"]["src/rms5120_aten.rs"] = digest(root / "src/rms5120_aten.rs")
+manifest["sources"]["rms5120_aten_exports.txt"] = digest(root / "rms5120_aten_exports.txt")
 for name in ["src/deberta_math.rs", "src/deberta_norm.rs", "src/gelu_exact.rs"]:
     manifest["sources"][name] = digest(root / name)
 for name in ["src/packed_mean_bf16.rs", "src/qwen35_norm.rs",
@@ -307,7 +315,7 @@ def snapshot_arch(invocation_root, arch):
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(root / "src", destination / "src")
     for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
-                 "encoder_activation_exports.txt", "qwen35_exports.txt",
+                 "encoder_activation_exports.txt", "qwen35_exports.txt", "rms5120_aten_exports.txt",
                  "LICENSE-Candle-BSD3", "LICENSE-PyTorch-BSD3"]:
         shutil.copy2(root / name, destination / name)
     notice = root.parent / "NOTICE"

@@ -48,6 +48,7 @@ infinity_selected_rows infinity_silu_mul infinity_silu_mul_bf16_pairs infinity_s
 infinity_silu_mul_bf16_vector8_native infinity_silu_mul_f32
 """.split()
 SYMBOLS += (DEVICE / "qwen35_exports.txt").read_text().split()
+SYMBOLS += (DEVICE / "rms5120_aten_exports.txt").read_text().split()
 
 FAKE_COMPILER = textwrap.dedent(r'''#!/usr/bin/env python3
 import json, os, pathlib, sys, time
@@ -123,7 +124,7 @@ def write_executable(path, text):
 def source_digest(root):
     files = [root / name for name in (
         "build.sh", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
-        "encoder_activation_exports.txt", "qwen35_exports.txt", "LICENSE-Candle-BSD3",
+        "encoder_activation_exports.txt", "qwen35_exports.txt", "rms5120_aten_exports.txt", "LICENSE-Candle-BSD3",
         "LICENSE-PyTorch-BSD3")]
     files += sorted((root / "src").rglob("*.rs"))
     files.append(root.parent / "NOTICE")

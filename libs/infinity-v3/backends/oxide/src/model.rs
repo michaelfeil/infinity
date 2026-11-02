@@ -137,6 +137,30 @@ impl EncoderFamily {
             ),
         }
     }
+
+    /// Trained classifier architectures that share the native BERT-style
+    /// backbone and can therefore reuse the bounded classifier readout.
+    fn accepts_classifier_architecture(self, architecture: &str) -> bool {
+        match self {
+            Self::Bert => matches!(
+                architecture,
+                "BertForSequenceClassification" | "BertForTokenClassification"
+            ),
+            Self::Roberta => matches!(
+                architecture,
+                "RobertaForSequenceClassification" | "RobertaForTokenClassification"
+            ),
+            Self::XlmRoberta => matches!(
+                architecture,
+                "XLMRobertaForSequenceClassification" | "XLMRobertaForTokenClassification"
+            ),
+            Self::Camembert => matches!(
+                architecture,
+                "CamembertForSequenceClassification" | "CamembertForTokenClassification"
+            ),
+            _ => false,
+        }
+    }
 }
 
 /// Arithmetic selected at load time for the eventual engine kernels.
@@ -591,17 +615,15 @@ impl BertConfig {
             return crate::mpnet::config(&raw);
         }
         if classifier {
-            let admitted = family == EncoderFamily::Bert
-                && raw.architectures.as_deref().is_some_and(|architectures| {
-                    architectures.len() == 1
-                        && matches!(
-                            architectures.first().map(String::as_str),
-                            Some("BertForSequenceClassification" | "BertForTokenClassification")
-                        )
-                });
+            let admitted = raw.architectures.as_deref().is_some_and(|architectures| {
+                architectures.len() == 1
+                    && architectures.first().is_some_and(|architecture| {
+                        family.accepts_classifier_architecture(architecture)
+                    })
+            });
             if !admitted {
                 return Err(start(
-                    "classifier admission requires bert with one BertForSequenceClassification or BertForTokenClassification architecture",
+                    "classifier admission requires one family-native sequence or token classification architecture",
                 ));
             }
         } else if let Some(architectures) = raw.architectures.as_deref() {

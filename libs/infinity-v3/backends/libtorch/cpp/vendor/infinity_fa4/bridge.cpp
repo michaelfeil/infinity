@@ -96,7 +96,7 @@ void invoke_export(unsigned slot, F&& invoke) {
 }
 }  // namespace
 
-extern "C" int infinity_fa4_modes_v1(){return (1 << attention_modes) - 1;}
+extern "C" int infinity_fa4_modes_v1(){return attention_modes >= 32 ? -1 : static_cast<int>((1u << attention_modes) - 1u);}
 
 // Export families: 0 global d64 MHA, 1 windowed d64 MHA, 2 causal d128 GQA4, 3 global d128 GQA2, 4 GQA6, 5 GQA8, 6 global d256 GQA4.
 // Pointers remain owned by the caller; no device allocation or synchronization here.
@@ -116,7 +116,7 @@ extern "C" int infinity_fa4_forward_v1(int mode,int dtype,int device,void* strea
   };
   const auto& profile = profiles[mode];
   if(h<=0||hk<=0||h!=profile.group*hk||!std::isfinite(scale)||scale<=0||
-     (profile.local&&(left<0||(!profile.causal&&right<0))))
+     (profile.local&&(left<0||(!profile.causal&&right<-1))))
     throw std::runtime_error("unsupported attention parameters");
   auto& fn=functions[dtype][mode];
   DLDataType data_type{static_cast<uint8_t>(dtype==0?kDLFloat:kDLBfloat),16,1};

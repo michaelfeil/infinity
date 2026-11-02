@@ -110,7 +110,7 @@ class GuardTests(unittest.TestCase):
                 [output, "--arch", "sm_90a", "--compile-only", "--export-only",
                  "--only-symbol", "fa4_bert_bf16"])
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("canonical26 export requires --runtime-dir and --ffi-root",
+            self.assertIn("canonical31 export requires --runtime-dir and --ffi-root",
                           result.stderr)
             self.assertFalse((output / "development-manifest.json").exists())
             self.assertFalse((output / "manifest.json").exists())
@@ -136,7 +136,7 @@ class GuardTests(unittest.TestCase):
                  "--compile-only", "--export-only", "--only-symbol",
                  "fa4_bert_bf16", "fa4_bert_fp16"])
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("canonical26 export requires --runtime-dir and --ffi-root",
+            self.assertIn("canonical31 export requires --runtime-dir and --ffi-root",
                           result.stderr)
             self.assertNotIn("unknown --only-symbol", result.stderr)
 
@@ -161,7 +161,7 @@ class GuardTests(unittest.TestCase):
                      "--compile-only", "--export-only", "--only-symbol", symbol,
                      *flags])
                 self.assertNotEqual(accepted.returncode, 0)
-                self.assertIn("canonical26 export requires --runtime-dir and --ffi-root",
+                self.assertIn("canonical31 export requires --runtime-dir and --ffi-root",
                               accepted.stderr)
                 self.assertNotIn("unknown --only-symbol", accepted.stderr)
 
@@ -345,9 +345,33 @@ class MockedCompileTests(unittest.TestCase):
             self.assertEqual(development["descriptors"][0]["object"], "fa4_bert_bf16.o")
             self.assertEqual(development["compile_cache_isolation"]["exports"], 1)
             for production_field in ("name", "native_abi_version", "abi_version",
-                                     "registry", "canonical26_inventory",
+                                     "registry", "canonical31_inventory",
                                      "link_object_order", "libraries"):
                 self.assertNotIn(production_field, development)
+
+    def test_new_tail_selected_export_preserves_canonical_mode_and_is_not_production(self):
+        for symbol, mode in (
+            ("fa4_qwen35_moe_gqa8_bf16", 26),
+            ("fa4_qwen3_q40kv8_d128_causal_bf16", 27),
+            ("fa4_qwen3_q40kv8_d128_noncausal_fp16", 28),
+            ("fa4_mistral_local4096_noncausal_bf16", 29),
+            ("fa4_qwen35_moe_gqa8_noncausal_bf16", 30),
+        ):
+            with self.subTest(symbol=symbol), tempfile.TemporaryDirectory() as temporary:
+                root = pathlib.Path(temporary)
+                output = root / "out"
+                exported, state, code = run_mocked_export(root, [
+                    output, "--arch", "sm_90a", "--compile-only", "--export-only",
+                    "--only-symbol", symbol,
+                    "--runtime-dir", root / "runtime", "--ffi-root", root / "ffi"])
+                self.assertEqual(code, 0)
+                self.assertEqual(exported, [symbol])
+                self.assertEqual(len(state["calls"]), 1)
+                development = json.loads((output / "development-manifest.json").read_text())
+                self.assertEqual(development["descriptors"][0]["canonical_mode"], mode)
+                self.assertIs(development["production_admissible"], False)
+                self.assertFalse((output / "manifest.json").exists())
+                self.assertFalse((output / "libinfinityfa4.so").exists())
 
     def test_nonportable_selected_object_leaves_no_development_manifest(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -379,8 +403,8 @@ class MockedCompileTests(unittest.TestCase):
                 "--deberta", "--deberta-exact-mul", "--alibi", "--jinacode",
                 "--runtime-dir", root / "runtime", "--ffi-root", root / "ffi"])
             self.assertEqual(code, 0)
-            self.assertEqual(len(exported), 60)
-            self.assertEqual(len(state["calls"]), 60)
+            self.assertEqual(len(exported), 70)
+            self.assertEqual(len(state["calls"]), 70)
             self.assertTrue((output / "manifest.json").exists())
             self.assertFalse((output / "development-manifest.json").exists())
 

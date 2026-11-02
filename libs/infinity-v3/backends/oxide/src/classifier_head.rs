@@ -1,10 +1,10 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
-//! Bounded trained BERT classifier admission and readout.
+//! Bounded trained BERT-family classifier admission and readout.
 //!
-//! Only the two audited BF16 contracts are admitted: MiniLM H384/6-layer
-//! sequence scoring with one raw logit, and an H768/12-layer token classifier
-//! with nine raw logits. The ordinary embedding loader continues to reject
-//! classifier architectures.
+//! BF16 BERT, RoBERTa, XLM-RoBERTa and CamemBERT sequence/token classifier
+//! checkpoints are admitted from their configured backbone geometry and their
+//! actual trained head tensors. The ordinary embedding loader continues to
+//! reject classifier architectures.
 
 use crate::{
     arg,
@@ -31,48 +31,12 @@ use std::{
     sync::Arc,
 };
 
-const N1_HIDDEN: usize = 384;
-const N1_HEADS: usize = 12;
-const N1_INTERMEDIATE: usize = 1536;
-const N1_LAYERS: usize = 6;
-const N1_VOCAB: usize = 30522;
-const N1_WIDTH: usize = 1;
-const N9_HIDDEN: usize = 768;
-const N9_HEADS: usize = 12;
-const N9_INTERMEDIATE: usize = 3072;
-const N9_LAYERS: usize = 12;
-const N9_VOCAB: usize = 28996;
-const N9_WIDTH: usize = 9;
-const MAX_POSITIONS: usize = 512;
-const TYPE_VOCAB: usize = 2;
+const MAX_HEAD_WIDTH: usize = 32_768;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ClassifierTask {
     Sequence,
     Tokens,
-}
-
-impl ClassifierTask {
-    fn architecture(self) -> &'static str {
-        match self {
-            Self::Sequence => "BertForSequenceClassification",
-            Self::Tokens => "BertForTokenClassification",
-        }
-    }
-
-    fn width(self) -> usize {
-        match self {
-            Self::Sequence => N1_WIDTH,
-            Self::Tokens => N9_WIDTH,
-        }
-    }
-
-    fn hidden_size(self) -> usize {
-        match self {
-            Self::Sequence => N1_HIDDEN,
-            Self::Tokens => N9_HIDDEN,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,28 +61,60 @@ pub(crate) struct ClassifierHeadHost {
     pub(crate) readout: ClassifierReadout,
     pub(crate) pooler: Option<LinearWeights>,
     pub(crate) classifier: LinearWeights,
+    hidden: usize,
     pooler_erf: bool,
+    /// A trained `classifier.dense -> activation -> classifier.out_proj`
+    /// recipe applies to every packed token for token readout. The BERT/plain
+    /// token projection remains a single root linear.
+    token_mlp: bool,
+}
+
+fn task_for_architecture(family: EncoderFamily, architecture: &str) -> Option<ClassifierTask> {
+    match (family, architecture) {
+        (EncoderFamily::Bert, "BertForSequenceClassification" | "BertForTokenClassification") => {
+            Some(if architecture == "BertForSequenceClassification" {
+                ClassifierTask::Sequence
+            } else {
+                ClassifierTask::Tokens
+            })
+        }
+        (
+            EncoderFamily::Roberta,
+            "RobertaForSequenceClassification" | "RobertaForTokenClassification",
+        ) => Some(if architecture == "RobertaForSequenceClassification" {
+            ClassifierTask::Sequence
+        } else {
+            ClassifierTask::Tokens
+        }),
+        (
+            EncoderFamily::XlmRoberta,
+            "XLMRobertaForSequenceClassification" | "XLMRobertaForTokenClassification",
+        ) => Some(if architecture == "XLMRobertaForSequenceClassification" {
+            ClassifierTask::Sequence
+        } else {
+            ClassifierTask::Tokens
+        }),
+        (
+            EncoderFamily::Camembert,
+            "CamembertForSequenceClassification" | "CamembertForTokenClassification",
+        ) => Some(if architecture == "CamembertForSequenceClassification" {
+            ClassifierTask::Sequence
+        } else {
+            ClassifierTask::Tokens
+        }),
+        (EncoderFamily::Deberta, "DebertaV2ForSequenceClassification") => {
+            Some(ClassifierTask::Sequence)
+        }
+        (EncoderFamily::Deberta, "DebertaV2ForTokenClassification") => Some(ClassifierTask::Tokens),
+        _ => None,
+    }
 }
 
 fn task_for(config: &BertConfig) -> Option<ClassifierTask> {
     let [architecture] = config.architectures.as_slice() else {
         return None;
     };
-    let task = match architecture.as_str() {
-        "BertForSequenceClassification" => ClassifierTask::Sequence,
-        "BertForTokenClassification" => ClassifierTask::Tokens,
-        "DebertaV2ForSequenceClassification" if config.family == EncoderFamily::Deberta => {
-            return Some(ClassifierTask::Sequence)
-        }
-        "DebertaV2ForTokenClassification" if config.family == EncoderFamily::Deberta => {
-            return Some(ClassifierTask::Tokens)
-        }
-        _ => return None,
-    };
-    (config.family == EncoderFamily::Bert
-        && config.architectures.len() == 1
-        && architecture == task.architecture())
-    .then_some(task)
+    task_for_architecture(config.family, architecture)
 }
 
 /// Cold task policy, after the classifier constructor validates its geometry.
@@ -147,47 +143,62 @@ pub(crate) fn admit_readout(config: &BertConfig, mode: ReadoutMode) -> Result<()
     }
 }
 
+fn architecture_name(config: &BertConfig) -> &str {
+    config
+        .architectures
+        .first()
+        .map_or("classifier", String::as_str)
+}
+
 fn admit_geometry(config: &BertConfig, task: ClassifierTask) -> Result<(), BackendError> {
-    let (hidden, heads, intermediate, layers, vocab) = match task {
-        ClassifierTask::Sequence => (N1_HIDDEN, N1_HEADS, N1_INTERMEDIATE, N1_LAYERS, N1_VOCAB),
-        ClassifierTask::Tokens => (N9_HIDDEN, N9_HEADS, N9_INTERMEDIATE, N9_LAYERS, N9_VOCAB),
-    };
-    let exact_eps = config.layer_norm_eps.to_bits() == 1e-12f64.to_bits();
-    if config.hidden_size != hidden
-        || config.num_attention_heads != heads
-        || config.intermediate_size != intermediate
-        || config.num_hidden_layers != layers
-        || config.vocab_size != vocab
-        || config.max_position_embeddings != MAX_POSITIONS
-        || config.type_vocab_size != TYPE_VOCAB
-        || !exact_eps
-        || config.recipe.embedding != NormArithmetic::ExactBiased
-        || config.recipe.residual != NormArithmetic::ExactBiased
-        || config.recipe.positions != PositionRecipe::Absolute
-        || config.recipe.feed_forward != FeedForwardRecipe::DenseGelu
-    {
+    // The trained-head executor is shared by the BERT-style absolute-position
+    // families. Their configured geometry remains the backbone contract; the
+    // classifier tensors below decide the actual readout layout.
+    if !matches!(
+        config.family,
+        EncoderFamily::Bert
+            | EncoderFamily::Roberta
+            | EncoderFamily::XlmRoberta
+            | EncoderFamily::Camembert
+    ) {
         return Err(crate::start(format!(
-            "unsupported {} classifier geometry or arithmetic recipe",
-            task.architecture()
+            "unsupported {} classifier family",
+            architecture_name(config)
         )));
     }
+    let recipe_ok = matches!(
+        config.recipe.embedding,
+        NormArithmetic::ExactBiased | NormArithmetic::RoundedAddBeforeStats
+    ) && matches!(
+        config.recipe.residual,
+        NormArithmetic::ExactBiased | NormArithmetic::RoundedAddBeforeStats
+    ) && config.recipe.positions == PositionRecipe::Absolute
+        && config.recipe.feed_forward == FeedForwardRecipe::DenseGelu;
+    if !recipe_ok || config.hidden_size > MAX_HEAD_WIDTH {
+        return Err(crate::start(format!(
+            "unsupported {} classifier geometry or arithmetic recipe",
+            architecture_name(config)
+        )));
+    }
+    let _ = task;
     Ok(())
 }
 
-fn reject_mlp_head(checkpoint: &Checkpoint) -> Result<(), BackendError> {
-    for name in [
-        "classifier.dense.weight",
-        "classifier.dense.bias",
-        "classifier.out_proj.weight",
-        "classifier.out_proj.bias",
-    ] {
-        if checkpoint.contains(name) {
-            return Err(crate::start(format!(
-                "unsupported classifier MLP tensor {name}; only the root biased linear head is admitted"
-            )));
-        }
+fn classifier_width(checkpoint: &Checkpoint, weight: &str) -> Result<usize, BackendError> {
+    let shape = checkpoint
+        .shape(weight)
+        .ok_or_else(|| crate::start(format!("missing classifier tensor {weight}")))?;
+    let [width, _] = shape else {
+        return Err(crate::start(format!(
+            "classifier tensor {weight} must be rank two"
+        )));
+    };
+    if *width == 0 || *width > MAX_HEAD_WIDTH {
+        return Err(crate::start(format!(
+            "classifier width {width} is outside 1..={MAX_HEAD_WIDTH}"
+        )));
     }
-    Ok(())
+    Ok(*width)
 }
 
 impl ClassifierHeadHost {
@@ -203,22 +214,59 @@ impl ClassifierHeadHost {
             },
             pooler: head.pooler,
             classifier: head.classifier,
+            hidden: 768,
             pooler_erf: true,
+            token_mlp: false,
         }
     }
-    pub(crate) fn load(checkpoint: &Checkpoint, config: &BertConfig) -> Result<Self, BackendError> {
-        let task =
-            task_for(config).ok_or_else(|| crate::start("unsupported classifier architecture"))?;
-        admit_geometry(config, task)?;
-        reject_mlp_head(checkpoint)?;
-        let width = task.width();
+
+    fn load_trained_head(
+        checkpoint: &Checkpoint,
+        config: &BertConfig,
+        task: ClassifierTask,
+    ) -> Result<Self, BackendError> {
         let hidden = config.hidden_size;
+        let mlp_names = [
+            "classifier.dense.weight",
+            "classifier.dense.bias",
+            "classifier.out_proj.weight",
+            "classifier.out_proj.bias",
+        ];
+        let present = mlp_names
+            .iter()
+            .filter(|name| checkpoint.contains(name))
+            .count();
+        if present != 0 {
+            if present != mlp_names.len() {
+                return Err(crate::start(
+                    "classifier dense and out_proj tensors must be complete or absent",
+                ));
+            }
+            let width = classifier_width(checkpoint, "classifier.out_proj.weight")?;
+            let dense = LinearWeights {
+                weight: checkpoint.source("classifier.dense.weight", &[hidden, hidden])?,
+                bias: checkpoint.source("classifier.dense.bias", &[hidden])?,
+            };
+            let classifier = LinearWeights {
+                weight: checkpoint.source("classifier.out_proj.weight", &[width, hidden])?,
+                bias: checkpoint.source("classifier.out_proj.bias", &[width])?,
+            };
+            return Ok(Self {
+                readout: ClassifierReadout { task, width },
+                pooler: Some(dense),
+                classifier,
+                hidden,
+                pooler_erf: false,
+                token_mlp: true,
+            });
+        }
+        let width = classifier_width(checkpoint, "classifier.weight")?;
         let classifier = LinearWeights {
             weight: checkpoint.source("classifier.weight", &[width, hidden])?,
             bias: checkpoint.source("classifier.bias", &[width])?,
         };
-        // Native BERT classifier readout only recognizes this namespace,
-        // independently of the backbone checkpoint's prefix.
+        // Native's optional classifier pooler namespace is independent of the
+        // backbone prefix and is only used by the sequence readout.
         let pooler_weight = "bert.pooler.dense.weight";
         let pooler_bias = "bert.pooler.dense.bias";
         let pooler = match (
@@ -240,8 +288,17 @@ impl ClassifierHeadHost {
             readout: ClassifierReadout { task, width },
             pooler,
             classifier,
+            hidden,
             pooler_erf: false,
+            token_mlp: false,
         })
+    }
+
+    pub(crate) fn load(checkpoint: &Checkpoint, config: &BertConfig) -> Result<Self, BackendError> {
+        let task =
+            task_for(config).ok_or_else(|| crate::start("unsupported classifier architecture"))?;
+        admit_geometry(config, task)?;
+        Self::load_trained_head(checkpoint, config, task)
     }
 }
 
@@ -276,16 +333,18 @@ pub(crate) fn validate_admission(
     admit_geometry(&config, task)?;
     if dense_paths.as_ref().is_some_and(|paths| !paths.is_empty()) {
         return Err(crate::start(
-            "Classifier admission does not accept Dense / Sentence-Transformers modules",
+            "Classifier admission does not accept an explicit Dense / Sentence-Transformers override",
         ));
     }
-    if crate::dense::DenseChainHost::load_with_paths(path, config.hidden_size, dense_paths)?
-        .is_some()
-    {
-        return Err(crate::start(
-            "Classifier admission does not accept Dense / Sentence-Transformers modules",
-        ));
+    if dense_paths.is_none() {
+        // Native classifiers ignore Dense modules discovered from modules.json,
+        // but malformed declared embedding metadata still fails closed.
+        let _ = crate::dense::DenseChainHost::load_with_paths(path, config.hidden_size, None)?;
     }
+    // Validate the actual trained-head tensor source and every referenced
+    // shape before any CUDA context or weight upload exists.
+    let checkpoint = Checkpoint::open(path)?;
+    let _ = ClassifierHeadHost::load(&checkpoint, &config)?;
     Ok(())
 }
 
@@ -379,16 +438,33 @@ pub(crate) struct ClassifierScratchLayout {
 }
 
 impl ClassifierScratchLayout {
+    #[cfg(test)]
     pub(crate) fn for_key(hidden: usize, width: usize, key: WorkKey) -> Result<Self, BackendError> {
+        Self::for_key_with_token_mlp(hidden, width, key, false)
+    }
+
+    fn for_key_with_token_mlp(
+        hidden: usize,
+        width: usize,
+        key: WorkKey,
+        token_mlp: bool,
+    ) -> Result<Self, BackendError> {
         // Both readout modes share one model head. Reserve the sequence
         // gather/pooler rows and the larger token-logit row extent together so
-        // either method can reuse the same bounded request workspace.
+        // either method can reuse the same bounded request workspace. A trained
+        // dense/out_proj token head additionally materializes every token row
+        // between its dense/activation and out_proj stages.
         let sequence_rows = key.1;
         let token_rows = key.0;
         let sequence_hidden = product(sequence_rows, hidden)?;
         let token_logits = product(token_rows, width)?;
         let sequence_logits = product(sequence_rows, width)?;
-        let first = sequence_hidden.max(sequence_logits);
+        let token_hidden = if token_mlp {
+            product(token_rows, hidden)?
+        } else {
+            0
+        };
+        let first = sequence_hidden.max(sequence_logits).max(token_hidden);
         let second = sequence_hidden.max(token_logits);
         let logits = sequence_logits.max(token_logits);
         for elements in [first, second, logits] {
@@ -571,6 +647,7 @@ pub(crate) struct ClassifierHead {
     pooler: Option<DeviceBiasedLinear>,
     classifier: DeviceBiasedLinear,
     kernels: ClassifierKernels,
+    token_mlp: bool,
     prepared: Option<ClassifierPrepared>,
 }
 
@@ -663,18 +740,41 @@ impl ClassifierHead {
         stream: &Arc<Stream>,
         provider: &LtProvider,
     ) -> Result<Self, BackendError> {
+        if host.token_mlp && host.pooler_erf {
+            return Err(crate::start(
+                "trained token MLP readout requires its dense/tanh recipe, not an ERF pooler",
+            ));
+        }
+        if host.token_mlp && host.pooler.is_none() {
+            return Err(crate::start(
+                "trained token MLP readout requires its dense stage",
+            ));
+        }
         let kernels = ClassifierKernels::load_with_erf(context, host.pooler_erf)?;
-        let hidden = if host.pooler_erf {
-            host.classifier
-                .weight
-                .shape()
-                .get(1)
-                .copied()
-                .filter(|width| *width == 768)
-                .ok_or_else(|| crate::start("DeBERTa classifier hidden width must be 768"))?
-        } else {
-            self::task_hidden(host.readout.task)
-        };
+        let hidden = host.hidden;
+        if hidden == 0 {
+            return Err(crate::start("classifier hidden width must be nonzero"));
+        }
+        let input_width = host
+            .classifier
+            .weight
+            .shape()
+            .get(1)
+            .copied()
+            .filter(|width| *width == hidden)
+            .ok_or_else(|| {
+                crate::start(format!(
+                    "classifier projection input width must be {hidden}"
+                ))
+            })?;
+        let _ = input_width;
+        if let Some(pooler) = host.pooler.as_ref() {
+            if pooler.weight.shape() != [hidden, hidden] {
+                return Err(crate::start(format!(
+                    "classifier pooler shape must be [{hidden}, {hidden}]"
+                )));
+            }
+        }
         let pooler_plan = host
             .pooler
             .as_ref()
@@ -705,6 +805,7 @@ impl ClassifierHead {
             pooler,
             classifier,
             kernels,
+            token_mlp: host.token_mlp,
             prepared: None,
         })
     }
@@ -717,7 +818,12 @@ impl ClassifierHead {
         &self,
         key: WorkKey,
     ) -> Result<ClassifierScratchLayout, BackendError> {
-        ClassifierScratchLayout::for_key(self.hidden, self.readout.width, key)
+        ClassifierScratchLayout::for_key_with_token_mlp(
+            self.hidden,
+            self.readout.width,
+            key,
+            self.token_mlp,
+        )
     }
 
     pub(crate) fn rows(&self, batch: &Batch, mode: ReadoutMode) -> Result<usize, BackendError> {
@@ -746,7 +852,7 @@ impl ClassifierHead {
             batch.input_ids.len(),
             batch.cumulative_seq_lengths.len().saturating_sub(1),
         )?;
-        if mode == ReadoutMode::Sequence {
+        if mode == ReadoutMode::Sequence || self.token_mlp {
             if let Some(pooler) = &self.pooler {
                 pooler.plan.preflight_rows(rows)?;
             }
@@ -867,30 +973,81 @@ impl ClassifierHead {
                 }
             }
             ReadoutMode::Tokens => {
-                let output = scratch
-                    .second
-                    .as_mut()
-                    .ok_or_else(|| ShapeError::Fatal(infer("missing classifier logit scratch")))?;
-                let classifier_prepared = unsafe {
-                    self.classifier.plan.prepare(
-                        provider,
-                        blas,
+                if self.token_mlp {
+                    let pooler = self
+                        .pooler
+                        .as_mut()
+                        .ok_or_else(|| ShapeError::Fatal(infer("missing classifier pooler")))?;
+                    let pooler_prepared = {
+                        let hidden = scratch.first.as_mut().ok_or_else(|| {
+                            ShapeError::Fatal(infer("missing classifier token hidden scratch"))
+                        })?;
+                        unsafe {
+                            pooler.plan.prepare(
+                                provider,
+                                blas,
+                                rows,
+                                stream,
+                                source,
+                                &pooler.device.weight,
+                                &pooler.device.bias,
+                                hidden,
+                            )?
+                        }
+                    };
+                    let classifier_prepared = {
+                        let hidden = scratch.first.as_ref().ok_or_else(|| {
+                            ShapeError::Fatal(infer("missing classifier token hidden scratch"))
+                        })?;
+                        let output = scratch.second.as_mut().ok_or_else(|| {
+                            ShapeError::Fatal(infer("missing classifier logit scratch"))
+                        })?;
+                        unsafe {
+                            self.classifier.plan.prepare(
+                                provider,
+                                blas,
+                                rows,
+                                stream,
+                                hidden,
+                                &self.classifier.device.weight,
+                                &self.classifier.device.bias,
+                                output,
+                            )?
+                        }
+                    };
+                    self.prepared = Some(ClassifierPrepared {
+                        mode,
                         rows,
-                        stream,
-                        source,
-                        &self.classifier.device.weight,
-                        &self.classifier.device.bias,
-                        output,
-                    )?
-                };
-                self.prepared = Some(ClassifierPrepared {
-                    mode,
-                    rows,
-                    source: source_pointer,
-                    stream: prepared_stream,
-                    pooler: None,
-                    classifier: classifier_prepared,
-                });
+                        source: source_pointer,
+                        stream: prepared_stream,
+                        pooler: Some(pooler_prepared),
+                        classifier: classifier_prepared,
+                    });
+                } else {
+                    let output = scratch.second.as_mut().ok_or_else(|| {
+                        ShapeError::Fatal(infer("missing classifier logit scratch"))
+                    })?;
+                    let classifier_prepared = unsafe {
+                        self.classifier.plan.prepare(
+                            provider,
+                            blas,
+                            rows,
+                            stream,
+                            source,
+                            &self.classifier.device.weight,
+                            &self.classifier.device.bias,
+                            output,
+                        )?
+                    };
+                    self.prepared = Some(ClassifierPrepared {
+                        mode,
+                        rows,
+                        source: source_pointer,
+                        stream: prepared_stream,
+                        pooler: None,
+                        classifier: classifier_prepared,
+                    });
+                }
             }
         }
         let _ = width;
@@ -1034,7 +1191,59 @@ impl ClassifierHead {
                 }
             }
             ReadoutMode::Tokens => {
-                {
+                if let Some(pooler_prepared) = pooler_prepared {
+                    let pooler = self
+                        .pooler
+                        .as_mut()
+                        .ok_or_else(|| infer("missing classifier pooler"))?;
+                    {
+                        let token_hidden = scratch
+                            .first
+                            .as_mut()
+                            .ok_or_else(|| infer("missing classifier token hidden scratch"))?;
+                        // SAFETY: the caller's retained-buffer contract covers
+                        // the preselected token pooler invocation.
+                        unsafe {
+                            pooler.plan.launch(
+                                &pooler_prepared,
+                                provider,
+                                blas,
+                                &self.kernels.bias_seed,
+                                stream,
+                                source,
+                                &pooler.device.weight,
+                                &pooler.device.bias,
+                                token_hidden,
+                            )?;
+                        }
+                        apply_tanh(&self.kernels, stream, token_hidden, rows, hidden)?;
+                    }
+                    {
+                        let token_hidden = scratch
+                            .first
+                            .as_ref()
+                            .ok_or_else(|| infer("missing classifier token hidden scratch"))?;
+                        let output = scratch
+                            .second
+                            .as_mut()
+                            .ok_or_else(|| infer("missing classifier logit scratch"))?;
+                        // SAFETY: the caller's retained-buffer contract covers
+                        // the preselected token projection.
+                        unsafe {
+                            self.classifier.plan.launch(
+                                &classifier,
+                                provider,
+                                blas,
+                                &self.kernels.bias_seed,
+                                stream,
+                                token_hidden,
+                                &self.classifier.device.weight,
+                                &self.classifier.device.bias,
+                                output,
+                            )?;
+                        }
+                    }
+                } else {
                     let output = scratch
                         .second
                         .as_mut()
@@ -1119,10 +1328,6 @@ fn apply_tanh(
         0,
         &mut [arg(&mut values), arg(&mut count)],
     )
-}
-
-fn task_hidden(task: ClassifierTask) -> usize {
-    task.hidden_size()
 }
 
 fn cast_to_f32(
@@ -1383,6 +1588,51 @@ mod tests {
         entries
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn family_config(
+        model_type: &str,
+        architecture: &str,
+        hidden: usize,
+        intermediate: usize,
+        heads: usize,
+        layers: usize,
+        vocab: usize,
+        positions: usize,
+        type_vocab: usize,
+        eps: f64,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "model_type": model_type,
+            "architectures": [architecture],
+            "hidden_size": hidden,
+            "intermediate_size": intermediate,
+            "num_attention_heads": heads,
+            "num_hidden_layers": layers,
+            "max_position_embeddings": positions,
+            "vocab_size": vocab,
+            "type_vocab_size": type_vocab,
+            "layer_norm_eps": eps,
+            "hidden_act": "gelu",
+            "position_embedding_type": "absolute"
+        })
+    }
+
+    fn mlp_entries(hidden: usize, width: usize) -> Vec<(String, Vec<usize>)> {
+        vec![
+            ("classifier.dense.weight".into(), vec![hidden, hidden]),
+            ("classifier.dense.bias".into(), vec![hidden]),
+            ("classifier.out_proj.weight".into(), vec![width, hidden]),
+            ("classifier.out_proj.bias".into(), vec![width]),
+        ]
+    }
+
+    fn plain_entries(hidden: usize, width: usize) -> Vec<(String, Vec<usize>)> {
+        vec![
+            ("classifier.weight".into(), vec![width, hidden]),
+            ("classifier.bias".into(), vec![width]),
+        ]
+    }
+
     #[test]
     fn deberta_prediction_mode_matches_its_trained_architecture() {
         for (architecture, mode, wrong) in [
@@ -1413,20 +1663,37 @@ mod tests {
     }
 
     #[test]
-    fn admits_the_two_audited_classifier_contracts() {
+    fn roberta_token_mlp_reserves_every_packed_hidden_row() {
+        let layout =
+            ClassifierScratchLayout::for_key_with_token_mlp(768, 9, (64, 16, 64), true).unwrap();
+        assert_eq!(layout.first, 64 * 768);
+        assert_eq!(layout.second, 16 * 768);
+        assert_eq!(layout.logits, 64 * 9);
+        let plain =
+            ClassifierScratchLayout::for_key_with_token_mlp(768, 9, (64, 16, 64), false).unwrap();
+        assert_eq!(plain.first, 16 * 768);
+        assert_eq!(plain.second, 16 * 768);
+    }
+
+    #[test]
+    fn admits_bert_sequence_pooler_and_token_plain_heads() {
         let sequence = Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
         sequence.weights(&sequence_entries(true));
         let host = sequence.load().unwrap();
         assert_eq!(host.readout.task, ClassifierTask::Sequence);
         assert_eq!(host.readout.width, 1);
+        assert_eq!(host.hidden, 384);
         assert!(host.pooler.is_some());
+        assert!(!host.token_mlp);
 
         let tokens = Fixture::new(config("BertForTokenClassification", 768, 3072, 12, 28996));
         tokens.weights(&token_entries(false));
         let host = tokens.load().unwrap();
         assert_eq!(host.readout.task, ClassifierTask::Tokens);
         assert_eq!(host.readout.width, 9);
+        assert_eq!(host.hidden, 768);
         assert!(host.pooler.is_none());
+        assert!(!host.token_mlp);
 
         let tokens_with_pooler =
             Fixture::new(config("BertForTokenClassification", 768, 3072, 12, 28996));
@@ -1435,26 +1702,126 @@ mod tests {
     }
 
     #[test]
-    fn rejects_mismatched_architectures_geometry_and_incomplete_heads() {
-        let wrong_architecture = Fixture::new(config(
-            "BertForSequenceClassification",
+    fn admits_roberta_family_dense_tanh_and_plain_heads_at_configured_widths() {
+        for (model_type, architecture, vocab) in [
+            ("roberta", "RobertaForSequenceClassification", 50265),
+            ("xlm-roberta", "XLMRobertaForSequenceClassification", 250002),
+            ("camembert", "CamembertForSequenceClassification", 32005),
+        ] {
+            let fixture = Fixture::new(family_config(
+                model_type,
+                architecture,
+                1024,
+                4096,
+                16,
+                24,
+                vocab,
+                514,
+                1,
+                1e-5,
+            ));
+            fixture.weights(&mlp_entries(1024, 3));
+            let host = fixture.load().unwrap();
+            assert_eq!(host.readout.task, ClassifierTask::Sequence);
+            assert_eq!(host.readout.width, 3);
+            assert_eq!(host.hidden, 1024);
+            assert!(host.pooler.is_some());
+            assert!(host.token_mlp);
+            assert!(validate_admission(&fixture.0, None).is_ok());
+        }
+        for (model_type, architecture, hidden, intermediate, heads, layers, vocab) in [
+            (
+                "roberta",
+                "RobertaForTokenClassification",
+                768,
+                3072,
+                12,
+                12,
+                50265,
+            ),
+            (
+                "xlm-roberta",
+                "XLMRobertaForTokenClassification",
+                1024,
+                4096,
+                16,
+                24,
+                250002,
+            ),
+            (
+                "camembert",
+                "CamembertForTokenClassification",
+                768,
+                3072,
+                12,
+                12,
+                32005,
+            ),
+        ] {
+            let fixture = Fixture::new(family_config(
+                model_type,
+                architecture,
+                hidden,
+                intermediate,
+                heads,
+                layers,
+                vocab,
+                514,
+                1,
+                1e-5,
+            ));
+            fixture.weights(&plain_entries(hidden, 9));
+            let host = fixture.load().unwrap();
+            assert_eq!(host.readout.task, ClassifierTask::Tokens);
+            assert_eq!(host.readout.width, 9);
+            assert_eq!(host.hidden, hidden);
+            assert!(host.pooler.is_none());
+            assert!(!host.token_mlp);
+        }
+        let token_mlp = Fixture::new(family_config(
+            "roberta",
+            "RobertaForTokenClassification",
             768,
             3072,
             12,
-            28996,
-        ));
-        wrong_architecture.weights(&sequence_entries(true));
-        assert!(wrong_architecture.load().is_err());
-
-        let wrong_layers = Fixture::new(config(
-            "BertForSequenceClassification",
-            384,
-            1536,
             12,
-            30522,
+            50265,
+            514,
+            1,
+            1e-5,
         ));
-        wrong_layers.weights(&sequence_entries(true));
-        assert!(wrong_layers.load().is_err());
+        token_mlp.weights(&mlp_entries(768, 7));
+        let host = token_mlp.load().unwrap();
+        assert_eq!(host.readout.task, ClassifierTask::Tokens);
+        assert_eq!(host.readout.width, 7);
+        assert!(host.token_mlp);
+    }
+
+    #[test]
+    fn rejects_mismatched_architectures_geometry_and_incomplete_heads() {
+        let wrong_architecture = Fixture::new(family_config(
+            "roberta",
+            "XLMRobertaForTokenClassification",
+            768,
+            3072,
+            12,
+            12,
+            50265,
+            514,
+            1,
+            1e-5,
+        ));
+        assert!(BertConfig::load_classifier(&wrong_architecture.0).is_err());
+
+        let wrong_recipe = Fixture::new(serde_json::json!({
+            "model_type":"bert",
+            "architectures":["BertForSequenceClassification"],
+            "hidden_size":384,"intermediate_size":1536,
+            "num_attention_heads":12,"num_hidden_layers":6,
+            "max_position_embeddings":512,"vocab_size":30522,
+            "type_vocab_size":2,"layer_norm_eps":1e-12,"hidden_act":"relu"
+        }));
+        assert!(BertConfig::load_classifier(&wrong_recipe.0).is_err());
 
         let optional_pooler =
             Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
@@ -1470,15 +1837,33 @@ mod tests {
         ]);
         assert!(incomplete_pooler.load().is_err());
 
-        let mlp_head = Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
-        mlp_head.weights(&[
-            ("classifier.weight".into(), vec![1, 384]),
-            ("classifier.bias".into(), vec![1]),
+        let partial_mlp =
+            Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
+        partial_mlp.weights(&[
             ("classifier.dense.weight".into(), vec![384, 384]),
-            ("bert.pooler.dense.weight".into(), vec![384, 384]),
-            ("bert.pooler.dense.bias".into(), vec![384]),
+            ("classifier.dense.bias".into(), vec![384]),
         ]);
-        assert!(mlp_head.load().is_err());
+        assert!(partial_mlp.load().is_err());
+
+        let wrong_out = Fixture::new(family_config(
+            "roberta",
+            "RobertaForSequenceClassification",
+            768,
+            3072,
+            12,
+            12,
+            50265,
+            514,
+            1,
+            1e-5,
+        ));
+        wrong_out.weights(&[
+            ("classifier.dense.weight".into(), vec![768, 768]),
+            ("classifier.dense.bias".into(), vec![768]),
+            ("classifier.out_proj.weight".into(), vec![3, 384]),
+            ("classifier.out_proj.bias".into(), vec![3]),
+        ]);
+        assert!(wrong_out.load().is_err());
     }
 
     #[test]
@@ -1559,7 +1944,14 @@ mod tests {
     fn classifier_admission_rejects_decoder_before_cuda_and_discovers_dense() {
         let decoder = Fixture::new(serde_json::json!({"model_type":"llama", "hidden_size":1024}));
         assert!(validate_admission(&decoder.0, None).is_err());
+        let missing_head =
+            Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
+        assert!(
+            validate_admission(&missing_head.0, None).is_err(),
+            "cold admission must require the trained head tensors, not only config"
+        );
         let fixture = Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
+        fixture.weights(&sequence_entries(true));
         assert!(validate_admission(&fixture.0, None).is_ok());
         // Transformer.path is deliberately absent; it cannot hide a Dense head.
         fs::write(
@@ -1589,10 +1981,14 @@ mod tests {
             serialize([("linear.weight", view)], None).unwrap(),
         )
         .unwrap();
-        let error = validate_admission(&fixture.0, None)
+        assert!(
+            validate_admission(&fixture.0, None).is_ok(),
+            "discovered embedding Dense modules are ignored by classifiers, matching Native"
+        );
+        let error = validate_admission(&fixture.0, Some(vec!["2_Dense".into()]))
             .unwrap_err()
             .to_string();
-        assert!(error.contains("does not accept Dense"), "{error}");
+        assert!(error.contains("explicit Dense"), "{error}");
         assert!(
             validate_admission(&fixture.0, Some(Vec::new())).is_ok(),
             "explicit [] suppresses Dense execution"
@@ -1600,7 +1996,7 @@ mod tests {
         fs::remove_file(dense.join("model.safetensors")).unwrap();
         assert!(
             validate_admission(&fixture.0, None).is_err(),
-            "missing declared head must never silently become backbone"
+            "malformed declared Dense metadata must never silently become backbone"
         );
     }
 

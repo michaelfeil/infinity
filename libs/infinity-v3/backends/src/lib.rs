@@ -510,6 +510,25 @@ impl Backend {
     }
 }
 
+/// Native classifiers ignore Dense modules discovered through `modules.json`;
+/// only an explicit override is admitted to the classifier task and then
+/// rejected because task heads, not pooled embedding projections, define the
+/// classifier output.
+#[cfg(feature = "oxide")]
+fn oxide_effective_dense_paths(
+    model_type: &ModelType,
+    explicit_dense: bool,
+    paths: Option<Vec<String>>,
+) -> Option<Vec<String>> {
+    if *model_type == ModelType::Classifier && !explicit_dense {
+        // An explicit empty list prevents classifier admission from
+        // rediscovering the embedding Dense modules in modules.json.
+        Some(Vec::new())
+    } else {
+        paths
+    }
+}
+
 #[allow(unused, clippy::too_many_arguments)]
 async fn init_backend(
     model_path: PathBuf,
@@ -565,6 +584,7 @@ async fn init_backend(
                     .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
             }
         }
+        let explicit_dense = dense_path.is_some();
         let dense_paths = if let Some(repo) = api_repo.as_ref() {
             // Oxide must distinguish a genuinely absent `modules.json` from a
             // failed fetch: a transient error cannot silently drop a trained
@@ -578,6 +598,10 @@ async fn init_backend(
             local_dense_paths(&model_path.join("modules.json"), dense_path)
                 .map_err(|e| BackendError::Start(e.to_string()))?
         };
+        // Discovered Sentence Transformers Dense modules describe embedding
+        // projections; classifiers use their checkpoint task head instead. An
+        // explicit --dense-path still reaches admission and is rejected there.
+        let dense_paths = oxide_effective_dense_paths(&model_type, explicit_dense, dense_paths);
         let startup_span = Span::current();
         let model = tokio::task::spawn_blocking(move || {
             startup_span.in_scope(|| {
@@ -994,6 +1018,25 @@ mod startup_tests {
 
     #[cfg(feature = "oxide")]
     #[test]
+    fn oxide_classifier_ignores_discovered_dense_but_keeps_explicit_override() {
+        let discovered = Some(vec!["2_Dense".to_owned()]);
+        assert_eq!(
+            oxide_effective_dense_paths(&ModelType::Classifier, false, discovered.clone()),
+            Some(Vec::new())
+        );
+        assert_eq!(
+            oxide_effective_dense_paths(&ModelType::Classifier, true, discovered.clone()),
+            discovered
+        );
+        let embedding = ModelType::Embedding(Pool::Mean);
+        assert_eq!(
+            oxide_effective_dense_paths(&embedding, false, discovered.clone()),
+            discovered
+        );
+    }
+
+    #[cfg(feature = "oxide")]
+    #[test]
     fn oxide_classifier_facade_reaches_task_admission_and_preserves_dtype_rejection() {
         let runtime = tokio::runtime::Builder::new_current_thread()
             .build()
@@ -1007,9 +1050,9 @@ mod startup_tests {
             std::process::id()
         ));
         std::fs::create_dir(&path).unwrap();
-        // A valid ordinary BERT shape that is deliberately outside the admitted
-        // sequence classifier geometry reaches task admission without weights/CUDA.
-        std::fs::write(path.join("config.json"), br#"{"model_type":"bert","architectures":["BertForSequenceClassification"],"hidden_size":768,"intermediate_size":3072,"num_hidden_layers":12,"num_attention_heads":12,"vocab_size":30522,"max_position_embeddings":512,"type_vocab_size":2,"layer_norm_eps":1e-12,"hidden_act":"gelu","position_embedding_type":"absolute"}"#).unwrap();
+        // A coherent ordinary BERT shape whose hidden width exceeds the bounded
+        // classifier head geometry reaches task admission without weights/CUDA.
+        std::fs::write(path.join("config.json"), br#"{"model_type":"bert","architectures":["BertForSequenceClassification"],"hidden_size":33024,"intermediate_size":33024,"num_hidden_layers":1,"num_attention_heads":129,"vocab_size":30522,"max_position_embeddings":512,"type_vocab_size":2,"layer_norm_eps":1e-12,"hidden_act":"gelu","position_embedding_type":"absolute"}"#).unwrap();
         for (dtype, expected) in [
             (DType::Float16, "classifiers require bfloat16"),
             (

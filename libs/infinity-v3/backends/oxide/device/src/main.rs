@@ -29,6 +29,7 @@ mod norm2048_vector;
 mod qwen35_norm;
 mod qwen35_attention;
 mod qwen35_copy;
+mod rms5120_aten;
 mod packed_mean_bf16;
 mod norm384;
 mod norm512;
@@ -2252,6 +2253,20 @@ mod kernels {
     #[kernel]
     pub unsafe fn infinity_qwen35_join_ab_bf16(a: *const u16, b: *const u16, out: *mut u16, tokens: u32, heads: u32) {
         unsafe { crate::qwen35_copy::join_ab(a, b, out, tokens, heads) };
+    }
+
+    /// Ordinary H5120 BF16 ATen reduction. One row per128-thread CTA.
+    /// The separate generic add-RMS ABI remains256 threads.
+    #[kernel]
+    pub unsafe fn infinity_rms_norm_5120_aten(
+        input: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe { crate::rms5120_aten::rms_norm_5120_aten(input, weight, out, rows, width, eps) };
     }
 
 }

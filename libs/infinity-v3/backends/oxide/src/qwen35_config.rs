@@ -889,6 +889,17 @@ mod tests {
             (elephant_config(), 4096, 4096, 1024, 32, 262_144, 1e-6),
             (mammoth_config(), 5120, 6144, 1024, 64, 262_144, 1e-6),
             (h1024_config(), 1024, 2048, 512, 24, 32_768, 1e-5),
+            // Canonical31 adds the ratio-eight d256 profile; absolute query
+            // head counts remain runtime geometry.
+            (
+                candidate_config(4096, 12288, 32, 4, 32, 32),
+                4096,
+                8192,
+                1024,
+                32,
+                262_144,
+                1e-6,
+            ),
         ] {
             let fixture = Fixture::new(value);
             let config = fixture.load().unwrap();
@@ -915,7 +926,7 @@ mod tests {
         unsupported_rotary["text_config"]["rope_parameters"]["mrope_section"] = json!([22, 21, 21]);
         assert_candidate_rejected(unsupported_rotary, "64");
 
-        assert_candidate_rejected(candidate_config(4096, 12288, 32, 4, 32, 32), "FA4");
+        assert_candidate_rejected(candidate_config(4096, 12288, 32, 2, 32, 32), "FA4");
         assert_candidate_rejected(
             elephant_with("max_position_embeddings", json!(524_288)),
             "rotary-table",

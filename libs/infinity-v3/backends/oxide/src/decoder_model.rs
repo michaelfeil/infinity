@@ -2480,4 +2480,120 @@ mod tests {
         assert_eq!(head.config.num_labels, 2);
         assert_eq!(head.config.hidden_size, 8);
     }
+    #[test]
+    fn qwen3_h5120_positive_intermediate_and_independent_query_widths() {
+        // These are source-admission examples, not checkpoint shape claims.
+        for (heads, intermediate) in [(40usize, 17408usize), (64, 25600), (40, 1), (64, 17407)] {
+            let fixture = Fixture::new();
+            fixture.raw_config(with_fields(
+                qwen3_config(),
+                serde_json::json!({
+                    "hidden_size": 5120,
+                    "intermediate_size": intermediate,
+                    "num_hidden_layers": 3,
+                    "num_attention_heads": heads,
+                    "num_key_value_heads": 8,
+                    "head_dim": 128
+                }),
+            ));
+            let config = fixture.config_from_disk();
+            assert_eq!(config.family, DecoderFamily::Qwen3);
+            assert_eq!(
+                (config.hidden_size, config.intermediate_size),
+                (5120, intermediate)
+            );
+            assert_eq!(
+                (config.num_attention_heads, config.num_key_value_heads),
+                (heads, 8)
+            );
+            assert_eq!(config.head_dim, 128);
+            assert_eq!(config.q_width(), heads * 128);
+            assert_eq!(config.kv_width(), 1024);
+            if heads == 64 {
+                assert_ne!(config.q_width(), config.hidden_size);
+            }
+        }
+
+        let zero = Fixture::new();
+        zero.raw_config(with_fields(
+            qwen3_config(),
+            serde_json::json!({
+                "hidden_size": 5120,
+                "intermediate_size": 0,
+                "num_attention_heads": 40,
+                "num_key_value_heads": 8,
+                "head_dim": 128
+            }),
+        ));
+        assert!(zero.error().contains("intermediate_size must be nonzero"));
+
+        let overflow = Fixture::new();
+        overflow.raw_config(with_fields(
+            qwen3_config(),
+            serde_json::json!({
+                "hidden_size": 5120,
+                "intermediate_size": usize::MAX,
+                "num_attention_heads": 40,
+                "num_key_value_heads": 8,
+                "head_dim": 128
+            }),
+        ));
+        assert!(overflow.error().contains("weight dimensions overflow"));
+
+        let beyond_cuda_index = Fixture::new();
+        beyond_cuda_index.raw_config(with_fields(
+            qwen3_config(),
+            serde_json::json!({
+                "hidden_size": 5120,
+                "intermediate_size": (1usize << 20),
+                "num_attention_heads": 40,
+                "num_key_value_heads": 8,
+                "head_dim": 128
+            }),
+        ));
+        assert!(beyond_cuda_index.error().contains("CUDA indexing range"));
+    }
+    #[test]
+    fn h5120_classifier_config_uses_the_task_aware_constructor_and_hidden_rows() {
+        use crate::decoder_classifier::{
+            DecoderClassifierConfig, DecoderClassifierScratchLayout, RowPlan,
+        };
+        for (heads, intermediate) in [(40usize, 17408usize), (64, 25600)] {
+            for architecture in [
+                "Qwen3ForSequenceClassification",
+                "Qwen3ForTokenClassification",
+            ] {
+                let value = serde_json::json!({
+                    "model_type":"qwen3","architectures":[architecture],
+                    "hidden_size":5120,"intermediate_size":intermediate,
+                    "num_hidden_layers":1,"num_attention_heads":heads,
+                    "num_key_value_heads":8,"head_dim":128,
+                    "vocab_size":151936,"max_position_embeddings":40960,
+                    "rms_norm_eps":1e-6,"rope_theta":1000000.0,
+                    "hidden_act":"silu","num_labels":2,"pad_token_id":0
+                });
+                // Exercise the same classifier-aware config constructor used by
+                // load_classifier; embedding construction must reject trained heads.
+                assert!(DecoderConfig::from_value(value.clone(), false).is_err());
+                let config = DecoderConfig::from_value(value.clone(), true).unwrap();
+                assert_eq!(
+                    crate::decoder::DecoderMath::select(&config).unwrap(),
+                    crate::decoder::DecoderMath::Qwen3H5120Ordinary
+                );
+                let head = DecoderClassifierConfig::from_value(value).unwrap();
+                assert_eq!((head.hidden_size, head.num_labels), (5120, 2));
+                assert_eq!(config.q_width(), heads * 128);
+                let layout =
+                    DecoderClassifierScratchLayout::for_key(head.hidden_size, 2, (5, 2, 2))
+                        .unwrap();
+                assert_eq!(layout.gather_elements(), 2 * config.hidden_size);
+                assert_eq!(layout.logits_elements(), 5 * 2);
+                let rows =
+                    RowPlan::sequence(&[11, 0, 22, 23, 0], &[0, 2, 5], head.pad_token_id).unwrap();
+                assert_eq!(rows.row_ids(), &[0, 3]);
+                assert_eq!((rows.rows(), rows.source_rows()), (2, 5));
+                assert_eq!(RowPlan::tokens(5).unwrap().rows(), 5);
+            }
+        }
+    }
 }

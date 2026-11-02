@@ -38,13 +38,71 @@ CANONICAL26_PROFILES = (
     ("gemma4_local256_causal", 8, 1, 256, True, True),
     ("gemma4_local256_noncausal", 8, 1, 256, False, True),
 )
-PROFILE_SEQUENCE_SHA256 = "3b214841c169c3bcaad0574ee9df917c9fc8a05be1e64602cf5b91d99a67ff1e"
+# Append-only minimal tail after the frozen canonical26 prefix. Only new
+# ratios/mask families are appended: mode26 Qwen3.5-MoE group8/d256 causal,
+# mode27/28 Qwen3 dense H5120 Q40/KV8 group5 d128 causal/noncausal, and mode29
+# Mistral noncausal W4096 asymmetric local [4096,-1]. Absolute Q/KV heads are
+# runtime tensor dimensions; Q64/Q8/Q12 duplicates are intentionally absent.
+APPENDED_PROFILES = (
+    ("qwen35_moe_gqa8", 16, 2, 256, True, False),
+    ("qwen3_q40kv8_d128_causal", 40, 8, 128, True, False),
+    ("qwen3_q40kv8_d128_noncausal", 40, 8, 128, False, False),
+    ("mistral_local4096_noncausal", 32, 8, 128, False, True),
+    ("qwen35_moe_gqa8_noncausal", 16, 2, 256, False, False),
+)
+QWEN35_MOE_PROFILE = APPENDED_PROFILES[0]
+CANONICAL27_PROFILES = CANONICAL26_PROFILES + APPENDED_PROFILES[:1]
+CANONICAL28_PROFILES = CANONICAL26_PROFILES + APPENDED_PROFILES[:2]
+CANONICAL29_PROFILES = CANONICAL26_PROFILES + APPENDED_PROFILES[:3]
+CANONICAL30_PROFILES = CANONICAL26_PROFILES + APPENDED_PROFILES[:4]
+CANONICAL31_PROFILES = CANONICAL26_PROFILES + APPENDED_PROFILES
+CANONICAL26_PROFILE_SEQUENCE_SHA256 = (
+    "3b214841c169c3bcaad0574ee9df917c9fc8a05be1e64602cf5b91d99a67ff1e"
+)
+CANONICAL_PREFIX_SEQUENCE_SHA256 = {
+    26: CANONICAL26_PROFILE_SEQUENCE_SHA256,
+    27: "7cb60381f0383fdcdd8fd4da8b0dbe0f31252e2236de40aa78ebd54987376114",
+    28: "e8cf5c714796adedf2562b4d0cd2070af237a4d5b2df39a869b2ca9607bc5e7e",
+    29: "8d08ad78acc3a31e3b8714503c0c399fa2934f2245534ef2cc59765a017d6a79",
+    30: "4647be9d34a82927cdaf37387f5314372c7cac9213f2d52a317a9f2ed16a2d26",
+    31: "187defaacc9f9b9b326b392fbeda675545a73660f44f69e21743743f782a87f1",
+}
+PROFILE_SEQUENCE_SHA256 = CANONICAL_PREFIX_SEQUENCE_SHA256[31]
 CANONICAL26_REGISTRY = {
     "namespace": "canonical26",
     "mode_count": 26,
     "mode_mask": "0x3ffffff",
+    "profile_sequence_sha256": CANONICAL26_PROFILE_SEQUENCE_SHA256,
+}
+CANONICAL27_REGISTRY = {
+    "namespace": "canonical27",
+    "mode_count": 27,
+    "mode_mask": "0x7ffffff",
+    "profile_sequence_sha256": CANONICAL_PREFIX_SEQUENCE_SHA256[27],
+}
+CANONICAL30_REGISTRY = {
+    "namespace": "canonical30",
+    "mode_count": 30,
+    "mode_mask": "0x3fffffff",
+    "profile_sequence_sha256": CANONICAL_PREFIX_SEQUENCE_SHA256[30],
+}
+CANONICAL31_REGISTRY = {
+    "namespace": "canonical31",
+    "mode_count": 31,
+    "mode_mask": "0x7fffffff",
     "profile_sequence_sha256": PROFILE_SEQUENCE_SHA256,
 }
+CANONICAL_PREFIX_REGISTRIES = {
+    count: {
+        "namespace": f"canonical{count}",
+        "mode_count": count,
+        "mode_mask": f"{(1 << count) - 1:#x}",
+        "profile_sequence_sha256": fingerprint,
+    }
+    for count, fingerprint in CANONICAL_PREFIX_SEQUENCE_SHA256.items()
+}
+CANONICAL_PROFILES = CANONICAL31_PROFILES
+CANONICAL_REGISTRY = CANONICAL31_REGISTRY
 HELPER_FAMILIES = (
     ("deberta", ("fa4_deberta_fp16", "fa4_deberta_bf16")),
     ("alibi", ("fa4_alibi_model_bias_fp16", "fa4_alibi_model_bias_bf16")),
@@ -70,6 +128,15 @@ CANONICAL26_APPENDED = {
     24: ("gemma4_local256_causal", (511, 0)),
     25: ("gemma4_local256_noncausal", (256, 256)),
 }
+CANONICAL30_APPENDED = {
+    **CANONICAL26_APPENDED,
+    26: ("qwen35_moe_gqa8", (None, None)),
+    27: ("qwen3_q40kv8_d128_causal", (None, None)),
+    28: ("qwen3_q40kv8_d128_noncausal", (None, None)),
+    29: ("mistral_local4096_noncausal", (4096, -1)),
+    30: ("qwen35_moe_gqa8_noncausal", (None, None)),
+}
+CANONICAL27_APPENDED = CANONICAL30_APPENDED
 SHA256_RE = re.compile(r"[0-9a-f]{64}")
 LEGACY_METADATA_INSTRUCTION = (
     "legacy V2 manifest rejected: derive canonical metadata first "
@@ -108,10 +175,10 @@ def profile_sequence_sha(rows):
 
 
 def validate_profile_rows(rows):
-    if len(rows) != len(CANONICAL26_PROFILES):
+    if len(rows) != len(CANONICAL31_PROFILES):
         raise RuntimeError(
-            f"profiles.inc row count {len(rows)} != {len(CANONICAL26_PROFILES)}")
-    for mode, (actual, expected) in enumerate(zip(rows, CANONICAL26_PROFILES)):
+            f"profiles.inc row count {len(rows)} != {len(CANONICAL31_PROFILES)}")
+    for mode, (actual, expected) in enumerate(zip(rows, CANONICAL31_PROFILES)):
         if tuple(actual) != expected:
             raise RuntimeError(
                 f"profiles.inc mode{mode} geometry/identity {tuple(actual)!r} != {expected!r}")
@@ -130,13 +197,13 @@ def validate_profiles_inc(profiles_inc):
 
 def validate_registry_metadata(registry):
     if not isinstance(registry, dict):
-        raise RuntimeError("canonical26 manifest lacks registry metadata")
-    extra = sorted(set(registry) - set(CANONICAL26_REGISTRY))
+        raise RuntimeError("canonical31 manifest lacks registry metadata")
+    extra = sorted(set(registry) - set(CANONICAL31_REGISTRY))
     if extra:
-        raise RuntimeError(f"canonical26 registry has unexpected fields: {extra}")
-    for key, expected in CANONICAL26_REGISTRY.items():
+        raise RuntimeError(f"canonical31 registry has unexpected fields: {extra}")
+    for key, expected in CANONICAL31_REGISTRY.items():
         if key not in registry:
-            raise RuntimeError(f"canonical26 registry lacks {key}")
+            raise RuntimeError(f"canonical31 registry lacks {key}")
         actual = registry[key]
         if key == "mode_count":
             if type(actual) is not int:
@@ -145,12 +212,12 @@ def validate_registry_metadata(registry):
             raise RuntimeError(f"registry {key} is not a string: {actual!r}")
         if actual != expected:
             raise RuntimeError(
-                f"canonical26 registry {key}={actual!r} != {expected!r}")
-    return dict(CANONICAL26_REGISTRY)
+                f"canonical31 registry {key}={actual!r} != {expected!r}")
+    return dict(CANONICAL31_REGISTRY)
 
 
 def canonical_window(mode, name, causal, local):
-    appended = CANONICAL26_APPENDED.get(mode)
+    appended = CANONICAL30_APPENDED.get(mode)
     if appended is not None:
         expected_name, expected_window = appended
         if name != expected_name:
@@ -315,13 +382,13 @@ def canonical_metadata_order(kernels, profile_names, **flags):
         if not isinstance(symbol, str) or not symbol:
             raise RuntimeError(f"invalid kernel symbol: {symbol!r}")
         if symbol in by_symbol:
-            raise RuntimeError(f"duplicate canonical26 kernel symbol: {symbol}")
+            raise RuntimeError(f"duplicate canonical31 kernel symbol: {symbol}")
         by_symbol[symbol] = kernel
     missing = [symbol for symbol in expected if symbol not in by_symbol]
     extra = [symbol for symbol in by_symbol if symbol not in expected]
     if missing or extra or len(kernels) != len(expected):
         raise RuntimeError(
-            "canonical26 kernel inventory differs: "
+            "canonical31 kernel inventory differs: "
             f"missing={missing} extra={extra} "
             f"expected_count={len(expected)} actual_count={len(kernels)}")
     return [by_symbol[symbol] for symbol in expected]
@@ -334,7 +401,7 @@ def validate_kernel_order(kernels, profile_names, **flags):
         missing = [symbol for symbol in expected if symbol not in actual]
         extra = [symbol for symbol in actual if symbol not in expected]
         raise RuntimeError(
-            "canonical26 kernel inventory differs: "
+            "canonical31 kernel inventory differs: "
             f"missing={missing} extra={extra} "
             f"expected_count={len(expected)} actual_count={len(actual)}")
     return expected
@@ -350,13 +417,13 @@ def validate_kernel_contracts(kernels, profile_rows):
         if not isinstance(symbol, str) or not symbol:
             raise RuntimeError(f"invalid kernel symbol: {symbol!r}")
         if symbol in by_symbol:
-            raise RuntimeError(f"duplicate canonical26 kernel symbol: {symbol}")
+            raise RuntimeError(f"duplicate canonical31 kernel symbol: {symbol}")
         by_symbol[symbol] = kernel
     flags = _helper_flags(by_symbol)
     expected = expected_kernel_symbols(names, **flags)
     if list(by_symbol) != expected:
         raise RuntimeError(
-            "canonical26 kernel metadata order differs from qualified source order")
+            "canonical31 kernel metadata order differs from qualified source order")
     ordinary = {}
     for mode, row in enumerate(profile_rows):
         name, heads, kv_heads, d, causal, local = row
@@ -375,7 +442,7 @@ def validate_kernel_contracts(kernels, profile_rows):
     for symbol in expected:
         expected_kernel = ordinary.get(symbol) or HELPER_CONTRACTS.get(symbol)
         if expected_kernel is None:
-            raise RuntimeError(f"unknown canonical26 kernel symbol {symbol}")
+            raise RuntimeError(f"unknown canonical31 kernel symbol {symbol}")
         _validate_exact_kernel(by_symbol[symbol], expected_kernel, symbol)
     return {"kernels": len(expected), "helpers": sum(flags.values())}
 
@@ -387,11 +454,11 @@ def validate_window_contract(kernels, profile_names):
         if not isinstance(symbol, str) or not symbol:
             raise RuntimeError(f"invalid kernel symbol: {symbol!r}")
         if symbol in by_symbol:
-            raise RuntimeError(f"duplicate canonical26 kernel symbol: {symbol}")
+            raise RuntimeError(f"duplicate canonical31 kernel symbol: {symbol}")
         by_symbol[symbol] = kernel
     annotated = set()
     for mode in WINDOW_CONTRACT_MODES:
-        name, window = CANONICAL26_APPENDED[mode]
+        name, window = CANONICAL30_APPENDED[mode]
         if profile_names[mode] != name:
             raise RuntimeError(
                 f"mode{mode} profile identity {profile_names[mode]!r} != {name!r}")
@@ -399,7 +466,7 @@ def validate_window_contract(kernels, profile_names):
             symbol = f"fa4_{name}_{dtype}"
             kernel = by_symbol.get(symbol)
             if kernel is None:
-                raise RuntimeError(f"missing canonical26 window kernel {symbol}")
+                raise RuntimeError(f"missing canonical30 window kernel {symbol}")
             annotated.add(symbol)
             if kernel.get("window") != list(window):
                 raise RuntimeError(
@@ -449,17 +516,17 @@ def inspect_manifest_inventory(manifest, profile_rows):
         order_kind = "unknown"
         raise RuntimeError(
             "manifest kernel order is neither canonical source order nor V2 link order")
-    inventory_header = manifest.get("canonical26_inventory")
+    inventory_header = manifest.get("canonical31_inventory")
     if inventory_header is not None and not isinstance(inventory_header, dict):
-        raise RuntimeError("canonical26_inventory is not an object")
+        raise RuntimeError("canonical31_inventory is not an object")
     declared = (inventory_header or {}).get("symbols")
     if order_kind == "canonical":
         if inventory_header.get("exact_order") is not True:
             raise RuntimeError(
-                "canonical26_inventory.exact_order must be boolean true")
+                "canonical31_inventory.exact_order must be boolean true")
         if declared != expected_metadata:
             raise RuntimeError(
-                "canonical kernel order requires canonical26_inventory.symbols "
+                "canonical kernel order requires canonical31_inventory.symbols "
                 "in the same canonical order")
         if "link_object_order" not in manifest:
             raise RuntimeError("canonical metadata requires explicit link_object_order")
@@ -470,7 +537,7 @@ def inspect_manifest_inventory(manifest, profile_rows):
     else:
         if declared is not None and declared != expected_legacy:
             raise RuntimeError(
-                "legacy kernel order requires legacy canonical26_inventory.symbols")
+                "legacy kernel order requires legacy canonical31_inventory.symbols")
         link_order = manifest.get("link_object_order", expected_link)
         if link_order != expected_link:
             raise RuntimeError(
@@ -507,7 +574,7 @@ def validate_manifest_inventory(manifest, profile_rows, require_all_helpers=True
         raise RuntimeError(LEGACY_METADATA_INSTRUCTION)
     if require_all_helpers and not all(inventory["helper_flags"].values()):
         raise RuntimeError(
-            "canonical26 requires every source-known helper family: "
+            "canonical30 requires every source-known helper family: "
             f"{inventory['helper_flags']}")
     validate_registry_metadata(manifest.get("registry"))
     validate_kernel_contracts(manifest["kernels"], profile_rows)
@@ -516,14 +583,14 @@ def validate_manifest_inventory(manifest, profile_rows, require_all_helpers=True
 
 def validate_compile_env(environ, compile_only):
     if not compile_only:
-        raise RuntimeError("canonical26 source export requires --compile-only")
+        raise RuntimeError("canonical30 source export requires --compile-only")
     if environ.get("CUDA_VISIBLE_DEVICES") != "":
-        raise RuntimeError("canonical26 source export requires CUDA_VISIBLE_DEVICES=''")
+        raise RuntimeError("canonical30 source export requires CUDA_VISIBLE_DEVICES=''")
     if environ.get("CUTE_DSL_PTXAS_PATH"):
         raise RuntimeError("refusing external CUTE_DSL_PTXAS_PATH for offline export")
     enabled = environ.get("FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED", "0")
     if enabled not in ("", "0", "false", "False", "no", "off"):
-        raise RuntimeError("refusing persistent FA4 JIT cache during canonical26 export")
+        raise RuntimeError("refusing persistent FA4 JIT cache during canonical30 export")
     environ["FLASH_ATTENTION_CUTE_DSL_CACHE_ENABLED"] = "0"
     environ.pop("FLASH_ATTENTION_CUTE_DSL_CACHE_DIR", None)
     environ.pop("CUTE_DSL_PTXAS_PATH", None)

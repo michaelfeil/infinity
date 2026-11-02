@@ -26,7 +26,7 @@ disabled_helpers = [
 ]
 if disabled_helpers:
     parser.error(
-        "canonical26 requires all 8 helper families; "
+        "canonical31 requires all 8 helper families; "
         f"these disable flags are not supported: {', '.join(disabled_helpers)}")
 targets = []
 for arch in args.architectures.split(";"):
@@ -69,12 +69,12 @@ for sm in targets:
             profile_names, **flags)]
     inventory = build_contract.validate_manifest_inventory(manifest, profile_rows)
     if inventory["order_kind"] != "canonical":
-        raise RuntimeError(f"{arch}: canonical26 metadata order is not canonical")
+        raise RuntimeError(f"{arch}: canonical31 metadata order is not canonical")
     if inventory["observed_symbols"] != symbols:
-        raise RuntimeError(f"{arch}: observed canonical26 symbols differ")
+        raise RuntimeError(f"{arch}: observed canonical31 symbols differ")
     if inventory["declared_symbols"] != symbols:
-        raise RuntimeError(f"{arch}: declared canonical26 symbols differ")
+        raise RuntimeError(f"{arch}: declared canonical31 symbols differ")
     if inventory["link_object_order"] != expected_link_order:
-        raise RuntimeError(f"{arch}: canonical26 link object order differs")
+        raise RuntimeError(f"{arch}: canonical31 link object order differs")
     print(f"{arch}: {len(symbols)} observed canonical objects; "
           f"{len(expected_link_order)} preserved link entries", flush=True)

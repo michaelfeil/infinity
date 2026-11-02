@@ -1,7 +1,12 @@
 // SPDX-License-Identifier: MIT
-// Canonical26 export order; this file is the native mode ABI.
+// Canonical31 export order; this file is the native mode ABI.
 // Fields: name, Q heads, KV heads, width, causal, local.
-// Modes 0..19 are published and must not change. Modes 20..25 are append-only.
+// Modes 0..19 are published and must not change. Modes 20..30 are append-only.
+// Mode 26 is Qwen3.5-MoE Q16/KV2/d256 causal global. Mode 27/28 are the
+// official Qwen3 dense H5120 Q40/KV8/d128 causal/noncausal globals.
+// Mode 29 is Mistral noncausal W4096 left=4096, right=-1 (unbounded future).
+// Mode 30 is Qwen3.5-MoE group8/d256 noncausal global, enabled by the Native
+// use_bidirectional_attention / noncausal_full_attention selector.
 FA4_PROFILE(bert, 16, 16, 64, 0, 0)
 FA4_PROFILE(modern_local, 12, 12, 64, 0, 1)
 FA4_PROFILE(qwen, 32, 8, 128, 1, 0)
@@ -28,3 +33,8 @@ FA4_PROFILE(causal_gqa8, 32, 4, 128, 1, 0)
 FA4_PROFILE(embedding_gemma2_local256, 4, 2, 256, 0, 1)
 FA4_PROFILE(gemma4_local256_causal, 8, 1, 256, 1, 1)
 FA4_PROFILE(gemma4_local256_noncausal, 8, 1, 256, 0, 1)
+FA4_PROFILE(qwen35_moe_gqa8, 16, 2, 256, 1, 0)
+FA4_PROFILE(qwen3_q40kv8_d128_causal, 40, 8, 128, 1, 0)
+FA4_PROFILE(qwen3_q40kv8_d128_noncausal, 40, 8, 128, 0, 0)
+FA4_PROFILE(mistral_local4096_noncausal, 32, 8, 128, 0, 1)
+FA4_PROFILE(qwen35_moe_gqa8_noncausal, 16, 2, 256, 0, 0)

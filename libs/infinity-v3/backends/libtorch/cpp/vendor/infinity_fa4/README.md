@@ -72,3 +72,16 @@ classes. The exhaustive CPU regression in Oxide's `deberta_reciprocal` test
 checks all 65,536 BF16 patterns for both constants, including NaN conversion.
 GPU instruction and model equivalence remain separate qualification steps;
 compilation alone establishes neither runtime quality nor performance.
+
+The default registry is canonical31 (export ABI7/native ABI1): the original
+26 modes keep their exact order, followed by Qwen3.5-MoE GQA8/d256 causal,
+Qwen3 Q40/KV8/d128 causal and noncausal, an asymmetric Mistral inventory
+entry, and Qwen3.5-MoE GQA8/d256 noncausal. This produces 62 ordinary
+FP16/BF16 objects and the same eight helper objects (70 total). The Rust
+loader continues accepting old canonical26 bundles for old profiles. Mode29's
+`[4096,-1]` window is provider inventory only; the current Rust runtime rejects
+that unsupported asymmetric mask. Provider inventory is not model qualification.
+
+The existing architecture selection, compile-only guard, portable linking and
+`--only-symbol` development export controls are unchanged. A selected export
+never produces a production-admissible manifest.

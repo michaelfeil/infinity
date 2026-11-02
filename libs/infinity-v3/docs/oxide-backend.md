@@ -39,7 +39,7 @@ variant of these families.
 | MPNet | BF16 H768, intermediate width 3072, 12 attention heads, 32 relative buckets and at most 512 positions. Uses exact GELU, learned bucket attention and the native `positions + 2` lookup. Only token type `0` is accepted; classifier and MLM heads are rejected. |
 | DeBERTa-v2/v3 | BF16 H768, 12 heads, intermediate width 3072, word-only embeddings and learned relative attention. Shared or dedicated relative projections and c2p/p2c combinations are supported. Absolute position/type embeddings, embedding projection and convolution are rejected. Requires FA4. |
 | Qwen2 | Dense SiLU text backbone, full split-half NeoX RoPE, global causal or noncausal attention, and a matching FA4 profile. The H896/d64 native RMS/rotary recipe is rejected. The exercised GTE-Qwen2-1.5B-instruct geometry is H1536, 12 Q/2 KV heads, d128, noncausal. |
-| Qwen3 | BF16 dense SiLU backbones at H1024, H2048, H2560 or H4096, d128 learned Q/K head norms, full NeoX RoPE, and a matching causal or noncausal FA4 profile. Query projection width may differ from hidden width. The `bidirectional_pplx_qwen3` alias follows Native configuration precedence. Qwen3 4B and Embedding 0.6B/8B are exercised; expert models and other normalization widths are rejected. |
+| Qwen3 | BF16 dense SiLU backbones at H1024, H2048, H2560, H4096 or H5120, d128 learned Q/K head norms, full NeoX RoPE, and a matching causal or noncausal FA4 profile. H5120 admits Q40/KV8 and Q64/KV8; query projection width may differ from hidden width. The `bidirectional_pplx_qwen3` alias follows Native configuration precedence. Qwen3 4B and Embedding 0.6B/8B are exercised; H5120 has separate kernel controls, with trained-checkpoint qualification pending. |
 | Qwen3 MoE | BF16 routed SiLU backbones with 128 experts, top-8 routing, d128 Q/K norms and a matching FA4 profile. Qwen3-30B-A3B at H2048 is checkpoint-qualified through the ordinary serving factory, including CLS/mean/last-token and raw/mixed outputs. Requires the architecture-specific MoE library under the kernel bundle's `moe/` directory. Larger geometries and performance remain unqualified. |
 | Mistral | BF16 H4096, 32 Q/8 KV heads at d128, dense SiLU and base RoPE, with global causal attention or a 4096-token sliding window. A positive window stays active even when `use_sliding_window` is false, matching Native. Mistral-7B-v0.1 is exercised. Other geometries, scaled RoPE and config-level average pooling are rejected. |
 | Qwen3.5 dense text | BF16, d256 heads, partial rotary width 64, gated full attention and 128-wide GDN heads. Hidden width is at most 8192; the actual GQA ratio requires a matching FA4 profile. Query width may differ from hidden width. Model geometry is validated structurally rather than by checkpoint name. |
@@ -66,10 +66,16 @@ Elephant and Mammoth have separate native text and single-question Decision
 qualification; this does not establish every Qwen3.5 geometry or performance.
 The cold runtime dependencies are selected by `INFINITY_FA4_ROOT`,
 `INFINITY_OXIDE_GDN_RAW_KERNELS`, `INFINITY_OXIDE_GDN_PROVIDER`, and
-`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 99 Rust
+`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 100 Rust
 exports; Qwen3.5 requires its nine additive exports. Dense decoders require the
 90-export bundle or newer for Native BF16 mean pooling. Other existing families
-can retain their older qualified bundles.
+can retain their older qualified bundles. H5120 Qwen3 requires the additive
+`infinity_rms_norm_5120_aten` export. Q40/KV8 additionally requires the
+canonical31 FA4 pair; older FA4 prefixes remain usable for their existing
+profiles. Its ordinary RMS uses 128 threads, while its add-RMS keeps the
+separately checked 256-thread recipe. Twenty H5120 kernel controls match Native
+exactly on H100, including memory and initialization checks; this does not
+qualify a complete 14B/32B checkpoint or establish a performance gain.
 Stored `A_log` and `dt_bias` decay parameters retain native F32 precision;
 other parameters follow the selected BF16 weight conversion.
 
@@ -95,12 +101,26 @@ LayerNorm epsilon `1e-12`. It supports all three pools and raw/mixed output;
 Dense modules and other FP16 configurations are rejected. FP16 uses the same
 typed encoder loop and workspace ownership as BF16, without CUDA graphs.
 
-BF16 classifier admission covers MS MARCO MiniLM-L6 (H384, one logit) and
-DSLIM BERT-base NER (H768, nine logits), with sequence and token predictions
-for both checkpoints. Optional BERT pooler weights are honored for sequence
-predictions. Other classifier configurations, MLP heads, Dense modules and
-FP16 classifiers are rejected. These paths have native output and lifecycle
-qualification; performance remains workload-specific.
+BF16 classifier admission covers the BERT-style absolute-position families:
+`BertForSequenceClassification`/`BertForTokenClassification`,
+`RobertaForSequenceClassification`/`RobertaForTokenClassification`,
+`XLMRobertaForSequenceClassification`/`XLMRobertaForTokenClassification`, and
+`CamembertForSequenceClassification`/`CamembertForTokenClassification`.
+The configured backbone geometry is validated rather than matched against a
+fixed MiniLM/DSLIM pair. Sequence and token predictions share the packed
+workspace and use the checkpoint's actual output width.
+
+A complete `classifier.dense` -> tanh -> `classifier.out_proj` head is executed
+for every packed token on token readout and for the selected first token on
+sequence readout, matching Native. Otherwise the root
+`classifier.weight`/`classifier.bias` projection is used. Optional
+`bert.pooler.dense` plus tanh is honored for sequence readout only; the
+independent pooler namespace matches Native and is ignored by token readout.
+Incomplete MLP or pooler tensor groups and FP16 classifiers are rejected before
+device allocation. Discovered Sentence Transformers Dense embedding modules are
+ignored by classifier serving, matching Native; an explicit Dense override is
+rejected. These paths are candidate implementations pending actual-checkpoint
+Root qualification; performance remains workload-specific.
 
 DeBERTa uses the same packed workspace, deferred results and pooling interfaces.
 Sequence and token classifier readout follows the trained architecture. Its

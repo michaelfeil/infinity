@@ -4,8 +4,8 @@
 //! Profile order and exported windows mirror the repository's ABI7
 //! `vendor/infinity_fa4/profiles.inc` and `build.py`. A bundle is accepted only
 //! when its manifest exports a declared prefix of the canonical append registry
-//! (legacy19, published20, private23, registry24, or canonical26) in that known
-//! order for the selected dtype. Absolute head counts are runtime tensor
+//! (legacy19, published20, private23, registry24, canonical26, or canonical31)
+//! in that known order for the selected dtype. Absolute head counts are runtime tensor
 //! dimensions; selection uses the exported Q/KV grouping with the exact ratio,
 //! dimension and mask kind. Global masks stay exact. Local profiles may serve
 //! safe runtime extents of the same causal/local kind because FA4 passes the
@@ -224,7 +224,8 @@ const PUBLISHED_PROFILE_COUNT: usize = 20;
 const PRIVATE23_PROFILE_COUNT: usize = 23;
 const REGISTRY24_PROFILE_COUNT: usize = 24;
 const CANONICAL26_PROFILE_COUNT: usize = 26;
-const PROFILES: [Profile; CANONICAL26_PROFILE_COUNT] = [
+const CANONICAL31_PROFILE_COUNT: usize = 31;
+const PROFILES: [Profile; CANONICAL31_PROFILE_COUNT] = [
     Profile::new("bert", 16, 16, 64, false, Window::Global),
     Profile::new(
         "modern_local",
@@ -338,12 +339,48 @@ const PROFILES: [Profile; CANONICAL26_PROFILE_COUNT] = [
             right: 256,
         },
     ),
+    // Canonical31 append: Qwen3.5-MoE Q16/KV2 d256 causal global, the official
+    // Qwen3 dense H5120 Q40/KV8 d128 causal/noncausal globals, the
+    // asymmetric-forward Mistral noncausal inventory window, and the
+    // Qwen3.5-MoE noncausal global. Mode29's `[4096, -1]` is an exact manifest
+    // inventory identity only: the runtime request path still rejects negative
+    // extents until the provider gains a matching runtime contract.
+    Profile::new("qwen35_moe_gqa8", 16, 2, 256, true, Window::Global),
+    Profile::new("qwen3_q40kv8_d128_causal", 40, 8, 128, true, Window::Global),
+    Profile::new(
+        "qwen3_q40kv8_d128_noncausal",
+        40,
+        8,
+        128,
+        false,
+        Window::Global,
+    ),
+    Profile::new(
+        "mistral_local4096_noncausal",
+        32,
+        8,
+        128,
+        false,
+        Window::Local {
+            left: 4096,
+            right: -1,
+        },
+    ),
+    Profile::new(
+        "qwen35_moe_gqa8_noncausal",
+        16,
+        2,
+        256,
+        false,
+        Window::Global,
+    ),
 ];
 const _: () = assert!(LEGACY_PROFILE_COUNT < PUBLISHED_PROFILE_COUNT);
 const _: () = assert!(PUBLISHED_PROFILE_COUNT < PRIVATE23_PROFILE_COUNT);
 const _: () = assert!(PRIVATE23_PROFILE_COUNT < REGISTRY24_PROFILE_COUNT);
 const _: () = assert!(REGISTRY24_PROFILE_COUNT < CANONICAL26_PROFILE_COUNT);
-const _: () = assert!(PROFILES.len() == CANONICAL26_PROFILE_COUNT);
+const _: () = assert!(CANONICAL26_PROFILE_COUNT < CANONICAL31_PROFILE_COUNT);
+const _: () = assert!(PROFILES.len() == CANONICAL31_PROFILE_COUNT);
 
 // Exact manifest registry identity for every legal declared ordinary prefix.
 // The fingerprint is the SHA-256 of the canonical profile sequence
@@ -391,6 +428,33 @@ const REGISTRY_PREFIX_IDENTITIES: &[(usize, &str, &str)] = &[
         26,
         "canonical26",
         "3b214841c169c3bcaad0574ee9df917c9fc8a05be1e64602cf5b91d99a67ff1e",
+    ),
+    // Canonical31 source-contract identities. A declared partial prefix uses
+    // its own ordered sequence fingerprint; only all31 modes use the full hash.
+    (
+        27,
+        "canonical31",
+        "7cb60381f0383fdcdd8fd4da8b0dbe0f31252e2236de40aa78ebd54987376114",
+    ),
+    (
+        28,
+        "canonical31",
+        "e8cf5c714796adedf2562b4d0cd2070af237a4d5b2df39a869b2ca9607bc5e7e",
+    ),
+    (
+        29,
+        "canonical31",
+        "8d08ad78acc3a31e3b8714503c0c399fa2934f2245534ef2cc59765a017d6a79",
+    ),
+    (
+        30,
+        "canonical31",
+        "4647be9d34a82927cdaf37387f5314372c7cac9213f2d52a317a9f2ed16a2d26",
+    ),
+    (
+        31,
+        "canonical31",
+        "187defaacc9f9b9b326b392fbeda675545a73660f44f69e21743743f782a87f1",
     ),
 ];
 
@@ -445,6 +509,26 @@ fn parse_window(value: Option<&serde_json::Value>) -> Option<Window> {
     }
 }
 
+/// Manifest-only window identity. Canonical31 mode29 carries the exact
+/// asymmetric-forward sentinel `[4096, -1]` for inventory validation. Accept
+/// only that declared profile pair; runtime requests still reject every
+/// negative extent through `Window::canonical_local_extents`.
+fn manifest_window_matches(value: Option<&serde_json::Value>, expected: Window) -> bool {
+    match expected {
+        Window::Local { left, right: -1 } => {
+            let Some(items) = value.and_then(serde_json::Value::as_array) else {
+                return false;
+            };
+            if items.len() != 2 {
+                return false;
+            }
+            items.first().and_then(serde_json::Value::as_i64) == Some(i64::from(left))
+                && items.get(1).and_then(serde_json::Value::as_i64) == Some(-1)
+        }
+        _ => parse_window(value) == Some(expected),
+    }
+}
+
 fn kernel_matches(kernel: &serde_json::Value, profile: &Profile, dtype: DType) -> bool {
     let symbol = format!("fa4_{}_{}", profile.name, dtype.name());
     kernel.get("symbol").and_then(serde_json::Value::as_str) == Some(symbol.as_str())
@@ -455,7 +539,7 @@ fn kernel_matches(kernel: &serde_json::Value, profile: &Profile, dtype: DType) -
         && kernel.get("d").and_then(serde_json::Value::as_u64)
             == u64::try_from(profile.head_dim).ok()
         && kernel.get("causal").and_then(serde_json::Value::as_bool) == Some(profile.causal)
-        && parse_window(kernel.get("window")) == Some(profile.window)
+        && manifest_window_matches(kernel.get("window"), profile.window)
         && kernel.get("dtype").and_then(serde_json::Value::as_str) == Some(dtype.name())
 }
 
@@ -813,14 +897,30 @@ pub(crate) struct Fa4 {
 // SAFETY: the engine Mutex serializes calls and teardown, binds the retained
 // primary context and drains pending work before releasing buffers/library.
 unsafe impl Send for Fa4 {}
+fn validate_manifest_abi(manifest: &serde_json::Value) -> Result<(), BackendError> {
+    if manifest
+        .get("abi_version")
+        .and_then(serde_json::Value::as_u64)
+        != Some(7)
+        || manifest
+            .get("native_abi_version")
+            .and_then(serde_json::Value::as_u64)
+            != Some(1)
+    {
+        return Err(start("expected native ABI1/export ABI7"));
+    }
+    Ok(())
+}
+
 impl Fa4 {
     pub(crate) fn supports(spec: &AttentionSpec) -> bool {
         profile_index(spec).is_some() && resolve_scale(spec).is_ok()
     }
 
-    /// Conservative guard for published auto routing. Appended canonical26
-    /// profiles remain available to explicit constructors and to the
-    /// manifest-driven loader, but old auto paths keep the published prefix.
+    /// Conservative guard for published auto routing. Appended canonical26 and
+    /// canonical31 profiles remain available to explicit constructors and to
+    /// the manifest-driven loader (for example the explicit Qwen3 H5120
+    /// Q40/KV8 root), but old auto paths keep the published prefix.
     pub(crate) fn supports_published(spec: &AttentionSpec) -> bool {
         Self::supports(spec)
             && select_profile_index(&PROFILES[..PUBLISHED_PROFILE_COUNT], spec).is_some()
@@ -840,17 +940,7 @@ impl Fa4 {
         let manifest: serde_json::Value =
             serde_json::from_slice(&std::fs::read(path.join("manifest.json")).map_err(start)?)
                 .map_err(start)?;
-        if manifest
-            .get("abi_version")
-            .and_then(serde_json::Value::as_u64)
-            != Some(7)
-            || manifest
-                .get("native_abi_version")
-                .and_then(serde_json::Value::as_u64)
-                != Some(1)
-        {
-            return Err(start("expected native ABI1/export ABI7"));
-        }
+        validate_manifest_abi(&manifest)?;
         let (mode, declared) = profile_selection(&manifest, &spec)?;
         let mode = i32::try_from(mode).map_err(start)?;
         let scale = resolve_scale(&spec)?;
@@ -1288,6 +1378,16 @@ mod tests {
         for dtype in [DType::F16, DType::Bf16] {
             for (mode, profile) in PROFILES.iter().enumerate() {
                 let spec = spec_for(profile, dtype);
+                if mode == 29 {
+                    // Asymmetric-forward inventory identity: mode29 cannot be
+                    // selected or executed until its runtime semantics are
+                    // qualified. Keep this an explicit typed rejection.
+                    let error = select_profile(&manifest, &spec).unwrap_err();
+                    assert!(format!("{error}").contains("missing-profile"));
+                    continue;
+                }
+                // All first26 plus the qualifying canonical31 appends
+                // 26/27/28/30 remain actual selectable cases.
                 assert_eq!(select_profile(&manifest, &spec).ok(), Some(mode));
             }
         }
@@ -1312,10 +1412,15 @@ mod tests {
             );
             assert_eq!(select_profile_index(&PROFILES, &mistral), Some(20));
             // Appended geometries with no published-prefix match must stay on
-            // the old auto fallback path.
-            for mode in [21, 22, 23, 24, 25] {
-                let spec = spec_for(&PROFILES[mode], dtype);
-                assert!(Fa4::supports(&spec));
+            // the old auto fallback path. Canonical31 stays beyond the
+            // published guard too, including the explicit Qwen3 H5120 pair.
+            for (mode, profile) in PROFILES.iter().enumerate().skip(21) {
+                let spec = spec_for(profile, dtype);
+                if mode == 29 {
+                    assert!(!Fa4::supports(&spec));
+                } else {
+                    assert!(Fa4::supports(&spec));
+                }
                 assert!(!Fa4::supports_published(&spec));
             }
         }
@@ -1622,25 +1727,30 @@ mod tests {
         .is_err());
         assert!(validate_mode_mask(
             PROFILES.len(),
-            mode_mask(PROFILES.len()).expect("appended mode mask")
-                | (1 << CANONICAL26_PROFILE_COUNT)
+            mode_mask(PROFILES.len()).expect("appended mode mask") ^ 1
         )
         .is_err());
     }
 
     #[test]
     fn canonical26_modes_are_appended_in_order_and_mode_mask_is_exact() {
-        assert_eq!(PROFILES.len(), 26);
+        assert_eq!(PROFILES.len(), CANONICAL31_PROFILE_COUNT);
         assert_eq!(PUBLISHED_PROFILE_COUNT, 20);
         assert_eq!(PRIVATE23_PROFILE_COUNT, 23);
         assert_eq!(REGISTRY24_PROFILE_COUNT, 24);
         assert_eq!(CANONICAL26_PROFILE_COUNT, 26);
+        assert_eq!(CANONICAL31_PROFILE_COUNT, 31);
         assert_eq!(PROFILES[20].name, "mistral_local4096");
         assert_eq!(PROFILES[21].name, "gemma3_local512");
         assert_eq!(PROFILES[22].name, "causal_gqa8");
         assert_eq!(PROFILES[23].name, "embedding_gemma2_local256");
         assert_eq!(PROFILES[24].name, "gemma4_local256_causal");
         assert_eq!(PROFILES[25].name, "gemma4_local256_noncausal");
+        assert_eq!(PROFILES[26].name, "qwen35_moe_gqa8");
+        assert_eq!(PROFILES[27].name, "qwen3_q40kv8_d128_causal");
+        assert_eq!(PROFILES[28].name, "qwen3_q40kv8_d128_noncausal");
+        assert_eq!(PROFILES[29].name, "mistral_local4096_noncausal");
+        assert_eq!(PROFILES[30].name, "qwen35_moe_gqa8_noncausal");
         assert_eq!(
             PROFILES[23].window,
             Window::Local {
@@ -1662,11 +1772,24 @@ mod tests {
                 right: 256
             }
         );
+        assert_eq!(
+            PROFILES[29].window,
+            Window::Local {
+                left: 4096,
+                right: -1
+            }
+        );
 
-        let mask = mode_mask(CANONICAL26_PROFILE_COUNT).expect("canonical26 mask");
-        assert_eq!(mask, 0x03ff_ffff);
-        assert_eq!(mask.count_ones(), 26);
-        assert!(validate_mode_mask(PROFILES.len(), mask).is_ok());
+        let mask26 = mode_mask(CANONICAL26_PROFILE_COUNT).expect("canonical26 mask");
+        assert_eq!(mask26, 0x03ff_ffff);
+        assert_eq!(mask26.count_ones(), 26);
+        assert!(validate_mode_mask(CANONICAL26_PROFILE_COUNT, mask26).is_ok());
+        assert!(validate_mode_mask(PROFILES.len(), mask26).is_err());
+
+        let mask31 = mode_mask(CANONICAL31_PROFILE_COUNT).expect("canonical31 mask");
+        assert_eq!(mask31, 0x7fff_ffff);
+        assert_eq!(mask31.count_ones(), 31);
+        assert!(validate_mode_mask(PROFILES.len(), mask31).is_ok());
         assert!(validate_mode_mask(
             PROFILES.len(),
             mode_mask(REGISTRY24_PROFILE_COUNT).expect("registry24 mask")
@@ -1748,8 +1871,8 @@ mod tests {
             ratio4.heads = 16;
             ratio4.kv_heads = 4;
             assert_eq!(select_profile(&manifest, &ratio4).ok(), Some(21));
-            // Global d256 masks stay exact: ratio-4 noncausal is mode6, while a
-            // ratio-8 global d256 request has no compiled profile.
+            // Global d256 masks stay exact: ratio-4 noncausal is mode6, while
+            // ratio-8 global d256 is the appended canonical31 MoE pair.
             let mut global_ratio4 = spec_for(&profile, dtype);
             global_ratio4.heads = 16;
             global_ratio4.kv_heads = 4;
@@ -1759,12 +1882,24 @@ mod tests {
             let mut global_ratio8 = global_ratio4;
             global_ratio8.heads = 16;
             global_ratio8.kv_heads = 2;
-            assert!(select_profile(&manifest, &global_ratio8).is_err());
+            assert_eq!(select_profile(&manifest, &global_ratio8).ok(), Some(30));
+            let mut global_ratio8_causal = global_ratio8;
+            global_ratio8_causal.causal = true;
+            assert_eq!(
+                select_profile(&manifest, &global_ratio8_causal).ok(),
+                Some(26)
+            );
+            // The d256 ratio-8 MoE identity does not absorb d128 Q40/KV8.
+            let mut qwen3_d256 = global_ratio8;
+            qwen3_d256.heads = 40;
+            qwen3_d256.kv_heads = 8;
+            qwen3_d256.head_dim = 256;
+            assert!(select_profile(&manifest, &qwen3_d256).is_err());
         }
     }
 
     #[test]
-    fn canonical26_complete_bundle_with_exact_mul_validates_26_modes() {
+    fn canonical31_complete_bundle_with_exact_mul_validates_31_modes() {
         let mut manifest = manifest_for(&[DType::F16, DType::Bf16]);
         for dtype in [DType::F16, DType::Bf16] {
             manifest["kernels"]
@@ -1776,18 +1911,40 @@ mod tests {
         for dtype in [DType::F16, DType::Bf16] {
             assert_eq!(
                 validate_profile_order(&manifest, dtype).ok(),
-                Some(CANONICAL26_PROFILE_COUNT)
+                Some(CANONICAL31_PROFILE_COUNT)
             );
             assert_eq!(
-                select_profile(&manifest, &spec_for(&PROFILES[25], dtype)).ok(),
-                Some(25)
+                select_profile(&manifest, &spec_for(&PROFILES[30], dtype)).ok(),
+                Some(30)
             );
         }
     }
 
     #[test]
+    fn canonical26_prefix_still_validates_but_cannot_select_canonical31_ratio5() {
+        let manifest = manifest_prefix(&[DType::F16, DType::Bf16], CANONICAL26_PROFILE_COUNT);
+        for dtype in [DType::F16, DType::Bf16] {
+            assert_eq!(
+                validate_profile_order(&manifest, dtype).ok(),
+                Some(CANONICAL26_PROFILE_COUNT)
+            );
+            // The new Qwen3 H5120 Q40/KV8 globals must typed-reject on an old
+            // canonical26 bundle instead of matching an older ratio.
+            for profile in [PROFILES[27], PROFILES[28]] {
+                let error = select_profile(&manifest, &spec_for(&profile, dtype)).unwrap_err();
+                assert!(format!("{error}").contains("missing-profile"));
+            }
+            // Older d128 ratio-8 exports remain reachable on the old prefix.
+            let mut q64 = spec_for(&PROFILES[22], dtype);
+            q64.heads = 64;
+            q64.kv_heads = 8;
+            assert_eq!(select_profile(&manifest, &q64).ok(), Some(22));
+        }
+    }
+
+    #[test]
     fn canonical26_registry_metadata_is_validated_when_present() {
-        let baseline = manifest_for(&[DType::F16, DType::Bf16]);
+        let baseline = manifest_prefix(&[DType::F16, DType::Bf16], CANONICAL26_PROFILE_COUNT);
         let mut manifest = baseline.clone();
         manifest["registry"] = json!({
             "namespace": "canonical26",
@@ -1830,6 +1987,237 @@ mod tests {
             validate_profile_order(&prefix24, DType::F16).ok(),
             Some(REGISTRY24_PROFILE_COUNT)
         );
+    }
+
+    #[test]
+    fn canonical31_registry_metadata_carries_the_source_contract_identity() {
+        let mut manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        manifest["registry"] = json!({
+            "namespace": "canonical31",
+            "mode_count": 31,
+            "mode_mask": "0x7fffffff",
+            "profile_sequence_sha256": "187defaacc9f9b9b326b392fbeda675545a73660f44f69e21743743f782a87f1",
+        });
+        for dtype in [DType::F16, DType::Bf16] {
+            assert_eq!(
+                validate_profile_order(&manifest, dtype).ok(),
+                Some(CANONICAL31_PROFILE_COUNT)
+            );
+        }
+        for (field, value) in [
+            ("mode_count", json!(30)),
+            ("mode_mask", json!("0x3fffffff")),
+            ("namespace", json!("canonical26")),
+            (
+                "profile_sequence_sha256",
+                json!("3b214841c169c3bcaad0574ee9df917c9fc8a05be1e64602cf5b91d99a67ff1e"),
+            ),
+        ] {
+            let mut wrong = manifest.clone();
+            wrong["registry"][field] = value;
+            assert!(
+                validate_profile_order(&wrong, DType::F16).is_err(),
+                "{field}"
+            );
+        }
+    }
+
+    /// Load the compile-only canonical31 manifest that Root catalog binds
+    /// through `INFINITY_FA4_CANONICAL31_MANIFEST`. This is a final CPU proof,
+    /// not an optional smoke test, so a missing or unreadable binding fails
+    /// loudly instead of silently skipping.
+    fn canonical31_fixture() -> Value {
+        let path = std::env::var_os("INFINITY_FA4_CANONICAL31_MANIFEST").unwrap_or_else(|| {
+            panic!("set INFINITY_FA4_CANONICAL31_MANIFEST to the real canonical31 manifest")
+        });
+        let bytes = std::fs::read(&path)
+            .unwrap_or_else(|error| panic!("read canonical31 manifest {path:?}: {error}"));
+        serde_json::from_slice(&bytes)
+            .unwrap_or_else(|error| panic!("parse canonical31 manifest {path:?}: {error}"))
+    }
+
+    #[test]
+    #[ignore = "requires actual canonical31 bundle; run explicitly with env"]
+    fn canonical31_real_manifest_validates_full_registry_for_both_dtypes() {
+        let manifest = canonical31_fixture();
+        validate_manifest_abi(&manifest).expect("actual canonical31 ABI header");
+        for (key, bad_value) in [("abi_version", 9), ("native_abi_version", 2)] {
+            let mut bad = manifest.clone();
+            bad[key] = json!(bad_value);
+            assert!(validate_manifest_abi(&bad).is_err());
+        }
+        assert_eq!(
+            manifest["registry"]["namespace"].as_str(),
+            Some("canonical31")
+        );
+        assert_eq!(manifest["registry"]["mode_count"].as_u64(), Some(31));
+        for dtype in [DType::F16, DType::Bf16] {
+            assert_eq!(
+                validate_profile_order(&manifest, dtype).ok(),
+                Some(CANONICAL31_PROFILE_COUNT)
+            );
+            // Qualifying canonical31 appends are real selectable cases on the
+            // actual bound manifest; mode29 stays an explicit typed pending.
+            for (mode, profile) in [
+                (26, PROFILES[26]),
+                (27, PROFILES[27]),
+                (28, PROFILES[28]),
+                (30, PROFILES[30]),
+            ] {
+                assert_eq!(
+                    select_profile(&manifest, &spec_for(&profile, dtype)).ok(),
+                    Some(mode)
+                );
+            }
+            let error = select_profile(&manifest, &spec_for(&PROFILES[29], dtype)).unwrap_err();
+            assert!(format!("{error}").contains("missing-profile"));
+            // The exact Q40/KV8 H5120 pair selects the appended globals.
+            for (mode, profile) in [(27, PROFILES[27]), (28, PROFILES[28])] {
+                let mut spec = spec_for(&profile, dtype);
+                spec.heads = 40;
+                spec.kv_heads = 8;
+                assert_eq!(select_profile(&manifest, &spec).ok(), Some(mode));
+            }
+        }
+        // Registry tampering still fails on the real manifest.
+        let mut tampered = manifest.clone();
+        tampered["registry"]["profile_sequence_sha256"] = json!("00");
+        assert!(validate_profile_order(&tampered, DType::Bf16).is_err());
+    }
+
+    #[test]
+    fn canonical31_qwen3_h5120_ratio5_rejects_nearby_zero_and_overflow() {
+        let full = manifest_for(&[DType::F16, DType::Bf16]);
+        let old26 = manifest_prefix(&[DType::F16, DType::Bf16], CANONICAL26_PROFILE_COUNT);
+        for dtype in [DType::F16, DType::Bf16] {
+            for (mode, profile) in [(27, PROFILES[27]), (28, PROFILES[28])] {
+                let mut spec = spec_for(&profile, dtype);
+                // Absolute H5120 heads are runtime for the exported ratio 5.
+                for (heads, kv_heads) in [(40, 8), (80, 16), (20, 4)] {
+                    spec.heads = heads;
+                    spec.kv_heads = kv_heads;
+                    assert_eq!(select_profile(&full, &spec).ok(), Some(mode));
+                    let error = select_profile(&old26, &spec).unwrap_err();
+                    assert!(format!("{error}").contains("missing-profile"));
+                }
+            }
+            for (heads, kv_heads, head_dim, label) in [
+                (40, 7, 128, "nearby KV ratio"),
+                (39, 8, 128, "nearby Q ratio"),
+                (45, 8, 128, "wider Q ratio"),
+                (80, 8, 128, "nearby doubled Q ratio"),
+                (40, 8, 256, "wrong head dimension"),
+                (0, 0, 128, "zero grouping"),
+                (usize::MAX, 8, 128, "overflowing grouping"),
+            ] {
+                let mut spec = spec_for(&PROFILES[27], dtype);
+                spec.heads = heads;
+                spec.kv_heads = kv_heads;
+                spec.head_dim = head_dim;
+                assert!(select_profile(&full, &spec).is_err(), "accepted {label}");
+            }
+            // Causal/noncausal stay distinct even at the same ratio.
+            let mut noncausal = spec_for(&PROFILES[27], dtype);
+            noncausal.heads = 40;
+            noncausal.kv_heads = 8;
+            noncausal.causal = false;
+            assert_eq!(select_profile(&full, &noncausal).ok(), Some(28));
+        }
+    }
+
+    #[test]
+    fn canonical31_keeps_q64_kv8_dynamic_selection_on_old_modes() {
+        let full = manifest_for(&[DType::F16, DType::Bf16]);
+        for dtype in [DType::F16, DType::Bf16] {
+            let mut causal = spec_for(&PROFILES[22], dtype);
+            causal.heads = 64;
+            causal.kv_heads = 8;
+            assert_eq!(select_profile(&full, &causal).ok(), Some(22));
+            let mut noncausal = causal;
+            noncausal.causal = false;
+            assert_eq!(select_profile(&full, &noncausal).ok(), Some(5));
+        }
+    }
+
+    #[test]
+    fn canonical31_mode29_inventory_window_never_becomes_a_runtime_mask() {
+        let profile = PROFILES[29];
+        assert!(manifest_window_matches(
+            Some(&json!([4096, -1])),
+            profile.window
+        ));
+        for wrong in [
+            json!([4096, -2]),
+            json!([1, -1]),
+            json!([-1, -1]),
+            json!([4096, 0]),
+            json!([null, null]),
+            json!([4096]),
+        ] {
+            assert!(
+                !manifest_window_matches(Some(&wrong), profile.window),
+                "accepted inventory window {wrong}"
+            );
+        }
+        // The signed parser is scoped to the exact mode29 identity.
+        assert!(!manifest_window_matches(
+            Some(&json!([4096, -1])),
+            PROFILES[20].window
+        ));
+        assert!(!manifest_window_matches(
+            Some(&json!([4095, -1])),
+            PROFILES[20].window
+        ));
+
+        let manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        for dtype in [DType::F16, DType::Bf16] {
+            let mut local = spec_for(&profile, dtype);
+            let error = select_profile(&manifest, &local).unwrap_err();
+            assert!(format!("{error}").contains("missing-profile"));
+            let batch = fake_batch(&local, 8, 8);
+            assert!(check_batch(&local, 90, &batch).is_err());
+            assert!(resolve_scale(&local).is_ok());
+
+            // A negative-forward local request is still a typed reject.
+            local.window = Window::Local {
+                left: 128,
+                right: -1,
+            };
+            assert!(select_profile(&manifest, &local).is_err());
+
+            // Mode29 must not silently become the ratio-4 d128 global masks.
+            let mut global = local;
+            global.window = Window::Global;
+            global.causal = false;
+            assert_eq!(select_profile(&manifest, &global).ok(), Some(13));
+            global.causal = true;
+            assert_eq!(select_profile(&manifest, &global).ok(), Some(2));
+        }
+    }
+
+    #[test]
+    fn canonical31_rejects_reordered_and_unknown_tail_exports() {
+        for dtype in [DType::F16, DType::Bf16] {
+            for (left, right) in [(26, 27), (28, 29), (29, 30)] {
+                let mut reordered = manifest_prefix(&[dtype], CANONICAL31_PROFILE_COUNT);
+                reordered["kernels"]
+                    .as_array_mut()
+                    .expect("test manifest has kernels")
+                    .swap(left, right);
+                assert!(
+                    validate_profile_order(&reordered, dtype).is_err(),
+                    "accepted reordered tail {left}/{right} for {}",
+                    dtype.name()
+                );
+            }
+
+            let mut unknown = manifest_prefix(&[dtype], CANONICAL31_PROFILE_COUNT);
+            unknown["kernels"]
+                .as_array_mut()
+                .expect("test manifest has kernels")
+                .push(kernel(&PROFILES[0], dtype));
+            assert!(validate_profile_order(&unknown, dtype).is_err());
+        }
     }
 
     #[test]
@@ -2460,7 +2848,13 @@ mod tests {
     fn gpu_loads_every_declared_export() {
         let (root, context, _stream) = gpu_setup();
         for dtype in [DType::F16, DType::Bf16] {
-            for profile in &PROFILES {
+            for (mode, profile) in PROFILES.iter().enumerate() {
+                if mode == 29 {
+                    // Inventory-only asymmetric-forward identity; selection is
+                    // an explicit typed pending until its semantics qualify.
+                    assert!(!Fa4::supports(&spec_for(profile, dtype)));
+                    continue;
+                }
                 Fa4::new(context.clone(), &root, spec_for(profile, dtype)).unwrap_or_else(
                     |error| panic!("load {} {}: {error}", profile.name, dtype.name()),
                 );
@@ -2473,7 +2867,12 @@ mod tests {
     fn gpu_every_export_computes_small_ragged_attention() {
         let (root, context, stream) = gpu_setup();
         let offsets = [0i32, 3, 7];
-        for profile in &PROFILES {
+        for (mode, profile) in PROFILES.iter().enumerate() {
+            if mode == 29 {
+                // Inventory-only asymmetric-forward identity; never executed.
+                assert!(!Fa4::supports(&spec_for(profile, DType::F16)));
+                continue;
+            }
             run_case::<f16>(
                 &context,
                 &root,
@@ -2627,5 +3026,49 @@ mod tests {
         run_case::<f16>(
             &context, &root, &stream, spec, &q_offsets, &k_offsets, 50, false,
         );
+    }
+    #[test]
+    fn canonical31_partial_registry_hashes_are_scoped_to_declared_prefix() {
+        for &(count, namespace, fingerprint) in
+            REGISTRY_PREFIX_IDENTITIES.iter().filter(|row| row.0 >= 27)
+        {
+            for dtype in [DType::F16, DType::Bf16] {
+                let mut manifest = manifest_prefix(&[dtype], count);
+                manifest["registry"] = json!({"namespace": namespace, "mode_count": count,
+                    "mode_mask": format!("0x{:x}", mode_mask(count).unwrap()),
+                    "profile_sequence_sha256": fingerprint});
+                assert_eq!(validate_profile_order(&manifest, dtype).ok(), Some(count));
+                if count < CANONICAL31_PROFILE_COUNT {
+                    manifest["registry"]["profile_sequence_sha256"] =
+                        json!("187defaacc9f9b9b326b392fbeda675545a73660f44f69e21743743f782a87f1");
+                    assert!(validate_profile_order(&manifest, dtype).is_err());
+                }
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires actual legacy canonical26 manifest; run explicitly with env"]
+    fn canonical31_actual_legacy26_keeps_old_profiles_and_rejects_new_modes() {
+        let path = std::env::var_os("INFINITY_FA4_LEGACY26_MANIFEST")
+            .expect("bind actual canonical26 manifest");
+        let manifest: Value =
+            serde_json::from_slice(&std::fs::read(path).expect("read actual canonical26 manifest"))
+                .expect("parse canonical26 manifest");
+        for dtype in [DType::F16, DType::Bf16] {
+            assert_eq!(
+                validate_profile_order(&manifest, dtype).ok(),
+                Some(CANONICAL26_PROFILE_COUNT)
+            );
+            for (mode, profile) in PROFILES.iter().take(CANONICAL26_PROFILE_COUNT).enumerate() {
+                assert_eq!(
+                    select_profile(&manifest, &spec_for(profile, dtype)).ok(),
+                    Some(mode)
+                );
+            }
+            for mode in [26, 27, 28, 30] {
+                assert!(select_profile(&manifest, &spec_for(&PROFILES[mode], dtype)).is_err());
+            }
+        }
     }
 }
