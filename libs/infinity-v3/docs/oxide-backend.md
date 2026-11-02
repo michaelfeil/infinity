@@ -69,6 +69,9 @@ workspace, deferred results, pooling, raw output and Dense-module handling.
 Additional BF16 encoder paths cover ModernBERT, Nomic BERT and Jina Small with
 their validated geometry, normalization, rotary/ALiBi and activation recipes.
 Their loader guards remain authoritative; family names do not imply all variants.
+Jina v2 base English also accepts H768 with 12 d64 heads. It requires the
+additive FA4 `alibi12_model_bias` helper pair to preserve model-dtype ALiBi
+rounding. Its trained-checkpoint and performance qualification remain pending.
 GTE additionally loads H1024/24-layer GTE-large and the documented multilingual
 architecture markers, including optional token-type embeddings. Snowflake
 `GteModel` checkpoints share the same GTE path. GTE-large uses
