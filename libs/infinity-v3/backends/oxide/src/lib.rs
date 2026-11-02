@@ -48,6 +48,7 @@ mod rotary_encoder_model;
 mod staging;
 pub mod tensor;
 mod upload;
+mod work_retirement;
 
 use classifier_head::{
     canonicalize_indices, pack_predictions, pack_token_predictions, ClassifierHead,
@@ -86,10 +87,38 @@ use std::{
 };
 use tensor::{Bf16, F16};
 use upload::{UploadElement, WeightUploader};
+use work_retirement::{CompletedTicket, CompletionTicket, RetirementQueue};
 
 // Model warmup precedes the HTTP metrics recorder. Track physical ownership
 // independently so publishing metrics later cannot lose startup allocations.
 static LIVE_ARENA_BYTES: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+static RETIRED_PROOF_RELEASES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+static RETIRED_DRAIN_RELEASES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+static DEFAULT_DROP_DRAINS: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn retired_proof_releases() -> usize {
+    RETIRED_PROOF_RELEASES.load(Ordering::Relaxed)
+}
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn retired_drain_releases() -> usize {
+    RETIRED_DRAIN_RELEASES.load(Ordering::Relaxed)
+}
+#[cfg(test)]
+#[allow(dead_code)]
+pub(crate) fn default_drop_drains() -> usize {
+    DEFAULT_DROP_DRAINS.load(Ordering::Relaxed)
+}
+#[cfg(test)]
+pub(crate) fn note_default_drop_drain() {
+    DEFAULT_DROP_DRAINS.fetch_add(1, Ordering::Relaxed);
+}
 fn record_live_arena_bytes() {
     metrics::gauge!("oxide_arena_live_bytes").set(LIVE_ARENA_BYTES.load(Ordering::Relaxed) as f64);
 }
@@ -1238,7 +1267,7 @@ impl<E: UploadElement> Plans<E> {
     }
 
     /// Preselect every layer's down invocation after the request arenas are
-    /// reserved. This runs before `lease.begin()`, H2D upload, or any kernel.
+    /// reserved. This runs before `lease.begin_tracked()`, H2D upload, or any kernel.
     ///
     /// # Safety
     /// The provider/engine CUDA context must already be bound on this thread.
@@ -1486,6 +1515,61 @@ impl Workspace {
             Self::Decoder(work) => work.fits(key),
         }
     }
+    fn mark_last_use(&mut self, ticket: CompletionTicket) {
+        match self {
+            Self::Encoder(work) => work.mark_last_use(ticket),
+            Self::EncoderF16(work) => work.mark_last_use(ticket),
+            Self::Decoder(work) => work.mark_last_use(ticket),
+        }
+    }
+    fn completion_ticket(&self) -> Option<CompletionTicket> {
+        match self {
+            Self::Encoder(work) => work.completion_ticket(),
+            Self::EncoderF16(work) => work.completion_ticket(),
+            Self::Decoder(work) => work.completion_ticket(),
+        }
+    }
+    /// Releases only with an actual last-use proof. Every ordinary family is
+    /// covered, including Gemma (which reuses the Decoder workspace).
+    ///
+    /// # Safety
+    /// The engine context must be current and every request use must have been
+    /// marked before its first GPU upload.
+    unsafe fn release_if_idle(&mut self) -> Result<bool, BackendError> {
+        match self {
+            Self::Encoder(work) => unsafe { work.release_if_idle() },
+            Self::EncoderF16(work) => unsafe { work.release_if_idle() },
+            Self::Decoder(work) => unsafe { work.release_if_idle() },
+        }
+    }
+    /// # Safety
+    /// The proof MUST come from the actual fence for this owner's ticket.
+    unsafe fn release_after_completion(
+        &mut self,
+        proof: &CompletedTicket,
+    ) -> Result<(), BackendError> {
+        match self {
+            Self::Encoder(work) => unsafe { work.release_after_completion(proof) },
+            Self::EncoderF16(work) => unsafe { work.release_after_completion(proof) },
+            Self::Decoder(work) => unsafe { work.release_after_completion(proof) },
+        }
+    }
+    /// # Safety
+    /// The caller MUST have observed a successful whole-stream drain.
+    unsafe fn release_after_drain(&mut self) {
+        match self {
+            Self::Encoder(work) => unsafe { work.release_after_drain() },
+            Self::EncoderF16(work) => unsafe { work.release_after_drain() },
+            Self::Decoder(work) => unsafe { work.release_after_drain() },
+        }
+    }
+    /// Retains an unproven owner instead of dropping it. The Work already keeps
+    /// its bytes charged to the live arena; only the retained metric is added.
+    fn quarantine_after_failed_drain(self) -> usize {
+        let bytes = self.bytes();
+        std::mem::forget(self);
+        bytes
+    }
     fn stage(
         &self,
         batch: &Batch,
@@ -1585,14 +1669,70 @@ struct Engine {
     workspace: Option<Workspace>,
     dense_workspace: Option<DenseWork>,
     cached: cache::WorkspaceCache<WorkKey, Workspace>,
+    retired: RetirementQueue<RetiredOwner>,
     failed: bool,
+}
+
+/// One submit-path owner whose last use may still be outstanding. Both classes
+/// share the same proof and byte accounting even though Dense is not cached.
+// The queue is a fixed inline array on the cold Engine. Boxing the larger
+// variant would allocate on the warm retirement path, which this fix forbids.
+#[allow(clippy::large_enum_variant)]
+enum RetiredOwner {
+    Workspace(Workspace),
+    Dense(DenseWork),
+}
+
+impl RetiredOwner {
+    fn bytes(&self) -> usize {
+        match self {
+            Self::Workspace(workspace) => workspace.bytes(),
+            Self::Dense(dense) => dense.bytes(),
+        }
+    }
+
+    /// # Safety
+    /// The proof MUST come from the actual fence for this owner's ticket.
+    unsafe fn release_after_completion(
+        &mut self,
+        proof: &CompletedTicket,
+    ) -> Result<(), BackendError> {
+        match self {
+            Self::Workspace(workspace) => unsafe { workspace.release_after_completion(proof) },
+            Self::Dense(dense) => unsafe { dense.release_after_completion(proof) },
+        }
+    }
+
+    /// # Safety
+    /// The caller MUST have observed a successful whole-stream drain.
+    unsafe fn release_after_drain(&mut self) {
+        match self {
+            Self::Workspace(workspace) => unsafe { workspace.release_after_drain() },
+            Self::Dense(dense) => unsafe { dense.drop_after_drain() },
+        }
+    }
+
+    fn quarantine_after_failed_drain(self) -> usize {
+        let bytes = self.bytes();
+        std::mem::forget(self);
+        bytes
+    }
 }
 impl Drop for Engine {
     fn drop(&mut self) {
         let complete = self.stream.synchronize().is_ok();
-        self.workspace.take();
-        drop(self.cached.drain());
         if complete {
+            if let Some(mut workspace) = self.workspace.take() {
+                // SAFETY: the whole-stream sync above proved every use done.
+                unsafe { workspace.release_after_drain() };
+                drop(workspace);
+            }
+            for (_, mut workspace) in self.cached.drain() {
+                // SAFETY: the whole-stream sync above proved every use done.
+                unsafe { workspace.release_after_drain() };
+                drop(workspace);
+            }
+            self.release_retired_after_drain();
             if let Some(mut dense) = self.dense_workspace.take() {
                 // SAFETY: the drain above proved every queued Dense use done.
                 unsafe { dense.drop_after_drain() };
@@ -1606,9 +1746,13 @@ impl Drop for Engine {
                 ManuallyDrop::drop(&mut self.plain_blas);
                 ManuallyDrop::drop(&mut self.lt);
             }
-        } else if let Some(dense) = self.dense_workspace.take() {
-            metrics::counter!("oxide_arena_retained_bytes_total").increment(dense.bytes() as u64);
-            std::mem::forget(dense);
+        } else {
+            self.retain_uncertain_workspaces();
+            for (_, workspace) in self.cached.drain() {
+                let bytes = workspace.quarantine_after_failed_drain();
+                metrics::counter!("oxide_arena_retained_bytes_total").increment(bytes as u64);
+            }
+            self.retain_uncertain_retired();
         }
     }
 }
@@ -1678,6 +1822,24 @@ fn capacity_fits(capacity: WorkKey, request: WorkKey, bytes: usize) -> bool {
         // token class. Changing only sequence/output counts can reuse its
         // bounded metadata without reallocating the much larger GPU scratch.
         && (bytes <= cache::BYTE_BUDGET || capacity.0 == request.0)
+}
+/// Pure retired-budget arithmetic. Retired bytes are physical owners that the
+/// cache cannot evict, so they participate in the same reservation projection.
+fn retired_budget_state(
+    gpu_bytes: usize,
+    pinned: usize,
+    retired_bytes: usize,
+    budget: usize,
+) -> Result<(), &'static str> {
+    let total = gpu_bytes
+        .checked_add(pinned)
+        .and_then(|value| value.checked_add(retired_bytes))
+        .ok_or("Oxide retired workspace accounting overflow")?;
+    if total > budget {
+        Err("Oxide retired workspaces exceed the cache byte budget")
+    } else {
+        Ok(())
+    }
 }
 fn needs_exclusive_staging(workspace_bytes: usize, pinned_bytes: usize) -> bool {
     // An oversized GPU arena is still shared by ordered submissions. Only
@@ -1944,6 +2106,8 @@ struct Work<E: UploadElement> {
     pooled: ManuallyDrop<DeviceBuffer<f32>>,
     classifier: ManuallyDrop<Option<Box<ClassifierScratchBuffers>>>,
     deberta: ManuallyDrop<Option<deberta::Scratch>>,
+    last_completion: Option<CompletionTicket>,
+    released: bool,
 }
 #[cfg(test)]
 struct LinearPlans {
@@ -1967,29 +2131,15 @@ impl LinearPlans {
 }
 impl<E: UploadElement> Drop for Work<E> {
     fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        #[cfg(test)]
+        note_default_drop_drain();
         if self.stream.synchronize().is_ok() {
-            // SAFETY: every field is dropped once after completion. Failed
+            // SAFETY: this destructor just drained the owning stream. Failed
             // drains deliberately retain device allocations.
-            unsafe {
-                if let Some(scratch) = self.classifier.as_mut() {
-                    scratch.mark_stream_drained();
-                }
-                ManuallyDrop::drop(&mut self.input);
-                ManuallyDrop::drop(&mut self.x);
-                ManuallyDrop::drop(&mut self.temp);
-                ManuallyDrop::drop(&mut self.qkv);
-                ManuallyDrop::drop(&mut self.query);
-                ManuallyDrop::drop(&mut self.key);
-                ManuallyDrop::drop(&mut self.value);
-                ManuallyDrop::drop(&mut self.attention);
-                ManuallyDrop::drop(&mut self.intermediate);
-                ManuallyDrop::drop(&mut self.gated);
-                ManuallyDrop::drop(&mut self.pooled);
-                ManuallyDrop::drop(&mut self.classifier);
-                ManuallyDrop::drop(&mut self.deberta);
-            }
-            LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
-            record_live_arena_bytes();
+            unsafe { self.release_payload_once() };
         } else {
             // Live bytes includes retained allocations when completion is
             // uncertain; expose that exceptional subset separately.
@@ -1998,6 +2148,111 @@ impl<E: UploadElement> Drop for Work<E> {
     }
 }
 impl<E: UploadElement> Work<E> {
+    /// Records the tracked completion generation for this Work's last use. The
+    /// engine calls this before the first GPU upload of a submission.
+    fn mark_last_use(&mut self, ticket: CompletionTicket) {
+        self.last_completion = Some(ticket);
+    }
+
+    fn completion_ticket(&self) -> Option<CompletionTicket> {
+        self.last_completion.clone()
+    }
+
+    /// Releases only when the last tracked submission has an actual completion
+    /// proof. A ticket-less owner was never marked before an upload and is kept
+    /// for the final stream drain rather than dropped without proof.
+    ///
+    /// # Safety
+    /// The engine context must already be current. Every request use of this
+    /// Work must have been marked before any GPU submission.
+    unsafe fn release_if_idle(&mut self) -> Result<bool, BackendError> {
+        match self.last_completion.as_ref() {
+            None => Ok(false),
+            Some(ticket) => match ticket.completed() {
+                Some(proof) => {
+                    // SAFETY: the exact last-use proof is rechecked below.
+                    unsafe { self.release_after_completion(&proof)? };
+                    Ok(true)
+                }
+                None => Ok(false),
+            },
+        }
+    }
+
+    /// Releases this Work after an exact same-stream completion proof.
+    ///
+    /// # Safety
+    /// The proof MUST come from the actual fence for this Work's tracked
+    /// ticket. On any identity mismatch the payload stays owned.
+    unsafe fn release_after_completion(
+        &mut self,
+        proof: &CompletedTicket,
+    ) -> Result<(), BackendError> {
+        let ticket = self
+            .last_completion
+            .as_ref()
+            .ok_or_else(|| infer("Work has no completion ticket"))?;
+        let stream_identity = Arc::as_ptr(&self.stream) as usize;
+        if !proof.matches(ticket)
+            || proof.stream_identity() != stream_identity
+            || ticket.stream_identity() != stream_identity
+        {
+            return Err(infer("Completion proof does not match this Work request"));
+        }
+        if !self.released {
+            // SAFETY: the caller proved the actual same-stream fence for this
+            // exact ticket, so no nested owner is still in use.
+            unsafe { self.release_payload_once() };
+        }
+        Ok(())
+    }
+
+    /// Releases this Work after the caller drained the whole producing stream.
+    /// A failed drain MUST NOT call this method.
+    ///
+    /// # Safety
+    /// The caller MUST have observed a successful whole-stream drain covering
+    /// every use of this Work.
+    unsafe fn release_after_drain(&mut self) {
+        if !self.released {
+            // SAFETY: the caller drained the producing stream for this owner.
+            unsafe { self.release_payload_once() };
+        }
+    }
+
+    unsafe fn release_payload_once(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        // SAFETY: exactly one owner drops the payload. Classifier scratch is
+        // marked drained first and DeBERTa scratch is released without a second
+        // sync, so no nested destructor re-drains after the outer proof.
+        unsafe {
+            if let Some(scratch) = self.classifier.as_mut() {
+                scratch.mark_stream_drained();
+            }
+            if let Some(scratch) = self.deberta.as_mut() {
+                scratch.release_after_drain();
+            }
+            ManuallyDrop::drop(&mut self.input);
+            ManuallyDrop::drop(&mut self.x);
+            ManuallyDrop::drop(&mut self.temp);
+            ManuallyDrop::drop(&mut self.qkv);
+            ManuallyDrop::drop(&mut self.query);
+            ManuallyDrop::drop(&mut self.key);
+            ManuallyDrop::drop(&mut self.value);
+            ManuallyDrop::drop(&mut self.attention);
+            ManuallyDrop::drop(&mut self.intermediate);
+            ManuallyDrop::drop(&mut self.gated);
+            ManuallyDrop::drop(&mut self.pooled);
+            ManuallyDrop::drop(&mut self.classifier);
+            ManuallyDrop::drop(&mut self.deberta);
+        }
+        LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
+        record_live_arena_bytes();
+    }
+
     fn new(s: Arc<Stream>, c: &BertConfig, key: WorkKey) -> Result<Self, BackendError> {
         Self::new_with_classifier(s, c, key, None)
     }
@@ -2138,6 +2393,8 @@ impl<E: UploadElement> Work<E> {
             pooled: ManuallyDrop::new(pooled),
             classifier: ManuallyDrop::new(classifier),
             deberta: ManuallyDrop::new(deberta),
+            last_completion: None,
+            released: false,
             stream: s,
         })
     }
@@ -2256,6 +2513,200 @@ impl Engine {
             std::mem::forget(dense);
         }
     }
+    fn quarantine_workspace(workspace: Workspace) {
+        let bytes = workspace.quarantine_after_failed_drain();
+        metrics::counter!("oxide_arena_retained_bytes_total").increment(bytes as u64);
+    }
+    fn quarantine_owner(owner: RetiredOwner) {
+        let bytes = owner.quarantine_after_failed_drain();
+        metrics::counter!("oxide_arena_retained_bytes_total").increment(bytes as u64);
+    }
+    /// Moves one submit-path eviction into the deferred retirement queue.
+    /// Completed owners release without draining; the rest stay charged until
+    /// their exact ticket (or the final whole-stream drain) provides proof.
+    fn retire_workspace(&mut self, mut workspace: Workspace) -> Result<(), EnqueueError> {
+        let bytes = workspace.bytes();
+        let ticket = workspace.completion_ticket();
+        // SAFETY: enqueue bound this engine's context; every request marks a
+        // last-use ticket before its first upload.
+        match unsafe { workspace.release_if_idle() } {
+            Ok(true) => {
+                drop(workspace);
+                Ok(())
+            }
+            Ok(false) => {
+                match self
+                    .retired
+                    .try_push(RetiredOwner::Workspace(workspace), bytes, ticket)
+                {
+                    Ok(()) => Ok(()),
+                    Err((error, owner)) => {
+                        // The queue returned the owner untouched. Quarantine it
+                        // rather than allowing a default Work drop to drain.
+                        Self::quarantine_owner(owner);
+                        Err(EnqueueError::Fatal(error))
+                    }
+                }
+            }
+            Err(error) => {
+                Self::quarantine_workspace(workspace);
+                Err(EnqueueError::Fatal(error))
+            }
+        }
+    }
+    fn retire_dense(&mut self, mut dense: DenseWork) -> Result<(), EnqueueError> {
+        let bytes = dense.bytes();
+        let ticket = dense.completion_ticket();
+        // SAFETY: enqueue bound this engine's context; every request marks a
+        // last-use ticket before its first upload.
+        match unsafe { dense.release_if_idle() } {
+            Ok(true) => {
+                drop(dense);
+                Ok(())
+            }
+            Ok(false) => match self
+                .retired
+                .try_push(RetiredOwner::Dense(dense), bytes, ticket)
+            {
+                Ok(()) => Ok(()),
+                Err((error, owner)) => {
+                    Self::quarantine_owner(owner);
+                    Err(EnqueueError::Fatal(error))
+                }
+            },
+            Err(error) => {
+                Self::quarantine_owner(RetiredOwner::Dense(dense));
+                Err(EnqueueError::Fatal(error))
+            }
+        }
+    }
+    fn retire_evictions(&mut self, evicted: Vec<(WorkKey, Workspace)>) -> Result<(), EnqueueError> {
+        if evicted.is_empty() {
+            return Ok(());
+        }
+        metrics::counter!("oxide_arena_evictions_total").increment(evicted.len() as u64);
+        let mut remaining = evicted.into_iter();
+        while let Some((_, workspace)) = remaining.next() {
+            if let Err(error) = self.retire_workspace(workspace) {
+                // A fatal queue/accounting error must not implicitly drop any
+                // later unproven eviction through Vec's iterator destructor.
+                for (_, workspace) in remaining {
+                    Self::quarantine_workspace(workspace);
+                }
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+    fn cache_workspace(&mut self, workspace: Workspace) -> Result<(), EnqueueError> {
+        let (key, bytes) = (workspace.key(), workspace.bytes());
+        let evicted = self.cached.put(key, workspace, bytes);
+        self.retire_evictions(evicted)
+    }
+    /// Reserves active GPU, pinned host and retired bytes together. Each round
+    /// that actually retires another owner refreshes the reservation so the new
+    /// retired bytes are charged before any allocation. The fixed queue bounds
+    /// the loop to at most its capacity.
+    fn reserve_retired(&mut self, gpu_bytes: usize, pinned: usize) -> Result<(), EnqueueError> {
+        for _ in 0..8 {
+            let retired_before = self.retired.len();
+            let reserve = gpu_bytes
+                .checked_add(pinned)
+                .and_then(|value| value.checked_add(self.retired.bytes()))
+                .ok_or_else(|| {
+                    EnqueueError::PreflightRejected(infer("Workspace arena overflow"))
+                })?;
+            let evicted = self.cached.reserve(reserve);
+            let evicted_len = evicted.len();
+            self.retire_evictions(evicted)?;
+            if evicted_len == 0 || self.retired.len() == retired_before {
+                break;
+            }
+        }
+        Ok(())
+    }
+    /// Releases proof-bearing retirees after one existing context bind. An
+    /// unproven or ticket-less owner is never popped as completed.
+    fn collect_completed_retirees(&mut self) -> Result<(), EnqueueError> {
+        while let Some((mut owner, proof)) = self.retired.pop_completed() {
+            // SAFETY: pop_completed returned the exact completed ticket; the
+            // release method rechecks ticket and stream identity again.
+            if let Err(error) = unsafe { owner.release_after_completion(&proof) } {
+                Self::quarantine_owner(owner);
+                return Err(EnqueueError::Fatal(error));
+            }
+            #[cfg(test)]
+            RETIRED_PROOF_RELEASES.fetch_add(1, Ordering::Relaxed);
+            drop(owner);
+        }
+        Ok(())
+    }
+    /// Retired bytes are still physical and stay charged against the same cache
+    /// budget. Reject before any allocation when they already make the active
+    /// reservation impossible to satisfy.
+    fn check_retired_budget(&self, gpu_bytes: usize, pinned: usize) -> Result<(), EnqueueError> {
+        if self.retired.len() == 0 {
+            return Ok(());
+        }
+        retired_budget_state(
+            gpu_bytes,
+            pinned,
+            self.retired.bytes(),
+            self.cached.byte_budget(),
+        )
+        .map_err(|message| EnqueueError::Admission(BackendError::Overloaded(message.into())))
+    }
+    /// Dense growth retires the old allocation before the new one exists. If
+    /// that allocation is still unproven, project its bytes as retired before
+    /// any cache, budget or arena mutation so rejection is typed and clean.
+    fn check_dense_growth_budget(
+        &self,
+        gpu_bytes: usize,
+        pinned: usize,
+        growing: bool,
+    ) -> Result<(), EnqueueError> {
+        if !growing {
+            return Ok(());
+        }
+        let Some(dense) = self.dense_workspace.as_ref() else {
+            return Ok(());
+        };
+        let proven = dense
+            .completion_ticket()
+            .as_ref()
+            .and_then(CompletionTicket::completed)
+            .is_some();
+        if proven {
+            return Ok(());
+        }
+        let projected = self
+            .retired
+            .bytes()
+            .checked_add(dense.bytes())
+            .ok_or_else(|| {
+                EnqueueError::Admission(BackendError::Overloaded(
+                    "Oxide retired workspace accounting overflow".into(),
+                ))
+            })?;
+        retired_budget_state(gpu_bytes, pinned, projected, self.cached.byte_budget())
+            .map_err(|message| EnqueueError::Admission(BackendError::Overloaded(message.into())))
+    }
+    /// Releases every retired owner after an actual whole-stream fence. Owners
+    /// stay quarantined (forgotten, still live-accounted) when the fence failed.
+    fn release_retired_after_drain(&mut self) {
+        while let Some((mut owner, _)) = self.retired.pop_any() {
+            // SAFETY: the caller just observed a successful whole-stream fence.
+            unsafe { owner.release_after_drain() };
+            #[cfg(test)]
+            RETIRED_DRAIN_RELEASES.fetch_add(1, Ordering::Relaxed);
+            drop(owner);
+        }
+    }
+    fn retain_uncertain_retired(&mut self) {
+        while let Some((owner, _)) = self.retired.pop_any() {
+            Self::quarantine_owner(owner);
+        }
+    }
     fn fail_closed(&mut self) {
         self.failed = true;
         // Close before the fallback drain so blocked acquirers wake even while
@@ -2311,7 +2762,7 @@ impl Engine {
         lease: &mut HostIoLease,
     ) -> Result<(), EnqueueError> {
         // Reject pure checked-size failures before descriptor changes, context
-        // binding, arena initialization, or this request's lease.begin().
+        // binding, arena initialization, or this request's lease.begin_tracked().
         let workspace = preflight_workspace(
             b,
             |key| self.workspace.as_ref().is_some_and(|work| work.fits(key)),
@@ -2336,6 +2787,7 @@ impl Engine {
         #[cfg(test)]
         bump_engine_context_bind();
         self.context.bind_to_thread().map_err(infer)?;
+        self.collect_completed_retirees()?;
         self.enqueue_inner(b, pool, max_length, readout_mode, lease, workspace)
     }
     fn enqueue_inner(
@@ -2369,24 +2821,25 @@ impl Engine {
             .unwrap_or(host_before);
         let mut pinned = self.io.pinned_after(host_before, host_after)?;
         let reuse_active = workspace.reuse_active;
-        let mut next = None;
-        let workspace_bytes = if reuse_active {
-            self.workspace
+        // Choose the actual cached key/bytes without taking or mutating while
+        // every pure admission check is still ahead of us.
+        let cached_fit = if reuse_active {
+            None
+        } else {
+            self.cached
+                .peek_best_fit(|key| capacity_fits(*key, plan, 0))
+                .map(Workspace::bytes)
+        };
+        let workspace_bytes = match (reuse_active, cached_fit) {
+            (true, _) => self
+                .workspace
                 .as_ref()
                 .map(|work| work.bytes())
-                .ok_or_else(|| infer("Missing oxide workspace"))?
-        } else {
-            // A cached fit can be larger than the requested size class: reserve
-            // its actual allocation, not the smaller request estimate.
-            next = self
-                .cached
-                .take_best_fit(|key| capacity_fits(*key, plan, 0));
-            match next.as_ref() {
-                Some(work) => work.bytes(),
-                None => workspace
-                    .requested_bytes
-                    .ok_or_else(|| infer("Missing preflight workspace geometry"))?,
-            }
+                .ok_or_else(|| infer("Missing oxide workspace"))?,
+            (false, Some(bytes)) => bytes,
+            (false, None) => workspace
+                .requested_bytes
+                .ok_or_else(|| infer("Missing preflight workspace geometry"))?,
         };
         // Dense scratch is sized by pooled selections only. Raw token rows may
         // grow without touching this allocation, and raw-only requests execute
@@ -2411,35 +2864,60 @@ impl Engine {
             pinned = self.io.pinned_after(host_before, host_after)?;
             exclusive = needs_exclusive_staging(gpu_bytes, pinned);
             if exclusive && self.io.active_leases() > 1 {
-                if let Some(work) = next.take() {
-                    let (key, bytes) = (work.key(), work.bytes());
-                    let evicted = self.cached.put(key, work, bytes);
-                    metrics::counter!("oxide_arena_evictions_total")
-                        .increment(evicted.len() as u64);
-                    drop(evicted);
-                }
+                // Nothing was taken, cached, retired or reserved yet.
                 return Err(BackendError::Overloaded(
                     "Oxide workspace and host staging memory is busy".into(),
                 )
                 .into());
             }
         }
-        let reserve = gpu_bytes
-            .checked_add(pinned)
-            .ok_or_else(|| infer("Workspace arena overflow"))?;
+        self.check_retired_budget(gpu_bytes, pinned)?;
+        self.check_dense_growth_budget(gpu_bytes, pinned, dense_capacity.is_some())?;
         // Drop mismatched idle pins before allocating future GPU scratch, then
         // allocate future pins only after the previous scratch is accounted.
+        // The peeked reuse candidate is still in the cache on rejection.
         lease.discard_for_resize(plan, host_elements)?;
-        let evicted = self.cached.reserve(reserve);
-        metrics::counter!("oxide_arena_evictions_total").increment(evicted.len() as u64);
-        drop(evicted);
+        // Select the exact peeked arena before the new reservation so that
+        // reservation eviction cannot discard the reuse candidate.
+        let mut next = if cached_fit.is_some() {
+            self.cached
+                .take_best_fit(|key| capacity_fits(*key, plan, 0))
+        } else {
+            None
+        };
+        if let Err(error) = self.reserve_retired(gpu_bytes, pinned) {
+            if let Some(work) = next.take() {
+                Self::quarantine_workspace(work);
+            }
+            return Err(error);
+        }
         if !reuse_active {
             if let Some(previous) = self.workspace.take() {
-                let (key, bytes) = (previous.key(), previous.bytes());
-                let evicted = self.cached.put(key, previous, bytes);
-                metrics::counter!("oxide_arena_evictions_total").increment(evicted.len() as u64);
-                drop(evicted);
+                // Replace the stale active reservation before charging the old
+                // workspace as cached; retire every eviction before allocating.
+                if let Err(error) = self.cache_workspace(previous) {
+                    if let Some(work) = next.take() {
+                        Self::quarantine_workspace(work);
+                    }
+                    return Err(error);
+                }
             }
+            if let Err(error) = self.reserve_retired(gpu_bytes, pinned) {
+                if let Some(work) = next.take() {
+                    Self::quarantine_workspace(work);
+                }
+                return Err(error);
+            }
+        }
+        if let Err(error) = self.check_retired_budget(gpu_bytes, pinned) {
+            if let Some(work) = next.take() {
+                // Re-caching is best effort. A queue/accounting failure already
+                // quarantines the owner; keep the original admission result.
+                let _ = self.cache_workspace(work);
+            }
+            return Err(error);
+        }
+        if !reuse_active {
             self.workspace = Some(match next {
                 Some(work) => {
                     metrics::counter!("oxide_arena_cached_reuses_total").increment(1);
@@ -2449,12 +2927,19 @@ impl Engine {
             });
         }
         if let Some(capacity) = dense_capacity {
+            // Dense growth is independent of the backbone arena. Retire the
+            // previous workspace instead of dropping it; its ordered uses are
+            // released only after the matching completion proof.
+            if let Some(dense) = self.dense_workspace.take() {
+                self.retire_dense(dense)?;
+            }
+            // Charge the newly retired Dense bytes in the reservation before
+            // allocating its replacement; this can evict cached owners.
+            self.reserve_retired(gpu_bytes, pinned)?;
+            self.check_retired_budget(gpu_bytes, pinned)?;
             let head = (*self.dense)
                 .as_ref()
                 .ok_or_else(|| infer("Missing Dense chain"))?;
-            // Dense growth is independent of the backbone arena. Dropping the
-            // previous workspace drains its ordered uses before reallocation.
-            drop(self.dense_workspace.take());
             self.dense_workspace = Some(head.work(self.stream.clone(), capacity)?);
         }
         // All request arena pointers are now fixed. Preselect the actual-M
@@ -2511,10 +2996,18 @@ impl Engine {
             }
             stage_batch_with_position_offset(b, geometry, lease, position_offset)?
         };
+        // One pre-upload ticket covers this submission's backbone and Dense
+        // last use. It is taken only after staging succeeded, immediately
+        // before the first GPU upload, so a staging rejection keeps the prior
+        // owner ticket and never starts an unnecessary stream fence.
+        let ticket = lease.begin_tracked()?;
+        w.mark_last_use(ticket.clone());
+        if let Some(dense) = self.dense_workspace.as_mut() {
+            dense.mark_last_use(ticket);
+        }
         let s = &*self.stream;
         // Ordinary ordered-stream dispatch; concrete plans were refreshed for
         // the exact logical row count and down metadata was preselected above.
-        lease.begin();
         #[cfg(test)]
         bump_lease_begin();
         w.upload(lease.slot()?.input.as_slice(), input_elements)?;
@@ -3613,6 +4106,7 @@ impl OxideBackend {
                 workspace: None,
                 dense_workspace: None,
                 cached: cache::WorkspaceCache::new(),
+                retired: RetirementQueue::new(),
                 failed: false,
             })),
             stream,
@@ -5626,6 +6120,15 @@ mod tests {
         assert!(!needs_exclusive_staging(budget / 2, budget / 2));
         assert!(needs_exclusive_staging(budget / 2, budget / 2 + 1));
     }
+    #[test]
+    fn retired_owner_bytes_stay_charged_against_the_cache_budget() {
+        assert!(retired_budget_state(10, 20, 30, 60).is_ok());
+        assert!(retired_budget_state(10, 20, 31, 60).is_err());
+        assert!(retired_budget_state(usize::MAX, 1, 0, usize::MAX).is_err());
+        let cache = cache::WorkspaceCache::<WorkKey, Workspace>::new();
+        assert_eq!(cache.byte_budget(), cache::BYTE_BUDGET);
+    }
+
     #[test]
     fn dense_capacity_tracks_pooled_selections_not_raw_rows_or_backbone_key() {
         let bytes = |capacity: usize| Ok::<usize, BackendError>(capacity * 100);

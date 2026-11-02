@@ -1,6 +1,7 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 //! Owned pinned input/output leases for ordered-stream deferred submissions.
 use super::{cache, capacity_fits, infer, product, Engine, WorkKey};
+use crate::work_retirement::{CompletionClock, CompletionTicket};
 use cuda_core::{Context, Event, PinnedHostBuffer, Stream};
 use infinity_v3_backend_core::BackendError;
 use std::{
@@ -46,6 +47,10 @@ pub(crate) struct HostIo {
     pub(crate) input: PinnedHostBuffer<u32>,
     pub(crate) output: PinnedHostBuffer<f32>,
     pub(crate) event: Event,
+    // Persistent per-slot generation source. Both slots allocate their clocks
+    // with the cold pool and keep them across resize/shrink, so a ticket never
+    // observes a clock owned by a different physical slot.
+    pub(crate) clock: Arc<CompletionClock>,
     // Declared last so physical buffers are freed before their accounting.
     resident: HostIoBytes,
 }
@@ -73,6 +78,7 @@ impl HostIo {
             input: PinnedHostBuffer::zeroed(context, 0).map_err(infer)?,
             output: PinnedHostBuffer::zeroed(context, 0).map_err(infer)?,
             event: context.new_event_with_flags(None).map_err(infer)?,
+            clock: Arc::new(CompletionClock::new()),
             resident: HostIoBytes(0),
         })
     }
@@ -322,6 +328,20 @@ pub(crate) trait SlotBytes {
     fn shrink(&mut self) {}
 }
 
+/// Publishes a tracked ticket only when the caller actually observed a
+/// successful same-stream event or stream fence. Anything else leaves the
+/// retired owner unproven.
+fn publish_completion_after_fence(ticket: Option<&CompletionTicket>, fence_succeeded: bool) {
+    if !fence_succeeded {
+        return;
+    }
+    if let Some(ticket) = ticket {
+        // SAFETY: the caller just observed the actual same-stream fence that
+        // covers this ticket's submission.
+        unsafe { ticket.mark_completed_after_fence() };
+    }
+}
+
 pub(crate) struct HostIoLease {
     slot: Option<HostIo>,
     pool: Arc<SlotPool<HostIo>>,
@@ -331,6 +351,7 @@ pub(crate) struct HostIoLease {
     recorded: bool,
     drained: bool,
     exclusive: bool,
+    completion_ticket: Option<CompletionTicket>,
 }
 impl HostIoLease {
     pub(crate) fn new(
@@ -348,6 +369,7 @@ impl HostIoLease {
             recorded: false,
             drained: false,
             exclusive: false,
+            completion_ticket: None,
         }
     }
     pub(crate) fn bytes(&self) -> Result<usize, BackendError> {
@@ -422,8 +444,25 @@ impl HostIoLease {
             .as_mut()
             .ok_or_else(|| infer("Missing host I/O lease"))
     }
-    pub(crate) fn begin(&mut self) {
+    /// Opts this lease into deferred completion tracking before the first GPU
+    /// upload for its request.
+    ///
+    /// The clock is allocated once with the cold pooled slot and persists across
+    /// resize/shrink. Repeated calls for the same lease return the identical
+    /// generation instead of issuing a new one.
+    pub(crate) fn begin_tracked(&mut self) -> Result<CompletionTicket, BackendError> {
+        if let Some(ticket) = self.completion_ticket.as_ref() {
+            return Ok(ticket.clone());
+        }
+        let stream_identity = Arc::as_ptr(&self.stream) as usize;
+        let slot = self
+            .slot
+            .as_mut()
+            .ok_or_else(|| infer("Missing host I/O lease"))?;
+        let ticket = Arc::clone(&slot.clock).ticket(stream_identity)?;
         self.started = true;
+        self.completion_ticket = Some(ticket.clone());
+        Ok(ticket)
     }
     pub(crate) fn record(&mut self) -> Result<(), BackendError> {
         self.started = true;
@@ -440,13 +479,14 @@ impl HostIoLease {
             return Ok(());
         }
         let complete = match self.slot.as_ref() {
-            Some(slot) if self.recorded => slot.event.synchronize().map_err(infer),
-            Some(_) if self.started => self.stream.synchronize().map_err(infer),
-            Some(_) => Ok(()),
+            Some(slot) if self.recorded => slot.event.synchronize().map_err(infer).map(|()| true),
+            Some(_) if self.started => self.stream.synchronize().map_err(infer).map(|()| true),
+            Some(_) => Ok(false),
             None => Err(infer("Missing host I/O lease")),
         };
         match complete {
-            Ok(()) => {
+            Ok(fenced) => {
+                publish_completion_after_fence(self.completion_ticket.as_ref(), fenced);
                 self.drained = true;
                 Ok(())
             }
@@ -505,16 +545,17 @@ impl Drop for HostIoLease {
             return;
         }
         if !self.drained {
-            let complete = match self.slot.as_ref() {
-                Some(slot) if self.recorded => slot.event.synchronize().is_ok(),
-                Some(_) if self.started => self.stream.synchronize().is_ok(),
-                Some(_) => true,
-                None => false,
+            let (complete, fenced) = match self.slot.as_ref() {
+                Some(slot) if self.recorded => (slot.event.synchronize().is_ok(), true),
+                Some(_) if self.started => (self.stream.synchronize().is_ok(), true),
+                Some(_) => (true, false),
+                None => (false, false),
             };
             if !complete {
                 self.retain_uncertain();
                 return;
             }
+            publish_completion_after_fence(self.completion_ticket.as_ref(), fenced);
             self.drained = true;
         }
         self.shrink_idle();
@@ -528,6 +569,18 @@ impl Drop for HostIoLease {
 mod tests {
     use super::*;
     use std::{sync::mpsc, thread, time::Duration};
+
+    #[test]
+    fn completion_is_published_only_after_a_real_fence() {
+        let clock = Arc::new(CompletionClock::new());
+        let ticket = clock.ticket(11).unwrap();
+        publish_completion_after_fence(Some(&ticket), false);
+        assert!(ticket.completed().is_none());
+        publish_completion_after_fence(None, true);
+        assert!(ticket.completed().is_none());
+        publish_completion_after_fence(Some(&ticket), true);
+        assert!(ticket.completed().is_some());
+    }
 
     #[derive(Clone, PartialEq, Eq, Debug)]
     struct Slot(u32);

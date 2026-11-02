@@ -29,6 +29,7 @@ use crate::{
     staging,
     tensor::Bf16,
     upload::WeightUploader,
+    work_retirement::{CompletedTicket, CompletionTicket},
 };
 use cuda_core::{Context, DeviceBuffer, Function, Stream};
 use infinity_v3_backend_core::{BackendError, Batch, Pool};
@@ -1515,6 +1516,8 @@ pub(crate) struct DecoderWork {
     projection: ManuallyDrop<DeviceBuffer<Bf16>>,
     activation: ManuallyDrop<DeviceBuffer<Bf16>>,
     pooled: ManuallyDrop<DeviceBuffer<f32>>,
+    last_completion: Option<CompletionTicket>,
+    released: bool,
 }
 impl DecoderWork {
     pub(crate) fn key(&self) -> WorkKey {
@@ -1598,8 +1601,100 @@ impl DecoderWork {
             projection: ManuallyDrop::new(projection),
             activation: ManuallyDrop::new(activation),
             pooled: ManuallyDrop::new(pooled),
+            last_completion: None,
+            released: false,
             stream,
         })
+    }
+    /// Records the tracked completion generation for this Work's last use. The
+    /// engine calls this before the first GPU upload of a submission.
+    pub(crate) fn mark_last_use(&mut self, ticket: CompletionTicket) {
+        self.last_completion = Some(ticket);
+    }
+
+    pub(crate) fn completion_ticket(&self) -> Option<CompletionTicket> {
+        self.last_completion.clone()
+    }
+
+    /// Releases only when the last tracked submission has an actual completion
+    /// proof. A ticket-less owner was never marked before an upload and is kept
+    /// for the final stream drain rather than dropped without proof.
+    pub(crate) unsafe fn release_if_idle(&mut self) -> Result<bool, BackendError> {
+        match self.last_completion.as_ref() {
+            None => Ok(false),
+            Some(ticket) => match ticket.completed() {
+                Some(proof) => {
+                    // SAFETY: the exact last-use proof is rechecked below.
+                    unsafe { self.release_after_completion(&proof)? };
+                    Ok(true)
+                }
+                None => Ok(false),
+            },
+        }
+    }
+
+    /// Releases Decoder-owned buffers after an exact same-stream proof.
+    ///
+    /// # Safety
+    /// The proof MUST come from the actual fence for this Work's tracked
+    /// ticket. On any identity mismatch the payload stays owned.
+    pub(crate) unsafe fn release_after_completion(
+        &mut self,
+        proof: &CompletedTicket,
+    ) -> Result<(), BackendError> {
+        let ticket = self
+            .last_completion
+            .as_ref()
+            .ok_or_else(|| infer("Decoder Work has no completion ticket"))?;
+        let stream_identity = Arc::as_ptr(&self.stream) as usize;
+        if !proof.matches(ticket)
+            || proof.stream_identity() != stream_identity
+            || ticket.stream_identity() != stream_identity
+        {
+            return Err(infer(
+                "Completion proof does not match this Decoder Work request",
+            ));
+        }
+        if !self.released {
+            // SAFETY: the caller proved the actual same-stream fence for this
+            // exact ticket, so no borrowed owner is still in use.
+            unsafe { self.release_payload_once() };
+        }
+        Ok(())
+    }
+
+    /// Releases this Work's owned payload after the caller drained the whole
+    /// producing stream. A failed drain MUST NOT call this method.
+    ///
+    /// # Safety
+    /// The caller MUST have observed a successful whole-stream drain covering
+    /// every use of this Work.
+    pub(crate) unsafe fn release_after_drain(&mut self) {
+        if !self.released {
+            // SAFETY: the caller drained the producing stream for this owner.
+            unsafe { self.release_payload_once() };
+        }
+    }
+
+    unsafe fn release_payload_once(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        // SAFETY: exactly one owner drops the payload, and this method is only
+        // called after a completion proof or an actual stream drain.
+        unsafe {
+            ManuallyDrop::drop(&mut self.input);
+            ManuallyDrop::drop(&mut self.residual);
+            ManuallyDrop::drop(&mut self.residual_next);
+            ManuallyDrop::drop(&mut self.branch);
+            ManuallyDrop::drop(&mut self.normalized);
+            ManuallyDrop::drop(&mut self.projection);
+            ManuallyDrop::drop(&mut self.activation);
+            ManuallyDrop::drop(&mut self.pooled);
+        }
+        super::LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
+        super::record_live_arena_bytes();
     }
     fn check(
         &self,
@@ -1677,21 +1772,15 @@ impl DecoderWork {
 }
 impl Drop for DecoderWork {
     fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        #[cfg(test)]
+        crate::note_default_drop_drain();
         if self.stream.synchronize().is_ok() {
-            // SAFETY: every field is dropped once after completion. Failed
+            // SAFETY: this destructor just drained the owning stream. Failed
             // drains deliberately retain device allocations.
-            unsafe {
-                ManuallyDrop::drop(&mut self.input);
-                ManuallyDrop::drop(&mut self.residual);
-                ManuallyDrop::drop(&mut self.residual_next);
-                ManuallyDrop::drop(&mut self.branch);
-                ManuallyDrop::drop(&mut self.normalized);
-                ManuallyDrop::drop(&mut self.projection);
-                ManuallyDrop::drop(&mut self.activation);
-                ManuallyDrop::drop(&mut self.pooled);
-            }
-            super::LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
-            super::record_live_arena_bytes();
+            unsafe { self.release_payload_once() };
         } else {
             metrics::counter!("oxide_arena_retained_bytes_total").increment(self.bytes as u64);
         }

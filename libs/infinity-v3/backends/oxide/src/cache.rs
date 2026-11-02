@@ -44,6 +44,21 @@ impl<K, V> WorkspaceCache<K, V> {
         }
     }
 
+    pub(crate) fn byte_budget(&self) -> usize {
+        self.byte_budget
+    }
+
+    /// Smallest retained allocation that can serve this request without taking
+    /// it. Admission uses this to compute the exact actual byte charge before
+    /// any cache, reservation or arena state changes.
+    pub(crate) fn peek_best_fit(&self, mut fits: impl FnMut(&K) -> bool) -> Option<&V> {
+        self.entries
+            .iter()
+            .filter(|entry| fits(&entry.key))
+            .min_by_key(|entry| entry.bytes)
+            .map(|entry| &entry.value)
+    }
+
     fn total_with(&self, extra: usize) -> usize {
         self.cached_bytes
             .saturating_add(self.reserved_bytes)
@@ -147,6 +162,31 @@ impl<K, V> WorkspaceCache<K, V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exposes_the_same_budget_used_by_reservation_projection() {
+        let cache = WorkspaceCache::<u8, u8>::with_limits(7, 1000);
+        assert_eq!(cache.byte_budget(), 1000);
+        assert_eq!(WorkspaceCache::<u8, u8>::new().byte_budget(), BYTE_BUDGET);
+    }
+
+    #[test]
+    fn peek_selects_the_smallest_fit_without_taking_or_changing_accounting() {
+        let mut cache = WorkspaceCache::with_limits(7, 1000);
+        assert!(cache.put(128, "large", 600).is_empty());
+        assert!(cache.put(64, "medium", 300).is_empty());
+        assert!(cache.put(16, "small", 100).is_empty());
+        assert_eq!(
+            cache.peek_best_fit(|capacity| *capacity >= 32),
+            Some(&"medium")
+        );
+        assert_eq!(cache.cached_bytes, 1000);
+        assert_eq!(
+            cache.take_best_fit(|capacity| *capacity >= 32),
+            Some("medium")
+        );
+        assert_eq!(cache.cached_bytes, 700);
+    }
 
     #[test]
     fn selects_smallest_fitting_arena_and_charges_its_actual_size() {

@@ -107,6 +107,7 @@ pub(crate) struct Scratch {
     pub(crate) p2c: ManuallyDrop<DeviceBuffer<Bf16>>,
     pub(crate) buckets: ManuallyDrop<DeviceBuffer<i32>>,
     stream: ManuallyDrop<Arc<Stream>>,
+    released: bool,
 }
 impl Scratch {
     pub(crate) fn bytes(tokens: usize, span: usize) -> Result<usize, BackendError> {
@@ -160,12 +161,38 @@ impl Scratch {
             p2c: ManuallyDrop::new(p2c),
             buckets: ManuallyDrop::new(buckets),
             stream: ManuallyDrop::new(stream.clone()),
+            released: false,
         })
+    }
+
+    /// Releases DeBERTa-owned scratch after the enclosing Work proved the shared
+    /// stream drained. No synchronization or driver query occurs.
+    ///
+    /// # Safety
+    /// Every queued use of these buffers must have completed.
+    pub(crate) unsafe fn release_after_drain(&mut self) {
+        if self.released {
+            return;
+        }
+        self.released = true;
+        // SAFETY: the caller proved completion, and `released` keeps the
+        // ordinary destructor from draining the stream again.
+        unsafe {
+            ManuallyDrop::drop(&mut self.c2p);
+            ManuallyDrop::drop(&mut self.p2c);
+            ManuallyDrop::drop(&mut self.buckets);
+            ManuallyDrop::drop(&mut self.stream);
+        }
     }
 }
 
 impl Drop for Scratch {
     fn drop(&mut self) {
+        if self.released {
+            return;
+        }
+        #[cfg(test)]
+        crate::note_default_drop_drain();
         if self.stream.synchronize().is_ok() {
             // SAFETY: retain all owners if ordered use cannot be proven complete.
             unsafe {

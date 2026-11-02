@@ -538,6 +538,10 @@ impl ClassifierScratchBuffers {
 
 impl Drop for ClassifierScratchBuffers {
     fn drop(&mut self) {
+        if !self.stream_drained {
+            #[cfg(test)]
+            crate::note_default_drop_drain();
+        }
         if self.stream_drained || self.stream.synchronize().is_ok() {
             self.first.take();
             self.second.take();

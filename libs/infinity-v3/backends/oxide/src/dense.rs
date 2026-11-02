@@ -21,6 +21,8 @@ use crate::{
     tensor::Bf16,
     u32_size,
     upload::WeightUploader,
+    work_retirement::{CompletedTicket, CompletionTicket},
+    BackendError,
 };
 use cuda_core::{Context, DeviceBuffer, Function, Stream};
 use serde::Deserialize;
@@ -646,6 +648,7 @@ pub(crate) struct DenseWork {
     selections: usize,
     bytes: usize,
     released: bool,
+    last_completion: Option<CompletionTicket>,
     first: ManuallyDrop<DeviceBuffer<Bf16>>,
     second: ManuallyDrop<DeviceBuffer<Bf16>>,
     output: ManuallyDrop<DeviceBuffer<f32>>,
@@ -723,6 +726,7 @@ impl DenseWork {
             selections,
             bytes,
             released: false,
+            last_completion: None,
             first: ManuallyDrop::new(first),
             second: ManuallyDrop::new(second),
             output: ManuallyDrop::new(output),
@@ -739,6 +743,61 @@ impl DenseWork {
 
     pub(crate) fn bytes(&self) -> usize {
         self.bytes
+    }
+
+    /// Records the tracked completion generation for this Work's last use. The
+    /// engine calls this before the first GPU upload of a submission.
+    pub(crate) fn mark_last_use(&mut self, ticket: CompletionTicket) {
+        self.last_completion = Some(ticket);
+    }
+
+    pub(crate) fn completion_ticket(&self) -> Option<CompletionTicket> {
+        self.last_completion.clone()
+    }
+
+    /// Releases only when the last tracked submission has an actual completion
+    /// proof. A ticket-less owner was never marked before an upload and is kept
+    /// for the final stream drain rather than dropped without proof.
+    pub(crate) unsafe fn release_if_idle(&mut self) -> Result<bool, BackendError> {
+        match self.last_completion.as_ref() {
+            None => Ok(false),
+            Some(ticket) => match ticket.completed() {
+                Some(proof) => {
+                    // SAFETY: the exact last-use proof is rechecked below.
+                    unsafe { self.release_after_completion(&proof)? };
+                    Ok(true)
+                }
+                None => Ok(false),
+            },
+        }
+    }
+
+    /// Releases Dense-owned buffers after an exact same-stream proof.
+    ///
+    /// # Safety
+    /// The proof MUST come from the actual fence for this Work's tracked
+    /// ticket. On any identity mismatch the payload stays owned.
+    pub(crate) unsafe fn release_after_completion(
+        &mut self,
+        proof: &CompletedTicket,
+    ) -> Result<(), BackendError> {
+        let ticket = self
+            .last_completion
+            .as_ref()
+            .ok_or_else(|| infer("Dense Work has no completion ticket"))?;
+        let stream_identity = Arc::as_ptr(&self.stream) as usize;
+        if !proof.matches(ticket)
+            || proof.stream_identity() != stream_identity
+            || ticket.stream_identity() != stream_identity
+        {
+            return Err(infer(
+                "Completion proof does not match this Dense Work request",
+            ));
+        }
+        // SAFETY: the caller proved the actual same-stream fence for this exact
+        // ticket, so no borrowed owner is still in use.
+        unsafe { self.drop_after_drain() };
+        Ok(())
     }
 
     pub(crate) fn output(&self) -> &DeviceBuffer<f32> {
@@ -772,6 +831,8 @@ impl Drop for DenseWork {
         if self.released {
             return;
         }
+        #[cfg(test)]
+        crate::note_default_drop_drain();
         if self.stream.synchronize().is_ok() {
             // SAFETY: this destructor just drained the owning stream. A failed
             // drain leaves the ManuallyDrop owners retained.
