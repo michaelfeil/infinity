@@ -5,6 +5,7 @@
 #include <tvm/ffi/container/tensor.h>
 #include <tvm/ffi/extra/c_env_api.h>
 #include <cmath>
+#include <climits>
 #include <cstdint>
 #include <string>
 #include <atomic>
@@ -273,4 +274,93 @@ extern "C" int infinity_fa4_jinacode_flash_alibi_v1(int dtype,int device,void* s
   last_error.clear();return 0;
  } catch(const std::exception& e){last_error=e.what();return -1;}
 }
+#endif
+
+#ifdef FA4_DEBERTA_EXACT_MUL
+extern "C" int __tvm_ffi_fa4_deberta_exact_mul_both_bf16(void*, const TVMFFIAny*, int32_t, TVMFFIAny*);
+extern "C" int __tvm_ffi_fa4_deberta_exact_mul_single_bf16(void*, const TVMFFIAny*, int32_t, TVMFFIAny*);
+
+namespace {
+std::atomic<bool> exact_mul_initialized[2]{};
+
+template <typename F>
+void invoke_exact_mul(unsigned slot, F&& invoke) {
+  if (!exact_mul_initialized[slot].load(std::memory_order_acquire)) {
+    std::unique_lock<std::mutex> lock(export_init_mutex);
+    if (!exact_mul_initialized[slot].load(std::memory_order_relaxed)) {
+      if (export_init_failure) std::rethrow_exception(export_init_failure);
+      try {
+        invoke();
+        exact_mul_initialized[slot].store(true, std::memory_order_release);
+      } catch (...) {
+        export_init_failure = std::current_exception();
+        throw;
+      }
+      return;
+    }
+  }
+  invoke();
+}
+}  // namespace
+
+// Raw BF16 relative GEMM tables; the supplied existing materialized divisor
+// selects one of two compiled, exactly-rounded score transforms. No tensor
+// scalar or model-dtype arithmetic is reconstructed on the host.
+extern "C" int infinity_fa4_deberta_exact_mul_v1(int dtype, int device, void* stream,
+    void* q, void* k, void* v, void* o, void* offsets,
+    void* c2p, void* p2c, void* buckets, int64_t total, int64_t batch,
+    int64_t heads, int64_t span, int64_t lut_len, int max_q, float divisor) {
+  try {
+    if (dtype != 1 || device < 0 || !q || !k || !v || !o || !offsets || !c2p || !p2c || !buckets ||
+        total <= 0 || total > INT32_MAX || batch <= 0 || batch > total || batch >= INT32_MAX ||
+        heads != 12 || span <= 0 || span > 4096 || lut_len <= 0 || lut_len > INT32_MAX || lut_len % 2 != 1 ||
+        max_q <= 0 || max_q > total || lut_len != 2 * static_cast<int64_t>(max_q) - 1 ||
+        total > INT32_MAX / (heads * 64) || total > INT32_MAX / (2 * span) ||
+        heads > INT32_MAX / (total * 2 * span))
+      throw std::runtime_error("invalid exact-mul BF16 DeBERTa geometry");
+    const auto aligned = [](void* pointer, uintptr_t alignment) {
+      return reinterpret_cast<uintptr_t>(pointer) % alignment == 0;
+    };
+    if (!aligned(q,2) || !aligned(k,2) || !aligned(v,2) || !aligned(o,2) ||
+        !aligned(c2p,2) || !aligned(p2c,2) || !aligned(offsets,4) || !aligned(buckets,4))
+      throw std::runtime_error("misaligned exact-mul BF16 DeBERTa device pointer");
+    const unsigned variant = divisor == 13.875F ? 0 : divisor == 11.3125F ? 1 : 2;
+    if (variant == 2) throw std::runtime_error("unsupported materialized BF16 DeBERTa divisor");
+    static tvm::ffi::Function functions[] = {
+        tvm::ffi::Function::FromExternC(nullptr, __tvm_ffi_fa4_deberta_exact_mul_both_bf16, nullptr),
+        tvm::ffi::Function::FromExternC(nullptr, __tvm_ffi_fa4_deberta_exact_mul_single_bf16, nullptr)};
+    DLDataType dt{kDLBfloat, 16, 1}, it{kDLInt, 32, 1};
+    int64_t shape[]{total, heads, 64}, strides[]{heads * 64, 64, 1}, cs[]{batch + 1}, one[]{1};
+    int64_t relative[]{heads, total, 2 * span}, rs[]{total * 2 * span, 2 * span, 1}, ls[]{lut_len};
+    auto tensor = [&](void* data, int ndim, int64_t* sizes, int64_t* steps, DLDataType type) {
+      return DLTensor{data, {kDLCUDA, device}, ndim, type, sizes, steps, 0};
+    };
+    auto qt=tensor(q,3,shape,strides,dt), kt=tensor(k,3,shape,strides,dt);
+    auto vt=tensor(v,3,shape,strides,dt), ot=tensor(o,3,shape,strides,dt);
+    auto ct=tensor(offsets,1,cs,one,it), at=tensor(c2p,3,relative,rs,dt);
+    auto bt=tensor(p2c,3,relative,rs,dt), lt=tensor(buckets,1,ls,one,it);
+    DLManagedTensor am{at,nullptr,nullptr}, bm{bt,nullptr,nullptr}, lm{lt,nullptr,nullptr};
+    tvm::ffi::Array<tvm::ffi::Any> tensors{
+        tvm::ffi::Tensor::FromDLPack(&am), tvm::ffi::Tensor::FromDLPack(&bm), tvm::ffi::Tensor::FromDLPack(&lm)};
+    tvm::ffi::Array<tvm::ffi::Any> aux{tensors,nullptr};
+    StreamScope scope(device,stream);
+    invoke_exact_mul(variant, [&] {
+#if FA4_COMPUTE_CAPABILITY == 100
+      functions[variant](&qt,&kt,&vt,&ot,nullptr,1.0,&ct,&ct,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,
+          nullptr,nullptr,aux,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,int64_t(max_q));
+#else
+      functions[variant](&qt,&kt,&vt,&ot,nullptr,1.0,&ct,&ct,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,nullptr,aux,nullptr,nullptr);
+#endif
+    });
+    last_error.clear();
+    return 0;
+  } catch (const std::exception& error) {
+    last_error=error.what();
+    return -1;
+  } catch (...) {
+    last_error="unknown exact-mul BF16 DeBERTa provider exception";
+    return -1;
+  }
+}
+
 #endif

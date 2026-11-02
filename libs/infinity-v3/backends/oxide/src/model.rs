@@ -70,6 +70,7 @@ pub(crate) enum EncoderFamily {
     Nomic,
     Jina,
     JinaCode,
+    Deberta,
 }
 impl EncoderFamily {
     fn from_model_type(model_type: &str) -> Option<Self> {
@@ -98,6 +99,7 @@ impl EncoderFamily {
             Self::Nomic => &[""],
             Self::Jina => &["bert.", ""],
             Self::JinaCode => &["", "bert."],
+            Self::Deberta => &["deberta.", ""],
         }
     }
 
@@ -126,6 +128,12 @@ impl EncoderFamily {
             Self::Nomic => matches!(architecture, "NomicBertModel"),
             Self::Jina => architecture.starts_with("JinaBert"),
             Self::JinaCode => architecture.starts_with("JinaBert"),
+            Self::Deberta => matches!(
+                architecture,
+                "DebertaV2Model"
+                    | "DebertaV2ForSequenceClassification"
+                    | "DebertaV2ForTokenClassification"
+            ),
         }
     }
 }
@@ -155,6 +163,7 @@ pub(crate) enum PositionRecipe {
     Rotary(RotaryRecipe),
     AlibiModelBias,
     LearnedRelative { buckets: usize },
+    Disentangled,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -306,6 +315,48 @@ pub(crate) struct BertConfig {
     pub(crate) add_cross_attention: bool,
 }
 impl BertConfig {
+    pub(crate) fn deberta_geometry(
+        vocab_size: usize,
+        num_hidden_layers: usize,
+        max_position_embeddings: usize,
+        layer_norm_eps: f64,
+        architectures: Vec<String>,
+    ) -> Result<Self, BackendError> {
+        if vocab_size == 0
+            || num_hidden_layers == 0
+            || num_hidden_layers > 128
+            || max_position_embeddings == 0
+            || max_position_embeddings > 8192
+            || !layer_norm_eps.is_finite()
+            || layer_norm_eps <= 0.0
+        {
+            return Err(start("Invalid DeBERTa BF16 geometry"));
+        }
+        Ok(Self {
+            hidden_size: 768,
+            intermediate_size: 3072,
+            num_attention_heads: 12,
+            num_hidden_layers,
+            max_position_embeddings,
+            rotary_table_positions: None,
+            vocab_size,
+            type_vocab_size: 0,
+            configured_type_vocab_size: Some(0),
+            layer_norm_eps,
+            family: EncoderFamily::Deberta,
+            recipe: EncoderRecipe {
+                embedding: NormArithmetic::RoundedAddBeforeStats,
+                residual: NormArithmetic::RoundedAddBeforeStats,
+                positions: PositionRecipe::Disentangled,
+                feed_forward: FeedForwardRecipe::DenseGeluErf,
+            },
+            architectures,
+            hidden_act: "gelu".into(),
+            position_embedding_type: "relative".into(),
+            is_decoder: false,
+            add_cross_attention: false,
+        })
+    }
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn load(path: &Path) -> Result<Self, BackendError> {
         Self::load_admitted(path, false)

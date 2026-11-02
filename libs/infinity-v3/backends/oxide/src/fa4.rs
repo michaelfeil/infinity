@@ -270,6 +270,7 @@ fn validate_profile_order(
         .get("kernels")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| start("manifest lacks a kernels array"))?;
+    crate::fa4_deberta::validate_exact_mul_exports(manifest)?;
     let deberta_symbol = format!("fa4_deberta_{}", dtype.name());
     let mut deberta_seen = false;
     let mut alibi_eight_seen = false;
@@ -278,6 +279,11 @@ fn validate_profile_order(
     for kernel in kernels {
         if kernel.get("dtype").and_then(serde_json::Value::as_str) != Some(dtype.name()) {
             continue;
+        }
+        if let Some(symbol) = kernel.get("symbol").and_then(serde_json::Value::as_str) {
+            if crate::fa4_deberta::is_exact_mul_symbol(symbol) {
+                continue;
+            }
         }
         if kernel.get("symbol").and_then(serde_json::Value::as_str) == Some(deberta_symbol.as_str())
         {
@@ -933,6 +939,31 @@ mod tests {
         })
     }
 
+    fn exact_mul_deberta_kernel(symbol: &str) -> Value {
+        crate::fa4_deberta::test_exact_mul_kernel(symbol)
+    }
+
+    fn push_exact_mul_deberta_pair(manifest: &mut Value) {
+        let kernels = manifest["kernels"]
+            .as_array_mut()
+            .expect("test manifest has kernels");
+        kernels.push(exact_mul_deberta_kernel(
+            crate::fa4_deberta::EXACT_MUL_BOTH_SYMBOL,
+        ));
+        kernels.push(exact_mul_deberta_kernel(
+            crate::fa4_deberta::EXACT_MUL_SINGLE_SYMBOL,
+        ));
+    }
+
+    fn exact_mul_deberta_position(manifest: &Value, symbol: &str) -> usize {
+        manifest["kernels"]
+            .as_array()
+            .expect("test manifest has kernels")
+            .iter()
+            .position(|kernel| kernel.get("symbol").and_then(Value::as_str) == Some(symbol))
+            .expect("exact-mul DeBERTa export is present")
+    }
+
     fn fake_batch(spec: &AttentionSpec, q_tokens: usize, k_tokens: usize) -> AttentionBatch {
         AttentionBatch {
             q: 0x1000,
@@ -1284,6 +1315,84 @@ mod tests {
             assert!(validate_profile_order(&manifest, dtype).is_err(), "{field}");
             manifest["kernels"].as_array_mut().unwrap().pop();
         }
+    }
+
+    #[test]
+    fn exact_mul_deberta_exports_are_additive_and_keep_ordinary_modes() {
+        for dtype in [DType::F16, DType::Bf16] {
+            let mut manifest = manifest_for(&[dtype]);
+            let before = validate_profile_order(&manifest, dtype).unwrap();
+            assert_eq!(before, PROFILES.len());
+            push_exact_mul_deberta_pair(&mut manifest);
+            assert_eq!(validate_profile_order(&manifest, dtype).unwrap(), before);
+            assert_eq!(
+                select_profile(&manifest, &spec_for(&PROFILES[0], dtype)).unwrap(),
+                0
+            );
+            assert_eq!(
+                select_profile(&manifest, &spec_for(&appended_profile(), dtype)).unwrap(),
+                LEGACY_PROFILE_COUNT
+            );
+        }
+    }
+
+    #[test]
+    fn exact_mul_deberta_exports_reject_partial_duplicate_and_unknown_entries() {
+        let dtype = DType::Bf16;
+        let base = manifest_for(&[dtype]);
+
+        let mut partial = base.clone();
+        partial["kernels"]
+            .as_array_mut()
+            .unwrap()
+            .push(exact_mul_deberta_kernel(
+                crate::fa4_deberta::EXACT_MUL_BOTH_SYMBOL,
+            ));
+        assert!(validate_profile_order(&partial, dtype).is_err());
+
+        let mut duplicate = base.clone();
+        push_exact_mul_deberta_pair(&mut duplicate);
+        duplicate["kernels"]
+            .as_array_mut()
+            .unwrap()
+            .push(exact_mul_deberta_kernel(
+                crate::fa4_deberta::EXACT_MUL_BOTH_SYMBOL,
+            ));
+        assert!(validate_profile_order(&duplicate, dtype).is_err());
+
+        let mut unknown = base;
+        push_exact_mul_deberta_pair(&mut unknown);
+        unknown["kernels"]
+            .as_array_mut()
+            .unwrap()
+            .push(exact_mul_deberta_kernel("fa4_deberta_exact_mul_other_bf16"));
+        assert!(validate_profile_order(&unknown, dtype).is_err());
+    }
+
+    #[test]
+    fn exact_mul_deberta_exports_validate_before_dtype_filtering() {
+        let dtype = DType::F16;
+        let mut manifest = manifest_for(&[dtype]);
+        push_exact_mul_deberta_pair(&mut manifest);
+        let index =
+            exact_mul_deberta_position(&manifest, crate::fa4_deberta::EXACT_MUL_BOTH_SYMBOL);
+        for (field, value) in [
+            ("relative_reciprocal_f32_bits", json!(0x3d939a85u64)),
+            ("relative_divisor_f32", json!(11.3125)),
+            ("window", json!([-1, null])),
+            ("dtype", json!("fp16")),
+        ] {
+            let mut wrong = manifest.clone();
+            wrong["kernels"][index][field] = value;
+            assert!(
+                validate_profile_order(&wrong, dtype).is_err(),
+                "accepted corrupt exact-mul {field}"
+            );
+        }
+        assert_eq!(
+            validate_profile_order(&manifest, dtype).unwrap(),
+            PROFILES.len()
+        );
     }
 
     #[test]

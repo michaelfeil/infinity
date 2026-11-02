@@ -7,16 +7,18 @@
 
 use cuda_device::{convert, cuda_module, kernel, thread, warp, DynamicSharedArray, SharedArray};
 mod aten_embedding;
-mod mpnet_norm;
-mod gelu_exact;
 mod classifier;
 mod classifier_norm384;
+mod deberta_math;
+mod deberta_norm;
 mod decoder;
 mod dense;
 mod encoder_f16;
 mod encoder_prenorm;
 mod gated;
+mod gelu_exact;
 mod jina_code_qk;
+mod mpnet_norm;
 mod nomic_embedding;
 mod norm1024;
 mod norm1024_exact_vector;
@@ -274,6 +276,71 @@ unsafe fn layer_norm<const ROUND_RESIDUAL: bool>(
 #[cuda_module]
 mod kernels {
     use super::*;
+
+    #[kernel]
+    pub unsafe fn infinity_deberta_unpack_scaled(
+        packed: *const u16,
+        q: *mut u16,
+        k: *mut u16,
+        v: *mut u16,
+        elements: u32,
+        width: u32,
+        scale: f32,
+    ) {
+        unsafe { crate::deberta_math::unpack_scaled(packed, q, k, v, elements, width, scale) };
+    }
+    #[kernel]
+    pub unsafe fn infinity_deberta_relative_transpose(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::deberta_math::relative_transpose(input, out, rows, width) };
+    }
+
+
+    #[kernel]
+    pub unsafe fn infinity_deberta_divide(input: *mut u16, elements: u32, scale: f32) {
+        unsafe { crate::deberta_math::divide(input, elements, scale) };
+    }
+    #[kernel]
+    pub unsafe fn infinity_deberta_signed_buckets(
+        out: *mut i32,
+        length: u32,
+        span: u32,
+        logarithmic: u32,
+        denominator: f32,
+    ) {
+        unsafe { crate::deberta_math::signed_buckets(out, length, span, logarithmic, denominator) };
+    }
+    #[kernel]
+    pub unsafe fn infinity_deberta_embedding_word_norm_768(
+        ids: *const u32,
+        word: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        _width: u32,
+        eps: f32,
+    ) {
+        unsafe { crate::deberta_norm::word(ids, word, gamma, beta, out, rows, eps) };
+    }
+    #[kernel]
+    pub unsafe fn infinity_deberta_layer_norm_768(
+        input: *const u16,
+        residual: *const u16,
+        bias: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        _width: u32,
+        eps: f32,
+    ) {
+        unsafe { crate::deberta_norm::rounded(input, residual, bias, gamma, beta, out, rows, eps) };
+    }
 
     /// Register-cached specialization, grid=(tokens,1,1), block=256.
     #[kernel]
@@ -1490,22 +1557,45 @@ mod kernels {
     /// Exact native classifier H384 embedding norm; 4 rows/128-thread CTA.
     #[kernel]
     pub unsafe fn infinity_classifier_embedding_norm_384_exact(
-        ids: *const u32, positions: *const u32, types: *const u32,
-        word: *const u16, position: *const u16, token_type: *const u16,
-        gamma: *const u16, beta: *const u16, out: *mut u16,
-        tokens: u32, hidden: u32, eps: f32,
+        ids: *const u32,
+        positions: *const u32,
+        types: *const u32,
+        word: *const u16,
+        position: *const u16,
+        token_type: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        hidden: u32,
+        eps: f32,
     ) {
-        unsafe { crate::classifier_norm384::embedding_norm_384_exact(ids,positions,types,word,position,token_type,gamma,beta,out,tokens,hidden,eps) };
+        unsafe {
+            crate::classifier_norm384::embedding_norm_384_exact(
+                ids, positions, types, word, position, token_type, gamma, beta, out, tokens,
+                hidden, eps,
+            )
+        };
     }
 
     /// Exact native classifier H384 residual norm; 4 rows/128-thread CTA.
     #[kernel]
     pub unsafe fn infinity_classifier_layer_norm_384_exact(
-        input: *const u16, residual: *const u16, bias: *const u16,
-        gamma: *const u16, beta: *const u16, out: *mut u16,
-        rows: u32, hidden: u32, eps: f32,
+        input: *const u16,
+        residual: *const u16,
+        bias: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        out: *mut u16,
+        rows: u32,
+        hidden: u32,
+        eps: f32,
     ) {
-        unsafe { crate::classifier_norm384::layer_norm_384_exact(input,residual,bias,gamma,beta,out,rows,hidden,eps) };
+        unsafe {
+            crate::classifier_norm384::layer_norm_384_exact(
+                input, residual, bias, gamma, beta, out, rows, hidden, eps,
+            )
+        };
     }
 
     /// Word-only BF16 gather; grid=ceil(tokens*width/256), block=256.
@@ -1773,7 +1863,6 @@ mod kernels {
     pub unsafe fn infinity_gelu_exact(input: *mut u16, elements: u32) {
         unsafe { crate::gelu_exact::gelu_exact(input, elements) };
     }
-
 }
 
 fn main() {}

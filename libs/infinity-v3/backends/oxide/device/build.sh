@@ -55,6 +55,9 @@ symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_emb
                   "infinity_embedding_gather", "infinity_embedding_gather_scaled",
                   "infinity_selected_rows", "infinity_bf16_to_f32"])
 # Additive FP16 H384 MiniLM elementwise exports; the original list above is unchanged.
+symbols = sorted(symbols + ["infinity_deberta_unpack_scaled", "infinity_deberta_relative_transpose",
+                           "infinity_deberta_divide", "infinity_deberta_signed_buckets",
+                           "infinity_deberta_embedding_word_norm_768", "infinity_deberta_layer_norm_768"])
 symbols = sorted(symbols + [
     "infinity_embedding_norm_384_f16", "infinity_layer_norm_384_f16",
     "infinity_plain_norm_384_f16", "infinity_mean_pool_f16",
@@ -96,6 +99,8 @@ manifest["sources"]["src/encoder_f16.rs"] = digest(root / "src/encoder_f16.rs")
 manifest["sources"]["src/jina_code_qk.rs"] = digest(root / "src/jina_code_qk.rs")
 manifest["sources"]["src/classifier.rs"] = digest(root / "src/classifier.rs")
 manifest["sources"]["src/classifier_norm384.rs"] = digest(root / "src/classifier_norm384.rs")
+for name in ["src/deberta_math.rs", "src/deberta_norm.rs", "src/gelu_exact.rs"]:
+    manifest["sources"][name] = digest(root / name)
 manifest["sources"] = dict(sorted(manifest["sources"].items()))
 output.mkdir(parents=True, exist_ok=True)
 # Carry the newly adapted primitive's attribution with standalone bundles.

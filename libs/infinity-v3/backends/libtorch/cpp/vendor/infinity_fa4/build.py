@@ -5,7 +5,7 @@
 Use the tested FA4 revision e9cf2c1651d2303191eb40a739a3c135fda00999 and
 nvidia-cutlass-dsl 4.7.1 in an isolated environment. Pass the CuTe runtime
 library directory (cu12/lib for CUDA12 serving) and the tvm_ffi package root.
-Use --compile-only --export-only without a GPU, then --link-only inside the deployment
+Use --compile-only --export-only for fake-tensor AOT export, then --link-only inside the deployment
 build container to avoid requiring a newer libstdc++ than the serving image.
 The LibTorch build consumes a parent directory of sm_NN bundles through
 INFINITY_FA4_ROOT and installs them beside libtei_torch.so.
@@ -31,6 +31,7 @@ phase = p.add_mutually_exclusive_group()
 phase.add_argument("--export-only", action="store_true", help="Export kernels before linking in the deployment toolchain")
 phase.add_argument("--link-only", action="store_true", help="Link existing exports; no Python GPU packages required")
 p.add_argument("--deberta", action="store_true", help="Also export packed DeBERTa relative attention")
+p.add_argument("--deberta-exact-mul", action="store_true", help="Include the BF16 fixed-divisor DeBERTa score hook")
 p.add_argument("--alibi", action="store_true", help="Also export packed Jina ALiBi model-bias attention")
 p.add_argument("--jinacode", action="store_true", help="Also export native JinaCode F32-FMA ALiBi attention")
 p.add_argument("--compile-only", action="store_true", help="Export using fake tensors without a build GPU; runtime validation is still required")
@@ -38,6 +39,8 @@ p.add_argument("--arch", choices=["sm_80", "sm_86", "sm_89", "sm_90a", "sm_100a"
 a = p.parse_args()
 if a.compile_only and a.link_only:
     p.error("--compile-only applies to export, not --link-only")
+if a.deberta_exact_mul and not a.deberta and not a.link_only:
+    p.error("--deberta-exact-mul requires --deberta")
 capability = int(a.arch.removeprefix("sm_").removesuffix("a"))
 a.output.mkdir(parents=True, exist_ok=True)
 def digest(path):
@@ -52,10 +55,16 @@ if not a.link_only:
         os.environ["FLASH_ATTENTION_NUM_SMS"] = str({80: 108, 86: 72, 89: 58, 90: 132, 100: 148, 120: 188}[capability])
     else:
         os.environ.pop("FLASH_ATTENTION_NUM_SMS", None)
+    if a.compile_only:
+        # External-ptxas hooks can load foreign-target cubins during AOT export.
+        os.environ.pop("CUTE_DSL_PTXAS_PATH", None)
     from fa4_source import stage_fa4_sources
     staged_source, softmax_backport = stage_fa4_sources()
     import torch
     import flash_attn.cute.interface as interface
+    if a.compile_only:
+        from compile_only import install_export_only_compile
+        compile_only_state = install_export_only_compile(interface.cute)
     if not a.compile_only and torch.cuda.get_device_capability() != divmod(capability, 10):
         raise RuntimeError(f"Exporting {a.arch} requires a matching GPU or --compile-only")
     if importlib.metadata.version("nvidia-cutlass-dsl") != "4.7.1":
@@ -124,6 +133,33 @@ if not a.link_only:
                 objects.append(str(obj))
                 kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
                                     causal=False, window=[None, None], dtype=dtype_name))
+        if a.deberta_exact_mul:
+            from deberta_mul_score import deberta_exact_mul_both, deberta_exact_mul_single
+            for name, callback, divisor, reciprocal in [
+                    ("both", deberta_exact_mul_both, 13.875, 0x3d939a86),
+                    ("single", deberta_exact_mul_single, 11.3125, 0x3db509e7)]:
+                q = torch.zeros((256, 12, 64), device="cuda", dtype=torch.bfloat16)
+                rel = torch.zeros((12, 256, 512), device="cuda", dtype=torch.bfloat16)
+                lut = torch.zeros(257, device="cuda", dtype=torch.int32)
+                previous = set(interface._flash_attn_fwd.compile_cache.cache)
+                interface.flash_attn_varlen_func(q, q, q, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                    max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
+                    score_mod=callback, aux_tensors=[rel, rel, lut],
+                    disable_scheduler_metadata=True)
+                fresh = set(interface._flash_attn_fwd.compile_cache.cache) - previous
+                if len(fresh) != 1:
+                    raise RuntimeError("Unexpected exact-mul DeBERTa compilation count")
+                compiled = interface._flash_attn_fwd.compile_cache.cache[fresh.pop()]
+                symbol = f"fa4_deberta_exact_mul_{name}_bf16"
+                obj = a.output / f"{symbol}.o"
+                export_portable(compiled, obj, symbol)
+                objects.append(str(obj))
+                kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
+                                    causal=False, window=[None, None], dtype="bf16",
+                                    relative_score_input="raw_bf16_matmul",
+                                    relative_divisor_f32=divisor,
+                                    relative_reciprocal_f32_bits=reciprocal,
+                                    relative_score_transform="mul.rn.f32+cvt.rn.bf16x2.f32+bit_widen_f32"))
         if a.alibi:
             # Same fake-tensor compile-only path as the ordinary exports.  The
             # 129 below is an export example, not a runtime sequence cap: the
@@ -198,6 +234,10 @@ if not a.link_only:
         "tvm_ffi": importlib.metadata.version("apache-tvm-ffi"),
         "objects": {pathlib.Path(obj).name: digest(pathlib.Path(obj)) for obj in objects},
     }
+    if a.compile_only:
+        manifest["compile_only_engine_control"] = compile_only_state
+    if a.deberta_exact_mul:
+        manifest["deberta_mul_score_sha256"] = digest(pathlib.Path(__file__).with_name("deberta_mul_score.py"))
     if a.alibi:
         manifest["alibi_score_sha256"] = digest(pathlib.Path(__file__).with_name("alibi_score.py"))
     if a.jinacode:
@@ -231,6 +271,8 @@ if any(k["symbol"].startswith(("fa4_alibi_model_bias_", "fa4_jinacode_flash_alib
 else:
     # Keep the pre-ALiBi link path independent of the additive module.
     link_defines = ["-DFA4_DEBERTA"] if any(k["symbol"].startswith("fa4_deberta_") for k in manifest["kernels"]) else []
+if any(k["symbol"].startswith("fa4_deberta_exact_mul_") for k in manifest["kernels"]):
+    link_defines.append("-DFA4_DEBERTA_EXACT_MUL")
 subprocess.run([a.cxx, "-std=c++17", "-O2", "-fPIC", "-shared", str(bridge),
                 *objects, "-DINFINITY_FA4_PORTABLE_HOST=1", f"-DFA4_COMPUTE_CAPABILITY={capability}", f"-I{a.ffi_root / 'include'}",
                 f"-L{a.runtime_dir}", "-lcute_dsl_runtime",

@@ -37,6 +37,7 @@ variant of these families.
 | BERT, RoBERTa, XLM-RoBERTa, CamemBERT | Encoder-only absolute position tables, tanh GELU, no cross-attention. BERT position capacity is at most 4096. Head width is at most 256; a matching provider profile is required for FA4. |
 | DistilBERT | The same packed encoder contract, with its checkpoint names/config aliases and fixed LayerNorm epsilon `1e-12`. An optional stored token-type table is validated and preserved; otherwise a zero table is used. |
 | MPNet | BF16 H768, intermediate width 3072, 12 attention heads, 32 relative buckets and at most 512 positions. Uses exact GELU, learned bucket attention and the native `positions + 2` lookup. Only token type `0` is accepted; classifier and MLM heads are rejected. |
+| DeBERTa-v2/v3 | BF16 H768, 12 heads, intermediate width 3072, word-only embeddings and learned relative attention. Shared or dedicated relative projections and c2p/p2c combinations are supported. Absolute position/type embeddings, embedding projection and convolution are rejected. Requires FA4. |
 | Qwen2 | Dense SiLU text backbone, full split-half NeoX RoPE, global causal or noncausal attention, and a matching FA4 profile. The H896/d64 native RMS/rotary recipe is rejected. The exercised GTE-Qwen2-1.5B-instruct geometry is H1536, 12 Q/2 KV heads, d128, noncausal. |
 | Qwen3 | Dense SiLU text backbones at H1024 or H4096, d128 learned Q/K head norms, full NeoX RoPE, and a matching FA4 profile. Query projection width may differ from hidden width. Qwen3-Embedding-0.6B and 8B are exercised; expert models and other normalization widths are rejected. |
 | Llama | Hidden width 2048, dense SiLU, base unscaled `default` RoPE, causal global attention, and a matching FA4 profile. TinyLlama's 32 Q/4 KV heads at d64 need the appended twentieth profile. H4096, noncausal Llama, and scaled RoPE including Llama3 are rejected. |
@@ -69,6 +70,14 @@ for both checkpoints. Optional BERT pooler weights are honored for sequence
 predictions. Other classifier configurations, MLP heads, Dense modules and
 FP16 classifiers are rejected. These paths have native output and lifecycle
 qualification; performance remains workload-specific.
+
+DeBERTa uses the same packed workspace, deferred results and pooling interfaces.
+Sequence and token classifier readout follows the trained architecture. Its
+relative score provider is selected once at model load: a complete validated
+exact-multiply pair avoids two relative-table divide launches per layer; older
+providers retain normalized relative tables. The fast path keeps the existing
+BF16 rounding boundaries and score addition order. A malformed advertised pair
+is an error. No experimental relative-score environment setting is required.
 
 Decoder loading also rejects sliding windows, partial rotary dimensions, expert,
 recurrent, media and quantization modifiers. Accepted Model/ForCausalLM checkpoint

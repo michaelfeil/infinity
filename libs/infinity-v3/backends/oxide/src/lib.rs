@@ -7,6 +7,8 @@ mod classifier_head;
 #[cfg(test)]
 mod classifier_primitives;
 mod cublas;
+mod deberta;
+mod deberta_encoder_model;
 mod decoder;
 mod decoder_model;
 mod dense;
@@ -14,6 +16,7 @@ mod encoder_linear;
 mod encoder_policy;
 mod fa4;
 mod fa4_alibi;
+mod fa4_deberta;
 pub mod fp8;
 mod jina_code_encoder_model;
 #[cfg(test)]
@@ -331,6 +334,7 @@ enum EncoderHostWeights {
     Nomic(NomicWeights),
     Jina(JinaWeights),
     JinaCode(JinaCodeHost),
+    Deberta(deberta_encoder_model::DebertaWeights),
 }
 struct JinaCodeHost {
     geometry: BertConfig,
@@ -350,6 +354,7 @@ impl EncoderHostWeights {
             Self::Nomic(host) => &host.config,
             Self::Jina(host) => &host.geometry,
             Self::JinaCode(host) => &host.geometry,
+            Self::Deberta(host) => &host.config.geometry,
         }
     }
 }
@@ -574,6 +579,9 @@ impl Kernels {
         let aten_768_embedding =
             config.hidden_size == 768 && config.recipe.embedding == NormArithmetic::AtenEmbedding;
         let embedding_name = match config.recipe.embedding {
+            NormArithmetic::RoundedAddBeforeStats if config.family == EncoderFamily::Deberta => {
+                "infinity_deberta_embedding_word_norm_768"
+            }
             NormArithmetic::ExactBiased if exact_classifier_384 => {
                 "infinity_classifier_embedding_norm_384_exact"
             }
@@ -609,6 +617,9 @@ impl Kernels {
             NormArithmetic::RoundedAddBeforeStats => "infinity_embedding_norm_rounded",
         };
         let norm_name = match config.recipe.residual {
+            NormArithmetic::RoundedAddBeforeStats if config.family == EncoderFamily::Deberta => {
+                "infinity_deberta_layer_norm_768"
+            }
             NormArithmetic::ExactBiased if exact_classifier_384 => {
                 "infinity_classifier_layer_norm_384_exact"
             }
@@ -655,7 +666,8 @@ impl Kernels {
         let rotary = match config.recipe.positions {
             PositionRecipe::Absolute
             | PositionRecipe::AlibiModelBias
-            | PositionRecipe::LearnedRelative { .. } => None,
+            | PositionRecipe::LearnedRelative { .. }
+            | PositionRecipe::Disentangled => None,
             PositionRecipe::Rotary(_) => Some(RotaryFunctions {
                 rope_hfma: module
                     .load_function("infinity_rope_neox_hfma")
@@ -708,14 +720,20 @@ impl Kernels {
             norm: module.load_function(norm_name).map_err(start)?,
             embedding_geometry: if mpnet_768_rounded {
                 MPNET_H768_GEOMETRY
-            } else if exact_768_embedding || exact_classifier_384 {
+            } else if exact_768_embedding
+                || exact_classifier_384
+                || config.family == EncoderFamily::Deberta
+            {
                 H768_GEOMETRY
             } else {
                 GENERIC_GEOMETRY
             },
             norm_geometry: if mpnet_768_rounded {
                 MPNET_H768_GEOMETRY
-            } else if exact_768_norm || exact_classifier_384 {
+            } else if exact_768_norm
+                || exact_classifier_384
+                || config.family == EncoderFamily::Deberta
+            {
                 H768_GEOMETRY
             } else {
                 GENERIC_GEOMETRY
@@ -955,7 +973,7 @@ enum DownPolicy {
 fn down_policy(c: &BertConfig) -> DownPolicy {
     if c.family == EncoderFamily::Gte {
         DownPolicy::NativeDefault
-    } else if classifier_head::is_classifier_config(c) {
+    } else if classifier_head::is_classifier_config(c) || c.family == EncoderFamily::Deberta {
         DownPolicy::ClassifierNativeDefault
     } else if c.family == EncoderFamily::Nomic {
         DownPolicy::Plain
@@ -1168,11 +1186,11 @@ impl<E: UploadElement> Plans<E> {
     fn new(provider: &LtProvider, c: &BertConfig) -> Result<Self, BackendError> {
         let h = c.hidden_size;
         let intermediate = match c.recipe.feed_forward {
-            FeedForwardRecipe::DenseGelu => IntermediatePlan::Dense(Box::new(
-                provider.prepare_native_small_gelu_bias_shape::<E>(h, c.intermediate_size)?,
-            )),
             FeedForwardRecipe::DenseGeluErf => IntermediatePlan::DenseExact(Box::new(
                 provider.prepare_native_small_bias_shape::<E>(h, c.intermediate_size)?,
+            )),
+            FeedForwardRecipe::DenseGelu => IntermediatePlan::Dense(Box::new(
+                provider.prepare_native_small_gelu_bias_shape::<E>(h, c.intermediate_size)?,
             )),
             FeedForwardRecipe::GatedGeluUpFirst | FeedForwardRecipe::GatedSiluGateFirst => {
                 IntermediatePlan::Gated {
@@ -1381,10 +1399,11 @@ impl ExecutableModel {
     }
     fn workspace_bytes(&self, key: WorkKey) -> Result<usize, BackendError> {
         match self {
-            Self::Encoder(model) => Work::<Bf16>::allocation_bytes_with_classifier(
+            Self::Encoder(model) => Work::<Bf16>::allocation_bytes_with_deberta(
                 key,
                 &model.config,
                 self.classifier_layout(key)?,
+                model.deberta.as_ref().map(|policy| policy.span()),
             ),
             Self::EncoderF16(model) => Work::<F16>::allocation_bytes(key, &model.config),
             Self::Modern(model) => Work::<Bf16>::allocation_bytes(key, &model.config.geometry),
@@ -1393,11 +1412,12 @@ impl ExecutableModel {
     }
     fn workspace(&self, stream: Arc<Stream>, key: WorkKey) -> Result<Workspace, BackendError> {
         match self {
-            Self::Encoder(model) => Ok(Workspace::Encoder(Work::<Bf16>::new_with_classifier(
+            Self::Encoder(model) => Ok(Workspace::Encoder(Work::<Bf16>::new_with_deberta(
                 stream,
                 &model.config,
                 key,
                 self.classifier_layout(key)?,
+                model.deberta.as_ref().map(|policy| policy.span()),
             )?)),
             Self::EncoderF16(model) => Ok(Workspace::EncoderF16(Work::<F16>::new(
                 stream,
@@ -1435,6 +1455,7 @@ struct EncoderModel<E: UploadElement> {
     mpnet_native: Option<mpnet_attention::NativeMpnetAttention>,
     fa4_layout: Option<PackedAttention>,
     classifier: Option<ClassifierHead>,
+    deberta: Option<Box<deberta::PreparedDeberta>>,
 }
 
 enum Workspace {
@@ -1921,6 +1942,7 @@ struct Work<E: UploadElement> {
     gated: ManuallyDrop<Option<DeviceBuffer<E>>>,
     pooled: ManuallyDrop<DeviceBuffer<f32>>,
     classifier: ManuallyDrop<Option<Box<ClassifierScratchBuffers>>>,
+    deberta: ManuallyDrop<Option<deberta::Scratch>>,
 }
 #[cfg(test)]
 struct LinearPlans {
@@ -1963,6 +1985,7 @@ impl<E: UploadElement> Drop for Work<E> {
                 ManuallyDrop::drop(&mut self.gated);
                 ManuallyDrop::drop(&mut self.pooled);
                 ManuallyDrop::drop(&mut self.classifier);
+                ManuallyDrop::drop(&mut self.deberta);
             }
             LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
             record_live_arena_bytes();
@@ -1989,6 +2012,14 @@ impl<E: UploadElement> Work<E> {
         c: &BertConfig,
         classifier: Option<ClassifierScratchLayout>,
     ) -> Result<usize, BackendError> {
+        Self::allocation_bytes_with_deberta(key, c, classifier, None)
+    }
+    fn allocation_bytes_with_deberta(
+        key: WorkKey,
+        c: &BertConfig,
+        classifier: Option<ClassifierScratchLayout>,
+        span: Option<usize>,
+    ) -> Result<usize, BackendError> {
         let (tokens, _, _) = key;
         i32::try_from(tokens).map_err(infer)?;
         u32_size(product(tokens, c.hidden_size)?)?;
@@ -2008,11 +2039,13 @@ impl<E: UploadElement> Work<E> {
                 .ok_or_else(|| infer("Workspace arena overflow"))?;
         }
         let classifier = classifier.map_or(Ok(0), ClassifierScratchLayout::bytes)?;
+        let deberta = span.map_or(Ok(0), |span| deberta::Scratch::bytes(tokens, span))?;
         product(input, 4)?
             .checked_add(product(output, 4)?)
             .and_then(|n| n.checked_add(hidden))
             .and_then(|n| n.checked_add(intermediate))
             .and_then(|n| n.checked_add(classifier))
+            .and_then(|n| n.checked_add(deberta))
             .ok_or_else(|| infer("Workspace arena overflow"))
     }
     fn fits(&self, key: WorkKey) -> bool {
@@ -2024,7 +2057,16 @@ impl<E: UploadElement> Work<E> {
         key: WorkKey,
         classifier_layout: Option<ClassifierScratchLayout>,
     ) -> Result<Self, BackendError> {
-        let bytes = Self::allocation_bytes_with_classifier(key, c, classifier_layout)?;
+        Self::new_with_deberta(s, c, key, classifier_layout, None)
+    }
+    fn new_with_deberta(
+        s: Arc<Stream>,
+        c: &BertConfig,
+        key: WorkKey,
+        classifier_layout: Option<ClassifierScratchLayout>,
+        span: Option<usize>,
+    ) -> Result<Self, BackendError> {
+        let bytes = Self::allocation_bytes_with_deberta(key, c, classifier_layout, span)?;
         let (tokens, sequences, selections) = key;
         let hidden = product(tokens, c.hidden_size)?;
         let input_len = staging::input_capacity(key)?;
@@ -2071,6 +2113,9 @@ impl<E: UploadElement> Work<E> {
             .map(|layout| ClassifierScratchBuffers::new(s.clone(), layout))
             .transpose()?
             .map(Box::new);
+        let deberta = span
+            .map(|span| deberta::Scratch::new(&s, tokens, span))
+            .transpose()?;
         metrics::counter!("oxide_arena_allocations_total").increment(1);
         LIVE_ARENA_BYTES.fetch_add(bytes, Ordering::Relaxed);
         record_live_arena_bytes();
@@ -2091,6 +2136,7 @@ impl<E: UploadElement> Work<E> {
             gated: ManuallyDrop::new(gated),
             pooled: ManuallyDrop::new(pooled),
             classifier: ManuallyDrop::new(classifier),
+            deberta: ManuallyDrop::new(deberta),
             stream: s,
         })
     }
@@ -2548,6 +2594,7 @@ fn enqueue_encoder<E: UploadElement>(
     let mpnet_native = model.mpnet_native.as_ref();
     let fa4_layout = model.fa4_layout;
     let rotary = model.rotary.as_ref();
+    let deberta = model.deberta.as_ref();
     let gated = model.gated.as_ref();
     let plans = &mut model.plans;
     let h = c.hidden_size;
@@ -2608,7 +2655,7 @@ fn enqueue_encoder<E: UploadElement>(
                 arg(&mut eps),
             ],
         )?;
-    } else if rotary.is_some() {
+    } else if rotary.is_some() || c.family == EncoderFamily::Deberta {
         launch_threads(
             &k.embedding,
             s,
@@ -2675,6 +2722,13 @@ fn enqueue_encoder<E: UploadElement>(
         trace.tensor(s, &w.x, tokens, h, "embedding");
     }
     let layers = weights.layers.iter().enumerate();
+    if let Some(policy) = deberta {
+        let scratch = w
+            .deberta
+            .as_ref()
+            .ok_or_else(|| infer("Missing DeBERTa relative scratch"))?;
+        policy.buckets(scratch, max_length)?;
+    }
     for (_layer_index, layer) in layers {
         // SAFETY: this thread bound the engine context once above. The
         // engine retains all buffers until stream completion/error drain;
@@ -2799,7 +2853,30 @@ fn enqueue_encoder<E: UploadElement>(
                 );
             }
         }
-        if let Some(provider) = mpnet_native {
+        if let Some(policy) = deberta {
+            let blas = plain_blas
+                .ok_or_else(|| infer("DeBERTa requires the prepared plain cuBLAS handle"))?;
+            let scratch = w
+                .deberta
+                .as_ref()
+                .ok_or_else(|| infer("Missing DeBERTa relative scratch"))?;
+            policy.attention(
+                _layer_index,
+                blas,
+                s,
+                scratch,
+                w.qkv.cu_deviceptr(),
+                w.qkv.len(),
+                w.query.cu_deviceptr(),
+                w.key.cu_deviceptr(),
+                w.value.cu_deviceptr(),
+                w.attention.cu_deviceptr(),
+                boundaries,
+                tokens,
+                batch_count,
+                max_length,
+            )?;
+        } else if let Some(provider) = mpnet_native {
             let layout = fa4_layout.ok_or_else(|| infer("Missing MPNet packed layout"))?;
             let table = weights
                 .relative_bias
@@ -3211,10 +3288,11 @@ enum CheckpointArchitecture {
     JinaCode,
     Gte,
     Encoder,
+    Deberta,
 }
 impl CheckpointArchitecture {
     fn uses_native_default(self) -> bool {
-        self == Self::Gte
+        matches!(self, Self::Gte | Self::Deberta)
     }
 }
 
@@ -3234,6 +3312,7 @@ fn selects_architecture(
         "modernbert" => Ok(CheckpointArchitecture::Modern),
         "nomic_bert" | "nomic-bert" => Ok(CheckpointArchitecture::Nomic),
         "new" | "gte" => Ok(CheckpointArchitecture::Gte),
+        "deberta-v2" => Ok(CheckpointArchitecture::Deberta),
         _ if jina_encoder_model::classify_marker(head)? => Ok(CheckpointArchitecture::Jina),
         _ => Ok(CheckpointArchitecture::Encoder),
     }
@@ -3275,6 +3354,14 @@ impl OxideBackend {
         dense_paths: Option<Vec<String>>,
     ) -> Result<Self, BackendError> {
         let precision = EncoderPrecision::from_dtype(dtype)?;
+        let mut deberta_host = None;
+        let early_architecture = detects_architecture(path)?;
+        if early_architecture == CheckpointArchitecture::Deberta {
+            if precision != EncoderPrecision::Bf16 {
+                return Err(start("DeBERTa currently requires bfloat16"));
+            }
+            deberta_host = Some(deberta_encoder_model::load(path)?);
+        }
         let classifier = model_type == ModelType::Classifier;
         if classifier {
             if precision != EncoderPrecision::Bf16 {
@@ -3324,18 +3411,28 @@ impl OxideBackend {
         };
         let (model, config, plain_blas, attention_length_limit, dense, output_width, readout) =
             if classifier {
-                let (host, checkpoint) = BertWeights::load_classifier(path)?;
-                let config = host.config.clone();
-                let head_host = ClassifierHeadHost::load(&checkpoint, &config)?;
+                let (host, head_host) = if architecture == CheckpointArchitecture::Deberta {
+                    let mut host = deberta_host
+                        .take()
+                        .ok_or_else(|| start("DeBERTa host weights were not preloaded"))?;
+                    let head = host
+                        .head
+                        .take()
+                        .ok_or_else(|| start("DeBERTa classifier head is missing"))?;
+                    (
+                        EncoderHostWeights::Deberta(host),
+                        ClassifierHeadHost::from_deberta(head),
+                    )
+                } else {
+                    let (host, checkpoint) = BertWeights::load_classifier(path)?;
+                    let head = ClassifierHeadHost::load(&checkpoint, &host.config)?;
+                    (EncoderHostWeights::Standard(host), head)
+                };
+                let config = host.config().clone();
                 let readout = head_host.readout;
                 let output_width = readout.width();
-                let mut model = encoder_model::<Bf16>(
-                    EncoderHostWeights::Standard(host),
-                    &context,
-                    &stream,
-                    &lt,
-                    EncoderPrecision::Bf16,
-                )?;
+                let mut model =
+                    encoder_model::<Bf16>(host, &context, &stream, &lt, EncoderPrecision::Bf16)?;
                 model.classifier = Some(ClassifierHead::new(head_host, &context, &stream, &lt)?);
                 (
                     ExecutableModel::Encoder(Box::new(model)),
@@ -3441,6 +3538,11 @@ impl OxideBackend {
                             CheckpointArchitecture::Nomic => {
                                 EncoderHostWeights::Nomic(NomicWeights::load(path)?)
                             }
+                            CheckpointArchitecture::Deberta => {
+                                EncoderHostWeights::Deberta(deberta_host.take().ok_or_else(
+                                    || start("DeBERTa host weights were not preloaded"),
+                                )?)
+                            }
                             _ => EncoderHostWeights::Standard(BertWeights::load(path)?),
                         };
                         let config = host.config().clone();
@@ -3464,6 +3566,7 @@ impl OxideBackend {
                             .transpose()?;
                         let plain_blas = if dense.as_ref().is_some_and(DenseHead::uses_plain)
                             || config.recipe.feed_forward.is_gated()
+                            || config.family == EncoderFamily::Deberta
                         {
                             Some(Blas::new(context.clone(), stream.clone())?)
                         } else {
@@ -3533,6 +3636,10 @@ fn encoder_model<E: UploadElement>(
     precision: EncoderPrecision,
 ) -> Result<EncoderModel<E>, BackendError> {
     let config = host.config().clone();
+    let is_deberta = config.family == EncoderFamily::Deberta;
+    if is_deberta && <E as crate::tensor::Element>::FORMAT != crate::tensor::ScalarFormat::Bf16 {
+        return Err(start("DeBERTa is qualified only for BF16 storage"));
+    }
     if config.family == EncoderFamily::JinaCode
         && <E as crate::tensor::Element>::FORMAT != crate::tensor::ScalarFormat::Bf16
     {
@@ -3563,6 +3670,11 @@ fn encoder_model<E: UploadElement>(
             "Jina requires packed QKV and attention row strides divisible by 8 elements",
         ));
     }
+    if is_deberta && !matches!(attention_mode.as_str(), "auto" | "fa4") {
+        return Err(start(
+            "DeBERTa requires the dedicated native FA4 attention API",
+        ));
+    }
     let mpnet_native = if config.family == EncoderFamily::Mpnet {
         if !matches!(attention_mode.as_str(), "auto" | "fa4") {
             return Err(start("MPNet requires native bucket attention"));
@@ -3589,7 +3701,7 @@ fn encoder_model<E: UploadElement>(
     } else {
         None
     };
-    let fa4 = if mpnet_native.is_some() {
+    let fa4 = if mpnet_native.is_some() || is_deberta {
         None
     } else {
         match attention_mode.as_str() {
@@ -3654,16 +3766,19 @@ fn encoder_model<E: UploadElement>(
         None
     };
     let mut kernels = match precision {
-        EncoderPrecision::Bf16 => {
-            Kernels::load(context, &config, fa4.is_some() || mpnet_native.is_some())?
-        }
+        EncoderPrecision::Bf16 => Kernels::load(
+            context,
+            &config,
+            fa4.is_some() || mpnet_native.is_some() || is_deberta,
+        )?,
         EncoderPrecision::F16 => Kernels::load_f16(context, fa4.is_some())?,
     };
     let gated = kernels.gated.take();
     let rotary = match config.recipe.positions {
         PositionRecipe::Absolute
         | PositionRecipe::AlibiModelBias
-        | PositionRecipe::LearnedRelative { .. } => None,
+        | PositionRecipe::LearnedRelative { .. }
+        | PositionRecipe::Disentangled => None,
         PositionRecipe::Rotary(recipe) => {
             let functions = kernels
                 .rotary
@@ -3673,6 +3788,20 @@ fn encoder_model<E: UploadElement>(
         }
     };
     let plans = Plans::<E>::new(lt, &config)?;
+    let deberta = if let EncoderHostWeights::Deberta(host) = &host {
+        let root = fa4_root
+            .as_ref()
+            .ok_or_else(|| start("DeBERTa requires INFINITY_FA4_ROOT"))?;
+        Some(Box::new(deberta::PreparedDeberta::new(
+            host,
+            context.clone(),
+            stream.clone(),
+            Path::new(root),
+            lt,
+        )?))
+    } else {
+        None
+    };
     let mut uploader = WeightUploader::new(stream.clone())?;
     let weights = match host {
         EncoderHostWeights::Standard(host) => Weights::<E> {
@@ -3694,6 +3823,20 @@ fn encoder_model<E: UploadElement>(
                 .layers
                 .iter()
                 .map(|l| Layer::<E>::upload(&mut uploader, l))
+                .collect::<Result<_, _>>()?,
+        },
+        EncoderHostWeights::Deberta(host) => Weights::<E> {
+            relative_bias: None,
+            word: uploader.upload_typed::<E>(&[&host.word])?,
+            position: None,
+            token_type: DeviceBuffer::<E>::zeroed(stream, config.hidden_size).map_err(start)?,
+            gamma: uploader.upload_typed::<E>(&[&host.gamma])?,
+            beta: uploader.upload_typed::<E>(&[&host.beta])?,
+            qkv_zero_bias: None,
+            layers: host
+                .layers
+                .iter()
+                .map(|layer| Layer::<E>::upload(&mut uploader, layer))
                 .collect::<Result<_, _>>()?,
         },
         EncoderHostWeights::Nomic(host) => Weights::<E> {
@@ -3752,12 +3895,14 @@ fn encoder_model<E: UploadElement>(
         mpnet_native,
         fa4_layout,
         classifier: None,
+        deberta,
     })
 }
 
 fn validate(batch: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
-    let inputs = if c.family == model::EncoderFamily::Gte
-        && c.recipe.embedding == NormArithmetic::AtenEmbedding
+    let inputs = if c.family == model::EncoderFamily::Deberta
+        || c.family == model::EncoderFamily::Gte
+            && c.recipe.embedding == NormArithmetic::AtenEmbedding
     {
         EmbeddingInputs::WordsOnly
     } else {
@@ -3774,6 +3919,11 @@ fn validate_encoder_inputs(
     let tokens = batch.input_ids.len();
     let position_limit = if c.family == EncoderFamily::Mpnet {
         mpnet::position_capacity(c)? as usize
+    } else if c.family == EncoderFamily::Deberta {
+        // Word-only relative attention does not index an absolute-position
+        // table. Keep its explicit qualification bound independent of the
+        // configuration's relative-distance fallback of typically 512.
+        8192
     } else {
         c.max_position_embeddings
     };
@@ -3825,10 +3975,11 @@ fn validate_encoder_inputs(
                 .token_type_ids
                 .iter()
                 .any(|&i| i as usize >= c.type_vocab_size))
-        || batch
-            .position_ids
-            .iter()
-            .any(|&i| i as usize >= position_limit)
+        || (c.family != EncoderFamily::Deberta
+            && batch
+                .position_ids
+                .iter()
+                .any(|&i| i as usize >= position_limit))
     {
         return Err(fail());
     }
@@ -4037,6 +4188,9 @@ impl Backend for OxideBackend {
         let readout = self
             .readout
             .ok_or_else(|| infer("Oxide classifier readout is not configured"))?;
+        if let LoadedConfig::Encoder(config) = &self.config {
+            classifier_head::admit_readout(config, ReadoutMode::Sequence)?;
+        }
         let sequences = batch
             .cumulative_seq_lengths
             .len()
@@ -4108,6 +4262,9 @@ impl Backend for OxideBackend {
         let readout = self
             .readout
             .ok_or_else(|| infer("Oxide classifier readout is not configured"))?;
+        if let LoadedConfig::Encoder(config) = &self.config {
+            classifier_head::admit_readout(config, ReadoutMode::Tokens)?;
+        }
         let sequences = batch
             .cumulative_seq_lengths
             .len()
@@ -4659,6 +4816,28 @@ mod tests {
         assert!(validate(&request, &geometry).is_err());
         request.token_type_ids.push(1);
         assert!(validate(&request, &geometry).is_ok());
+    }
+
+    #[test]
+    fn deberta_word_only_validation_ignores_unused_ids_and_charges_relative_scratch() {
+        let c = BertConfig::deberta_geometry(1000, 2, 512, 1e-7, vec!["DebertaV2Model".into()])
+            .unwrap();
+        let mut request = repeated_sequences(1, 1024);
+        request.position_ids.fill(u32::MAX);
+        request.token_type_ids.fill(u32::MAX);
+        assert_eq!(validate(&request, &c).unwrap(), 1024);
+        request.input_ids[0] = 1000;
+        assert!(validate(&request, &c).is_err());
+        request.input_ids[0] = 1;
+        assert!(validate(&request, &c).is_ok());
+        request.position_ids.pop();
+        assert!(validate(&request, &c).is_err());
+        let key = (256, 4, 2);
+        let plain = Work::<Bf16>::allocation_bytes_with_classifier(key, &c, None).unwrap();
+        let relative =
+            Work::<Bf16>::allocation_bytes_with_deberta(key, &c, None, Some(256)).unwrap();
+        assert_eq!(relative - plain, deberta::Scratch::bytes(256, 256).unwrap());
+        assert_eq!(down_policy(&c), DownPolicy::ClassifierNativeDefault);
     }
 
     #[test]

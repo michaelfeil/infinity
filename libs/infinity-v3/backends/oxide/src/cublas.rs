@@ -36,6 +36,31 @@ type GemmEx = unsafe extern "C" fn(
     i32,
 ) -> i32;
 type SetWorkspace = unsafe extern "C" fn(Handle, *mut c_void, usize) -> i32;
+type GemmStridedBatchedEx = unsafe extern "C" fn(
+    Handle,
+    i32,
+    i32,
+    i32,
+    i32,
+    i32,
+    *const f32,
+    *const c_void,
+    i32,
+    i32,
+    i64,
+    *const c_void,
+    i32,
+    i32,
+    i64,
+    *const f32,
+    *mut c_void,
+    i32,
+    i32,
+    i64,
+    i32,
+    i32,
+    i32,
+) -> i32;
 const CUBLAS_GEMM_DEFAULT_TENSOR_OP: i32 = 99;
 
 // CUDA 13.1 recommends 32 MiB for SM90/SM10x/SM12x split-K workspaces, which
@@ -56,6 +81,7 @@ pub(crate) struct Blas {
     handle: Handle,
     destroy: Destroy,
     gemm: GemmEx,
+    gemm_strided_batched: GemmStridedBatchedEx,
     stream: Arc<Stream>,
     context: Arc<Context>,
     workspace: ManuallyDrop<Workspace>,
@@ -218,7 +244,7 @@ impl Blas {
         context.bind_to_thread().map_err(super::start)?;
         // CUDA 13 is required by the pinned cuda-core headers/runtime.
         let library = unsafe { Library::new("libcublas.so.13") }.map_err(super::start)?;
-        let (create, destroy, set_stream, set_workspace, gemm) = unsafe {
+        let (create, destroy, set_stream, set_workspace, gemm, gemm_strided_batched) = unsafe {
             (
                 *library
                     .get::<Create>(b"cublasCreate_v2\0")
@@ -234,6 +260,9 @@ impl Blas {
                     .map_err(super::start)?,
                 *library
                     .get::<GemmEx>(b"cublasGemmEx\0")
+                    .map_err(super::start)?,
+                *library
+                    .get::<GemmStridedBatchedEx>(b"cublasGemmStridedBatchedEx\0")
                     .map_err(super::start)?,
             )
         };
@@ -285,10 +314,82 @@ impl Blas {
             handle,
             destroy,
             gemm,
+            gemm_strided_batched,
             stream,
             context,
             workspace: ManuallyDrop::new(workspace),
             _library: ManuallyDrop::new(library),
+        })
+    }
+
+    /// BF16 strided head-wise product for the native disentangled score tables.
+    /// No transpose is applied: the caller supplies checked column-major views.
+    ///
+    /// # Safety
+    /// This handle's context must be current. All pointers must name initialized
+    /// compatible device views on its stream and survive completion; output may
+    /// not alias an input. The caller preflights every extent and stride.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn strided_batched_bf16(
+        &self,
+        a: u64,
+        b: u64,
+        c: u64,
+        m: i32,
+        n: i32,
+        k: i32,
+        lda: i32,
+        ldb: i32,
+        ldc: i32,
+        stride_a: i64,
+        stride_b: i64,
+        stride_c: i64,
+        batches: i32,
+    ) -> Result<(), BackendError> {
+        if a == 0
+            || b == 0
+            || c == 0
+            || m <= 0
+            || n <= 0
+            || k <= 0
+            || lda < m
+            || ldb < k
+            || ldc < m
+            || stride_a <= 0
+            || stride_b <= 0
+            || stride_c <= 0
+            || batches <= 0
+        {
+            return Err(super::infer("Invalid BF16 strided relative projection"));
+        }
+        let (alpha, beta) = (1.0f32, 0.0f32);
+        // SAFETY: checked geometry and the caller's retained borrowed-storage contract.
+        check(unsafe {
+            (self.gemm_strided_batched)(
+                self.handle,
+                0,
+                0,
+                m,
+                n,
+                k,
+                &alpha,
+                a as *const c_void,
+                14,
+                lda,
+                stride_a,
+                b as *const c_void,
+                14,
+                ldb,
+                stride_b,
+                &beta,
+                c as *mut c_void,
+                14,
+                ldc,
+                stride_c,
+                batches,
+                68,
+                CUBLAS_GEMM_DEFAULT_TENSOR_OP,
+            )
         })
     }
 

@@ -97,6 +97,7 @@ pub(crate) struct ClassifierHeadHost {
     pub(crate) readout: ClassifierReadout,
     pub(crate) pooler: Option<LinearWeights>,
     pub(crate) classifier: LinearWeights,
+    pooler_erf: bool,
 }
 
 fn task_for(config: &BertConfig) -> Option<ClassifierTask> {
@@ -106,6 +107,12 @@ fn task_for(config: &BertConfig) -> Option<ClassifierTask> {
     let task = match architecture.as_str() {
         "BertForSequenceClassification" => ClassifierTask::Sequence,
         "BertForTokenClassification" => ClassifierTask::Tokens,
+        "DebertaV2ForSequenceClassification" if config.family == EncoderFamily::Deberta => {
+            return Some(ClassifierTask::Sequence)
+        }
+        "DebertaV2ForTokenClassification" if config.family == EncoderFamily::Deberta => {
+            return Some(ClassifierTask::Tokens)
+        }
         _ => return None,
     };
     (config.family == EncoderFamily::Bert
@@ -117,6 +124,27 @@ fn task_for(config: &BertConfig) -> Option<ClassifierTask> {
 /// Cold task policy, after the classifier constructor validates its geometry.
 pub(crate) fn is_classifier_config(config: &BertConfig) -> bool {
     task_for(config).is_some()
+}
+
+/// Native DeBERTa binds prediction mode to the trained architecture. Ordinary
+/// BERT retains its existing dual readout behavior.
+pub(crate) fn admit_readout(config: &BertConfig, mode: ReadoutMode) -> Result<(), BackendError> {
+    if config.family != EncoderFamily::Deberta {
+        return Ok(());
+    }
+    let task =
+        task_for(config).ok_or_else(|| infer("DeBERTa classifier architecture is missing"))?;
+    if matches!(
+        (task, mode),
+        (ClassifierTask::Sequence, ReadoutMode::Sequence)
+            | (ClassifierTask::Tokens, ReadoutMode::Tokens)
+    ) {
+        Ok(())
+    } else {
+        Err(infer(
+            "DeBERTa prediction mode must match the trained classifier architecture",
+        ))
+    }
 }
 
 fn admit_geometry(config: &BertConfig, task: ClassifierTask) -> Result<(), BackendError> {
@@ -163,6 +191,21 @@ fn reject_mlp_head(checkpoint: &Checkpoint) -> Result<(), BackendError> {
 }
 
 impl ClassifierHeadHost {
+    pub(crate) fn from_deberta(head: crate::deberta_encoder_model::DebertaHead) -> Self {
+        Self {
+            readout: ClassifierReadout {
+                task: if head.tokenwise {
+                    ClassifierTask::Tokens
+                } else {
+                    ClassifierTask::Sequence
+                },
+                width: head.width,
+            },
+            pooler: head.pooler,
+            classifier: head.classifier,
+            pooler_erf: true,
+        }
+    }
     pub(crate) fn load(checkpoint: &Checkpoint, config: &BertConfig) -> Result<Self, BackendError> {
         let task =
             task_for(config).ok_or_else(|| crate::start("unsupported classifier architecture"))?;
@@ -197,6 +240,7 @@ impl ClassifierHeadHost {
             readout: ClassifierReadout { task, width },
             pooler,
             classifier,
+            pooler_erf: false,
         })
     }
 }
@@ -206,6 +250,26 @@ pub(crate) fn validate_admission(
     path: &Path,
     dense_paths: Option<Vec<String>>,
 ) -> Result<(), BackendError> {
+    let raw: serde_json::Value = crate::model::read_json(&path.join("config.json"))?;
+    if raw.get("model_type").and_then(serde_json::Value::as_str) == Some("deberta-v2") {
+        let config = crate::deberta_encoder_model::load_config(path)?;
+        if task_for(&config.geometry).is_none() {
+            return Err(crate::start("DeBERTa classifier architecture required"));
+        }
+        if dense_paths.as_ref().is_some_and(|paths| !paths.is_empty())
+            || crate::dense::DenseChainHost::load_with_paths(
+                path,
+                config.geometry.hidden_size,
+                dense_paths,
+            )?
+            .is_some()
+        {
+            return Err(crate::start(
+                "DeBERTa classifier does not accept Dense modules",
+            ));
+        }
+        return Ok(());
+    }
     let config = BertConfig::load_classifier(path)?;
     let task =
         task_for(&config).ok_or_else(|| crate::start("unsupported classifier architecture"))?;
@@ -229,11 +293,16 @@ struct ClassifierKernels {
     bias_seed: Function,
     gather_first: Function,
     tanh: Function,
+    gelu_erf: Option<Function>,
     cast: Function,
 }
 
 impl ClassifierKernels {
+    #[cfg(test)]
     fn load(context: &Arc<Context>) -> Result<Self, BackendError> {
+        Self::load_with_erf(context, false)
+    }
+    fn load_with_erf(context: &Arc<Context>, erf: bool) -> Result<Self, BackendError> {
         let path = std::env::var_os(infinity_v3_config::infinity_env!("OXIDE_KERNEL_MODULE"))
             .ok_or_else(|| {
                 crate::start(
@@ -263,6 +332,15 @@ impl ClassifierKernels {
             tanh: module
                 .load_function("infinity_dense_tanh_bf16_inplace")
                 .map_err(crate::start)?,
+            gelu_erf: if erf {
+                Some(
+                    module
+                        .load_function("infinity_gelu_exact")
+                        .map_err(crate::start)?,
+                )
+            } else {
+                None
+            },
             cast: module
                 .load_function("infinity_bf16_to_f32")
                 .map_err(crate::start)?,
@@ -310,7 +388,7 @@ impl ClassifierScratchLayout {
         let sequence_hidden = product(sequence_rows, hidden)?;
         let token_logits = product(token_rows, width)?;
         let sequence_logits = product(sequence_rows, width)?;
-        let first = sequence_hidden;
+        let first = sequence_hidden.max(sequence_logits);
         let second = sequence_hidden.max(token_logits);
         let logits = sequence_logits.max(token_logits);
         for elements in [first, second, logits] {
@@ -581,8 +659,18 @@ impl ClassifierHead {
         stream: &Arc<Stream>,
         provider: &LtProvider,
     ) -> Result<Self, BackendError> {
-        let kernels = ClassifierKernels::load(context)?;
-        let hidden = self::task_hidden(host.readout.task);
+        let kernels = ClassifierKernels::load_with_erf(context, host.pooler_erf)?;
+        let hidden = if host.pooler_erf {
+            host.classifier
+                .weight
+                .shape()
+                .get(1)
+                .copied()
+                .filter(|width| *width == 768)
+                .ok_or_else(|| crate::start("DeBERTa classifier hidden width must be 768"))?
+        } else {
+            self::task_hidden(host.readout.task)
+        };
         let pooler_plan = host
             .pooler
             .as_ref()
@@ -869,7 +957,19 @@ impl ClassifierHead {
                                 hidden_buffer,
                             )?;
                         }
-                        apply_tanh(&self.kernels, stream, hidden_buffer, rows, hidden)?;
+                        if let Some(function) = &self.kernels.gelu_erf {
+                            let mut input = hidden_buffer.cu_deviceptr();
+                            let mut count = u32_size(product(rows, hidden)?)?;
+                            launch(
+                                function,
+                                stream,
+                                blocks(count as usize)?,
+                                0,
+                                &mut [arg(&mut input), arg(&mut count)],
+                            )?;
+                        } else {
+                            apply_tanh(&self.kernels, stream, hidden_buffer, rows, hidden)?;
+                        }
                     }
                     {
                         let (hidden_buffer, gather) = scratch.swapped_mut()?;
@@ -1280,6 +1380,35 @@ mod tests {
     }
 
     #[test]
+    fn deberta_prediction_mode_matches_its_trained_architecture() {
+        for (architecture, mode, wrong) in [
+            (
+                "DebertaV2ForSequenceClassification",
+                ReadoutMode::Sequence,
+                ReadoutMode::Tokens,
+            ),
+            (
+                "DebertaV2ForTokenClassification",
+                ReadoutMode::Tokens,
+                ReadoutMode::Sequence,
+            ),
+        ] {
+            let c = BertConfig::deberta_geometry(1000, 2, 512, 1e-7, vec![architecture.into()])
+                .unwrap();
+            assert!(admit_readout(&c, mode).is_ok());
+            assert!(admit_readout(&c, wrong).is_err());
+        }
+    }
+
+    #[test]
+    fn wide_sequence_heads_reserve_the_classifier_destination() {
+        let layout = ClassifierScratchLayout::for_key(768, 1024, (129, 4, 4)).unwrap();
+        assert_eq!(layout.first, 4 * 1024);
+        assert_eq!(layout.second, 129 * 1024);
+        assert_eq!(layout.logits, 129 * 1024);
+    }
+
+    #[test]
     fn admits_the_two_audited_classifier_contracts() {
         let sequence = Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
         sequence.weights(&sequence_entries(true));
@@ -1488,7 +1617,7 @@ mod tests {
         );
         assert_eq!(tokens.logits, 64 * 9);
         let token_dominant = ClassifierScratchLayout::for_key(8, 9, (512, 2, 16)).unwrap();
-        assert_eq!(token_dominant.first, 2 * 8);
+        assert_eq!(token_dominant.first, 2 * 9);
         assert_eq!(token_dominant.second, 512 * 9);
         assert_eq!(token_dominant.logits, 512 * 9);
 
