@@ -1,0 +1,32 @@
+{
+  "schema": "oxide-docs-parity-wave3-qualification-status/v1",
+  "do_not_claim_qualified": true,
+  "new_models_not_numerically_qualified": [
+    "Gemma family",
+    "UltraV3",
+    "Nomic",
+    "Gemmathree G3",
+    "typed heads",
+    "Q35",
+    "GTE"
+  ],
+  "known_numeric_failures": {
+    "Mistral V9 partial11 independent": {
+      "source": "/tmp/oxide-docs-parity-20261102/mistral-v9-partial11-independent-v3.json",
+      "pass": false,
+      "note": "pairs reported pass=false with large max_abs/cosine divergence"
+    },
+    "QV3 V5 empty-images": {
+      "source": "/tmp/oxide-docs-parity-20261102/qv3-tensor-view-v5/LOCALIZATION.json",
+      "pass": false,
+      "note": "root quality-life returncode 1, DriverError invalid argument; later life-contract verification does not establish numeric parity"
+    },
+    "Q35/Qwen3.5 numeric": {
+      "source": "/tmp/oxide-docs-parity-20261102/qv35-numeric/STATUS.json",
+      "pass": null,
+      "note": "CPU pins finalized; runtime/GPU numeric gate pending; no numeric qualification claimed"
+    }
+  },
+  "frozen_manifests_take_precedence": true,
+  "active_private_edits": "unfinished live snapshot"
+}

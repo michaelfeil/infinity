@@ -1,0 +1,97 @@
+{
+  "objective": "Every documented model and Native task contract on Oxide; faster than LibTorch must be measured, not assumed.",
+  "public_repo": "/tmp/infinity-plain-cuda",
+  "public_head": "09fbb71f27536f99713abc696b749e94e145b735",
+  "recovery_branch": "wip/oxide-node-recovery-20261102",
+  "recovery_head": "bd4f9e1cd048473c5d1f194d8df0fd4d1ff2e6ce",
+  "main_uncommitted_integrations": [],
+  "root_model_jobs": [
+    {
+      "key": "gemma3",
+      "status": "accepted",
+      "jobId": "job_2f5febcbb958468cbcc0ae5ce082054e",
+      "sessionId": "ses_e62a7a575ffeA1g4M2Q1x781sl"
+    },
+    {
+      "key": "gemma2",
+      "status": "accepted",
+      "jobId": "job_0c764fdaf7ac405d88f8673f8733c252",
+      "sessionId": "ses_e62a79a1effefpe1DrmJVIKECw"
+    },
+    {
+      "key": "gemma4",
+      "status": "accepted",
+      "jobId": "job_b0f38e2565154c4e9b919a67a354af9d",
+      "sessionId": "ses_e62a78e35ffe61Arwil8KJB8pD"
+    },
+    {
+      "key": "ultra",
+      "status": "accepted",
+      "jobId": "job_180d739ce05e41caacebb0984110191d",
+      "sessionId": "ses_e62a779d5ffe5De1vHFxvzHyZz"
+    },
+    {
+      "key": "nomic_moe",
+      "status": "accepted",
+      "jobId": "job_ebfadb8632cb4521aa45e121ead31a9f",
+      "sessionId": "ses_e62a76e15ffePXVgnGG6XskE0H"
+    },
+    {
+      "key": "gemma_media",
+      "status": "accepted",
+      "jobId": "job_41e8ea15827c40c29f5a7d02d44394cd",
+      "sessionId": "ses_e62a7630cffe15vvOuirtUzO6A"
+    },
+    {
+      "key": "dense_gaps",
+      "status": "accepted",
+      "jobId": "job_b2969e24d7544bc6a4b6738b1a0c8f3b",
+      "sessionId": "ses_e62a758a1ffebrTl1tIFhUrorU"
+    }
+  ],
+  "coordinators": [
+    "parity_catalog: encoder-headsv2, sparseColBERT, DebertaC2+H384/H1024, doccatalog140internal",
+    "deberta_qualification: QV3empty-imagesfailureafter5exactCLS;QV35interp correction;Mistralexactmean/GELUcentral132+controlconsumer",
+    "remaining_latency_audit: Q35MoEcoldpreparedrouting+25fixturefactoryharness; Q35headsD3Pplx;Laya;Clef;FA431publicproducer"
+  ],
+  "primary_metadata": "/tmp/oxide-docs-parity-20261102/model-metadata/RESULTS.json all140configs saved, pinnedrevisions+modules/tasksidecars, no weights downloaded",
+  "actual_new_root_gpu": {
+    "mean_controls": "/tmp/oxide-docs-parity-20261102/root-native-mean-control-v1/gold/manifest.json 30Nativecases; independentCPU full122880features plus9ragged98304words exact;21differencesfromsequential",
+    "qv3_run": "/tmp/oxide-qwen3vl-root-tensor-view-v1/report.json failed DriverError1 at6th empty-images fixture; first5CLS20480wordsbitexactNative; partial /tmp/oxide-docs-parity-20261102/qv3-failed-partial-output-v1",
+    "qv35_run": "previousactualNative/Rustraw357376wordsmax29.75 mismatch; interpolatedpos NativeBF16fourproductsF32sumoneBF16round vsoldpairwise; trainedpostable2304x768 side48,214/768witness",
+    "native_q35moe": "previousactualT7Nativepassfull72GBfit /tmp/infinity-oxide-parity-20261101/q35moe-runtime-handoff-v1/root-native-t7-v2.gold.json",
+    "mean_ops": "plain/mem/init all221184words EXACT zeroSanErrors /tmp/oxide-docs-parity-20261102/root-native-mean-control-v1/mean-run-central132{,-mem,-init}.json",
+    "qv35_v5": "FAILED raw357376wordsmax21.8671875 vsold29.75;132interpolationfixpartialonly, /tmp/oxide-qwen35vl-map-policy-output-v5/paired-0.8B-single-cats-gate"
+  },
+  "gpu_policy": "RootonlyGPU0 under /tmp/infinity-oxide-root-gpu0.lock; neverGPU1-7. NoauthorGPU/Torch/Docker. H10080GB stillavailable.",
+  "active_root_gpu_sessions": [],
+  "central132": "COMPILEDALL3 68s same84pins/387old129closureproofpass /tmp/oxide-docs-parity-20261102/device132-all3-build-v1/ROOT-READY.json; SM90 dc0a1265...; noSM100/120runtime",
+  "open_code_constraints": "Baseten DeepSeek-V4.1-Flash-1017-Fast; ~18workershit40Mtoken/min quota, avoidnewfanout/narrowreadcompactoutputs; Ultra429resumedsamecontextcurrentjobrecord. Knownexternaldirectory permissions useranyfiles/fullaccessauthorized; grantmatchingknownsourcepathrequests afterinspect. Do notdumpjobget text/reasoning/fulljoblist.",
+  "status": "active; huge goal unmet; keep implementing and publishing coherent tested incremental source; no allmodel/performance claims",
+  "published_wave1": {
+    "head": "09fbb71f27536f99713abc696b749e94e145b735",
+    "checks": "678oxide lib/24facade, strictalltargetClippy/fmt;13devicebuildpolicy/12FA4publicbuilder tests",
+    "features": "configuredBERTfamilyheads,H5120Qwen3geometry+RMS5120source, canonical31host/publicproducer preservingold26"
+  },
+  "latest_public_head": "c23bbab",
+  "root_wave4_pending": "Gemma3 PUSHED c23bbab;785CPU/all3device115; Native perroute consumer privatepending",
+  "actual_encoder_operator_proof": {
+    "root": "/tmp/oxide-docs-parity-20261102/encoder-primitives-root-gate-v4-root",
+    "cases": 243,
+    "exact_values": 1411840,
+    "plain_repeats": 3,
+    "memcheck_errors": 0,
+    "initcheck_errors": 0
+  },
+  "actual_fa438": {
+    "root": "/tmp/oxide-fa4-canonical38-all3-v2",
+    "old210_preserved": true,
+    "new42_compiled": true,
+    "all3": true,
+    "runtime_qualified": false
+  },
+  "qv3_actual_v5": "all8fixture forward/life completed,10/32numeric gates pass; empty raw+last exact, mean wrong; v6source fixes Candle packedmean; imagefirstdivergence row15 remains",
+  "mistral_v9_actual": "successor3hostpinfix succeeds;11Nativevectors numericfail incltext, owningimage selfdelta; authorauditing boundedintermediates",
+  "q35moe_v3_actual": "NativeReference corrected compiled3,normalfactoryT7 executed;1937/2048worddiff,maxabs.28125,relL2.030926,unqualified; boundeddiagnostic next",
+  "gemma_family_main": "OpenCode failed429afterpartialmerge; Roottookover,resolved4indexfiles,missingColBERT/SPLADEfields+MediaPlaceholderfix; hostfulltests/deviceall3running"
+}

@@ -1,0 +1,24 @@
+{
+  "scope": "authoritative correction after the live archive snapshot; no all-model or performance qualification",
+  "public_head": "c23bbab",
+  "encoder_primitives": {
+    "cases": 243,
+    "exact_values": 1411840,
+    "memcheck_errors": 0,
+    "initcheck_errors": 0,
+    "receipt": "encoder-primitives-root-gate-v4-root/ROOT-ACTUAL-RESULTS.json"
+  },
+  "qwen3_vl_v5": {
+    "forward_8fixtures": "passed",
+    "owning_life": "passed",
+    "numeric": "10/32 gates passed; empty-images raw+last and allCLS exact; mean and image paths fail"
+  },
+  "mistral_v9": {
+    "numeric": "all11 Native vectors fail",
+    "owning_life": "image deferred differs from sync"
+  },
+  "qwen35_moe_v3": {
+    "factory_T7": "completed",
+    "numeric": "1937/2048 words differ; maxabs0.28125 relL2 0.030926, unqualified"
+  }
+}

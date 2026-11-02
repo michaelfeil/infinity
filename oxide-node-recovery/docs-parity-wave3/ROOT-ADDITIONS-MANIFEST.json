@@ -1,0 +1,35 @@
+{
+  "source_archive_unchanged": true,
+  "status_override": "ROOT-STATUS-CORRECTION.json",
+  "native_gdn_uncompressed_sha256": "316287e48fdc0f9a0f4ff8725fb429f3f0bdb2ebcbd5862c3873f356f5c81a3c",
+  "files": {
+    "q35moe-v3-native-comparison.json": {
+      "bytes": 1032,
+      "sha256": "1e5606d9b18fabf95c2d413f304a4650fd36f1948213ccab6752007659f3f2e6"
+    },
+    "native-sdk-gdn-316.so.gz": {
+      "bytes": 145736,
+      "sha256": "c96108ae4cc8b7978f77d04cd7fdddac6c4d07b5941bd3b050bed64df481afc8"
+    },
+    "LICENSE-GDN-SM100-BSD3": {
+      "bytes": 1547,
+      "sha256": "b0a2db0136d014fe77e47afc071534e17696d51aa1b0f8457044d504818f1cc3"
+    },
+    "ROOT-STATUS-CORRECTION.json": {
+      "bytes": 807,
+      "sha256": "4649b852883665d76aec0322cc0fed3f1ad91a1a75fe96fc71fcf04cafc57c2e"
+    },
+    "b66-runtime-identities.json": {
+      "bytes": 1220,
+      "sha256": "852289cf8608c3c4d63f81feb95a7626f1e6f7c2478186c31b3b7b10451276b0"
+    },
+    "ROOT-LATEST-WORKSTATE.json": {
+      "bytes": 5751,
+      "sha256": "820cd5a20dcbe89b8f29c1cfcbfc9d684cde46c920a3c0ddd6ca2f745c060b3b"
+    },
+    "q35moe-native-t7-gold.json": {
+      "bytes": 125515,
+      "sha256": "80d2a4423cf5116e74bf165e00ece8c73ad2fde2b64970cc5d20a6ee7dd6c977"
+    }
+  }
+}

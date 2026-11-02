@@ -1,0 +1,22 @@
+{
+  "libinfinitygdn.so": {
+    "ldd": "libinfinitygdn.so => /tmp/native214-fa4-mode20/install/lib/libinfinitygdn.so (0x00007f0303e8a000)",
+    "realpath": "/tmp/native214-fa4-mode20/install/lib/libinfinitygdn.so",
+    "sha256": "316287e48fdc0f9a0f4ff8725fb429f3f0bdb2ebcbd5862c3873f356f5c81a3c"
+  },
+  "libcublasLt.so.13": {
+    "ldd": "libcublasLt.so.13 => /tmp/oxide-host-cublas-130200/libcublasLt.so.13 (0x00007f02c3800000)",
+    "realpath": "/tmp/oxide-host-cublas-130200/libcublasLt.so.13",
+    "sha256": "5cd9d979d72807f61cd22a5583659a3a0e7988a50e9b051416c46d1d8be31cc8"
+  },
+  "libcudart.so.13": {
+    "ldd": "libcudart.so.13 => /usr/local/cuda/lib64/libcudart.so.13 (0x00007f02c3400000)",
+    "realpath": "/usr/local/cuda-13.0/targets/x86_64-linux/lib/libcudart.so.13.0.96",
+    "sha256": "96c42e418cec19054186b9429c321603cc190bf26a18104e19408117a2a817b0"
+  },
+  "libcublas.so.13": {
+    "ldd": "libcublas.so.13 => /opt/torch-sdk/lib/python3.12/site-packages/torch/lib/../../nvidia/cu13/lib/libcublas.so.13 (0x00007f0268a00000)",
+    "realpath": "/opt/torch-sdk/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13",
+    "sha256": "25cde432108543626df85d887c730bf2cab96803ca16f9654e4abc8d2b45833e"
+  }
+}

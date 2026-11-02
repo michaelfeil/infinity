@@ -1,0 +1,37 @@
+{
+  "schema": "oxide-q35moe-strict-compare/v4",
+  "status": "CHANGED",
+  "unchanged": false,
+  "word_gate": "strict",
+  "rust_schema": "oxide-q35moe-unified-runtime-report/v1",
+  "native_schema": "oxide-q35moe-native-gold/v1",
+  "invalid_case_count": 0,
+  "invalid_cases": [],
+  "retained_file_sha256": [
+    "344def7466553b7d773cf92efc4bd5234cd53b4f24e9dbca334f47fafff05b8c"
+  ],
+  "canonical_batch_sha256": [
+    "872b5687b79bb8c43781c4d05f2201ad8f67d37602c2136daf562eb9fe88c13f"
+  ],
+  "guards": {
+    "max_abs": 0.25,
+    "relative_l2": 0.02,
+    "min_cos": 0.999
+  },
+  "numeric_qualified": false,
+  "case_count": 1,
+  "vector_case_count": 1,
+  "empty_case_count": 0,
+  "empty_semantic_only": false,
+  "float_count": 2048,
+  "diff_count": 1937,
+  "signed_zero_diffs": 0,
+  "max_abs": 0.28125,
+  "relative_l2": 0.030926207079363374,
+  "min_cos": 0.999522560038809,
+  "reasons": [
+    "strict f32 word equality failed for 1937 words",
+    "max_abs 0.28125 exceeds 0.25",
+    "relative_l2 0.030926207079363374 exceeds 0.02"
+  ]
+}
