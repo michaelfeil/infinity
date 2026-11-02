@@ -1,6 +1,7 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 
 use super::*;
+use crate::model::{FeedForwardRecipe, NormArithmetic, PositionRecipe};
 use half::{bf16, f16};
 use safetensors::Dtype;
 use serde_json::{json, Value};
@@ -20,6 +21,7 @@ struct TensorSpec {
     name: String,
     shape: Vec<usize>,
     probes: Vec<(usize, f32)>,
+    dtype: Dtype,
 }
 
 impl TensorSpec {
@@ -28,6 +30,7 @@ impl TensorSpec {
             name: format!("{root}{relative}"),
             shape: shape.to_vec(),
             probes: Vec::new(),
+            dtype: Dtype::F16,
         }
     }
 }
@@ -58,6 +61,83 @@ fn default_specs(root: &str) -> Vec<TensorSpec> {
         layer(root, "mlp.layernorm.weight", &[H]),
         layer(root, "mlp.layernorm.bias", &[H]),
     ]
+}
+
+const H768: usize = 768;
+const I768: usize = 3072;
+const V768: usize = 30528;
+const L768: usize = 12;
+
+fn official_h768_config() -> Value {
+    json!({
+        "_name_or_path": "jinaai/jina-bert-implementation",
+        "model_max_length": 8192,
+        "architectures": ["JinaBertForMaskedLM"],
+        "attention_probs_dropout_prob": 0.0,
+        "auto_map": {
+            "AutoConfig": "jinaai/jina-bert-implementation--configuration_bert.JinaBertConfig",
+            "AutoModelForMaskedLM": "jinaai/jina-bert-implementation--modeling_bert.JinaBertForMaskedLM",
+            "AutoModel": "jinaai/jina-bert-implementation--modeling_bert.JinaBertModel",
+            "AutoModelForSequenceClassification": "jinaai/jina-bert-implementation--modeling_bert.JinaBertForSequenceClassification"
+        },
+        "classifier_dropout": null,
+        "gradient_checkpointing": false,
+        "hidden_act": "gelu",
+        "hidden_dropout_prob": 0.1,
+        "hidden_size": H768,
+        "initializer_range": 0.02,
+        "intermediate_size": I768,
+        "layer_norm_eps": 1e-12,
+        "max_position_embeddings": 8192,
+        "model_type": "bert",
+        "num_attention_heads": 12,
+        "num_hidden_layers": L768,
+        "pad_token_id": 0,
+        "position_embedding_type": "alibi",
+        "torch_dtype": "float32",
+        "transformers_version": "4.26.0",
+        "type_vocab_size": T,
+        "use_cache": true,
+        "vocab_size": V768,
+        "feed_forward_type": "geglu",
+        "emb_pooler": "mean"
+    })
+}
+
+fn h768_specs(root: &str) -> Vec<TensorSpec> {
+    let mut specs = vec![
+        TensorSpec::new(root, "embeddings.word_embeddings.weight", &[V768, H768]),
+        TensorSpec::new(root, "embeddings.token_type_embeddings.weight", &[T, H768]),
+        TensorSpec::new(root, "embeddings.LayerNorm.weight", &[H768]),
+        TensorSpec::new(root, "embeddings.LayerNorm.bias", &[H768]),
+    ];
+    for layer in 0..L768 {
+        let prefix = format!("encoder.layer.{layer}.");
+        for (relative, shape) in [
+            ("attention.self.query.weight", vec![H768, H768]),
+            ("attention.self.query.bias", vec![H768]),
+            ("attention.self.key.weight", vec![H768, H768]),
+            ("attention.self.key.bias", vec![H768]),
+            ("attention.self.value.weight", vec![H768, H768]),
+            ("attention.self.value.bias", vec![H768]),
+            ("attention.output.dense.weight", vec![H768, H768]),
+            ("attention.output.dense.bias", vec![H768]),
+            ("attention.output.LayerNorm.weight", vec![H768]),
+            ("attention.output.LayerNorm.bias", vec![H768]),
+            ("mlp.gated_layers.weight", vec![I768 * 2, H768]),
+            ("mlp.wo.weight", vec![H768, I768]),
+            ("mlp.wo.bias", vec![H768]),
+            ("mlp.layernorm.weight", vec![H768]),
+            ("mlp.layernorm.bias", vec![H768]),
+        ] {
+            specs.push(TensorSpec::new(
+                root,
+                &format!("{prefix}{relative}"),
+                &shape,
+            ));
+        }
+    }
+    specs
 }
 
 fn default_config() -> Value {
@@ -117,6 +197,10 @@ impl Fixture {
                 config[key.as_str()] = value.clone();
             }
         }
+        self.config_exact(config);
+    }
+
+    fn config_exact(&self, config: Value) {
         fs::write(
             self.path.join("config.json"),
             serde_json::to_vec(&config).unwrap(),
@@ -134,11 +218,18 @@ impl Fixture {
                 .iter()
                 .try_fold(1usize, |count, dimension| count.checked_mul(*dimension))
                 .unwrap();
-            let end = cursor.checked_add(count.checked_mul(2).unwrap()).unwrap();
+            let width = match spec.dtype {
+                Dtype::F32 => 4,
+                Dtype::F16 | Dtype::BF16 => 2,
+                other => panic!("unsupported fixture dtype {other:?}"),
+            };
+            let end = cursor
+                .checked_add(count.checked_mul(width).unwrap())
+                .unwrap();
             entries.insert(
                 spec.name.clone(),
                 json!({
-                    "dtype": "F16",
+                    "dtype": format!("{:?}", spec.dtype),
                     "shape": &spec.shape,
                     "data_offsets": [cursor, end],
                 }),
@@ -163,14 +254,24 @@ impl Fixture {
         file.write_all(&header).unwrap();
         file.set_len((data_start + cursor) as u64).unwrap();
         for (spec, offset_bytes) in placements {
+            let width = match spec.dtype {
+                Dtype::F32 => 4,
+                Dtype::F16 | Dtype::BF16 => 2,
+                other => panic!("unsupported fixture dtype {other:?}"),
+            };
             for (index, value) in &spec.probes {
                 let byte = data_start
                     .checked_add(offset_bytes)
-                    .and_then(|offset| offset.checked_add(index.checked_mul(2)?))
+                    .and_then(|offset| offset.checked_add(index.checked_mul(width)?))
                     .unwrap();
                 file.seek(SeekFrom::Start(byte as u64)).unwrap();
-                file.write_all(&f16::from_f32(*value).to_bits().to_le_bytes())
-                    .unwrap();
+                let encoded = match spec.dtype {
+                    Dtype::F32 => value.to_le_bytes().to_vec(),
+                    Dtype::F16 => f16::from_f32(*value).to_bits().to_le_bytes().to_vec(),
+                    Dtype::BF16 => bf16::from_f32(*value).to_bits().to_le_bytes().to_vec(),
+                    other => panic!("unsupported fixture dtype {other:?}"),
+                };
+                file.write_all(&encoded).unwrap();
             }
         }
     }
@@ -469,6 +570,124 @@ fn production_marker_routing_fails_closed_for_qk_post_norm_and_heads() {
         assert!(detects(&fixture.path).unwrap());
         assert!(JinaWeights::load(&fixture.path).is_err(), "{architecture}");
     }
+}
+
+#[test]
+fn admits_actual_official_jina_base_h768_config() {
+    let fixture = Fixture::new();
+    fixture.config_exact(official_h768_config());
+    assert!(detects(&fixture.path).unwrap());
+    let config = JinaConfig::load(&fixture.path).unwrap();
+    assert_eq!(
+        (
+            config.hidden_size,
+            config.intermediate_size,
+            config.num_attention_heads,
+            config.num_hidden_layers,
+            config.vocab_size,
+            config.type_vocab_size,
+            config.max_position_embeddings,
+        ),
+        (H768, I768, 12, L768, V768, T, 8192)
+    );
+    let geometry = config.geometry();
+    assert_eq!(geometry.family, EncoderFamily::Jina);
+    assert_eq!(
+        geometry.recipe.embedding,
+        NormArithmetic::ExactWordTypeBiased
+    );
+    assert_eq!(
+        geometry.recipe.residual,
+        NormArithmetic::RoundedAddBeforeStats
+    );
+    assert_eq!(geometry.recipe.positions, PositionRecipe::AlibiModelBias);
+    assert_eq!(
+        geometry.recipe.feed_forward,
+        FeedForwardRecipe::GatedGeluUpFirst
+    );
+}
+
+#[test]
+fn h768_sparse_header_preserves_weight_order_and_typed_dtypes() {
+    let fixture = Fixture::new();
+    fixture.config_exact(official_h768_config());
+    let mut specs = h768_specs("");
+    for spec in &mut specs {
+        if spec
+            .name
+            .ends_with("embeddings.token_type_embeddings.weight")
+        {
+            spec.dtype = Dtype::F32;
+        } else if spec.name.ends_with("embeddings.LayerNorm.weight") {
+            spec.dtype = Dtype::BF16;
+        } else if spec
+            .name
+            .ends_with("encoder.layer.0.mlp.gated_layers.weight")
+        {
+            spec.probes = vec![(0, 3.25), (I768 * H768, -2.75)];
+        }
+    }
+    fixture.write(&specs);
+    let weights = load(&fixture);
+    assert_eq!(weights.geometry.hidden_size, H768);
+    assert_eq!(weights.geometry.num_attention_heads, 12);
+    assert_eq!(weights.geometry.num_hidden_layers, L768);
+    assert_eq!(weights.geometry.vocab_size, V768);
+    assert_eq!(weights.layers.len(), L768);
+    assert_eq!(weights.word.shape(), &[V768, H768]);
+    assert_eq!(weights.token_type.shape(), &[T, H768]);
+    assert_eq!(weights.word.dtype(), Dtype::F16);
+    assert_eq!(weights.token_type.dtype(), Dtype::F32);
+    assert_eq!(weights.gamma.dtype(), Dtype::BF16);
+    assert_eq!(weights.beta.dtype(), Dtype::F16);
+    let layer = &weights.layers[0];
+    assert_eq!(layer.qkv.weight_parts.len(), 3);
+    assert_eq!(layer.qkv.bias_parts.as_ref().unwrap().len(), 3);
+    assert_eq!(layer.attention.weight_parts[0].shape(), &[H768, H768]);
+    assert!(layer.intermediate.bias_parts.is_none());
+    assert_eq!(layer.intermediate.weight_parts[0].shape(), &[I768, H768]);
+    assert_eq!(layer.intermediate.weight_parts[1].shape(), &[I768, H768]);
+    assert_eq!(layer.output.weight_parts[0].shape(), &[H768, I768]);
+    assert_eq!(
+        probe_bits(&layer.intermediate.weight_parts[0]),
+        expected_bits(-2.75)
+    );
+    assert_eq!(
+        probe_bits(&layer.intermediate.weight_parts[1]),
+        expected_bits(3.25)
+    );
+}
+
+#[test]
+fn h768_malformed_geometry_is_rejected_without_affecting_h512() {
+    let fixture = Fixture::new();
+    fixture.write(&h768_specs(""));
+    for (field, value) in [
+        ("hidden_size", json!(512)),
+        ("num_attention_heads", json!(8)),
+        ("intermediate_size", json!(2048)),
+        ("num_hidden_layers", json!(11)),
+        ("vocab_size", json!(V768 + 1)),
+        ("type_vocab_size", json!(3)),
+        ("max_position_embeddings", json!(4096)),
+        ("layer_norm_eps", json!(1e-11)),
+        ("feed_forward_type", json!("mlp")),
+        ("position_embedding_type", json!("absolute")),
+    ] {
+        let mut config = official_h768_config();
+        config[field] = value;
+        fixture.config_exact(config);
+        assert!(rejected(&fixture), "accepted malformed H768 {field}");
+    }
+
+    fixture.config_exact(official_h768_config());
+    assert!(JinaWeights::load(&fixture.path).is_ok());
+
+    let h512 = Fixture::new();
+    h512.write(&default_specs(""));
+    let weights = JinaWeights::load(&h512.path).unwrap();
+    assert_eq!(weights.geometry.hidden_size, H);
+    assert_eq!(weights.geometry.num_attention_heads, 8);
 }
 
 #[test]

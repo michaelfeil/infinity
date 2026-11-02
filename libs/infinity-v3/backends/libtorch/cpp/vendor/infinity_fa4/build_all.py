@@ -16,6 +16,7 @@ parser.add_argument("--runtime-dir", type=pathlib.Path)
 parser.add_argument("--deberta-exact-mul", action=argparse.BooleanOptionalAction, default=True, help="Include Oxide BF16 exact-mul DeBERTa attention (default: on)")
 parser.add_argument("--alibi", action=argparse.BooleanOptionalAction, default=True, help="Include published Jina8 ALiBi attention (default: on)")
 parser.add_argument("--jinacode", action=argparse.BooleanOptionalAction, default=True, help="Include native JinaCode ALiBi attention (default: on)")
+parser.add_argument("--alibi12", action=argparse.BooleanOptionalAction, default=True, help="Include JinaBase twelve-head model-dtype ALiBi attention (default: on)")
 args = parser.parse_args()
 disabled_helpers = [
     flag for enabled, flag in (
@@ -26,7 +27,7 @@ disabled_helpers = [
 ]
 if disabled_helpers:
     parser.error(
-        "canonical31 requires all 8 helper families; "
+        "canonical38 requires all 8 published helper entries; "
         f"these disable flags are not supported: {', '.join(disabled_helpers)}")
 targets = []
 for arch in args.architectures.split(";"):
@@ -52,6 +53,7 @@ for sm in targets:
         *(["--deberta-exact-mul"] if args.deberta_exact_mul else []),
         *(["--alibi"] if args.alibi else []),
         *(["--jinacode"] if args.jinacode else []),
+        *(["--alibi12"] if args.alibi12 else []),
     ], check=True)
     manifest = json.loads((output / "manifest.json").read_text())
     profile_rows = build_contract.validate_profiles_inc(
@@ -62,6 +64,7 @@ for sm in targets:
         "include_deberta_exact_mul": args.deberta_exact_mul,
         "include_alibi": args.alibi,
         "include_jinacode": args.jinacode,
+        "include_alibi12": args.alibi12,
     }
     symbols = build_contract.expected_kernel_symbols(profile_names, **flags)
     expected_link_order = [

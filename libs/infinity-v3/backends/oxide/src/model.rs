@@ -880,14 +880,24 @@ impl BertConfig {
             validate_gte_rotary(&rotary, self.hidden_size / self.num_attention_heads)?;
         }
         if self.family == EncoderFamily::Jina {
-            let recipe_valid = self.hidden_size == 512
-                && self.num_attention_heads == 8
-                && self.hidden_size / self.num_attention_heads == 64
-                && self.max_position_embeddings <= 8192
-                && self.recipe.embedding == NormArithmetic::ExactWordTypeBiased
+            let recipe_valid = self.recipe.embedding == NormArithmetic::ExactWordTypeBiased
                 && self.recipe.residual == NormArithmetic::RoundedAddBeforeStats
                 && self.recipe.positions == PositionRecipe::AlibiModelBias
-                && self.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst;
+                && self.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst
+                && self.hidden_size / self.num_attention_heads == 64
+                && self.max_position_embeddings <= 8192
+                && ((self.hidden_size == 512
+                    && self.num_attention_heads == 8
+                    && self.intermediate_size > 0
+                    && self.intermediate_size.is_multiple_of(8))
+                    || (self.hidden_size == 768
+                        && self.num_attention_heads == 12
+                        && self.intermediate_size == 3072
+                        && self.num_hidden_layers == 12
+                        && self.vocab_size == 30528
+                        && self.type_vocab_size == 2
+                        && self.max_position_embeddings == 8192
+                        && self.layer_norm_eps == 1e-12));
             if !recipe_valid {
                 return Err(start(
                     "invalid or unsupported Jina dimensions / arithmetic recipe",

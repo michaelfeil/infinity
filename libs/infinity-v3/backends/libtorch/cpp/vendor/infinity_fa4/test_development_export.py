@@ -146,6 +146,7 @@ class GuardTests(unittest.TestCase):
             (["--deberta", "--deberta-exact-mul"], "fa4_deberta_exact_mul_both_bf16"),
             (["--alibi"], "fa4_alibi_model_bias_fp16"),
             (["--jinacode"], "fa4_jinacode_flash_alibi_bf16"),
+            (["--alibi12"], "fa4_alibi12_model_bias_bf16"),
         )
         with tempfile.TemporaryDirectory() as temporary:
             root = pathlib.Path(temporary)
@@ -267,6 +268,10 @@ def run_mocked_export(root, args, validate_side_effect=None,
         "alibi12_native_score",
         alibi12_native_flash_bf16=lambda *a, **k: None,
         alibi12_native_flash_fp16=lambda *a, **k: None)
+    fake_alibi12 = score_module(
+        "alibi12_model_bias_score",
+        alibi12_model_bias_bf16=lambda *a, **k: None,
+        alibi12_model_bias_fp16=lambda *a, **k: None)
 
     modules = {
         "torch": fake_torch,
@@ -281,6 +286,7 @@ def run_mocked_export(root, args, validate_side_effect=None,
         "deberta_mul_score": fake_deberta_mul,
         "alibi_score": fake_alibi,
         "alibi12_native_score": fake_jinacode,
+        "alibi12_model_bias_score": fake_alibi12,
     }
 
     def fake_export(compiled, path, symbol):
@@ -407,11 +413,11 @@ class MockedCompileTests(unittest.TestCase):
             (output / "development-manifest.json").write_text("{}\n")
             exported, state, code = run_mocked_export(root, [
                 output, "--arch", "sm_90a", "--compile-only", "--export-only",
-                "--deberta", "--deberta-exact-mul", "--alibi", "--jinacode",
+                "--deberta", "--deberta-exact-mul", "--alibi", "--jinacode", "--alibi12",
                 "--runtime-dir", root / "runtime", "--ffi-root", root / "ffi"])
             self.assertEqual(code, 0)
-            self.assertEqual(len(exported), 84)
-            self.assertEqual(len(state["calls"]), 84)
+            self.assertEqual(len(exported), 86)
+            self.assertEqual(len(state["calls"]), 86)
             self.assertTrue((output / "manifest.json").exists())
             self.assertFalse((output / "development-manifest.json").exists())
 
@@ -424,7 +430,7 @@ class MockedCompileTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 run_mocked_export(root, [
                     output, "--arch", "sm_90a", "--compile-only", "--export-only",
-                    "--deberta", "--deberta-exact-mul", "--alibi", "--jinacode",
+                    "--deberta", "--deberta-exact-mul", "--alibi", "--jinacode", "--alibi12",
                     "--runtime-dir", root / "runtime", "--ffi-root", root / "ffi"],
                     export_failure_symbol="fa4_bert_bf16")
             self.assertTrue((output / "development-manifest.json").exists())

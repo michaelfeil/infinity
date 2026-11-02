@@ -18,11 +18,17 @@ use std::path::Path;
 
 const JINA_HIDDEN: usize = 512;
 const JINA_HEADS: usize = 8;
+const JINA_BASE_HIDDEN: usize = 768;
+const JINA_BASE_HEADS: usize = 12;
 const JINA_HEAD_DIM: usize = 64;
 const JINA_MAX_LAYERS: usize = 256;
 const JINA_MAX_POSITIONS: usize = 8192;
 const JINA_DEFAULT_EPS: f64 = 1e-12;
 const JINA_DEFAULT_TYPES: usize = 2;
+const JINA_BASE_INTERMEDIATE: usize = 3072;
+const JINA_BASE_LAYERS: usize = 12;
+const JINA_BASE_VOCAB: usize = 30528;
+const JINA_BASE_POSITIONS: usize = 8192;
 const JINA_IMPLEMENTATION: &str = "jina-bert-implementation";
 const JINA_CODE_MARKER: &str = "jina-bert-v2-qk-post-norm";
 const POOLER_WEIGHT: &str = "pooler.dense.weight";
@@ -259,14 +265,34 @@ impl JinaConfig {
         let types = raw.type_vocab_size.unwrap_or(JINA_DEFAULT_TYPES);
         let eps = raw.layer_norm_eps.unwrap_or(JINA_DEFAULT_EPS);
 
-        if hidden != JINA_HIDDEN || heads != JINA_HEADS || hidden / heads != JINA_HEAD_DIM {
+        if hidden == JINA_BASE_HIDDEN {
+            if heads != JINA_BASE_HEADS
+                || hidden / heads != JINA_HEAD_DIM
+                || intermediate != JINA_BASE_INTERMEDIATE
+                || layers != JINA_BASE_LAYERS
+                || vocab != JINA_BASE_VOCAB
+                || types != JINA_DEFAULT_TYPES
+                || positions != JINA_BASE_POSITIONS
+                || eps != JINA_DEFAULT_EPS
+            {
+                return Err(start(
+                    "JinaBase H768 requires 12 heads, head_dim 64, I3072, 12 layers, vocab 30528, 2 token types, 8192 ALiBi positions, and layer_norm_eps 1e-12",
+                ));
+            }
+        } else if hidden == JINA_HIDDEN {
+            if heads != JINA_HEADS || hidden / heads != JINA_HEAD_DIM {
+                return Err(start(
+                    "Jina geometry must use hidden_size 512 with 8 heads and head_dim 64",
+                ));
+            }
+            if intermediate == 0 || !intermediate.is_multiple_of(8) {
+                return Err(start(
+                    "Jina intermediate_size must be a positive multiple of 8",
+                ));
+            }
+        } else {
             return Err(start(
-                "Jina geometry must use hidden_size 512 with 8 heads and head_dim 64",
-            ));
-        }
-        if intermediate == 0 || !intermediate.is_multiple_of(8) {
-            return Err(start(
-                "Jina intermediate_size must be a positive multiple of 8",
+                "Jina geometry must use hidden_size 512 with 8 heads or hidden_size 768 with 12 heads, both at head_dim 64",
             ));
         }
         if layers == 0 || layers > JINA_MAX_LAYERS {

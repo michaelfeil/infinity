@@ -174,9 +174,13 @@ HELPER_FAMILIES = (
         "fa4_deberta_exact_mul_both_bf16",
         "fa4_deberta_exact_mul_single_bf16",
     )),
+    ("alibi12", (
+        "fa4_alibi12_model_bias_fp16",
+        "fa4_alibi12_model_bias_bf16",
+    )),
 )
 HELPER_SYMBOLS = dict(HELPER_FAMILIES)
-LINK_HELPER_ORDER = ("deberta", "deberta_exact_mul", "alibi", "jinacode")
+LINK_HELPER_ORDER = ("deberta", "deberta_exact_mul", "alibi", "jinacode", "alibi12")
 DTYPES = ("fp16", "bf16")
 WINDOW_CONTRACT = "compiled_equals_canonical_runtime"
 WINDOW_CONTRACT_MODES = (23, 24, 25)
@@ -377,6 +381,15 @@ def _helper_contracts():
             "bias_rounding": "float32_fma_unscaled_then_pow2_scale",
             "alibi_heads": 12, "alibi_slope_count": 12,
         }
+        contracts[f"fa4_alibi12_model_bias_{dtype}"] = {
+            "symbol": f"fa4_alibi12_model_bias_{dtype}", "heads": 12,
+            "kv_heads": 12, "d": 64, "causal": False, "window": [None, None],
+            "dtype": dtype, "kind": "alibi12_model_bias",
+            "score_source": "alibi12_model_bias_score.py", "score_abi": 1,
+            "qk_scale": 0.125, "external_softmax_scale": 1.0,
+            "bias_rounding": "model_dtype",
+            "alibi_heads": 12, "alibi_slope_count": 12,
+        }
     for name, divisor, reciprocal in (
             ("both", 13.875, 0x3d939a86),
             ("single", 11.3125, 0x3db509e7)):
@@ -449,6 +462,7 @@ def expected_kernel_symbols(
     include_deberta_exact_mul=True,
     include_alibi=True,
     include_jinacode=True,
+    include_alibi12=True,
 ):
     symbols = [f"fa4_{name}_{dtype}" for dtype in DTYPES for name in profile_names]
     flags = {
@@ -456,6 +470,7 @@ def expected_kernel_symbols(
         "deberta_exact_mul": include_deberta_exact_mul,
         "alibi": include_alibi,
         "jinacode": include_jinacode,
+        "alibi12": include_alibi12,
     }
     for family, family_symbols in HELPER_FAMILIES:
         if flags[family]:
@@ -705,9 +720,15 @@ def validate_manifest_inventory(manifest, profile_rows=None, require_all_helpers
     inventory = inspect_manifest_inventory(manifest, canonical_rows)
     if inventory["order_kind"] != "canonical":
         raise RuntimeError(LEGACY_METADATA_INSTRUCTION)
-    if require_all_helpers and not all(inventory["helper_flags"].values()):
+    # A new optional model recipe must not make an already published canonical
+    # provider impossible to validate or relink. The original eight helpers
+    # remain required; the additive ALiBi12 pair is checked atomically above.
+    published_helpers = ("deberta", "alibi", "jinacode", "deberta_exact_mul")
+    if require_all_helpers and not all(
+        inventory["helper_flags"][f"include_{family}"] for family in published_helpers
+    ):
         raise RuntimeError(
-            "canonical38 requires every source-known helper family: "
+            "canonical38 requires every published helper family: "
             f"{inventory['helper_flags']}")
     validate_registry_metadata(manifest.get("registry"), count)
     validate_kernel_contracts(manifest["kernels"], canonical_rows)

@@ -117,6 +117,8 @@ def native_link_defines(kernels):
         defines.append("-DFA4_ALIBI")
     if any(s.startswith("fa4_jinacode_flash_alibi_") for s in symbols):
         defines.append("-DFA4_ALIBI12_NATIVE_FLASH")
+    if any(s.startswith("fa4_alibi12_model_bias_") for s in symbols):
+        defines.append("-DFA4_ALIBI12_MODEL_BIAS")
     return defines
 
 

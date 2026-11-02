@@ -623,6 +623,7 @@ fn validate_profile_order(
     let mut deberta_seen = false;
     let mut alibi_eight_seen = false;
     let mut alibi_native_twelve_seen = false;
+    let mut alibi_model_twelve_seen = false;
     let mut seen = 0usize;
     for kernel in kernels {
         if kernel.get("dtype").and_then(serde_json::Value::as_str) != Some(dtype.name()) {
@@ -652,6 +653,7 @@ fn validate_profile_order(
             let seen = match profile {
                 crate::fa4_alibi::AlibiProfile::Eight => &mut alibi_eight_seen,
                 crate::fa4_alibi::AlibiProfile::TwelveNativeFlash => &mut alibi_native_twelve_seen,
+                crate::fa4_alibi::AlibiProfile::TwelveModelBias => &mut alibi_model_twelve_seen,
             };
             if *seen || !crate::fa4_alibi::kernel_matches(kernel, dtype.name(), profile) {
                 return Err(start("invalid or duplicate ALiBi model-bias export"));
@@ -1156,6 +1158,24 @@ impl Fa4 {
             root,
             spec,
             crate::fa4_alibi::AlibiProfile::TwelveNativeFlash,
+        )
+    }
+
+    /// Additive twelve-head JinaBase recipe. Bias is rounded once to the model
+    /// storage dtype, matching `packed_attention`/`alibi_score.py`, and is not
+    /// the JinaCode native-FMA score recipe.
+    pub(crate) fn new_alibi12_model_bias(
+        context: Arc<Context>,
+        stream: Arc<Stream>,
+        root: &Path,
+        spec: AttentionSpec,
+    ) -> Result<Self, BackendError> {
+        Self::new_alibi_profile(
+            context,
+            stream,
+            root,
+            spec,
+            crate::fa4_alibi::AlibiProfile::TwelveModelBias,
         )
     }
 
@@ -2709,6 +2729,80 @@ mod tests {
                 .clone();
             manifest["kernels"].as_array_mut().unwrap().push(extra);
             assert!(validate_profile_order(&manifest, dtype).is_err());
+        }
+    }
+
+    #[test]
+    fn alibi12_model_bias_exports_are_additive_and_distinct_from_jinacode() {
+        for dtype in [DType::F16, DType::Bf16] {
+            let mut manifest = manifest_for(&[dtype]);
+            let before = validate_profile_order(&manifest, dtype).unwrap();
+            let entry = |symbol: &str, kind: &str, source: &str, rounding: &str| {
+                json!({
+                    "symbol": symbol, "dtype": dtype.name(), "kind": kind,
+                    "score_source": source, "score_abi": 1, "qk_scale": 0.125,
+                    "external_softmax_scale": 1.0, "bias_rounding": rounding,
+                    "alibi_heads": 12, "alibi_slope_count": 12,
+                    "heads": 12, "kv_heads": 12, "d": 64,
+                    "causal": false, "window": [null, null]
+                })
+            };
+            manifest["kernels"].as_array_mut().unwrap().push(entry(
+                &format!("fa4_alibi12_model_bias_{}", dtype.name()),
+                "alibi12_model_bias",
+                "alibi12_model_bias_score.py",
+                "model_dtype",
+            ));
+            assert_eq!(validate_profile_order(&manifest, dtype).unwrap(), before);
+            assert_eq!(
+                select_profile(&manifest, &spec_for(&PROFILES[0], dtype)).unwrap(),
+                0
+            );
+
+            manifest["kernels"].as_array_mut().unwrap().push(entry(
+                &format!("fa4_jinacode_flash_alibi_{}", dtype.name()),
+                "alibi12_native_flash",
+                "alibi12_native_score.py",
+                "float32_fma_unscaled_then_pow2_scale",
+            ));
+            assert_eq!(validate_profile_order(&manifest, dtype).unwrap(), before);
+
+            let mut crossed = manifest.clone();
+            let last = crossed["kernels"]
+                .as_array_mut()
+                .unwrap()
+                .last_mut()
+                .unwrap();
+            last["kind"] = json!("alibi12_model_bias");
+            last["score_source"] = json!("alibi12_model_bias_score.py");
+            last["bias_rounding"] = json!("model_dtype");
+            assert!(validate_profile_order(&crossed, dtype).is_err());
+
+            let mut duplicate = manifest;
+            let last = duplicate["kernels"]
+                .as_array()
+                .unwrap()
+                .last()
+                .unwrap()
+                .clone();
+            duplicate["kernels"].as_array_mut().unwrap().push(last);
+            assert!(validate_profile_order(&duplicate, dtype).is_err());
+        }
+    }
+
+    #[test]
+    fn manifest_abi_rejects_non_native1_or_non_export7() {
+        assert!(validate_manifest_abi(&json!({
+            "abi_version": 7, "native_abi_version": 1
+        }))
+        .is_ok());
+        for manifest in [
+            json!({"abi_version": 6, "native_abi_version": 1}),
+            json!({"abi_version": 7, "native_abi_version": 0}),
+            json!({"abi_version": 7}),
+            json!({"native_abi_version": 1}),
+        ] {
+            assert!(validate_manifest_abi(&manifest).is_err());
         }
     }
 

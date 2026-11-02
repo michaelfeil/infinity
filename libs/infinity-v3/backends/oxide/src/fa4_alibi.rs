@@ -51,6 +51,7 @@ const SLOPES_12: [f32; 12] = [
 pub(crate) enum AlibiProfile {
     Eight,
     TwelveNativeFlash,
+    TwelveModelBias,
 }
 
 impl AlibiProfile {
@@ -64,7 +65,7 @@ impl AlibiProfile {
     pub(crate) const fn heads(self) -> usize {
         match self {
             Self::Eight => 8,
-            Self::TwelveNativeFlash => 12,
+            Self::TwelveNativeFlash | Self::TwelveModelBias => 12,
         }
     }
 
@@ -75,7 +76,7 @@ impl AlibiProfile {
     pub(crate) const fn slopes(self) -> &'static [f32] {
         match self {
             Self::Eight => &SLOPES_8,
-            Self::TwelveNativeFlash => &SLOPES_12,
+            Self::TwelveNativeFlash | Self::TwelveModelBias => &SLOPES_12,
         }
     }
 
@@ -84,6 +85,7 @@ impl AlibiProfile {
         match self {
             Self::Eight => b"infinity_fa4_alibi_model_bias_v1\0",
             Self::TwelveNativeFlash => b"infinity_fa4_jinacode_flash_alibi_v1\0",
+            Self::TwelveModelBias => b"infinity_fa4_alibi12_model_bias_v1\0",
         }
     }
 
@@ -91,14 +93,19 @@ impl AlibiProfile {
         match self {
             Self::Eight => format!("fa4_alibi_model_bias_{dtype}"),
             Self::TwelveNativeFlash => format!("fa4_jinacode_flash_alibi_{dtype}"),
+            Self::TwelveModelBias => format!("fa4_alibi12_model_bias_{dtype}"),
         }
     }
 }
 
 pub(crate) fn profile_for_symbol(symbol: &str, dtype: &str) -> Option<AlibiProfile> {
-    [AlibiProfile::Eight, AlibiProfile::TwelveNativeFlash]
-        .into_iter()
-        .find(|profile| symbol == profile.kernel_symbol(dtype))
+    [
+        AlibiProfile::Eight,
+        AlibiProfile::TwelveNativeFlash,
+        AlibiProfile::TwelveModelBias,
+    ]
+    .into_iter()
+    .find(|profile| symbol == profile.kernel_symbol(dtype))
 }
 
 pub(crate) fn kernel_matches(
@@ -107,18 +114,19 @@ pub(crate) fn kernel_matches(
     profile: AlibiProfile,
 ) -> bool {
     let heads = u64::try_from(profile.heads()).ok();
-    let slope_metadata_matches = match profile {
-        AlibiProfile::Eight => true,
-        AlibiProfile::TwelveNativeFlash => {
-            kernel
-                .get("alibi_heads")
+    let twelve_model_bias = profile == AlibiProfile::TwelveModelBias;
+    let twelve_native = profile == AlibiProfile::TwelveNativeFlash;
+    let slope_metadata_matches = if twelve_model_bias || twelve_native {
+        kernel
+            .get("alibi_heads")
+            .and_then(serde_json::Value::as_u64)
+            == Some(12)
+            && kernel
+                .get("alibi_slope_count")
                 .and_then(serde_json::Value::as_u64)
                 == Some(12)
-                && kernel
-                    .get("alibi_slope_count")
-                    .and_then(serde_json::Value::as_u64)
-                    == Some(12)
-        }
+    } else {
+        true
     };
     slope_metadata_matches
         && kernel.get("symbol").and_then(serde_json::Value::as_str)
@@ -128,14 +136,15 @@ pub(crate) fn kernel_matches(
             == Some(match profile {
                 AlibiProfile::Eight => "alibi_model_bias",
                 AlibiProfile::TwelveNativeFlash => "alibi12_native_flash",
+                AlibiProfile::TwelveModelBias => "alibi12_model_bias",
             })
         && kernel
             .get("score_source")
             .and_then(serde_json::Value::as_str)
-            == Some(if profile == AlibiProfile::TwelveNativeFlash {
-                "alibi12_native_score.py"
-            } else {
-                "alibi_score.py"
+            == Some(match profile {
+                AlibiProfile::Eight => "alibi_score.py",
+                AlibiProfile::TwelveNativeFlash => "alibi12_native_score.py",
+                AlibiProfile::TwelveModelBias => "alibi12_model_bias_score.py",
             })
         && kernel.get("heads").and_then(serde_json::Value::as_u64) == heads
         && kernel.get("kv_heads").and_then(serde_json::Value::as_u64) == heads
@@ -151,7 +160,7 @@ pub(crate) fn kernel_matches(
         && kernel
             .get("bias_rounding")
             .and_then(serde_json::Value::as_str)
-            == Some(if profile == AlibiProfile::TwelveNativeFlash {
+            == Some(if twelve_native {
                 "float32_fma_unscaled_then_pow2_scale"
             } else {
                 "model_dtype"

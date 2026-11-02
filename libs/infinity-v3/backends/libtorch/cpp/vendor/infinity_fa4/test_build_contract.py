@@ -19,6 +19,7 @@ def _helper_kernels():
         "fa4_jinacode_flash_alibi_{dtype}",
         "fa4_deberta_exact_mul_both_bf16",
         "fa4_deberta_exact_mul_single_bf16",
+        "fa4_alibi12_model_bias_{dtype}",
     ]
     kernels = []
     for pattern in order:
@@ -42,7 +43,7 @@ def manifest_for(count):
     symbols = [kernel["symbol"] for kernel in kernels]
     names = [row[0] for row in rows]
     flags = {f"include_{family}": True for family in
-             ("deberta", "deberta_exact_mul", "alibi", "jinacode")}
+             ("deberta", "deberta_exact_mul", "alibi", "jinacode", "alibi12")}
     link_order = [f"{symbol}.o" for symbol in
                   contract.expected_link_symbols(names, **flags)]
     return {
@@ -62,6 +63,29 @@ def key(mode, row):
 
 
 class CanonicalPrefixTests(unittest.TestCase):
+    def test_new_alibi12_preserves_the_complete_published_helper_prefix(self):
+        new = manifest_for(38)
+        appended = ["fa4_alibi12_model_bias_fp16", "fa4_alibi12_model_bias_bf16"]
+        old_helpers = [
+            "fa4_deberta_fp16", "fa4_deberta_bf16",
+            "fa4_alibi_model_bias_fp16", "fa4_alibi_model_bias_bf16",
+            "fa4_jinacode_flash_alibi_fp16", "fa4_jinacode_flash_alibi_bf16",
+            "fa4_deberta_exact_mul_both_bf16",
+            "fa4_deberta_exact_mul_single_bf16",
+        ]
+        inventory = contract.validate_manifest_inventory(new)
+        self.assertEqual(inventory["observed_symbols"][-10:], old_helpers + appended)
+        old = dict(new)
+        old["kernels"] = [k for k in new["kernels"] if k["symbol"] not in appended]
+        old_symbols = [k["symbol"] for k in old["kernels"]]
+        old["canonical31_inventory"] = {"exact_order": True, "symbols": old_symbols}
+        old["link_object_order"] = [n for n in new["link_object_order"]
+                                    if n not in [s + ".o" for s in appended]]
+        old["objects"] = {n: h for n, h in new["objects"].items()
+                          if n in old["link_object_order"]}
+        self.assertEqual(contract.validate_manifest_inventory(old)["order_kind"], "canonical")
+        self.assertEqual(new["kernels"][:-2], old["kernels"])
+
     def test_active_canonical38_registry_and_fingerprint_are_coherent(self):
         rows = contract.validate_profiles_inc(VENDOR / "profiles.inc")
         self.assertEqual(len(rows), 38)
@@ -94,9 +118,9 @@ class CanonicalPrefixTests(unittest.TestCase):
         rows = contract.canonical_rows_for(38)
         names = [row[0] for row in rows]
         flags = {f"include_{family}": True for family in
-                 ("deberta", "deberta_exact_mul", "alibi", "jinacode")}
+                 ("deberta", "deberta_exact_mul", "alibi", "jinacode", "alibi12")}
         symbols = contract.expected_kernel_symbols(names, **flags)
-        self.assertEqual(len(symbols), 38 * 2 + 8)
+        self.assertEqual(len(symbols), 38 * 2 + 10)
         for dtype in contract.DTYPES:
             for name in names:
                 self.assertIn(f"fa4_{name}_{dtype}", symbols)

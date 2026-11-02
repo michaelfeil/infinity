@@ -34,6 +34,7 @@ p.add_argument("--deberta", action="store_true", help="Also export packed DeBERT
 p.add_argument("--deberta-exact-mul", action="store_true", help="Include the BF16 fixed-divisor DeBERTa score hook")
 p.add_argument("--alibi", action="store_true", help="Also export packed Jina ALiBi model-bias attention")
 p.add_argument("--jinacode", action="store_true", help="Also export native JinaCode F32-FMA ALiBi attention")
+p.add_argument("--alibi12", action="store_true", help="Also export JinaBase 12-head model-dtype ALiBi attention")
 p.add_argument("--only-symbol", nargs="+", metavar="SYMBOL", help="Development-only: export only these canonical symbols (requires --compile-only --export-only)")
 p.add_argument("--compile-only", action="store_true", help="Export using fake tensors without a build GPU; runtime validation is still required")
 p.add_argument("--arch", choices=["sm_80", "sm_86", "sm_89", "sm_90a", "sm_100a", "sm_120"], default="sm_90a", help="Target architecture; one native bundle per architecture")
@@ -57,6 +58,7 @@ if dev_only:
         "include_deberta_exact_mul": a.deberta_exact_mul,
         "include_alibi": a.alibi,
         "include_jinacode": a.jinacode,
+        "include_alibi12": a.alibi12,
     }
     canonical_symbols = build_contract.expected_kernel_symbols(
         [row[0] for row in profile_rows], **dev_flags)
@@ -312,6 +314,38 @@ if not a.link_only:
                                     score_abi=1, qk_scale=0.125, external_softmax_scale=1.0,
                                     bias_rounding="float32_fma_unscaled_then_pow2_scale",
                                     alibi_heads=12, alibi_slope_count=12))
+        if a.alibi12:
+            # JinaBase uses the ordinary model-dtype bias contract with twelve
+            # heads. This is additive and does not reuse the JinaCode FMA hook.
+            from alibi12_model_bias_score import (
+                alibi12_model_bias_bf16, alibi12_model_bias_fp16)
+            for dtype_name, dtype, score_mod in [
+                    ("fp16", torch.float16, alibi12_model_bias_fp16),
+                    ("bf16", torch.bfloat16, alibi12_model_bias_bf16)]:
+                symbol = f"fa4_alibi12_model_bias_{dtype_name}"
+                if dev_only and symbol not in only_symbols:
+                    continue
+                q = torch.zeros((256, 12, 64), device="cuda", dtype=dtype)
+                slopes = torch.zeros(12, device="cuda", dtype=torch.float32)
+                def compile_alibi12():
+                    interface.flash_attn_varlen_func(q, q, q, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                        max_seqlen_q=129, max_seqlen_k=129, softmax_scale=1.,
+                        score_mod=score_mod, aux_tensors=[slopes],
+                        disable_scheduler_metadata=True)
+                compiled = compile_isolated(f"alibi12_{dtype_name}", compile_alibi12)
+                obj = a.output / f"{symbol}.o"
+                export_portable(compiled, obj, symbol)
+                require_no_cuda(f"after export {symbol}")
+                clear_compile_cache(f"alibi12_{dtype_name}")
+                objects.append(str(obj))
+                kernels.append(dict(symbol=symbol, heads=12, kv_heads=12, d=64,
+                                    causal=False, window=[None, None], dtype=dtype_name,
+                                    kind="alibi12_model_bias",
+                                    score_source="alibi12_model_bias_score.py",
+                                    score_abi=1, qk_scale=0.125,
+                                    external_softmax_scale=1.0,
+                                    bias_rounding="model_dtype",
+                                    alibi_heads=12, alibi_slope_count=12))
     require_no_cuda("after all exports")
     if dev_only:
         profile_names = [row[0] for row in profile_rows]
@@ -389,6 +423,7 @@ if not a.link_only:
         "include_deberta_exact_mul": a.deberta_exact_mul,
         "include_alibi": a.alibi,
         "include_jinacode": a.jinacode,
+        "include_alibi12": a.alibi12,
     }
     kernels = build_contract.canonical_metadata_order(
         kernels, profile_names, **kernel_flags)
@@ -438,6 +473,8 @@ if not a.link_only:
         manifest["alibi_score_sha256"] = digest(pathlib.Path(__file__).with_name("alibi_score.py"))
     if a.jinacode:
         manifest["alibi12_native_score_sha256"] = digest(pathlib.Path(__file__).with_name("alibi12_native_score.py"))
+    if a.alibi12:
+        manifest["alibi12_model_bias_score_sha256"] = digest(pathlib.Path(__file__).with_name("alibi12_model_bias_score.py"))
     if a.deberta_exact_mul:
         manifest["deberta_mul_score_sha256"] = digest(pathlib.Path(__file__).with_name("deberta_mul_score.py"))
     if a.compile_only:
@@ -492,7 +529,7 @@ if manifest["architecture"] not in ["sm_80", "sm_86", "sm_89", "sm_90a", "sm_100
     raise RuntimeError("Unsupported bundle architecture")
 capability = int(manifest["architecture"].removeprefix("sm_").removesuffix("a"))
 bridge = pathlib.Path(__file__).with_name("bridge.cpp")
-if any(k["symbol"].startswith(("fa4_alibi_model_bias_", "fa4_jinacode_flash_alibi_")) for k in manifest["kernels"]):
+if any(k["symbol"].startswith(("fa4_alibi_model_bias_", "fa4_jinacode_flash_alibi_", "fa4_alibi12_model_bias_")) for k in manifest["kernels"]):
     from alibi_score import native_link_defines
     link_defines = native_link_defines(manifest["kernels"])
 else:

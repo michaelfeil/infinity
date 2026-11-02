@@ -685,6 +685,24 @@ fn selects_mpnet_h768(c: &BertConfig) -> bool {
         && c.recipe.residual == NormArithmetic::RoundedAddBeforeStats
 }
 
+fn selects_jina_h768_word_type_embedding(c: &BertConfig) -> bool {
+    c.family == EncoderFamily::Jina
+        && c.hidden_size == 768
+        && c.num_attention_heads == 12
+        && c.recipe.embedding == NormArithmetic::ExactWordTypeBiased
+}
+
+fn selects_jina_h768_rounded_norm(c: &BertConfig) -> bool {
+    c.family == EncoderFamily::Jina
+        && c.hidden_size == 768
+        && c.num_attention_heads == 12
+        && c.recipe.residual == NormArithmetic::RoundedAddBeforeStats
+}
+
+fn jina_h768_residual_norm_kernel() -> &'static str {
+    "infinity_deberta_layer_norm_768"
+}
+
 struct Kernels {
     embedding: Function,
     gte_word_gather: Option<Function>,
@@ -759,6 +777,8 @@ impl Kernels {
         let rounded_512_norm = config.family == EncoderFamily::Jina
             && config.hidden_size == 512
             && config.recipe.residual == NormArithmetic::RoundedAddBeforeStats;
+        let jina_h768_embedding = selects_jina_h768_word_type_embedding(config);
+        let jina_h768_rounded_norm = selects_jina_h768_rounded_norm(config);
         let rounded_1024_embedding = config.hidden_size == 1024
             && config.recipe.embedding == NormArithmetic::RoundedAddBeforeStats;
         let rounded_1024_norm = config.hidden_size == 1024
@@ -830,6 +850,13 @@ impl Kernels {
             }
             NormArithmetic::RoundedAddBeforeStats if rounded_512_norm => {
                 "infinity_layer_norm_512_rounded_native"
+            }
+            // JinaBase reuses the public DeBERTa H768 rounded-residual adapter:
+            // BF16-round the projection+residual sum, then the Candle width-768
+            // statistics. The projection already owns its bias and Jina passes
+            // a null bias, so the optional Launcher bias path stays unused.
+            NormArithmetic::RoundedAddBeforeStats if jina_h768_rounded_norm => {
+                jina_h768_residual_norm_kernel()
             }
             NormArithmetic::RoundedAddBeforeStats if rounded_1024_norm => {
                 "infinity_layer_norm_1024_rounded_native"
@@ -932,6 +959,7 @@ impl Kernels {
                 MPNET_H768_GEOMETRY
             } else if exact_768_embedding
                 || exact_classifier_384
+                || jina_h768_embedding
                 || (config.family == EncoderFamily::Deberta && config.hidden_size == 768)
             {
                 H768_GEOMETRY
@@ -945,6 +973,7 @@ impl Kernels {
             } else if exact_768_norm
                 || gte_1024
                 || exact_classifier_384
+                || jina_h768_rounded_norm
                 || (config.family == EncoderFamily::Deberta && config.hidden_size == 768)
             {
                 H768_GEOMETRY
@@ -7041,6 +7070,9 @@ fn encoder_model<E: UploadElement>(
     };
     let packed = packed_attention_layout(&config)?;
     let alibi_family = matches!(config.family, EncoderFamily::Jina | EncoderFamily::JinaCode);
+    let jina_base_h768 = config.family == EncoderFamily::Jina
+        && config.hidden_size == 768
+        && config.num_attention_heads == 12;
     if alibi_family && packed.is_none() {
         return Err(start(
             "Jina requires packed QKV and attention row strides divisible by 8 elements",
@@ -7098,6 +7130,13 @@ fn encoder_model<E: UploadElement>(
                         root,
                         attention_spec,
                     )?
+                } else if jina_base_h768 {
+                    fa4::Fa4::new_alibi12_model_bias(
+                        context.clone(),
+                        stream.clone(),
+                        root,
+                        attention_spec,
+                    )?
                 } else if alibi_family {
                     fa4::Fa4::new_alibi(context.clone(), stream.clone(), root, attention_spec)?
                 } else {
@@ -7113,6 +7152,13 @@ fn encoder_model<E: UploadElement>(
                 let root = Path::new(root);
                 Some(if config.family == EncoderFamily::JinaCode {
                     fa4::Fa4::new_alibi_native12(
+                        context.clone(),
+                        stream.clone(),
+                        root,
+                        attention_spec,
+                    )?
+                } else if jina_base_h768 {
+                    fa4::Fa4::new_alibi12_model_bias(
                         context.clone(),
                         stream.clone(),
                         root,
@@ -11258,6 +11304,9 @@ mod jina_alibi;
 
 #[cfg(test)]
 mod jina_code_loader_tests;
+
+#[cfg(test)]
+mod jina_base_host_tests;
 
 #[cfg(test)]
 mod qwen35_main_contract_tests {
