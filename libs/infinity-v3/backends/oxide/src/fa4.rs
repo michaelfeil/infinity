@@ -5,8 +5,10 @@
 //! `vendor/infinity_fa4/profiles.inc` and `build.py`. A bundle is accepted only
 //! when its manifest exports the full legacy-19 or appended-20 mode prefix in
 //! that known order for the selected dtype. Absolute head counts are runtime
-//! tensor dimensions; selection uses
-//! the exported Q/KV grouping with the exact dimension and mask.
+//! tensor dimensions; selection uses the exported Q/KV grouping with the exact
+//! dimension and mask kind. Global masks stay exact. Local profiles may serve
+//! safe runtime extents of the same causal/local kind because FA4 passes the
+//! left/right bounds as runtime scalars.
 //!
 //! Softcap, relative-bias and DeBERTa score modifiers are not represented by
 //! [`AttentionSpec`], so they fail selection at load instead of falling back to
@@ -75,6 +77,46 @@ pub(crate) enum Window {
     Local { left: i32, right: i32 },
 }
 
+impl Window {
+    /// Validate a local window as FA4 normalizes it for the requested semantic
+    /// causal bit, and return its runtime bounds.
+    ///
+    /// FA4's `_resolve_causal_local_window` forces `window_size_right = 0` for a
+    /// causal request, then selects the local path when a left bound is present.
+    /// The kernel therefore sees its own `causal = false, local = true,
+    /// right = 0` form for a semantic causal-local profile. Keep the provider's
+    /// causal bit separate from those normalized kernel flags: a causal local
+    /// request must already carry `right = 0`, while a noncausal local request
+    /// must not use that causal-local form (`right > 0`).
+    fn canonical_local_extents(self, causal: bool) -> Option<(i32, i32)> {
+        let Self::Local { left, right } = self else {
+            return None;
+        };
+        if left < 0 || right < 0 {
+            return None;
+        }
+        left.checked_add(right)?.checked_add(1)?;
+        if causal {
+            (right == 0).then_some((left, right))
+        } else {
+            (right > 0).then_some((left, right))
+        }
+    }
+
+    /// Global masks are exact. Two local masks describe the same cold kernel
+    /// when both validate for the same causal kind, regardless of extents.
+    fn matches_mask(self, requested: Self, causal: bool) -> bool {
+        match (self, requested) {
+            (Self::Global, Self::Global) => true,
+            (Self::Local { .. }, Self::Local { .. }) => {
+                self.canonical_local_extents(causal).is_some()
+                    && requested.canonical_local_extents(causal).is_some()
+            }
+            _ => false,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum Scale {
     RsqrtHeadDim,
@@ -82,8 +124,10 @@ pub(crate) enum Scale {
     Explicit(f64),
 }
 
-/// Provider geometry and scale convention selected once at load. `window` is
-/// the exact exported mask, not an inferred approximation;
+/// Provider geometry and scale convention selected once at load. `window`
+/// distinguishes global and local masks. Global masks are exact; local requests
+/// may use safe runtime extents of the same causal/local kind. A causal local
+/// request must use `right = 0`; a noncausal local request must use `right > 0`.
 /// `Scale::RsqrtHeadDim` resolves to `1 / sqrt(head_dim)` at load.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct AttentionSpec {
@@ -161,7 +205,7 @@ impl Profile {
         export_group == request_group
             && self.head_dim == spec.head_dim
             && self.causal == spec.causal
-            && self.window == spec.window
+            && self.window.matches_mask(spec.window, spec.causal)
     }
 }
 
@@ -226,7 +270,28 @@ fn infer(e: impl std::fmt::Display) -> BackendError {
 }
 
 fn profile_index(spec: &AttentionSpec) -> Option<usize> {
-    PROFILES.iter().position(|profile| profile.matches(spec))
+    select_profile_index(&PROFILES, spec)
+}
+
+/// Select deterministically among equivalent local kernels: prefer the profile
+/// whose exported extents match the request exactly, then the first declared
+/// profile. This keeps original profile order authoritative while allowing an
+/// older local export to serve a new runtime extent.
+fn select_profile_index(profiles: &[Profile], spec: &AttentionSpec) -> Option<usize> {
+    let mut selected: Option<(usize, bool)> = None;
+    for (mode, profile) in profiles.iter().enumerate() {
+        if !profile.matches(spec) {
+            continue;
+        }
+        let exact = profile.window == spec.window;
+        if let Some((_, best_exact)) = selected {
+            if best_exact || !exact {
+                continue;
+            }
+        }
+        selected = Some((mode, exact));
+    }
+    selected.map(|(mode, _)| mode)
 }
 
 fn parse_window(value: Option<&serde_json::Value>) -> Option<Window> {
@@ -422,6 +487,28 @@ fn valid_stride(stride: &[i64], width: i64, head_dim: i64) -> bool {
         && stride[0] % 8 == 0
 }
 
+/// Keep the runtime mask arithmetic inside signed int32. The longest per-batch
+/// Q length and the packed K extent bound `causal_row_offset`; a local window
+/// larger than the remaining int32 headroom could overflow the native mask.
+fn validate_local_window_bounds(
+    spec: &AttentionSpec,
+    batch: &AttentionBatch,
+) -> Result<(), BackendError> {
+    let Window::Local { .. } = spec.window else {
+        return Ok(());
+    };
+    let Some((left, right)) = spec.window.canonical_local_extents(spec.causal) else {
+        return Err(infer("invalid local attention window"));
+    };
+    let max_sequence = batch.max_q.max(batch.k_tokens);
+    let max_sequence = i64::try_from(max_sequence).map_err(infer)?;
+    let limit = i64::from(i32::MAX) - max_sequence;
+    if i64::from(left) > limit || i64::from(right) > limit {
+        return Err(infer("local attention window exceeds safe int32 bounds"));
+    }
+    Ok(())
+}
+
 fn check_batch(
     spec: &AttentionSpec,
     capability: i32,
@@ -472,6 +559,7 @@ fn check_batch(
     {
         return Err(infer("invalid attention element strides"));
     }
+    validate_local_window_bounds(spec, batch)?;
     if separate_qk_forbidden(
         capability,
         spec.head_dim,
@@ -989,6 +1077,254 @@ mod tests {
                 assert_eq!(select_profile(&manifest, &spec).ok(), Some(mode));
             }
         }
+    }
+
+    #[test]
+    fn accepts_runtime_local_extents_of_the_existing_mask_kind() {
+        let manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        for dtype in [DType::F16, DType::Bf16] {
+            // UltraBERT: 6/6 d128 noncausal local, radius 128.
+            let mut ultrabert = spec_for(&PROFILES[10], dtype);
+            ultrabert.heads = 6;
+            ultrabert.kv_heads = 6;
+            ultrabert.window = Window::Local {
+                left: 128,
+                right: 128,
+            };
+            assert_eq!(select_profile(&manifest, &ultrabert).ok(), Some(10));
+
+            // Absolute heads remain runtime aliases of the ratio-1 local kernel.
+            let mut ultrabert_alias = ultrabert;
+            ultrabert_alias.heads = 12;
+            ultrabert_alias.kv_heads = 12;
+            assert_eq!(select_profile(&manifest, &ultrabert_alias).ok(), Some(10));
+
+            // Mistral: 32/8 d128 causal local, radius 4095.
+            let mut mistral = spec_for(&PROFILES[15], dtype);
+            mistral.heads = 32;
+            mistral.kv_heads = 8;
+            mistral.window = Window::Local {
+                left: 4095,
+                right: 0,
+            };
+            assert_eq!(select_profile(&manifest, &mistral).ok(), Some(15));
+
+            let mut mistral_alias = mistral;
+            mistral_alias.heads = 16;
+            mistral_alias.kv_heads = 4;
+            assert_eq!(select_profile(&manifest, &mistral_alias).ok(), Some(15));
+
+            // Asymmetric noncausal windows stay local and noncausal.
+            let mut asymmetric = spec_for(&PROFILES[10], dtype);
+            asymmetric.window = Window::Local {
+                left: 0,
+                right: 128,
+            };
+            assert_eq!(select_profile(&manifest, &asymmetric).ok(), Some(10));
+        }
+    }
+
+    #[test]
+    fn rejects_mismatched_mask_kinds_and_unsafe_local_extents() {
+        let manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        let reject = |spec: AttentionSpec, label: &str| {
+            assert!(
+                select_profile(&manifest, &spec).is_err(),
+                "accepted {label}"
+            );
+        };
+
+        // A global request keeps the global export even when the same geometry
+        // has a local export: local128 must not absorb mha128's global mask.
+        let mut global_for_local = spec_for(&PROFILES[10], DType::F16);
+        global_for_local.window = Window::Global;
+        assert_eq!(select_profile(&manifest, &global_for_local).ok(), Some(9));
+
+        let mut global_for_causal_local = spec_for(&PROFILES[15], DType::F16);
+        global_for_causal_local.window = Window::Global;
+        assert_eq!(
+            select_profile(&manifest, &global_for_causal_local).ok(),
+            Some(2)
+        );
+
+        // The local request selects the local kernel, not the global mha128
+        // export with the same ratio and width.
+        let mut local_for_global = spec_for(&PROFILES[9], DType::F16);
+        local_for_global.window = Window::Local {
+            left: 128,
+            right: 128,
+        };
+        assert_eq!(select_profile(&manifest, &local_for_global).ok(), Some(10));
+
+        let mut unsupported_local = spec_for(&PROFILES[7], DType::F16);
+        unsupported_local.window = Window::Local {
+            left: 128,
+            right: 128,
+        };
+        reject(unsupported_local, "local request without a local export");
+
+        let mut causal_for_noncausal = spec_for(&PROFILES[10], DType::F16);
+        causal_for_noncausal.causal = true;
+        causal_for_noncausal.window = Window::Local {
+            left: 128,
+            right: 0,
+        };
+        reject(
+            causal_for_noncausal,
+            "causal request for a noncausal export",
+        );
+
+        let mut noncausal_for_causal = spec_for(&PROFILES[15], DType::F16);
+        noncausal_for_causal.causal = false;
+        noncausal_for_causal.window = Window::Local {
+            left: 4095,
+            right: 0,
+        };
+        reject(
+            noncausal_for_causal,
+            "noncausal request for a causal export",
+        );
+
+        let mut causal_right_nonzero = spec_for(&PROFILES[15], DType::F16);
+        causal_right_nonzero.window = Window::Local {
+            left: 4095,
+            right: 1,
+        };
+        reject(causal_right_nonzero, "causal local right != 0");
+
+        let mut noncausal_right_zero = spec_for(&PROFILES[10], DType::F16);
+        noncausal_right_zero.window = Window::Local {
+            left: 128,
+            right: 0,
+        };
+        reject(noncausal_right_zero, "noncausal local right == 0");
+
+        for (left, right, label) in [
+            (-1, 128, "negative left"),
+            (128, -1, "negative right"),
+            (0, 0, "noncausal zero extent"),
+            (i32::MAX, i32::MAX, "overflowing extent"),
+        ] {
+            let mut spec = spec_for(&PROFILES[10], DType::F16);
+            spec.window = Window::Local { left, right };
+            reject(spec, label);
+        }
+
+        let mut causal_overflow = spec_for(&PROFILES[15], DType::F16);
+        causal_overflow.window = Window::Local {
+            left: i32::MAX,
+            right: 0,
+        };
+        reject(causal_overflow, "causal overflow");
+    }
+
+    #[test]
+    fn rejects_unsafe_local_window_bounds_before_enqueue() {
+        let mut spec = spec_for(&PROFILES[10], DType::F16);
+        spec.window = Window::Local {
+            left: 128,
+            right: 128,
+        };
+        let safe = fake_batch(&spec, 256, 256);
+        assert!(check_batch(&spec, 90, &safe).is_ok());
+
+        let huge = fake_batch(&spec, i32::MAX as usize, i32::MAX as usize);
+        assert!(check_batch(&spec, 90, &huge).is_err());
+
+        let mut negative = spec;
+        negative.window = Window::Local {
+            left: -1,
+            right: 128,
+        };
+        let batch = fake_batch(&negative, 256, 256);
+        assert!(check_batch(&negative, 90, &batch).is_err());
+    }
+
+    #[test]
+    fn local_manifest_identity_remains_exact_while_requests_broaden() {
+        let manifest = manifest_for(&[DType::F16, DType::Bf16]);
+        let mut ultrabert = spec_for(&PROFILES[10], DType::F16);
+        ultrabert.window = Window::Local {
+            left: 128,
+            right: 128,
+        };
+        assert_eq!(select_profile(&manifest, &ultrabert).ok(), Some(10));
+        assert_eq!(
+            select_profile(&manifest, &spec_for(&PROFILES[10], DType::F16)).ok(),
+            Some(10)
+        );
+
+        for (field, value) in [
+            ("window", json!([128, 128])),
+            ("causal", json!(true)),
+            ("heads", json!(12)),
+            ("kv_heads", json!(12)),
+        ] {
+            let mut corrupt = manifest_for(&[DType::F16, DType::Bf16]);
+            corrupt["kernels"]
+                .as_array_mut()
+                .expect("test manifest has kernels")[10][field] = value;
+            assert!(
+                select_profile(&corrupt, &ultrabert).is_err(),
+                "accepted corrupt local {field}"
+            );
+            assert!(
+                select_profile(&corrupt, &spec_for(&PROFILES[10], DType::F16)).is_err(),
+                "canonical request accepted corrupt local {field}"
+            );
+        }
+    }
+
+    #[test]
+    fn chooses_exact_then_first_declared_duplicate_deterministically() {
+        let canonical = Profile::new(
+            "canonical",
+            6,
+            6,
+            128,
+            false,
+            Window::Local {
+                left: 64,
+                right: 64,
+            },
+        );
+        let wider = Profile::new(
+            "wider",
+            6,
+            6,
+            128,
+            false,
+            Window::Local {
+                left: 128,
+                right: 128,
+            },
+        );
+        let profiles = [canonical, wider];
+        let mut spec = spec_for(&canonical, DType::F16);
+        spec.window = Window::Local {
+            left: 128,
+            right: 128,
+        };
+        assert_eq!(select_profile_index(&profiles, &spec), Some(1));
+
+        spec.window = Window::Local {
+            left: 64,
+            right: 64,
+        };
+        assert_eq!(select_profile_index(&profiles, &spec), Some(0));
+
+        spec.window = Window::Local {
+            left: 96,
+            right: 96,
+        };
+        assert_eq!(select_profile_index(&profiles, &spec), Some(0));
+
+        let duplicate = [canonical, canonical];
+        spec.window = Window::Local {
+            left: 64,
+            right: 64,
+        };
+        assert_eq!(select_profile_index(&duplicate, &spec), Some(0));
     }
 
     #[test]
@@ -1717,6 +2053,30 @@ mod tests {
                 spec.dtype = DType::Bf16;
                 run_case::<bf16>(
                     &context, &root, &stream, spec, &offsets, &offsets, 130, wrapper,
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires INFINITY_FA4_ROOT and a matching CUDA device"]
+    fn gpu_local_radius128_boundary_and_changed_heads_match_cpu_reference() {
+        let (root, context, stream) = gpu_setup();
+        // One 260-token sequence crosses the radius-128 boundary at rows
+        // 128..131 and at the tail. run_case compares every row with the CPU
+        // reference, so an off-by-one local bound fails.
+        let offsets = [0i32, 260];
+        for (heads, kv_heads) in [(6, 6), (12, 12)] {
+            for wrapper in [true, false] {
+                let mut spec = spec_for(&PROFILES[10], DType::Bf16);
+                spec.heads = heads;
+                spec.kv_heads = kv_heads;
+                spec.window = Window::Local {
+                    left: 128,
+                    right: 128,
+                };
+                run_case::<bf16>(
+                    &context, &root, &stream, spec, &offsets, &offsets, 260, wrapper,
                 );
             }
         }
