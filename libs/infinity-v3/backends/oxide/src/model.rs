@@ -1982,6 +1982,42 @@ impl Checkpoint {
         Self::from_shards(files, index, shards)
     }
 
+    /// Open the ordinary checkpoint plus named same-directory safetensors
+    /// sidecars. Duplicate tensor names remain a typed error.
+    pub(crate) fn open_with_extra(path: &Path, extra: &[&str]) -> Result<Self, BackendError> {
+        if detect_format(path)? == DataFormat::PyTorch {
+            return Err(start(
+                "sidecar decision weights currently require safetensors checkpoints",
+            ));
+        }
+        let backbone = path.join("backbone_h2.safetensors");
+        let (files, index) = if backbone.is_file() {
+            (vec!["backbone_h2.safetensors".to_string()], None)
+        } else {
+            checkpoint_files(path)?
+        };
+        let root = path.canonicalize().map_err(start)?;
+        let mut shards = Vec::new();
+        for file in &files {
+            let resolved = path.join(file).canonicalize().map_err(start)?;
+            if !permitted_weight(&root, &resolved) {
+                return Err(start("checkpoint shard escapes model directory"));
+            }
+            shards.push(open_shard(&resolved)?);
+        }
+        for extra in extra {
+            if files.iter().any(|file| file == extra) {
+                continue;
+            }
+            let resolved = path.join(extra).canonicalize().map_err(start)?;
+            if !permitted_weight(&root, &resolved) {
+                return Err(start("checkpoint sidecar escapes model directory"));
+            }
+            shards.push(open_shard(&resolved)?);
+        }
+        Self::from_shards(files, index, shards)
+    }
+
     /// Open a nested module checkpoint while keeping the enclosing model root as
     /// the trusted Hub snapshot boundary.
     ///

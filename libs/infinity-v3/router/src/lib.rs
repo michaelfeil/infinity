@@ -307,9 +307,20 @@ async fn initialize_model(
         "D3 requires --backend libtorch"
     );
     let vela_encoder = matches!(decision_protocol, Some(DecisionProtocol::Vela3));
+    let vela_ultra = vela_encoder
+        && vela_policy
+            .as_ref()
+            .is_some_and(|policy| policy.base().is_none())
+        && fs::read(model_root.join("config.json"))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|value| value["model_type"].as_str().map(str::to_string))
+            .is_some_and(|model_type| matches!(model_type.as_str(), "ultrabert" | "ultravbert"));
     anyhow::ensure!(
-        !vela_encoder || backend_kind == infinity_v3_backend::BackendKind::Libtorch,
-        "Vela3 requires --backend libtorch"
+        !vela_encoder
+            || backend_kind == infinity_v3_backend::BackendKind::Libtorch
+            || (vela_ultra && backend_kind == infinity_v3_backend::BackendKind::Oxide),
+        "Vela3 core encoders require --backend libtorch or Oxide with a pinned UltraBERT/UltraVBERT package"
     );
     let decoder_decision = rune || onejev || clef || pplx || d3 || vela_encoder;
     let readout = model_root.join("decision_config.json").exists();

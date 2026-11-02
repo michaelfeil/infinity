@@ -134,6 +134,8 @@ mod splade;
 mod splade_runtime;
 mod staging;
 pub mod tensor;
+pub mod ultrabert_executor;
+pub mod ultrabert_qualification;
 mod upload;
 mod work_retirement;
 #[cfg(test)]
@@ -188,6 +190,8 @@ use std::{
     },
 };
 use tensor::{Bf16, F16};
+use ultrabert_executor::{UltraBertEmbeddingPool, UltraBertExecutionMode, UltraBertOutput};
+use ultrabert_qualification::{UltraBertConfig, UltraBertQualification, UltraBertTask};
 use upload::{UploadElement, WeightUploader};
 use work_retirement::{CompletedTicket, CompletionTicket, RetirementQueue};
 
@@ -1523,6 +1527,7 @@ enum ExecutableModel {
     Decoder(Box<decoder::DecoderModel>),
     Gemma(Box<Gemma3Model>),
     Gemma2(Box<gemma2_forward::Gemma2Executor>),
+    UltraBert(Box<ultrabert_executor::UltraBertExecutor>),
     Qwen35(Box<qwen35_runtime::Qwen35Model>),
     Gemma4(Box<Gemma4Model>),
 }
@@ -1553,6 +1558,7 @@ impl ExecutableModel {
             | Self::Decoder(_)
             | Self::Gemma(_)
             | Self::Gemma2(_)
+            | Self::UltraBert(_)
             | Self::Qwen35(_)
             | Self::Gemma4(_) => true,
         }
@@ -1597,6 +1603,7 @@ impl ExecutableModel {
             }
             Self::Gemma(model) => model.preflight(provider, batch, pool),
             Self::Gemma2(model) => model.preflight_media(batch).map_err(ShapeError::Rejected),
+            Self::UltraBert(_) => Ok(()),
             Self::Qwen35(model) => model.preflight(batch),
             Self::Gemma4(model) => {
                 if readout_mode.is_some() {
@@ -1625,6 +1632,7 @@ impl ExecutableModel {
             Self::Decoder(model) => model.config.hidden_size,
             Self::Gemma(model) => model.config.hidden_size,
             Self::Gemma2(model) => model.config().embedding_dim,
+            Self::UltraBert(model) => model.config().hidden_size,
             Self::Qwen35(model) => model.weights.config.hidden_size,
             Self::Gemma4(model) => model.hidden_size(),
         }
@@ -1707,6 +1715,7 @@ impl ExecutableModel {
             | Self::Decoder(_)
             | Self::Gemma(_)
             | Self::Gemma2(_)
+            | Self::UltraBert(_)
             | Self::Qwen35(_)
             | Self::Gemma4(_) => Ok(None),
         }
@@ -1734,6 +1743,9 @@ impl ExecutableModel {
             Self::Gemma2(model) => {
                 gemma2_forward::Gemma2Work::allocation_bytes(key, model.config())
             }
+            Self::UltraBert(_) => Err(infer(
+                "UltraBERT owns its packed executor workspace outside the generic Engine arena",
+            )),
             Self::Qwen35(model) => model.workspace_bytes(key),
             Self::Gemma4(model) => model.workspace_bytes(key),
         }
@@ -1767,6 +1779,9 @@ impl ExecutableModel {
             Self::Gemma2(model) => Ok(Workspace::Gemma2(Box::new(
                 gemma2_forward::Gemma2Work::new(stream, model.config(), key)?,
             ))),
+            Self::UltraBert(_) => Err(infer(
+                "UltraBERT owns its packed executor workspace outside the generic Engine arena",
+            )),
             Self::Qwen35(model) => Ok(Workspace::Qwen35(Box::new(model.workspace(stream, key)?))),
             Self::Gemma4(model) => Ok(Workspace::Gemma4(Box::new(model.workspace(stream, key)?))),
         }
@@ -1786,6 +1801,7 @@ impl ExecutableModel {
             Self::EncoderF16(_)
             | Self::Gemma(_)
             | Self::Gemma2(_)
+            | Self::UltraBert(_)
             | Self::Qwen35(_)
             | Self::Gemma4(_) => None,
         }
@@ -3191,6 +3207,54 @@ impl Engine {
             self.retain_uncertain_workspaces();
         }
     }
+    /// Execute one UltraBERT request on its own packed-GQA executor. The
+    /// executor retains its Work/arena and request host lease until the ordered
+    /// stream drains; this method only surfaces typed failure so the caller can
+    /// quarantine the engine.
+    fn ultrabert_forward(
+        &mut self,
+        batch: &Batch,
+        mode: UltraBertExecutionMode,
+    ) -> Result<UltraBertOutput, BackendError> {
+        if self.failed || self.io.poisoned() {
+            return Err(BackendError::Unhealthy);
+        }
+        self.context.bind_to_thread().map_err(infer)?;
+        let result = match &mut *self.model {
+            ExecutableModel::UltraBert(model) => model
+                .forward(batch, mode)
+                .map_err(|error| start(format!("UltraBERT execution: {error}"))),
+            _ => Err(infer("UltraBERT request reached a non-UltraBERT engine")),
+        };
+        if result.is_err() {
+            self.failed = true;
+            self.io.close();
+        }
+        result
+    }
+
+    fn ultrabert_forward_decision(
+        &mut self,
+        batch: &Batch,
+        plan: &ultrabert_executor::UltraBertDecisionPlan,
+    ) -> Result<Vec<Vec<f32>>, BackendError> {
+        if self.failed || self.io.poisoned() {
+            return Err(BackendError::Unhealthy);
+        }
+        self.context.bind_to_thread().map_err(infer)?;
+        let result = match &mut *self.model {
+            ExecutableModel::UltraBert(model) => model
+                .forward_decision(batch, plan)
+                .map_err(|error| start(format!("UltraBERT decision: {error}"))),
+            _ => Err(infer("UltraBERT decision reached a non-UltraBERT engine")),
+        };
+        if result.is_err() {
+            self.failed = true;
+            self.io.close();
+        }
+        result
+    }
+
     fn enqueue(
         &mut self,
         b: &Batch,
@@ -5130,6 +5194,7 @@ enum LoadedConfig {
     Decoder(DecoderConfig),
     Gemma(Gemma3Config),
     Gemma2(gemma2_text::Gemma2Config),
+    UltraBert(UltraBertConfig),
     Qwen35(qwen35_config::Qwen35Config),
     Qwen35Block(qwen35_config::Qwen35Config, usize),
     Qwen35DynamicBlock(qwen35_config::Qwen35Config),
@@ -5144,6 +5209,7 @@ impl LoadedConfig {
             Self::Decoder(config) => config.hidden_size,
             Self::Gemma(config) => config.hidden_size,
             Self::Gemma2(config) => config.text.embedding_dim,
+            Self::UltraBert(config) => config.hidden_size,
             Self::Qwen35(config)
             | Self::Qwen35Block(config, _)
             | Self::Qwen35DynamicBlock(config) => config.hidden_size,
@@ -5165,6 +5231,7 @@ enum CheckpointArchitecture {
     Encoder,
     Deberta,
     Gemma4,
+    UltraBert,
 }
 impl CheckpointArchitecture {
     fn uses_native_default(self) -> bool {
@@ -5178,6 +5245,9 @@ fn selects_architecture(
     let Some(model_type) = head.model_type.as_deref() else {
         return Ok(CheckpointArchitecture::Encoder);
     };
+    if matches!(model_type, "ultrabert" | "ultravbert") {
+        return Ok(CheckpointArchitecture::UltraBert);
+    }
     if DecoderFamily::is_unsupported_native_decoder_model_type(model_type) {
         return Err(start(format!(
             "decoder model_type {model_type} is a recognized Native alias/family whose actual math is not ported; no encoder fallback"
@@ -5256,7 +5326,17 @@ impl OxideBackend {
     /// This reads configuration only and never initializes CUDA or opens tensor
     /// payloads. Actual constructors revalidate the loaded weight configuration.
     pub fn validate_decision_checkpoint(path: &Path, dtype: &str) -> Result<(), BackendError> {
-        Self::validate_qwen35_checkpoint(path, dtype, &ModelType::Decision, None)
+        let value: serde_json::Value = model::read_json(&path.join("config.json"))?;
+        if matches!(
+            value.get("model_type").and_then(serde_json::Value::as_str),
+            Some("ultrabert" | "ultravbert")
+        ) {
+            UltraBertQualification::open(path, dtype, Some(UltraBertTask::Decision))
+                .map(|_| ())
+                .map_err(|error| start(format!("UltraBERT decision admission: {error}")))
+        } else {
+            Self::validate_qwen35_checkpoint(path, dtype, &ModelType::Decision, None)
+        }
     }
 
     /// CPU-only configuration admission for a Qwen3.5 serving task. This does
@@ -5291,6 +5371,9 @@ impl OxideBackend {
         mut batch: Batch,
         inputs: Vec<DecisionInput>,
     ) -> Result<Inference<Vec<DecisionOutput>>, BackendError> {
+        if matches!(self.config, LoadedConfig::UltraBert(_)) {
+            return self.submit_ultrabert_decide(batch, inputs);
+        }
         clear_decision_selectors(&mut batch);
         self.submit_warm_decision(batch, inputs)
     }
@@ -5346,6 +5429,9 @@ impl OxideBackend {
         let early_architecture = detects_architecture(path)?;
         if early_architecture == CheckpointArchitecture::Gemma4 {
             return Self::new_gemma4(path, dtype, &model_type, device_id);
+        }
+        if early_architecture == CheckpointArchitecture::UltraBert {
+            return Self::new_ultrabert(path, dtype, model_type, device_id, dense_paths);
         }
         if model_type == ModelType::Decision {
             return Err(start("Oxide decisions require a dense Qwen3.5 checkpoint"));
@@ -5926,6 +6012,350 @@ impl OxideBackend {
             stream,
             io,
         })
+    }
+
+    /// Normal BF16 UltraBERT/UltraVBERT factory route. Configuration, exact
+    /// tensor inventory, task/head compatibility, static FA4 profiles and the
+    /// BF16 runtime are validated on the host before the CUDA context exists.
+    /// The returned backend owns the packed-GQA executor, its retained Work and
+    /// its request-specific host leases until completion or failure quarantine.
+    fn new_ultrabert(
+        path: &Path,
+        dtype: &str,
+        model_type: ModelType,
+        device_id: usize,
+        dense_paths: Option<Vec<String>>,
+    ) -> Result<Self, BackendError> {
+        if dtype != "bfloat16" {
+            return Err(start("UltraBERT requires the BF16 runtime"));
+        }
+        if dense_paths.as_ref().is_some_and(|paths| !paths.is_empty()) {
+            return Err(start(
+                "UltraBERT Dense modules are not admitted; use the checkpoint's trained head",
+            ));
+        }
+        let task_override = if matches!(model_type, ModelType::Decision) {
+            Some(UltraBertTask::Decision)
+        } else {
+            None
+        };
+        let qualification = UltraBertQualification::open(path, dtype, task_override)
+            .map_err(|error| start(format!("UltraBERT admission: {error}")))?;
+        let config = qualification.config().clone();
+        match &model_type {
+            ModelType::Embedding(_) if config.task != UltraBertTask::Embedding => {
+                return Err(start(
+                    "UltraBERT embedding requests require an embedding checkpoint; the trained classifier head is not dropped",
+                ))
+            }
+            ModelType::Classifier
+                if !matches!(
+                    config.task,
+                    UltraBertTask::SequenceClassification | UltraBertTask::TokenClassification
+                ) =>
+            {
+                return Err(start(
+                    "UltraBERT classification requires a sequence or token classification checkpoint",
+                ))
+            }
+            ModelType::Decision if config.task != UltraBertTask::Decision => {
+                return Err(start(
+                    "UltraBERT decisions require vela3_config.json or vela3v_config.json",
+                ))
+            }
+            _ => {}
+        }
+        let pool = match model_type {
+            ModelType::Embedding(pool @ (Pool::Cls | Pool::Mean | Pool::LastToken)) => pool,
+            ModelType::Classifier | ModelType::Decision => Pool::Cls,
+            ModelType::Embedding(Pool::Splade) => {
+                return Err(start("UltraBERT does not support SPLADE pooling"))
+            }
+        };
+        let readout = match config.task {
+            UltraBertTask::SequenceClassification => Some(ClassifierReadout {
+                task: ClassifierTask::Sequence,
+                width: config.num_labels.unwrap_or(0),
+            }),
+            UltraBertTask::TokenClassification => Some(ClassifierReadout {
+                task: ClassifierTask::Tokens,
+                width: config.num_labels.unwrap_or(0),
+            }),
+            UltraBertTask::Embedding | UltraBertTask::Decision => None,
+        };
+        qualification
+            .require_gpu_ready()
+            .map_err(|error| start(format!("UltraBERT GPU requirements: {error}")))?;
+        if device_id >= device_count()? {
+            return Err(start("CUDA device ordinal is not visible"));
+        }
+        let fa4_root = std::env::var_os(infinity_v3_config::infinity_env!("FA4_ROOT"))
+            .map(std::path::PathBuf::from)
+            .ok_or_else(|| start("UltraBERT attention requires INFINITY_FA4_ROOT"))?;
+        let context = Context::new(device_id).map_err(start)?;
+        let stream = context.new_stream().map_err(start)?;
+        let executor_lt = LtProvider::new(context.clone(), stream.clone())?;
+        let executor_blas = Blas::new(context.clone(), stream.clone())?;
+        let executor = qualification
+            .prepare_gpu_with(
+                context.clone(),
+                stream.clone(),
+                &fa4_root,
+                executor_lt,
+                executor_blas,
+            )
+            .map_err(|error| start(format!("UltraBERT executor preparation: {error}")))?;
+        let lt = LtProvider::new(context.clone(), stream.clone())?;
+        let io = HostIo::pool(&context)?;
+        let output_width = readout.map_or(config.hidden_size, |readout| readout.width);
+        Ok(Self {
+            config: LoadedConfig::UltraBert(config),
+            output_width,
+            pool,
+            attention_length_limit: None,
+            raw_output_supported: true,
+            readout,
+            colbert_policy: None,
+            engine: Arc::new(Mutex::new(Engine {
+                lt: ManuallyDrop::new(lt),
+                model: ManuallyDrop::new(ExecutableModel::UltraBert(Box::new(executor))),
+                dense: ManuallyDrop::new(None),
+                plain_blas: ManuallyDrop::new(None),
+                context,
+                stream: stream.clone(),
+                io: io.clone(),
+                workspace: None,
+                dense_workspace: None,
+                splade_workspace: None,
+                colbert_workspace: None,
+                cached: cache::WorkspaceCache::new(),
+                retired: RetirementQueue::new(),
+                failed: false,
+            })),
+            stream,
+            io,
+        })
+    }
+
+    fn ultrabert_embedding_mode(&self) -> Result<UltraBertExecutionMode, BackendError> {
+        let pool = UltraBertEmbeddingPool::try_from(self.pool.clone())
+            .map_err(|error| start(format!("UltraBERT pooling: {error}")))?;
+        Ok(UltraBertExecutionMode::Embedding(pool))
+    }
+
+    fn submit_ultrabert_decide(
+        &self,
+        batch: Batch,
+        inputs: Vec<DecisionInput>,
+    ) -> Result<Inference<Vec<DecisionOutput>>, BackendError> {
+        let LoadedConfig::UltraBert(config) = &self.config else {
+            return Err(infer("UltraBERT decision requires the UltraBERT engine"));
+        };
+        if config.task != UltraBertTask::Decision {
+            return Err(infer("UltraBERT checkpoint has no decision head"));
+        }
+        let plan = ultrabert_executor::UltraBertDecisionPlan::new(config, &batch, &inputs)
+            .map_err(|error| start(format!("UltraBERT decision admission: {error}")))?;
+        let mut hidden_batch = batch.clone();
+        hidden_batch.pooled_indices.clear();
+        hidden_batch.raw_indices = (0..batch.len() as u32).collect();
+        validate_loaded(&hidden_batch, &self.config)?;
+        let logits = plan
+            .logit_elements()
+            .map_err(|error| start(format!("UltraBERT decision result: {error}")))?
+            .checked_mul(std::mem::size_of::<f32>())
+            .ok_or_else(|| infer("UltraBERT decision result size overflow"))?;
+        let memory = result_memory::global_pool()?.reserve(logits)?;
+        let engine = self.engine.clone();
+        Ok(Inference::Deferred(Box::new(move || {
+            let outputs = {
+                let mut engine = engine.lock().map_err(|_| BackendError::Unhealthy)?;
+                engine.ultrabert_forward_decision(&hidden_batch, &plan)?
+            };
+            let mut results = Vec::with_capacity(outputs.len());
+            for logits in outputs {
+                if logits.iter().any(|value| !value.is_finite()) {
+                    return Err(infer("Invalid UltraBERT decision logits"));
+                }
+                results.push(DecisionOutput {
+                    logits,
+                    action_probability: 1.0,
+                    memory: Some(memory.clone()),
+                });
+            }
+            Ok(results)
+        })))
+    }
+
+    /// Deferred UltraBERT embedding submission. The closure owns the packed
+    /// batch, executor handle and result-memory lease until the completion
+    /// worker drains the exact request. No host buffer is shared with the next
+    /// submission.
+    fn submit_ultrabert_embed(&self, batch: Batch) -> Result<Inference<Embeddings>, BackendError> {
+        let LoadedConfig::UltraBert(config) = &self.config else {
+            return Err(infer("UltraBERT embedding requires the UltraBERT engine"));
+        };
+        let mode = self.ultrabert_embedding_mode()?;
+        validate_loaded(&batch, &self.config)?;
+        crate::ultrabert_executor::validate_selection(&batch, mode)
+            .map_err(|error| infer(format!("UltraBERT selection: {error}")))?;
+        if batch.pooled_indices.is_empty() && batch.raw_indices.is_empty() {
+            return Ok(Inference::Ready(Embeddings::default()));
+        }
+        let hidden = config.hidden_size;
+        let memory =
+            result_memory::global_pool()?.reserve(output::result_bytes(&batch, hidden, hidden)?)?;
+        let pooled = batch.pooled_indices.clone();
+        let raw = batch.raw_indices.clone();
+        let engine = self.engine.clone();
+        Ok(Inference::Deferred(Box::new(move || {
+            let output = {
+                let mut engine = engine.lock().map_err(|_| BackendError::Unhealthy)?;
+                engine.ultrabert_forward(&batch, mode)?
+            };
+            let UltraBertOutput::Embeddings {
+                pooled: pooled_rows,
+                raw: raw_rows,
+            } = output
+            else {
+                return Err(infer("UltraBERT returned a non-embedding result"));
+            };
+            if pooled_rows
+                .iter()
+                .chain(raw_rows.iter().flatten())
+                .any(|value| value.iter().any(|value| !value.is_finite()))
+            {
+                return Err(infer("Invalid UltraBERT embedding output"));
+            }
+            let mut result = Embeddings::default();
+            result
+                .try_reserve(pooled.len().saturating_add(raw.len()))
+                .map_err(|error| BackendError::Overloaded(error.to_string()))?;
+            for (&index, row) in pooled.iter().zip(pooled_rows) {
+                result.insert(index as usize, Embedding::Pooled(row));
+            }
+            for (&index, rows) in raw.iter().zip(raw_rows) {
+                result.insert(index as usize, Embedding::All(rows));
+            }
+            result.memory = Some(memory);
+            Ok(result)
+        })))
+    }
+
+    fn submit_ultrabert_predict(
+        &self,
+        mut batch: Batch,
+        task: UltraBertExecutionMode,
+    ) -> Result<Inference<Predictions>, BackendError> {
+        let LoadedConfig::UltraBert(config) = &self.config else {
+            return Err(infer(
+                "UltraBERT classification requires the UltraBERT engine",
+            ));
+        };
+        let readout = self
+            .readout
+            .ok_or_else(|| infer("UltraBERT classifier readout is not configured"))?;
+        if readout.task == ClassifierTask::Tokens
+            || !matches!(task, UltraBertExecutionMode::SequenceClassification)
+        {
+            return Err(infer(
+                "UltraBERT token classification requires the token prediction API",
+            ));
+        }
+        let sequences = batch
+            .cumulative_seq_lengths
+            .len()
+            .checked_sub(1)
+            .filter(|count| *count > 0)
+            .ok_or_else(|| infer("UltraBERT classifier batch is empty"))?;
+        canonicalize_indices(&mut batch.pooled_indices, sequences)?;
+        batch.raw_indices.clear();
+        validate_loaded(&batch, &self.config)?;
+        crate::ultrabert_executor::validate_selection(&batch, task)
+            .map_err(|error| infer(format!("UltraBERT selection: {error}")))?;
+        let width = config.num_labels.unwrap_or(0);
+        if width == 0 {
+            return Err(infer("UltraBERT classifier labels are missing"));
+        }
+        let memory =
+            result_memory::global_pool()?.reserve(output::result_bytes(&batch, width, width)?)?;
+        let engine = self.engine.clone();
+        Ok(Inference::Deferred(Box::new(move || {
+            let output = {
+                let mut engine = engine.lock().map_err(|_| BackendError::Unhealthy)?;
+                engine.ultrabert_forward(&batch, task)?
+            };
+            let UltraBertOutput::Logits {
+                rows,
+                width,
+                values,
+            } = output
+            else {
+                return Err(infer("UltraBERT returned a non-classifier result"));
+            };
+            if values.iter().any(|value| !value.is_finite()) {
+                return Err(infer("Invalid UltraBERT classifier output"));
+            }
+            let mut result = pack_predictions(&values, rows, width)?;
+            result.memory = Some(memory);
+            Ok(result)
+        })))
+    }
+
+    fn submit_ultrabert_predict_tokens(
+        &self,
+        mut batch: Batch,
+    ) -> Result<Inference<TokenPredictions>, BackendError> {
+        let LoadedConfig::UltraBert(config) = &self.config else {
+            return Err(infer(
+                "UltraBERT token classification requires the UltraBERT engine",
+            ));
+        };
+        let readout = self
+            .readout
+            .ok_or_else(|| infer("UltraBERT token classifier readout is not configured"))?;
+        if readout.task != ClassifierTask::Tokens {
+            return Err(infer(
+                "UltraBERT sequence classifier does not implement token classification",
+            ));
+        }
+        let sequences = batch
+            .cumulative_seq_lengths
+            .len()
+            .checked_sub(1)
+            .filter(|count| *count > 0)
+            .ok_or_else(|| infer("UltraBERT token classifier batch is empty"))?;
+        canonicalize_indices(&mut batch.raw_indices, sequences)?;
+        batch.pooled_indices.clear();
+        validate_loaded(&batch, &self.config)?;
+        crate::ultrabert_executor::validate_selection(
+            &batch,
+            UltraBertExecutionMode::TokenClassification,
+        )
+        .map_err(|error| infer(format!("UltraBERT selection: {error}")))?;
+        let width = config.num_labels.unwrap_or(0);
+        if width == 0 {
+            return Err(infer("UltraBERT classifier labels are missing"));
+        }
+        let boundaries = batch.cumulative_seq_lengths.clone();
+        let memory =
+            result_memory::global_pool()?.reserve(output::result_bytes(&batch, width, width)?)?;
+        let engine = self.engine.clone();
+        Ok(Inference::Deferred(Box::new(move || {
+            let output = {
+                let mut engine = engine.lock().map_err(|_| BackendError::Unhealthy)?;
+                engine.ultrabert_forward(&batch, UltraBertExecutionMode::TokenClassification)?
+            };
+            let UltraBertOutput::Logits { width, values, .. } = output else {
+                return Err(infer("UltraBERT returned a non-classifier result"));
+            };
+            if values.iter().any(|value| !value.is_finite()) {
+                return Err(infer("Invalid UltraBERT token classifier output"));
+            }
+            let mut result = pack_token_predictions(&values, &boundaries, width)?;
+            result.memory = Some(memory);
+            Ok(result)
+        })))
     }
 
     /// Explicit dense BF16 Qwen3.5 text constructor. The normal factory uses
@@ -7099,6 +7529,16 @@ fn validate_loaded(batch: &Batch, config: &LoadedConfig) -> Result<usize, Backen
         LoadedConfig::Decoder(config) => validate_decoder(batch, config),
         LoadedConfig::Gemma(config) => validate_gemma3(batch, config),
         LoadedConfig::Gemma2(config) => validate_gemma2_batch(batch, &config.text),
+        LoadedConfig::UltraBert(config) => {
+            crate::ultrabert_executor::validate_batch(config, batch)
+                .map_err(|error| start(format!("UltraBERT batch: {error}")))?;
+            Ok(batch
+                .cumulative_seq_lengths
+                .windows(2)
+                .filter_map(|pair| pair[1].checked_sub(pair[0]))
+                .max()
+                .unwrap_or(0) as usize)
+        }
         LoadedConfig::Qwen35(c) => validate_qwen35_batch(batch, c),
         LoadedConfig::Gemma4(c) => validate_gemma4_batch(batch, c),
         LoadedConfig::Qwen35Block(c, prefix) => {
@@ -7379,6 +7819,9 @@ impl Backend for OxideBackend {
         self.submit_embed(batch)?.complete()
     }
     fn submit_embed(&self, batch: Batch) -> Result<Inference<Embeddings>, BackendError> {
+        if matches!(self.config, LoadedConfig::UltraBert(_)) {
+            return self.submit_ultrabert_embed(batch);
+        }
         if self.readout.is_some() {
             return Err(infer(
                 "Classifier admission does not expose the ordinary embedding API",
@@ -7499,6 +7942,10 @@ impl Backend for OxideBackend {
         self.submit_predict(batch)?.complete()
     }
     fn submit_predict(&self, mut batch: Batch) -> Result<Inference<Predictions>, BackendError> {
+        if matches!(self.config, LoadedConfig::UltraBert(_)) {
+            return self
+                .submit_ultrabert_predict(batch, UltraBertExecutionMode::SequenceClassification);
+        }
         let readout = self
             .readout
             .ok_or_else(|| infer("Oxide classifier readout is not configured"))?;
@@ -7573,6 +8020,9 @@ impl Backend for OxideBackend {
         &self,
         mut batch: Batch,
     ) -> Result<Inference<TokenPredictions>, BackendError> {
+        if matches!(self.config, LoadedConfig::UltraBert(_)) {
+            return self.submit_ultrabert_predict_tokens(batch);
+        }
         let readout = self
             .readout
             .ok_or_else(|| infer("Oxide classifier readout is not configured"))?;
@@ -8817,6 +9267,7 @@ mod tests {
                     | ExecutableModel::Gemma(_)
                     | ExecutableModel::Modern(_)
                     | ExecutableModel::Gemma2(_)
+                    | ExecutableModel::UltraBert(_)
                     | ExecutableModel::Qwen35(_)
                     | ExecutableModel::Gemma4(_) => panic!("MiniLM must use BF16 encoder plans"),
                 };
@@ -8976,6 +9427,7 @@ mod tests {
             | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
             | LoadedConfig::Gemma2(_)
+            | LoadedConfig::UltraBert(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
             | LoadedConfig::Qwen35DynamicBlock(_)
@@ -9400,6 +9852,7 @@ mod tests {
             | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
             | LoadedConfig::Gemma2(_)
+            | LoadedConfig::UltraBert(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
             | LoadedConfig::Qwen35DynamicBlock(_)
@@ -9417,6 +9870,7 @@ mod tests {
             | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
             | LoadedConfig::Gemma2(_)
+            | LoadedConfig::UltraBert(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
             | LoadedConfig::Qwen35DynamicBlock(_)
@@ -9476,6 +9930,7 @@ mod tests {
             | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
             | LoadedConfig::Gemma2(_)
+            | LoadedConfig::UltraBert(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
             | LoadedConfig::Qwen35DynamicBlock(_)
@@ -9709,6 +10164,7 @@ mod tests {
             | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
             | LoadedConfig::Gemma2(_)
+            | LoadedConfig::UltraBert(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
             | LoadedConfig::Qwen35DynamicBlock(_)
@@ -10065,6 +10521,7 @@ mod tests {
             | ExecutableModel::Decoder(_)
             | ExecutableModel::Gemma(_)
             | ExecutableModel::Gemma2(_)
+            | ExecutableModel::UltraBert(_)
             | ExecutableModel::Qwen35(_)
             | ExecutableModel::Gemma4(_) => {
                 panic!("GTE must use encoder plans")
@@ -10185,6 +10642,7 @@ mod tests {
                 | LoadedConfig::Decoder(_)
                 | LoadedConfig::Gemma(_)
                 | LoadedConfig::Gemma2(_)
+                | LoadedConfig::UltraBert(_)
                 | LoadedConfig::Qwen35(_)
                 | LoadedConfig::Qwen35Block(_, _)
                 | LoadedConfig::Qwen35DynamicBlock(_)

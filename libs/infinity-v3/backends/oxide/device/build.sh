@@ -256,6 +256,12 @@ rms896_exports = [
     if line.strip()
 ]
 symbols = sorted(symbols + rms896_exports)
+vela_head_exports = [
+    line.strip()
+    for line in (root / "vela_head_exports.txt").read_text().splitlines()
+    if line.strip()
+]
+symbols = sorted(symbols + vela_head_exports)
 duplicates = sorted(name for name in set(symbols) if symbols.count(name) > 1)
 if duplicates:
     raise SystemExit("Duplicate kernel exports: " + ", ".join(duplicates))
@@ -310,6 +316,8 @@ manifest["sources"]["src/rms5120_aten.rs"] = digest(root / "src/rms5120_aten.rs"
 manifest["sources"]["rms5120_aten_exports.txt"] = digest(root / "rms5120_aten_exports.txt")
 manifest["sources"]["src/rms896_exact_vector.rs"] = digest(root / "src/rms896_exact_vector.rs")
 manifest["sources"]["rms896_exports.txt"] = digest(root / "rms896_exports.txt")
+manifest["sources"]["src/vela_head.rs"] = digest(root / "src/vela_head.rs")
+manifest["sources"]["vela_head_exports.txt"] = digest(root / "vela_head_exports.txt")
 for name in ["src/deberta_math.rs", "src/deberta_norm.rs", "src/gelu_exact.rs", "src/deberta_embedding.rs"]:
     manifest["sources"][name] = digest(root / name)
 manifest["sources"]["src/gemma2_media.rs"] = digest(root / "src/gemma2_media.rs")
@@ -394,7 +402,7 @@ def snapshot_arch(invocation_root, arch):
     shutil.copytree(root / "src", destination / "src")
     for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
                  "encoder_activation_exports.txt", "qwen35_exports.txt", "rms5120_aten_exports.txt", "rms896_exports.txt",
-                 "LICENSE-Candle-BSD3", "LICENSE-PyTorch-BSD3"]:
+                 "vela_head_exports.txt", "LICENSE-Candle-BSD3", "LICENSE-PyTorch-BSD3"]:
         shutil.copy2(root / name, destination / name)
     notice = root.parent / "NOTICE"
     if notice.is_file():

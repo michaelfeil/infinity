@@ -423,6 +423,28 @@ impl HostIoLease {
         }
     }
 
+    /// Standalone lease for an executor that owns its own ordered stream and
+    /// host-I/O pool but does not hold a production `Engine` handle.
+    pub(crate) fn standalone(
+        slot: HostIo,
+        pool: Arc<SlotPool<HostIo>>,
+        stream: Arc<Stream>,
+    ) -> Self {
+        Self {
+            id: NEXT_HOST_IO_LEASE_ID.fetch_add(1, Ordering::Relaxed),
+            slot: Some(slot),
+            pool,
+            _engine: None,
+            stream,
+            started: false,
+            recorded: false,
+            drained: false,
+            exclusive: false,
+            completion_ticket: None,
+            retained: Vec::new(),
+        }
+    }
+
     /// Model-owned lease that does not retain an Engine. Its owner must keep
     /// the stream and pool alive through the completion event or quarantine.
     pub(crate) fn owned(slot: HostIo, pool: Arc<SlotPool<HostIo>>, stream: Arc<Stream>) -> Self {

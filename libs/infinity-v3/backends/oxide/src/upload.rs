@@ -86,6 +86,10 @@ impl WeightUploader {
         self.upload_typed::<Bf16>(sources)
     }
 
+    pub(crate) fn stream(&self) -> &Arc<Stream> {
+        &self.stream
+    }
+
     pub(crate) fn upload_typed<E: UploadElement>(
         &mut self,
         sources: &[&WeightSource],

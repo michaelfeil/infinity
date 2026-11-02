@@ -492,6 +492,52 @@ impl Blas {
         })
     }
 
+    /// Enqueue one prepared `X W^T + Y` projection with beta=1. The caller
+    /// seeds `y` before the call; the vendor handle, stream identity and
+    /// storage checks match [`Self::linear`].
+    ///
+    /// # Safety
+    /// The caller must bind this context on the current thread and keep every
+    /// allocation alive, without conflicting access, until this stream drains.
+    pub(crate) unsafe fn linear_accumulate<E: Element>(
+        &self,
+        plan: &LinearPlan<E>,
+        x: &cuda_core::DeviceBuffer<E::Storage>,
+        w: &cuda_core::DeviceBuffer<E::Storage>,
+        y: &mut cuda_core::DeviceBuffer<E::Storage>,
+    ) -> Result<(), BackendError> {
+        if !Arc::ptr_eq(x.context(), &self.context) {
+            return Err(super::infer(
+                "Linear input belongs to a different CUDA context",
+            ));
+        }
+        let a = plan.bind(x, w, y).map_err(super::infer)?;
+        let (alpha, beta) = (1.0f32, 1.0f32);
+        check(unsafe {
+            (self.gemm)(
+                self.handle,
+                1,
+                0,
+                a.width,
+                a.rows,
+                a.input,
+                &alpha,
+                a.weight as *const c_void,
+                a.cuda_type,
+                a.weight_stride,
+                a.x as *const c_void,
+                a.cuda_type,
+                a.x_stride,
+                &beta,
+                a.output as *mut c_void,
+                a.cuda_type,
+                a.output_stride,
+                68,
+                -1,
+            )
+        })
+    }
+
     /// Enqueue one prepared X W^T operation with beta=0 from plain arguments.
     ///
     /// This is the shared vendor call for [`Self::linear`] and prepared engines

@@ -71,7 +71,21 @@ their validated geometry, normalization, rotary/ALiBi and activation recipes.
 Their loader guards remain authoritative; family names do not imply all variants.
 GTE additionally loads H1024/24-layer GTE-large and the documented multilingual
 architecture markers, including optional token-type embeddings. GTE-large uses
-a separate width-1024 Candle LayerNorm; trained-checkpoint qualification is pending.
+a separate width-1024 Candle LayerNorm. That operator matches Native exactly
+across 49 cases with zero GPU memory or initialization errors; see the
+[scoped evidence](oxide-gte1024-qualification.json). Trained-checkpoint
+qualification remains pending.
+
+UltraBERT and UltraVBERT use a separate packed executor for the published
+bidirectional text backbone and the Vela3 vision backbone. The ordinary factory
+admits embedding, trained sequence/token-classification and Vela3 decision
+heads; the executor retains the trained head weights, packed request markers,
+ordered stream and deferred completion. Text and vision decision readouts run
+on that same stream, and the trained pixel-shuffle leaf replaces host-side
+segment copies. A matching FA4 provider and the additive Vela encoder, vision
+and pixel-shuffle kernel exports are required. CPU source and model-header tests
+pass; GPU whole-model numeric comparison, lifecycle and performance
+qualification remain pending.
 
 GTE and ModernBERT sequence/token heads execute their trained projections,
 activation and optional head LayerNorm. ModernBERT includes H1024 geometry;
@@ -103,7 +117,7 @@ Elephant and Mammoth have separate native text and single-question Decision
 qualification; this does not establish every Qwen3.5 geometry or performance.
 The cold runtime dependencies are selected by `INFINITY_FA4_ROOT`,
 `INFINITY_OXIDE_GDN_RAW_KERNELS`, `INFINITY_OXIDE_GDN_PROVIDER`, and
-`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 160 Rust
+`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 163 Rust
 exports; Qwen3.5 requires its nine additive exports. Dense decoders require the
 90-export bundle or newer for Native BF16 mean pooling. Other existing families
 can retain their older qualified bundles. H5120 Qwen3 requires the additive

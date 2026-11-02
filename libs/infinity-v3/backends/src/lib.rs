@@ -577,12 +577,12 @@ async fn init_backend(
         // oxide constructor. Sidecars for other decision protocols are fetched
         // only when the checkpoint actually declares them, matching LibTorch.
         if model_type == ModelType::Decision {
-            infinity_backend_oxide::OxideBackend::validate_decision_checkpoint(&model_path, dtype)?;
             if let Some(repo) = api_repo.as_ref() {
                 download_decision_sidecars(repo)
                     .await
                     .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
             }
+            infinity_backend_oxide::OxideBackend::validate_decision_checkpoint(&model_path, dtype)?;
         }
         let explicit_dense = dense_path.is_some();
         let dense_paths = if let Some(repo) = api_repo.as_ref() {
@@ -909,11 +909,19 @@ async fn download_decision_sidecars(api: &ApiRepo) -> Result<(), ApiError> {
         api.get("readout.safetensors").await?;
     } else if api.get("joint_head_config.json").await.is_ok() {
         api.get("joint_head.safetensors").await?;
+    } else if api.get("vela3v_config.json").await.is_ok() {
+        api.get("backbone_h2.safetensors").await?;
+        api.get("decision_adapter.safetensors").await?;
     }
     Ok(())
 }
 
 async fn download_safetensors(api: Arc<ApiRepo>) -> Result<Vec<PathBuf>, ApiError> {
+    // Vela3 vision packages keep the decision-trained backbone in a named
+    // sidecar instead of `model.safetensors`.
+    if let Ok(path) = api.get("backbone_h2.safetensors").await {
+        return Ok(vec![path]);
+    }
     // Single file
     tracing::info!("Downloading `model.safetensors`");
     match api.get("model.safetensors").await {

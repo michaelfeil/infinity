@@ -1,0 +1,24 @@
+{
+  "scope": "H100 BF16 width-1024 Candle LayerNorm used by wider GTE; whole GTE-large checkpoint and performance remain unqualified",
+  "source_commit": "5107f4e00f749280606545ab2f991b568befc60e",
+  "reference": "actual_b66_Candle_not_ATen",
+  "native_sdk_sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+  "cases": 49,
+  "values": 6284288,
+  "plain_repeats": 3,
+  "all_bit_exact": true,
+  "input_output_guards": true,
+  "input_immutability": true,
+  "memcheck_errors": 0,
+  "initcheck_errors": 0,
+  "kernel_sha256": "9222adf2c7269fbe35b2f74fea7313fe3b530025bf6eee61b4645dcf37938f90",
+  "reports_sha256": {
+    "ROOT-REPORT.json": "61d85141c3404501aa31f0a61296b17cd8c640bbf71d0e84aee50f3bea3e2555",
+    "root-plain.json": "027b07f63955a6bdc07f188c120500b14e1b56f9252091e65ccd9c5596358526",
+    "root-mem.json": "027b07f63955a6bdc07f188c120500b14e1b56f9252091e65ccd9c5596358526",
+    "root-init.json": "027b07f63955a6bdc07f188c120500b14e1b56f9252091e65ccd9c5596358526",
+    "root-candidate_mem.log": "c2a881f118cb955af6d06ca398b118681d45ee22cc422605d45a4dc03f48aa77",
+    "root-candidate_init.log": "946a4afd457c60c1b928fce64a8b60fe86e2820be35d7bff7964347eef75edaa"
+  },
+  "recovery_branch": "wip/oxide-node-recovery-20261102"
+}

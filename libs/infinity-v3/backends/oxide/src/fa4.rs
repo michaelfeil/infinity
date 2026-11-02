@@ -530,6 +530,12 @@ fn profile_index(spec: &AttentionSpec) -> Option<usize> {
     select_profile_index(&PROFILES, spec)
 }
 
+/// Name of the compiled profile that `Fa4::supports` would select for `spec`.
+/// This is a static query over the source table; it does not load a provider.
+pub(crate) fn matching_profile_name(spec: &AttentionSpec) -> Option<&'static str> {
+    profile_index(spec).map(|index| PROFILES[index].name)
+}
+
 /// Select deterministically among equivalent local kernels: prefer the profile
 /// whose exported extents match the request exactly, then the first declared
 /// profile. This keeps original profile order authoritative while allowing an

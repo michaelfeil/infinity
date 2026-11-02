@@ -54,18 +54,19 @@ mod rms896_exact_vector;
 mod silu_pairs;
 mod silu_vector8;
 mod splade_pool;
+mod vela_head;
 
 /// Interpret one BF16 storage element without numerical conversion error.
 /// The upper16 bits are the exponent, sign and significant FP32 bits.
 #[inline(always)]
-fn f32_from_bf16(value: u16) -> f32 {
+pub(crate) fn f32_from_bf16(value: u16) -> f32 {
     f32::from_bits((value as u32) << 16)
 }
 
 /// Round FP32 to BF16 using the compiler's admitted native CUDA intrinsic.
 /// Both halves receive the same value; the low half is its BF16 representation.
 #[inline(always)]
-fn bf16_from_f32(value: f32) -> u16 {
+pub(crate) fn bf16_from_f32(value: f32) -> u16 {
     convert::cvt_bf16x2_f32(value, value) as u16
 }
 
@@ -1302,6 +1303,79 @@ mod kernels {
             unsafe { write(out, q_offset + column, value) };
             column += 256;
         }
+    }
+
+    /// F32 Vela3 encoder decision readout (cosine/tau + relu MLP).
+    #[allow(clippy::too_many_arguments)]
+    #[kernel]
+    pub unsafe fn infinity_vela_encoder_head_f32(
+        hidden: *const u16,
+        boundaries: *const u32,
+        markers: *const u32,
+        marker_offsets: *const u32,
+        weights: *const f32,
+        out: *mut f32,
+        counts: *mut u32,
+        hidden_width: u32,
+        projection: u32,
+        max_options: u32,
+    ) {
+        unsafe {
+            crate::vela_head::forward(
+                hidden,
+                boundaries,
+                markers,
+                marker_offsets,
+                weights,
+                out,
+                counts,
+                hidden_width,
+                projection,
+                max_options,
+                0,
+            )
+        };
+    }
+
+    /// F32 Vela3 vision decision readout (mean span + gelu MLP).
+    #[allow(clippy::too_many_arguments)]
+    #[kernel]
+    pub unsafe fn infinity_vela_vision_head_f32(
+        hidden: *const u16,
+        boundaries: *const u32,
+        markers: *const u32,
+        marker_offsets: *const u32,
+        weights: *const f32,
+        out: *mut f32,
+        counts: *mut u32,
+        hidden_width: u32,
+        projection: u32,
+        max_options: u32,
+    ) {
+        unsafe {
+            crate::vela_head::forward(
+                hidden,
+                boundaries,
+                markers,
+                marker_offsets,
+                weights,
+                out,
+                counts,
+                hidden_width,
+                projection,
+                max_options,
+                1,
+            )
+        };
+    }
+
+    /// Trained UltraVBERT column-then-row pixel shuffle, one 512px tile.
+    #[kernel]
+    pub unsafe fn infinity_ultravbert_pixel_shuffle_bf16(
+        input: *const u16,
+        out: *mut u16,
+    ) {
+        unsafe { crate::vela_head::pixel_shuffle(input, out) };
     }
 
     /// Convert selected BF16 rows to public FP32 CLS, mean or last-token vectors.

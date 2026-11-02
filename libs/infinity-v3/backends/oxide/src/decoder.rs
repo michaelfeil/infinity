@@ -64,9 +64,9 @@ pub(crate) const PUBLIC_MEAN_EXPORT: &str = "infinity_gemma2_mean_pool_bf16";
 /// one warp per row and four rows per CTA; Qwen keeps the generic one-row,
 /// 256-thread launch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct NormGeometry {
-    rows_per_cta: u32,
-    threads: u32,
+pub(crate) struct NormGeometry {
+    pub(crate) rows_per_cta: u32,
+    pub(crate) threads: u32,
 }
 const GENERIC_NORM_GEOMETRY: NormGeometry = NormGeometry {
     rows_per_cta: 1,
@@ -369,23 +369,28 @@ pub(crate) fn mean_pool_route(
     }
 }
 
-struct DecoderKernels {
-    gather: Function,
-    rms_norm: Function,
-    add_rms_norm: Function,
-    rope_neox: Function,
-    qk_norm_rope: Option<Function>,
-    rope_initializer: Option<Arc<Function>>,
-    silu_mul: Function,
-    pool: Function,
-    mean_kernel: Option<Function>,
-    selected_rows: Function,
-    bf16_to_f32: Function,
-    rms_geometry: NormGeometry,
-    norm_geometry: NormGeometry,
+pub(crate) struct DecoderKernels {
+    pub(crate) gather: Function,
+    pub(crate) rms_norm: Function,
+    pub(crate) add_rms_norm: Function,
+    pub(crate) rope_neox: Function,
+    pub(crate) qk_norm_rope: Option<Function>,
+    pub(crate) rope_initializer: Option<Arc<Function>>,
+    pub(crate) silu_mul: Function,
+    pub(crate) pool: Function,
+    pub(crate) mean_kernel: Option<Function>,
+    pub(crate) selected_rows: Function,
+    pub(crate) bf16_to_f32: Function,
+    pub(crate) layer_norm: Option<Function>,
+    pub(crate) gelu_tanh: Option<Function>,
+    pub(crate) vela_encoder_head: Option<Function>,
+    pub(crate) pixel_shuffle: Option<Function>,
+    pub(crate) vela_vision_head: Option<Function>,
+    pub(crate) rms_geometry: NormGeometry,
+    pub(crate) norm_geometry: NormGeometry,
 }
 impl DecoderKernels {
-    fn load(context: &Arc<Context>, math: DecoderMath) -> Result<Self, BackendError> {
+    pub(crate) fn load(context: &Arc<Context>, math: DecoderMath) -> Result<Self, BackendError> {
         let path = std::env::var_os(infinity_v3_config::infinity_env!("OXIDE_KERNEL_MODULE"))
             .ok_or_else(|| {
                 start("Set INFINITY_OXIDE_KERNEL_MODULE to the artifact compiled by cargo oxide")
@@ -456,6 +461,15 @@ impl DecoderKernels {
             bf16_to_f32: module
                 .load_function("infinity_bf16_to_f32")
                 .map_err(start)?,
+            layer_norm: module.load_function("infinity_layer_norm").ok(),
+            gelu_tanh: module
+                .load_function("infinity_encoder_activation_gelu_tanh_bf16")
+                .ok(),
+            vela_encoder_head: module.load_function("infinity_vela_encoder_head_f32").ok(),
+            pixel_shuffle: module
+                .load_function("infinity_ultravbert_pixel_shuffle_bf16")
+                .ok(),
+            vela_vision_head: module.load_function("infinity_vela_vision_head_f32").ok(),
             rms_geometry: math.rms_geometry(),
             norm_geometry: math.norm_geometry(),
         })
@@ -622,10 +636,10 @@ impl BiasSupport {
 /// readout. Aggregate `BiasSupport` cannot stand in for this: an earlier layer
 /// may carry a bias while the final one does not.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-struct ReadoutBias {
-    attention: bool,
-    gate_up: bool,
-    down: bool,
+pub(crate) struct ReadoutBias {
+    pub(crate) attention: bool,
+    pub(crate) gate_up: bool,
+    pub(crate) down: bool,
 }
 impl ReadoutBias {
     fn from_last_layer(layer: Option<&DecoderLayerWeights>) -> Self {
@@ -647,11 +661,11 @@ struct PlanRows {
 
 const PLAIN_SEED_ROWS: usize = 128;
 
-struct DecoderPlainPlans {
-    qkv: LinearPlan<Bf16>,
-    attention: LinearPlan<Bf16>,
-    gate_up: LinearPlan<Bf16>,
-    down: LinearPlan<Bf16>,
+pub(crate) struct DecoderPlainPlans {
+    pub(crate) qkv: LinearPlan<Bf16>,
+    pub(crate) attention: LinearPlan<Bf16>,
+    pub(crate) gate_up: LinearPlan<Bf16>,
+    pub(crate) down: LinearPlan<Bf16>,
 }
 
 /// Pointwise projections after the final attention gather. Their operand rows
@@ -696,7 +710,11 @@ impl DecoderReadoutPlans {
         })
     }
 
-    fn set_rows(&mut self, provider: &LtProvider, rows: usize) -> Result<(), ShapeError> {
+    pub(crate) fn set_rows(
+        &mut self,
+        provider: &LtProvider,
+        rows: usize,
+    ) -> Result<(), ShapeError> {
         let rejected = |error| ShapeError::Rejected(infer(error));
         self.plain_attention.set_rows(rows).map_err(rejected)?;
         self.plain_gate_up.set_rows(rows).map_err(rejected)?;
@@ -714,9 +732,9 @@ impl DecoderReadoutPlans {
     }
 }
 
-struct DecoderPlans {
+pub(crate) struct DecoderPlans {
     rows: PlanRows,
-    plain: DecoderPlainPlans,
+    pub(crate) plain: DecoderPlainPlans,
     bias_qkv: Option<LtPlan<Bf16>>,
     bias_attention: Option<LtPlan<Bf16>>,
     bias_gate_up: Option<LtPlan<Bf16>>,
@@ -724,7 +742,7 @@ struct DecoderPlans {
     readout: DecoderReadoutPlans,
 }
 impl DecoderPlans {
-    fn new(
+    pub(crate) fn new(
         provider: &LtProvider,
         c: &DecoderConfig,
         bias: BiasSupport,
@@ -775,7 +793,11 @@ impl DecoderPlans {
         })
     }
 
-    fn set_rows(&mut self, provider: &LtProvider, rows: usize) -> Result<(), ShapeError> {
+    pub(crate) fn set_rows(
+        &mut self,
+        provider: &LtProvider,
+        rows: usize,
+    ) -> Result<(), ShapeError> {
         crate::math::refresh_plan_rows(&mut self.rows.full, rows, || {
             let rejected = |error| ShapeError::Rejected(infer(error));
             self.plain.qkv.set_rows(rows).map_err(rejected)?;
@@ -816,7 +838,7 @@ pub(crate) struct DecoderGeometry {
     pub(crate) silu_groups_per_row: usize,
 }
 impl DecoderGeometry {
-    fn new(c: &DecoderConfig) -> Result<Self, BackendError> {
+    pub(crate) fn new(c: &DecoderConfig) -> Result<Self, BackendError> {
         Self::from_dimensions(
             c.hidden_size,
             c.intermediate_size,
@@ -2282,6 +2304,16 @@ fn pooled_elements(
     }
 }
 
+pub(crate) struct DecoderWorkBuffersMut<'a> {
+    pub(crate) input: &'a mut DeviceBuffer<u32>,
+    pub(crate) residual: &'a mut DeviceBuffer<Bf16>,
+    pub(crate) residual_next: &'a mut DeviceBuffer<Bf16>,
+    pub(crate) branch: &'a mut DeviceBuffer<Bf16>,
+    pub(crate) normalized: &'a mut DeviceBuffer<Bf16>,
+    pub(crate) projection: &'a mut DeviceBuffer<Bf16>,
+    pub(crate) activation: &'a mut DeviceBuffer<Bf16>,
+}
+
 pub(crate) struct DecoderWork {
     pub(crate) stream: Arc<Stream>,
     tokens: usize,
@@ -2310,6 +2342,23 @@ impl DecoderWork {
     }
     pub(crate) fn fits(&self, key: WorkKey) -> bool {
         super::capacity_fits(self.key(), key, self.bytes)
+    }
+    pub(crate) fn buffers_mut(&mut self) -> DecoderWorkBuffersMut<'_> {
+        DecoderWorkBuffersMut {
+            input: &mut self.input,
+            residual: &mut self.residual,
+            residual_next: &mut self.residual_next,
+            branch: &mut self.branch,
+            normalized: &mut self.normalized,
+            projection: &mut self.projection,
+            activation: &mut self.activation,
+        }
+    }
+    pub(crate) fn pooled_deviceptr(&mut self) -> Result<u64, BackendError> {
+        self.pooled
+            .as_mut()
+            .map(|pooled| pooled.cu_deviceptr())
+            .ok_or_else(|| infer("Decoder embedding workspace has no pooled slab"))
     }
     #[allow(dead_code)]
     pub(crate) fn allocation_bytes(key: WorkKey, c: &DecoderConfig) -> Result<usize, BackendError> {
