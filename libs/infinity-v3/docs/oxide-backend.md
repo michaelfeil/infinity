@@ -40,6 +40,7 @@ variant of these families.
 | DeBERTa-v2/v3 | BF16 H768, 12 heads, intermediate width 3072, word-only embeddings and learned relative attention. Shared or dedicated relative projections and c2p/p2c combinations are supported. Absolute position/type embeddings, embedding projection and convolution are rejected. Requires FA4. |
 | Qwen2 | Dense SiLU text backbone, full split-half NeoX RoPE, global causal or noncausal attention, and a matching FA4 profile. The H896/d64 native RMS/rotary recipe is rejected. The exercised GTE-Qwen2-1.5B-instruct geometry is H1536, 12 Q/2 KV heads, d128, noncausal. |
 | Qwen3 | Dense SiLU text backbones at H1024 or H4096, d128 learned Q/K head norms, full NeoX RoPE, and a matching FA4 profile. Query projection width may differ from hidden width. Qwen3-Embedding-0.6B and 8B are exercised; expert models and other normalization widths are rejected. |
+| Qwen3.5 dense text | BF16, d256 heads, partial rotary width 64, gated full attention and 128-wide GDN heads. Hidden width is at most 8192; the actual GQA ratio requires a matching FA4 profile. Query width may differ from hidden width. Model geometry is validated structurally rather than by checkpoint name. |
 | Llama | Hidden width 2048, dense SiLU, base unscaled `default` RoPE, causal global attention, and a matching FA4 profile. TinyLlama's 32 Q/4 KV heads at d64 need the appended twentieth profile. H4096, noncausal Llama, and scaled RoPE including Llama3 are rejected. |
 
 MPNet uses a separate [native attention provider](../backends/oxide/vendor/mpnet_attention/README.md),
@@ -49,6 +50,25 @@ workspace, deferred results, pooling, raw output and Dense-module handling.
 Additional BF16 encoder paths cover ModernBERT, Nomic BERT and Jina Small with
 their validated geometry, normalization, rotary/ALiBi and activation recipes.
 Their loader guards remain authoritative; family names do not imply all variants.
+
+Qwen3.5 uses the common serving constructor for ordinary text embeddings and
+OneJev lexical Decision heads. The checkpoint's modeling metadata selects causal
+or block Decision attention. Block Decision currently accepts one question per
+batch, GDN key/value head counts 16/32 or 16/48, and convolution width 4; its
+prefix can change on each request. Multi-question fanout, persistent prefix
+caching, media, and dynamic FP8 serving remain explicitly unsupported. A block
+checkpoint cannot be used as an ordinary embedding model without a prefix.
+Partial-prefix block attention remains a typed rejection on SM100; compiling
+that architecture does not establish block runtime coverage there.
+Elephant and Mammoth have separate native text and single-question Decision
+qualification; this does not establish every Qwen3.5 geometry or performance.
+The cold runtime dependencies are selected by `INFINITY_FA4_ROOT`,
+`INFINITY_OXIDE_GDN_RAW_KERNELS`, `INFINITY_OXIDE_GDN_PROVIDER`, and
+`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 99 Rust
+exports; Qwen3.5 requires its nine additive exports. Existing families can retain
+their older qualified bundles.
+Stored `A_log` and `dt_bias` decay parameters retain native F32 precision;
+other parameters follow the selected BF16 weight conversion.
 
 Jina embeddings v2 base code uses a separate BF16 recipe at H768, 12 layers,
 12 heads and 8192 positions, loading its F16 checkpoint weights. It supports
@@ -79,7 +99,7 @@ providers retain normalized relative tables. The fast path keeps the existing
 BF16 rounding boundaries and score addition order. A malformed advertised pair
 is an error. No experimental relative-score environment setting is required.
 
-Decoder loading also rejects sliding windows, partial rotary dimensions, expert,
+The Qwen2/Qwen3/Llama decoder loader also rejects sliding windows, partial rotary dimensions, expert,
 recurrent, media and quantization modifiers. Accepted Model/ForCausalLM checkpoint
 backbones provide embeddings only; they do not enable generation or a KV cache.
 Required tensor shapes and complete Q/K/V and gate/up bias groups are checked.

@@ -178,6 +178,18 @@ encoder_activation_exports = [
 ]
 symbols = sorted(symbols + encoder_activation_exports)
 
+# Additive Qwen3.5 text and packed-mean exports live in their own leaf file so
+# composing another additive leaf cannot overwrite this source.
+qwen35_exports = [
+    line.strip()
+    for line in (root / "qwen35_exports.txt").read_text().splitlines()
+    if line.strip()
+]
+symbols = sorted(symbols + qwen35_exports)
+duplicates = sorted(name for name in set(symbols) if symbols.count(name) > 1)
+if duplicates:
+    raise SystemExit("Duplicate kernel exports: " + ", ".join(duplicates))
+
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -214,8 +226,15 @@ manifest["sources"]["src/classifier_norm384.rs"] = digest(root / "src/classifier
 manifest["sources"]["src/gemma2.rs"] = digest(root / "src/gemma2.rs")
 manifest["sources"]["src/encoder_activation.rs"] = digest(root / "src/encoder_activation.rs")
 manifest["sources"]["encoder_activation_exports.txt"] = digest(root / "encoder_activation_exports.txt")
+manifest["sources"]["qwen35_exports.txt"] = digest(root / "qwen35_exports.txt")
 for name in ["src/deberta_math.rs", "src/deberta_norm.rs", "src/gelu_exact.rs"]:
     manifest["sources"][name] = digest(root / name)
+for name in ["src/packed_mean_bf16.rs", "src/qwen35_norm.rs",
+             "src/qwen35_attention.rs", "src/qwen35_copy.rs"]:
+    manifest["sources"][name] = digest(root / name)
+for notice_name in ("NOTICE", "NOTICE.qwen35"):
+    notice_path = root.parent / notice_name
+    manifest["sources"][notice_name] = digest(notice_path)
 manifest["sources"] = dict(sorted(manifest["sources"].items()))
 output.mkdir(parents=True, exist_ok=True)
 work_root = (output.parent / (output.name + ".work")).resolve()
@@ -288,12 +307,15 @@ def snapshot_arch(invocation_root, arch):
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copytree(root / "src", destination / "src")
     for name in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
-                 "encoder_activation_exports.txt", "LICENSE-Candle-BSD3",
-                 "LICENSE-PyTorch-BSD3"]:
+                 "encoder_activation_exports.txt", "qwen35_exports.txt",
+                 "LICENSE-Candle-BSD3", "LICENSE-PyTorch-BSD3"]:
         shutil.copy2(root / name, destination / name)
     notice = root.parent / "NOTICE"
     if notice.is_file():
         shutil.copy2(notice, destination.parent / "NOTICE")
+    qwen35_notice = root.parent / "NOTICE.qwen35"
+    if qwen35_notice.is_file():
+        shutil.copy2(qwen35_notice, destination.parent / "NOTICE.qwen35")
     license_file = root.parent.parent.parent / "LICENSE"
     if license_file.is_file():
         shutil.copy2(license_file, destination.parent.parent.parent / "LICENSE")
@@ -344,6 +366,9 @@ try:
     shutil.copy2(root / "LICENSE-PyTorch-BSD3", output / "LICENSE-PyTorch-BSD3")
     shutil.copy2(root / "LICENSE-Candle-BSD3", output / "LICENSE-Candle-BSD3")
     shutil.copy2(root.parent / "NOTICE", output / "NOTICE")
+    qwen35_notice = root.parent / "NOTICE.qwen35"
+    if qwen35_notice.is_file():
+        shutil.copy2(qwen35_notice, output / "NOTICE.qwen35")
     manifest_path = output / "manifest.json"
     manifest_path.unlink(missing_ok=True)
     if local_config_mode:

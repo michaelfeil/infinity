@@ -62,6 +62,11 @@ type GemmStridedBatchedEx = unsafe extern "C" fn(
     i32,
 ) -> i32;
 const CUBLAS_GEMM_DEFAULT_TENSOR_OP: i32 = 99;
+/// FP32 accumulation for the Native OneJev F32 lexical readout.
+pub(crate) const F32_PROJECTION_COMPUTE: i32 = 68;
+/// Native `at::linear` F32 dispatch uses plain SGEMM semantics under the
+/// default cuBLAS math mode. Tensor-op algorithm 99 is BF16-only.
+pub(crate) const F32_PROJECTION_ALGORITHM: i32 = -1;
 
 // CUDA 13.1 recommends 32 MiB for SM90/SM10x/SM12x split-K workspaces, which
 // matches the cuBLAS default capacity. cuMemAlloc_v2 returns 256-byte-aligned
@@ -389,6 +394,104 @@ impl Blas {
                 batches,
                 68,
                 CUBLAS_GEMM_DEFAULT_TENSOR_OP,
+            )
+        })
+    }
+
+    /// Enqueue one prepared F32 `X W^T` projection with the Native OneJev
+    /// lexical readout recipe.
+    ///
+    /// Native executes `at::linear(last.to(kFloat), selected.to(kFloat))`, a
+    /// plain F32 SGEMM with default non-tensor-op math. The BF16 tensor-op
+    /// projection is a separate method and is never reused here.
+    ///
+    /// # Safety
+    /// The caller must bind this context on the current thread, keep every
+    /// allocation alive without conflicting access until this stream drains,
+    /// and pass arguments prepared from an F32 `LinearPlan`.
+    pub(crate) unsafe fn enqueue_f32_projection(
+        &self,
+        arguments: &GemmArguments,
+    ) -> Result<(), BackendError> {
+        if arguments.cuda_type != 0 {
+            return Err(super::infer(
+                "F32 decision projection requires F32 cuBLAS arguments",
+            ));
+        }
+        let (alpha, beta) = (1.0f32, 0.0f32);
+        // SAFETY: the caller's retained-buffer contract covers the prepared
+        // arguments, and this private handle stays serialized in default math.
+        check(unsafe {
+            (self.gemm)(
+                self.handle,
+                1,
+                0,
+                arguments.width,
+                arguments.rows,
+                arguments.input,
+                &alpha,
+                arguments.weight as *const c_void,
+                arguments.cuda_type,
+                arguments.weight_stride,
+                arguments.x as *const c_void,
+                arguments.cuda_type,
+                arguments.x_stride,
+                &beta,
+                arguments.output as *mut c_void,
+                arguments.cuda_type,
+                arguments.output_stride,
+                F32_PROJECTION_COMPUTE,
+                F32_PROJECTION_ALGORITHM,
+            )
+        })
+    }
+
+    /// Enqueue one prepared X W^T operation with beta=0 from plain arguments.
+    ///
+    /// This is the shared vendor call for [`Self::linear`] and prepared engines
+    /// that validated offsets, layouts and context identity in their own
+    /// preflight. It performs no allocation, `Arc` clone, CUDA query or context
+    /// bind; only the GEMM itself is submitted to the private handle, using the
+    /// same datatype, strides, compute mode and default algorithm as the
+    /// borrowed-storage path.
+    ///
+    /// # Safety
+    /// `arguments` must come from a `LinearPlan` that was validated for these
+    /// exact buffers; every input, weight and output span must own this handle's
+    /// context; this stream must be bound on the current thread; no input or
+    /// output may overlap another; and every allocation must remain alive
+    /// without conflicting access until this stream drains. A Rust borrow alone
+    /// does not cover deferred GPU use.
+    #[inline]
+    pub(crate) unsafe fn linear_bound(
+        &self,
+        arguments: &crate::math::GemmArguments,
+    ) -> Result<(), BackendError> {
+        let (alpha, beta) = (1.0f32, 0.0f32);
+        // cuBLAS column-major view computes Y^T = W × X^T.
+        // SAFETY: the caller guarantees the prepared arguments and owner
+        // lifetimes; the private handle remains exclusively owned.
+        check(unsafe {
+            (self.gemm)(
+                self.handle,
+                1,
+                0,
+                arguments.width,
+                arguments.rows,
+                arguments.input,
+                &alpha,
+                arguments.weight as *const c_void,
+                arguments.cuda_type,
+                arguments.weight_stride,
+                arguments.x as *const c_void,
+                arguments.cuda_type,
+                arguments.x_stride,
+                &beta,
+                arguments.output as *mut c_void,
+                arguments.cuda_type,
+                arguments.output_stride,
+                68, // CUBLAS_COMPUTE_32F
+                -1, // CUBLAS_GEMM_DEFAULT
             )
         })
     }

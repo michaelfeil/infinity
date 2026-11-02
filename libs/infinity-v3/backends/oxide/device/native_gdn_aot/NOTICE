@@ -1,0 +1,38 @@
+Infinity oxide Qwen3.5 GDN AOT packing auxiliary CUDA module
+
+Covered original host/build and layout-helper contributions are licensed under
+the Infinity Restricted MIT License 1.0, reproduced in the workspace LICENSE.
+This is not standard MIT or OSI open source.
+
+The BF16 Q/K/V packing geometry and the native FP32 state orientation are
+transcribed from retained Infinity MIT sources:
+
+  libs/infinity-v3/backends/libtorch/cpp/kernels/qwen35_kernels.cu
+  revision c4c90b9
+  SPDX-License-Identifier: MIT
+  pack_gdn_inputs: qkF32 [tokens*key_heads,256] with Q[0:128] then
+  K[128:256]; BF16 V tail at 2*key_heads*128; alpha in
+  [0,value_heads) and beta in [value_heads,2*value_heads) in the F32
+  prepared gate row.
+
+  libs/infinity-v3/backends/libtorch/cpp/kernels/flashinfer_gdn.cpp
+  and libs/infinity-v3/backends/libtorch/cpp/models/qwen35_models.cpp
+  revision c4c90b9
+  SPDX-License-Identifier: MIT
+  Provider FP32 state is [batch,value_heads,value=128,key=128]; native
+  resident state is [batch,value_heads,key=128,value=128]. The initial
+  native state is transposed and optionally gathered through an int64 source
+  map; the final provider state is transposed back by sequence position with
+  no source gather.
+
+No arithmetic is added. The two state exports copy uint32 payload bits
+exactly. The pack export performs only the source BF16 round-to-nearest casts
+for Q/K and the source BF16 copy for V; alpha and beta are copied as F32.
+
+The four unchanged Candle GDN entrypoints are not present in this module. The
+retained Candle MIT notice/license from the sibling native_gdn module is copied
+unchanged into the build output as LICENSE.candle-MIT so attribution remains
+available with every produced bundle.
+
+No Torch, C10, ATen, Python, Triton, TVM-FFI, or FlashInfer runtime is linked.
+No numerical parity, performance, or GPU-execution qualification is claimed.

@@ -20,8 +20,30 @@ const PIN_RETAIN_BYTES: usize = cache::BYTE_BUDGET / 4;
 pub(crate) fn input_capacity(key: WorkKey) -> Result<usize, BackendError> {
     Ok(InputLayout::new(key.0, key.1, key.2)?.words())
 }
+/// Opt-in extra input words for the Qwen warm metadata tail. Ordinary
+/// families keep the original backbone input capacity.
+#[allow(dead_code)]
+pub(crate) fn input_capacity_with_tail(
+    key: WorkKey,
+    tail_words: usize,
+) -> Result<usize, BackendError> {
+    input_capacity(key)?
+        .checked_add(tail_words)
+        .ok_or_else(|| infer("Input staging layout overflow"))
+}
+#[cfg(test)]
 pub(crate) fn pinned_bytes(key: WorkKey, output_elements: usize) -> Result<usize, BackendError> {
-    product(input_capacity(key)?, 4)?
+    pinned_bytes_with_input(key, input_capacity(key)?, output_elements)
+}
+pub(crate) fn pinned_bytes_with_input(
+    key: WorkKey,
+    input_elements: usize,
+    output_elements: usize,
+) -> Result<usize, BackendError> {
+    if input_elements < input_capacity(key)? {
+        return Err(infer("Host I/O input is shorter than the backbone layout"));
+    }
+    product(input_elements, 4)?
         .checked_add(product(output_elements, 4)?)
         .ok_or_else(|| infer("Host I/O staging overflow"))
 }
@@ -36,6 +58,18 @@ fn host_slot_fits(
     bytes: usize,
 ) -> bool {
     slot_fits(capacity, request, bytes) && request_output <= capacity_output
+}
+fn host_slot_fits_input(
+    capacity: WorkKey,
+    capacity_input: usize,
+    capacity_output: usize,
+    request: WorkKey,
+    request_input: usize,
+    request_output: usize,
+    bytes: usize,
+) -> bool {
+    host_slot_fits(capacity, capacity_output, request, request_output, bytes)
+        && request_input <= capacity_input
 }
 
 pub(crate) struct HostIo {
@@ -90,11 +124,13 @@ impl HostIo {
             .num_bytes()
             .saturating_add(self.output.num_bytes())
     }
-    fn fits(&self, key: WorkKey, output_elements: usize) -> bool {
-        host_slot_fits(
+    fn fits_with_input(&self, key: WorkKey, input_elements: usize, output_elements: usize) -> bool {
+        host_slot_fits_input(
             self.key,
+            self.input.len(),
             self.output_elements,
             key,
+            input_elements,
             output_elements,
             self.bytes(),
         )
@@ -102,10 +138,14 @@ impl HostIo {
     fn allocate(
         context: &Arc<Context>,
         key: WorkKey,
+        input_elements: usize,
         output_elements: usize,
     ) -> Result<(PinnedHostBuffer<u32>, PinnedHostBuffer<f32>), BackendError> {
+        if input_elements < input_capacity(key)? {
+            return Err(infer("Host I/O input is shorter than the backbone layout"));
+        }
         Ok((
-            PinnedHostBuffer::zeroed(context, input_capacity(key)?).map_err(infer)?,
+            PinnedHostBuffer::zeroed(context, input_elements).map_err(infer)?,
             PinnedHostBuffer::zeroed(context, output_elements).map_err(infer)?,
         ))
     }
@@ -131,7 +171,7 @@ impl SlotBytes for HostIo {
         if self.bytes() == 0 {
             return;
         }
-        if let Ok((input, output)) = HostIo::allocate(self.input.context(), (0, 0, 0), 0) {
+        if let Ok((input, output)) = HostIo::allocate(self.input.context(), (0, 0, 0), 0, 0) {
             self.replace((0, 0, 0), 0, input, output);
         }
     }
@@ -339,6 +379,13 @@ fn publish_completion_after_fence(ticket: Option<&CompletionTicket>, fence_succe
     }
 }
 
+#[cfg(test)]
+static TRACKED_LEASE_FALLBACK_DRAINS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+pub(crate) fn tracked_lease_fallback_drains() -> usize {
+    TRACKED_LEASE_FALLBACK_DRAINS.load(Ordering::Relaxed)
+}
+
 pub(crate) struct HostIoLease {
     slot: Option<HostIo>,
     pool: Arc<SlotPool<HostIo>>,
@@ -372,62 +419,94 @@ impl HostIoLease {
     pub(crate) fn bytes(&self) -> Result<usize, BackendError> {
         Ok(self.slot()?.bytes())
     }
+    #[allow(dead_code)] // Ordinary-capacity compatibility wrapper; explicit tails use the extended method.
     pub(crate) fn required_bytes(
         &self,
         key: WorkKey,
         output_elements: usize,
     ) -> Result<Option<usize>, BackendError> {
-        if self.slot()?.fits(key, output_elements) {
+        self.required_bytes_with_input(key, input_capacity(key)?, output_elements)
+    }
+    pub(crate) fn required_bytes_with_input(
+        &self,
+        key: WorkKey,
+        input_elements: usize,
+        output_elements: usize,
+    ) -> Result<Option<usize>, BackendError> {
+        if self
+            .slot()?
+            .fits_with_input(key, input_elements, output_elements)
+        {
             Ok(None)
         } else {
-            pinned_bytes(key, output_elements).map(Some)
+            pinned_bytes_with_input(key, input_elements, output_elements).map(Some)
         }
     }
     pub(crate) fn mark_exclusive(&mut self) {
         self.exclusive = true;
     }
+    #[allow(dead_code)] // Ordinary-capacity compatibility wrapper; explicit tails use the extended method.
     pub(crate) fn discard_for_resize(
         &mut self,
         key: WorkKey,
+        output_elements: usize,
+    ) -> Result<(), BackendError> {
+        self.discard_for_resize_with_input(key, input_capacity(key)?, output_elements)
+    }
+    pub(crate) fn discard_for_resize_with_input(
+        &mut self,
+        key: WorkKey,
+        input_elements: usize,
         output_elements: usize,
     ) -> Result<(), BackendError> {
         let slot = self
             .slot
             .as_mut()
             .ok_or_else(|| infer("Missing host I/O lease"))?;
-        if !slot.fits(key, output_elements) && slot.bytes() > 0 {
+        if !slot.fits_with_input(key, input_elements, output_elements) && slot.bytes() > 0 {
             let old = slot.bytes();
             slot.shrink();
             self.pool.adjust_pinned(old, slot.bytes())?;
         }
         Ok(())
     }
+    #[allow(dead_code)] // Legacy ordinary-capacity wrapper; extended callers supply explicit input words.
     pub(crate) fn prepare(
         &mut self,
         key: WorkKey,
         output_elements: usize,
         exclusive: bool,
     ) -> Result<(), BackendError> {
-        self.discard_for_resize(key, output_elements)?;
+        self.prepare_with_input(key, input_capacity(key)?, output_elements, exclusive)
+    }
+    pub(crate) fn prepare_with_input(
+        &mut self,
+        key: WorkKey,
+        input_elements: usize,
+        output_elements: usize,
+        exclusive: bool,
+    ) -> Result<(), BackendError> {
+        self.discard_for_resize_with_input(key, input_elements, output_elements)?;
         let Self {
             slot, pool, stream, ..
         } = self;
         let slot = slot
             .as_mut()
             .ok_or_else(|| infer("Missing host I/O lease"))?;
-        if slot.fits(key, output_elements) {
+        if slot.fits_with_input(key, input_elements, output_elements) {
             return Ok(());
         }
         let base = slot.bytes();
-        let new = pinned_bytes(key, output_elements)?;
+        let new = pinned_bytes_with_input(key, input_elements, output_elements)?;
         pool.grow(base, new, exclusive)?;
-        let (input, output) = match HostIo::allocate(stream.context(), key, output_elements) {
-            Ok(buffers) => buffers,
-            Err(error) => {
-                let _ = pool.adjust_pinned(new, base);
-                return Err(error);
-            }
-        };
+        let (input, output) =
+            match HostIo::allocate(stream.context(), key, input_elements, output_elements) {
+                Ok(buffers) => buffers,
+                Err(error) => {
+                    let _ = pool.adjust_pinned(new, base);
+                    return Err(error);
+                }
+            };
         slot.replace(key, output_elements, input, output);
         Ok(())
     }
@@ -477,7 +556,11 @@ impl HostIoLease {
         }
         let complete = match self.slot.as_ref() {
             Some(slot) if self.recorded => slot.event.synchronize().map_err(infer).map(|()| true),
-            Some(_) if self.started => self.stream.synchronize().map_err(infer).map(|()| true),
+            Some(_) if self.started => {
+                #[cfg(test)]
+                TRACKED_LEASE_FALLBACK_DRAINS.fetch_add(1, Ordering::Relaxed);
+                self.stream.synchronize().map_err(infer).map(|()| true)
+            }
             Some(_) => Ok(false),
             None => Err(infer("Missing host I/O lease")),
         };
@@ -527,7 +610,7 @@ impl HostIoLease {
             return;
         }
         let old = slot.bytes();
-        let Ok((input, output)) = HostIo::allocate(stream.context(), (0, 0, 0), 0) else {
+        let Ok((input, output)) = HostIo::allocate(stream.context(), (0, 0, 0), 0, 0) else {
             return;
         };
         slot.replace((0, 0, 0), 0, input, output);
@@ -544,7 +627,11 @@ impl Drop for HostIoLease {
         if !self.drained {
             let (complete, fenced) = match self.slot.as_ref() {
                 Some(slot) if self.recorded => (slot.event.synchronize().is_ok(), true),
-                Some(_) if self.started => (self.stream.synchronize().is_ok(), true),
+                Some(_) if self.started => {
+                    #[cfg(test)]
+                    TRACKED_LEASE_FALLBACK_DRAINS.fetch_add(1, Ordering::Relaxed);
+                    (self.stream.synchronize().is_ok(), true)
+                }
                 Some(_) => (true, false),
                 None => (false, false),
             };
@@ -754,6 +841,61 @@ mod tests {
         assert!(!host_slot_fits(key, 45, key, 16 * 7, exact));
         assert!(host_slot_fits((32, 4, 16), 77, (32, 4, 8), 45, 1024));
         assert!(!host_slot_fits((32, 4, 8), 45, (32, 4, 16), 45, 77));
+    }
+
+    #[test]
+    fn opt_in_input_tail_changes_only_the_request_that_asks_for_it() {
+        let key = (32, 4, 2);
+        let base = input_capacity(key).unwrap();
+        assert_eq!(input_capacity_with_tail(key, 0).unwrap(), base);
+        assert_eq!(input_capacity_with_tail(key, 517).unwrap(), base + 517);
+        assert!(input_capacity_with_tail(key, usize::MAX).is_err());
+        assert_eq!(
+            pinned_bytes_with_input(key, base + 517, 9).unwrap(),
+            (base + 517) * 4 + 9 * 4
+        );
+        assert!(pinned_bytes_with_input(key, base - 1, 9).is_err());
+        assert!(pinned_bytes_with_input(key, usize::MAX, 9).is_err());
+        // A slot sized for the ordinary layout cannot host the warm tail, even
+        // when its key and output capacities agree.
+        assert!(!host_slot_fits_input(
+            key,
+            base,
+            45,
+            key,
+            base + 517,
+            45,
+            4096
+        ));
+        let wide = pinned_bytes_with_input(key, base + 517, 45).unwrap();
+        assert!(host_slot_fits_input(
+            key,
+            base + 517,
+            77,
+            key,
+            base + 517,
+            45,
+            wide
+        ));
+        assert!(!host_slot_fits_input(
+            key,
+            base + 517,
+            45,
+            key,
+            base + 517,
+            46,
+            wide
+        ));
+        // Ordinary families keep the original capacity and accounting.
+        let ordinary = (32, 4, 16);
+        assert_eq!(
+            input_capacity_with_tail(ordinary, 0).unwrap(),
+            input_capacity(ordinary).unwrap()
+        );
+        assert_eq!(
+            pinned_bytes(ordinary, 45).unwrap(),
+            input_capacity(ordinary).unwrap() * 4 + 45 * 4
+        );
     }
 
     #[test]

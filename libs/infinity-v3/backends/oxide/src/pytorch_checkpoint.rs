@@ -27,8 +27,8 @@
 #[cfg(test)]
 use crate::model::to_bf16;
 use crate::model::{
-    convert_16, elements, permitted_cache_blob, permitted_weight, start, Bf16Target, F16Target,
-    Source16, Target16,
+    convert_16, convert_f32, elements, permitted_cache_blob, permitted_weight, start, Bf16Target,
+    F16Target, Source16, Target16,
 };
 use infinity_v3_backend_core::BackendError;
 use pytorch_reader::{
@@ -41,6 +41,7 @@ use std::path::{Component, Path};
 use std::sync::{Arc, OnceLock};
 
 const READ_SCRATCH_BYTES: usize = 64 * 1024;
+const F32_READ_SCRATCH_BYTES: usize = 16 * 1024;
 const PYTORCH_SINGLE: &str = "pytorch_model.bin";
 const PYTORCH_INDEX: &str = "pytorch_model.bin.index.json";
 const SAFETENSORS_SINGLE: &str = "model.safetensors";
@@ -391,6 +392,54 @@ impl PyTorchWeightSource {
         out: &mut [u16],
     ) -> Result<(), BackendError> {
         self.read_target::<F16Target, true>(offset_elements, out)
+    }
+
+    pub(crate) fn read_f32(
+        &self,
+        offset_elements: usize,
+        out: &mut [f32],
+    ) -> Result<(), BackendError> {
+        let end_element = offset_elements
+            .checked_add(out.len())
+            .ok_or_else(|| start("weight read range overflow"))?;
+        if end_element > self.count {
+            return Err(start("weight read range exceeds tensor"));
+        }
+        if out.is_empty() {
+            return Ok(());
+        }
+        // Publication policy: no byte is returned to the uploader before the whole backing
+        // entry has been structurally validated and, when declared, CRC-checked.
+        self.verify()?;
+        let per_read = F32_READ_SCRATCH_BYTES
+            .checked_div(self.width)
+            .ok_or_else(|| start("invalid weight element width"))?;
+        if per_read == 0 {
+            return Err(start("invalid weight element width"));
+        }
+        let source = source16(self.dtype)?;
+        let mut done = 0usize;
+        while done < out.len() {
+            let take = (out.len() - done).min(per_read);
+            let range_start = self
+                .base_element
+                .checked_add(offset_elements)
+                .and_then(|base| base.checked_add(done))
+                .ok_or_else(|| start("weight read range overflow"))?;
+            let bytes = self
+                .tensor
+                .read_range(range_start, take)
+                .map_err(|error| start(format!("PyTorch weight range read failed: {error}")))?;
+            let end = done
+                .checked_add(take)
+                .ok_or_else(|| start("weight output range overflow"))?;
+            let target = out
+                .get_mut(done..end)
+                .ok_or_else(|| start("weight output range error"))?;
+            convert_f32::<true>(source, &bytes, target)?;
+            done = end;
+        }
+        Ok(())
     }
 
     pub(crate) fn read_target<T: Target16, const NATIVE: bool>(
@@ -1431,7 +1480,12 @@ mod tests {
     fn verifies_whole_backing_storage_before_publishing_ranges() {
         let elements = 17_500usize;
         let values = (0..elements)
-            .map(|index| (index % 251) as f32)
+            .map(|index| match index {
+                0 => f32::from_bits(0x8000_0000),
+                1 => f32::from_bits(0x0000_0001),
+                2 => f32::from_bits(0x3f80_0001),
+                _ => (index % 251) as f32,
+            })
             .collect::<Vec<_>>();
         let specs = vec![TensorSpec {
             name: "blob.weight".into(),
@@ -1452,6 +1506,28 @@ mod tests {
         let mut read = vec![0u16; elements];
         source.read_bf16(0, &mut read).unwrap();
         assert_eq!(read, expected);
+
+        let mut exact = vec![0.0f32; elements];
+        source.read_f32(0, &mut exact).unwrap();
+        assert_eq!(
+            exact
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>(),
+            specs[0]
+                .values
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>()
+        );
+        let slice = source.slice(1, vec![3]).unwrap();
+        let mut sliced = [0.0f32; 3];
+        slice.read_f32(0, &mut sliced).unwrap();
+        assert_eq!(
+            sliced.map(f32::to_bits),
+            [0x0000_0001u32, 0x3f80_0001, 0x4040_0000]
+        );
+        assert!(source.read_f32(elements, &mut [0.0f32; 1]).is_err());
 
         // A compressed entry is rejected before a range read. The frozen reader's deflated
         // access re-inflates from the entry start per window, so backend publication must not
@@ -1491,6 +1567,9 @@ mod tests {
         std::fs::write(valid.0.join("pytorch_model.bin"), bytes).unwrap();
         let checkpoint = PyTorchCheckpoint::open(&valid.0).unwrap();
         let source = checkpoint.source("blob.weight", &[elements]).unwrap();
+        let mut corrupted = vec![0.0f32; elements];
+        let error = source.read_f32(0, &mut corrupted).unwrap_err().to_string();
+        assert!(error.contains("verification failed"), "{error}");
         let error = source.read_bf16(0, &mut read).unwrap_err().to_string();
         assert!(error.contains("verification failed"), "{error}");
     }

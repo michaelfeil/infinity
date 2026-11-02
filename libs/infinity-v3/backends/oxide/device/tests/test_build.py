@@ -47,6 +47,7 @@ infinity_rope_interleaved_hfma infinity_rope_neox infinity_rope_neox_hfma infini
 infinity_selected_rows infinity_silu_mul infinity_silu_mul_bf16_pairs infinity_silu_mul_bf16_pairs_native
 infinity_silu_mul_bf16_vector8_native infinity_silu_mul_f32
 """.split()
+SYMBOLS += (DEVICE / "qwen35_exports.txt").read_text().split()
 
 FAKE_COMPILER = textwrap.dedent(r'''#!/usr/bin/env python3
 import json, os, pathlib, sys, time
@@ -122,10 +123,11 @@ def write_executable(path, text):
 def source_digest(root):
     files = [root / name for name in (
         "build.sh", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
-        "encoder_activation_exports.txt", "LICENSE-Candle-BSD3",
+        "encoder_activation_exports.txt", "qwen35_exports.txt", "LICENSE-Candle-BSD3",
         "LICENSE-PyTorch-BSD3")]
     files += sorted((root / "src").rglob("*.rs"))
     files.append(root.parent / "NOTICE")
+    files.append(root.parent / "NOTICE.qwen35")
     return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
 
 
@@ -239,6 +241,10 @@ class BuildScriptTests(unittest.TestCase):
         self.assertEqual(manifest["requested_architectures"], architectures)
         self.assertEqual(manifest["complete_target_set"],
                          architectures == ALL_ARCHITECTURES)
+        self.assertEqual((output / "NOTICE.qwen35").read_bytes(),
+                         (DEVICE.parent / "NOTICE.qwen35").read_bytes())
+        self.assertEqual(manifest["sources"]["NOTICE.qwen35"],
+                         hashlib.sha256((output / "NOTICE.qwen35").read_bytes()).hexdigest())
         for item in manifest["architectures"]:
             self.assertEqual(len(item["symbols_verified"]), len(SYMBOLS))
             candidate = (output / item["architecture"] / ".kernels.cubin").resolve()
@@ -470,6 +476,7 @@ class BuildScriptTests(unittest.TestCase):
             ignore=shutil.ignore_patterns(".oxide-artifacts", "target",
                                           "*.ptx", "*.ll", "*.cubin", "__pycache__"))
         shutil.copy2(DEVICE.parent / "NOTICE", tree.parent / "NOTICE")
+        shutil.copy2(DEVICE.parent / "NOTICE.qwen35", tree.parent / "NOTICE.qwen35")
         (tree / ".cargo").mkdir()
         (tree / ".cargo/cuda-oxide.toml").write_text(
             '[env]\nOXIDE_LOCAL_CONFIG_MARKER = "visible"\n')
@@ -487,6 +494,19 @@ class BuildScriptTests(unittest.TestCase):
             self.assertEqual(event["cwd"], str(tree))
             self.assertIn("OXIDE_LOCAL_CONFIG_MARKER", event["cwd_config_text"])
         self.assert_manifest(output)
+
+    def test_missing_qwen_notice_fails_before_compiler(self):
+        tree = self.tmp / "missing-notice/libs/infinity-v3/backends/oxide/device"
+        shutil.copytree(DEVICE, tree, ignore=shutil.ignore_patterns(
+            ".oxide-artifacts", "target", "*.ptx", "*.ll", "*.cubin", "__pycache__"))
+        shutil.copy2(DEVICE.parent / "NOTICE", tree.parent / "NOTICE")
+        output = self.tmp / "missing-notice-output"
+        record = self.tmp / "missing-notice-compiler.jsonl"
+        result = self.run_build(output, record, source=tree, architectures=["sm_90"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NOTICE.qwen35", result.stdout)
+        self.assertFalse(record.exists())
+        self.assertFalse((output / "manifest.json").exists())
 
 
 if __name__ == "__main__":

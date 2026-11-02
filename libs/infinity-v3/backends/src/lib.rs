@@ -546,11 +546,24 @@ async fn init_backend(
         let dtype = oxide_dtype(dtype)?;
         if !matches!(
             &model_type,
-            ModelType::Embedding(Pool::Cls | Pool::Mean | Pool::LastToken) | ModelType::Classifier
+            ModelType::Embedding(Pool::Cls | Pool::Mean | Pool::LastToken)
+                | ModelType::Classifier
+                | ModelType::Decision
         ) {
             return Err(BackendError::Start(
-                "The plain CUDA backend supports dense embeddings and BF16 BERT classifiers".into(),
+                "The plain CUDA backend supports dense embeddings, BF16 BERT classifiers, and Qwen3.5 decisions".into(),
             ));
+        }
+        // Decision is admitted only through the Qwen3.5 cold dispatch inside the
+        // oxide constructor. Sidecars for other decision protocols are fetched
+        // only when the checkpoint actually declares them, matching LibTorch.
+        if model_type == ModelType::Decision {
+            infinity_backend_oxide::OxideBackend::validate_decision_checkpoint(&model_path, dtype)?;
+            if let Some(repo) = api_repo.as_ref() {
+                download_decision_sidecars(repo)
+                    .await
+                    .map_err(|e| BackendError::WeightsNotFound(e.to_string()))?;
+            }
         }
         let dense_paths = if let Some(repo) = api_repo.as_ref() {
             // Oxide must distinguish a genuinely absent `modules.json` from a
@@ -1079,6 +1092,107 @@ mod startup_tests {
             assert!(matches!(error, BackendError::Start(_)));
             assert!(error.to_string().contains(diagnostic), "{error}");
         }
+    }
+
+    #[cfg(feature = "oxide")]
+    fn oxide_config_fixture(contents: &[u8]) -> PathBuf {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "oxide-qwen35-factory-{}-{nonce}",
+            std::process::id()
+        ));
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("config.json"), contents).unwrap();
+        path
+    }
+
+    #[cfg(feature = "oxide")]
+    #[test]
+    fn oxide_decision_reaches_qwen35_cold_admission_without_cuda() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let path = oxide_config_fixture(
+            br#"{"model_type":"qwen3_5","text_config":{"model_type":"qwen3_5_text"}}"#,
+        );
+        let error = runtime
+            .block_on(init_backend(
+                path.clone(),
+                None,
+                DType::Bfloat16,
+                ModelType::Decision,
+                None,
+                0,
+                false,
+                BackendKind::Oxide,
+                TorchDevice::Cuda,
+            ))
+            .err()
+            .expect("incomplete Qwen3.5 decision fixture must reject");
+        assert!(matches!(error, BackendError::Start(_)));
+        assert!(
+            error.to_string().to_lowercase().contains("qwen3.5"),
+            "{error}"
+        );
+        std::fs::remove_dir_all(path).unwrap();
+    }
+
+    #[cfg(feature = "oxide")]
+    #[test]
+    fn oxide_non_qwen35_decision_and_qwen35_classifier_stay_typed_unsupported() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        let bert = oxide_config_fixture(br#"{"model_type":"bert"}"#);
+        let error = runtime
+            .block_on(init_backend(
+                bert.clone(),
+                None,
+                DType::Bfloat16,
+                ModelType::Decision,
+                None,
+                0,
+                false,
+                BackendKind::Oxide,
+                TorchDevice::Cuda,
+            ))
+            .err()
+            .expect("non-Qwen3.5 decision must reject");
+        assert!(matches!(error, BackendError::Start(_)));
+        assert!(
+            error.to_string().contains("dense Qwen3.5 checkpoint"),
+            "{error}"
+        );
+        std::fs::remove_dir_all(bert).unwrap();
+
+        let qwen35 = oxide_config_fixture(
+            br#"{"model_type":"qwen3_5","text_config":{"model_type":"qwen3_5_text"}}"#,
+        );
+        let error = runtime
+            .block_on(init_backend(
+                qwen35.clone(),
+                None,
+                DType::Bfloat16,
+                ModelType::Classifier,
+                None,
+                0,
+                false,
+                BackendKind::Oxide,
+                TorchDevice::Cuda,
+            ))
+            .err()
+            .expect("Qwen3.5 classifier must reject");
+        assert!(matches!(error, BackendError::Start(_)));
+        assert!(
+            error
+                .to_string()
+                .contains("classifier serving is unsupported"),
+            "{error}"
+        );
+        std::fs::remove_dir_all(qwen35).unwrap();
     }
 }
 

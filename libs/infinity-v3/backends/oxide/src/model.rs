@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex};
 const SAFETENSORS_PREFIX_BYTES: u64 = 8;
 const MAX_HEADER_BYTES: u64 = 100_000_000;
 const READ_SCRATCH_BYTES: usize = 64 * 1024;
+const F32_READ_SCRATCH_BYTES: usize = 16 * 1024;
 pub(crate) const NONFINITE: &str = "invalid or nonfinite checkpoint weights";
 const MAX_SIDECAR_BYTES: u64 = 16 * 1024 * 1024;
 
@@ -1108,6 +1109,81 @@ impl WeightSource {
         self.read_target::<F16Target, false>(offset_elements, out)
     }
 
+    pub(crate) fn read_f32(
+        &self,
+        offset_elements: usize,
+        out: &mut [f32],
+    ) -> Result<(), BackendError> {
+        if let Some(source) = &self.pytorch {
+            return source.read_f32(offset_elements, out);
+        }
+        let end_element = offset_elements
+            .checked_add(out.len())
+            .ok_or_else(|| start("weight read range overflow"))?;
+        if end_element > self.count {
+            return Err(start("weight read range exceeds tensor"));
+        }
+        if out.is_empty() {
+            return Ok(());
+        }
+        let Some(file) = self.file.as_ref() else {
+            out.fill(0.0);
+            return Ok(());
+        };
+        let offset_bytes = offset_elements
+            .checked_mul(self.width)
+            .ok_or_else(|| start("weight byte offset overflow"))?;
+        let offset_bytes =
+            u64::try_from(offset_bytes).map_err(|_| start("weight byte offset overflow"))?;
+        let file_offset = self
+            .data_start
+            .checked_add(self.data_offset)
+            .and_then(|base| base.checked_add(offset_bytes))
+            .ok_or_else(|| start("weight file offset overflow"))?;
+        if self.width == 0 {
+            return Err(start("invalid weight element width"));
+        }
+        let per_read = F32_READ_SCRATCH_BYTES / self.width;
+        if per_read == 0 {
+            return Err(start("invalid weight element width"));
+        }
+        let source = Source16::from_safetensors_dtype(self.dtype)?;
+        let mut file = file
+            .lock()
+            .map_err(|_| start("checkpoint shard lock is poisoned"))?;
+        let current_len = file
+            .metadata()
+            .map_err(|error| start(format!("checkpoint shard metadata failed: {error}")))?
+            .len();
+        if current_len != self.file_len {
+            return Err(start("checkpoint shard changed length after validation"));
+        }
+        file.seek(SeekFrom::Start(file_offset))
+            .map_err(|error| start(format!("checkpoint shard seek failed: {error}")))?;
+        let mut scratch = [0u8; F32_READ_SCRATCH_BYTES];
+        let mut done = 0usize;
+        while done < out.len() {
+            let take = (out.len() - done).min(per_read);
+            let byte_count = take
+                .checked_mul(self.width)
+                .ok_or_else(|| start("weight chunk size overflow"))?;
+            let bytes = scratch
+                .get_mut(..byte_count)
+                .ok_or_else(|| start("weight scratch buffer is too small"))?;
+            file.read_exact(bytes)
+                .map_err(|error| start(format!("checkpoint shard read failed: {error}")))?;
+            let end = done
+                .checked_add(take)
+                .ok_or_else(|| start("weight output range overflow"))?;
+            let target = out
+                .get_mut(done..end)
+                .ok_or_else(|| start("weight output range error"))?;
+            convert_f32::<false>(source, bytes, target)?;
+            done = end;
+        }
+        Ok(())
+    }
+
     fn read_target<T: Target16, const NATIVE: bool>(
         &self,
         offset_elements: usize,
@@ -1192,7 +1268,7 @@ pub(crate) enum Source16 {
 }
 
 impl Source16 {
-    fn from_safetensors_dtype(dtype: Dtype) -> Result<Self, BackendError> {
+    pub(crate) fn from_safetensors_dtype(dtype: Dtype) -> Result<Self, BackendError> {
         match dtype {
             Dtype::F32 => Ok(Self::F32),
             Dtype::F16 => Ok(Self::F16),
@@ -1323,6 +1399,61 @@ pub(crate) fn convert_16<T: Target16, const NATIVE: bool>(
                     .try_into()
                     .map_err(|_| start(format!("invalid {} weight data", source.label())))?;
                 *slot = T::from_f32(decode_f32::<NATIVE>(raw))?;
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn convert_f32<const NATIVE: bool>(
+    source: Source16,
+    bytes: &[u8],
+    out: &mut [f32],
+) -> Result<(), BackendError> {
+    let width = source.width();
+    let expected = out
+        .len()
+        .checked_mul(width)
+        .ok_or_else(|| start("weight conversion size overflow"))?;
+    if bytes.len() != expected {
+        return Err(start("weight source data length mismatch"));
+    }
+    let widen = |value: f32, slot: &mut f32| {
+        if !value.is_finite() {
+            return Err(start(NONFINITE));
+        }
+        *slot = value;
+        Ok(())
+    };
+    match source {
+        Source16::F32 => {
+            for (chunk, slot) in bytes.chunks_exact(4).zip(out.iter_mut()) {
+                let raw: [u8; 4] = chunk
+                    .try_into()
+                    .map_err(|_| start(format!("invalid {} weight data", source.label())))?;
+                widen(decode_f32::<NATIVE>(raw), slot)?;
+            }
+        }
+        Source16::Bf16 => {
+            for (chunk, slot) in bytes.chunks_exact(2).zip(out.iter_mut()) {
+                let raw: [u8; 2] = chunk
+                    .try_into()
+                    .map_err(|_| start(format!("invalid {} weight data", source.label())))?;
+                widen(
+                    half::bf16::from_bits(decode_u16::<NATIVE>(raw)).to_f32(),
+                    slot,
+                )?;
+            }
+        }
+        Source16::F16 => {
+            for (chunk, slot) in bytes.chunks_exact(2).zip(out.iter_mut()) {
+                let raw: [u8; 2] = chunk
+                    .try_into()
+                    .map_err(|_| start(format!("invalid {} weight data", source.label())))?;
+                widen(
+                    half::f16::from_bits(decode_u16::<NATIVE>(raw)).to_f32(),
+                    slot,
+                )?;
             }
         }
     }
@@ -2311,6 +2442,102 @@ mod tests {
         assert!(word.read_bf16(word.len(), &mut [0u16; 1]).is_err());
         assert!(word.read_bf16(usize::MAX, &mut [0u16; 1]).is_err());
     }
+    #[test]
+    fn reads_exact_f32_ranges_and_rejects_nonfinite_weights() {
+        let exact = [
+            f32::from_bits(0x3f80_0001),
+            f32::from_bits(0x8000_0000),
+            f32::from_bits(0x0000_0001),
+            f32::from_bits(0x7f7f_ffff),
+            0.1,
+            1.0 / 3.0,
+            -2.5,
+            f32::from_bits(0x3eaa_aaab),
+        ];
+        let fixture = Fixture::new();
+        fixture.weight_values(Dtype::F32, false, false, |_, index| {
+            exact.get(index).copied().unwrap_or(0.25)
+        });
+        let weights = BertWeights::load(&fixture.0).unwrap();
+        let mut full = [0.0f32; 8];
+        weights.word.read_f32(0, &mut full).unwrap();
+        assert_eq!(full.map(f32::to_bits), exact.map(f32::to_bits));
+        let mut offset = [0.0f32; 4];
+        weights.word.read_f32(2, &mut offset).unwrap();
+        assert_eq!(
+            offset.map(f32::to_bits).to_vec(),
+            exact[2..6]
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>()
+        );
+        let slice = weights.word.slice(2, vec![3]).unwrap();
+        let mut sliced = [0.0f32; 3];
+        slice.read_f32(0, &mut sliced).unwrap();
+        assert_eq!(
+            sliced.map(f32::to_bits).to_vec(),
+            exact[2..5]
+                .iter()
+                .map(|value| value.to_bits())
+                .collect::<Vec<_>>()
+        );
+        weights.word.read_f32(weights.word.len(), &mut []).unwrap();
+        assert!(weights
+            .word
+            .read_f32(weights.word.len(), &mut [0.0f32; 1])
+            .is_err());
+        assert!(weights.word.read_f32(usize::MAX, &mut [0.0f32; 1]).is_err());
+
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let fixture = Fixture::new();
+            fixture.weight_values(
+                Dtype::F32,
+                false,
+                false,
+                |_, index| {
+                    if index == 0 {
+                        bad
+                    } else {
+                        1.0
+                    }
+                },
+            );
+            let weights = BertWeights::load(&fixture.0).unwrap();
+            let error = weights
+                .word
+                .read_f32(0, &mut [0.0f32; 8])
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("nonfinite"), "{error}");
+        }
+    }
+
+    #[test]
+    fn widen_f32_conversion_preserves_half_values_exactly() {
+        let mut bf16 = [0.0f32; 3];
+        convert_f32::<false>(
+            Source16::Bf16,
+            &[0x3f80u16, 0x8000, 0x0001].map(u16::to_le_bytes).concat(),
+            &mut bf16,
+        )
+        .unwrap();
+        assert_eq!(
+            bf16.map(f32::to_bits),
+            [0x3f80_0000, 0x8000_0000, 0x0001_0000]
+        );
+        let mut f16 = [0.0f32; 3];
+        convert_f32::<false>(
+            Source16::F16,
+            &[0x3c00u16, 0x8000, 0x0001].map(u16::to_le_bytes).concat(),
+            &mut f16,
+        )
+        .unwrap();
+        assert_eq!(
+            f16.map(f32::to_bits),
+            [0x3f80_0000, 0x8000_0000, 0x3380_0000]
+        );
+    }
+
     #[test]
     fn converts_source_floats_to_bf16_bits() {
         for (dtype, value) in [(Dtype::F32, 1.0f32 / 3.0), (Dtype::F16, 0.1f32)] {

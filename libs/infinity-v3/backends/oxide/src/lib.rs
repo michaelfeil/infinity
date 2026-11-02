@@ -9,6 +9,10 @@ mod classifier_primitives;
 mod cublas;
 mod deberta;
 mod deberta_encoder_model;
+#[allow(dead_code)]
+mod decision_head;
+#[allow(dead_code)]
+mod decision_head_gpu;
 mod decoder;
 mod decoder_model;
 mod dense;
@@ -23,6 +27,10 @@ mod fa4;
 mod fa4_alibi;
 mod fa4_deberta;
 pub mod fp8;
+#[allow(dead_code)]
+mod gdn_aot_provider;
+#[allow(dead_code)]
+pub mod gdn_prepared;
 pub mod gemma2_math;
 mod input_layout;
 mod jina_code_encoder_model;
@@ -48,6 +56,39 @@ mod nomic_numerics;
 mod nomic_primitive_schema;
 mod output;
 mod pytorch_checkpoint;
+#[allow(dead_code)]
+mod qwen35_block_attention;
+#[allow(dead_code)]
+mod qwen35_block_layout;
+#[allow(dead_code)]
+mod qwen35_block_work;
+#[allow(dead_code)]
+mod qwen35_config;
+#[allow(dead_code)]
+mod qwen35_execute;
+#[allow(dead_code)]
+mod qwen35_fp8;
+#[allow(dead_code)]
+mod qwen35_layout;
+#[allow(dead_code)]
+mod qwen35_model;
+#[allow(dead_code)]
+mod qwen35_prepared;
+#[cfg(test)]
+mod qwen35_retirement_root_tests;
+#[allow(dead_code)]
+mod qwen35_runtime;
+#[allow(dead_code)]
+mod qwen35_serving;
+#[allow(dead_code)]
+mod qwen35_tables;
+#[allow(dead_code)]
+mod qwen35_weights;
+#[allow(dead_code)]
+mod qwen35_work;
+#[allow(dead_code)]
+mod warm_head;
+pub use qwen35_runtime::Qwen35TextOptions;
 mod rotary;
 mod rotary_encoder;
 mod rotary_encoder_model;
@@ -55,6 +96,9 @@ mod staging;
 pub mod tensor;
 mod upload;
 mod work_retirement;
+#[cfg(test)]
+#[path = "workspace_retirement_root_tests.rs"]
+mod workspace_retirement_root_tests;
 
 use classifier_head::{
     canonicalize_indices, pack_predictions, pack_token_predictions, ClassifierHead,
@@ -68,8 +112,8 @@ use dense::{DenseChainHost, DenseHead, DenseWork};
 use encoder_linear::ProjectionPlan;
 use encoder_policy::{EmbeddingInputs, ModernEncoder};
 use infinity_v3_backend_core::{
-    result_memory, Backend, BackendError, Batch, Embedding, Embeddings, Inference, ModelType, Pool,
-    Predictions, TokenPredictions,
+    result_memory, Backend, BackendError, Batch, DecisionInput, DecisionOutput, Embedding,
+    Embeddings, Inference, ModelType, Pool, Predictions, TokenPredictions,
 };
 pub(crate) use input_layout::InputLayout;
 use jina_code_encoder_model::{JinaCodeLayerWeights, JinaCodeWeights};
@@ -81,6 +125,7 @@ use model::{
 };
 use modern_encoder_model::{ModernConfig, ModernWeights};
 use nomic_encoder_model::{MatrixSources, NomicLayerWeights, NomicWeights};
+use qwen35_block_layout::Qwen35BlockMode;
 use rotary_encoder::{PreparedGatedActivation, RotaryEncoder, RotaryFunctions};
 use staging::{HostIo, HostIoLease, SlotPool};
 use std::{
@@ -106,9 +151,33 @@ static RETIRED_PROOF_RELEASES: AtomicUsize = AtomicUsize::new(0);
 static RETIRED_DRAIN_RELEASES: AtomicUsize = AtomicUsize::new(0);
 #[cfg(test)]
 static DEFAULT_DROP_DRAINS: AtomicUsize = AtomicUsize::new(0);
+// Root witness hooks. Qwen3.5 Work keeps its own conservative default Drop.
+#[cfg(test)]
+pub(crate) static QWEN35_WORK_DEFAULT_DROP_DRAINS: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+pub(crate) static QWEN35_RETIRED_PROOF_RELEASES: AtomicUsize = AtomicUsize::new(0);
+#[cfg(test)]
+pub(crate) static QWEN35_RETIRED_DRAIN_RELEASES: AtomicUsize = AtomicUsize::new(0);
 
 #[cfg(test)]
+pub(crate) fn qwen35_work_default_drop_drains() -> usize {
+    QWEN35_WORK_DEFAULT_DROP_DRAINS.load(Ordering::Relaxed)
+}
+#[cfg(test)]
 #[allow(dead_code)]
+pub(crate) fn note_qwen35_work_default_drop_drain() {
+    QWEN35_WORK_DEFAULT_DROP_DRAINS.fetch_add(1, Ordering::Relaxed);
+}
+#[cfg(test)]
+pub(crate) fn qwen35_retired_proof_releases() -> usize {
+    QWEN35_RETIRED_PROOF_RELEASES.load(Ordering::Relaxed)
+}
+#[cfg(test)]
+pub(crate) fn qwen35_retired_drain_releases() -> usize {
+    QWEN35_RETIRED_DRAIN_RELEASES.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
 pub(crate) fn retired_proof_releases() -> usize {
     RETIRED_PROOF_RELEASES.load(Ordering::Relaxed)
 }
@@ -1336,13 +1405,14 @@ enum ExecutableModel {
     Encoder(Box<EncoderModel<Bf16>>),
     EncoderF16(Box<EncoderModel<F16>>),
     Decoder(Box<decoder::DecoderModel>),
+    Qwen35(Box<qwen35_runtime::Qwen35Model>),
 }
 impl ExecutableModel {
     fn supports_raw_output(&self) -> bool {
         match self {
             Self::Encoder(model) => model.kernels.raw_cast.is_some(),
             Self::EncoderF16(model) => model.kernels.raw_cast.is_some(),
-            Self::Modern(_) | Self::Decoder(_) => true,
+            Self::Modern(_) | Self::Decoder(_) | Self::Qwen35(_) => true,
         }
     }
     fn preflight(
@@ -1365,6 +1435,14 @@ impl ExecutableModel {
             Self::EncoderF16(model) => model.plans.set_rows(provider, batch.input_ids.len()),
             Self::Modern(model) => model.preflight(batch.input_ids.len()),
             Self::Decoder(model) => model.preflight(provider, batch, pool),
+            Self::Qwen35(model) => model.preflight(batch),
+        }
+    }
+
+    fn input_capacity(&self, key: WorkKey) -> Result<usize, BackendError> {
+        match self {
+            Self::Qwen35(model) => model.input_capacity(key),
+            _ => staging::input_capacity(key),
         }
     }
 
@@ -1374,6 +1452,7 @@ impl ExecutableModel {
             Self::EncoderF16(model) => model.config.hidden_size,
             Self::Modern(model) => model.config.geometry.hidden_size,
             Self::Decoder(model) => model.config.hidden_size,
+            Self::Qwen35(model) => model.weights.config.hidden_size,
         }
     }
     /// # Safety
@@ -1431,7 +1510,7 @@ impl ExecutableModel {
                 .as_ref()
                 .map(|classifier| classifier.scratch_layout(key))
                 .transpose(),
-            Self::EncoderF16(_) | Self::Modern(_) | Self::Decoder(_) => Ok(None),
+            Self::EncoderF16(_) | Self::Modern(_) | Self::Decoder(_) | Self::Qwen35(_) => Ok(None),
         }
     }
     fn workspace_bytes(&self, key: WorkKey) -> Result<usize, BackendError> {
@@ -1445,6 +1524,7 @@ impl ExecutableModel {
             Self::EncoderF16(model) => Work::<F16>::allocation_bytes(key, &model.config),
             Self::Modern(model) => Work::<Bf16>::allocation_bytes(key, &model.config.geometry),
             Self::Decoder(model) => decoder::DecoderWork::allocation_bytes(key, &model.config),
+            Self::Qwen35(model) => model.workspace_bytes(key),
         }
     }
     fn workspace(&self, stream: Arc<Stream>, key: WorkKey) -> Result<Workspace, BackendError> {
@@ -1471,12 +1551,13 @@ impl ExecutableModel {
                 &model.config,
                 key,
             )?)),
+            Self::Qwen35(model) => Ok(Workspace::Qwen35(Box::new(model.workspace(stream, key)?))),
         }
     }
     fn classifier_readout(&self) -> Option<ClassifierReadout> {
         match self {
             Self::Encoder(model) => model.classifier.as_ref().map(ClassifierHead::readout),
-            Self::EncoderF16(_) | Self::Modern(_) | Self::Decoder(_) => None,
+            Self::EncoderF16(_) | Self::Modern(_) | Self::Decoder(_) | Self::Qwen35(_) => None,
         }
     }
 }
@@ -1499,6 +1580,7 @@ enum Workspace {
     Encoder(Work<Bf16>),
     EncoderF16(Work<F16>),
     Decoder(decoder::DecoderWork),
+    Qwen35(Box<qwen35_work::Qwen35Work>),
 }
 impl Workspace {
     fn key(&self) -> WorkKey {
@@ -1506,6 +1588,7 @@ impl Workspace {
             Self::Encoder(work) => work.key(),
             Self::EncoderF16(work) => work.key(),
             Self::Decoder(work) => work.key(),
+            Self::Qwen35(work) => work.key(),
         }
     }
     fn bytes(&self) -> usize {
@@ -1513,6 +1596,7 @@ impl Workspace {
             Self::Encoder(work) => work.bytes,
             Self::EncoderF16(work) => work.bytes,
             Self::Decoder(work) => work.bytes(),
+            Self::Qwen35(work) => work.bytes(),
         }
     }
     fn fits(&self, key: WorkKey) -> bool {
@@ -1520,6 +1604,7 @@ impl Workspace {
             Self::Encoder(work) => work.fits(key),
             Self::EncoderF16(work) => work.fits(key),
             Self::Decoder(work) => work.fits(key),
+            Self::Qwen35(work) => work.fits(key),
         }
     }
     fn mark_last_use(&mut self, ticket: CompletionTicket) {
@@ -1527,6 +1612,7 @@ impl Workspace {
             Self::Encoder(work) => work.mark_last_use(ticket),
             Self::EncoderF16(work) => work.mark_last_use(ticket),
             Self::Decoder(work) => work.mark_last_use(ticket),
+            Self::Qwen35(work) => work.mark_last_use(ticket),
         }
     }
     fn completion_ticket(&self) -> Option<CompletionTicket> {
@@ -1534,6 +1620,7 @@ impl Workspace {
             Self::Encoder(work) => work.completion_ticket(),
             Self::EncoderF16(work) => work.completion_ticket(),
             Self::Decoder(work) => work.completion_ticket(),
+            Self::Qwen35(work) => work.completion_ticket(),
         }
     }
     /// Releases only with an actual last-use proof. Every ordinary family is
@@ -1547,6 +1634,7 @@ impl Workspace {
             Self::Encoder(work) => unsafe { work.release_if_idle() },
             Self::EncoderF16(work) => unsafe { work.release_if_idle() },
             Self::Decoder(work) => unsafe { work.release_if_idle() },
+            Self::Qwen35(work) => unsafe { work.release_if_idle() },
         }
     }
     /// # Safety
@@ -1559,6 +1647,7 @@ impl Workspace {
             Self::Encoder(work) => unsafe { work.release_after_completion(proof) },
             Self::EncoderF16(work) => unsafe { work.release_after_completion(proof) },
             Self::Decoder(work) => unsafe { work.release_after_completion(proof) },
+            Self::Qwen35(work) => unsafe { work.release_payload_after_completion(proof) },
         }
     }
     /// # Safety
@@ -1568,6 +1657,7 @@ impl Workspace {
             Self::Encoder(work) => unsafe { work.release_after_drain() },
             Self::EncoderF16(work) => unsafe { work.release_after_drain() },
             Self::Decoder(work) => unsafe { work.release_after_drain() },
+            Self::Qwen35(work) => unsafe { work.release_payload_after_drain() },
         }
     }
     /// Retains an unproven owner instead of dropping it. The Work already keeps
@@ -1587,6 +1677,7 @@ impl Workspace {
             Self::Encoder(work) => work.stage(batch, geometry, lease),
             Self::EncoderF16(work) => work.stage(batch, geometry, lease),
             Self::Decoder(work) => work.stage(batch, geometry, lease),
+            Self::Qwen35(work) => work.stage(batch, geometry, lease),
         }
     }
     fn stage_classifier(
@@ -1597,7 +1688,7 @@ impl Workspace {
     ) -> Result<(usize, usize), BackendError> {
         match self {
             Self::Encoder(work) => work.stage_classifier(batch, geometry, lease),
-            Self::EncoderF16(_) | Self::Decoder(_) => Err(infer(
+            Self::EncoderF16(_) | Self::Decoder(_) | Self::Qwen35(_) => Err(infer(
                 "Classifier staging requires a BF16 encoder workspace",
             )),
         }
@@ -1607,6 +1698,7 @@ impl Workspace {
             Self::Encoder(work) => work.upload(host, elements),
             Self::EncoderF16(work) => work.upload(host, elements),
             Self::Decoder(work) => work.upload(host, elements),
+            Self::Qwen35(work) => work.upload(host, elements),
         }
     }
     #[allow(clippy::too_many_arguments)]
@@ -1640,6 +1732,15 @@ impl Workspace {
                 lease,
             ),
             Self::Decoder(work) => work.finish(
+                dense,
+                lt,
+                plain_blas,
+                pooled_rows,
+                raw_rows,
+                backbone_width,
+                lease,
+            ),
+            Self::Qwen35(work) => work.finish(
                 dense,
                 lt,
                 plain_blas,
@@ -2627,6 +2728,10 @@ impl Engine {
             }
             #[cfg(test)]
             RETIRED_PROOF_RELEASES.fetch_add(1, Ordering::Relaxed);
+            #[cfg(test)]
+            if matches!(&owner, RetiredOwner::Workspace(Workspace::Qwen35(_))) {
+                QWEN35_RETIRED_PROOF_RELEASES.fetch_add(1, Ordering::Relaxed);
+            }
             drop(owner);
         }
         Ok(())
@@ -2689,6 +2794,10 @@ impl Engine {
             unsafe { owner.release_after_drain() };
             #[cfg(test)]
             RETIRED_DRAIN_RELEASES.fetch_add(1, Ordering::Relaxed);
+            #[cfg(test)]
+            if matches!(&owner, RetiredOwner::Workspace(Workspace::Qwen35(_))) {
+                QWEN35_RETIRED_DRAIN_RELEASES.fetch_add(1, Ordering::Relaxed);
+            }
             drop(owner);
         }
     }
@@ -2805,9 +2914,22 @@ impl Engine {
         let raw_rows = output::raw_rows(b)?;
         let host_elements = geometry.host_elements(b)?;
         let plan = workspace.key;
+        let host_plan = if matches!(&*self.model, ExecutableModel::Qwen35(_)) {
+            if workspace.reuse_active {
+                self.workspace.as_ref().map_or(plan, Workspace::key)
+            } else {
+                self.cached
+                    .peek_best_fit(|capacity| capacity_fits(*capacity, plan, 0))
+                    .map_or(plan, Workspace::key)
+            }
+        } else {
+            // Existing families retain their original requested host capacity.
+            plan
+        };
+        let host_input_elements = self.model.input_capacity(host_plan)?;
         let host_before = lease.bytes()?;
         let host_after = lease
-            .required_bytes(plan, host_elements)?
+            .required_bytes_with_input(host_plan, host_input_elements, host_elements)?
             .unwrap_or(host_before);
         let mut pinned = self.io.pinned_after(host_before, host_after)?;
         let reuse_active = workspace.reuse_active;
@@ -2866,7 +2988,7 @@ impl Engine {
         // Drop mismatched idle pins before allocating future GPU scratch, then
         // allocate future pins only after the previous scratch is accounted.
         // The peeked reuse candidate is still in the cache on rejection.
-        lease.discard_for_resize(plan, host_elements)?;
+        lease.discard_for_resize_with_input(host_plan, host_input_elements, host_elements)?;
         // Select the exact peeked arena before the new reservation so that
         // reservation eviction cannot discard the reuse candidate.
         let mut next = if cached_fit.is_some() {
@@ -2966,7 +3088,12 @@ impl Engine {
         if host_oversized {
             lease.mark_exclusive();
         }
-        lease.prepare(plan, host_elements, host_oversized)?;
+        lease.prepare_with_input(
+            host_plan,
+            host_input_elements,
+            host_elements,
+            host_oversized,
+        )?;
         let position_offset = match &*self.model {
             ExecutableModel::Encoder(m) if m.config.family == EncoderFamily::Mpnet => {
                 mpnet::POSITION_OFFSET as u32
@@ -3017,6 +3144,17 @@ impl Engine {
                 model.enqueue(lt, plain_blas, s, work, b, pool, max_length, tokens)?;
                 Ok(())
             }
+            (ExecutableModel::Qwen35(model), Workspace::Qwen35(work)) => model
+                .enqueue(
+                    plain_blas.ok_or_else(|| infer("Qwen3.5 requires plain cuBLAS"))?,
+                    s,
+                    work,
+                    b,
+                    pool,
+                    max_length,
+                    tokens,
+                )
+                .map_err(EnqueueError::from),
             (ExecutableModel::Encoder(model), Workspace::Encoder(w)) => {
                 enqueue_encoder(model, w, lt, plain_blas, s, b, pool, max_length, tokens)?;
                 if let Some(head) = model.classifier.as_mut() {
@@ -3061,6 +3199,252 @@ impl Engine {
             (None, _) => None,
         };
         Ok(w.finish(dense, lt, plain_blas, pooled_rows, raw_rows, hidden, lease)?)
+    }
+
+    /// Engine-bound OneJev decision submission. This is the private async entry
+    /// used to qualify the warm path before public Decision admission. It reuses
+    /// the shared Work/scratch, writes logits into the request-specific host
+    /// lease output, and leaves completion ownership with the returned
+    /// `Inference::Deferred` closure.
+    fn enqueue_warm_decision(
+        &mut self,
+        b: &Batch,
+        max_length: usize,
+        requests: &[DecisionInput],
+        request_prefix: Option<usize>,
+        lease: &mut HostIoLease,
+    ) -> Result<warm_head::WarmDecisionPlan, EnqueueError> {
+        let workspace = preflight_workspace(
+            b,
+            |key| self.workspace.as_ref().is_some_and(|work| work.fits(key)),
+            |key| self.model.workspace_bytes(key),
+        )
+        .map_err(EnqueueError::PreflightRejected)?;
+        // Preserve the common pure-CPU architecture/shape admission before
+        // binding or initializing the arena for the warm block path too.
+        match self.model.preflight(&self.lt, b, &Pool::LastToken, None) {
+            Ok(()) => {}
+            Err(ShapeError::Rejected(error)) => return Err(EnqueueError::PreflightRejected(error)),
+            Err(ShapeError::Fatal(error)) => return Err(EnqueueError::classify_backend(error)),
+        }
+        // Dynamic block prefixes are actual per-request values. Resolve and
+        // check them against this backend's mode before binding the context or
+        // touching the arena; a typed rejection leaves the Engine healthy.
+        if let ExecutableModel::Qwen35(model) = &*self.model {
+            match model.preflight_request_prefix(b, request_prefix) {
+                Ok(()) => {}
+                Err(ShapeError::Rejected(error)) => {
+                    return Err(EnqueueError::PreflightRejected(error))
+                }
+                Err(ShapeError::Fatal(error)) => return Err(EnqueueError::classify_backend(error)),
+            }
+        }
+        let output_elements = match &*self.model {
+            ExecutableModel::Qwen35(model) => {
+                let head = model.decision_head().ok_or_else(|| {
+                    EnqueueError::PreflightRejected(infer(
+                        "Qwen3.5 warm OneJev head is not attached",
+                    ))
+                })?;
+                warm_decision_output_elements(head.vocab_rows(), requests)
+                    .map_err(EnqueueError::PreflightRejected)?
+            }
+            _ => {
+                return Err(EnqueueError::PreflightRejected(infer(
+                    "Qwen3.5 decision requires the Qwen3.5 model",
+                )))
+            }
+        };
+        let key = workspace.key;
+        let reuse_active = workspace.reuse_active;
+        // Peek the actual cached arena so the whole warm metadata tail is
+        // validated against its real capacity before any cache or Work change.
+        let active = if reuse_active {
+            let work = self
+                .workspace
+                .as_ref()
+                .ok_or_else(|| EnqueueError::PreflightRejected(infer("Missing oxide workspace")))?;
+            Some((work.key(), work.bytes()))
+        } else {
+            None
+        };
+        let cached_fit = if reuse_active {
+            None
+        } else {
+            self.cached
+                .peek_best_fit(|capacity| capacity_fits(*capacity, key, 0))
+                .map(|work| (work.key(), work.bytes()))
+        };
+        let (actual_key, workspace_bytes) = match active.as_ref().or(cached_fit.as_ref()) {
+            Some((actual_key, bytes)) => (*actual_key, *bytes),
+            None => (
+                key,
+                workspace.requested_bytes.ok_or_else(|| {
+                    EnqueueError::PreflightRejected(infer("Missing preflight workspace geometry"))
+                })?,
+            ),
+        };
+        let tokens = b.input_ids.len();
+        let packed = decision_head::PackedDecisionBatch::new(&b.cumulative_seq_lengths)
+            .map_err(|error| EnqueueError::PreflightRejected(infer(error.to_string())))?;
+        let (metadata, input_elements) = {
+            let ExecutableModel::Qwen35(model) = &*self.model else {
+                return Err(EnqueueError::PreflightRejected(infer(
+                    "Qwen3.5 decision requires the Qwen3.5 model",
+                )));
+            };
+            let input_elements = model.input_capacity(actual_key)?;
+            let metadata = model
+                .prepare_warm_metadata(actual_key, tokens, &packed, requests)
+                .map_err(EnqueueError::PreflightRejected)?;
+            if metadata.layout().end() != input_elements || metadata.total_rows() != output_elements
+            {
+                return Err(EnqueueError::classify_backend(infer(
+                    "Warm OneJev admission and prepared metadata disagree",
+                )));
+            }
+            (metadata, input_elements)
+        };
+        self.context.bind_to_thread().map_err(infer)?;
+        self.collect_completed_retirees()?;
+        let host_before = lease.bytes().map_err(EnqueueError::classify_backend)?;
+        let host_after = lease
+            .required_bytes_with_input(actual_key, input_elements, output_elements)
+            .map_err(EnqueueError::classify_backend)?
+            .unwrap_or(host_before);
+        let mut pinned = self
+            .io
+            .pinned_after(host_before, host_after)
+            .map_err(EnqueueError::classify_backend)?;
+        let mut exclusive = needs_exclusive_staging(workspace_bytes, pinned);
+        if exclusive {
+            let reclaimed = self.io.shrink_free();
+            metrics::counter!("oxide_host_io_shrunk_bytes_total").increment(reclaimed as u64);
+            pinned = self
+                .io
+                .pinned_after(host_before, host_after)
+                .map_err(EnqueueError::classify_backend)?;
+            exclusive = needs_exclusive_staging(workspace_bytes, pinned);
+            if exclusive && self.io.active_leases() > 1 {
+                // The selected cached arena was never taken, so pressure keeps
+                // it, and every other cache entry, untouched.
+                return Err(EnqueueError::Admission(BackendError::Overloaded(
+                    "Oxide workspace and host staging memory is busy".into(),
+                )));
+            }
+        }
+        self.check_retired_budget(workspace_bytes, pinned)?;
+        let mut next = if cached_fit.is_some() {
+            self.cached
+                .take_best_fit(|capacity| capacity_fits(*capacity, key, 0))
+        } else {
+            None
+        };
+        if let Some(work) = next.as_ref() {
+            debug_assert_eq!((work.key(), work.bytes()), (actual_key, workspace_bytes));
+        }
+        if let Err(error) =
+            lease.discard_for_resize_with_input(actual_key, input_elements, output_elements)
+        {
+            if let Some(work) = next.take() {
+                self.cache_workspace(work)?;
+            }
+            return Err(EnqueueError::classify_backend(error));
+        }
+        if let Err(error) = self.reserve_retired(workspace_bytes, pinned) {
+            if let Some(work) = next.take() {
+                Self::quarantine_workspace(work);
+            }
+            return Err(error);
+        }
+        if !reuse_active {
+            // Replace the stale active reservation before charging the old
+            // workspace as cached; retire every eviction before allocating.
+            if let Some(previous) = self.workspace.take() {
+                if let Err(error) = self.cache_workspace(previous) {
+                    if let Some(work) = next.take() {
+                        Self::quarantine_workspace(work);
+                    }
+                    return Err(error);
+                }
+            }
+            if let Err(error) = self.reserve_retired(workspace_bytes, pinned) {
+                if let Some(work) = next.take() {
+                    Self::quarantine_workspace(work);
+                }
+                return Err(error);
+            }
+        }
+        if let Err(error) = self.check_retired_budget(workspace_bytes, pinned) {
+            if let Some(work) = next.take() {
+                self.cache_workspace(work)?;
+            }
+            return Err(error);
+        }
+        if !reuse_active {
+            self.workspace = Some(match next {
+                Some(work) => {
+                    metrics::counter!("oxide_arena_cached_reuses_total").increment(1);
+                    work
+                }
+                None => self.model.workspace(self.stream.clone(), key)?,
+            });
+        }
+        let model = match &mut *self.model {
+            ExecutableModel::Qwen35(model) => model.as_mut(),
+            _ => {
+                return Err(EnqueueError::Fatal(infer(
+                    "Qwen3.5 decision requires the Qwen3.5 model",
+                )))
+            }
+        };
+        let work = match self.workspace.as_mut() {
+            Some(Workspace::Qwen35(work)) => work.as_mut(),
+            _ => {
+                return Err(EnqueueError::Fatal(infer(
+                    "Qwen3.5 decision requires the Qwen3.5 workspace",
+                )))
+            }
+        };
+        if model.decision_head().is_none() {
+            return Err(EnqueueError::Fatal(infer(
+                "Qwen3.5 warm OneJev head is not attached",
+            )));
+        }
+        let plan = model
+            .bind_warm_metadata(metadata, work)
+            .map_err(EnqueueError::Fatal)?;
+        lease
+            .prepare_with_input(actual_key, input_elements, output_elements, exclusive)
+            .map_err(EnqueueError::classify_backend)?;
+        let blas = (*self.plain_blas)
+            .as_ref()
+            .ok_or_else(|| EnqueueError::Fatal(infer("Qwen3.5 requires plain cuBLAS")))?;
+        let geometry = output::OutputGeometry::new(
+            model.weights.config.hidden_size,
+            model.weights.config.hidden_size,
+        )
+        .map_err(EnqueueError::classify_backend)?;
+        let (upload_elements, _) = work
+            .stage_warm(b, geometry, &plan, lease, request_prefix)
+            .map_err(EnqueueError::Rejected)?;
+        let ticket = lease.begin_tracked()?;
+        work.mark_last_use(ticket);
+        #[cfg(test)]
+        bump_lease_begin();
+        work.upload(lease.slot()?.input.as_slice(), upload_elements)
+            .map_err(EnqueueError::classify_backend)?;
+        let stream = &*self.stream;
+        model
+            .enqueue(blas, stream, work, b, &Pool::Mean, max_length, tokens)
+            .map_err(EnqueueError::classify_backend)?;
+        let host_logits = lease.slot_mut()?.output.as_mut_slice();
+        // SAFETY: the outer Engine owns the bound stream, model, Work, head and
+        // lease output through the lease event/drain boundary.
+        unsafe { model.enqueue_warm(work, blas, stream, &plan, host_logits) }
+            .map_err(EnqueueError::classify_backend)?;
+        lease.record().map_err(EnqueueError::classify_backend)?;
+        Ok(plan)
     }
 }
 
@@ -3770,6 +4154,9 @@ enum LoadedConfig {
     Modern(ModernConfig),
     Encoder(BertConfig),
     Decoder(DecoderConfig),
+    Qwen35(qwen35_config::Qwen35Config),
+    Qwen35Block(qwen35_config::Qwen35Config, usize),
+    Qwen35DynamicBlock(qwen35_config::Qwen35Config),
 }
 impl LoadedConfig {
     #[cfg_attr(not(test), allow(dead_code))]
@@ -3778,6 +4165,9 @@ impl LoadedConfig {
             Self::Encoder(config) => config.hidden_size,
             Self::Modern(config) => config.geometry.hidden_size,
             Self::Decoder(config) => config.hidden_size,
+            Self::Qwen35(config)
+            | Self::Qwen35Block(config, _)
+            | Self::Qwen35DynamicBlock(config) => config.hidden_size,
         }
     }
 }
@@ -3838,6 +4228,49 @@ pub struct OxideBackend {
     io: Arc<SlotPool<HostIo>>,
 }
 impl OxideBackend {
+    /// Check the Decision checkpoint protocol before remote weight downloads.
+    /// This reads configuration only and never initializes CUDA or opens tensor
+    /// payloads. Actual constructors revalidate the loaded weight configuration.
+    pub fn validate_decision_checkpoint(path: &Path, dtype: &str) -> Result<(), BackendError> {
+        Self::validate_qwen35_checkpoint(path, dtype, &ModelType::Decision, None)
+    }
+
+    /// CPU-only configuration admission for a Qwen3.5 serving task. This does
+    /// not establish weight, runtime, or model-quality qualification.
+    pub fn validate_qwen35_checkpoint(
+        path: &Path,
+        dtype: &str,
+        model_type: &ModelType,
+        dense_paths: Option<&[String]>,
+    ) -> Result<(), BackendError> {
+        if !qwen35_serving::is_qwen35_checkpoint(path)? {
+            return Err(start("Oxide decisions require a dense Qwen3.5 checkpoint"));
+        }
+        let attention = qwen35_serving::decision_attention(path)?;
+        let route = qwen35_serving::route(dtype, model_type, dense_paths, attention)?;
+        if matches!(route, qwen35_serving::ServingRoute::Text { .. }) {
+            qwen35_serving::text_causal(path)?;
+        }
+        let config = qwen35_config::Qwen35Config::load(path)?;
+        config.validate_candidate()?;
+        if route == qwen35_serving::ServingRoute::DynamicBlockDecision {
+            qwen35_serving::validate_block_config(&config)?;
+        }
+        Ok(())
+    }
+
+    /// Submit a typed Decision while retaining request-specific output storage
+    /// through the single outer completion event. As in the synchronous Native
+    /// entry, queue-owned embedding selectors do not select Decision outputs.
+    pub fn submit_decide(
+        &self,
+        mut batch: Batch,
+        inputs: Vec<DecisionInput>,
+    ) -> Result<Inference<Vec<DecisionOutput>>, BackendError> {
+        clear_decision_selectors(&mut batch);
+        self.submit_warm_decision(batch, inputs)
+    }
+
     pub fn new(
         path: &Path,
         dtype: &str,
@@ -3856,6 +4289,12 @@ impl OxideBackend {
         device_id: usize,
         dense_paths: Option<Vec<String>>,
     ) -> Result<Self, BackendError> {
+        if qwen35_serving::is_qwen35_checkpoint(path)? {
+            return Self::new_qwen35_serving(path, dtype, model_type, device_id, dense_paths);
+        }
+        if model_type == ModelType::Decision {
+            return Err(start("Oxide decisions require a dense Qwen3.5 checkpoint"));
+        }
         let precision = EncoderPrecision::from_dtype(dtype)?;
         let mut deberta_host = None;
         let early_architecture = detects_architecture(path)?;
@@ -4122,6 +4561,396 @@ impl OxideBackend {
             io,
         })
     }
+
+    /// Explicit dense BF16 Qwen3.5 text constructor. The normal factory uses
+    /// this only through the cold Qwen3.5 dispatch. Prefix/cache/media,
+    /// dynamic FP8 and the Decision head remain separate gates.
+    pub fn new_qwen35_text_candidate(
+        path: &Path,
+        pool: Pool,
+        device_id: usize,
+        options: Qwen35TextOptions,
+    ) -> Result<Self, BackendError> {
+        Self::new_qwen35_candidate(path, pool, device_id, options, None)
+    }
+
+    /// Explicit experimental B1 block constructor. The prefix is fixed for
+    /// this backend; the actual packed token count may change per request as
+    /// long as it covers that prefix. This is not a factory-admitted model.
+    pub fn new_qwen35_block_candidate(
+        path: &Path,
+        pool: Pool,
+        device_id: usize,
+        options: Qwen35TextOptions,
+        prefix: usize,
+    ) -> Result<Self, BackendError> {
+        if prefix == 0 {
+            return Err(start("Qwen3.5 block prefix must be nonzero"));
+        }
+        if options.causal {
+            return Err(start(
+                "Qwen3.5 block candidate requires noncausal attention",
+            ));
+        }
+        Self::new_qwen35_candidate(path, pool, device_id, options, Some(prefix))
+    }
+
+    fn new_qwen35_candidate(
+        path: &Path,
+        pool: Pool,
+        device_id: usize,
+        options: Qwen35TextOptions,
+        block_prefix: Option<usize>,
+    ) -> Result<Self, BackendError> {
+        if !matches!(pool, Pool::Cls | Pool::Mean | Pool::LastToken) {
+            return Err(start(
+                "Qwen3.5 text candidate requires ordinary backbone pooling",
+            ));
+        }
+        if block_prefix.is_some() {
+            let declared = infinity_v3_backend_core::block_attention_config::block_attention(path)
+                .map_err(start)?;
+            validate_qwen35_trial_mode(declared, block_prefix)?;
+        }
+        let host = qwen35_model::Qwen35Weights::load(path)?;
+        host.config.validate_candidate()?;
+        if block_prefix.is_some() {
+            qwen35_serving::validate_block_config(&host.config)?;
+        }
+        let config = host.config.clone();
+        if device_id >= device_count()? {
+            return Err(start("CUDA device ordinal is not visible"));
+        }
+        let context = Context::new(device_id).map_err(start)?;
+        let stream = context.new_stream().map_err(start)?;
+        let lt = LtProvider::new(context.clone(), stream.clone())?;
+        let model = match block_prefix {
+            Some(prefix) => qwen35_runtime::Qwen35Model::new_with_block(
+                host, &context, &stream, options, prefix,
+            )?,
+            None => qwen35_runtime::Qwen35Model::new(host, &context, &stream, options)?,
+        };
+        let blas = Blas::new(context.clone(), stream.clone())?;
+        let io = HostIo::pool(&context)?;
+        let output_width = config.hidden_size;
+        let loaded = match block_prefix {
+            Some(prefix) => LoadedConfig::Qwen35Block(config, prefix),
+            None => LoadedConfig::Qwen35(config),
+        };
+        Ok(Self {
+            config: loaded,
+            output_width,
+            pool,
+            readout: None,
+            attention_length_limit: None,
+            raw_output_supported: true,
+            engine: Arc::new(Mutex::new(Engine {
+                lt: ManuallyDrop::new(lt),
+                model: ManuallyDrop::new(ExecutableModel::Qwen35(Box::new(model))),
+                dense: ManuallyDrop::new(None),
+                plain_blas: ManuallyDrop::new(Some(blas)),
+                context,
+                stream: stream.clone(),
+                io: io.clone(),
+                workspace: None,
+                dense_workspace: None,
+                cached: cache::WorkspaceCache::new(),
+                retired: RetirementQueue::new(),
+                failed: false,
+            })),
+            stream,
+            io,
+        })
+    }
+
+    /// Cold factory dispatch for a detected Qwen3.5 checkpoint. Metadata and
+    /// resource admission run before any CUDA context or weight upload, then
+    /// the existing explicit constructors remain authoritative for the actual
+    /// host config and device validation.
+    fn new_qwen35_serving(
+        path: &Path,
+        dtype: &str,
+        model_type: ModelType,
+        device_id: usize,
+        dense_paths: Option<Vec<String>>,
+    ) -> Result<Self, BackendError> {
+        let attention = qwen35_serving::decision_attention(path)?;
+        let route = qwen35_serving::route(dtype, &model_type, dense_paths.as_deref(), attention)?;
+        let resources = qwen35_serving::cold_resources()?;
+        match route {
+            qwen35_serving::ServingRoute::Text { pool, .. } => Self::new_qwen35_text_candidate(
+                path,
+                pool,
+                device_id,
+                resources.into_options(qwen35_serving::text_causal(path)?),
+            ),
+            qwen35_serving::ServingRoute::TextDecision => Self::new_qwen35_text_decision_candidate(
+                path,
+                device_id,
+                resources.into_options(true),
+            ),
+            qwen35_serving::ServingRoute::DynamicBlockDecision => {
+                Self::new_qwen35_dynamic_block_decision_candidate(
+                    path,
+                    device_id,
+                    resources.into_options(false),
+                )
+            }
+        }
+    }
+
+    /// Whole-model/decision constructor for the causal OptionTokens route. It
+    /// attaches the reviewed OneJev head; the normal factory reaches it only
+    /// through the cold Qwen3.5 dispatch.
+    #[allow(dead_code)]
+    pub(crate) fn new_qwen35_text_decision_candidate(
+        path: &Path,
+        device_id: usize,
+        options: Qwen35TextOptions,
+    ) -> Result<Self, BackendError> {
+        Self::new_qwen35_decision_candidate(path, device_id, options, None)
+    }
+
+    /// Explicit private-trial route for B1 block OptionTokens. The prefix is
+    /// fixed for this backend and every request must carry that same prefix.
+    /// Public serving/factory admission remains disabled.
+    pub fn new_qwen35_block_decision_candidate(
+        path: &Path,
+        device_id: usize,
+        options: Qwen35TextOptions,
+        prefix: usize,
+    ) -> Result<Self, BackendError> {
+        if prefix == 0 || options.causal {
+            return Err(start(
+                "Block OneJev requires a nonzero prefix and noncausal full attention",
+            ));
+        }
+        Self::new_qwen35_decision_candidate(
+            path,
+            device_id,
+            options,
+            Some(Qwen35BlockMode::Fixed(prefix)),
+        )
+    }
+
+    /// B1 block OptionTokens route whose prefix is resolved from each actual
+    /// request. One backend retains one Work and one weight set across prefix
+    /// changes at the same token count; no prefix is cached and no sentinel
+    /// prefix exists. Normal admission remains B1-only.
+    pub fn new_qwen35_dynamic_block_decision_candidate(
+        path: &Path,
+        device_id: usize,
+        options: Qwen35TextOptions,
+    ) -> Result<Self, BackendError> {
+        if options.causal {
+            return Err(start(
+                "Dynamic block OneJev requires noncausal full attention",
+            ));
+        }
+        Self::new_qwen35_decision_candidate(
+            path,
+            device_id,
+            options,
+            Some(Qwen35BlockMode::Dynamic),
+        )
+    }
+
+    fn new_qwen35_decision_candidate(
+        path: &Path,
+        device_id: usize,
+        options: Qwen35TextOptions,
+        block_mode: Option<Qwen35BlockMode>,
+    ) -> Result<Self, BackendError> {
+        let declared_block =
+            infinity_v3_backend_core::block_attention_config::block_attention(path)
+                .map_err(start)?;
+        validate_decision_attention_mode(declared_block, block_mode.is_some())?;
+        let host = qwen35_model::Qwen35Weights::load(path)?;
+        host.config.validate_candidate()?;
+        if block_mode.is_some() {
+            qwen35_serving::validate_block_config(&host.config)?;
+        }
+        let config = host.config.clone();
+        if device_id >= device_count()? {
+            return Err(start("CUDA device ordinal is not visible"));
+        }
+        let context = Context::new(device_id).map_err(start)?;
+        let stream = context.new_stream().map_err(start)?;
+        let lt = LtProvider::new(context.clone(), stream.clone())?;
+        let model = match block_mode {
+            Some(Qwen35BlockMode::Fixed(prefix)) => {
+                qwen35_runtime::Qwen35Model::new_with_block_decision_head(
+                    host, &context, &stream, options, prefix, path,
+                )?
+            }
+            Some(Qwen35BlockMode::Dynamic) => {
+                qwen35_runtime::Qwen35Model::new_with_dynamic_block_decision_head(
+                    host, &context, &stream, options, path,
+                )?
+            }
+            None => qwen35_runtime::Qwen35Model::new_with_decision_head(
+                host,
+                &context,
+                &stream,
+                options,
+                Some(path),
+            )?,
+        };
+        let blas = Blas::new(context.clone(), stream.clone())?;
+        let io = HostIo::pool(&context)?;
+        Ok(Self {
+            config: match block_mode {
+                Some(Qwen35BlockMode::Fixed(prefix)) => {
+                    LoadedConfig::Qwen35Block(config.clone(), prefix)
+                }
+                Some(Qwen35BlockMode::Dynamic) => LoadedConfig::Qwen35DynamicBlock(config.clone()),
+                None => LoadedConfig::Qwen35(config.clone()),
+            },
+            output_width: config.hidden_size,
+            pool: Pool::LastToken,
+            readout: None,
+            attention_length_limit: None,
+            raw_output_supported: true,
+            engine: Arc::new(Mutex::new(Engine {
+                lt: ManuallyDrop::new(lt),
+                model: ManuallyDrop::new(ExecutableModel::Qwen35(Box::new(model))),
+                dense: ManuallyDrop::new(None),
+                plain_blas: ManuallyDrop::new(Some(blas)),
+                context,
+                stream: stream.clone(),
+                io: io.clone(),
+                workspace: None,
+                dense_workspace: None,
+                cached: cache::WorkspaceCache::new(),
+                retired: RetirementQueue::new(),
+                failed: false,
+            })),
+            stream,
+            io,
+        })
+    }
+
+    /// Explicit B1 fixed-prefix trial. This reuses the same whole backbone,
+    /// GPU readout and request-specific deferred host lease as the warm route.
+    pub fn submit_qwen35_block_decision_candidate(
+        &self,
+        batch: Batch,
+        requests: Vec<DecisionInput>,
+    ) -> Result<Inference<Vec<DecisionOutput>>, BackendError> {
+        if !matches!(
+            &self.config,
+            LoadedConfig::Qwen35Block(_, _) | LoadedConfig::Qwen35DynamicBlock(_)
+        ) {
+            return Err(infer(
+                "Block OneJev submission requires the explicit block constructor",
+            ));
+        }
+        self.submit_warm_decision(batch, requests)
+    }
+
+    /// Private async OneJev decision entry for Root qualification. The returned
+    /// deferred closure owns the request-specific host lease until the recorded
+    /// event drains, so held A/B requests never share one D2H host buffer.
+    #[allow(dead_code)]
+    pub(crate) fn submit_warm_decision(
+        &self,
+        batch: Batch,
+        requests: Vec<DecisionInput>,
+    ) -> Result<Inference<Vec<DecisionOutput>>, BackendError> {
+        if matches!(
+            &self.config,
+            LoadedConfig::Qwen35Block(_, _) | LoadedConfig::Qwen35DynamicBlock(_)
+        ) {
+            validate_block_single_sequence(&batch.cumulative_seq_lengths)?;
+        }
+        let request_prefix = match &self.config {
+            LoadedConfig::Qwen35(_) => {
+                if requests.iter().any(|request| {
+                    !matches!(
+                        request,
+                        DecisionInput::OptionTokens { .. } | DecisionInput::Warmup
+                    )
+                }) {
+                    return Err(infer(
+                        "Ordinary OneJev head requests cannot carry block-prefix metadata",
+                    ));
+                }
+                None
+            }
+            LoadedConfig::Qwen35Block(_, prefix) => {
+                validate_fixed_block_decision_requests(*prefix, &requests)?;
+                Some(*prefix)
+            }
+            LoadedConfig::Qwen35DynamicBlock(_) => Some(validate_dynamic_block_decision_requests(
+                batch.input_ids.len(),
+                &requests,
+            )?),
+            _ => return Err(infer("Warm OneJev decisions require the Qwen3.5 backend")),
+        };
+        if !batch.pooled_indices.is_empty() || !batch.raw_indices.is_empty() {
+            return Err(infer(
+                "Warm OneJev decisions require an unpooled packed decision batch",
+            ));
+        }
+        if requests.len() != batch.len() {
+            return Err(infer(
+                "Warm OneJev request count does not match the packed batch",
+            ));
+        }
+        let max_length = validate_loaded(&batch, &self.config)?;
+        let slot = self.io.acquire()?;
+        let mut lease = HostIoLease::new(
+            slot,
+            self.io.clone(),
+            self.engine.clone(),
+            self.stream.clone(),
+        );
+        let plan = {
+            let mut engine = match self.engine.lock() {
+                Ok(engine) => engine,
+                Err(_) => {
+                    self.io.close();
+                    return Err(BackendError::Unhealthy);
+                }
+            };
+            if engine.failed || self.io.poisoned() {
+                self.io.close();
+                return Err(BackendError::Unhealthy);
+            }
+            match engine.enqueue_warm_decision(
+                &batch,
+                max_length,
+                &requests,
+                request_prefix,
+                &mut lease,
+            ) {
+                Ok(plan) => plan,
+                Err(EnqueueError::PreflightRejected(error))
+                | Err(EnqueueError::Admission(error)) => return Err(error),
+                Err(EnqueueError::Rejected(error)) => {
+                    if engine.stream.synchronize().is_err() {
+                        engine.fail_closed();
+                        return Err(BackendError::Unhealthy);
+                    }
+                    return Err(error);
+                }
+                Err(EnqueueError::Fatal(error)) => {
+                    engine.fail_closed();
+                    return Err(error);
+                }
+            }
+        };
+        let elements = plan.total_rows();
+        Ok(Inference::Deferred(Box::new(move || {
+            lease.wait()?;
+            let output = lease.output(elements)?;
+            if output.iter().any(|value| !value.is_finite()) {
+                lease.poison();
+                return Err(infer("Invalid warm OneJev logits"));
+            }
+            warm_head::finish_warm_decision(&plan, output).map_err(|error| infer(error.to_string()))
+        })))
+    }
 }
 
 /// A successful early admission does not pin config.json while weights load.
@@ -4130,6 +4959,111 @@ impl OxideBackend {
 fn loaded_f16_config(host: &BertWeights) -> Result<BertConfig, BackendError> {
     host.config.validate_f16_minilm()?;
     Ok(host.config.clone())
+}
+
+/// Pure metadata admission before touching a cache or binding a CUDA context.
+fn warm_decision_output_elements(
+    vocab_rows: usize,
+    requests: &[DecisionInput],
+) -> Result<usize, BackendError> {
+    let total = requests
+        .iter()
+        .enumerate()
+        .try_fold(0usize, |sum, (index, request)| {
+            let count = decision_head::output_count_for(vocab_rows, index, request)
+                .map_err(|error| infer(error.to_string()))?;
+            if count == 0 || count > warm_head::MAX_OPTIONS_PER_REQUEST {
+                return Err(infer("Warm OneJev option count exceeds the qualified cap"));
+            }
+            sum.checked_add(count)
+                .ok_or_else(|| infer("Warm OneJev output count overflow"))
+        })?;
+    if total == 0 || total > warm_head::MAX_TOTAL_ROWS {
+        return Err(infer(
+            "Warm OneJev total row count exceeds the qualified cap",
+        ));
+    }
+    Ok(total)
+}
+
+/// The actual OneJev checkpoint marker controls the backbone attention mode.
+// Ordinary tei_forward text is valid even for a checkpoint carrying a
+// OneJev block marker. Only an explicitly requested block trial requires it.
+fn validate_qwen35_trial_mode(declared: bool, prefix: Option<usize>) -> Result<(), BackendError> {
+    if prefix.is_some() {
+        validate_decision_attention_mode(declared, true)
+    } else {
+        Ok(())
+    }
+}
+
+fn validate_decision_attention_mode(
+    declared_block: bool,
+    requested_block: bool,
+) -> Result<(), BackendError> {
+    if declared_block != requested_block {
+        return Err(start(
+            "OneJev checkpoint attention marker differs from the requested backbone mode",
+        ));
+    }
+    Ok(())
+}
+
+/// The serving queue marks ordinary raw/pooled selectors independently of the
+/// Decision protocol. As in Native, the Decision entry removes these selectors
+/// while preserving every physical token and sequence boundary.
+fn clear_decision_selectors(batch: &mut Batch) {
+    batch.pooled_indices.clear();
+    batch.raw_indices.clear();
+}
+
+/// B1 is the only admitted block shape. Check it before any host slot or
+/// engine mutation so multi-request batches fail with one typed error.
+fn validate_block_single_sequence(cumulative_seq_lengths: &[u32]) -> Result<(), BackendError> {
+    if cumulative_seq_lengths.len() != 2 {
+        return Err(infer(
+            "Block OneJev supports exactly one packed B1 sequence",
+        ));
+    }
+    Ok(())
+}
+
+/// Validate the actual block metadata before acquiring a host slot or enqueue.
+fn validate_fixed_block_decision_requests(
+    prefix: usize,
+    requests: &[DecisionInput],
+) -> Result<(), BackendError> {
+    match requests {
+        [DecisionInput::BlockOptionTokens { prefix_length, .. }]
+            if prefix != 0 && *prefix_length == prefix => Ok(()),
+        _ => Err(infer("B1 block OneJev requires one BlockOptionTokens request with the backend's exact fixed prefix")),
+    }
+}
+
+/// Pure dynamic-prefix admission. Exactly one B1 `BlockOptionTokens` request is
+/// required and its prefix must be nonzero and at most the actual token count.
+/// A model-owned `Warmup` probe uses the actual full sequence as its prefix and
+/// stays on the block route. Ordinary token options, empty and multi-request
+/// inputs are rejected without touching a host slot or the device.
+fn validate_dynamic_block_decision_requests(
+    tokens: usize,
+    requests: &[DecisionInput],
+) -> Result<usize, BackendError> {
+    crate::qwen35_block_layout::validate_block_token_count(tokens)?;
+    match requests {
+        [DecisionInput::Warmup] => Ok(tokens),
+        [DecisionInput::BlockOptionTokens { prefix_length, .. }] => {
+            if *prefix_length == 0 || *prefix_length > tokens {
+                return Err(infer(
+                    "dynamic block prefix must be nonzero and at most the actual token count",
+                ));
+            }
+            Ok(*prefix_length)
+        }
+        _ => Err(infer(
+            "B1 dynamic block OneJev requires exactly one BlockOptionTokens or Warmup request",
+        )),
+    }
 }
 
 fn encoder_model<E: UploadElement>(
@@ -4499,6 +5433,68 @@ fn validate_encoder_inputs(
     Ok(max_length)
 }
 
+fn validate_qwen35_batch(
+    batch: &Batch,
+    c: &qwen35_config::Qwen35Config,
+) -> Result<usize, BackendError> {
+    let fail = || infer("Invalid or unsupported packed Qwen3.5 text batch");
+    let tokens = batch.input_ids.len();
+    let sequences = batch
+        .cumulative_seq_lengths
+        .len()
+        .checked_sub(1)
+        .filter(|n| *n > 0)
+        .ok_or_else(fail)?;
+    if tokens == 0
+        || batch.cumulative_seq_lengths.first() != Some(&0)
+        || batch
+            .cumulative_seq_lengths
+            .last()
+            .copied()
+            .map(|n| n as usize)
+            != Some(tokens)
+        || batch.position_ids.len() != tokens
+        || batch.token_type_ids.len() != tokens
+        || batch.multimodal.iter().any(Option::is_some)
+        || batch.compact_input_ids.is_some()
+        || batch.compact_position_ids.is_some()
+        || batch.scatter_unfold.is_some()
+        || batch.fold_gather.is_some()
+    {
+        return Err(fail());
+    }
+    let mut max_length = 0;
+    for pair in batch.cumulative_seq_lengths.windows(2) {
+        let (Some(&start), Some(&end)) = (pair.first(), pair.get(1)) else {
+            return Err(fail());
+        };
+        let length = end.checked_sub(start).filter(|n| *n > 0).ok_or_else(fail)? as usize;
+        if length > c.max_position_embeddings {
+            return Err(fail());
+        }
+        max_length = max_length.max(length);
+    }
+    if sequences > 65535
+        || batch
+            .pooled_indices
+            .iter()
+            .chain(&batch.raw_indices)
+            .any(|&i| i as usize >= sequences)
+        || batch.input_ids.iter().any(|&i| i as usize >= c.vocab_size)
+        || batch
+            .position_ids
+            .iter()
+            .any(|&i| i as usize >= c.max_position_embeddings)
+    {
+        return Err(fail());
+    }
+    u32_size(product(tokens, c.q_width())?)?;
+    u32_size(product(tokens, c.kv_width())?)?;
+    u32_size(product(tokens, c.intermediate_size)?)?;
+    u32_size(product(tokens, c.hidden_size)?)?;
+    Ok(max_length)
+}
+
 fn validate_loaded(batch: &Batch, config: &LoadedConfig) -> Result<usize, BackendError> {
     match config {
         LoadedConfig::Encoder(config) => validate(batch, config),
@@ -4506,6 +5502,28 @@ fn validate_loaded(batch: &Batch, config: &LoadedConfig) -> Result<usize, Backen
             validate_encoder_inputs(batch, &config.geometry, EmbeddingInputs::WordsOnly)
         }
         LoadedConfig::Decoder(config) => validate_decoder(batch, config),
+        LoadedConfig::Qwen35(c) => validate_qwen35_batch(batch, c),
+        LoadedConfig::Qwen35Block(c, prefix) => {
+            crate::qwen35_block_layout::validate_block_token_count(batch.input_ids.len())?;
+            let max_length = validate_qwen35_batch(batch, c)?;
+            if batch.cumulative_seq_lengths.len() != 2 {
+                return Err(infer("Qwen3.5 block admits exactly one packed sequence"));
+            }
+            if *prefix == 0 || *prefix > batch.input_ids.len() {
+                return Err(infer(
+                    "Qwen3.5 block prefix must be nonzero and at most the actual token count",
+                ));
+            }
+            Ok(max_length)
+        }
+        LoadedConfig::Qwen35DynamicBlock(c) => {
+            crate::qwen35_block_layout::validate_block_token_count(batch.input_ids.len())?;
+            let max_length = validate_qwen35_batch(batch, c)?;
+            if batch.cumulative_seq_lengths.len() != 2 {
+                return Err(infer("Qwen3.5 block admits exactly one packed sequence"));
+            }
+            Ok(max_length)
+        }
     }
 }
 
@@ -4570,6 +5588,21 @@ fn validate_decoder(batch: &Batch, c: &DecoderConfig) -> Result<usize, BackendEr
 }
 
 impl Backend for OxideBackend {
+    fn decide(
+        &self,
+        batch: Batch,
+        inputs: Vec<DecisionInput>,
+    ) -> Result<Vec<DecisionOutput>, BackendError> {
+        self.submit_decide(batch, inputs)?.complete()
+    }
+
+    fn max_batch_size(&self) -> Option<usize> {
+        match &self.config {
+            LoadedConfig::Qwen35Block(_, _) | LoadedConfig::Qwen35DynamicBlock(_) => Some(1),
+            _ => None,
+        }
+    }
+
     fn health(&self) -> Result<(), BackendError> {
         if self.io.poisoned() {
             return Err(BackendError::Unhealthy);
@@ -4599,6 +5632,11 @@ impl Backend for OxideBackend {
         if self.readout.is_some() {
             return Err(infer(
                 "Classifier admission does not expose the ordinary embedding API",
+            ));
+        }
+        if matches!(&self.config, LoadedConfig::Qwen35DynamicBlock(_)) {
+            return Err(infer(
+                "Dynamic block OneJev requires the block decision submission path",
             ));
         }
         let max_length = validate_loaded(&batch, &self.config)?;
@@ -5884,7 +6922,7 @@ mod tests {
                 let engine = backend.engine.lock().unwrap();
                 let work = match engine.workspace.as_ref().unwrap() {
                     Workspace::Encoder(work) => work,
-                    Workspace::EncoderF16(_) | Workspace::Decoder(_) => {
+                    Workspace::EncoderF16(_) | Workspace::Decoder(_) | Workspace::Qwen35(_) => {
                         panic!("MiniLM must use the BF16 encoder workspace")
                     }
                 };
@@ -5901,7 +6939,7 @@ mod tests {
                 assert!(!engine.io.poisoned());
                 let work = match engine.workspace.as_ref().unwrap() {
                     Workspace::Encoder(work) => work,
-                    Workspace::EncoderF16(_) | Workspace::Decoder(_) => {
+                    Workspace::EncoderF16(_) | Workspace::Decoder(_) | Workspace::Qwen35(_) => {
                         panic!("MiniLM must use the BF16 encoder workspace")
                     }
                 };
@@ -5914,7 +6952,8 @@ mod tests {
                     ExecutableModel::Encoder(model) => model,
                     ExecutableModel::EncoderF16(_)
                     | ExecutableModel::Decoder(_)
-                    | ExecutableModel::Modern(_) => panic!("MiniLM must use BF16 encoder plans"),
+                    | ExecutableModel::Modern(_)
+                    | ExecutableModel::Qwen35(_) => panic!("MiniLM must use BF16 encoder plans"),
                 };
                 assert_eq!(model.plans.rows, None);
                 assert_eq!(model.plans.qkv.logical_rows(), b.input_ids.len() as i32);
@@ -6068,7 +7107,11 @@ mod tests {
         let large_key = work_key(&large).unwrap();
         let encoder_config = match &reference.config {
             LoadedConfig::Encoder(config) => config,
-            LoadedConfig::Decoder(_) | LoadedConfig::Modern(_) => {
+            LoadedConfig::Decoder(_)
+            | LoadedConfig::Modern(_)
+            | LoadedConfig::Qwen35(_)
+            | LoadedConfig::Qwen35Block(_, _)
+            | LoadedConfig::Qwen35DynamicBlock(_) => {
                 panic!("this test requires an encoder checkpoint")
             }
         };
@@ -6485,7 +7528,11 @@ mod tests {
         let oversized_length = limit.checked_add(1).unwrap();
         let vocab_size = match &backend.config {
             LoadedConfig::Encoder(config) => config.vocab_size,
-            LoadedConfig::Decoder(_) | LoadedConfig::Modern(_) => {
+            LoadedConfig::Decoder(_)
+            | LoadedConfig::Modern(_)
+            | LoadedConfig::Qwen35(_)
+            | LoadedConfig::Qwen35Block(_, _)
+            | LoadedConfig::Qwen35DynamicBlock(_) => {
                 panic!("this test requires an encoder checkpoint")
             }
         };
@@ -6495,7 +7542,11 @@ mod tests {
                 config.max_position_embeddings =
                     config.max_position_embeddings.max(oversized_length);
             }
-            LoadedConfig::Decoder(_) | LoadedConfig::Modern(_) => unreachable!(),
+            LoadedConfig::Decoder(_)
+            | LoadedConfig::Modern(_)
+            | LoadedConfig::Qwen35(_)
+            | LoadedConfig::Qwen35Block(_, _)
+            | LoadedConfig::Qwen35DynamicBlock(_) => unreachable!(),
         }
         let boundary = u32::try_from(oversized_length).unwrap();
         let oversized = Batch {
@@ -6547,7 +7598,11 @@ mod tests {
                 assert_eq!(config.head_dim, 64);
                 assert!(config.is_causal);
             }
-            LoadedConfig::Encoder(_) | LoadedConfig::Modern(_) => {
+            LoadedConfig::Encoder(_)
+            | LoadedConfig::Modern(_)
+            | LoadedConfig::Qwen35(_)
+            | LoadedConfig::Qwen35Block(_, _)
+            | LoadedConfig::Qwen35DynamicBlock(_) => {
                 panic!("TinyLlama must load as a decoder")
             }
         }
@@ -6773,7 +7828,11 @@ mod tests {
                     config.max_position_embeddings,
                 )
             }
-            LoadedConfig::Encoder(_) | LoadedConfig::Modern(_) => {
+            LoadedConfig::Encoder(_)
+            | LoadedConfig::Modern(_)
+            | LoadedConfig::Qwen35(_)
+            | LoadedConfig::Qwen35Block(_, _)
+            | LoadedConfig::Qwen35DynamicBlock(_) => {
                 panic!("Qwen3 must load as a decoder")
             }
         };
@@ -7099,7 +8158,8 @@ mod tests {
             ExecutableModel::Encoder(model) => model,
             ExecutableModel::EncoderF16(_)
             | ExecutableModel::Modern(_)
-            | ExecutableModel::Decoder(_) => {
+            | ExecutableModel::Decoder(_)
+            | ExecutableModel::Qwen35(_) => {
                 panic!("GTE must use encoder plans")
             }
         };
@@ -7214,7 +8274,11 @@ mod tests {
         assert_eq!(
             down_policy(match &reference.config {
                 LoadedConfig::Encoder(config) => config,
-                LoadedConfig::Modern(_) | LoadedConfig::Decoder(_) => {
+                LoadedConfig::Modern(_)
+                | LoadedConfig::Decoder(_)
+                | LoadedConfig::Qwen35(_)
+                | LoadedConfig::Qwen35Block(_, _)
+                | LoadedConfig::Qwen35DynamicBlock(_) => {
                     panic!("GTE must use the encoder executor")
                 }
             }),
@@ -7264,7 +8328,7 @@ mod tests {
             );
             let work = match engine.workspace.as_ref().unwrap() {
                 Workspace::Encoder(work) => work,
-                Workspace::EncoderF16(_) | Workspace::Decoder(_) => {
+                Workspace::EncoderF16(_) | Workspace::Decoder(_) | Workspace::Qwen35(_) => {
                     panic!("GTE must use the encoder workspace")
                 }
             };
@@ -7787,3 +8851,97 @@ mod jina_alibi;
 
 #[cfg(test)]
 mod jina_code_loader_tests;
+
+#[cfg(test)]
+mod qwen35_main_contract_tests {
+    use super::*;
+    #[test]
+    fn explicit_block_trial_requires_marker_but_ordinary_text_remains_valid() {
+        assert!(validate_qwen35_trial_mode(false, Some(3)).is_err());
+        assert!(validate_qwen35_trial_mode(true, Some(3)).is_ok());
+        assert!(validate_qwen35_trial_mode(true, None).is_ok());
+        assert!(validate_qwen35_trial_mode(false, None).is_ok());
+    }
+
+    fn selector_batch() -> Batch {
+        Batch {
+            multimodal: vec![],
+            input_ids: vec![1],
+            token_type_ids: vec![0],
+            position_ids: vec![0],
+            cumulative_seq_lengths: vec![0, 1],
+            max_length: 1,
+            pooled_indices: vec![0],
+            raw_indices: vec![0],
+            compact_input_ids: None,
+            compact_position_ids: None,
+            scatter_unfold: None,
+            fold_gather: None,
+            tokens: vec![],
+            offsets: vec![],
+        }
+    }
+
+    #[test]
+    fn serving_decisions_remove_selectors_and_preserve_the_physical_batch() {
+        let mut batch = selector_batch();
+        let ids = batch.input_ids.clone();
+        let positions = batch.position_ids.clone();
+        let boundaries = batch.cumulative_seq_lengths.clone();
+        clear_decision_selectors(&mut batch);
+        assert!(batch.pooled_indices.is_empty());
+        assert!(batch.raw_indices.is_empty());
+        assert_eq!(batch.input_ids, ids);
+        assert_eq!(batch.position_ids, positions);
+        assert_eq!(batch.cumulative_seq_lengths, boundaries);
+    }
+
+    #[test]
+    fn block_batches_are_single_sequence_before_admission() {
+        assert!(validate_block_single_sequence(&[0, 7]).is_ok());
+        assert!(validate_block_single_sequence(&[0, 1, 7]).is_err());
+        assert!(validate_block_single_sequence(&[]).is_err());
+    }
+
+    #[test]
+    fn dynamic_block_accepts_actual_block_and_full_prefix_warmup_only() {
+        assert_eq!(
+            validate_dynamic_block_decision_requests(7, &[DecisionInput::Warmup]).unwrap(),
+            7
+        );
+        assert_eq!(
+            validate_dynamic_block_decision_requests(
+                7,
+                &[DecisionInput::BlockOptionTokens {
+                    token_ids: vec![3, 4],
+                    prefix_length: 5,
+                }],
+            )
+            .unwrap(),
+            5
+        );
+        for requests in [
+            vec![DecisionInput::OptionTokens {
+                token_ids: vec![3, 4],
+            }],
+            vec![DecisionInput::BlockOptionTokens {
+                token_ids: vec![3],
+                prefix_length: 0,
+            }],
+            vec![DecisionInput::BlockOptionTokens {
+                token_ids: vec![3],
+                prefix_length: 8,
+            }],
+            vec![
+                DecisionInput::BlockOptionTokens {
+                    token_ids: vec![3],
+                    prefix_length: 5,
+                },
+                DecisionInput::Warmup,
+            ],
+            vec![],
+        ] {
+            assert!(validate_dynamic_block_decision_requests(7, &requests).is_err());
+        }
+    }
+}

@@ -26,6 +26,10 @@ mod norm1024;
 mod norm1024_exact_vector;
 mod norm2048;
 mod norm2048_vector;
+mod qwen35_norm;
+mod qwen35_attention;
+mod qwen35_copy;
+mod packed_mean_bf16;
 mod norm384;
 mod norm512;
 mod norm768;
@@ -2080,6 +2084,176 @@ mod kernels {
     ) {
         unsafe { crate::gemma2::mean_pool_bf16(input, cu_seqlens, selected, out, count, width) };
     }
+    /// Native model-dtype BF16 mean, widened to F32.
+    /// Grid=(count,ceil(hidden/8),1), block=256.
+    #[kernel]
+    pub unsafe fn infinity_mean_pool_bf16_native(
+        input: *const u16,
+        cu_seqlens: *const u32,
+        selected: *const u32,
+        out: *mut f32,
+        count: u32,
+        hidden: u32,
+    ) {
+        unsafe {
+            crate::packed_mean_bf16::packed_mean_pool_bf16(
+                input, cu_seqlens, selected, out, count, hidden,
+            )
+        };
+    }
+    /// Exact Qwen3.5 offset RMS, one CTA per flattened head row.
+    #[kernel]
+    pub unsafe fn infinity_qwen35_norm_vector_bf16(
+        x: *const u16,
+        gamma: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        heads: u32,
+        stride0: u64,
+        stride1: u64,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::qwen35_norm::norm_vector(
+                x, gamma, out, rows, width, heads, stride0, stride1, eps,
+            )
+        };
+    }
+
+    /// Exact rounded-residual Qwen3.5 offset RMS, one CTA per row.
+    #[kernel]
+    pub unsafe fn infinity_qwen35_residual_norm_vector_bf16(
+        x: *const u16,
+        addition: *const u16,
+        gamma: *const u16,
+        out: *mut u16,
+        updated: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::qwen35_norm::residual_norm_vector(
+                x, addition, gamma, out, updated, rows, width, eps,
+            )
+        };
+    }
+
+    /// Exact Qwen3.5 offset RMS, one CTA per flattened head row.
+    #[kernel]
+    pub unsafe fn infinity_qwen35_norm_scalar_bf16(
+        x: *const u16,
+        gamma: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        heads: u32,
+        stride0: u64,
+        stride1: u64,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::qwen35_norm::norm_scalar(
+                x, gamma, out, rows, width, heads, stride0, stride1, eps,
+            )
+        };
+    }
+
+    /// Exact rounded-residual Qwen3.5 offset RMS, one CTA per row.
+    #[kernel]
+    pub unsafe fn infinity_qwen35_residual_norm_scalar_bf16(
+        x: *const u16,
+        addition: *const u16,
+        gamma: *const u16,
+        out: *mut u16,
+        updated: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::qwen35_norm::residual_norm_scalar(
+                x, addition, gamma, out, updated, rows, width, eps,
+            )
+        };
+    }
+
+    /// Qwen3.5 staged partial RoPE; four head rows per 128-thread CTA.
+    #[kernel]
+    pub unsafe fn infinity_qwen35_partial_rope_256_bf16(
+        q: *mut u16,
+        k: *mut u16,
+        cosine: *const f32,
+        sine: *const f32,
+        positions: *const u32,
+        tokens: u32,
+        qheads: u32,
+        kvheads: u32,
+        rotary: u32,
+        qstride: u64,
+        kstride: u64,
+        table_stride: u32,
+    ) {
+        unsafe {
+            crate::qwen35_attention::partial_rope_256_bf16(
+                q,
+                k,
+                cosine,
+                sine,
+                positions,
+                tokens,
+                qheads,
+                kvheads,
+                rotary,
+                qstride,
+                kstride,
+                table_stride,
+            )
+        };
+    }
+
+    /// Dense BF16 output gate; grid=ceil(tokens*heads*256/256), block256.
+    #[kernel]
+    pub unsafe fn infinity_qwen35_attention_gate_bf16(
+        attention: *const u16,
+        query_gate: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        heads: u32,
+        gate_stride: u64,
+    ) {
+        unsafe {
+            crate::qwen35_attention::attention_gate_bf16(
+                attention,
+                query_gate,
+                out,
+                tokens,
+                heads,
+                gate_stride,
+            )
+        };
+    }
+
+    /// Cold BF16-rounded RoPE coefficients; grid=ceil(positions*pairs/256), block256.
+    #[kernel]
+    pub unsafe fn infinity_qwen35_rope_tables_bf16(
+        inverse: *const f32,
+        cosine: *mut f32,
+        sine: *mut f32,
+        positions: u32,
+        pairs: u32,
+    ) {
+        unsafe {
+            crate::qwen35_attention::rope_tables_bf16(inverse, cosine, sine, positions, pairs)
+        };
+    }
+    /// Exact bit-copy concatenation, grid=ceil(T*2*heads/256), block256.
+    #[kernel]
+    pub unsafe fn infinity_qwen35_join_ab_bf16(a: *const u16, b: *const u16, out: *mut u16, tokens: u32, heads: u32) {
+        unsafe { crate::qwen35_copy::join_ab(a, b, out, tokens, heads) };
+    }
+
 }
 
 fn main() {}

@@ -1,0 +1,46 @@
+Infinity Qwen3.5 dense text and OneJev additions
+
+Original Infinity Rust host ownership/executor/layout code and new original
+port contributions use Infinity Restricted MIT License 1.0 in the repository
+LICENSE. The inherited grants below remain unchanged; this is not a relicensing
+of the inherited material.
+
+The Qwen3.5 norm and attention helpers in device/src/qwen35_norm.rs and
+qwen35_attention.rs retain Candle-derived portions under MIT, including the
+complete original Hugging Face Team copyright and permission notices inline.
+The native BF16 packed mean port in device/src/packed_mean_bf16.rs follows the
+retained Candle packed_mean_pool kernel; its origin is recorded in that file
+and backends/libtorch/cpp/vendor/candle_kernels/PROVENANCE.md.
+
+Candle inherited notice:
+Copyright The Hugging Face Team. All rights reserved.
+
+Permission is hereby granted, free of charge, to any
+person obtaining a copy of this software and associated
+documentation files (the "Software"), to deal in the
+Software without restriction, including without
+limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of
+the Software, and to permit persons to whom the Software
+is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice
+shall be included in all copies or substantial portions
+of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+
+The CUDA GDN raw and packing auxiliary source notices and inherited license
+remain separately preserved in device/native_gdn/{NOTICE,LICENSE.candle-MIT}
+and device/native_gdn_aot/NOTICE. CUDA Rust retains the existing Apache-2.0
+notice in the component NOTICE and workspace LICENSES/Apache-2.0.txt.

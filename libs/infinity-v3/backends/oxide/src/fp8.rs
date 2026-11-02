@@ -11,7 +11,7 @@ use crate::{
     math::MathError,
     tensor::{E4M3Fn, Element, Layout, ScalarFormat, TensorError, TensorMut, TensorRef, F32},
 };
-use cuda_core::{DeviceBuffer, DriverError, Stream};
+use cuda_core::{DeviceBuffer, DeviceBufferView, DriverError, Stream};
 use std::{fmt, marker::PhantomData, sync::Arc};
 
 #[derive(Debug)]
@@ -101,6 +101,13 @@ impl QuantizedRowStorage {
     /// The same initialization, ordering and retention obligations as
     /// `assume_quantized` apply to these borrowed logical rows.
     pub unsafe fn initialized_view(&self, rows: usize) -> Result<QuantizedRowsRef<'_>, Fp8Error> {
+        self.planned_view(rows)
+    }
+
+    /// Borrow the checked logical geometry before data is written. Only plan
+    /// construction and descriptor layout validation may consume this view;
+    /// no launch may read the rows until the ordered quantizer completed.
+    pub fn planned_view(&self, rows: usize) -> Result<QuantizedRowsRef<'_>, Fp8Error> {
         prefix(self.capacity, rows)?;
         Ok(QuantizedRowsRef {
             values: TensorRef::new(&self.values, row_layout(rows, self.width)?)?,
@@ -223,6 +230,19 @@ impl<E: Element> Fp8LinearPlan<E> {
         weight: &QuantizedRowsRef<'_>,
         output: &mut DeviceBuffer<E::Storage>,
     ) -> Result<Fp8Arguments, MathError> {
+        self.bind_at(input, weight, output, 0)
+    }
+
+    /// Bind an output that starts at an element offset inside an existing
+    /// retained phase slab. The offset is checked by `TensorMut::with_offset`;
+    /// no driver call or allocation is introduced.
+    pub fn bind_at(
+        &self,
+        input: &QuantizedRowsRef<'_>,
+        weight: &QuantizedRowsRef<'_>,
+        output: &mut DeviceBuffer<E::Storage>,
+        output_offset: usize,
+    ) -> Result<Fp8Arguments, MathError> {
         if input.values.layout() != &self.input || weight.values.layout() != &self.weight {
             return Err(MathError::UnsupportedLayout);
         }
@@ -237,7 +257,8 @@ impl<E: Element> Fp8LinearPlan<E> {
                 return Err(MathError::ContextMismatch);
             }
         }
-        let output = TensorMut::<E, 2>::new(output, self.output).map_err(MathError::Tensor)?;
+        let output = TensorMut::<E, 2>::with_offset(output, output_offset, self.output)
+            .map_err(MathError::Tensor)?;
         Ok(Fp8Arguments {
             input: input.values.device_ptr(),
             weight: weight.values.device_ptr(),
@@ -419,6 +440,29 @@ impl Fp8Provider {
         scratch: Option<&mut DeviceBuffer<f32>>,
         bias: Option<&DeviceBuffer<E::Storage>>,
     ) -> Result<(), BackendError> {
+        unsafe { self.project_bound_at(plan, methods, input, weight, output, 0, scratch, bias) }
+    }
+
+    /// Prepared projection writing at a checked element offset inside a
+    /// retained phase slab. The physical owner, context checks and completion
+    /// contract are identical to [`Self::project_bound`].
+    ///
+    /// # Safety
+    /// Same contract as [`Self::project_bound`]; `output_offset` is checked by
+    /// `Fp8LinearPlan::bind_at` and must address initialized, nonoverlapping
+    /// model-dtype storage of at least `rows * output_width` elements.
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn project_bound_at<E: Element>(
+        &mut self,
+        plan: &mut PreparedFp8<E>,
+        methods: &Fp8Methods<E>,
+        input: &QuantizedRowsRef<'_>,
+        weight: &QuantizedRowsRef<'_>,
+        output: &mut DeviceBuffer<E::Storage>,
+        output_offset: usize,
+        scratch: Option<&mut DeviceBuffer<f32>>,
+        bias: Option<&DeviceBuffer<E::Storage>>,
+    ) -> Result<(), BackendError> {
         if self.failed {
             return Err(crate::infer("FP8 provider is failed"));
         }
@@ -428,7 +472,7 @@ impl Fp8Provider {
         }
         let args = plan
             .metadata
-            .bind(input, weight, output)
+            .bind_at(input, weight, output, output_offset)
             .map_err(crate::infer)?;
         let expected = Fp8Geometry {
             rows: args.rows,
@@ -585,6 +629,25 @@ impl<E: Element> Fp8Methods<E> {
         destination: &mut QuantizedRowStorage,
         rows: usize,
     ) -> Result<(), BackendError> {
+        let view = source.slice(0..source.len()).map_err(crate::infer)?;
+        unsafe { self.quantize_view_bound(stream, &view, destination, rows) }
+    }
+
+    /// Enqueue the same native quantizer from a checked borrowed view, so
+    /// phase-slab subranges and owned cache views reuse the identical ABI
+    /// without copying or manufacturing a second allocation.
+    ///
+    /// # Safety
+    /// Identical to [`Self::quantize_bound`]; the view must expose a contiguous
+    /// `[rows, destination.width()]` prefix and retain its storage through the
+    /// ordered stream completion.
+    pub unsafe fn quantize_view_bound(
+        &self,
+        stream: &Stream,
+        source: &DeviceBufferView<'_, E::Storage>,
+        destination: &mut QuantizedRowStorage,
+        rows: usize,
+    ) -> Result<(), BackendError> {
         prefix(destination.capacity, rows).map_err(crate::infer)?;
         if !Arc::ptr_eq(&self.context, stream.context())
             || !Arc::ptr_eq(&self.context, source.context())
@@ -592,13 +655,19 @@ impl<E: Element> Fp8Methods<E> {
         {
             return Err(crate::infer("FP8 quantization context differs"));
         }
-        let layout = row_layout(rows, destination.width).map_err(crate::infer)?;
-        let source = TensorRef::<E, 2>::new(source, layout).map_err(crate::infer)?;
+        let elements = rows
+            .checked_mul(destination.width)
+            .ok_or_else(|| crate::infer("FP8 quantization source extent overflows"))?;
+        if elements > source.len() {
+            return Err(crate::infer(
+                "FP8 quantization source view is smaller than the requested rows",
+            ));
+        }
         if rows == 0 {
             return Ok(());
         }
         let (mut src, mut dst, mut scale, mut m, mut k) = (
-            source.device_ptr(),
+            source.cu_deviceptr(),
             destination.values.cu_deviceptr(),
             destination.scales.cu_deviceptr(),
             u32::try_from(rows).map_err(crate::infer)?,

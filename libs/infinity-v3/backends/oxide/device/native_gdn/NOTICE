@@ -1,0 +1,28 @@
+Infinity oxide bounded Qwen3.5 GDN raw CUDA module
+
+Covered original host and extraction contributions are licensed under the
+Infinity Restricted MIT License 1.0, reproduced in the workspace LICENSE.
+This is not standard MIT or OSI open source.
+
+The four unchanged entrypoints qwen35_conv_bf16, qwen35_gdn_prepare,
+qwen35_gdn_recurrent, and qwen35_gdn_norm are copied byte-identically from the
+retained Candle source:
+
+  libs/infinity-v3/backends/libtorch/cpp/vendor/candle_kernels/kernels/qwen35_gdn.cu
+  Candle source revision d9073968443369d57cdb378db2e0ff957c5ec027
+  SPDX-License-Identifier: MIT
+  Copyright (c) Candle contributors
+
+Their complete MIT permission notice is retained in LICENSE.candle-MIT in this
+directory and in the header of qwen35_gdn_native.cu.
+
+The packed_conv_vector and qwen35_gdn_cached bodies are extracted from:
+
+  libs/infinity-v3/backends/libtorch/cpp/kernels/qwen35_kernels.cu
+  Infinity source revision c4c90b9
+  SPDX-License-Identifier: MIT
+
+Only the launchable symbol spelling and device-inline body extraction changed;
+arithmetic, FMA and rounding order, packed row strides, history/source mapping,
+initial-state indexing, and sequence-indexed final-state writes are preserved.
+No Torch, C10, ATen, Python, Triton, or FlashInfer runtime is linked.
