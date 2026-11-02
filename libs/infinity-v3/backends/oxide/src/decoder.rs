@@ -15,7 +15,7 @@
 
 use super::{
     arg, blocks, fa4, infer, launch, launch_threads, product, stage_batch, start, u32_size,
-    upload_input, HostIoLease, LtPlan, LtProvider, WorkKey,
+    upload_input, HostIoLease, InputLayout, LtPlan, LtProvider, WorkKey,
 };
 use crate::{
     cublas::Blas,
@@ -831,21 +831,17 @@ impl DecoderModel {
         let full_silu_grid = blocks(product(tokens, g.silu_groups_per_row)?)?;
         let readout_silu_grid = blocks(product(sequences, g.silu_groups_per_row)?)?;
         let k = &self.kernels;
+        let layout = InputLayout::new(
+            tokens,
+            batch.cumulative_seq_lengths.len(),
+            batch.pooled_indices.len(),
+        )?
+        .with_trailer(super::output::raw_rows(batch)?)?;
         let base = work.input.cu_deviceptr();
-        let id_bytes = u64::try_from(product(tokens, 4)?).map_err(infer)?;
-        let type_bytes = u64::try_from(product(tokens, 12)?).map_err(infer)?;
-        let mut ids = base;
-        let positions = base
-            .checked_add(id_bytes)
-            .ok_or_else(|| infer("decoder position address overflow"))?;
-        let boundaries = base
-            .checked_add(type_bytes)
-            .ok_or_else(|| infer("decoder boundary address overflow"))?;
-        let selected = boundaries
-            .checked_add(
-                u64::try_from(product(batch.cumulative_seq_lengths.len(), 4)?).map_err(infer)?,
-            )
-            .ok_or_else(|| infer("decoder selection address overflow"))?;
+        let mut ids = layout.ids().address(base)?;
+        let positions = layout.positions().address(base)?;
+        let boundaries = layout.boundaries().address(base)?;
+        let selected = layout.selections().address(base)?;
         let residual = work.residual.cu_deviceptr();
         let residual_next = work.residual_next.cu_deviceptr();
         let branch = work.branch.cu_deviceptr();
@@ -1492,7 +1488,7 @@ impl DecoderModel {
                     stream,
                     normalized,
                     work.pooled.cu_deviceptr(),
-                    selected,
+                    layout.trailer().address(base)?,
                     batch,
                     h,
                 )?;
@@ -1706,13 +1702,14 @@ impl DecoderWork {
         if tokens > self.tokens || sequences > self.sequences || selections > self.selections {
             return Err(infer("Decoder request exceeds retained arena capacity"));
         }
-        let input = super::input_elements(
+        let input = InputLayout::new(
             tokens,
             sequences
                 .checked_add(1)
                 .ok_or_else(|| infer("Decoder boundary count overflow"))?,
             selections,
-        )?;
+        )?
+        .words();
         if input > staging::input_capacity(self.key())? {
             return Err(infer("Decoder metadata exceeds retained arena"));
         }

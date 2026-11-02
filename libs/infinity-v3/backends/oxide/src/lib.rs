@@ -19,6 +19,7 @@ mod fa4_alibi;
 mod fa4_deberta;
 pub mod fp8;
 pub mod gemma2_math;
+mod input_layout;
 mod jina_code_encoder_model;
 #[cfg(test)]
 #[path = "jina_code_host_tests.rs"]
@@ -65,6 +66,7 @@ use infinity_v3_backend_core::{
     result_memory, Backend, BackendError, Batch, Embedding, Embeddings, Inference, ModelType, Pool,
     Predictions, TokenPredictions,
 };
+pub(crate) use input_layout::InputLayout;
 use jina_code_encoder_model::{JinaCodeLayerWeights, JinaCodeWeights};
 use jina_encoder_model::{JinaLayerWeights, JinaWeights};
 use lt::{LtPlan, LtProvider, ShapeError, NATIVE_DEFAULT_SEED_ROWS};
@@ -1848,16 +1850,6 @@ fn needs_exclusive_staging(workspace_bytes: usize, pinned_bytes: usize) -> bool 
         || (workspace_bytes <= cache::BYTE_BUDGET
             && workspace_bytes.saturating_add(pinned_bytes) > cache::BYTE_BUDGET)
 }
-fn input_elements(
-    tokens: usize,
-    boundaries: usize,
-    selected: usize,
-) -> Result<usize, BackendError> {
-    product(tokens, 3)?
-        .checked_add(boundaries)
-        .and_then(|n| n.checked_add(selected))
-        .ok_or_else(|| infer("Input staging layout overflow"))
-}
 #[cfg(test)]
 fn pack_input(
     out: &mut [u32],
@@ -1890,29 +1882,27 @@ fn pack_input_with_position_offset(
     selected: &[u32],
     position_offset: u32,
 ) -> Result<(), BackendError> {
-    let layout = product(tokens, 3)?
-        .checked_add(boundaries.len())
-        .and_then(|n| n.checked_add(selected.len()))
-        .ok_or_else(|| infer("Input staging layout overflow"))?;
-    if out.len() != layout
+    let layout = InputLayout::new(tokens, boundaries.len(), selected.len())?;
+    let tokens = layout.tokens();
+    if out.len() != layout.words()
         || input_ids.len() > tokens
         || position_ids.len() > tokens
         || token_type_ids.len() > tokens
     {
         return Err(infer("Invalid input staging layout"));
     }
-    let mut rest = out;
-    for (section, source) in [input_ids, position_ids, token_type_ids]
-        .into_iter()
-        .enumerate()
-    {
-        let (row, tail) = rest
-            .split_at_mut_checked(tokens)
+    for (range, source, add_position_offset) in [
+        (layout.ids_range(), input_ids, false),
+        (layout.positions_range(), position_ids, true),
+        (layout.types_range(), token_type_ids, false),
+    ] {
+        let row = out
+            .get_mut(range)
             .ok_or_else(|| infer("Invalid input staging layout"))?;
         let (head, padding) = row
             .split_at_mut_checked(source.len())
             .ok_or_else(|| infer("Invalid input staging layout"))?;
-        if section == 1 && position_offset != 0 {
+        if add_position_offset && position_offset != 0 {
             for (out, value) in head.iter_mut().zip(source) {
                 *out = value
                     .checked_add(position_offset)
@@ -1922,16 +1912,13 @@ fn pack_input_with_position_offset(
             head.copy_from_slice(source);
         }
         padding.fill(0);
-        rest = tail;
     }
-    let (boundary_rows, selection_rows) = rest
-        .split_at_mut_checked(boundaries.len())
-        .ok_or_else(|| infer("Invalid input staging layout"))?;
-    if selection_rows.len() != selected.len() {
-        return Err(infer("Invalid input staging layout"));
-    }
-    boundary_rows.copy_from_slice(boundaries);
-    selection_rows.copy_from_slice(selected);
+    out.get_mut(layout.boundaries_range())
+        .ok_or_else(|| infer("Invalid input staging layout"))?
+        .copy_from_slice(boundaries);
+    out.get_mut(layout.selections_range())
+        .ok_or_else(|| infer("Invalid input staging layout"))?
+        .copy_from_slice(selected);
     Ok(())
 }
 
@@ -1951,8 +1938,13 @@ fn stage_batch_with_position_offset(
     lease: &mut HostIoLease,
     position_offset: u32,
 ) -> Result<(usize, usize), BackendError> {
-    let rows = output::rows(b)?;
-    let elements = input_elements(b.input_ids.len(), b.cumulative_seq_lengths.len(), rows)?;
+    let layout = InputLayout::new(
+        b.input_ids.len(),
+        b.cumulative_seq_lengths.len(),
+        b.pooled_indices.len(),
+    )?
+    .with_trailer(output::raw_rows(b)?)?;
+    let elements = layout.words();
     // The backbone keeps every selected row at its native width, while the
     // host payload uses the narrower/wider Dense width for the pooled prefix.
     let backbone = geometry.backbone_elements(b)?;
@@ -1965,13 +1957,8 @@ fn stage_batch_with_position_offset(
         .as_mut_slice()
         .get_mut(..elements)
         .ok_or_else(|| infer("Input exceeds retained host I/O arena"))?;
-    let pooled_metadata = input_elements(
-        b.input_ids.len(),
-        b.cumulative_seq_lengths.len(),
-        b.pooled_indices.len(),
-    )?;
     let (pooled_input, raw_input) = host
-        .split_at_mut_checked(pooled_metadata)
+        .split_at_mut_checked(layout.packed_words())
         .ok_or_else(|| infer("Invalid raw selection staging layout"))?;
     pack_input_with_position_offset(
         pooled_input,
@@ -2056,7 +2043,7 @@ fn enqueue_raw_output(
     stream: &Stream,
     input: u64,
     output: u64,
-    selected: u64,
+    raw_selected: u64,
     batch: &Batch,
     hidden: usize,
 ) -> Result<(), BackendError> {
@@ -2069,9 +2056,7 @@ fn enqueue_raw_output(
                 .map_err(infer)?,
         )
         .ok_or_else(|| infer("Raw output address overflow"))?;
-    let mut selected = selected
-        .checked_add(u64::try_from(product(batch.pooled_indices.len(), 4)?).map_err(infer)?)
-        .ok_or_else(|| infer("Raw selection address overflow"))?;
+    let mut selected = raw_selected;
     launch(
         function,
         stream,
@@ -3035,7 +3020,12 @@ impl Engine {
                     let mode = readout_mode.ok_or_else(|| {
                         infer("Classifier head requires a call-selected readout mode")
                     })?;
-                    let boundaries = w.input.cu_deviceptr() + product(tokens, 12)? as u64;
+                    let layout = InputLayout::new(
+                        tokens,
+                        b.cumulative_seq_lengths.len(),
+                        b.pooled_indices.len(),
+                    )?;
+                    let boundaries = layout.boundaries().address(w.input.cu_deviceptr())?;
                     let (source, scratch) = w.classifier_parts()?;
                     // SAFETY: pre-enqueue preparation fixed all pointers; the bound context and owner survive stream drain.
                     unsafe {
@@ -3112,14 +3102,20 @@ fn enqueue_encoder<E: UploadElement>(
         .qkv_zero_bias
         .as_ref()
         .map_or(0, DeviceBuffer::cu_deviceptr);
+    let layout = InputLayout::new(
+        tokens,
+        b.cumulative_seq_lengths.len(),
+        b.pooled_indices.len(),
+    )?
+    .with_trailer(output::raw_rows(b)?)?;
     let base = w.input.cu_deviceptr();
     let (mut ids, mut pos, mut types) = (
-        base,
-        base + product(tokens, 4)? as u64,
-        base + product(tokens, 8)? as u64,
+        layout.ids().address(base)?,
+        layout.positions().address(base)?,
+        layout.types().address(base)?,
     );
-    let boundaries = base + product(tokens, 12)? as u64;
-    let selected = boundaries + product(b.cumulative_seq_lengths.len(), 4)? as u64;
+    let boundaries = layout.boundaries().address(base)?;
+    let selected = layout.selections().address(base)?;
     let (mut word, mut position, mut type_weight) = (
         weights.word.cu_deviceptr(),
         weights
@@ -3752,7 +3748,15 @@ fn enqueue_encoder<E: UploadElement>(
             .raw_cast
             .as_ref()
             .ok_or_else(|| infer("Raw output kernel is unavailable"))?;
-        enqueue_raw_output(function, s, x, w.pooled.cu_deviceptr(), selected, b, h)?;
+        enqueue_raw_output(
+            function,
+            s,
+            x,
+            w.pooled.cu_deviceptr(),
+            layout.trailer().address(base)?,
+            b,
+            h,
+        )?;
     }
     Ok(())
 }
@@ -5759,7 +5763,7 @@ mod tests {
     #[test]
     fn compact_metadata_does_not_touch_the_unused_arena_tail() {
         let mut storage = vec![u32::MAX; 256];
-        let n = input_elements(3, 3, 1).unwrap();
+        let n = InputLayout::new(3, 3, 1).unwrap().words();
         pack_input(
             &mut storage[..n],
             3,

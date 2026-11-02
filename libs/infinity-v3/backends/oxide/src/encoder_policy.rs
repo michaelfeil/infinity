@@ -18,7 +18,7 @@ use crate::{
     tensor::Bf16,
     u32_size,
     upload::WeightUploader,
-    PackedAttention, Work,
+    InputLayout, PackedAttention, Work,
 };
 use cuda_core::{Context, DeviceBuffer, Function, Stream};
 use infinity_v3_backend_core::{BackendError, Batch, Pool};
@@ -392,17 +392,17 @@ impl ModernEncoder {
             .ok_or_else(|| infer("Modern projection plans are not prepared"))?;
         let mut rows = u32_size(tokens)?;
         let mut width = u32_size(g.hidden_size)?;
+        let layout = InputLayout::new(
+            tokens,
+            b.cumulative_seq_lengths.len(),
+            b.pooled_indices.len(),
+        )?
+        .with_trailer(crate::output::raw_rows(b)?)?;
         let base = w.input.cu_deviceptr();
-        let mut ids = base;
-        let positions = base
-            .checked_add(u64::try_from(product(tokens, 4)?).map_err(infer)?)
-            .ok_or_else(|| infer("Modern position address overflow"))?;
-        let boundaries = base
-            .checked_add(u64::try_from(product(tokens, 12)?).map_err(infer)?)
-            .ok_or_else(|| infer("Modern boundary address overflow"))?;
-        let selected = boundaries
-            .checked_add(u64::try_from(product(b.cumulative_seq_lengths.len(), 4)?).map_err(infer)?)
-            .ok_or_else(|| infer("Modern selection address overflow"))?;
+        let mut ids = layout.ids().address(base)?;
+        let positions = layout.positions().address(base)?;
+        let boundaries = layout.boundaries().address(base)?;
+        let selected = layout.selections().address(base)?;
         let mut word = self.weights.word.cu_deviceptr();
         let mut gamma = self.weights.embedding_gamma.cu_deviceptr();
         let mut residual = w.x.cu_deviceptr();
@@ -615,7 +615,7 @@ impl ModernEncoder {
                 stream,
                 w.attention.cu_deviceptr(),
                 w.pooled.cu_deviceptr(),
-                selected,
+                layout.trailer().address(base)?,
                 b,
                 g.hidden_size,
             )?;

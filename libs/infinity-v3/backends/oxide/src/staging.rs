@@ -1,6 +1,6 @@
 // Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 //! Owned pinned input/output leases for ordered-stream deferred submissions.
-use super::{cache, capacity_fits, infer, product, Engine, WorkKey};
+use super::{cache, capacity_fits, infer, product, Engine, InputLayout, WorkKey};
 use crate::work_retirement::{CompletionClock, CompletionTicket};
 use cuda_core::{Context, Event, PinnedHostBuffer, Stream};
 use infinity_v3_backend_core::BackendError;
@@ -18,10 +18,7 @@ use std::{
 const PIN_RETAIN_BYTES: usize = cache::BYTE_BUDGET / 4;
 
 pub(crate) fn input_capacity(key: WorkKey) -> Result<usize, BackendError> {
-    product(key.0, 3)?
-        .checked_add(key.1)
-        .and_then(|n| n.checked_add(key.2))
-        .ok_or_else(|| infer("Input staging layout overflow"))
+    Ok(InputLayout::new(key.0, key.1, key.2)?.words())
 }
 pub(crate) fn pinned_bytes(key: WorkKey, output_elements: usize) -> Result<usize, BackendError> {
     product(input_capacity(key)?, 4)?
