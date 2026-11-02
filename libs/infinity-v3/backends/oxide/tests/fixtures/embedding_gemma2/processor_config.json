@@ -1,0 +1,78 @@
+{
+  "audio_ms_per_token": 40,
+  "audio_seq_length": 280,
+  "feature_extractor": {
+    "dither": 0.0,
+    "feature_extractor_type": "Gemma4AudioFeatureExtractor",
+    "feature_size": 128,
+    "fft_length": 512,
+    "fft_overdrive": false,
+    "frame_length": 320,
+    "hop_length": 160,
+    "input_scale_factor": 1.0,
+    "max_frequency": 8000.0,
+    "mel_floor": 0.001,
+    "min_frequency": 0.0,
+    "padding_side": "right",
+    "padding_value": 0.0,
+    "per_bin_mean": null,
+    "per_bin_stddev": null,
+    "preemphasis": 0.0,
+    "preemphasis_htk_flavor": true,
+    "return_attention_mask": true,
+    "sampling_rate": 16000
+  },
+  "image_processor": {
+    "do_convert_rgb": true,
+    "do_normalize": false,
+    "do_rescale": true,
+    "do_resize": true,
+    "image_mean": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "image_processor_type": "Gemma4ImageProcessor",
+    "image_seq_length": 280,
+    "image_std": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "max_soft_tokens": 280,
+    "patch_size": 16,
+    "pooling_kernel_size": 3,
+    "resample": 3,
+    "rescale_factor": 0.00392156862745098
+  },
+  "image_seq_length": 280,
+  "processor_class": "EmbeddingGemma2Processor",
+  "video_processor": {
+    "add_timestamps": false,
+    "do_convert_rgb": true,
+    "do_normalize": false,
+    "do_rescale": true,
+    "do_resize": true,
+    "do_sample_frames": true,
+    "fps": 1,
+    "image_mean": [
+      0.0,
+      0.0,
+      0.0
+    ],
+    "image_std": [
+      1.0,
+      1.0,
+      1.0
+    ],
+    "max_frames": 32,
+    "max_soft_tokens": 140,
+    "overflow_strategy": "uniform",
+    "patch_size": 16,
+    "pooling_kernel_size": 3,
+    "resample": 3,
+    "rescale_factor": 0.00392156862745098,
+    "return_metadata": false,
+    "video_processor_type": "EmbeddingGemma2VideoProcessor"
+  }
+}

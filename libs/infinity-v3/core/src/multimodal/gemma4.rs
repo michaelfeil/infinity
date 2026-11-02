@@ -290,4 +290,65 @@ mod tests {
             assert_eq!(format!("{:x}", hash.finalize()), expected, "{w}x{h}");
         }
     }
+
+    #[tokio::test]
+    async fn real_cached_cats_image_matches_pinned_preprocessor_output() {
+        const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
+        let bytes = std::fs::read(format!("{ROOT}/docs/assets/cats_coco_sample.jpg")).unwrap();
+        let processor_json: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(format!("{ROOT}/libs/infinity-v3/backends/oxide/tests/fixtures/embedding_gemma2/processor_config.json"))
+                .unwrap_or_else(|_| {
+                    let model = "/workspace/model-performance/michaelfeil/benchmark-overview/models/google--embeddinggemma-2";
+                    std::fs::read(format!("{model}/processor_config.json")).unwrap()
+                }),
+        )
+        .unwrap();
+        let config = MultimodalConfig::default();
+        let processor =
+            Gemma4ImageProcessor::from_config(&processor_json["image_processor"], config).unwrap();
+        let url = format!(
+            "data:image/jpeg;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(&bytes)
+        );
+        let prepared = processor.prepare(vec![url]).await.unwrap();
+        let image = &prepared.images[0];
+        assert_eq!(image.grid_thw[0], 1);
+        assert_eq!(image.patch_dim, 768);
+        assert_eq!(image.merge_size, 3);
+        let mut hash = Sha256::new();
+        for value in &image.pixels {
+            hash.update(value.to_le_bytes());
+        }
+        let sha = format!("{:x}", hash.finalize());
+        if let Some(out) = std::env::var_os("INFINITY_EG2_MEDIA_FIXTURE_OUT") {
+            let out = std::path::PathBuf::from(out);
+            std::fs::create_dir_all(&out).unwrap();
+            let mut bytes = Vec::with_capacity(image.pixels.len() * 4);
+            for value in &image.pixels {
+                bytes.extend_from_slice(&value.to_le_bytes());
+            }
+            std::fs::write(out.join("cats_coco.patches.f32"), &bytes).unwrap();
+            std::fs::write(
+                out.join("cats_coco.json"),
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "source": "docs/assets/cats_coco_sample.jpg",
+                    "source_sha256": format!("{:x}", Sha256::digest(std::fs::read(format!("{ROOT}/docs/assets/cats_coco_sample.jpg")).unwrap())),
+                    "grid_thw": image.grid_thw,
+                    "patch_dim": image.patch_dim,
+                    "merge_size": image.merge_size,
+                    "token_count": image.token_count(),
+                    "patch_values": image.pixels.len(),
+                    "patches_sha256": sha,
+                    "preprocessor": "core/src/multimodal/gemma4.rs Gemma4ImageProcessor::from_config + prepare",
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            return;
+        }
+        assert_eq!(
+            sha, "1fad9494b1b306add3a16079fc66cd0313dbc3168a3f0617d3c565fd6ec75048",
+            "real cached image preprocessor output changed"
+        );
+    }
 }

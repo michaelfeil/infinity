@@ -3,7 +3,7 @@
 use crate::{
     lt::ShapeError,
     math::{GemmArguments, LinearPlan, MathError},
-    tensor::Element,
+    tensor::{Element, TensorMut, TensorRef},
 };
 use cuda_core::{Context, Stream};
 use infinity_v3_backend_core::BackendError;
@@ -243,6 +243,52 @@ impl Blas {
 
     pub(crate) fn context(&self) -> &Arc<Context> {
         &self.context
+    }
+
+    /// Metadata-only ordered-stream identity check. No driver call or clone.
+    pub(crate) fn uses_stream(&self, stream: &Stream) -> bool {
+        std::ptr::eq(self.stream.as_ref(), stream)
+    }
+
+    /// Metadata-only primary-context identity check. No driver call or clone.
+    pub(crate) fn uses_context(&self, context: &Arc<Context>) -> bool {
+        Arc::ptr_eq(&self.context, context)
+    }
+
+    /// Enqueue one prepared X W^T operation over checked subranges of borrowed
+    /// storage. This is the same prepared GEMM recipe as [`Self::linear`], but
+    /// element offsets let one bounded request arena hold concatenated rows.
+    ///
+    /// # Safety
+    /// The caller must bind this context on the current thread, pass buffers
+    /// from this handle's context, and keep every allocation alive without
+    /// conflicting access until this stream drains.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn linear_subrange<E: Element>(
+        &self,
+        plan: &LinearPlan<E>,
+        x: &cuda_core::DeviceBuffer<E::Storage>,
+        x_offset: usize,
+        w: &cuda_core::DeviceBuffer<E::Storage>,
+        w_offset: usize,
+        y: &mut cuda_core::DeviceBuffer<E::Storage>,
+        y_offset: usize,
+    ) -> Result<(), BackendError> {
+        for context in [x.context(), w.context(), y.context()] {
+            if !Arc::ptr_eq(context, &self.context) {
+                return Err(super::infer(
+                    "Linear subrange buffers belong to a different CUDA context",
+                ));
+            }
+        }
+        let x = TensorRef::<E, 2>::with_offset(x, x_offset, plan.input_layout())
+            .map_err(super::infer)?;
+        let w = TensorRef::<E, 2>::with_offset(w, w_offset, plan.weight_layout())
+            .map_err(super::infer)?;
+        let y = TensorMut::<E, 2>::with_offset(y, y_offset, plan.output_layout())
+            .map_err(super::infer)?;
+        let a = plan.arguments(x.device_ptr(), w.device_ptr(), y.device_ptr());
+        self.linear_bound(&a)
     }
 
     pub(crate) fn new(context: Arc<Context>, stream: Arc<Stream>) -> Result<Self, BackendError> {

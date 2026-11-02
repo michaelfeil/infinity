@@ -1,0 +1,19 @@
+{
+  "schema": "gemma4-vision-real-image-fixture/v1",
+  "source_image": "cats_coco_sample.jpg",
+  "source_image_sha256": "dea9e7ef97386345f7cff32f9055da4982da5471c48d575146c796ab4563b04e",
+  "processor_config_sha256": "32bdf45d2ad4cc29a0822ddd157a182de76644f0419a6228d151495256e9813c",
+  "grid_thw": [
+    1,
+    42,
+    57
+  ],
+  "patch_dim": 768,
+  "merge_size": 3,
+  "patch_count": 2394,
+  "soft_tokens": 266,
+  "pixels_f32le_sha256": "1fad9494b1b306add3a16079fc66cd0313dbc3168a3f0617d3c565fd6ec75048",
+  "pixel_order": "patch_major_y_then_x_then_py_then_px_then_channel",
+  "rescale_factor": 0.00392156862745098,
+  "do_normalize": false
+}

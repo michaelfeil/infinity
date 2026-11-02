@@ -947,11 +947,29 @@ mod tests {
             .iter()
             .filter(|name| name.starts_with("infinity_gemma3_"))
             .count();
-        assert_eq!(symbols.len(), 91 + gemma3_count);
+        let media_count = symbols
+            .iter()
+            .filter(|name| name.starts_with("infinity_gemma2_media_"))
+            .count();
+        let gemma4_count = symbols
+            .iter()
+            .filter(|name| name.starts_with("infinity_gemma4_"))
+            .count();
+        // Keep the original 91-export base dynamic and add every declared
+        // family leaf independently. Do not replace the base count with a
+        // guessed grand total.
+        assert_eq!(
+            symbols.len(),
+            91 + gemma3_count + media_count + gemma4_count
+        );
+        assert_eq!(media_count, 24);
+        assert_eq!(gemma4_count, 20);
         let gemma2: Vec<_> = symbols
             .iter()
             .copied()
-            .filter(|name| name.starts_with("infinity_gemma2_"))
+            .filter(|name| {
+                name.starts_with("infinity_gemma2_") && !name.starts_with("infinity_gemma2_media_")
+            })
             .collect();
         assert_eq!(gemma2.len(), EXPORTS.len());
         for name in EXPORTS {
@@ -966,6 +984,7 @@ mod tests {
             .filter(|name| {
                 !name.starts_with("infinity_gemma2_")
                     && !name.starts_with("infinity_gemma3_")
+                    && !name.starts_with("infinity_gemma4_")
                     && !HEAD_ADDITIONS.contains(name)
             })
             .collect();
@@ -977,10 +996,21 @@ mod tests {
 
         let main = include_str!("../device/src/main.rs");
         assert_eq!(
-            main.matches("pub unsafe fn infinity_gemma2_").count(),
+            main.matches("pub unsafe fn infinity_gemma2_").count()
+                - main.matches("pub unsafe fn infinity_gemma2_media_").count(),
             EXPORTS.len()
         );
+        assert_eq!(
+            main.matches("pub unsafe fn infinity_gemma2_media_").count(),
+            24
+        );
+        assert_eq!(main.matches("pub unsafe fn infinity_gemma4_").count(), 20);
         assert!(main.contains("mod gemma2;"));
+        assert!(main.contains("mod gemma2_media;"));
+        assert!(main.contains("mod gemma4;"));
+        assert!(main.contains("mod gemma4_vision;"));
+        assert!(main.contains("pub unsafe fn infinity_gemma4_router_scale_bf16_to_f32"));
+        assert!(main.contains("pub unsafe fn infinity_gemma4_vision_pool_standardize_rows_bf16"));
         let kernel = include_str!("../device/src/gemma2.rs");
         assert_eq!(
             hex(&Sha256::digest(kernel.as_bytes())),

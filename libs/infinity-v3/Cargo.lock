@@ -1908,6 +1908,7 @@ dependencies = [
  "base64 0.22.1",
  "cuda-core",
  "half",
+ "infinity-head512-aot",
  "infinity-v3-config",
  "infinity_v3-backend-core",
  "libloading",
@@ -1919,6 +1920,17 @@ dependencies = [
  "serde_json",
  "sha2",
  "zip 8.6.0",
+]
+
+[[package]]
+name = "infinity-head512-aot"
+version = "0.1.0"
+dependencies = [
+ "libloading",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
 ]
 
 [[package]]

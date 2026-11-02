@@ -378,6 +378,7 @@ fn publish_completion_after_fence(ticket: Option<&CompletionTicket>, fence_succe
         unsafe { ticket.mark_completed_after_fence() };
     }
 }
+static NEXT_HOST_IO_LEASE_ID: AtomicUsize = AtomicUsize::new(1);
 
 #[cfg(test)]
 static TRACKED_LEASE_FALLBACK_DRAINS: AtomicUsize = AtomicUsize::new(0);
@@ -387,15 +388,18 @@ pub(crate) fn tracked_lease_fallback_drains() -> usize {
 }
 
 pub(crate) struct HostIoLease {
+    #[allow(dead_code)] // Shared text executor interface; media-only trees do not read it.
+    id: usize,
     slot: Option<HostIo>,
     pool: Arc<SlotPool<HostIo>>,
-    _engine: Arc<Mutex<Engine>>,
+    _engine: Option<Arc<Mutex<Engine>>>,
     stream: Arc<Stream>,
     started: bool,
     recorded: bool,
     drained: bool,
     exclusive: bool,
     completion_ticket: Option<CompletionTicket>,
+    retained: Vec<Box<dyn std::any::Any + Send>>,
 }
 impl HostIoLease {
     pub(crate) fn new(
@@ -405,20 +409,92 @@ impl HostIoLease {
         stream: Arc<Stream>,
     ) -> Self {
         Self {
+            id: NEXT_HOST_IO_LEASE_ID.fetch_add(1, Ordering::Relaxed),
             slot: Some(slot),
             pool,
-            _engine: engine,
+            _engine: Some(engine),
             stream,
             started: false,
             recorded: false,
             drained: false,
             exclusive: false,
             completion_ticket: None,
+            retained: Vec::new(),
         }
     }
+
+    /// Model-owned lease that does not retain an Engine. Its owner must keep
+    /// the stream and pool alive through the completion event or quarantine.
+    pub(crate) fn owned(slot: HostIo, pool: Arc<SlotPool<HostIo>>, stream: Arc<Stream>) -> Self {
+        Self {
+            id: NEXT_HOST_IO_LEASE_ID.fetch_add(1, Ordering::Relaxed),
+            slot: Some(slot),
+            pool,
+            _engine: None,
+            stream,
+            started: false,
+            recorded: false,
+            drained: false,
+            exclusive: false,
+            completion_ticket: None,
+            retained: Vec::new(),
+        }
+    }
+
+    /// Test-only lease that owns real pinned storage and a stream without an
+    /// Engine. Used by the ignored model-owned GPU gates.
+    #[cfg(test)]
+    pub(crate) fn detached(slot: HostIo, pool: Arc<SlotPool<HostIo>>, stream: Arc<Stream>) -> Self {
+        Self::owned(slot, pool, stream)
+    }
+
+    /// Retain a request-owned GPU arena until this lease's completion event or
+    /// proven drain. The owner must be Send and must not be used again.
+    pub(crate) fn retain_owner<T: Send + 'static>(&mut self, owner: T) -> Result<(), BackendError> {
+        self.retained
+            .try_reserve(1)
+            .map_err(|_| infer("Host I/O retained-owner allocation failed"))?;
+        self.retained.push(Box::new(owner));
+        Ok(())
+    }
+
+    /// Metadata-only completion-stream identity check. No driver call.
+    pub(crate) fn uses_stream(&self, stream: &Stream) -> bool {
+        std::ptr::eq(self.stream.as_ref(), stream)
+    }
+
+    pub(crate) fn id(&self) -> usize {
+        self.id
+    }
+
+    /// Reject a lease that has already begun, recorded, or drained before any
+    /// CPU staging or async H2D.
+    pub(crate) fn ensure_stageable(&self) -> Result<(), BackendError> {
+        if self.started || self.recorded || self.drained {
+            return Err(infer(
+                "Host I/O lease is already started, recorded, or drained",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Begin retention for a lease that has neither recorded nor drained.
+    pub(crate) fn begin(&mut self) {
+        self.started = true;
+    }
+
+    pub(crate) fn begin_checked(&mut self) -> Result<(), BackendError> {
+        if self.recorded || self.drained {
+            return Err(infer("Host I/O lease is already recorded or drained"));
+        }
+        self.started = true;
+        Ok(())
+    }
+
     pub(crate) fn bytes(&self) -> Result<usize, BackendError> {
         Ok(self.slot()?.bytes())
     }
+
     #[allow(dead_code)] // Ordinary-capacity compatibility wrapper; explicit tails use the extended method.
     pub(crate) fn required_bytes(
         &self,
@@ -540,6 +616,10 @@ impl HostIoLease {
         self.completion_ticket = Some(ticket.clone());
         Ok(ticket)
     }
+
+    /// Begin retention only for a lease that has neither recorded its event nor
+    /// drained. Used by safe async output paths before the first H2D/D2H.
+    #[allow(dead_code)] // Shared text executor interface.
     pub(crate) fn record(&mut self) -> Result<(), BackendError> {
         self.started = true;
         let slot = self
@@ -595,6 +675,8 @@ impl HostIoLease {
             metrics::counter!("oxide_arena_retained_bytes_total").increment(slot.bytes() as u64);
             std::mem::forget(slot);
         }
+        let retained = std::mem::take(&mut self.retained);
+        std::mem::forget(retained);
     }
     fn shrink_idle(&mut self) {
         let Self {

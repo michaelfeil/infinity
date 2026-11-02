@@ -43,14 +43,25 @@ pub struct AudioFeatures {
     pub values: Vec<f32>,
     pub mask: Vec<u8>,
     pub feature_size: usize,
+    /// The checkpoint's two native audio subsampling strides.
+    pub subsample_strides: [usize; 2],
 }
 
 impl AudioFeatures {
     pub fn token_count(&self) -> usize {
-        self.mask
-            .iter()
-            .step_by(4)
-            .filter(|&&valid| valid != 0)
+        if self.mask.is_empty() || self.subsample_strides.contains(&0) {
+            return 0;
+        }
+        let mut length = self.mask.len();
+        for stride in self.subsample_strides {
+            length = length.saturating_add(stride - 1) / stride;
+        }
+        let source_stride = self.subsample_strides[0].saturating_mul(self.subsample_strides[1]);
+        (0..length)
+            .filter(|frame| {
+                let source = frame.saturating_mul(source_stride).min(self.mask.len() - 1);
+                self.mask[source] != 0
+            })
             .count()
     }
 }

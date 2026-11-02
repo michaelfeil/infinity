@@ -1,0 +1,16 @@
+{
+  "source": "libs/infinity_emb/tests/data/audio/cat_meow.wav",
+  "source_sha256": "1339ea1bef8271035ddd7dfa77c814221e257cf092c8f64d12f5eeeb6c9264fa",
+  "decoder": "author sandbox deterministic 3:1 decimation; Root uses ffmpeg 16k mono",
+  "feature_extractor": "core/src/multimodal/embedding_gemma2.rs extract_audio_features",
+  "frames": 410,
+  "feature_size": 128,
+  "subsample_strides": [
+    2,
+    2
+  ],
+  "token_count": 103,
+  "values": 52480,
+  "values_sha256": "00aa2abdbb21b33f3ef551aaa120636a753f48114fd539403531b22dc0a9f37f",
+  "mask_sha256": "a3d0ab7c95c67fe64ff9bdab41213215cd03225be718a91fae2de43e1fd0974b"
+}

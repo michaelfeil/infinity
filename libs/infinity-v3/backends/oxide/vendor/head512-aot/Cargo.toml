@@ -1,0 +1,18 @@
+[package]
+name = "infinity-head512-aot"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.93"
+publish = false
+license-file = "../../../../LICENSE"
+description = "Isolated FlashAttention 2.8.3-derived Native512 AOT bridge for packed head_dim=512 attention"
+
+
+[dependencies]
+libloading = "0.8"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

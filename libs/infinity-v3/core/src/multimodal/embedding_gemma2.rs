@@ -38,6 +38,7 @@ pub struct EmbeddingGemma2Processor {
     default_prompt: Option<String>,
     video_fps: f64,
     max_frames: usize,
+    audio_strides: [usize; 2],
 }
 
 impl std::fmt::Debug for EmbeddingGemma2Processor {
@@ -104,6 +105,7 @@ impl EmbeddingGemma2Processor {
             .as_u64()
             .filter(|n| *n > 0 && *n <= 32)
             .ok_or_else(|| invalid("Invalid video frame limit"))? as usize;
+        let audio_strides = audio_subsample_strides(&model)?;
         let token_names = [
             "<|image|>",
             "<|video|>",
@@ -169,6 +171,7 @@ impl EmbeddingGemma2Processor {
             default_prompt,
             video_fps,
             max_frames,
+            audio_strides,
         })
     }
 
@@ -286,6 +289,7 @@ impl EmbeddingGemma2Processor {
                                     sample_memory,
                                     self.budget.clone(),
                                     self.workers.clone(),
+                                    self.audio_strides,
                                 )
                                 .await?;
                                 memory.merge(feature_memory);
@@ -675,11 +679,39 @@ fn sample_video_frames(
         .collect()
 }
 
+fn audio_subsample_strides(model: &serde_json::Value) -> Result<[usize; 2]> {
+    let audio = model.get("audio_config").or_else(|| {
+        model
+            .get("text_config")
+            .and_then(|value| value.get("audio_config"))
+    });
+    let Some(value) = audio.and_then(|audio| audio.get("sscp_conv_stride_size")) else {
+        return Ok([2, 2]);
+    };
+    let stride = |index: usize| -> Option<usize> {
+        let entry = value.get(index)?;
+        let scalar = if entry.is_array() {
+            entry.get(0)?
+        } else {
+            entry
+        };
+        scalar
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .filter(|&value| value > 0)
+    };
+    match (stride(0), stride(1)) {
+        (Some(first), Some(second)) => Ok([first, second]),
+        _ => Err(invalid("Invalid audio subsampling strides")),
+    }
+}
+
 async fn prepare_audio_features(
     samples: Vec<f32>,
     sample_memory: OwnedSemaphorePermit,
     budget: MediaBudget,
     workers: Arc<Semaphore>,
+    subsample_strides: [usize; 2],
 ) -> Result<(AudioFeatures, OwnedSemaphorePermit)> {
     let worker = workers
         .acquire_owned()
@@ -692,7 +724,7 @@ async fn prepare_audio_features(
         // Cancellation cannot release admission while blocking work owns samples.
         let _worker = worker;
         let _sample_memory = sample_memory;
-        let features = extract_audio_features(&samples)?;
+        let features = extract_audio_features(&samples, subsample_strides)?;
         Ok((features, feature_memory))
     })
     .await
@@ -708,7 +740,10 @@ fn audio_feature_frames(samples: usize) -> Result<usize> {
 }
 
 /// Gemma4's magnitude (not power) log-mel spectrogram with semicausal Hann windows.
-pub(crate) fn extract_audio_features(samples: &[f32]) -> Result<AudioFeatures> {
+pub(crate) fn extract_audio_features(
+    samples: &[f32],
+    subsample_strides: [usize; 2],
+) -> Result<AudioFeatures> {
     use rustfft::{num_complex::Complex, FftPlanner};
     const FRAME: usize = 320;
     const HOP: usize = 160;
@@ -783,6 +818,7 @@ pub(crate) fn extract_audio_features(samples: &[f32]) -> Result<AudioFeatures> {
         values,
         mask,
         feature_size: BINS,
+        subsample_strides,
     })
 }
 
@@ -815,6 +851,7 @@ mod tests {
                 sample_memory,
                 budget.clone(),
                 workers.clone(),
+                [2, 2],
             ));
             tokio::time::timeout(std::time::Duration::from_secs(2), async {
                 while workers.available_permits() != 0 {
@@ -869,7 +906,7 @@ mod tests {
     }
     #[test]
     fn audio_frame_and_token_counts_follow_two_stride_two_convolutions() {
-        let features = extract_audio_features(&vec![0.0; 16000]).unwrap();
+        let features = extract_audio_features(&vec![0.0; 16000], [2, 2]).unwrap();
         assert_eq!(features.mask.len(), 99);
         assert!(audio_feature_frames(320).is_err());
         assert!(audio_feature_frames(480_001).is_err());
@@ -879,5 +916,107 @@ mod tests {
             .values
             .iter()
             .all(|v| (*v - 0.001f32.ln()).abs() < 1e-6));
+    }
+
+    #[test]
+    fn audio_strides_are_read_from_the_checkpoint_config() {
+        let model = serde_json::json!({
+            "audio_config": {"sscp_conv_stride_size": [[2], [2]]}
+        });
+        assert_eq!(audio_subsample_strides(&model).unwrap(), [2, 2]);
+        let flat = serde_json::json!({
+            "text_config": {"audio_config": {"sscp_conv_stride_size": [3, 2]}}
+        });
+        assert_eq!(audio_subsample_strides(&flat).unwrap(), [3, 2]);
+        let invalid = serde_json::json!({
+            "audio_config": {"sscp_conv_stride_size": [[0], [2]]}
+        });
+        assert!(audio_subsample_strides(&invalid).is_err());
+    }
+
+    #[test]
+    fn real_cached_cat_meow_matches_pinned_audio_preprocessor_output() {
+        use sha2::{Digest, Sha256};
+        const ROOT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../..");
+        let bytes = std::fs::read(format!(
+            "{ROOT}/libs/infinity_emb/tests/data/audio/cat_meow.wav"
+        ))
+        .unwrap();
+        // Local WAV header: mono 16-bit PCM at 48 kHz without extra chunks.
+        assert_eq!(&bytes[0..4], b"RIFF");
+        assert_eq!(&bytes[8..12], b"WAVE");
+        assert_eq!(&bytes[12..16], b"fmt ");
+        let channels = u16::from_le_bytes([bytes[22], bytes[23]]);
+        let rate = u32::from_le_bytes([bytes[24], bytes[25], bytes[26], bytes[27]]);
+        let bits = u16::from_le_bytes([bytes[34], bytes[35]]);
+        assert_eq!((channels, rate, bits), (1, 48_000, 16));
+        let data = bytes.windows(4).position(|w| w == b"data").unwrap();
+        let length = u32::from_le_bytes([
+            bytes[data + 4],
+            bytes[data + 5],
+            bytes[data + 6],
+            bytes[data + 7],
+        ]) as usize;
+        let pcm = &bytes[data + 8..data + 8 + length];
+        assert_eq!(pcm.len() % 2, 0);
+        let source: Vec<f32> = pcm
+            .chunks_exact(2)
+            .map(|sample| f32::from(i16::from_le_bytes([sample[0], sample[1]])) / 32768.0)
+            .collect();
+        // Deterministic 3:1 decimation for the author CPU sandbox (ffmpeg is
+        // unavailable here); Root uses the actual decoder. Feature extraction
+        // itself is the production Rust implementation.
+        let mut samples = Vec::with_capacity(source.len() / 3);
+        for frame in source.chunks_exact(3) {
+            samples.push((frame[0] + frame[1] + frame[2]) / 3.0);
+        }
+        let features = extract_audio_features(&samples, [2, 2]).unwrap();
+        assert_eq!(features.feature_size, 128);
+        assert_eq!(features.subsample_strides, [2, 2]);
+        let mut hash = Sha256::new();
+        for value in &features.values {
+            hash.update(value.to_le_bytes());
+        }
+        let values_sha = format!("{:x}", hash.finalize());
+        let mut hash = Sha256::new();
+        hash.update(&features.mask);
+        let mask_sha = format!("{:x}", hash.finalize());
+        if let Some(out) = std::env::var_os("INFINITY_EG2_MEDIA_FIXTURE_OUT") {
+            let out = std::path::PathBuf::from(out);
+            std::fs::create_dir_all(&out).unwrap();
+            let mut values = Vec::with_capacity(features.values.len() * 4);
+            for value in &features.values {
+                values.extend_from_slice(&value.to_le_bytes());
+            }
+            std::fs::write(out.join("cat_meow.features.f32"), &values).unwrap();
+            std::fs::write(out.join("cat_meow.mask.u8"), &features.mask).unwrap();
+            std::fs::write(
+                out.join("cat_meow.json"),
+                serde_json::to_vec_pretty(&serde_json::json!({
+                    "source": "libs/infinity_emb/tests/data/audio/cat_meow.wav",
+                    "source_sha256": format!("{:x}", Sha256::digest(&bytes)),
+                    "decoder": "author sandbox deterministic 3:1 decimation; Root uses ffmpeg 16k mono",
+                    "feature_extractor": "core/src/multimodal/embedding_gemma2.rs extract_audio_features",
+                    "frames": features.mask.len(),
+                    "feature_size": features.feature_size,
+                    "subsample_strides": features.subsample_strides,
+                    "token_count": features.token_count(),
+                    "values": features.values.len(),
+                    "values_sha256": values_sha,
+                    "mask_sha256": mask_sha,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            return;
+        }
+        assert_eq!(
+            values_sha, "00aa2abdbb21b33f3ef551aaa120636a753f48114fd539403531b22dc0a9f37f",
+            "real cached audio features changed"
+        );
+        assert_eq!(
+            mask_sha, "a3d0ab7c95c67fe64ff9bdab41213215cd03225be718a91fae2de43e1fd0974b",
+            "real cached audio mask changed"
+        );
     }
 }

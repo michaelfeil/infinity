@@ -1,0 +1,13 @@
+{
+  "source": "libs/infinity-v3/backends/libtorch/cpp/vendor/torch_flash_attention",
+  "source_commit": "2f970a5b83e86608cce7b800db818eccc283e853",
+  "upstream_license": "BSD-3-Clause",
+  "upstream_flash_attention_submodule_revision": "14c377950125c70b7a9dabf9c561fca53715ac7d",
+  "modified_files": {
+    "philox_unpack.cuh": "ATen includes guarded by FLASHATTENTION_DISABLE_DROPOUT",
+    "flash_fwd_launch_template.h": "c10 exception shim replaced by head512_cuda_error.h; C10 macros renamed HEAD512_*"
+  },
+  "unchanged_numeric_contract": "kernel body, tile traits, mask arithmetic, namespace configuration, FP16/BF16 types",
+  "head512_provider_scope": "Isolated FlashAttention 2.8.3-derived Native512 bridge; not a general FA2 backend; normal FA4 path unchanged",
+  "head512_warm_launch": "ABI v2 cold prepare applies the six fixed specialization attributes; the warm path launches the upstream flash_fwd_kernel template directly and never calls run_flash_fwd or split-KV dispatch"
+}

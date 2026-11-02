@@ -51,6 +51,14 @@ scales, Q/K norms, embedding scaling and per-layer residual norms. Raw and
 pooled embeddings use the normal factory and deferred ownership. Trained
 checkpoint and performance qualification are pending.
 
+Gemma2 adds text, image and audio execution, including projected media rows,
+PLE and shared KV. Gemma4 adds dense E2B/E4B and sparse Rune-26B execution,
+vision and option-token readout. Both use the ordinary factory and owned deferred
+workspaces. Their trained-checkpoint and performance qualification is pending.
+The isolated [head512 provider](../backends/oxide/vendor/head512-aot/README.md)
+supplies d512 attention where FA4 has no matching geometry. Its native SM90/SM100
+and compact SM120 variants compile, but runtime qualification remains pending.
+
 MPNet uses a separate [native attention provider](../backends/oxide/vendor/mpnet_attention/README.md),
 selected with `INFINITY_OXIDE_MPNET_ATTENTION_ROOT`. It shares the encoder
 workspace, deferred results, pooling, raw output and Dense-module handling.
@@ -89,7 +97,7 @@ Elephant and Mammoth have separate native text and single-question Decision
 qualification; this does not establish every Qwen3.5 geometry or performance.
 The cold runtime dependencies are selected by `INFINITY_FA4_ROOT`,
 `INFINITY_OXIDE_GDN_RAW_KERNELS`, `INFINITY_OXIDE_GDN_PROVIDER`, and
-`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 115 Rust
+`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 159 Rust
 exports; Qwen3.5 requires its nine additive exports. Dense decoders require the
 90-export bundle or newer for Native BF16 mean pooling. Other existing families
 can retain their older qualified bundles. H5120 Qwen3 requires the additive
@@ -578,6 +586,12 @@ The existing GDN provider also exposes reusable AOT kernels, but GDN/Qwen3.5
 model execution is not implemented by this initial backend.
 
 ## Current qualification limits
+
+Classifier and GTE-base checks cover 77 cases across five trained checkpoints
+and seven task/pooling routes, each repeated three times on H100. All pass their
+original numerical guards; GTE mean pooling is not bit exact. Held results,
+out-of-order completion and cancellation recovery also pass. These checks use
+saved Native references and establish no speed gain. See [the scoped evidence](oxide-classic-head-gte-qualification.json).
 
 The current framework passed HTTP quality checks on 320 public SciFact texts
 for each of seven checkpoint cases, including changing shapes, order checks and

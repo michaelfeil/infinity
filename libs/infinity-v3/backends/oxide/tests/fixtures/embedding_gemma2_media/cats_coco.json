@@ -1,0 +1,15 @@
+{
+  "source": "docs/assets/cats_coco_sample.jpg",
+  "source_sha256": "dea9e7ef97386345f7cff32f9055da4982da5471c48d575146c796ab4563b04e",
+  "grid_thw": [
+    1,
+    42,
+    57
+  ],
+  "patch_dim": 768,
+  "merge_size": 3,
+  "token_count": 266,
+  "patch_values": 1838592,
+  "patches_sha256": "1fad9494b1b306add3a16079fc66cd0313dbc3168a3f0617d3c565fd6ec75048",
+  "preprocessor": "core/src/multimodal/gemma4.rs Gemma4ImageProcessor::from_config + prepare"
+}

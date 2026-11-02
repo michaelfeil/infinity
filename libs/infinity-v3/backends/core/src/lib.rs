@@ -1,4 +1,5 @@
 pub mod block_attention_config;
+pub mod media;
 mod multimodal;
 pub mod result_memory;
 #[cfg(feature = "clap")]

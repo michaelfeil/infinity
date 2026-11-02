@@ -35,7 +35,18 @@ pub mod fp8;
 mod gdn_aot_provider;
 #[allow(dead_code)]
 pub mod gdn_prepared;
+mod gemma2_attention;
+mod gemma2_forward;
+mod gemma2_head512;
 pub mod gemma2_math;
+mod gemma2_media;
+mod gemma2_media_audio;
+pub(crate) mod gemma2_media_bridge;
+mod gemma2_media_exec;
+mod gemma2_media_prepared;
+mod gemma2_media_vision;
+mod gemma2_prepared;
+mod gemma2_text;
 mod gemma3_executor;
 #[cfg_attr(not(test), allow(dead_code))]
 mod gemma3_model;
@@ -45,6 +56,11 @@ mod gemma3_prepared;
 mod gemma3_reference;
 #[allow(dead_code)]
 mod gemma3_tables;
+mod gemma4_e2b_model;
+mod gemma4_option_head;
+mod gemma4_runtime;
+mod gemma4_text_model;
+mod gemma4_vision_model;
 mod head_linear;
 mod input_layout;
 mod jina_code_encoder_model;
@@ -140,6 +156,10 @@ use encoder_linear::ProjectionPlan;
 use encoder_policy::{EmbeddingInputs, ModernEncoder};
 use gemma3_executor::Gemma3Model;
 use gemma3_model::{Gemma3Config, Gemma3Weights};
+use gemma4_e2b_model::Gemma4E2bWork;
+use gemma4_option_head::{stage_option_ids, Gemma4OptionWork};
+use gemma4_runtime::Gemma4Model;
+use gemma4_text_model::{Gemma4Config, Gemma4Contract};
 use infinity_v3_backend_core::{
     result_memory, Backend, BackendError, Batch, DecisionInput, DecisionOutput, Embedding,
     Embeddings, Inference, ModelType, Pool, Predictions, TokenPredictions,
@@ -1480,7 +1500,9 @@ enum ExecutableModel {
     EncoderF16(Box<EncoderModel<F16>>),
     Decoder(Box<decoder::DecoderModel>),
     Gemma(Box<Gemma3Model>),
+    Gemma2(Box<gemma2_forward::Gemma2Executor>),
     Qwen35(Box<qwen35_runtime::Qwen35Model>),
+    Gemma4(Box<Gemma4Model>),
 }
 impl ExecutableModel {
     fn splade_head(&self) -> Option<&SpladeHead> {
@@ -1505,7 +1527,12 @@ impl ExecutableModel {
         match self {
             Self::Encoder(model) => model.kernels.raw_cast.is_some(),
             Self::EncoderF16(model) => model.kernels.raw_cast.is_some(),
-            Self::Modern(_) | Self::Decoder(_) | Self::Gemma(_) | Self::Qwen35(_) => true,
+            Self::Modern(_)
+            | Self::Decoder(_)
+            | Self::Gemma(_)
+            | Self::Gemma2(_)
+            | Self::Qwen35(_)
+            | Self::Gemma4(_) => true,
         }
     }
     fn preflight(
@@ -1547,12 +1574,22 @@ impl ExecutableModel {
                 model.preflight(provider, batch, pool)
             }
             Self::Gemma(model) => model.preflight(provider, batch, pool),
+            Self::Gemma2(model) => model.preflight_media(batch).map_err(ShapeError::Rejected),
             Self::Qwen35(model) => model.preflight(batch),
+            Self::Gemma4(model) => {
+                if readout_mode.is_some() {
+                    return Err(ShapeError::Rejected(infer(
+                        "Gemma4 is a decoder/decision model, not a classifier readout",
+                    )));
+                }
+                model.preflight(batch, pool)
+            }
         }
     }
 
     fn input_capacity(&self, key: WorkKey) -> Result<usize, BackendError> {
         match self {
+            Self::Gemma2(_) => staging::input_capacity_with_tail(key, key.2),
             Self::Qwen35(model) => model.input_capacity(key),
             _ => staging::input_capacity(key),
         }
@@ -1565,7 +1602,9 @@ impl ExecutableModel {
             Self::Modern(model) => model.config.geometry.hidden_size,
             Self::Decoder(model) => model.config.hidden_size,
             Self::Gemma(model) => model.config.hidden_size,
+            Self::Gemma2(model) => model.config().embedding_dim,
             Self::Qwen35(model) => model.weights.config.hidden_size,
+            Self::Gemma4(model) => model.hidden_size(),
         }
     }
     /// # Safety
@@ -1642,7 +1681,12 @@ impl ExecutableModel {
                 .as_ref()
                 .map(|classifier| classifier.scratch_layout(key))
                 .transpose(),
-            Self::EncoderF16(_) | Self::Decoder(_) | Self::Gemma(_) | Self::Qwen35(_) => Ok(None),
+            Self::EncoderF16(_)
+            | Self::Decoder(_)
+            | Self::Gemma(_)
+            | Self::Gemma2(_)
+            | Self::Qwen35(_)
+            | Self::Gemma4(_) => Ok(None),
         }
     }
     fn workspace_bytes(&self, key: WorkKey) -> Result<usize, BackendError> {
@@ -1665,7 +1709,11 @@ impl ExecutableModel {
             ),
             Self::Decoder(model) => model.workspace_bytes(key),
             Self::Gemma(model) => model.workspace_bytes(key),
+            Self::Gemma2(model) => {
+                gemma2_forward::Gemma2Work::allocation_bytes(key, model.config())
+            }
             Self::Qwen35(model) => model.workspace_bytes(key),
+            Self::Gemma4(model) => model.workspace_bytes(key),
         }
     }
     fn workspace(&self, stream: Arc<Stream>, key: WorkKey) -> Result<Workspace, BackendError> {
@@ -1694,7 +1742,11 @@ impl ExecutableModel {
             )?)),
             Self::Decoder(model) => Ok(Workspace::Decoder(model.workspace(stream, key)?)),
             Self::Gemma(model) => Ok(Workspace::Decoder(model.workspace(stream, key)?)),
+            Self::Gemma2(model) => Ok(Workspace::Gemma2(Box::new(
+                gemma2_forward::Gemma2Work::new(stream, model.config(), key)?,
+            ))),
             Self::Qwen35(model) => Ok(Workspace::Qwen35(Box::new(model.workspace(stream, key)?))),
+            Self::Gemma4(model) => Ok(Workspace::Gemma4(Box::new(model.workspace(stream, key)?))),
         }
     }
     fn classifier_readout(&self) -> Option<ClassifierReadout> {
@@ -1709,7 +1761,11 @@ impl ExecutableModel {
                 },
                 width: model.classifier_width().unwrap_or(0),
             }),
-            Self::EncoderF16(_) | Self::Gemma(_) | Self::Qwen35(_) => None,
+            Self::EncoderF16(_)
+            | Self::Gemma(_)
+            | Self::Gemma2(_)
+            | Self::Qwen35(_)
+            | Self::Gemma4(_) => None,
         }
     }
 }
@@ -1736,7 +1792,9 @@ enum Workspace {
     Encoder(Work<Bf16>),
     EncoderF16(Work<F16>),
     Decoder(decoder::DecoderWork),
+    Gemma2(Box<gemma2_forward::Gemma2Work>),
     Qwen35(Box<qwen35_work::Qwen35Work>),
+    Gemma4(Box<Gemma4E2bWork>),
 }
 impl Workspace {
     fn key(&self) -> WorkKey {
@@ -1744,7 +1802,9 @@ impl Workspace {
             Self::Encoder(work) => work.key(),
             Self::EncoderF16(work) => work.key(),
             Self::Decoder(work) => work.key(),
+            Self::Gemma2(work) => work.key(),
             Self::Qwen35(work) => work.key(),
+            Self::Gemma4(work) => work.key(),
         }
     }
     fn bytes(&self) -> usize {
@@ -1752,7 +1812,9 @@ impl Workspace {
             Self::Encoder(work) => work.bytes,
             Self::EncoderF16(work) => work.bytes,
             Self::Decoder(work) => work.bytes(),
+            Self::Gemma2(work) => work.bytes(),
             Self::Qwen35(work) => work.bytes(),
+            Self::Gemma4(work) => work.bytes(),
         }
     }
     fn fits(&self, key: WorkKey) -> bool {
@@ -1760,7 +1822,9 @@ impl Workspace {
             Self::Encoder(work) => work.fits(key),
             Self::EncoderF16(work) => work.fits(key),
             Self::Decoder(work) => work.fits(key),
+            Self::Gemma2(work) => work.fits(key),
             Self::Qwen35(work) => work.fits(key),
+            Self::Gemma4(work) => work.fits(key),
         }
     }
     fn mark_last_use(&mut self, ticket: CompletionTicket) {
@@ -1768,7 +1832,9 @@ impl Workspace {
             Self::Encoder(work) => work.mark_last_use(ticket),
             Self::EncoderF16(work) => work.mark_last_use(ticket),
             Self::Decoder(work) => work.mark_last_use(ticket),
+            Self::Gemma2(work) => work.mark_last_use(ticket),
             Self::Qwen35(work) => work.mark_last_use(ticket),
+            Self::Gemma4(work) => work.mark_last_use(ticket),
         }
     }
     fn completion_ticket(&self) -> Option<CompletionTicket> {
@@ -1776,7 +1842,9 @@ impl Workspace {
             Self::Encoder(work) => work.completion_ticket(),
             Self::EncoderF16(work) => work.completion_ticket(),
             Self::Decoder(work) => work.completion_ticket(),
+            Self::Gemma2(work) => work.completion_ticket(),
             Self::Qwen35(work) => work.completion_ticket(),
+            Self::Gemma4(work) => work.completion_ticket(),
         }
     }
     /// Releases only with an actual last-use proof. Every ordinary family is
@@ -1790,7 +1858,9 @@ impl Workspace {
             Self::Encoder(work) => unsafe { work.release_if_idle() },
             Self::EncoderF16(work) => unsafe { work.release_if_idle() },
             Self::Decoder(work) => unsafe { work.release_if_idle() },
+            Self::Gemma2(work) => unsafe { work.release_if_idle() },
             Self::Qwen35(work) => unsafe { work.release_if_idle() },
+            Self::Gemma4(work) => unsafe { work.release_if_idle() },
         }
     }
     /// # Safety
@@ -1803,7 +1873,9 @@ impl Workspace {
             Self::Encoder(work) => unsafe { work.release_after_completion(proof) },
             Self::EncoderF16(work) => unsafe { work.release_after_completion(proof) },
             Self::Decoder(work) => unsafe { work.release_after_completion(proof) },
+            Self::Gemma2(work) => unsafe { work.release_after_completion(proof) },
             Self::Qwen35(work) => unsafe { work.release_payload_after_completion(proof) },
+            Self::Gemma4(work) => unsafe { work.release_payload_after_completion(proof) },
         }
     }
     /// # Safety
@@ -1813,7 +1885,9 @@ impl Workspace {
             Self::Encoder(work) => unsafe { work.release_after_drain() },
             Self::EncoderF16(work) => unsafe { work.release_after_drain() },
             Self::Decoder(work) => unsafe { work.release_after_drain() },
+            Self::Gemma2(work) => unsafe { work.release_after_drain() },
             Self::Qwen35(work) => unsafe { work.release_payload_after_drain() },
+            Self::Gemma4(work) => unsafe { work.release_payload_after_drain() },
         }
     }
     /// Retains an unproven owner instead of dropping it. The Work already keeps
@@ -1824,7 +1898,7 @@ impl Workspace {
         bytes
     }
     fn stage(
-        &self,
+        &mut self,
         batch: &Batch,
         geometry: output::OutputGeometry,
         lease: &mut HostIoLease,
@@ -1833,7 +1907,11 @@ impl Workspace {
             Self::Encoder(work) => work.stage(batch, geometry, lease),
             Self::EncoderF16(work) => work.stage(batch, geometry, lease),
             Self::Decoder(work) => work.stage(batch, geometry, lease),
+            Self::Gemma2(work) => work.stage(batch, geometry, lease),
             Self::Qwen35(work) => work.stage(batch, geometry, lease),
+            Self::Gemma4(work) => work
+                .stage_text(batch, geometry, lease)
+                .map(|(prefix, _, output)| (prefix, output)),
         }
     }
     fn stage_classifier(
@@ -1845,17 +1923,19 @@ impl Workspace {
         match self {
             Self::Encoder(work) => work.stage_classifier(batch, geometry, lease),
             Self::Decoder(work) => work.stage_classifier(batch, geometry, lease),
-            Self::EncoderF16(_) | Self::Qwen35(_) => Err(infer(
-                "Classifier staging requires a BF16 encoder workspace",
-            )),
+            Self::EncoderF16(_) | Self::Gemma2(_) | Self::Qwen35(_) | Self::Gemma4(_) => Err(
+                infer("Classifier staging requires a BF16 encoder workspace"),
+            ),
         }
     }
-    fn upload(&self, host: &[u32], elements: usize) -> Result<(), BackendError> {
+    fn upload(&mut self, host: &[u32], elements: usize) -> Result<(), BackendError> {
         match self {
             Self::Encoder(work) => work.upload(host, elements),
             Self::EncoderF16(work) => work.upload(host, elements),
             Self::Decoder(work) => work.upload(host, elements),
+            Self::Gemma2(work) => work.upload(host, elements),
             Self::Qwen35(work) => work.upload(host, elements),
+            Self::Gemma4(work) => work.upload_text_and_mark(host, elements),
         }
     }
     #[allow(clippy::too_many_arguments)]
@@ -1897,6 +1977,15 @@ impl Workspace {
                 backbone_width,
                 lease,
             ),
+            Self::Gemma2(work) => work.finish(
+                dense,
+                lt,
+                plain_blas,
+                pooled_rows,
+                raw_rows,
+                backbone_width,
+                lease,
+            ),
             Self::Qwen35(work) => work.finish(
                 dense,
                 lt,
@@ -1906,6 +1995,9 @@ impl Workspace {
                 backbone_width,
                 lease,
             ),
+            Self::Gemma4(_) => Err(infer(
+                "Gemma4 completion is dispatched by the model/workspace pair",
+            )),
         }
     }
 }
@@ -2054,6 +2146,43 @@ fn bucketed(value: usize, minimum: usize) -> Result<usize, BackendError> {
         .checked_next_power_of_two()
         .ok_or_else(|| infer("Batch arena capacity overflow"))
 }
+fn input_elements(
+    tokens: usize,
+    boundaries: usize,
+    selected: usize,
+) -> Result<usize, BackendError> {
+    InputLayout::new(tokens, boundaries, selected).map(InputLayout::words)
+}
+
+/// Byte offsets of the three packed token arrays followed by the boundary and
+/// selection word arrays. The first three arrays are `input_ids`, `positions`
+/// and `token_type_ids`, each `tokens` u32 words.
+pub(crate) fn input_section_offsets(
+    tokens: usize,
+    boundaries: usize,
+    selected: usize,
+) -> Result<(usize, usize, usize), BackendError> {
+    let layout = InputLayout::new(tokens, boundaries, selected)?;
+    let positions = layout.positions().bytes()?;
+    let boundary_words = layout.boundaries().bytes()?;
+    let selected_words = layout.selections().bytes()?;
+    let capacity = layout
+        .words()
+        .checked_mul(4)
+        .ok_or_else(|| infer("Input staging byte size overflow"))?;
+    let end = usize::try_from(selected_words).map_err(infer)? + selected * 4;
+    if end != capacity {
+        return Err(infer(
+            "Input section offsets disagree with the packed capacity",
+        ));
+    }
+    Ok((
+        usize::try_from(positions).map_err(infer)?,
+        usize::try_from(boundary_words).map_err(infer)?,
+        usize::try_from(selected_words).map_err(infer)?,
+    ))
+}
+
 fn work_key(b: &Batch) -> Result<WorkKey, BackendError> {
     Ok((
         bucketed(b.input_ids.len(), MIN_TOKEN_CAPACITY)?,
@@ -3197,7 +3326,12 @@ impl Engine {
             .2
             .checked_add(metadata_capacity)
             .ok_or_else(|| infer("SPLADE pinned metadata capacity overflow"))?;
-        let host_input_elements = self.model.input_capacity(host_plan)?;
+        let host_input_elements = match &*self.model {
+            ExecutableModel::Gemma4(_) => staging::input_capacity(host_plan)?
+                .checked_add(raw_rows)
+                .ok_or_else(|| infer("Gemma4 raw input staging overflow"))?,
+            _ => self.model.input_capacity(host_plan)?,
+        };
         let host_before = lease.bytes()?;
         let host_after = lease
             .required_bytes_with_input(host_plan, host_input_elements, host_elements)?
@@ -3671,6 +3805,10 @@ impl Engine {
                 model.enqueue(lt, plain_blas, s, work, b, pool, max_length, tokens)?;
                 Ok(())
             }
+            (ExecutableModel::Gemma2(model), Workspace::Gemma2(work)) => {
+                model.enqueue_multimodal(plain_blas, s, work, b, pool, max_length, tokens)?;
+                Ok(())
+            }
             (ExecutableModel::Qwen35(model), Workspace::Qwen35(work)) => model
                 .enqueue(
                     plain_blas.ok_or_else(|| infer("Qwen3.5 requires plain cuBLAS"))?,
@@ -3682,6 +3820,38 @@ impl Engine {
                     tokens,
                 )
                 .map_err(EnqueueError::from),
+            (ExecutableModel::Gemma4(model), Workspace::Gemma4(work)) => {
+                let result = (|| -> Result<(), BackendError> {
+                    let vision = model.encode_vision(
+                        plain_blas.ok_or_else(|| infer("Gemma4 requires plain cuBLAS"))?,
+                        b,
+                        lease,
+                    )?;
+                    model.enqueue_text(
+                        plain_blas,
+                        s,
+                        work,
+                        b,
+                        pool,
+                        max_length,
+                        tokens,
+                        lease,
+                        vision
+                            .as_ref()
+                            .map(|(owner, rows)| (owner, rows.as_slice())),
+                    )?;
+                    model.finish_text(s, work, b, pooled_rows, raw_rows, lease)?;
+                    if let Some((owner, _)) = vision {
+                        lease.retain_owner(owner)?;
+                    }
+                    Ok(())
+                })();
+                if result.is_err() {
+                    work.cancel_text_after_failure();
+                }
+                result?;
+                return Ok(());
+            }
             (ExecutableModel::Encoder(model), Workspace::Encoder(w)) => {
                 {
                     let colbert = match (
@@ -4865,9 +5035,11 @@ enum LoadedConfig {
     Encoder(BertConfig),
     Decoder(DecoderConfig),
     Gemma(Gemma3Config),
+    Gemma2(gemma2_text::Gemma2Config),
     Qwen35(qwen35_config::Qwen35Config),
     Qwen35Block(qwen35_config::Qwen35Config, usize),
     Qwen35DynamicBlock(qwen35_config::Qwen35Config),
+    Gemma4(Gemma4Config),
 }
 impl LoadedConfig {
     #[cfg_attr(not(test), allow(dead_code))]
@@ -4877,9 +5049,11 @@ impl LoadedConfig {
             Self::Modern(config) => config.geometry.hidden_size,
             Self::Decoder(config) => config.hidden_size,
             Self::Gemma(config) => config.hidden_size,
+            Self::Gemma2(config) => config.text.embedding_dim,
             Self::Qwen35(config)
             | Self::Qwen35Block(config, _)
             | Self::Qwen35DynamicBlock(config) => config.hidden_size,
+            Self::Gemma4(config) => config.hidden_size,
         }
     }
 }
@@ -4888,6 +5062,7 @@ impl LoadedConfig {
 enum CheckpointArchitecture {
     Decoder,
     Gemma,
+    Gemma2,
     Modern,
     Nomic,
     Jina,
@@ -4895,6 +5070,7 @@ enum CheckpointArchitecture {
     Gte,
     Encoder,
     Deberta,
+    Gemma4,
 }
 impl CheckpointArchitecture {
     fn uses_native_default(self) -> bool {
@@ -4913,6 +5089,9 @@ fn selects_architecture(
             "decoder model_type {model_type} is a recognized Native alias/family whose actual math is not ported; no encoder fallback"
         )));
     }
+    if model_type == "embedding_gemma2" {
+        return Ok(CheckpointArchitecture::Gemma2);
+    }
     if DecoderFamily::is_decoder_model_type(model_type) {
         return Ok(CheckpointArchitecture::Decoder);
     }
@@ -4923,6 +5102,7 @@ fn selects_architecture(
         return Ok(CheckpointArchitecture::JinaCode);
     }
     match model_type {
+        "gemma4" | "gemma4_text" | "gemma4_unified" => Ok(CheckpointArchitecture::Gemma4),
         "modernbert" => Ok(CheckpointArchitecture::Modern),
         "nomic_bert" | "nomic-bert" => Ok(CheckpointArchitecture::Nomic),
         "new" | "gte" => Ok(CheckpointArchitecture::Gte),
@@ -5069,6 +5249,10 @@ impl OxideBackend {
         if qwen35_serving::is_qwen35_checkpoint(path)? {
             return Self::new_qwen35_serving(path, dtype, model_type, device_id, dense_paths);
         }
+        let early_architecture = detects_architecture(path)?;
+        if early_architecture == CheckpointArchitecture::Gemma4 {
+            return Self::new_gemma4(path, dtype, &model_type, device_id);
+        }
         if model_type == ModelType::Decision {
             return Err(start("Oxide decisions require a dense Qwen3.5 checkpoint"));
         }
@@ -5100,6 +5284,21 @@ impl OxideBackend {
             deberta_host = Some(deberta_encoder_model::load(path)?);
         }
         let classifier = model_type == ModelType::Classifier;
+        if early_architecture == CheckpointArchitecture::Gemma2 {
+            if dtype != "bfloat16" {
+                return Err(start("EmbeddingGemma2 requires the BF16 runtime"));
+            }
+            if classifier {
+                return Err(start(
+                    "EmbeddingGemma2 supports pooled embeddings only, not classifiers",
+                ));
+            }
+            if dense_paths.as_ref().is_some_and(|paths| !paths.is_empty()) {
+                return Err(start(
+                    "EmbeddingGemma2 uses its saved in-checkpoint embedding_projection; external Dense modules are not admitted",
+                ));
+            }
+        }
         let decoder_classifier_value =
             if classifier && early_architecture == CheckpointArchitecture::Decoder {
                 let value: serde_json::Value = model::read_json(&path.join("config.json"))?;
@@ -5410,6 +5609,38 @@ impl OxideBackend {
                         dense,
                         output_width,
                     )
+                } else if architecture == CheckpointArchitecture::Gemma2 {
+                    let host = gemma2_text::Gemma2Text::load(path)?;
+                    let config = host.config.clone();
+                    let fa4_root = std::env::var_os(infinity_v3_config::infinity_env!("FA4_ROOT"))
+                        .ok_or_else(|| {
+                            start("EmbeddingGemma2 local attention requires INFINITY_FA4_ROOT")
+                        })?;
+                    let head512_root = std::env::var_os(infinity_v3_config::infinity_env!(
+                        "HEAD512_ROOT"
+                    ))
+                    .ok_or_else(|| {
+                        start("EmbeddingGemma2 full d512 attention requires INFINITY_HEAD512_ROOT")
+                    })?;
+                    let model = gemma2_forward::Gemma2Executor::new(
+                        context.clone(),
+                        stream.clone(),
+                        &host,
+                        path,
+                        Path::new(&fa4_root),
+                        Path::new(&head512_root),
+                        None,
+                    )?;
+                    let output_width = config.text.embedding_dim;
+                    let attention_length_limit = Some(config.text.max_position_embeddings);
+                    (
+                        ExecutableModel::Gemma2(Box::new(model)),
+                        LoadedConfig::Gemma2(config),
+                        Some(Blas::new(context.clone(), stream.clone())?),
+                        attention_length_limit,
+                        None,
+                        output_width,
+                    )
                 } else if architecture == CheckpointArchitecture::Modern {
                     let host = ModernWeights::load(path)?;
                     let config = host.config.clone();
@@ -5526,6 +5757,67 @@ impl OxideBackend {
                 model: ManuallyDrop::new(model),
                 dense: ManuallyDrop::new(dense),
                 plain_blas: ManuallyDrop::new(plain_blas),
+                context,
+                stream: stream.clone(),
+                io: io.clone(),
+                workspace: None,
+                dense_workspace: None,
+                splade_workspace: None,
+                colbert_workspace: None,
+                cached: cache::WorkspaceCache::new(),
+                retired: RetirementQueue::new(),
+                failed: false,
+            })),
+            stream,
+            io,
+        })
+    }
+
+    fn new_gemma4(
+        path: &Path,
+        dtype: &str,
+        model_type: &ModelType,
+        device_id: usize,
+    ) -> Result<Self, BackendError> {
+        if dtype != "bfloat16" {
+            return Err(start("Gemma4 requires the BF16 runtime"));
+        }
+        let (contract, pool) = match model_type {
+            ModelType::Decision => (Gemma4Contract::RuneOptionTokens, Pool::LastToken),
+            ModelType::Embedding(pool @ (Pool::Cls | Pool::Mean | Pool::LastToken)) => {
+                (Gemma4Contract::Embedding, pool.clone())
+            }
+            ModelType::Embedding(Pool::Splade) => {
+                return Err(start("Gemma4 SPLADE pooling is unsupported"))
+            }
+            ModelType::Classifier => {
+                return Err(start("Gemma4 classifier readout is not an embedding route"))
+            }
+        };
+        if device_id >= device_count()? {
+            return Err(start("CUDA device ordinal is not visible"));
+        }
+        let context = Context::new(device_id).map_err(start)?;
+        let stream = context.new_stream().map_err(start)?;
+        let lt = LtProvider::new(context.clone(), stream.clone())?;
+        let model = Gemma4Model::load(path, context.clone(), stream.clone(), contract)?;
+        let config = model.config.clone();
+        let output_width = model.hidden_size();
+        let blas = Blas::new(context.clone(), stream.clone())?;
+        let io = HostIo::pool(&context)?;
+        Ok(Self {
+            config: LoadedConfig::Gemma4(config),
+            output_width,
+            pool,
+            readout: None,
+            colbert_policy: None,
+            attention_length_limit: None,
+            raw_output_supported: true,
+            engine: Arc::new(Mutex::new(Engine {
+                lt: ManuallyDrop::new(lt),
+                model: ManuallyDrop::new(ExecutableModel::Gemma4(Box::new(model))),
+                dense: ManuallyDrop::new(None),
+                plain_blas: ManuallyDrop::new(Some(blas)),
                 context,
                 stream: stream.clone(),
                 io: io.clone(),
@@ -5834,6 +6126,134 @@ impl OxideBackend {
         self.submit_warm_decision(batch, requests)
     }
 
+    /// Gemma4 Rune `option_tokens` submission over the concrete text executor.
+    /// The trained BF16 tied option head is planned cold, option IDs are staged
+    /// in the request's retained host input tail, and the completion closure
+    /// owns the text Work, option Work and prepared head until the event drains.
+    fn submit_gemma4_decision(
+        &self,
+        batch: Batch,
+        requests: Vec<DecisionInput>,
+    ) -> Result<Inference<Vec<DecisionOutput>>, BackendError> {
+        if !matches!(self.config, LoadedConfig::Gemma4(_)) {
+            return Err(infer("Gemma4 Rune submission requires the Gemma4 model"));
+        }
+        if requests.len() != batch.len() {
+            return Err(infer(
+                "Gemma4 Rune request count does not match the packed batch",
+            ));
+        }
+        if !batch.pooled_indices.is_empty() || !batch.raw_indices.is_empty() {
+            return Err(infer(
+                "Gemma4 Rune decisions require an unpooled packed decision batch",
+            ));
+        }
+        if requests.iter().any(|request| {
+            !matches!(
+                request,
+                DecisionInput::OptionTokens { .. } | DecisionInput::Warmup
+            )
+        }) {
+            return Err(infer(
+                "Gemma4 Rune supports only OptionTokens and Warmup requests",
+            ));
+        }
+        let max_length = validate_loaded(&batch, &self.config)?;
+        let tokens = batch.input_ids.len();
+        let key = work_key(&batch)?;
+        let slot = self.io.acquire()?;
+        let mut lease = HostIoLease::new(
+            slot,
+            self.io.clone(),
+            self.engine.clone(),
+            self.stream.clone(),
+        );
+        let (work, option_work, prepared, vision) = {
+            let mut engine = match self.engine.lock() {
+                Ok(engine) => engine,
+                Err(_) => {
+                    self.io.close();
+                    return Err(BackendError::Unhealthy);
+                }
+            };
+            if engine.failed || self.io.poisoned() {
+                self.io.close();
+                return Err(BackendError::Unhealthy);
+            }
+            let Engine {
+                model, plain_blas, ..
+            } = &mut *engine;
+            let plain_blas = plain_blas
+                .as_ref()
+                .ok_or_else(|| infer("Gemma4 requires plain cuBLAS"))?;
+            let ExecutableModel::Gemma4(model) = &mut **model else {
+                return Err(infer("Gemma4 Rune submission has no Gemma4 executor"));
+            };
+            model
+                .preflight(&batch, &Pool::LastToken)
+                .map_err(ShapeError::into_backend)?;
+            let prepared = model.prepare_rune(&batch, &requests)?;
+            let total_options = prepared.total_options();
+            if total_options == 0 {
+                return Err(infer("Gemma4 Rune requests contain no option tokens"));
+            }
+            let host_key = (key.0, key.1, total_options);
+            let input_words = staging::input_capacity(host_key)?;
+            let output_elements = total_options;
+            lease.prepare_with_input(key, input_words, output_elements, false)?;
+            let ids_offset = stage_option_ids(&mut lease, host_key, prepared.row_ids())?;
+            if ids_offset
+                .checked_add(total_options)
+                .is_none_or(|end| end != input_words)
+            {
+                return Err(infer(
+                    "Gemma4 Rune option-ID tail disagrees with the input layout",
+                ));
+            }
+            let mut work = model.workspace(self.stream.clone(), key)?;
+            let geometry = output::OutputGeometry::new(model.hidden_size(), model.hidden_size())?;
+            let (prefix, tail, _) = work.stage_text(&batch, geometry, &mut lease)?;
+            if tail != staging::input_capacity(key)? {
+                return Err(infer(
+                    "Gemma4 Rune text tail offset disagrees with the layout",
+                ));
+            }
+            work.upload_text_prefix(&lease, prefix)?;
+            let mut option_work = Gemma4OptionWork::new(self.stream.clone(), prepared.layout())?;
+            let vision = model.encode_vision(plain_blas, &batch, &lease)?;
+            unsafe {
+                model.enqueue_rune(
+                    Some(plain_blas),
+                    &self.stream,
+                    &mut work,
+                    &mut option_work,
+                    &batch,
+                    max_length,
+                    tokens,
+                    &requests,
+                    &mut lease,
+                    &prepared,
+                    vision
+                        .as_ref()
+                        .map(|(owner, rows)| (owner, rows.as_slice())),
+                )?;
+            }
+            prepared.finish_rune(&self.stream, &mut option_work, &mut lease)?;
+            (work, option_work, prepared, vision)
+        };
+        if let Some((owner, _)) = vision {
+            lease.retain_owner(owner)?;
+        }
+        Ok(Inference::Deferred(Box::new(move || {
+            lease.wait()?;
+            let output = prepared.outputs(&lease)?;
+            drop(option_work);
+            drop(work);
+            Ok(output)
+        })))
+    }
+
+    /// Private async OneJev decision entry for Root qualification. The returned
     /// Private async OneJev decision entry for Root qualification. The returned
     /// deferred closure owns the request-specific host lease until the recorded
     /// event drains, so held A/B requests never share one D2H host buffer.
@@ -5843,6 +6263,9 @@ impl OxideBackend {
         batch: Batch,
         requests: Vec<DecisionInput>,
     ) -> Result<Inference<Vec<DecisionOutput>>, BackendError> {
+        if matches!(&self.config, LoadedConfig::Gemma4(_)) {
+            return self.submit_gemma4_decision(batch, requests);
+        }
         if matches!(
             &self.config,
             LoadedConfig::Qwen35Block(_, _) | LoadedConfig::Qwen35DynamicBlock(_)
@@ -6506,6 +6929,73 @@ fn validate_qwen35_batch(
     Ok(max_length)
 }
 
+fn validate_gemma4_batch(batch: &Batch, c: &Gemma4Config) -> Result<usize, BackendError> {
+    let fail = || infer("Invalid or unsupported packed Gemma4 batch");
+    let tokens = batch.input_ids.len();
+    let sequences = batch
+        .cumulative_seq_lengths
+        .len()
+        .checked_sub(1)
+        .filter(|n| *n > 0)
+        .ok_or_else(fail)?;
+    if tokens == 0
+        || batch.cumulative_seq_lengths.first() != Some(&0)
+        || batch
+            .cumulative_seq_lengths
+            .last()
+            .copied()
+            .map(|n| n as usize)
+            != Some(tokens)
+        || batch.position_ids.len() != tokens
+        || batch.token_type_ids.len() != tokens
+        || batch.compact_input_ids.is_some()
+        || batch.compact_position_ids.is_some()
+        || batch.scatter_unfold.is_some()
+        || batch.fold_gather.is_some()
+    {
+        return Err(fail());
+    }
+    let mut max_length = 0;
+    for pair in batch.cumulative_seq_lengths.windows(2) {
+        let (Some(&start), Some(&end)) = (pair.first(), pair.get(1)) else {
+            return Err(fail());
+        };
+        let length = end.checked_sub(start).filter(|n| *n > 0).ok_or_else(fail)? as usize;
+        if length > c.max_position_embeddings {
+            return Err(fail());
+        }
+        max_length = max_length.max(length);
+    }
+    if sequences > 65535
+        || batch
+            .pooled_indices
+            .iter()
+            .chain(&batch.raw_indices)
+            .any(|&i| i as usize >= sequences)
+        || batch.input_ids.iter().any(|&i| i as usize >= c.vocab_size)
+        || batch
+            .position_ids
+            .iter()
+            .any(|&i| i as usize >= c.max_position_embeddings)
+    {
+        return Err(fail());
+    }
+    if let Some(media) = batch.multimodal.iter().flatten().next() {
+        if !media.audios.is_empty() {
+            return Err(infer("Gemma4 official checkpoints have no audio tower"));
+        }
+        for (start, image) in &media.images {
+            let soft = image.token_count();
+            if start.checked_add(soft).is_none_or(|end| end > tokens) {
+                return Err(infer("Gemma4 image token span exceeds the packed tokens"));
+            }
+        }
+    }
+    u32_size(product(tokens, c.hidden_size)?)?;
+    u32_size(product(tokens, c.intermediate_size)?)?;
+    Ok(max_length)
+}
+
 fn validate_loaded(batch: &Batch, config: &LoadedConfig) -> Result<usize, BackendError> {
     match config {
         LoadedConfig::Encoder(config) => validate(batch, config),
@@ -6514,7 +7004,9 @@ fn validate_loaded(batch: &Batch, config: &LoadedConfig) -> Result<usize, Backen
         }
         LoadedConfig::Decoder(config) => validate_decoder(batch, config),
         LoadedConfig::Gemma(config) => validate_gemma3(batch, config),
+        LoadedConfig::Gemma2(config) => validate_gemma2_batch(batch, &config.text),
         LoadedConfig::Qwen35(c) => validate_qwen35_batch(batch, c),
+        LoadedConfig::Gemma4(c) => validate_gemma4_batch(batch, c),
         LoadedConfig::Qwen35Block(c, prefix) => {
             crate::qwen35_block_layout::validate_block_token_count(batch.input_ids.len())?;
             let max_length = validate_qwen35_batch(batch, c)?;
@@ -6625,6 +7117,85 @@ fn validate_decoder_batch(batch: &Batch, shape: DecoderBatchShape) -> Result<usi
     u32_size(product(tokens, shape.hidden_size)?)?;
     Ok(max_length)
 }
+
+fn validate_gemma2_batch(
+    batch: &Batch,
+    c: &gemma2_text::Gemma2TextConfig,
+) -> Result<usize, BackendError> {
+    let fail = || infer("Invalid or unsupported packed oxide EmbeddingGemma2 batch");
+    let tokens = batch.input_ids.len();
+    let sequences = batch
+        .cumulative_seq_lengths
+        .len()
+        .checked_sub(1)
+        .filter(|n| *n > 0)
+        .ok_or_else(fail)?;
+    if tokens == 0
+        || batch.cumulative_seq_lengths.first() != Some(&0)
+        || batch
+            .cumulative_seq_lengths
+            .last()
+            .copied()
+            .map(|n| n as usize)
+            != Some(tokens)
+        || batch.position_ids.len() != tokens
+        || batch.token_type_ids.len() != tokens
+        || batch.compact_input_ids.is_some()
+        || batch.compact_position_ids.is_some()
+        || batch.scatter_unfold.is_some()
+        || batch.fold_gather.is_some()
+    {
+        return Err(fail());
+    }
+    let mut max_length = 0;
+    for pair in batch.cumulative_seq_lengths.windows(2) {
+        let (Some(&start), Some(&end)) = (pair.first(), pair.get(1)) else {
+            return Err(fail());
+        };
+        let length = end.checked_sub(start).filter(|n| *n > 0).ok_or_else(fail)? as usize;
+        if length > c.max_position_embeddings {
+            return Err(fail());
+        }
+        max_length = max_length.max(length);
+    }
+    if sequences > 65535
+        || batch
+            .pooled_indices
+            .iter()
+            .chain(&batch.raw_indices)
+            .any(|&i| i as usize >= sequences)
+        || batch.input_ids.iter().any(|&i| i as usize >= c.vocab_size)
+        || batch
+            .position_ids
+            .iter()
+            .any(|&i| i as usize >= c.max_position_embeddings)
+    {
+        return Err(fail());
+    }
+    let max_q_width = c
+        .layers
+        .iter()
+        .map(|layer| layer.q_width)
+        .max()
+        .ok_or_else(fail)?;
+    let max_kv_width = c
+        .layers
+        .iter()
+        .map(|layer| layer.kv_width)
+        .max()
+        .ok_or_else(fail)?;
+    u32_size(product(tokens, max_q_width)?)?;
+    u32_size(product(tokens, max_kv_width)?)?;
+    u32_size(product(tokens, c.intermediate_size)?)?;
+    u32_size(product(tokens, c.hidden_size)?)?;
+    let ple = c
+        .num_hidden_layers
+        .checked_mul(c.ple_width)
+        .ok_or_else(fail)?;
+    u32_size(product(tokens, ple)?)?;
+    Ok(max_length)
+}
+
 fn validate_decoder(batch: &Batch, c: &DecoderConfig) -> Result<usize, BackendError> {
     validate_decoder_batch(
         batch,
@@ -7309,6 +7880,25 @@ mod tests {
             "hidden_act": "gelu", "position_embedding_type": "absolute"
         }))
         .unwrap()
+    }
+
+    #[test]
+    fn gemma4_marker_selects_the_owned_multimodal_architecture() {
+        let head: jina_encoder_model::RawJinaMarker = serde_json::from_value(serde_json::json!({
+            "model_type": "gemma4",
+            "architectures": ["Gemma4ForConditionalGeneration"]
+        }))
+        .unwrap();
+        assert_eq!(
+            selects_architecture(&head).unwrap(),
+            CheckpointArchitecture::Gemma4
+        );
+        let head: jina_encoder_model::RawJinaMarker =
+            serde_json::from_value(serde_json::json!({"model_type": "gemma4_text"})).unwrap();
+        assert_eq!(
+            selects_architecture(&head).unwrap(),
+            CheckpointArchitecture::Gemma4
+        );
     }
 
     #[test]
@@ -8092,7 +8682,11 @@ mod tests {
                 let engine = backend.engine.lock().unwrap();
                 let work = match engine.workspace.as_ref().unwrap() {
                     Workspace::Encoder(work) => work,
-                    Workspace::EncoderF16(_) | Workspace::Decoder(_) | Workspace::Qwen35(_) => {
+                    Workspace::EncoderF16(_)
+                    | Workspace::Decoder(_)
+                    | Workspace::Gemma2(_)
+                    | Workspace::Qwen35(_)
+                    | Workspace::Gemma4(_) => {
                         panic!("MiniLM must use the BF16 encoder workspace")
                     }
                 };
@@ -8109,7 +8703,11 @@ mod tests {
                 assert!(!engine.io.poisoned());
                 let work = match engine.workspace.as_ref().unwrap() {
                     Workspace::Encoder(work) => work,
-                    Workspace::EncoderF16(_) | Workspace::Decoder(_) | Workspace::Qwen35(_) => {
+                    Workspace::EncoderF16(_)
+                    | Workspace::Decoder(_)
+                    | Workspace::Gemma2(_)
+                    | Workspace::Qwen35(_)
+                    | Workspace::Gemma4(_) => {
                         panic!("MiniLM must use the BF16 encoder workspace")
                     }
                 };
@@ -8124,7 +8722,9 @@ mod tests {
                     | ExecutableModel::Decoder(_)
                     | ExecutableModel::Gemma(_)
                     | ExecutableModel::Modern(_)
-                    | ExecutableModel::Qwen35(_) => panic!("MiniLM must use BF16 encoder plans"),
+                    | ExecutableModel::Gemma2(_)
+                    | ExecutableModel::Qwen35(_)
+                    | ExecutableModel::Gemma4(_) => panic!("MiniLM must use BF16 encoder plans"),
                 };
                 assert_eq!(model.plans.rows, None);
                 assert_eq!(model.plans.qkv.logical_rows(), b.input_ids.len() as i32);
@@ -8281,9 +8881,11 @@ mod tests {
             LoadedConfig::Decoder(_)
             | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
+            | LoadedConfig::Gemma2(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
-            | LoadedConfig::Qwen35DynamicBlock(_) => {
+            | LoadedConfig::Qwen35DynamicBlock(_)
+            | LoadedConfig::Gemma4(_) => {
                 panic!("this test requires an encoder checkpoint")
             }
         };
@@ -8703,9 +9305,11 @@ mod tests {
             LoadedConfig::Decoder(_)
             | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
+            | LoadedConfig::Gemma2(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
-            | LoadedConfig::Qwen35DynamicBlock(_) => {
+            | LoadedConfig::Qwen35DynamicBlock(_)
+            | LoadedConfig::Gemma4(_) => {
                 panic!("this test requires an encoder checkpoint")
             }
         };
@@ -8718,9 +9322,11 @@ mod tests {
             LoadedConfig::Decoder(_)
             | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
+            | LoadedConfig::Gemma2(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
-            | LoadedConfig::Qwen35DynamicBlock(_) => unreachable!(),
+            | LoadedConfig::Qwen35DynamicBlock(_)
+            | LoadedConfig::Gemma4(_) => unreachable!(),
         }
         let boundary = u32::try_from(oversized_length).unwrap();
         let oversized = Batch {
@@ -8775,9 +9381,11 @@ mod tests {
             LoadedConfig::Encoder(_)
             | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
+            | LoadedConfig::Gemma2(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
-            | LoadedConfig::Qwen35DynamicBlock(_) => {
+            | LoadedConfig::Qwen35DynamicBlock(_)
+            | LoadedConfig::Gemma4(_) => {
                 panic!("TinyLlama must load as a decoder")
             }
         }
@@ -9006,9 +9614,11 @@ mod tests {
             LoadedConfig::Encoder(_)
             | LoadedConfig::Gemma(_)
             | LoadedConfig::Modern(_)
+            | LoadedConfig::Gemma2(_)
             | LoadedConfig::Qwen35(_)
             | LoadedConfig::Qwen35Block(_, _)
-            | LoadedConfig::Qwen35DynamicBlock(_) => {
+            | LoadedConfig::Qwen35DynamicBlock(_)
+            | LoadedConfig::Gemma4(_) => {
                 panic!("Qwen3 must load as a decoder")
             }
         };
@@ -9204,6 +9814,7 @@ mod tests {
             ("qwen2", CheckpointArchitecture::Decoder),
             ("gemma3_text", CheckpointArchitecture::Gemma),
             ("gemma3", CheckpointArchitecture::Gemma),
+            ("embedding_gemma2", CheckpointArchitecture::Gemma2),
         ] {
             let path = config_fixture(
                 model_type,
@@ -9220,6 +9831,7 @@ mod tests {
         for architecture in [
             CheckpointArchitecture::Decoder,
             CheckpointArchitecture::Gemma,
+            CheckpointArchitecture::Gemma2,
             CheckpointArchitecture::Modern,
             CheckpointArchitecture::Nomic,
             CheckpointArchitecture::Jina,
@@ -9358,7 +9970,9 @@ mod tests {
             | ExecutableModel::Modern(_)
             | ExecutableModel::Decoder(_)
             | ExecutableModel::Gemma(_)
-            | ExecutableModel::Qwen35(_) => {
+            | ExecutableModel::Gemma2(_)
+            | ExecutableModel::Qwen35(_)
+            | ExecutableModel::Gemma4(_) => {
                 panic!("GTE must use encoder plans")
             }
         };
@@ -9476,9 +10090,11 @@ mod tests {
                 LoadedConfig::Modern(_)
                 | LoadedConfig::Decoder(_)
                 | LoadedConfig::Gemma(_)
+                | LoadedConfig::Gemma2(_)
                 | LoadedConfig::Qwen35(_)
                 | LoadedConfig::Qwen35Block(_, _)
-                | LoadedConfig::Qwen35DynamicBlock(_) => {
+                | LoadedConfig::Qwen35DynamicBlock(_)
+                | LoadedConfig::Gemma4(_) => {
                     panic!("GTE must use the encoder executor")
                 }
             }),
@@ -9528,7 +10144,11 @@ mod tests {
             );
             let work = match engine.workspace.as_ref().unwrap() {
                 Workspace::Encoder(work) => work,
-                Workspace::EncoderF16(_) | Workspace::Decoder(_) | Workspace::Qwen35(_) => {
+                Workspace::EncoderF16(_)
+                | Workspace::Decoder(_)
+                | Workspace::Gemma2(_)
+                | Workspace::Qwen35(_)
+                | Workspace::Gemma4(_) => {
                     panic!("GTE must use the encoder workspace")
                 }
             };

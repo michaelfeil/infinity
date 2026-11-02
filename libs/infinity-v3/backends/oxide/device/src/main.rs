@@ -21,6 +21,9 @@ mod encoder_prenorm;
 mod gated;
 mod gelu_exact;
 mod gemma2;
+mod gemma4_vision;
+mod gemma4;
+mod gemma2_media;
 mod gemma3;
 mod jina_code_qk;
 mod mpnet_norm;
@@ -2560,4 +2563,647 @@ mod kernels {
 
 }
 
-fn main() {}
+fn main() {
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_norm_bf16_f32scale(
+        input: *const u16,
+        scale: *const f32,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        heads: u32,
+        token_stride: u64,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::gemma4::norm_bf16_f32scale(
+                input,
+                scale,
+                out,
+                rows,
+                width,
+                heads,
+                token_stride,
+                eps,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_router_scale_bf16_to_f32(
+        unit: *const u16,
+        scale: *const u16,
+        out: *mut f32,
+        count: u32,
+        root: f32,
+    ) {
+        unsafe { crate::gemma4::router_scale_bf16_to_f32(unit, scale, out, count, root) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_residual_norm_bf16_f32scale(
+        input: *const u16,
+        residual: *const u16,
+        scale: *const f32,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::gemma4::residual_norm_bf16_f32scale(
+                input, residual, scale, out, rows, width, eps,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_im2col_f32(
+        input: *const f32,
+        out: *mut f32,
+        channels: u32,
+        height: u32,
+        width: u32,
+        kh: u32,
+        kw: u32,
+        stride: u32,
+        pad_h: u32,
+        pad_w: u32,
+        out_h: u32,
+        out_w: u32,
+    ) {
+        unsafe {
+            crate::gemma2_media::im2col_f32(
+                input, out, channels, height, width, kh, kw, stride, pad_h, pad_w, out_h,
+                out_w,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_mask_f32(
+        input: *const f32,
+        valid: *const u8,
+        out: *mut f32,
+        count: u32,
+    ) {
+        unsafe { crate::gemma2_media::mask_f32(input, valid, out, count) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_channel_norm_relu_bf16(
+        input: *const f32,
+        scale: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe { crate::gemma2_media::channel_norm_relu_bf16(input, scale, out, rows, width, eps) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_transpose_btwc_to_bctw_bf16(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::gemma2_media::transpose_btwc_to_bctw_bf16(input, out, rows, width) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_conv_rows_to_btcw_bf16(
+        input: *const u16,
+        out: *mut u16,
+        time: u32,
+        spatial: u32,
+        channels: u32,
+    ) {
+        unsafe {
+            crate::gemma2_media::conv_rows_to_btcw_bf16(input, out, time, spatial, channels)
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_center_pixels_bf16(
+        input: *const f32,
+        out: *mut u16,
+        count: u32,
+    ) {
+        unsafe { crate::gemma2_media::center_pixels_bf16(input, out, count) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_patch_add_position_bf16(
+        input: *const u16,
+        columns: *const u32,
+        rows: *const u32,
+        table: *const u16,
+        out: *mut u16,
+        count: u32,
+        width: u32,
+        positions: u32,
+    ) {
+        unsafe {
+            crate::gemma2_media::patch_add_position_bf16(
+                input, columns, rows, table, out, count, width, positions,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_axial_tables_bf16(
+        columns: *const u32,
+        rows: *const u32,
+        inverse: *const f32,
+        cosine: *mut u16,
+        sine: *mut u16,
+        count: u32,
+        pairs: u32,
+    ) {
+        unsafe {
+            crate::gemma2_media::axial_tables_bf16(
+                columns, rows, inverse, cosine, sine, count, pairs,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_axial_rope_bf16(
+        qk: *mut u16,
+        cosine: *const u16,
+        sine: *const u16,
+        tokens: u32,
+        heads: u32,
+        dim: u32,
+    ) {
+        unsafe { crate::gemma2_media::axial_rope_bf16(qk, cosine, sine, tokens, heads, dim) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_attention_bf16(
+        q: *const u16,
+        k: *const u16,
+        v: *const u16,
+        out: *mut u16,
+        cu_seqlens: *const u32,
+        total: u32,
+        batch: u32,
+        heads: u32,
+        kv_heads: u32,
+        dim: u32,
+        max_q: u32,
+        scale: f32,
+    ) {
+        unsafe {
+            crate::gemma2_media::attention_bf16(
+                q, k, v, out, cu_seqlens, total, batch, heads, kv_heads, dim, max_q, scale,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_gated_gelu_split_bf16(
+        gate: *const u16,
+        up: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::gemma2_media::gated_gelu_split_bf16(gate, up, out, rows, width) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_vision_pool_bf16(
+        input: *const u16,
+        out: *mut u16,
+        height: u32,
+        width: u32,
+        pool: u32,
+        hidden: u32,
+    ) {
+        unsafe { crate::gemma2_media::vision_pool_bf16(input, out, height, width, pool, hidden) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_clamp_bf16(
+        input: *const u16,
+        out: *mut u16,
+        count: u32,
+        minimum: f32,
+        maximum: f32,
+    ) {
+        unsafe { crate::gemma2_media::clamp_bf16(input, out, count, minimum, maximum) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_residual_scale_add_bf16(
+        destination: *mut u16,
+        source: *const u16,
+        count: u32,
+        scale: f32,
+    ) {
+        unsafe { crate::gemma2_media::residual_scale_add_bf16(destination, source, count, scale) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_add_bf16(
+        destination: *mut u16,
+        source: *const u16,
+        count: u32,
+    ) {
+        unsafe { crate::gemma2_media::add_bf16(destination, source, count) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_bias_add_bf16(
+        rows: u32,
+        width: u32,
+        bias: *const u16,
+        data: *mut u16,
+    ) {
+        unsafe { crate::gemma2_media::bias_add_bf16(rows, width, bias, data) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_audio_scaled_qk_f32(
+        q: *const u16,
+        k: *const u16,
+        per_dim_scale: *const u16,
+        q_out: *mut f32,
+        k_out: *mut f32,
+        tokens: u32,
+        heads: u32,
+        dim: u32,
+    ) {
+        unsafe {
+            crate::gemma2_media::audio_scaled_qk_f32(
+                q, k, per_dim_scale, q_out, k_out, tokens, heads, dim,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_audio_attention_bf16(
+        q: *const f32,
+        k: *const f32,
+        v: *const u16,
+        relative: *const u16,
+        valid: *const u8,
+        out: *mut u16,
+        tokens: u32,
+        heads: u32,
+        dim: u32,
+        chunk: u32,
+        past: u32,
+        future: u32,
+        span: u32,
+        cap: f32,
+        invalid: f32,
+    ) {
+        unsafe {
+            crate::gemma2_media::audio_attention_bf16(
+                q, k, v, relative, valid, out, tokens, heads, dim, chunk, past, future, span,
+                cap, invalid,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_glu_bf16(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::gemma2_media::glu_bf16(input, out, rows, width) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_depthwise_conv1d_causal_bf16(
+        input: *const u16,
+        weight: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        channels: u32,
+        kernel: u32,
+        clip: f32,
+    ) {
+        unsafe {
+            crate::gemma2_media::depthwise_conv1d_causal_bf16(
+                input, weight, out, tokens, channels, kernel, clip,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_silu_bf16(
+        input: *const u16,
+        out: *mut u16,
+        count: u32,
+    ) {
+        unsafe { crate::gemma2_media::silu_bf16(input, out, count) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_select_rows_bf16(
+        input: *const u16,
+        out: *mut u16,
+        selected: *const u32,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::gemma2_media::select_rows_bf16(input, out, selected, rows, width) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_scatter_rows_bf16(
+        state: *mut u16,
+        rows: *const u16,
+        indices: *const u32,
+        count: u32,
+        width: u32,
+    ) {
+        unsafe { crate::gemma2_media::scatter_rows_bf16(state, rows, indices, count, width) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma2_media_audio_norm_bf16_f32scale(
+        input: *const u16,
+        scale: *const f32,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::gemma2_media::audio_norm_bf16_f32scale(input, scale, out, rows, width, eps)
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_unit_norm_bf16(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        heads: u32,
+        token_stride: u64,
+        eps: f32,
+    ) {
+        unsafe { crate::gemma4::unit_norm_bf16(input, out, rows, width, heads, token_stride, eps) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_gated_gelu_bf16(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+    ) {
+        unsafe { crate::gemma4::gated_gelu_bf16(input, out, rows, width) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_ple_gate_bf16(
+        gate: *const u16,
+        ple: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        layers: u32,
+        layer: u32,
+    ) {
+        unsafe { crate::gemma4::ple_gate_bf16(gate, ple, out, rows, width, layers, layer) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_ple_combine_bf16(
+        projected: *const u16,
+        token: *const u16,
+        out: *mut u16,
+        count: u32,
+        scale: f32,
+    ) {
+        unsafe { crate::gemma4::ple_combine_bf16(projected, token, out, count, scale) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_scale_bf16(
+        input: *const u16,
+        out: *mut u16,
+        count: u32,
+        scale: f32,
+    ) {
+        unsafe { crate::gemma4::scale_bf16(input, out, count, scale) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_rope_tables_bf16(
+        inverse: *const f32,
+        cosine: *mut f32,
+        sine: *mut f32,
+        positions: u32,
+        pairs: u32,
+    ) {
+        unsafe { crate::gemma4::rope_tables_bf16(inverse, cosine, sine, positions, pairs) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_rope_q_bf16(
+        q: *mut u16,
+        cosine: *const f32,
+        sine: *const f32,
+        positions: *const u32,
+        tokens: u32,
+        q_heads: u32,
+        head_dim: u32,
+        rotary_dim: u32,
+        q_stride: u64,
+        table_stride: u32,
+    ) {
+        unsafe {
+            crate::gemma4::rope_q_bf16(
+                q,
+                cosine,
+                sine,
+                positions,
+                tokens,
+                q_heads,
+                head_dim,
+                rotary_dim,
+                q_stride,
+                table_stride,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_attention_256_bf16(
+        q: *const u16,
+        k: *const u16,
+        v: *const u16,
+        cu_q: *const u32,
+        cu_k: *const u32,
+        out: *mut u16,
+        batch: u32,
+        heads: u32,
+        kv_heads: u32,
+        head_dim: u32,
+        q_stride: u64,
+        kv_stride: u64,
+        max_q: u32,
+        max_support: u32,
+        scale: f32,
+        causal: u32,
+        window_left: i32,
+        window_right: i32,
+    ) {
+        unsafe {
+            crate::gemma4::attention_256_bf16(
+                q,
+                k,
+                v,
+                cu_q,
+                cu_k,
+                out,
+                batch,
+                heads,
+                kv_heads,
+                head_dim,
+                q_stride,
+                kv_stride,
+                max_q,
+                max_support,
+                scale,
+                causal,
+                window_left,
+                window_right,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_option_softcap_bf16_to_f32(
+        input: *const u16,
+        out: *mut f32,
+        count: u32,
+        cap: f32,
+    ) {
+        unsafe { crate::gemma4::option_softcap_bf16_to_f32(input, out, count, cap) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_select_rows_bf16(
+        input: *const u16,
+        cu_seqlens: *const u32,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        last: u32,
+    ) {
+        unsafe { crate::gemma4::select_rows_bf16(input, cu_seqlens, out, rows, width, last) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_vision_clip_rows_bf16(
+        input: *const u16,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        stride: u32,
+        min: f32,
+        max: f32,
+    ) {
+        unsafe { crate::gemma4_vision::clip_rows(input, out, rows, width, stride, min, max) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_vision_position_add_bf16(
+        hidden: *const u16,
+        table: *const u16,
+        columns: *const u32,
+        rows: *const u32,
+        out: *mut u16,
+        tokens: u32,
+        width: u32,
+        table_size: u32,
+    ) {
+        unsafe { crate::gemma4_vision::position_add(hidden, table, columns, rows, out, tokens, width, table_size) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_vision_rope_tables_bf16(
+        columns: *const u32,
+        rows: *const u32,
+        inverse: *const f32,
+        cosine: *mut u16,
+        sine: *mut u16,
+        tokens: u32,
+        pairs: u32,
+    ) {
+        unsafe { crate::gemma4_vision::rope_tables(columns, rows, inverse, cosine, sine, tokens, pairs) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_vision_rope2d_bf16(
+        input: *const u16,
+        cosine: *const u16,
+        sine: *const u16,
+        out: *mut u16,
+        count: u32,
+        heads: u32,
+        dim: u32,
+        token_stride: u64,
+        head_stride: u64,
+    ) {
+        unsafe { crate::gemma4_vision::rope2d(input, cosine, sine, out, count, heads, dim, token_stride, head_stride) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_vision_pool_bf16(
+        input: *const u16,
+        out: *mut u16,
+        height: u32,
+        width: u32,
+        hidden: u32,
+        kernel: u32,
+        inverse: f32,
+        scale: f32,
+    ) {
+        unsafe { crate::gemma4_vision::pool(input, out, height, width, hidden, kernel, inverse, scale) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_vision_pool_standardize_rows_bf16(
+        input: *const u16,
+        bias: *const f32,
+        scale: *const f32,
+        out: *mut u16,
+        height: u32,
+        width: u32,
+        hidden: u32,
+        kernel: u32,
+        inverse: f32,
+        sqrt_scale: f32,
+    ) {
+        unsafe {
+            crate::gemma4_vision::pool_standardize_rows(
+                input, bias, scale, out, height, width, hidden, kernel, inverse, sqrt_scale,
+            )
+        };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_gemma4_vision_scatter_rows_bf16(
+        destination: *mut u16,
+        features: *const u16,
+        rows: *const u32,
+        row_count: u32,
+        width: u32,
+    ) {
+        unsafe { crate::gemma4_vision::scatter_rows(destination, features, rows, row_count, width) };
+    }
+}

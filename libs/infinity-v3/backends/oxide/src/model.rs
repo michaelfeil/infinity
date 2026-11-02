@@ -967,14 +967,32 @@ pub(crate) struct WeightSource {
     pytorch: Option<PyTorchWeightSource>,
 }
 impl WeightSource {
-    fn from_header(
+    fn from_header_wide(
         file: Arc<Mutex<File>>,
         file_len: u64,
         data_start: u64,
         info: &TensorHeader,
         name: &str,
     ) -> Result<Self, BackendError> {
-        let count = elements(&info.shape)?;
+        let count = info
+            .shape
+            .iter()
+            .try_fold(1usize, |count, dim| count.checked_mul(*dim))
+            .ok_or_else(|| start(format!("weight {name} dimensions overflow")))?;
+        if count > isize::MAX as usize {
+            return Err(start(format!("weight {name} exceeds host indexing range")));
+        }
+        Self::from_header_count(file, file_len, data_start, info, name, count)
+    }
+
+    fn from_header_count(
+        file: Arc<Mutex<File>>,
+        file_len: u64,
+        data_start: u64,
+        info: &TensorHeader,
+        name: &str,
+        count: usize,
+    ) -> Result<Self, BackendError> {
         let width = match info.dtype {
             Dtype::F32 => 4,
             Dtype::F16 | Dtype::BF16 => 2,
@@ -996,6 +1014,11 @@ impl WeightSource {
         }
         let data_offset = u64::try_from(begin)
             .map_err(|_| start(format!("weight offset overflow for {name}")))?;
+        let width_u64 = u64::try_from(width)
+            .map_err(|_| start(format!("weight element width overflow for {name}")))?;
+        if width_u64 == 0 || data_offset % width_u64 != 0 {
+            return Err(start(format!("misaligned weight data offset for {name}")));
+        }
         let byte_len = u64::try_from(byte_len)
             .map_err(|_| start(format!("weight byte size overflow for {name}")))?;
         let absolute = data_start
@@ -1018,6 +1041,17 @@ impl WeightSource {
             width,
             pytorch: None,
         })
+    }
+
+    fn from_header(
+        file: Arc<Mutex<File>>,
+        file_len: u64,
+        data_start: u64,
+        info: &TensorHeader,
+        name: &str,
+    ) -> Result<Self, BackendError> {
+        let count = elements(&info.shape)?;
+        Self::from_header_count(file, file_len, data_start, info, name, count)
     }
 
     pub(crate) fn zeroed(shape: Vec<usize>) -> Result<Self, BackendError> {
@@ -2029,10 +2063,30 @@ impl Checkpoint {
             .ok_or_else(|| start(format!("missing weight {name}")))
     }
 
+    /// Load a tensor whose element count may exceed the 32-bit logical matrix
+    /// bound (for example Gemma4's per-layer embedding matrix).
+    pub(crate) fn source_wide(
+        &self,
+        name: &str,
+        shape: &[usize],
+    ) -> Result<WeightSource, BackendError> {
+        self.optional_source_impl(name, shape, true)?
+            .ok_or_else(|| start(format!("missing weight {name}")))
+    }
+
     pub(crate) fn optional_source(
         &self,
         name: &str,
         shape: &[usize],
+    ) -> Result<Option<WeightSource>, BackendError> {
+        self.optional_source_impl(name, shape, false)
+    }
+
+    fn optional_source_impl(
+        &self,
+        name: &str,
+        shape: &[usize],
+        wide: bool,
     ) -> Result<Option<WeightSource>, BackendError> {
         if let Some(checkpoint) = &self.pytorch {
             return checkpoint
@@ -2062,13 +2116,23 @@ impl Checkpoint {
         let Some(shard) = self.shards.get(*shard_index) else {
             return Err(start(format!("invalid shard ownership for {name}")));
         };
-        let source = WeightSource::from_header(
-            Arc::clone(&shard.file),
-            shard.file_len,
-            shard.data_start,
-            info,
-            name,
-        )?;
+        let source = if wide {
+            WeightSource::from_header_wide(
+                Arc::clone(&shard.file),
+                shard.file_len,
+                shard.data_start,
+                info,
+                name,
+            )?
+        } else {
+            WeightSource::from_header(
+                Arc::clone(&shard.file),
+                shard.file_len,
+                shard.data_start,
+                info,
+                name,
+            )?
+        };
         Ok(Some(source))
     }
 }

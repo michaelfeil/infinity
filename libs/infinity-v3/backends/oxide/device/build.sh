@@ -179,6 +179,52 @@ symbols = sorted(symbols + ["infinity_gemma2_norm_bf16_f32scale",
 symbols = sorted(symbols + ["infinity_gemma3_rms_norm_bf16_f32scale",
                             "infinity_gemma3_residual_norm_bf16_f32scale",
                             "infinity_gemma3_qk_norm_rope_bf16"])
+symbols = sorted(symbols + [
+    "infinity_gemma2_media_im2col_f32",
+    "infinity_gemma2_media_mask_f32",
+    "infinity_gemma2_media_channel_norm_relu_bf16",
+    "infinity_gemma2_media_transpose_btwc_to_bctw_bf16",
+    "infinity_gemma2_media_conv_rows_to_btcw_bf16",
+    "infinity_gemma2_media_center_pixels_bf16",
+    "infinity_gemma2_media_patch_add_position_bf16",
+    "infinity_gemma2_media_axial_tables_bf16",
+    "infinity_gemma2_media_axial_rope_bf16",
+    "infinity_gemma2_media_attention_bf16",
+    "infinity_gemma2_media_gated_gelu_split_bf16",
+    "infinity_gemma2_media_vision_pool_bf16",
+    "infinity_gemma2_media_clamp_bf16",
+    "infinity_gemma2_media_residual_scale_add_bf16",
+    "infinity_gemma2_media_add_bf16",
+    "infinity_gemma2_media_bias_add_bf16",
+    "infinity_gemma2_media_audio_scaled_qk_f32",
+    "infinity_gemma2_media_audio_attention_bf16",
+    "infinity_gemma2_media_glu_bf16",
+    "infinity_gemma2_media_depthwise_conv1d_causal_bf16",
+    "infinity_gemma2_media_silu_bf16",
+    "infinity_gemma2_media_select_rows_bf16",
+    "infinity_gemma2_media_scatter_rows_bf16",
+    "infinity_gemma2_media_audio_norm_bf16_f32scale",
+])
+symbols = sorted(symbols + ["infinity_gemma4_norm_bf16_f32scale",
+                            "infinity_gemma4_residual_norm_bf16_f32scale",
+                            "infinity_gemma4_unit_norm_bf16",
+                            "infinity_gemma4_gated_gelu_bf16",
+                            "infinity_gemma4_ple_gate_bf16",
+                            "infinity_gemma4_ple_combine_bf16",
+                            "infinity_gemma4_scale_bf16",
+                            "infinity_gemma4_rope_tables_bf16",
+                            "infinity_gemma4_rope_q_bf16",
+                            "infinity_gemma4_attention_256_bf16",
+                            "infinity_gemma4_option_softcap_bf16_to_f32",
+                            "infinity_gemma4_select_rows_bf16",
+                            "infinity_gemma4_router_scale_bf16_to_f32"])
+symbols = sorted(symbols + ["infinity_gemma4_vision_clip_rows_bf16",
+                            "infinity_gemma4_vision_position_add_bf16",
+                            "infinity_gemma4_vision_rope_tables_bf16",
+                            "infinity_gemma4_vision_rope2d_bf16",
+                            "infinity_gemma4_vision_pool_bf16",
+                            "infinity_gemma4_vision_pool_standardize_rows_bf16",
+                            "infinity_gemma4_vision_scatter_rows_bf16"])
 
 # Additive optional encoder-activation exports live in their own leaf file so
 # composing another additive leaf cannot overwrite this source. The original
@@ -265,6 +311,9 @@ manifest["sources"]["src/rms896_exact_vector.rs"] = digest(root / "src/rms896_ex
 manifest["sources"]["rms896_exports.txt"] = digest(root / "rms896_exports.txt")
 for name in ["src/deberta_math.rs", "src/deberta_norm.rs", "src/gelu_exact.rs", "src/deberta_embedding.rs"]:
     manifest["sources"][name] = digest(root / name)
+manifest["sources"]["src/gemma2_media.rs"] = digest(root / "src/gemma2_media.rs")
+manifest["sources"]["src/gemma4.rs"] = digest(root / "src/gemma4.rs")
+manifest["sources"]["src/gemma4_vision.rs"] = digest(root / "src/gemma4_vision.rs")
 for name in ["src/packed_mean_bf16.rs", "src/qwen35_norm.rs",
              "src/qwen35_attention.rs", "src/qwen35_copy.rs"]:
     manifest["sources"][name] = digest(root / name)

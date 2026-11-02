@@ -17,7 +17,11 @@ use crate::{
     cublas::Blas,
     lt::ShapeError,
     math::LinearPlan,
-    moe_abi::{Buffers, ModelInfo, Shape, ABI_VERSION, KERNEL_AUTO, MODEL_QWEN3_E128_TOP8},
+    model::WeightSource,
+    moe_abi::{
+        Buffers, ModelInfo, ModelKind, Shape, ABI_VERSION, KERNEL_AUTO, MODEL_GEMMA4_E128_TOP8,
+        MODEL_QWEN3_E128_TOP8,
+    },
     moe_api::{Api, PreparedPlan},
     moe_model::{GateUpSources, RoutedLayerWeights, RoutedMlpConfig},
     tensor::Bf16,
@@ -257,10 +261,45 @@ impl MoeLayer {
     }
 }
 
+/// Canonical fused expert weights for one Gemma4 routed layer.
+pub(crate) struct Gemma4MoeLayer {
+    gate_up: DeviceBuffer<Bf16>,
+    down: DeviceBuffer<Bf16>,
+    hidden: usize,
+    intermediate: usize,
+    experts: usize,
+}
+
+impl Gemma4MoeLayer {
+    pub(crate) fn upload(
+        uploader: &mut WeightUploader,
+        gate_up: &WeightSource,
+        down: &WeightSource,
+        hidden: usize,
+        intermediate: usize,
+        experts: usize,
+    ) -> Result<Self, BackendError> {
+        let two_i = product(intermediate, 2)?;
+        if gate_up.shape() != [experts, two_i, hidden].as_slice()
+            || down.shape() != [experts, hidden, intermediate].as_slice()
+        {
+            return Err(start("Gemma4 fused expert tensor geometry differs"));
+        }
+        Ok(Self {
+            gate_up: uploader.upload(&[gate_up])?,
+            down: uploader.upload(&[down])?,
+            hidden,
+            intermediate,
+            experts,
+        })
+    }
+}
+
 /// A cold-loaded, validated native ABI provider with its geometry fixed.
 pub(crate) struct MoeProvider {
     api: Arc<Api>,
     context: Arc<Context>,
+    model: ModelKind,
     _model: ModelInfo,
     hidden: usize,
     intermediate: usize,
@@ -303,12 +342,63 @@ impl MoeProvider {
         Ok(Self {
             api,
             context: Arc::clone(context),
+            model: MODEL_QWEN3_E128_TOP8,
             _model: model,
             hidden: config.hidden_size,
             intermediate: config.moe_intermediate_size,
             experts: config.num_experts,
             top_k: config.num_experts_per_tok,
             renormalize: if config.norm_topk_prob { 1 } else { 0 },
+        })
+    }
+
+    /// Load the Native Gemma4 fused-expert ABI. The routing logits and
+    /// per-expert scales are supplied by the caller; the sidecar only performs
+    /// top-k selection, renormalization, expert GEMMs and output composition.
+    ///
+    /// # Safety
+    /// `path` must name trusted Native code built for the matching ABI.
+    pub(crate) unsafe fn load_gemma4(
+        context: &Arc<Context>,
+        path: &Path,
+        hidden: usize,
+        intermediate: usize,
+        experts: usize,
+        top_k: usize,
+    ) -> Result<Self, BackendError> {
+        if experts != QWEN3_EXPERTS || top_k != QWEN3_TOP_K {
+            return Err(start("Gemma4 routed MoE requires 128 experts and top_k 8"));
+        }
+        if hidden != 2816 || intermediate != 704 {
+            return Err(start(format!(
+                "Gemma4 routed MoE requires hidden 2816/intermediate 704, found {hidden}/{intermediate}"
+            )));
+        }
+        let (major, minor) = context.compute_capability().map_err(start)?;
+        let arch = arch_for_compute_capability(major, minor)?;
+        // SAFETY: the caller promises a trusted artifact.
+        let api = unsafe { Api::load(path, arch) }.map_err(start)?;
+        let model = api.query_model(MODEL_GEMMA4_E128_TOP8).map_err(start)?;
+        if model.experts != experts as i32
+            || model.top_k != top_k as i32
+            || model.hidden != hidden as i32
+            || model.intermediate != intermediate as i32
+            || model.requires_expert_scales != 1
+        {
+            return Err(start(
+                "native ABI1 Gemma4 model geometry differs from config",
+            ));
+        }
+        Ok(Self {
+            api,
+            context: Arc::clone(context),
+            model: MODEL_GEMMA4_E128_TOP8,
+            _model: model,
+            hidden,
+            intermediate,
+            experts,
+            top_k,
+            renormalize: 1,
         })
     }
 
@@ -322,7 +412,7 @@ impl MoeProvider {
         let experts = i32::try_from(self.experts).map_err(infer)?;
         let top_k = i32::try_from(self.top_k).map_err(infer)?;
         Ok(Shape::new(
-            MODEL_QWEN3_E128_TOP8,
+            self.model,
             KERNEL_AUTO,
             tokens,
             hidden,
@@ -494,6 +584,77 @@ impl MoeProvider {
         // and stream satisfies the borrowed-forward contract documented above.
         unsafe { frame.prepared.forward_bound(&buffers) }.map_err(start)
     }
+
+    /// Enqueue one Gemma4 routed layer with caller-computed F32 router logits
+    /// and FP32 per-expert scales. The sidecar performs the Native top-k,
+    /// renormalization and fused expert GEMMs.
+    ///
+    /// # Safety
+    /// The caller must bind `stream`'s context and retain every buffer owner
+    /// until the stream drains.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) unsafe fn forward_precomputed(
+        &self,
+        frame: &MoeFrame,
+        layer: &Gemma4MoeLayer,
+        expert_scales: &DeviceBuffer<f32>,
+        stream: &Stream,
+        input: &DeviceBuffer<Bf16>,
+        output: &mut DeviceBuffer<Bf16>,
+        scratch: &mut MoeScratch,
+    ) -> Result<(), BackendError> {
+        if self.model != MODEL_GEMMA4_E128_TOP8
+            || frame.provider != Arc::as_ptr(&self.api) as usize
+            || frame.hidden != self.hidden
+            || frame.intermediate != self.intermediate
+            || frame.experts != self.experts
+            || frame.top_k != self.top_k
+        {
+            return Err(infer(
+                "Gemma4 MoE frame belongs to a different provider or geometry",
+            ));
+        }
+        if layer.hidden != self.hidden
+            || layer.intermediate != self.intermediate
+            || layer.experts != self.experts
+        {
+            return Err(infer("Gemma4 MoE layer geometry differs from provider"));
+        }
+        if !Arc::ptr_eq(stream.context(), &self.context)
+            || !Arc::ptr_eq(scratch.stream.context(), &self.context)
+        {
+            return Err(infer("Gemma4 MoE provider and stream contexts differ"));
+        }
+        let logits = scratch.logits_f32();
+        if logits.len() < product(frame.tokens, self.experts)?
+            || expert_scales.len() < self.experts
+            || input.len() < product(frame.tokens, self.hidden)?
+            || output.len() < product(frame.tokens, self.hidden)?
+        {
+            return Err(infer("Gemma4 MoE buffer is shorter than the token prefix"));
+        }
+        let workspace_required = frame.prepared.workspace_bytes();
+        if workspace_required == 0 || workspace_required > scratch.workspace {
+            return Err(infer("Gemma4 MoE workspace exceeds retained scratch"));
+        }
+        let buffers = Buffers {
+            struct_size: std::mem::size_of::<Buffers>() as u32,
+            abi_version: ABI_VERSION,
+            logits: logits.cu_deviceptr() as *const f32,
+            input_bf16: input.cu_deviceptr() as *const c_void,
+            gate_up_weight_bf16: layer.gate_up.cu_deviceptr() as *const c_void,
+            down_weight_bf16: layer.down.cu_deviceptr() as *const c_void,
+            expert_scales: expert_scales.cu_deviceptr() as *const f32,
+            output_bf16: output.cu_deviceptr() as *mut c_void,
+            workspace: scratch.workspace_buffer.cu_deviceptr() as *mut c_void,
+            workspace_bytes: workspace_required,
+            stream: stream.cu_stream().cast(),
+            flags: 0,
+            reserved: [0; 3],
+        };
+        // SAFETY: the caller contract covers every owner and the retained plan.
+        unsafe { frame.prepared.forward_bound(&buffers) }.map_err(start)
+    }
 }
 
 /// One token-exact native plan and router descriptor shared by every routed
@@ -596,6 +757,10 @@ impl MoeScratch {
 
     pub(crate) fn bytes(&self) -> usize {
         self.bytes
+    }
+
+    pub(crate) fn logits_f32(&self) -> &DeviceBuffer<f32> {
+        &self.logits_f32
     }
 
     /// Release buffers after the owning decoder arena proved its stream complete.
