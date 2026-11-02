@@ -209,6 +209,14 @@ impl Infer {
         backend: BackendPool,
     ) -> Self {
         let notify_batching_task = Arc::new(Notify::new());
+        let coalesce_wait = if backend.kind() == BackendKind::PythonBackend {
+            python_coalesce_wait()
+        } else {
+            Duration::ZERO
+        };
+        if !coalesce_wait.is_zero() {
+            queue.enable_snapshots();
+        }
         let tasks = if backend.kind() == BackendKind::PythonBackend {
             // A synchronous model has no useful forward overlap. Hold the only
             // replica while selecting the next batch so queued inputs accumulate
@@ -217,6 +225,7 @@ impl Infer {
                 backend.clone(),
                 queue.clone(),
                 notify_batching_task.clone(),
+                coalesce_wait,
             ))]
         } else {
             let (sender, receiver) = mpsc::channel(1);
@@ -984,12 +993,137 @@ async fn backend_task(
     queue.close();
 }
 
-async fn sync_batching_task(pool: BackendPool, queue: Queue, notify: Arc<Notify>) {
+const MAX_COALESCE_WAIT: Duration = Duration::from_millis(5);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CoalesceReason {
+    Capacity,
+    Priority,
+    Timeout,
+    Close,
+}
+
+impl CoalesceReason {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Capacity => "capacity",
+            Self::Priority => "priority",
+            Self::Timeout => "timeout",
+            Self::Close => "close",
+        }
+    }
+}
+
+fn coalesce_wait_from(value: Option<&str>) -> Duration {
+    match value.map(str::trim) {
+        None | Some("") => Duration::ZERO,
+        Some(value) => match value.parse::<u64>() {
+            Ok(micros) => Duration::from_micros(micros).min(MAX_COALESCE_WAIT),
+            Err(_) => {
+                tracing::warn!(
+                    "Invalid {}: expected nonnegative microseconds; coalescing disabled",
+                    infinity_v3_config::infinity_env!("PYTHON_BATCH_COALESCE_WAIT_US")
+                );
+                Duration::ZERO
+            }
+        },
+    }
+}
+
+fn python_coalesce_wait() -> Duration {
+    match std::env::var(infinity_v3_config::infinity_env!(
+        "PYTHON_BATCH_COALESCE_WAIT_US"
+    )) {
+        Ok(value) => coalesce_wait_from(Some(&value)),
+        Err(std::env::VarError::NotPresent) => Duration::ZERO,
+        Err(error) => {
+            tracing::warn!(
+                "Invalid {}: {error}; coalescing disabled",
+                infinity_v3_config::infinity_env!("PYTHON_BATCH_COALESCE_WAIT_US")
+            );
+            Duration::ZERO
+        }
+    }
+}
+
+/// Wait, while holding the idle replica lease, until a coherent queue snapshot
+/// has enough provably selectable work, a priority entry arrives, shutdown is
+/// observed, or the bounded deadline expires. The snapshot is published by the
+/// queue worker before it returns the previous batch. This is a dispatch hint
+/// only: selection still enforces every token, request, tier, cancellation, and
+/// group rule.
+async fn coalesce_python_batch(
+    pool: &BackendPool,
+    queue: &Queue,
+    max_wait: Duration,
+    entered: Option<&Notify>,
+) -> CoalesceReason {
+    if let Some(entered) = entered {
+        entered.notify_one();
+    }
+    let started = tokio::time::Instant::now();
+    let deadline = started + max_wait;
+    let mut snapshots = queue.snapshots();
+    let close = queue.close_notifier();
+    let mut changed = pool.changes();
+    let reason = loop {
+        if queue.is_closed() || pool.is_closed() {
+            break CoalesceReason::Close;
+        }
+        let snapshot = *snapshots.borrow_and_update();
+        if snapshot.closed {
+            break CoalesceReason::Close;
+        }
+        if snapshot.priority {
+            break CoalesceReason::Priority;
+        }
+        if snapshot.capacity {
+            break CoalesceReason::Capacity;
+        }
+        let now = tokio::time::Instant::now();
+        if now >= deadline {
+            break CoalesceReason::Timeout;
+        }
+        tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => break CoalesceReason::Timeout,
+            _ = snapshots.changed() => {}
+            _ = close.notified() => {}
+            _ = changed.changed() => {
+                if pool.is_closed() {
+                    break CoalesceReason::Close;
+                }
+            }
+        }
+    };
+    metrics::histogram!("infinity_python_batch_coalesce_wait_duration", "model" => pool.model_label())
+        .record(started.elapsed().as_secs_f64());
+    metrics::counter!(
+        "infinity_python_batch_coalesce_wait_total",
+        "model" => pool.model_label(),
+        "reason" => reason.as_str()
+    )
+    .increment(1);
+    reason
+}
+
+async fn sync_batching_task(
+    pool: BackendPool,
+    queue: Queue,
+    notify: Arc<Notify>,
+    coalesce_wait: Duration,
+) {
     let model_type = pool.model_type.clone();
-    sync_batching_task_with(pool, queue, notify, move |execution, batch| {
-        let model_type = model_type.clone();
-        async move { complete_batch(execution, model_type, batch).await }
-    })
+    sync_batching_task_with(
+        pool,
+        queue,
+        notify,
+        coalesce_wait,
+        None,
+        move |execution, batch| {
+            let model_type = model_type.clone();
+            async move { complete_batch(execution, model_type, batch).await }
+        },
+    )
     .await;
 }
 
@@ -999,6 +1133,8 @@ async fn sync_batching_task_with<F, Fut>(
     pool: BackendPool,
     queue: Queue,
     notify: Arc<Notify>,
+    coalesce_wait: Duration,
+    coalesce_entered: Option<Arc<Notify>>,
     mut run: F,
 ) where
     F: FnMut(crate::backend_pool::Execution, NextBatch) -> Fut + Send + 'static,
@@ -1034,6 +1170,15 @@ async fn sync_batching_task_with<F, Fut>(
             break;
         }
         let started = Instant::now();
+        if !coalesce_wait.is_zero() {
+            let reason =
+                coalesce_python_batch(&pool, &queue, coalesce_wait, coalesce_entered.as_deref())
+                    .await;
+            if matches!(reason, CoalesceReason::Close) {
+                drop(execution);
+                break;
+            }
+        }
         let batch = tokio::select! {
             batch = queue.next_batch() => batch,
             _ = changed.changed() => {
@@ -1676,6 +1821,8 @@ mod sync_tests {
             pool.clone(),
             queue.clone(),
             notify.clone(),
+            Duration::ZERO,
+            None,
             run,
         ));
         tokio::time::timeout(Duration::from_secs(2), first_started.notified())
@@ -1740,6 +1887,8 @@ mod sync_tests {
             pool.clone(),
             queue.clone(),
             notify,
+            Duration::ZERO,
+            None,
             run,
         ));
         tokio::time::timeout(Duration::from_secs(2), ran.notified())
@@ -1754,6 +1903,247 @@ mod sync_tests {
         tokio::time::timeout(Duration::from_secs(2), task)
             .await
             .expect("idle synchronous loop must exit on shutdown")
+            .unwrap();
+        queue.shutdown().await;
+    }
+
+    #[test]
+    fn coalesce_wait_is_opt_in_and_bounded() {
+        assert_eq!(coalesce_wait_from(None), Duration::ZERO);
+        assert_eq!(coalesce_wait_from(Some("")), Duration::ZERO);
+        assert_eq!(coalesce_wait_from(Some("0")), Duration::ZERO);
+        assert_eq!(coalesce_wait_from(Some("250")), Duration::from_micros(250));
+        assert_eq!(coalesce_wait_from(Some("bad")), Duration::ZERO);
+        assert_eq!(coalesce_wait_from(Some("999999999")), MAX_COALESCE_WAIT);
+    }
+
+    fn coalescing_queue(max_requests: usize) -> Queue {
+        let queue = Queue::new(4096, Some(max_requests), 0.0, max_requests);
+        queue.enable_snapshots();
+        queue
+    }
+
+    fn priority_entry(
+        tokens: usize,
+    ) -> (Entry, oneshot::Receiver<Result<InferResult, BackendError>>) {
+        let (mut entry, response) = entry(tokens);
+        entry.metadata.service_tier = ServiceTier::Priority;
+        (entry, response)
+    }
+
+    async fn coalesce_reason(
+        queue: &Queue,
+        pool: &crate::backend_pool::BackendPool,
+        wait: Duration,
+        entered: &Arc<Notify>,
+    ) -> CoalesceReason {
+        let queue = queue.clone();
+        let pool = pool.clone();
+        let entered = entered.clone();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            tokio::spawn(async move {
+                coalesce_python_batch(&pool, &queue, wait, Some(&entered)).await
+            }),
+        )
+        .await
+        .expect("coalesce helper must finish")
+        .expect("coalesce helper task must not panic")
+    }
+
+    #[tokio::test]
+    async fn coalesce_wait_collects_a_partial_cohort() {
+        let queue = coalescing_queue(4);
+        let pool =
+            crate::backend_pool::test_pool(BackendKind::PythonBackend, ModelType::Classifier, 1);
+        let entered = Arc::new(Notify::new());
+        let task = {
+            let queue = queue.clone();
+            let pool = pool.clone();
+            let entered = entered.clone();
+            tokio::spawn(async move {
+                coalesce_python_batch(&pool, &queue, Duration::from_secs(10), Some(&entered)).await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .expect("dispatcher must enter the wait before arrivals");
+        let mut responses = Vec::new();
+        for _ in 0..4 {
+            responses.push(append(&queue, 1).await);
+        }
+        let reason = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("coalesce must finish")
+            .expect("coalesce task must not panic");
+        assert_eq!(reason, CoalesceReason::Capacity);
+        drop(responses);
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn coalesce_priority_arriving_mid_wait_wins() {
+        let queue = coalescing_queue(4);
+        let pool =
+            crate::backend_pool::test_pool(BackendKind::PythonBackend, ModelType::Classifier, 1);
+        let entered = Arc::new(Notify::new());
+        let task = {
+            let queue = queue.clone();
+            let pool = pool.clone();
+            let entered = entered.clone();
+            tokio::spawn(async move {
+                coalesce_python_batch(&pool, &queue, Duration::from_secs(10), Some(&entered)).await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .expect("dispatcher must enter the wait before the priority arrival");
+        let (priority, response) = priority_entry(1);
+        let _lease = queue.append(priority).await.unwrap();
+        let reason = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("coalesce must finish")
+            .expect("coalesce task must not panic");
+        assert_eq!(reason, CoalesceReason::Priority);
+        drop(response);
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn coalesce_close_wakes_the_wait() {
+        let queue = coalescing_queue(4);
+        let pool =
+            crate::backend_pool::test_pool(BackendKind::PythonBackend, ModelType::Classifier, 1);
+        let entered = Arc::new(Notify::new());
+        let task = {
+            let queue = queue.clone();
+            let pool = pool.clone();
+            let entered = entered.clone();
+            tokio::spawn(async move {
+                coalesce_python_batch(&pool, &queue, Duration::from_secs(10), Some(&entered)).await
+            })
+        };
+        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .expect("dispatcher must enter the wait");
+        queue.close();
+        let reason = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("coalesce must finish")
+            .expect("coalesce task must not panic");
+        assert_eq!(reason, CoalesceReason::Close);
+        queue.shutdown().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn coalesce_timeout_is_bounded() {
+        let queue = coalescing_queue(4);
+        let pool =
+            crate::backend_pool::test_pool(BackendKind::PythonBackend, ModelType::Classifier, 1);
+        let entered = Arc::new(Notify::new());
+        let task = {
+            let queue = queue.clone();
+            let pool = pool.clone();
+            let entered = entered.clone();
+            tokio::spawn(async move {
+                coalesce_python_batch(&pool, &queue, Duration::from_millis(10), Some(&entered))
+                    .await
+            })
+        };
+        entered.notified().await;
+        tokio::time::advance(Duration::from_millis(20)).await;
+        let reason = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("coalesce must finish")
+            .expect("coalesce task must not panic");
+        assert_eq!(reason, CoalesceReason::Timeout);
+        queue.shutdown().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn one_request_still_pays_the_timeout() {
+        let queue = coalescing_queue(4);
+        let pool =
+            crate::backend_pool::test_pool(BackendKind::PythonBackend, ModelType::Classifier, 1);
+        let _response = append(&queue, 1).await;
+        let entered = Arc::new(Notify::new());
+        let task = {
+            let queue = queue.clone();
+            let pool = pool.clone();
+            let entered = entered.clone();
+            tokio::spawn(async move {
+                coalesce_python_batch(&pool, &queue, Duration::from_millis(10), Some(&entered))
+                    .await
+            })
+        };
+        entered.notified().await;
+        tokio::time::advance(Duration::from_millis(20)).await;
+        let reason = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("coalesce must finish")
+            .expect("coalesce task must not panic");
+        assert_eq!(reason, CoalesceReason::Timeout);
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn full_batch_does_not_wait() {
+        let queue = coalescing_queue(2);
+        let pool =
+            crate::backend_pool::test_pool(BackendKind::PythonBackend, ModelType::Classifier, 1);
+        let mut responses = Vec::new();
+        for _ in 0..2 {
+            responses.push(append(&queue, 1).await);
+        }
+        let entered = Arc::new(Notify::new());
+        let reason = coalesce_reason(&queue, &pool, Duration::from_secs(10), &entered).await;
+        assert_eq!(reason, CoalesceReason::Capacity);
+        drop(responses);
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn synchronous_loop_coalesces_before_the_first_run() {
+        let queue = coalescing_queue(4);
+        let pool =
+            crate::backend_pool::test_pool(BackendKind::PythonBackend, ModelType::Classifier, 1);
+        let notify = Arc::new(Notify::new());
+        let entered = Arc::new(Notify::new());
+        let sizes = Arc::new(StdMutex::new(Vec::new()));
+        let ran = Arc::new(Notify::new());
+        let run = {
+            let sizes = sizes.clone();
+            let ran = ran.clone();
+            move |_execution: crate::backend_pool::Execution, (entries, _): NextBatch| {
+                sizes.lock().unwrap().push(entries.len());
+                let ran = ran.clone();
+                async move { ran.notify_one() }
+            }
+        };
+        let task = tokio::spawn(sync_batching_task_with(
+            pool.clone(),
+            queue.clone(),
+            notify,
+            Duration::from_secs(10),
+            Some(entered.clone()),
+            run,
+        ));
+        tokio::time::timeout(Duration::from_secs(2), entered.notified())
+            .await
+            .expect("dispatcher must enter the wait before arrivals");
+        let mut responses = Vec::new();
+        for _ in 0..4 {
+            responses.push(append(&queue, 1).await);
+        }
+        tokio::time::timeout(Duration::from_secs(2), ran.notified())
+            .await
+            .expect("coalesced batch must run");
+        assert_eq!(sizes.lock().unwrap().as_slice(), &[4]);
+        pool.close();
+        queue.close();
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("synchronous loop must exit")
             .unwrap();
         queue.shutdown().await;
     }

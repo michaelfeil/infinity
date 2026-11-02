@@ -17,7 +17,7 @@ use std::sync::{
     Arc,
 };
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch, Notify};
 use tracing::{instrument, Span};
 
 fn early_dispatch_tokens(value: Option<&str>) -> Option<usize> {
@@ -262,6 +262,19 @@ fn unfinished_client(
     })
 }
 
+/// One coherent worker-published view of the pending queue. It never admits or
+/// selects work; selection still applies every hard limit. `capacity` is only
+/// set for the provably simple case below.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct QueueSnapshot {
+    pub pending: usize,
+    pub priority: bool,
+    pub tokens: usize,
+    pub capacity: bool,
+    pub capacity_safe: bool,
+    pub closed: bool,
+}
+
 /// Request Queue
 #[derive(Debug, Clone)]
 pub struct Queue {
@@ -274,6 +287,10 @@ pub struct Queue {
     /// Channel to communicate with the background queue task
     queue_sender: mpsc::Sender<QueueCommand>,
     closed: Arc<AtomicBool>,
+    snapshot_tx: watch::Sender<QueueSnapshot>,
+    snapshots: watch::Receiver<QueueSnapshot>,
+    snapshots_enabled: Arc<AtomicBool>,
+    close_notify: Arc<Notify>,
 }
 
 impl Queue {
@@ -365,6 +382,12 @@ impl Queue {
 
         let closed = Arc::new(AtomicBool::new(false));
         let worker_closed = closed.clone();
+        let (snapshot_tx, snapshots) = watch::channel(QueueSnapshot::default());
+        let worker_snapshot_tx = snapshot_tx.clone();
+        let snapshots_enabled = Arc::new(AtomicBool::new(false));
+        let worker_snapshots_enabled = snapshots_enabled.clone();
+        let close_notify = Arc::new(Notify::new());
+        let worker_close_notify = close_notify.clone();
         let budget = Arc::new(QueueBudget::new(model_name.clone()));
         // Launch background queue task
         let worker = std::thread::spawn(move || {
@@ -377,6 +400,9 @@ impl Queue {
                 early_dispatch_tokens,
                 replicas,
                 worker_closed,
+                worker_snapshot_tx,
+                worker_snapshots_enabled,
+                worker_close_notify,
                 model_name.into(),
                 priority_queue_bonus,
                 flex_queue_offset,
@@ -400,6 +426,10 @@ impl Queue {
             worker: Arc::new(std::sync::Mutex::new(Some(worker))),
             queue_sender,
             closed,
+            snapshot_tx,
+            snapshots,
+            snapshots_enabled,
+            close_notify,
         }
     }
 
@@ -429,6 +459,21 @@ impl Queue {
         self.closed.load(Ordering::SeqCst)
     }
 
+    /// Enable worker snapshot publication for the opt-in coalescing path.
+    pub(crate) fn enable_snapshots(&self) {
+        self.snapshots_enabled.store(true, Ordering::SeqCst);
+    }
+
+    /// Subscribe to coherent snapshots published by the queue worker.
+    pub(crate) fn snapshots(&self) -> watch::Receiver<QueueSnapshot> {
+        self.snapshots.clone()
+    }
+
+    /// Wake a dispatcher immediately when the queue is closed.
+    pub(crate) fn close_notifier(&self) -> Arc<Notify> {
+        self.close_notify.clone()
+    }
+
     pub async fn shutdown(&self) {
         self.close();
         let handle = self.worker.lock().unwrap().take();
@@ -441,6 +486,11 @@ impl Queue {
     /// full, the worker observes the closed flag on its next command.
     pub fn close(&self) {
         self.closed.store(true, Ordering::SeqCst);
+        self.snapshot_tx.send_replace(QueueSnapshot {
+            closed: true,
+            ..Default::default()
+        });
+        self.close_notify.notify_one();
         let _ = self.queue_sender.try_send(QueueCommand::Close);
     }
 
@@ -645,6 +695,40 @@ impl<'a> BlockPrefix<'a> {
     }
 }
 
+fn publish_snapshot(
+    snapshot_tx: &watch::Sender<QueueSnapshot>,
+    entries: &PendingEntries,
+    queued_tokens: usize,
+    max_batch_tokens: usize,
+    max_batch_requests: Option<usize>,
+    max_batch_expanded_tokens: usize,
+    closed: bool,
+) {
+    let group_count = entries.normal.len() + entries.priority.len() + entries.flex.len();
+    let has_siblings = entries.len() > group_count;
+    let has_canceled = entries
+        .iter()
+        .any(|entry| entry.metadata.response_tx.is_closed());
+    let priority = entries.priority.iter().any(|pending| {
+        std::iter::once(&pending.entry)
+            .chain(&pending.siblings)
+            .any(|entry| !entry.metadata.response_tx.is_closed())
+    });
+    let capacity_safe =
+        !closed && max_batch_expanded_tokens <= max_batch_tokens && !has_siblings && !has_canceled;
+    let token_limit = max_batch_expanded_tokens.min(max_batch_tokens);
+    let request_full = max_batch_requests.is_some_and(|limit| entries.len() >= limit);
+    let tokens_full = queued_tokens >= token_limit;
+    snapshot_tx.send_replace(QueueSnapshot {
+        pending: entries.len(),
+        priority,
+        tokens: queued_tokens,
+        capacity: capacity_safe && (request_full || tokens_full),
+        capacity_safe,
+        closed,
+    });
+}
+
 // Background task responsible for the queue state.
 #[allow(clippy::too_many_arguments)]
 fn queue_blocking_task(
@@ -656,6 +740,9 @@ fn queue_blocking_task(
     early_dispatch_tokens: Option<usize>,
     replicas: usize,
     closed: Arc<AtomicBool>,
+    snapshot_tx: watch::Sender<QueueSnapshot>,
+    snapshots_enabled: Arc<AtomicBool>,
+    close_notify: Arc<Notify>,
     model_name: metrics::SharedString,
     priority_queue_bonus: Duration,
     flex_queue_offset: Duration,
@@ -693,6 +780,19 @@ fn queue_blocking_task(
     // The first spare is ready before processing commands. Replacements are
     // staged on this thread after dispatch, while the backend owns the batch.
     let mut spare_token_buffers = allocate_token_buffers();
+    let publish = |entries: &PendingEntries, queued_tokens: usize, closed: bool| {
+        if snapshots_enabled.load(Ordering::Relaxed) {
+            publish_snapshot(
+                &snapshot_tx,
+                entries,
+                queued_tokens,
+                max_batch_tokens,
+                max_batch_requests,
+                max_batch_expanded_tokens,
+                closed,
+            );
+        }
+    };
 
     while let Some(cmd) = queue_receiver.blocking_recv() {
         if closed.load(Ordering::SeqCst) {
@@ -729,6 +829,8 @@ fn queue_blocking_task(
                 }
                 QueueCommand::Close => {}
             }
+            publish(&entries, queued_tokens, true);
+            close_notify.notify_one();
             continue;
         }
         match cmd {
@@ -745,6 +847,7 @@ fn queue_blocking_task(
                 if let Some(first) = group.next() {
                     entries.push_group(first, group.collect(), Instant::now());
                 }
+                publish(&entries, queued_tokens, false);
             }
             QueueCommand::Append(entry, span) => {
                 let _span = span.entered();
@@ -753,6 +856,7 @@ fn queue_blocking_task(
                 entries.push_back(*entry, Instant::now());
                 let gauge = metrics::gauge!("infinity_queue_size", "model" => model_name.clone());
                 gauge.increment(1.0);
+                publish(&entries, queued_tokens, false);
             }
             QueueCommand::NextBatch {
                 response_sender,
@@ -903,6 +1007,10 @@ fn queue_blocking_task(
                     }
                 }
 
+                // Publish before the response so the dispatcher can never wake
+                // from a completed batch and observe pre-selection hints.
+                publish(&entries, queued_tokens, false);
+
                 // Packed batches use the staged numeric buffers. Other storage
                 // follows the selected batch; token strings and offsets stay lazy.
                 let capacity = selected.len();
@@ -1047,6 +1155,8 @@ fn queue_blocking_task(
             }
         }
     }
+    publish(&entries, queued_tokens, true);
+    close_notify.notify_one();
 }
 
 pub type NextBatch = (Vec<Metadata>, Batch);
@@ -1150,6 +1260,12 @@ mod tests {
         let (queue_sender, queue_receiver) = mpsc::channel(32);
         let closed = Arc::new(AtomicBool::new(false));
         let worker_closed = closed.clone();
+        let (snapshot_tx, snapshots) = watch::channel(QueueSnapshot::default());
+        let worker_snapshot_tx = snapshot_tx.clone();
+        let snapshots_enabled = Arc::new(AtomicBool::new(false));
+        let worker_snapshots_enabled = snapshots_enabled.clone();
+        let close_notify = Arc::new(Notify::new());
+        let worker_close_notify = close_notify.clone();
         std::thread::spawn(move || {
             queue_blocking_task(
                 max_tokens,
@@ -1160,6 +1276,9 @@ mod tests {
                 target,
                 1,
                 worker_closed,
+                worker_snapshot_tx,
+                worker_snapshots_enabled,
+                worker_close_notify,
                 "test".into(),
                 Duration::from_secs(1),
                 Duration::from_secs(1),
@@ -1180,6 +1299,10 @@ mod tests {
             worker: Arc::new(std::sync::Mutex::new(None)),
             queue_sender,
             closed,
+            snapshot_tx,
+            snapshots,
+            snapshots_enabled,
+            close_notify,
         }
     }
 
@@ -2031,5 +2154,70 @@ mod tests {
         assert_eq!(batch.raw_indices, vec![0]);
         assert_eq!(batch.cumulative_seq_lengths, vec![0, 3]);
         assert_eq!(batch.position_ids, vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn snapshot_capacity_is_only_for_simple_uncancelled_entries() {
+        let (snapshot_tx, snapshots) = watch::channel(QueueSnapshot::default());
+        let now = Instant::now();
+        let mut entries = PendingEntries::new(16, Duration::from_secs(1), Duration::from_secs(1));
+        let mut responses = Vec::new();
+        for _ in 0..4 {
+            let (entry, response) = test_entry(vec![1; 4], true);
+            responses.push(response);
+            entries.push_back(entry, now);
+        }
+        publish_snapshot(&snapshot_tx, &entries, 16, 16, Some(4), 16, false);
+        let snapshot = *snapshots.borrow();
+        assert!(snapshot.capacity_safe);
+        assert!(snapshot.capacity);
+        assert_eq!(snapshot.pending, 4);
+        assert_eq!(snapshot.tokens, 16);
+
+        publish_snapshot(&snapshot_tx, &entries, 16, 16, Some(4), 32, false);
+        assert!(!snapshots.borrow().capacity_safe);
+        assert!(!snapshots.borrow().capacity);
+
+        let mut grouped = PendingEntries::new(32, Duration::from_secs(1), Duration::from_secs(1));
+        let mut grouped_responses = Vec::new();
+        for _ in 0..2 {
+            let (first, first_response) = test_entry(vec![1; 4], true);
+            grouped_responses.push(first_response);
+            let mut siblings = Vec::new();
+            for _ in 0..8 {
+                let (sibling, sibling_response) = test_entry(vec![1; 4], true);
+                grouped_responses.push(sibling_response);
+                siblings.push(sibling);
+            }
+            grouped.push_group(first, siblings, now);
+        }
+        publish_snapshot(&snapshot_tx, &grouped, 72, 1024, Some(16), 1024, false);
+        assert_eq!(snapshots.borrow().pending, 18);
+        assert!(!snapshots.borrow().capacity_safe);
+        assert!(!snapshots.borrow().capacity);
+        drop(grouped_responses);
+
+        let mut canceled = PendingEntries::new(16, Duration::from_secs(1), Duration::from_secs(1));
+        let (entry, response) = test_entry(vec![1; 4], true);
+        drop(response);
+        canceled.push_back(entry, now);
+        publish_snapshot(&snapshot_tx, &canceled, 4, 16, Some(4), 16, false);
+        assert!(!snapshots.borrow().capacity_safe);
+        assert!(!snapshots.borrow().capacity);
+
+        let mut canceled_priority =
+            PendingEntries::new(16, Duration::from_secs(1), Duration::from_secs(1));
+        let (mut priority, priority_response) = test_entry(vec![1; 4], true);
+        priority.metadata.service_tier = ServiceTier::Priority;
+        drop(priority_response);
+        canceled_priority.push_back(priority, now);
+        publish_snapshot(&snapshot_tx, &canceled_priority, 4, 16, Some(4), 16, false);
+        assert!(!snapshots.borrow().priority);
+        assert!(!snapshots.borrow().capacity_safe);
+
+        publish_snapshot(&snapshot_tx, &entries, 16, 16, Some(4), 16, true);
+        assert!(!snapshots.borrow().capacity);
+        assert!(snapshots.borrow().closed);
+        drop(responses);
     }
 }
