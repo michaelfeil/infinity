@@ -20,6 +20,7 @@ import unittest
 
 DEVICE = Path(__file__).resolve().parents[1]
 BUILD = DEVICE / "build.sh"
+ALL_ARCHITECTURES = ["sm_90", "sm_100", "sm_120"]
 
 SYMBOLS = """
 infinity_add_rms_norm infinity_add_rms_norm_1024_exact_vector infinity_add_rms_norm_1536_cached infinity_add_rms_norm_1536_vector
@@ -128,6 +129,22 @@ def source_digest(root):
     return {str(path): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
 
 
+def tree_state(root):
+    state = {}
+    for path in sorted(root.rglob("*")):
+        info = path.lstat()
+        name = str(path.relative_to(root))
+        if path.is_symlink():
+            state[name] = ("symlink", os.readlink(path),
+                           info.st_mtime_ns, info.st_ctime_ns)
+        elif path.is_file():
+            state[name] = ("file", hashlib.sha256(path.read_bytes()).hexdigest(),
+                           info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+        elif path.is_dir():
+            state[name] = ("dir", info.st_mtime_ns, info.st_ctime_ns)
+    return state
+
+
 def read_intervals(path):
     events = [json.loads(line) for line in path.read_text().splitlines() if line]
     starts, intervals = {}, []
@@ -166,10 +183,10 @@ def weighted_max_concurrency(path):
                 for point in points), default=0)
 
 
-def expected_job_counts(total):
-    workers = min(total, 3)
+def expected_job_counts(total, targets=3):
+    workers = min(total, targets)
     base, extra = divmod(total, workers)
-    return sorted(base + (index < extra) for index in range(3))
+    return sorted(base + (index < extra) for index in range(targets))
 
 
 class BuildScriptTests(unittest.TestCase):
@@ -203,21 +220,31 @@ class BuildScriptTests(unittest.TestCase):
             env.update(extra)
         return env
 
-    def run_build(self, output, record, jobs=1, source=DEVICE, extra=None):
+    def run_build(self, output, record, jobs=1, source=DEVICE, extra=None,
+                  architectures=None):
+        command = ["bash", str(source / "build.sh"), str(output)]
+        if architectures is not None:
+            command += ["--architectures", *architectures]
         return subprocess.run(
-            ["bash", str(source / "build.sh"), str(output)],
-            cwd=str(source), env=self.build_env(record, jobs, extra),
+            command, cwd=str(source), env=self.build_env(record, jobs, extra),
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
             timeout=120)
 
-    def assert_manifest(self, output):
+    def assert_manifest(self, output, architectures=ALL_ARCHITECTURES):
         manifest_path = output / "manifest.json"
         self.assertEqual(stat.S_IMODE(manifest_path.stat().st_mode), 0o644)
         manifest = json.loads(manifest_path.read_text())
         self.assertEqual([item["architecture"] for item in manifest["architectures"]],
-                         ["sm_90", "sm_100", "sm_120"])
+                         architectures)
+        self.assertEqual(manifest["requested_architectures"], architectures)
+        self.assertEqual(manifest["complete_target_set"],
+                         architectures == ALL_ARCHITECTURES)
         for item in manifest["architectures"]:
             self.assertEqual(len(item["symbols_verified"]), len(SYMBOLS))
+            candidate = (output / item["architecture"] / ".kernels.cubin").resolve()
+            self.assertEqual(item["assemble_command"][-1], str(candidate))
+            self.assertFalse(candidate.exists())
+        return manifest
 
     def test_bounded_jobs_1_through_5(self):
         for jobs in (1, 2, 3, 4, 5):
@@ -234,6 +261,135 @@ class BuildScriptTests(unittest.TestCase):
                                  expected_job_counts(jobs))
                 self.assertLessEqual(weighted_max_concurrency(record), jobs)
                 self.assert_manifest(output)
+
+    def test_default_selection_reports_complete_target_set(self):
+        output = self.tmp / "default-selection-out"
+        record = self.tmp / "default-selection.jsonl"
+        result = self.run_build(output, record, jobs=1)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        manifest = self.assert_manifest(output)
+        self.assertIs(manifest["complete_target_set"], True)
+
+    def test_architecture_subset_adapts_jobs_and_preserves_canonical_order(self):
+        cases = [
+            (["sm_120"], 5, ["sm_120"], [5]),
+            (["sm_120", "sm_90", "sm_120"], 5, ["sm_90", "sm_120"], [2, 3]),
+        ]
+        for index, (requested, jobs, selected, job_counts) in enumerate(cases):
+            with self.subTest(requested=requested):
+                output = self.tmp / f"subset-{index}-out"
+                record = self.tmp / f"subset-{index}.jsonl"
+                result = self.run_build(
+                    output, record, jobs=jobs, architectures=requested)
+                self.assertEqual(result.returncode, 0, result.stdout)
+                intervals = read_intervals(record)
+                self.assertEqual(len(intervals), len(selected))
+                self.assertEqual(max_concurrency(intervals), min(jobs, len(selected)))
+                starts = read_starts(record)
+                self.assertEqual(sorted(event["arch"] for event in starts),
+                                 sorted(selected))
+                self.assertEqual(sorted(event["cargo_jobs"] for event in starts),
+                                 job_counts)
+                self.assertLessEqual(weighted_max_concurrency(record), jobs)
+                self.assert_manifest(output, selected)
+                self.assertEqual(sorted(path.name for path in output.glob("sm_*")),
+                                 sorted(selected))
+                self.assertIn("complete_target_set=false", result.stdout)
+
+    def test_invalid_architecture_selection_fails_before_compile(self):
+        cases = [
+            ("unsupported", ["sm_90", "sm_999"],
+             "Unsupported architecture(s): sm_999"),
+            ("empty", [], "--architectures requires at least one target"),
+        ]
+        for name, requested, expected in cases:
+            with self.subTest(case=name):
+                output = self.tmp / f"invalid-{name}-out"
+                record = self.tmp / f"invalid-{name}.jsonl"
+                result = self.run_build(output, record, architectures=requested)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(expected, result.stdout)
+                self.assertFalse(output.exists())
+                self.assertFalse(record.exists())
+
+    def test_subset_rejects_reused_all_target_output_without_mutation(self):
+        output = self.tmp / "reused-full-output"
+        first = self.run_build(output, self.tmp / "reused-full.jsonl", jobs=2)
+        self.assertEqual(first.returncode, 0, first.stdout)
+        self.assert_manifest(output)
+        before = tree_state(output)
+        record = self.tmp / "reused-subset.jsonl"
+        second = self.run_build(
+            output, record, jobs=5, architectures=["sm_90"])
+        self.assertNotEqual(second.returncode, 0)
+        self.assertIn("unselected architecture path(s): sm_100, sm_120",
+                      second.stdout)
+        self.assertIn("dedicated output directory", second.stdout)
+        self.assertEqual(tree_state(output), before)
+        self.assert_manifest(output)
+        self.assertFalse(record.exists())
+
+    def test_subset_rejects_symlinked_excluded_target_without_touching_it(self):
+        output = self.tmp / "reused-symlink-output"
+        output.mkdir()
+        link = output / "sm_120"
+        link.symlink_to(self.tmp / "missing-target")
+        result = self.run_build(
+            output, self.tmp / "reused-symlink.jsonl", architectures=["sm_90"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unselected architecture path(s): sm_120", result.stdout)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(os.readlink(link), str(self.tmp / "missing-target"))
+        self.assertFalse((output / "manifest.json").exists())
+
+    def test_selected_arch_symlink_is_rejected_and_external_bundle_preserved(self):
+        external = self.tmp / "external-bundle/sm_90"
+        external.mkdir(parents=True)
+        external_cubin = external / "kernels.cubin"
+        external_cubin.write_bytes(b"EXTERNAL_KERNEL\n")
+        output = self.tmp / "selected-symlink-output"
+        output.mkdir()
+        link = output / "sm_90"
+        link.symlink_to(external, target_is_directory=True)
+        record = self.tmp / "selected-symlink.jsonl"
+        result = self.run_build(output, record, architectures=["sm_90"])
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Selected architecture path(s) are symlinks: sm_90",
+                      result.stdout)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(os.readlink(link), str(external))
+        self.assertEqual(external_cubin.read_bytes(), b"EXTERNAL_KERNEL\n")
+        self.assertEqual(sorted(path.name for path in external.iterdir()),
+                         ["kernels.cubin"])
+        self.assertFalse((output / "manifest.json").exists())
+        self.assertFalse(record.exists())
+
+    def test_same_subset_output_repeats_and_recovers_after_failure(self):
+        output = self.tmp / "same-subset-output"
+        first = self.run_build(
+            output, self.tmp / "same-subset-first.jsonl", architectures=["sm_90"])
+        self.assertEqual(first.returncode, 0, first.stdout)
+        self.assert_manifest(output, ["sm_90"])
+        second = self.run_build(
+            output, self.tmp / "same-subset-second.jsonl",
+            architectures=["sm_90"])
+        self.assertEqual(second.returncode, 0, second.stdout)
+        self.assert_manifest(output, ["sm_90"])
+        failed = self.run_build(
+            output, self.tmp / "same-subset-failed.jsonl",
+            architectures=["sm_90"], extra={"FAKE_MODE": "fail"})
+        self.assertNotEqual(failed.returncode, 0)
+        self.assertFalse((output / "manifest.json").exists())
+        self.assertFalse((output / "sm_90/kernels.ptx").exists())
+        self.assertFalse((output / "sm_90/kernels.cubin").exists())
+        retry = self.run_build(
+            output, self.tmp / "same-subset-retry.jsonl",
+            architectures=["sm_90"])
+        self.assertEqual(retry.returncode, 0, retry.stdout)
+        manifest = self.assert_manifest(output, ["sm_90"])
+        self.assertFalse(manifest["complete_target_set"])
+        for arch in ("sm_100", "sm_120"):
+            self.assertFalse((output / arch).exists())
 
     def stale_fixture(self, output):
         output.mkdir()
@@ -280,6 +436,7 @@ class BuildScriptTests(unittest.TestCase):
                 published = output / "sm_90/kernels.ptx"
                 if published.exists():
                     self.assertNotIn(marker, published.read_text())
+                self.assertFalse((output / "sm_90/kernels.cubin").exists())
                 self.assertEqual(list(output.glob(".manifest.*")), [])
 
     def test_concurrent_outputs_serialize_and_source_stays_untouched(self):

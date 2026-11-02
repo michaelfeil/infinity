@@ -271,11 +271,28 @@ when the binary contains multiple backends.
 
 ## Native kernel bundle
 
-`device/build.sh` compiles all 69 Rust kernels separately for `sm_90`,
+`device/build.sh` compiles all 90 Rust kernels separately for `sm_90`,
 `sm_100`, and `sm_120`, assembles each PTX artifact to a cubin, verifies entry
 symbols, and writes a manifest recording source/artifact hashes, target,
-compiler revision, and commands. Every architecture is natively compiled from
-Rust for all 69 exports, including seven FP16 MiniLM and four classifier
+compiler revision, and commands. The default invocation retains that complete
+three-target release contract. Local development may pass
+`--architectures sm_90` (or any one or more of `sm_90`, `sm_100`, `sm_120`;
+duplicates are ignored and output stays in canonical order) to build only the
+selected targets. A subset manifest records `requested_architectures` and
+`complete_target_set: false`; it is a development bundle, not an all-hardware
+qualification. Use a separate output directory per GPU/target iteration. If a
+subset output contains any unselected known target path (directory, file, or
+symlink), the build fails before mutating the output because runtime consumers
+load `OUTPUT/sm_<capability>/kernels.cubin` directly and do not consult
+manifest completeness. Existing files are preserved; the builder does not
+delete stale target directories. A selected target directory that is a symlink
+is also rejected before any output mutation. Before a rebuild starts, the
+selected target's previously published `kernels.ptx` and `kernels.cubin` are
+removed so a failed compile cannot leave old code loadable. Assembly writes a
+candidate at `OUTPUT/sm_<capability>/.kernels.cubin`, validates its native exports
+and SM, then atomically replaces `OUTPUT/sm_<capability>/kernels.cubin`; a
+failed validation publishes no cubin. Every architecture is natively compiled from
+Rust for all 90 exports, including seven FP16 MiniLM and four classifier
 primitives. The original nine BERT kernels remain byte-identical
 on all three targets. Additional exports provide rounded embedding/residual
 LayerNorm, native width-768/1024 normalization arithmetic, ordinary or rounded RMSNorm with an optional residual output,

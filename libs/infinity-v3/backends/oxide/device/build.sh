@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # Copyright Infinity Core Contributors. Licensed under the repository LICENSE.
 # Requires the pinned cargo-oxide compiler and a CUDA toolkit providing ptxas.
-# Usage: CARGO_OXIDE=/path/to/cargo-oxide ./build.sh /path/to/kernel-bundle
+# Usage: CARGO_OXIDE=/path/to/cargo-oxide ./build.sh OUTPUT_DIRECTORY \
+#          [--architectures TARGET...]
+# TARGET is one or more of sm_90, sm_100, sm_120. Without the flag all three
+# release targets are built. Use a dedicated output directory for a subset: an
+# output containing any unselected known target path is rejected. A subset is a
+# development bundle, not an all-hardware qualification.
 set -euo pipefail
 device_root="$(cd -- "$(dirname -- "$0")" && pwd)"
-output_dir="${1:?Usage: build.sh OUTPUT_DIRECTORY}"
-python3 - "$device_root" "$output_dir" "${CARGO_OXIDE:-cargo-oxide}" <<'PY'
+output_dir="${1:?Usage: build.sh OUTPUT_DIRECTORY [--architectures TARGET...]}"
+shift
+python3 - "$device_root" "$output_dir" "${CARGO_OXIDE:-cargo-oxide}" "$@" <<'PY'
 import hashlib
 import json
 import os
@@ -45,8 +51,45 @@ environment = dict(os.environ, RUSTUP_TOOLCHAIN="1.99.1", RUSTC_BOOTSTRAP="1")
 for name in ("CUDA_TOOLKIT_PATH", "CUDA_HOME"):
     if name in os.environ:
         environment[name] = str(resolve_from_root(os.environ[name]))
-architectures = [("sm_90", "H100"), ("sm_100", "B200"),
-                 ("sm_120", "RTX PRO 6000 Blackwell")]
+all_architectures = [("sm_90", "H100"), ("sm_100", "B200"),
+                     ("sm_120", "RTX PRO 6000 Blackwell")]
+canonical_architectures = [arch for arch, _hardware in all_architectures]
+hardware_by_architecture = dict(all_architectures)
+
+def parse_architectures(arguments):
+    if not arguments:
+        return list(all_architectures)
+    requested = []
+    index = 0
+    while index < len(arguments):
+        argument = arguments[index]
+        if argument != "--architectures":
+            raise SystemExit(
+                f"Unsupported build.sh argument {argument!r}; usage: build.sh "
+                "OUTPUT_DIRECTORY [--architectures TARGET...]")
+        index += 1
+        values = []
+        while index < len(arguments) and not arguments[index].startswith("--"):
+            values.append(arguments[index])
+            index += 1
+        if not values:
+            raise SystemExit(
+                "--architectures requires at least one target; supported targets: "
+                + ", ".join(canonical_architectures))
+        requested.extend(values)
+    unsupported = list(dict.fromkeys(
+        arch for arch in requested if arch not in hardware_by_architecture))
+    if unsupported:
+        raise SystemExit(
+            "Unsupported architecture(s): " + ", ".join(unsupported)
+            + "; supported targets: " + ", ".join(canonical_architectures))
+    selected = set(requested)
+    return [item for item in all_architectures if item[0] in selected]
+
+architectures = parse_architectures(sys.argv[4:])
+requested_architectures = [arch for arch, _hardware in architectures]
+selected_architectures = set(requested_architectures)
+complete_target_set = requested_architectures == canonical_architectures
 jobs_text = os.environ.get("CARGO_BUILD_JOBS", "3")
 try:
     total_jobs = int(jobs_text)
@@ -159,6 +202,8 @@ manifest = {
                  "src/decoder.rs", "src/dense.rs", "src/encoder_prenorm.rs", "src/gated.rs", "src/aten_embedding.rs", "src/mpnet_norm.rs", "src/gelu_exact.rs", "src/rms1536.rs", "src/rms1536_vector.rs", "src/rms4096_vector.rs", "src/silu_pairs.rs", "src/silu_vector8.rs", "src/readout.rs", "src/qk_norm_rope_128.rs"]},
     "kernels": symbols,
     "qualification": "Every architecture is independently compiled from Rust and assembled to a native cubin; hardware runtime validation is separate.",
+    "requested_architectures": requested_architectures,
+    "complete_target_set": complete_target_set,
     "architectures": [],
 }
 # Hash the additive F16 module without rewriting the phase1 source list above.
@@ -180,6 +225,10 @@ target_base = resolve_from_root(target_base_value) if target_base_value else Non
 def build_arch(index, arch, hardware, source_root):
     directory = output / arch
     directory.mkdir(parents=True, exist_ok=True)
+    ptx, cubin = directory / "kernels.ptx", directory / "kernels.cubin"
+    # A failed rebuild must not leave a previously published target loadable.
+    ptx.unlink(missing_ok=True)
+    cubin.unlink(missing_ok=True)
     arch_work = work_root / arch
     ptx_dir = arch_work / "ptx"
     target_dir = (target_base / arch) if target_base else (arch_work / "target")
@@ -195,27 +244,33 @@ def build_arch(index, arch, hardware, source_root):
     produced = ptx_dir / "infinity_oxide_kernels.ptx"
     if not produced.is_file():
         raise RuntimeError(f"Compiler did not emit {produced.name} for {arch} in {ptx_dir}")
-    ptx, cubin = directory / "kernels.ptx", directory / "kernels.cubin"
     shutil.copy2(produced, ptx)
     text = ptx.read_text()
     targets = re.findall(r"^\.target\s+(\w+)", text, re.MULTILINE)
     entries = sorted(re.findall(r"\.visible\s+\.entry\s+(\w+)\s*\(", text))
     if targets != [arch] or entries != symbols:
         raise RuntimeError(f"Incorrect compiler target or kernel exports: {arch}: {targets}, {entries}")
-    assemble = [ptxas, "-arch=" + arch, "-v", str(ptx), "-o", str(cubin)]
+    # Stage beside the destination so publication also works when OUTPUT is
+    # a mounted volume on a different filesystem from OUTPUT.work.
+    candidate_cubin = directory / ".kernels.cubin"
+    candidate_cubin.unlink(missing_ok=True)
+    assemble = [ptxas, "-arch=" + arch, "-v", str(ptx), "-o", str(candidate_cubin)]
     assemble_seconds = command(assemble, directory / "ptxas.log", environment)
-    binary_symbols = subprocess.check_output([cuobjdump, "--dump-elf-symbols", str(cubin)],
-                                             text=True, env=environment)
+    binary_symbols = subprocess.check_output(
+        [cuobjdump, "--dump-elf-symbols", str(candidate_cubin)],
+        text=True, env=environment)
     (directory / "symbols.log").write_text(binary_symbols)
     native_entries = sorted(re.findall(r"STO_ENTRY\s+(\w+)", binary_symbols))
     if native_entries != symbols:
         raise RuntimeError(f"Incorrect native cubin exports for {arch}: {native_entries}")
-    elf_text = subprocess.check_output([cuobjdump, "--dump-elf", str(cubin)],
-                                       text=True, env=environment)
+    elf_text = subprocess.check_output(
+        [cuobjdump, "--dump-elf", str(candidate_cubin)],
+        text=True, env=environment)
     native_arch = re.search(r"\bsm=(\d+)\b", elf_text)
     if native_arch is None or f"sm_{native_arch[1]}" != arch:
         raise RuntimeError(f"Incorrect native cubin architecture for {arch}: "
                            f"{native_arch[1] if native_arch else 'missing'}")
+    os.replace(candidate_cubin, cubin)
     return {
         "architecture": arch, "hardware": hardware,
         "ptx_version": re.search(r"^\.version\s+([\d.]+)", text, re.MULTILINE)[1],
@@ -262,6 +317,28 @@ work_root.mkdir(parents=True, exist_ok=True)
 work_lock = os.open(work_root, os.O_RDONLY)
 try:
     fcntl.flock(work_lock, fcntl.LOCK_EX)
+    # Runtime consumers in dense, decoder, encoder-policy, and oxide load
+    # OUTPUT/sm_<capability>/kernels.cubin directly; they do not consult the
+    # manifest for target completeness. Never follow a selected target symlink
+    # or reuse a known unselected target path: fail before any output mutation.
+    selected_symlinks = [arch for arch in requested_architectures
+                         if (output / arch).is_symlink()]
+    if selected_symlinks:
+        raise SystemExit(
+            "Selected architecture path(s) are symlinks: "
+            + ", ".join(selected_symlinks)
+            + "; use a real dedicated output directory for this build")
+    excluded_architectures = [arch for arch in canonical_architectures
+                              if arch not in selected_architectures]
+    conflicting_architectures = [
+        arch for arch in excluded_architectures
+        if (output / arch).exists() or (output / arch).is_symlink()
+    ]
+    if conflicting_architectures:
+        raise SystemExit(
+            "Output contains unselected architecture path(s): "
+            + ", ".join(conflicting_architectures)
+            + "; use a dedicated output directory for this target subset")
     # Attribution belongs to this output; write it only after the work-dir lock
     # so a different source root cannot race the same output directory.
     shutil.copy2(root / "LICENSE-PyTorch-BSD3", output / "LICENSE-PyTorch-BSD3")
@@ -293,6 +370,10 @@ try:
         write_manifest_atomic(manifest_path, json.dumps(manifest, indent=2))
         for arch, hardware in architectures:
             print(f"{arch} ({hardware}): all {len(symbols)} Rust kernels compiled and assembled", flush=True)
+        if not complete_target_set:
+            print("Requested target subset: " + ", ".join(requested_architectures)
+                  + "; manifest complete_target_set=false. This development bundle "
+                  "is not an all-hardware qualification.", flush=True)
     finally:
         if invocation_root is not None:
             shutil.rmtree(invocation_root, ignore_errors=True)

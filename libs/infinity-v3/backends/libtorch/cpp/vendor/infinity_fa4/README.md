@@ -9,16 +9,30 @@ With the project's pinned CUDA Torch SDK installed, run from this directory:
 ```sh
 python -m pip install -r requirements-build.txt
 python -m pip install --no-deps -r requirements-sources.txt
-python build_all.py /path/to/infinityfa4 --architectures '80;86;89;90;100;120'
+CUDA_VISIBLE_DEVICES= python build_all.py /path/to/infinityfa4 --architectures '90;100;120'
 export INFINITY_FA4_ROOT=/path/to/infinityfa4
 ```
 
+During model development, use `--architectures '90'` to build only the complete
+H100 provider (`100` for B200, `120` for RTX PRO 6000 Blackwell). For a compile
+probe of one attention kernel, use a separate scratch output:
+
+```sh
+CUDA_VISIBLE_DEVICES= python build.py /tmp/fa4-bert-probe \
+  --arch sm_90a --compile-only --export-only --only-symbol fa4_bert_bf16 \
+  --runtime-dir /path/to/nvidia_cutlass_dsl/cu13/lib --ffi-root /path/to/tvm_ffi
+```
+
+The probe writes selected objects and `development-manifest.json`; it cannot be
+linked or installed as a provider. Build the full provider before model runtime
+validation or deployment.
+
 The separate source install preserves tested CuTe 4.7.1 despite Quack's older
 metadata pin. SM90/SM100 use their `a` targets. Compile-only export uses fake
-tensors and `no_jit_engine=True`; dependency imports can still initialize a
-build GPU. Export qualification must independently verify that no attention
-kernel launches occurred. The external `CUTE_DSL_PTXAS_PATH` loader hook is
-unset before imports in this mode to prevent foreign-target library loading.
+tensors and `no_jit_engine=True`. It requires `CUDA_VISIBLE_DEVICES=` and checks
+that Torch has not initialized CUDA after imports and exports. An external
+`CUTE_DSL_PTXAS_PATH` loader hook is rejected before imports. Runtime quality and
+performance still require separate validation.
 The NVIDIA Dockerfile builds these bundles automatically. CMake installs native
 libraries, manifests and license notices; serving needs no Python or JIT.
 

@@ -34,6 +34,7 @@ p.add_argument("--deberta", action="store_true", help="Also export packed DeBERT
 p.add_argument("--deberta-exact-mul", action="store_true", help="Include the BF16 fixed-divisor DeBERTa score hook")
 p.add_argument("--alibi", action="store_true", help="Also export packed Jina ALiBi model-bias attention")
 p.add_argument("--jinacode", action="store_true", help="Also export native JinaCode F32-FMA ALiBi attention")
+p.add_argument("--only-symbol", nargs="+", metavar="SYMBOL", help="Development-only: export only these canonical symbols (requires --compile-only --export-only)")
 p.add_argument("--compile-only", action="store_true", help="Export using fake tensors without a build GPU; runtime validation is still required")
 p.add_argument("--arch", choices=["sm_80", "sm_86", "sm_89", "sm_90a", "sm_100a", "sm_120"], default="sm_90a", help="Target architecture; one native bundle per architecture")
 a = p.parse_args()
@@ -42,6 +43,29 @@ if a.compile_only and a.link_only:
 if a.deberta_exact_mul and not a.deberta and not a.link_only:
     p.error("--deberta-exact-mul requires --deberta")
 capability = int(a.arch.removeprefix("sm_").removesuffix("a"))
+dev_only = bool(a.only_symbol)
+if dev_only:
+    if not (a.compile_only and a.export_only):
+        p.error("--only-symbol requires --compile-only and --export-only")
+    only_symbols = list(dict.fromkeys(a.only_symbol))
+    if len(only_symbols) != len(a.only_symbol):
+        p.error("--only-symbol contains duplicate symbols")
+    profiles_inc = pathlib.Path(__file__).with_name("profiles.inc")
+    profile_rows = build_contract.validate_profiles_inc(profiles_inc)
+    dev_flags = {
+        "include_deberta": a.deberta,
+        "include_deberta_exact_mul": a.deberta_exact_mul,
+        "include_alibi": a.alibi,
+        "include_jinacode": a.jinacode,
+    }
+    canonical_symbols = build_contract.expected_kernel_symbols(
+        [row[0] for row in profile_rows], **dev_flags)
+    unknown = [symbol for symbol in only_symbols if symbol not in canonical_symbols]
+    if unknown:
+        p.error("unknown --only-symbol for this canonical build: " + ", ".join(unknown))
+    if (a.output / "manifest.json").exists() or (a.output / "libinfinityfa4.so").exists():
+        raise RuntimeError("refusing development-only export into an existing canonical bundle")
+    (a.output / "development-manifest.json").unlink(missing_ok=True)
 a.output.mkdir(parents=True, exist_ok=True)
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
@@ -136,6 +160,9 @@ if not a.link_only:
                 window = build_contract.canonical_window(mode, name, causal, _local)
                 profiles.append((mode, name, h, hk, d, causal, window))
             for mode, name, h, hk, d, causal, window in profiles:
+                symbol = f"fa4_{name}_{dtype_name}"
+                if dev_only and symbol not in only_symbols:
+                    continue
                 q = torch.zeros((256, h, d), device="cuda", dtype=dtype)
                 k = torch.zeros((256, hk, d), device="cuda", dtype=dtype)
                 def compile_profile():
@@ -161,7 +188,6 @@ if not a.link_only:
                                                         causal=causal, window_size=window,
                                                         disable_scheduler_metadata=True)
                 compiled = compile_isolated(name, compile_profile)
-                symbol = f"fa4_{name}_{dtype_name}"
                 obj = a.output / f"{symbol}.o"
                 export_portable(compiled, obj, symbol)
                 require_no_cuda(f"after export {symbol}")
@@ -176,6 +202,9 @@ if not a.link_only:
             # Native regression before changing the pinned upstream implementation.
             from deberta_score import deberta_score
             for dtype_name, dtype in [("fp16", torch.float16), ("bf16", torch.bfloat16)]:
+                symbol = f"fa4_deberta_{dtype_name}"
+                if dev_only and symbol not in only_symbols:
+                    continue
                 q = torch.zeros((256, 12, 64), device="cuda", dtype=dtype)
                 rel = torch.zeros((12, 256, 512), device="cuda", dtype=dtype)
                 lut = torch.zeros(257, device="cuda", dtype=torch.int32)
@@ -185,7 +214,6 @@ if not a.link_only:
                         score_mod=deberta_score, aux_tensors=[rel, rel, lut],
                         disable_scheduler_metadata=True)
                 compiled = compile_isolated(f"deberta_{dtype_name}", compile_deberta)
-                symbol = f"fa4_deberta_{dtype_name}"
                 obj = a.output / f"{symbol}.o"
                 export_portable(compiled, obj, symbol)
                 require_no_cuda(f"after export {symbol}")
@@ -198,6 +226,9 @@ if not a.link_only:
             for name, callback, divisor, reciprocal in [
                     ("both", deberta_exact_mul_both, 13.875, 0x3d939a86),
                     ("single", deberta_exact_mul_single, 11.3125, 0x3db509e7)]:
+                symbol = f"fa4_deberta_exact_mul_{name}_bf16"
+                if dev_only and symbol not in only_symbols:
+                    continue
                 q = torch.zeros((256, 12, 64), device="cuda", dtype=torch.bfloat16)
                 rel = torch.zeros((12, 256, 512), device="cuda", dtype=torch.bfloat16)
                 lut = torch.zeros(257, device="cuda", dtype=torch.int32)
@@ -207,7 +238,6 @@ if not a.link_only:
                         score_mod=callback, aux_tensors=[rel, rel, lut],
                         disable_scheduler_metadata=True)
                 compiled = compile_isolated(f"deberta_exact_mul_{name}", compile_exact_mul)
-                symbol = f"fa4_deberta_exact_mul_{name}_bf16"
                 obj = a.output / f"{symbol}.o"
                 export_portable(compiled, obj, symbol)
                 require_no_cuda(f"after export {symbol}")
@@ -227,6 +257,9 @@ if not a.link_only:
             for dtype_name, dtype, score_mod in [
                     ("fp16", torch.float16, alibi_model_bias_fp16),
                     ("bf16", torch.bfloat16, alibi_model_bias_bf16)]:
+                symbol = f"fa4_alibi_model_bias_{dtype_name}"
+                if dev_only and symbol not in only_symbols:
+                    continue
                 q = torch.zeros((256, 8, 64), device="cuda", dtype=dtype)
                 slopes = torch.zeros(8, device="cuda", dtype=torch.float32)
                 def compile_alibi():
@@ -235,7 +268,6 @@ if not a.link_only:
                         score_mod=score_mod, aux_tensors=[slopes],
                         disable_scheduler_metadata=True)
                 compiled = compile_isolated(f"alibi_{dtype_name}", compile_alibi)
-                symbol = f"fa4_alibi_model_bias_{dtype_name}"
                 obj = a.output / f"{symbol}.o"
                 export_portable(compiled, obj, symbol)
                 require_no_cuda(f"after export {symbol}")
@@ -253,6 +285,9 @@ if not a.link_only:
             for dtype_name, dtype, score_mod in [
                     ("fp16", torch.float16, alibi12_native_flash_fp16),
                     ("bf16", torch.bfloat16, alibi12_native_flash_bf16)]:
+                symbol = f"fa4_jinacode_flash_alibi_{dtype_name}"
+                if dev_only and symbol not in only_symbols:
+                    continue
                 packed = torch.zeros((256, 2304), device="cuda", dtype=dtype)
                 q = packed[:, :768].view(256, 12, 64)
                 k = packed[:, 768:1536].view(256, 12, 64)
@@ -264,7 +299,6 @@ if not a.link_only:
                         score_mod=score_mod, aux_tensors=[slopes],
                         disable_scheduler_metadata=True)
                 compiled = compile_isolated(f"jinacode_{dtype_name}", compile_jinacode)
-                symbol = f"fa4_jinacode_flash_alibi_{dtype_name}"
                 obj = a.output / f"{symbol}.o"
                 export_portable(compiled, obj, symbol)
                 require_no_cuda(f"after export {symbol}")
@@ -277,6 +311,76 @@ if not a.link_only:
                                     bias_rounding="float32_fma_unscaled_then_pow2_scale",
                                     alibi_heads=12, alibi_slope_count=12))
     require_no_cuda("after all exports")
+    if dev_only:
+        profile_names = [row[0] for row in profile_rows]
+        canonical = build_contract.expected_kernel_symbols(profile_names, **dev_flags)
+        selected = [symbol for symbol in canonical if symbol in only_symbols]
+        by_symbol = {kernel["symbol"]: kernel for kernel in kernels}
+        missing = [symbol for symbol in selected if symbol not in by_symbol]
+        extra = [symbol for symbol in by_symbol if symbol not in selected]
+        if missing or extra:
+            raise RuntimeError(
+                f"development export inventory differs: missing={missing} extra={extra}")
+        if len(compile_only_state["calls"]) != len(selected):
+            raise RuntimeError(
+                f"development compile callback count {len(compile_only_state['calls'])} "
+                f"!= selected object count {len(selected)}")
+        for symbol in selected:
+            validate_host_object(a.output / f"{symbol}.o")
+        modes = {f"fa4_{row[0]}_{dtype}": mode
+                 for mode, row in enumerate(profile_rows) for dtype in build_contract.DTYPES}
+        descriptors = []
+        for symbol in selected:
+            descriptor = dict(by_symbol[symbol])
+            if symbol in modes:
+                descriptor["canonical_mode"] = modes[symbol]
+            descriptor["object"] = f"{symbol}.o"
+            descriptor["object_sha256"] = digest(a.output / f"{symbol}.o")
+            descriptors.append(descriptor)
+        development = {
+            "schema": "infinity-fa4-development-export/v1",
+            "kind": "development-only",
+            "development_only": True,
+            "production_admissible": False,
+            "architecture": a.arch,
+            "target_sm_count": int(os.environ["FLASH_ATTENTION_NUM_SMS"]),
+            "host_target": host_target(),
+            "export_env": export_env,
+            "softmax_backport": softmax_backport,
+            "gemma_sm100_local_source_patch": gemma_local_patch,
+            "fa4_source_lock_sha256": digest(lock_path),
+            "fa4_source_identity": {
+                "before_import": source_identity_before,
+                "after_import": source_identity_after,
+            },
+            "fa4_python_sources": {
+                str(path.relative_to(pathlib.Path(interface.__file__).parent)): digest(path)
+                for path in sorted(pathlib.Path(interface.__file__).parent.rglob("*.py"))},
+            "export_runtime_pins": build_contract.runtime_pins(a.ffi_root, a.runtime_dir),
+            "cutlass_dsl": importlib.metadata.version("nvidia-cutlass-dsl"),
+            "tvm_ffi": importlib.metadata.version("apache-tvm-ffi"),
+            "selected_symbols": selected,
+            "descriptors": descriptors,
+            "object_hashes": {f"{symbol}.o": digest(a.output / f"{symbol}.o")
+                              for symbol in selected},
+            "provenance": {
+                "kind": "development-only-selected-symbol-export",
+                "canonical_profile_count": len(profile_rows),
+                "profile_sequence_sha256": build_contract.profile_sequence_sha(profile_rows),
+                "selected_only": True,
+            },
+            "compile_cache_isolation": {
+                "policy": "clear-cache-before-and-after-every-export",
+                "exports": len(selected),
+                "compile_callbacks": len(compile_only_state["calls"]),
+                "cache_entries_after_each_compile": 1,
+            },
+        }
+        (a.output / "development-manifest.json").write_text(
+            json.dumps(development, indent=2))
+        print(f"Exported {len(selected)} development-only symbols to {a.output}",
+              flush=True)
+        raise SystemExit(0)
     profile_names = [row[0] for row in profile_rows]
     kernel_flags = {
         "include_deberta": a.deberta,
@@ -349,6 +453,8 @@ if not a.link_only:
         manifest, profile_rows, require_all_helpers=False)
     (a.output / "manifest.json").write_text(json.dumps(manifest, indent=2))
 else:
+    if (a.output / "development-manifest.json").exists():
+        raise RuntimeError("refusing --link-only on a development-only export")
     manifest = json.loads((a.output / "manifest.json").read_text())
     if manifest["architecture"] != a.arch:
         raise RuntimeError("Link target differs from the exported architecture")
@@ -372,6 +478,8 @@ else:
             raise RuntimeError(f"Export changed since manifest was created: {path}")
 for obj in objects:
     validate_host_object(pathlib.Path(obj))
+if not dev_only and (a.output / "development-manifest.json").exists():
+    (a.output / "development-manifest.json").unlink()
 if a.export_only:
     print(f"Exported kernels to {a.output}; link with a deployment-compatible C++ compiler", flush=True)
     raise SystemExit(0)
