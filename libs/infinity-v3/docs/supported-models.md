@@ -244,9 +244,9 @@ image documents use `/v1/classify` with `query`/`document` messages and
 | [cross-encoder/ms-marco-MiniLM-L-6-v2](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L-6-v2) | BERT + trained relevance head | `--max-batch-tokens 8192` |
 | [cross-encoder/ms-marco-MiniLM-L4-v2](https://huggingface.co/cross-encoder/ms-marco-MiniLM-L4-v2) | BERT + trained relevance head | `--max-batch-tokens 8192` |
 | [cross-encoder/ms-marco-TinyBERT-L2-v2](https://huggingface.co/cross-encoder/ms-marco-TinyBERT-L2-v2) | BERT + trained relevance head | `--max-batch-tokens 8192` |
-| [mixedbread-ai/mxbai-rerank-base-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v1) | BERT + trained relevance head | `--max-batch-tokens 8192` |
-| [mixedbread-ai/mxbai-rerank-large-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-large-v1) | BERT + trained relevance head | `--max-batch-tokens 8192` |
-| [mixedbread-ai/mxbai-rerank-xsmall-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-xsmall-v1) | BERT + trained relevance head | `--max-batch-tokens 8192` |
+| [mixedbread-ai/mxbai-rerank-base-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-base-v1) | DeBERTa v2 + trained relevance head | `--max-batch-tokens 8192` |
+| [mixedbread-ai/mxbai-rerank-large-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-large-v1) | DeBERTa v2 + trained relevance head | `--max-batch-tokens 8192` |
+| [mixedbread-ai/mxbai-rerank-xsmall-v1](https://huggingface.co/mixedbread-ai/mxbai-rerank-xsmall-v1) | DeBERTa v2 + trained relevance head | `--max-batch-tokens 8192` |
 | [nvidia/llama-nemotron-rerank-1b-v2](https://huggingface.co/nvidia/llama-nemotron-rerank-1b-v2) | Bidirectional Llama + trained relevance head | `--max-batch-tokens 8192` |
 | [nvidia/Nemotron-3.5-Rerank-8B-BF16](https://huggingface.co/nvidia/Nemotron-3.5-Rerank-8B-BF16) | Mistral3 + trained relevance head | `--max-batch-tokens 8192` |
 

@@ -7,15 +7,14 @@
 //! reject classifier architectures.
 
 use crate::{
-    arg,
-    biased_linear::{BiasedLinear, PreparedBiasedLinear},
-    blocks,
+    arg, blocks,
     cublas::Blas,
+    head_linear::{HeadLinearPlan, PreparedHeadLinear},
     infer, launch,
     lt::{LtProvider, ShapeError},
     model::{
         BertConfig, Checkpoint, EncoderFamily, FeedForwardRecipe, LinearWeights, NormArithmetic,
-        PositionRecipe,
+        PositionRecipe, WeightSource,
     },
     product,
     tensor::Bf16,
@@ -45,6 +44,27 @@ pub(crate) enum ReadoutMode {
     Tokens,
 }
 
+/// Native sequence readout uses CLS by default, except ModernBERT whose
+/// configured `classifier_pooling` may select mean or last-token reduction.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ClassifierPooling {
+    First,
+    Mean,
+    Last,
+}
+
+/// The activation stage after the first trained head projection. The BERT
+/// dense/out_proj head selects tanh, DeBERTa's context pooler selects exact
+/// GELU, and ModernBERT selects its configured tanh-GELU/ReLU/SiLU recipe.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum HeadActivation {
+    Tanh,
+    GeluErf,
+    GeluTanh,
+    Relu,
+    Silu,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ClassifierReadout {
     pub(crate) task: ClassifierTask,
@@ -57,16 +77,49 @@ impl ClassifierReadout {
     }
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct HeadLinear {
+    pub(crate) weight: WeightSource,
+    pub(crate) bias: Option<WeightSource>,
+}
+
+impl HeadLinear {
+    fn from_biases(weight: WeightSource, bias: WeightSource) -> Self {
+        Self {
+            weight,
+            bias: Some(bias),
+        }
+    }
+
+    fn input(&self) -> Option<usize> {
+        self.weight.shape().get(1).copied()
+    }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct HeadNorm {
+    pub(crate) gamma: WeightSource,
+    pub(crate) beta: Option<WeightSource>,
+    pub(crate) eps: f32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct HeadStage {
+    pub(crate) linear: HeadLinear,
+    pub(crate) activation: HeadActivation,
+    pub(crate) norm: Option<HeadNorm>,
+}
+
+#[derive(Clone, Debug)]
 pub(crate) struct ClassifierHeadHost {
     pub(crate) readout: ClassifierReadout,
-    pub(crate) pooler: Option<LinearWeights>,
-    pub(crate) classifier: LinearWeights,
-    hidden: usize,
-    pooler_erf: bool,
-    /// A trained `classifier.dense -> activation -> classifier.out_proj`
-    /// recipe applies to every packed token for token readout. The BERT/plain
-    /// token projection remains a single root linear.
-    token_mlp: bool,
+    pub(crate) classifier: HeadLinear,
+    pub(crate) hidden: usize,
+    pub(crate) first: Option<HeadStage>,
+    first_sequence: bool,
+    first_tokens: bool,
+    requires_first_for_sequence: bool,
+    pooling: ClassifierPooling,
 }
 
 fn task_for_architecture(family: EncoderFamily, architecture: &str) -> Option<ClassifierTask> {
@@ -102,6 +155,8 @@ fn task_for_architecture(family: EncoderFamily, architecture: &str) -> Option<Cl
         } else {
             ClassifierTask::Tokens
         }),
+        (EncoderFamily::Gte, "NewForSequenceClassification") => Some(ClassifierTask::Sequence),
+        (EncoderFamily::Gte, "NewForTokenClassification") => Some(ClassifierTask::Tokens),
         (EncoderFamily::Deberta, "DebertaV2ForSequenceClassification") => {
             Some(ClassifierTask::Sequence)
         }
@@ -122,9 +177,13 @@ pub(crate) fn is_classifier_config(config: &BertConfig) -> bool {
     task_for(config).is_some()
 }
 
-/// Native DeBERTa binds prediction mode to the trained architecture. Ordinary
-/// BERT retains its existing dual readout behavior.
+/// Native DeBERTa binds prediction mode to the trained architecture, and GTE
+/// has no token-classification head at all. Ordinary BERT retains its existing
+/// dual readout behavior.
 pub(crate) fn admit_readout(config: &BertConfig, mode: ReadoutMode) -> Result<(), BackendError> {
+    if config.family == EncoderFamily::Gte && mode == ReadoutMode::Tokens {
+        return Err(infer("GTE does not support token classification"));
+    }
     if config.family != EncoderFamily::Deberta {
         return Ok(());
     }
@@ -151,36 +210,45 @@ fn architecture_name(config: &BertConfig) -> &str {
 }
 
 fn admit_geometry(config: &BertConfig, task: ClassifierTask) -> Result<(), BackendError> {
-    // The trained-head executor is shared by the BERT-style absolute-position
-    // families. Their configured geometry remains the backbone contract; the
-    // classifier tensors below decide the actual readout layout.
-    if !matches!(
-        config.family,
+    if config.family == EncoderFamily::Gte && task == ClassifierTask::Tokens {
+        return Err(crate::start("GTE does not support token classification"));
+    }
+    let (family_ok, recipe_ok) = match config.family {
         EncoderFamily::Bert
-            | EncoderFamily::Roberta
-            | EncoderFamily::XlmRoberta
-            | EncoderFamily::Camembert
-    ) {
+        | EncoderFamily::Roberta
+        | EncoderFamily::XlmRoberta
+        | EncoderFamily::Camembert => (
+            true,
+            matches!(
+                config.recipe.embedding,
+                NormArithmetic::ExactBiased | NormArithmetic::RoundedAddBeforeStats
+            ) && matches!(
+                config.recipe.residual,
+                NormArithmetic::ExactBiased | NormArithmetic::RoundedAddBeforeStats
+            ) && config.recipe.positions == PositionRecipe::Absolute
+                && config.recipe.feed_forward == FeedForwardRecipe::DenseGelu,
+        ),
+        EncoderFamily::Gte => (
+            true,
+            config.recipe.embedding == NormArithmetic::AtenEmbedding
+                && config.recipe.residual == NormArithmetic::ExactBiased
+                && matches!(config.recipe.positions, PositionRecipe::Rotary(_))
+                && config.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst,
+        ),
+        _ => (false, false),
+    };
+    if !family_ok {
         return Err(crate::start(format!(
             "unsupported {} classifier family",
             architecture_name(config)
         )));
     }
-    let recipe_ok = matches!(
-        config.recipe.embedding,
-        NormArithmetic::ExactBiased | NormArithmetic::RoundedAddBeforeStats
-    ) && matches!(
-        config.recipe.residual,
-        NormArithmetic::ExactBiased | NormArithmetic::RoundedAddBeforeStats
-    ) && config.recipe.positions == PositionRecipe::Absolute
-        && config.recipe.feed_forward == FeedForwardRecipe::DenseGelu;
     if !recipe_ok || config.hidden_size > MAX_HEAD_WIDTH {
         return Err(crate::start(format!(
             "unsupported {} classifier geometry or arithmetic recipe",
             architecture_name(config)
         )));
     }
-    let _ = task;
     Ok(())
 }
 
@@ -201,26 +269,51 @@ fn classifier_width(checkpoint: &Checkpoint, weight: &str) -> Result<usize, Back
     Ok(*width)
 }
 
+fn exact_pair(
+    checkpoint: &Checkpoint,
+    weight: &str,
+    bias: &str,
+    hidden: usize,
+) -> Result<Option<LinearWeights>, BackendError> {
+    if checkpoint.shape(weight) != Some([hidden, hidden].as_slice())
+        || checkpoint.shape(bias) != Some([hidden].as_slice())
+    {
+        return Ok(None);
+    }
+    Ok(Some(LinearWeights {
+        weight: checkpoint.source(weight, &[hidden, hidden])?,
+        bias: checkpoint.source(bias, &[hidden])?,
+    }))
+}
+
 impl ClassifierHeadHost {
     pub(crate) fn from_deberta(head: crate::deberta_encoder_model::DebertaHead) -> Self {
+        let hidden = head.classifier.weight.shape().get(1).copied().unwrap_or(0);
+        let tokenwise = head.tokenwise;
         Self {
             readout: ClassifierReadout {
-                task: if head.tokenwise {
+                task: if tokenwise {
                     ClassifierTask::Tokens
                 } else {
                     ClassifierTask::Sequence
                 },
                 width: head.width,
             },
-            pooler: head.pooler,
-            classifier: head.classifier,
-            hidden: 768,
-            pooler_erf: true,
-            token_mlp: false,
+            classifier: HeadLinear::from_biases(head.classifier.weight, head.classifier.bias),
+            hidden,
+            first: head.pooler.map(|pooler| HeadStage {
+                linear: HeadLinear::from_biases(pooler.weight, pooler.bias),
+                activation: HeadActivation::GeluErf,
+                norm: None,
+            }),
+            first_sequence: !tokenwise,
+            first_tokens: false,
+            requires_first_for_sequence: !tokenwise,
+            pooling: ClassifierPooling::First,
         }
     }
 
-    fn load_trained_head(
+    fn load_bert_head(
         checkpoint: &Checkpoint,
         config: &BertConfig,
         task: ClassifierTask,
@@ -236,6 +329,14 @@ impl ClassifierHeadHost {
             .iter()
             .filter(|name| checkpoint.contains(name))
             .count();
+        if family_is_gte(config.family) {
+            if present != 0 {
+                return Err(crate::start(
+                    "GTE classifier does not use classifier.dense/out_proj",
+                ));
+            }
+            return Self::load_gte_head(checkpoint, hidden, task);
+        }
         if present != 0 {
             if present != mlp_names.len() {
                 return Err(crate::start(
@@ -243,28 +344,34 @@ impl ClassifierHeadHost {
                 ));
             }
             let width = classifier_width(checkpoint, "classifier.out_proj.weight")?;
-            let dense = LinearWeights {
-                weight: checkpoint.source("classifier.dense.weight", &[hidden, hidden])?,
-                bias: checkpoint.source("classifier.dense.bias", &[hidden])?,
+            let first = HeadStage {
+                linear: HeadLinear::from_biases(
+                    checkpoint.source("classifier.dense.weight", &[hidden, hidden])?,
+                    checkpoint.source("classifier.dense.bias", &[hidden])?,
+                ),
+                activation: HeadActivation::Tanh,
+                norm: None,
             };
-            let classifier = LinearWeights {
-                weight: checkpoint.source("classifier.out_proj.weight", &[width, hidden])?,
-                bias: checkpoint.source("classifier.out_proj.bias", &[width])?,
-            };
+            let classifier = HeadLinear::from_biases(
+                checkpoint.source("classifier.out_proj.weight", &[width, hidden])?,
+                checkpoint.source("classifier.out_proj.bias", &[width])?,
+            );
             return Ok(Self {
                 readout: ClassifierReadout { task, width },
-                pooler: Some(dense),
                 classifier,
                 hidden,
-                pooler_erf: false,
-                token_mlp: true,
+                first: Some(first),
+                first_sequence: true,
+                first_tokens: true,
+                requires_first_for_sequence: false,
+                pooling: ClassifierPooling::First,
             });
         }
         let width = classifier_width(checkpoint, "classifier.weight")?;
-        let classifier = LinearWeights {
-            weight: checkpoint.source("classifier.weight", &[width, hidden])?,
-            bias: checkpoint.source("classifier.bias", &[width])?,
-        };
+        let classifier = HeadLinear::from_biases(
+            checkpoint.source("classifier.weight", &[width, hidden])?,
+            checkpoint.source("classifier.bias", &[width])?,
+        );
         // Native's optional classifier pooler namespace is independent of the
         // backbone prefix and is only used by the sequence readout.
         let pooler_weight = "bert.pooler.dense.weight";
@@ -273,9 +380,13 @@ impl ClassifierHeadHost {
             checkpoint.contains(pooler_weight),
             checkpoint.contains(pooler_bias),
         ) {
-            (true, true) => Some(LinearWeights {
-                weight: checkpoint.source(pooler_weight, &[hidden, hidden])?,
-                bias: checkpoint.source(pooler_bias, &[hidden])?,
+            (true, true) => Some(HeadStage {
+                linear: HeadLinear::from_biases(
+                    checkpoint.source(pooler_weight, &[hidden, hidden])?,
+                    checkpoint.source(pooler_bias, &[hidden])?,
+                ),
+                activation: HeadActivation::Tanh,
+                norm: None,
             }),
             (false, false) => None,
             _ => {
@@ -286,11 +397,60 @@ impl ClassifierHeadHost {
         };
         Ok(Self {
             readout: ClassifierReadout { task, width },
-            pooler,
             classifier,
             hidden,
-            pooler_erf: false,
-            token_mlp: false,
+            first: pooler,
+            first_sequence: true,
+            first_tokens: false,
+            requires_first_for_sequence: false,
+            pooling: ClassifierPooling::First,
+        })
+    }
+
+    fn load_gte_head(
+        checkpoint: &Checkpoint,
+        hidden: usize,
+        task: ClassifierTask,
+    ) -> Result<Self, BackendError> {
+        if task == ClassifierTask::Tokens {
+            return Err(crate::start("GTE does not support token classification"));
+        }
+        let width = classifier_width(checkpoint, "classifier.weight")?;
+        let classifier_bias = checkpoint
+            .contains("classifier.bias")
+            .then(|| checkpoint.source("classifier.bias", &[width]))
+            .transpose()?;
+        let classifier = HeadLinear {
+            weight: checkpoint.source("classifier.weight", &[width, hidden])?,
+            bias: classifier_bias,
+        };
+        // Native GTE tries a complete new.pooler, then a complete root pooler.
+        // An incomplete preferred namespace falls back rather than failing.
+        let pooler = exact_pair(
+            checkpoint,
+            "new.pooler.dense.weight",
+            "new.pooler.dense.bias",
+            hidden,
+        )?
+        .or(exact_pair(
+            checkpoint,
+            "pooler.dense.weight",
+            "pooler.dense.bias",
+            hidden,
+        )?);
+        Ok(Self {
+            readout: ClassifierReadout { task, width },
+            classifier,
+            hidden,
+            first: pooler.map(|pooler| HeadStage {
+                linear: HeadLinear::from_biases(pooler.weight, pooler.bias),
+                activation: HeadActivation::Tanh,
+                norm: None,
+            }),
+            first_sequence: true,
+            first_tokens: false,
+            requires_first_for_sequence: false,
+            pooling: ClassifierPooling::First,
         })
     }
 
@@ -298,8 +458,92 @@ impl ClassifierHeadHost {
         let task =
             task_for(config).ok_or_else(|| crate::start("unsupported classifier architecture"))?;
         admit_geometry(config, task)?;
-        Self::load_trained_head(checkpoint, config, task)
+        Self::load_bert_head(checkpoint, config, task)
     }
+
+    /// ModernBERT's sequence head is a configured pooling reduction followed by
+    /// a biasless `head.dense`, activation, biasless `head.norm`, and the root
+    /// classifier projection. Token readout uses only that root projection,
+    /// matching the Native encoder executor.
+    pub(crate) fn load_modern(
+        checkpoint: &Checkpoint,
+        config: &crate::modern_encoder_model::ModernConfig,
+    ) -> Result<Self, BackendError> {
+        let policy = config
+            .classifier
+            .as_ref()
+            .ok_or_else(|| crate::start("ModernBERT classifier policy is missing"))?;
+        let hidden = config.geometry.hidden_size;
+        let width = classifier_width(checkpoint, "classifier.weight")?;
+        let classifier_bias = checkpoint
+            .contains("classifier.bias")
+            .then(|| checkpoint.source("classifier.bias", &[width]))
+            .transpose()?;
+        if let Some(expected) = policy.classifier_bias {
+            if expected != classifier_bias.is_some() {
+                return Err(crate::start(format!(
+                    "ModernBERT classifier_bias={expected} disagrees with the checkpoint bias tensor"
+                )));
+            }
+        }
+        for forbidden in ["head.dense.bias", "head.norm.bias"] {
+            if checkpoint.contains(forbidden) {
+                return Err(crate::start(format!(
+                    "ModernBERT classifier head must not contain {forbidden}"
+                )));
+            }
+        }
+        let dense = checkpoint
+            .contains("head.dense.weight")
+            .then(|| checkpoint.source("head.dense.weight", &[hidden, hidden]))
+            .transpose()?;
+        let norm = checkpoint
+            .contains("head.norm.weight")
+            .then(|| checkpoint.source("head.norm.weight", &[hidden]))
+            .transpose()?;
+        let first = match (dense, norm) {
+            (Some(weight), Some(gamma)) => Some(HeadStage {
+                linear: HeadLinear { weight, bias: None },
+                activation: policy.activation,
+                norm: Some(HeadNorm {
+                    gamma,
+                    beta: None,
+                    eps: config.geometry.layer_norm_eps as f32,
+                }),
+            }),
+            (None, None) => None,
+            _ => {
+                return Err(crate::start(
+                    "ModernBERT head.dense and head.norm tensors must be complete or absent",
+                ))
+            }
+        };
+        if policy.task == ClassifierTask::Sequence && first.is_none() {
+            return Err(crate::start(
+                "ModernBERT sequence classifier requires head.dense and head.norm",
+            ));
+        }
+        Ok(Self {
+            readout: ClassifierReadout {
+                task: policy.task,
+                width,
+            },
+            classifier: HeadLinear {
+                weight: checkpoint.source("classifier.weight", &[width, hidden])?,
+                bias: classifier_bias,
+            },
+            hidden,
+            first_sequence: first.is_some(),
+            first_tokens: false,
+            first,
+            requires_first_for_sequence: true,
+            pooling: policy.pooling,
+        })
+    }
+}
+
+fn family_is_gte(family: EncoderFamily) -> bool {
+    family == EncoderFamily::Gte
 }
 
 /// Validate task and module metadata before creating any CUDA state.
@@ -325,6 +569,24 @@ pub(crate) fn validate_admission(
                 "DeBERTa classifier does not accept Dense modules",
             ));
         }
+        return Ok(());
+    }
+    if raw.get("model_type").and_then(serde_json::Value::as_str) == Some("modernbert") {
+        let config = crate::modern_encoder_model::ModernConfig::load_classifier(path)?;
+        if dense_paths.as_ref().is_some_and(|paths| !paths.is_empty()) {
+            return Err(crate::start(
+                "ModernBERT classifier does not accept an explicit Dense / Sentence-Transformers override",
+            ));
+        }
+        if dense_paths.is_none() {
+            let _ = crate::dense::DenseChainHost::load_with_paths(
+                path,
+                config.geometry.hidden_size,
+                None,
+            )?;
+        }
+        let checkpoint = Checkpoint::open(path)?;
+        let _ = ClassifierHeadHost::load_modern(&checkpoint, &config)?;
         return Ok(());
     }
     let config = BertConfig::load_classifier(path)?;
@@ -353,6 +615,13 @@ struct ClassifierKernels {
     gather_first: Function,
     tanh: Function,
     gelu_erf: Option<Function>,
+    gelu_tanh: Option<Function>,
+    relu: Option<Function>,
+    silu: Option<Function>,
+    layer_norm: Option<Function>,
+    f32_to_bf16: Option<Function>,
+    mean_pool: Option<Function>,
+    pool: Option<Function>,
     cast: Function,
 }
 
@@ -381,6 +650,7 @@ impl ClassifierKernels {
         let module = context
             .load_module_from_image(&data)
             .map_err(crate::start)?;
+        let optional = |name: &str| module.load_function(name).ok();
         Ok(Self {
             bias_seed: module
                 .load_function("infinity_classifier_bias_bf16")
@@ -398,8 +668,15 @@ impl ClassifierKernels {
                         .map_err(crate::start)?,
                 )
             } else {
-                None
+                optional("infinity_gelu_exact")
             },
+            gelu_tanh: optional("infinity_encoder_activation_gelu_tanh_bf16"),
+            relu: optional("infinity_encoder_activation_relu_bf16"),
+            silu: optional("infinity_encoder_activation_silu_bf16"),
+            layer_norm: optional("infinity_plain_layer_norm_bf16_aten"),
+            f32_to_bf16: optional("infinity_f32_to_bf16"),
+            mean_pool: optional("infinity_mean_pool_bf16_native"),
+            pool: optional("infinity_pool"),
             cast: module
                 .load_function("infinity_bf16_to_f32")
                 .map_err(crate::start)?,
@@ -407,33 +684,55 @@ impl ClassifierKernels {
     }
 }
 
-struct DeviceLinear {
+struct DeviceHeadLinear {
     weight: DeviceBuffer<Bf16>,
     bias: DeviceBuffer<Bf16>,
 }
 
-struct DeviceBiasedLinear {
-    device: DeviceLinear,
-    plan: BiasedLinear,
+struct DeviceHeadStage {
+    device: DeviceHeadLinear,
+    norm: Option<DeviceHeadNorm>,
+    activation: HeadActivation,
+    plan: HeadLinearPlan,
 }
 
-fn upload_linear(
+struct DeviceHeadNorm {
+    gamma: DeviceBuffer<Bf16>,
+    beta: Option<DeviceBuffer<Bf16>>,
+    eps: f32,
+}
+
+struct DeviceClassifier {
+    device: DeviceHeadLinear,
+    plan: HeadLinearPlan,
+}
+
+fn upload_head_linear(
     uploader: &mut WeightUploader,
-    host: &LinearWeights,
-) -> Result<DeviceLinear, BackendError> {
-    Ok(DeviceLinear {
-        weight: uploader.upload(&[&host.weight])?,
-        bias: uploader.upload(&[&host.bias])?,
-    })
+    stream: &Arc<Stream>,
+    host: &HeadLinear,
+) -> Result<DeviceHeadLinear, BackendError> {
+    let weight = uploader.upload(&[&host.weight])?;
+    let bias = match host.bias.as_ref() {
+        Some(bias) => uploader.upload(&[bias])?,
+        None => {
+            let width = host.weight.shape().first().copied().unwrap_or(0);
+            DeviceBuffer::<Bf16>::zeroed(stream, width).map_err(crate::start)?
+        }
+    };
+    Ok(DeviceHeadLinear { weight, bias })
 }
 
 /// Scratch capacities reserved from the shared request shape key. Sequence
 /// requests need two hidden-width BF16 row buffers; token requests reuse the
-/// packed backbone output directly and only need one logit-width buffer.
+/// packed backbone output directly and only need one logit-width buffer. Mean
+/// and last-token ModernBERT pooling stage their reduction through one F32 row
+/// buffer before the BF16 head.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct ClassifierScratchLayout {
     first: usize,
     second: usize,
+    pooled: usize,
     logits: usize,
 }
 
@@ -443,11 +742,22 @@ impl ClassifierScratchLayout {
         Self::for_key_with_token_mlp(hidden, width, key, false)
     }
 
+    #[cfg(test)]
     fn for_key_with_token_mlp(
         hidden: usize,
         width: usize,
         key: WorkKey,
         token_mlp: bool,
+    ) -> Result<Self, BackendError> {
+        Self::for_key_with_pooling(hidden, width, key, token_mlp, false)
+    }
+
+    fn for_key_with_pooling(
+        hidden: usize,
+        width: usize,
+        key: WorkKey,
+        token_mlp: bool,
+        pooling: bool,
     ) -> Result<Self, BackendError> {
         // Both readout modes share one model head. Reserve the sequence
         // gather/pooler rows and the larger token-logit row extent together so
@@ -466,13 +776,15 @@ impl ClassifierScratchLayout {
         };
         let first = sequence_hidden.max(sequence_logits).max(token_hidden);
         let second = sequence_hidden.max(token_logits);
+        let pooled = if pooling { sequence_hidden } else { 0 };
         let logits = sequence_logits.max(token_logits);
-        for elements in [first, second, logits] {
+        for elements in [first, second, pooled, logits] {
             u32_size(elements)?;
         }
         Ok(Self {
             first,
             second,
+            pooled,
             logits,
         })
     }
@@ -480,6 +792,7 @@ impl ClassifierScratchLayout {
     pub(crate) fn bytes(self) -> Result<usize, BackendError> {
         product(self.first, size_of::<Bf16>())?
             .checked_add(product(self.second, size_of::<Bf16>())?)
+            .and_then(|bytes| bytes.checked_add(product(self.pooled, size_of::<f32>()).ok()?))
             .and_then(|bytes| bytes.checked_add(product(self.logits, size_of::<f32>()).ok()?))
             .ok_or_else(|| infer("classifier workspace byte size overflow"))
     }
@@ -489,6 +802,7 @@ pub(crate) struct ClassifierScratchBuffers {
     stream: Arc<Stream>,
     first: Option<DeviceBuffer<Bf16>>,
     second: Option<DeviceBuffer<Bf16>>,
+    pooled: ManuallyDrop<Option<DeviceBuffer<f32>>>,
     logits: ManuallyDrop<DeviceBuffer<f32>>,
     stream_drained: bool,
 }
@@ -550,6 +864,20 @@ impl ClassifierScratchBuffers {
                 return Err(error);
             }
         };
+        // SAFETY: the pooling kernel writes every reduced element before use.
+        let pooled = match (layout.pooled > 0)
+            .then(|| unsafe { DeviceBuffer::<f32>::uninitialized_async(&stream, layout.pooled) })
+            .transpose()
+        {
+            Ok(pooled) => pooled,
+            Err(error) => {
+                let mut owners = Vec::new();
+                owners.extend(first);
+                owners.extend(second);
+                drop_after_uncertain(&stream, owners);
+                return Err(infer(error));
+            }
+        };
         // SAFETY: the cast kernel writes every logit element before readback.
         let logits =
             match unsafe { DeviceBuffer::<f32>::uninitialized_async(&stream, layout.logits) } {
@@ -566,6 +894,7 @@ impl ClassifierScratchBuffers {
             stream,
             first,
             second,
+            pooled: ManuallyDrop::new(pooled),
             logits: ManuallyDrop::new(logits),
             stream_drained: false,
         })
@@ -607,6 +936,10 @@ impl ClassifierScratchBuffers {
         Ok((second, first))
     }
 
+    fn pooled(&self) -> Option<&DeviceBuffer<f32>> {
+        (*self.pooled).as_ref()
+    }
+
     pub(crate) fn logits(&self) -> &DeviceBuffer<f32> {
         &self.logits
     }
@@ -622,13 +955,17 @@ impl Drop for ClassifierScratchBuffers {
             self.first.take();
             self.second.take();
             // SAFETY: this destructor just drained the owning stream.
-            unsafe { ManuallyDrop::drop(&mut self.logits) };
+            unsafe {
+                ManuallyDrop::drop(&mut self.pooled);
+                ManuallyDrop::drop(&mut self.logits);
+            }
         } else {
             let bytes = self
                 .first
                 .as_ref()
                 .map_or(0, DeviceBuffer::num_bytes)
                 .saturating_add(self.second.as_ref().map_or(0, DeviceBuffer::num_bytes))
+                .saturating_add((*self.pooled).as_ref().map_or(0, DeviceBuffer::num_bytes))
                 .saturating_add(self.logits.num_bytes());
             crate::record_uncharged_retained_bytes(bytes);
             if let Some(first) = self.first.take() {
@@ -644,10 +981,13 @@ impl Drop for ClassifierScratchBuffers {
 pub(crate) struct ClassifierHead {
     readout: ClassifierReadout,
     hidden: usize,
-    pooler: Option<DeviceBiasedLinear>,
-    classifier: DeviceBiasedLinear,
+    first: Option<DeviceHeadStage>,
+    first_sequence: bool,
+    first_tokens: bool,
+    requires_first_for_sequence: bool,
+    pooling: ClassifierPooling,
+    classifier: DeviceClassifier,
     kernels: ClassifierKernels,
-    token_mlp: bool,
     prepared: Option<ClassifierPrepared>,
 }
 
@@ -656,8 +996,8 @@ struct ClassifierPrepared {
     rows: usize,
     source: u64,
     stream: usize,
-    pooler: Option<PreparedBiasedLinear>,
-    classifier: PreparedBiasedLinear,
+    first: Option<PreparedHeadLinear>,
+    classifier: PreparedHeadLinear,
 }
 
 fn validate_bounds(bounds: &[u32], tokens: usize, rows: usize) -> Result<(), ShapeError> {
@@ -740,72 +1080,164 @@ impl ClassifierHead {
         stream: &Arc<Stream>,
         provider: &LtProvider,
     ) -> Result<Self, BackendError> {
-        if host.token_mlp && host.pooler_erf {
+        if host.first_tokens && host.first.is_none() {
+            return Err(crate::start("trained token head requires its dense stage"));
+        }
+        if host.requires_first_for_sequence
+            && host.first.is_none()
+            && host.readout.task == ClassifierTask::Sequence
+        {
             return Err(crate::start(
-                "trained token MLP readout requires its dense/tanh recipe, not an ERF pooler",
+                "sequence classifier requires its trained head stage",
             ));
         }
-        if host.token_mlp && host.pooler.is_none() {
-            return Err(crate::start(
-                "trained token MLP readout requires its dense stage",
-            ));
-        }
-        let kernels = ClassifierKernels::load_with_erf(context, host.pooler_erf)?;
+        let erf = host
+            .first
+            .as_ref()
+            .is_some_and(|stage| stage.activation == HeadActivation::GeluErf);
+        let kernels = ClassifierKernels::load_with_erf(context, erf)?;
         let hidden = host.hidden;
         if hidden == 0 {
             return Err(crate::start("classifier hidden width must be nonzero"));
         }
-        let input_width = host
-            .classifier
-            .weight
-            .shape()
-            .get(1)
-            .copied()
-            .filter(|width| *width == hidden)
-            .ok_or_else(|| {
-                crate::start(format!(
-                    "classifier projection input width must be {hidden}"
-                ))
-            })?;
-        let _ = input_width;
-        if let Some(pooler) = host.pooler.as_ref() {
-            if pooler.weight.shape() != [hidden, hidden] {
+        if let Some(stage) = host.first.as_ref() {
+            if stage.linear.input() != Some(hidden)
+                || stage.linear.weight.shape().first().copied() != Some(hidden)
+            {
                 return Err(crate::start(format!(
-                    "classifier pooler shape must be [{hidden}, {hidden}]"
+                    "classifier first projection must be [{hidden}, {hidden}]"
                 )));
             }
+            if let Some(norm) = stage.norm.as_ref() {
+                if norm.gamma.shape() != [hidden]
+                    || norm
+                        .beta
+                        .as_ref()
+                        .is_some_and(|beta| beta.shape() != [hidden])
+                {
+                    return Err(crate::start(format!(
+                        "classifier head norm must use hidden width {hidden}"
+                    )));
+                }
+            }
+            match stage.activation {
+                HeadActivation::Tanh => {}
+                HeadActivation::GeluErf if kernels.gelu_erf.is_none() => {
+                    return Err(crate::start("classifier GELU-ERF kernel is unavailable"))
+                }
+                HeadActivation::GeluTanh if kernels.gelu_tanh.is_none() => {
+                    return Err(crate::start(
+                        "classifier tanh-GELU activation kernel is unavailable",
+                    ))
+                }
+                HeadActivation::Relu if kernels.relu.is_none() => {
+                    return Err(crate::start(
+                        "classifier ReLU activation kernel is unavailable",
+                    ))
+                }
+                HeadActivation::Silu if kernels.silu.is_none() => {
+                    return Err(crate::start(
+                        "classifier SiLU activation kernel is unavailable",
+                    ))
+                }
+                _ => {}
+            }
+            if stage.norm.is_some() && kernels.layer_norm.is_none() {
+                return Err(crate::start("classifier head norm kernel is unavailable"));
+            }
         }
-        let pooler_plan = host
-            .pooler
+        if host.pooling != ClassifierPooling::First {
+            if kernels.f32_to_bf16.is_none() {
+                return Err(crate::start(
+                    "classifier pooling requires the F32-to-BF16 kernel",
+                ));
+            }
+            let kernel = match host.pooling {
+                ClassifierPooling::Mean => kernels.mean_pool.as_ref(),
+                ClassifierPooling::Last => kernels.pool.as_ref(),
+                ClassifierPooling::First => None,
+            };
+            if kernel.is_none() {
+                return Err(crate::start(
+                    "classifier pooling reduction kernel is unavailable",
+                ));
+            }
+        }
+        if host.classifier.input() != Some(hidden) {
+            return Err(crate::start(format!(
+                "classifier projection input width must be {hidden}"
+            )));
+        }
+        let width = host.readout.width;
+        if host.classifier.weight.shape().first().copied() != Some(width) {
+            return Err(crate::start(format!(
+                "classifier projection output width must be {width}"
+            )));
+        }
+        if host
+            .classifier
+            .bias
             .as_ref()
-            .map(|_| BiasedLinear::new(provider, hidden, hidden))
+            .is_some_and(|bias| bias.shape() != [width])
+        {
+            return Err(crate::start(format!(
+                "classifier bias must use output width {width}"
+            )));
+        }
+        let mut first_plan = host
+            .first
+            .as_ref()
+            .map(|stage| HeadLinearPlan::new(provider, hidden, hidden, stage.linear.bias.is_some()))
             .transpose()
             .map_err(ShapeError::into_backend)?;
-        let classifier_plan = BiasedLinear::new(provider, hidden, host.readout.width)
-            .map_err(ShapeError::into_backend)?;
+        let classifier_plan =
+            HeadLinearPlan::new(provider, hidden, width, host.classifier.bias.is_some())
+                .map_err(ShapeError::into_backend)?;
         let mut uploader = WeightUploader::new(stream.clone())?;
-        let pooler = host
-            .pooler
+        let first = host
+            .first
             .as_ref()
-            .map(|linear| {
-                Ok::<_, BackendError>(DeviceBiasedLinear {
-                    device: upload_linear(&mut uploader, linear)?,
-                    plan: pooler_plan.ok_or_else(|| infer("missing classifier pooler plan"))?,
+            .map(|stage| {
+                let device = upload_head_linear(&mut uploader, stream, &stage.linear)?;
+                let norm = stage
+                    .norm
+                    .as_ref()
+                    .map(|norm| {
+                        Ok::<_, BackendError>(DeviceHeadNorm {
+                            gamma: uploader.upload(&[&norm.gamma])?,
+                            beta: match norm.beta.as_ref() {
+                                Some(beta) => Some(uploader.upload(&[beta])?),
+                                None => None,
+                            },
+                            eps: norm.eps,
+                        })
+                    })
+                    .transpose()?;
+                Ok::<_, BackendError>(DeviceHeadStage {
+                    device,
+                    norm,
+                    activation: stage.activation,
+                    plan: first_plan
+                        .take()
+                        .ok_or_else(|| infer("missing classifier first-stage plan"))?,
                 })
             })
             .transpose()?;
-        let classifier = DeviceBiasedLinear {
-            device: upload_linear(&mut uploader, &host.classifier)?,
+        let classifier = DeviceClassifier {
+            device: upload_head_linear(&mut uploader, stream, &host.classifier)?,
             plan: classifier_plan,
         };
         uploader.finish()?;
         Ok(Self {
             readout: host.readout,
             hidden,
-            pooler,
+            first,
+            first_sequence: host.first_sequence,
+            first_tokens: host.first_tokens,
+            requires_first_for_sequence: host.requires_first_for_sequence,
+            pooling: host.pooling,
             classifier,
             kernels,
-            token_mlp: host.token_mlp,
             prepared: None,
         })
     }
@@ -818,11 +1250,12 @@ impl ClassifierHead {
         &self,
         key: WorkKey,
     ) -> Result<ClassifierScratchLayout, BackendError> {
-        ClassifierScratchLayout::for_key_with_token_mlp(
+        ClassifierScratchLayout::for_key_with_pooling(
             self.hidden,
             self.readout.width,
             key,
-            self.token_mlp,
+            self.first_tokens,
+            self.pooling != ClassifierPooling::First,
         )
     }
 
@@ -852,9 +1285,27 @@ impl ClassifierHead {
             batch.input_ids.len(),
             batch.cumulative_seq_lengths.len().saturating_sub(1),
         )?;
-        if mode == ReadoutMode::Sequence || self.token_mlp {
-            if let Some(pooler) = &self.pooler {
-                pooler.plan.preflight_rows(rows)?;
+        if mode == ReadoutMode::Sequence && self.requires_first_for_sequence && self.first.is_none()
+        {
+            return Err(ShapeError::Rejected(infer(
+                "sequence classifier requires its trained head stage",
+            )));
+        }
+        match mode {
+            ReadoutMode::Sequence => {
+                if self.first_sequence {
+                    if let Some(stage) = self.first.as_ref() {
+                        stage.plan.preflight_rows(rows)?;
+                    }
+                }
+            }
+            ReadoutMode::Tokens => {
+                if self.first_tokens {
+                    let stage = self.first.as_ref().ok_or_else(|| {
+                        ShapeError::Rejected(infer("trained token head requires its dense stage"))
+                    })?;
+                    stage.plan.preflight_rows(rows)?;
+                }
             }
         }
         self.classifier.plan.preflight_rows(rows)?;
@@ -881,7 +1332,6 @@ impl ClassifierHead {
     ) -> Result<(), ShapeError> {
         self.prepared = None;
         let rows = self.preflight(provider, batch, mode)?;
-        let width = self.readout.width;
         let hidden = self.hidden;
         let tokens = batch.input_ids.len();
         validate_source_span(source.len(), tokens, hidden)?;
@@ -893,6 +1343,14 @@ impl ClassifierHead {
                 "classifier source, stream and handles must share their owning CUDA context",
             )));
         }
+        if self.pooling != ClassifierPooling::First
+            && mode == ReadoutMode::Sequence
+            && scratch.pooled().is_none()
+        {
+            return Err(ShapeError::Fatal(infer(
+                "missing classifier F32 pooling scratch",
+            )));
+        }
         let source_pointer = source.cu_deviceptr();
         let prepared_stream = stream.cu_stream() as usize;
         match mode {
@@ -902,27 +1360,28 @@ impl ClassifierHead {
                         "missing classifier row-gather scratch",
                     )));
                 }
-                if let Some(pooler) = self.pooler.as_mut() {
-                    let pooler_prepared = {
+                if self.first_sequence && self.first.is_some() {
+                    let first_prepared = {
                         let (gather, hidden_buffer) =
                             scratch.pair_mut().map_err(ShapeError::Fatal)?;
-                        // SAFETY: the bound-context and retained-buffer contract
-                        // covers pointer-only preparation.
+                        let stage = self
+                            .first
+                            .as_mut()
+                            .ok_or_else(|| ShapeError::Fatal(infer("missing classifier head")))?;
                         unsafe {
-                            pooler.plan.prepare(
+                            stage.plan.prepare(
                                 provider,
                                 blas,
                                 rows,
                                 stream,
                                 gather,
-                                &pooler.device.weight,
-                                &pooler.device.bias,
+                                &stage.device.weight,
+                                &stage.device.bias,
                                 hidden_buffer,
                             )?
                         }
                     };
                     let classifier_prepared = {
-                        // The gather buffer is free after the pooler launch.
                         let (hidden_buffer, gather) =
                             scratch.swapped_mut().map_err(ShapeError::Fatal)?;
                         unsafe {
@@ -943,12 +1402,12 @@ impl ClassifierHead {
                         rows,
                         source: source_pointer,
                         stream: prepared_stream,
-                        pooler: Some(pooler_prepared),
+                        first: Some(first_prepared),
                         classifier: classifier_prepared,
                     });
                 } else {
                     let classifier_prepared = {
-                        let (gather, logits) = scratch.pair_mut().map_err(ShapeError::Fatal)?;
+                        let (gather, second) = scratch.pair_mut().map_err(ShapeError::Fatal)?;
                         unsafe {
                             self.classifier.plan.prepare(
                                 provider,
@@ -958,7 +1417,7 @@ impl ClassifierHead {
                                 gather,
                                 &self.classifier.device.weight,
                                 &self.classifier.device.bias,
-                                logits,
+                                second,
                             )?
                         }
                     };
@@ -967,36 +1426,36 @@ impl ClassifierHead {
                         rows,
                         source: source_pointer,
                         stream: prepared_stream,
-                        pooler: None,
+                        first: None,
                         classifier: classifier_prepared,
                     });
                 }
             }
             ReadoutMode::Tokens => {
-                if self.token_mlp {
-                    let pooler = self
-                        .pooler
-                        .as_mut()
-                        .ok_or_else(|| ShapeError::Fatal(infer("missing classifier pooler")))?;
-                    let pooler_prepared = {
-                        let hidden = scratch.first.as_mut().ok_or_else(|| {
+                if self.first_tokens {
+                    let first_prepared = {
+                        let hidden_buffer = scratch.first.as_mut().ok_or_else(|| {
                             ShapeError::Fatal(infer("missing classifier token hidden scratch"))
                         })?;
+                        let stage = self
+                            .first
+                            .as_mut()
+                            .ok_or_else(|| ShapeError::Fatal(infer("missing classifier head")))?;
                         unsafe {
-                            pooler.plan.prepare(
+                            stage.plan.prepare(
                                 provider,
                                 blas,
                                 rows,
                                 stream,
                                 source,
-                                &pooler.device.weight,
-                                &pooler.device.bias,
-                                hidden,
+                                &stage.device.weight,
+                                &stage.device.bias,
+                                hidden_buffer,
                             )?
                         }
                     };
                     let classifier_prepared = {
-                        let hidden = scratch.first.as_ref().ok_or_else(|| {
+                        let hidden_buffer = scratch.first.as_ref().ok_or_else(|| {
                             ShapeError::Fatal(infer("missing classifier token hidden scratch"))
                         })?;
                         let output = scratch.second.as_mut().ok_or_else(|| {
@@ -1008,7 +1467,7 @@ impl ClassifierHead {
                                 blas,
                                 rows,
                                 stream,
-                                hidden,
+                                hidden_buffer,
                                 &self.classifier.device.weight,
                                 &self.classifier.device.bias,
                                 output,
@@ -1020,7 +1479,7 @@ impl ClassifierHead {
                         rows,
                         source: source_pointer,
                         stream: prepared_stream,
-                        pooler: Some(pooler_prepared),
+                        first: Some(first_prepared),
                         classifier: classifier_prepared,
                     });
                 } else {
@@ -1044,24 +1503,24 @@ impl ClassifierHead {
                         rows,
                         source: source_pointer,
                         stream: prepared_stream,
-                        pooler: None,
+                        first: None,
                         classifier: classifier_prepared,
                     });
                 }
             }
         }
-        let _ = width;
         Ok(())
     }
 
-    /// Launch gather/pooler/tanh/classifier/cast on the shared ordered stream.
+    /// Launch pooling/head/classifier/cast on the shared ordered stream.
     /// `bounds` is the already-uploaded device cumulative table, not a host
-    /// slice pointer. CPU span validation happened during preparation.
+    /// slice pointer. `selected` is the uploaded canonical sequence selection.
+    /// CPU span validation happened during preparation.
     ///
     /// # Safety
-    /// The caller retains the source, uploaded bounds, scratch, weights and
-    /// module through stream completion and passes the same buffers used during
-    /// preparation.
+    /// The caller retains the source, uploaded bounds/selections, scratch,
+    /// weights and module through stream completion and passes the same buffers
+    /// used during preparation.
     #[allow(clippy::too_many_arguments)]
     pub(crate) unsafe fn enqueue(
         &mut self,
@@ -1070,6 +1529,7 @@ impl ClassifierHead {
         stream: &Stream,
         source: &DeviceBuffer<Bf16>,
         bounds: u64,
+        selected: u64,
         scratch: &mut ClassifierScratchBuffers,
     ) -> Result<(), BackendError> {
         let prepared = self
@@ -1081,7 +1541,7 @@ impl ClassifierHead {
             rows,
             source: prepared_source,
             stream: prepared_stream,
-            pooler: pooler_prepared,
+            first: first_prepared,
             classifier,
         } = prepared;
         if source.cu_deviceptr() != prepared_source
@@ -1091,45 +1551,61 @@ impl ClassifierHead {
                 "classifier source or stream differs from prepared metadata",
             ));
         }
-        let width = self.readout.width;
         let hidden = self.hidden;
+        let width = self.readout.width;
         match mode {
             ReadoutMode::Sequence => {
-                if let Some(pooler_prepared) = pooler_prepared {
+                pool_classifier_rows(
+                    &self.kernels,
+                    self.pooling,
+                    stream,
+                    source,
+                    bounds,
+                    selected,
+                    scratch,
+                    rows,
+                    hidden,
+                )?;
+                if let Some(first_prepared) = first_prepared {
                     {
                         let (gather, hidden_buffer) = scratch.pair_mut()?;
-                        gather_first(&self.kernels, stream, source, bounds, gather, rows, hidden)?;
-                        let pooler = self
-                            .pooler
+                        let stage = self
+                            .first
                             .as_mut()
-                            .ok_or_else(|| infer("missing classifier pooler"))?;
+                            .ok_or_else(|| infer("missing classifier head"))?;
                         // SAFETY: the caller's retained-buffer contract covers
-                        // the preselected pooler invocation.
+                        // the preselected head invocation.
                         unsafe {
-                            pooler.plan.launch(
-                                &pooler_prepared,
+                            stage.plan.launch(
+                                &first_prepared,
                                 provider,
                                 blas,
                                 &self.kernels.bias_seed,
                                 stream,
                                 gather,
-                                &pooler.device.weight,
-                                &pooler.device.bias,
+                                &stage.device.weight,
+                                &stage.device.bias,
                                 hidden_buffer,
                             )?;
                         }
-                        if let Some(function) = &self.kernels.gelu_erf {
-                            let mut input = hidden_buffer.cu_deviceptr();
-                            let mut count = u32_size(product(rows, hidden)?)?;
-                            launch(
-                                function,
+                        apply_classifier_activation(
+                            &self.kernels,
+                            stage.activation,
+                            stream,
+                            hidden_buffer,
+                            rows,
+                            hidden,
+                        )?;
+                        if let Some(norm) = stage.norm.as_ref() {
+                            apply_classifier_norm(
+                                &self.kernels,
                                 stream,
-                                blocks(count as usize)?,
-                                0,
-                                &mut [arg(&mut input), arg(&mut count)],
+                                norm,
+                                hidden_buffer,
+                                rows,
+                                hidden,
+                                norm.eps,
                             )?;
-                        } else {
-                            apply_tanh(&self.kernels, stream, hidden_buffer, rows, hidden)?;
                         }
                     }
                     {
@@ -1159,26 +1635,21 @@ impl ClassifierHead {
                         width,
                     )
                 } else {
-                    // Native optional-pooler sequence readout: gather the
-                    // first packed token and project it directly.
-                    {
-                        let (gather, logits) = scratch.pair_mut()?;
-                        gather_first(&self.kernels, stream, source, bounds, gather, rows, hidden)?;
-                        // SAFETY: the caller's retained-buffer contract covers
-                        // the preselected classifier invocation.
-                        unsafe {
-                            self.classifier.plan.launch(
-                                &classifier,
-                                provider,
-                                blas,
-                                &self.kernels.bias_seed,
-                                stream,
-                                gather,
-                                &self.classifier.device.weight,
-                                &self.classifier.device.bias,
-                                logits,
-                            )?;
-                        }
+                    let (gather, second) = scratch.pair_mut()?;
+                    // SAFETY: the caller's retained-buffer contract covers the
+                    // preselected classifier invocation.
+                    unsafe {
+                        self.classifier.plan.launch(
+                            &classifier,
+                            provider,
+                            blas,
+                            &self.kernels.bias_seed,
+                            stream,
+                            gather,
+                            &self.classifier.device.weight,
+                            &self.classifier.device.bias,
+                            second,
+                        )?;
                     }
                     cast_to_f32(
                         &self.kernels,
@@ -1191,32 +1662,50 @@ impl ClassifierHead {
                 }
             }
             ReadoutMode::Tokens => {
-                if let Some(pooler_prepared) = pooler_prepared {
-                    let pooler = self
-                        .pooler
-                        .as_mut()
-                        .ok_or_else(|| infer("missing classifier pooler"))?;
+                if let Some(first_prepared) = first_prepared {
                     {
                         let token_hidden = scratch
                             .first
                             .as_mut()
                             .ok_or_else(|| infer("missing classifier token hidden scratch"))?;
+                        let stage = self
+                            .first
+                            .as_mut()
+                            .ok_or_else(|| infer("missing classifier head"))?;
                         // SAFETY: the caller's retained-buffer contract covers
-                        // the preselected token pooler invocation.
+                        // the preselected token head invocation.
                         unsafe {
-                            pooler.plan.launch(
-                                &pooler_prepared,
+                            stage.plan.launch(
+                                &first_prepared,
                                 provider,
                                 blas,
                                 &self.kernels.bias_seed,
                                 stream,
                                 source,
-                                &pooler.device.weight,
-                                &pooler.device.bias,
+                                &stage.device.weight,
+                                &stage.device.bias,
                                 token_hidden,
                             )?;
                         }
-                        apply_tanh(&self.kernels, stream, token_hidden, rows, hidden)?;
+                        apply_classifier_activation(
+                            &self.kernels,
+                            stage.activation,
+                            stream,
+                            token_hidden,
+                            rows,
+                            hidden,
+                        )?;
+                        if let Some(norm) = stage.norm.as_ref() {
+                            apply_classifier_norm(
+                                &self.kernels,
+                                stream,
+                                norm,
+                                token_hidden,
+                                rows,
+                                hidden,
+                                norm.eps,
+                            )?;
+                        }
                     }
                     {
                         let token_hidden = scratch
@@ -1275,6 +1764,208 @@ impl ClassifierHead {
             }
         }
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn pool_classifier_rows(
+    kernels: &ClassifierKernels,
+    pooling: ClassifierPooling,
+    stream: &Stream,
+    source: &DeviceBuffer<Bf16>,
+    bounds: u64,
+    selected: u64,
+    scratch: &mut ClassifierScratchBuffers,
+    rows: usize,
+    hidden: usize,
+) -> Result<(), BackendError> {
+    let output = scratch
+        .first
+        .as_ref()
+        .ok_or_else(|| infer("missing classifier row-gather scratch"))?;
+    match pooling {
+        ClassifierPooling::First => {
+            gather_first(kernels, stream, source, bounds, output, rows, hidden)
+        }
+        ClassifierPooling::Mean | ClassifierPooling::Last => {
+            if selected == 0 {
+                return Err(infer(
+                    "classifier pooling requires the uploaded sequence selections",
+                ));
+            }
+            let pooled = (*scratch.pooled)
+                .as_ref()
+                .ok_or_else(|| infer("missing classifier F32 pooling scratch"))?;
+            let mut source_pointer = source.cu_deviceptr();
+            let mut bounds_pointer = bounds;
+            let mut selected_pointer = selected;
+            let mut pooled_pointer = pooled.cu_deviceptr();
+            let mut count = u32_size(rows)?;
+            let mut width = u32_size(hidden)?;
+            if pooling == ClassifierPooling::Mean {
+                let kernel = kernels
+                    .mean_pool
+                    .as_ref()
+                    .ok_or_else(|| infer("classifier mean-pool kernel is unavailable"))?;
+                launch(
+                    kernel,
+                    stream,
+                    (count, u32_size(hidden.div_ceil(8))?, 1),
+                    0,
+                    &mut [
+                        arg(&mut source_pointer),
+                        arg(&mut bounds_pointer),
+                        arg(&mut selected_pointer),
+                        arg(&mut pooled_pointer),
+                        arg(&mut count),
+                        arg(&mut width),
+                    ],
+                )?;
+            } else {
+                let kernel = kernels
+                    .pool
+                    .as_ref()
+                    .ok_or_else(|| infer("classifier last-token pool kernel is unavailable"))?;
+                let mut mode = 2u32;
+                launch(
+                    kernel,
+                    stream,
+                    blocks(product(rows, hidden)?)?,
+                    0,
+                    &mut [
+                        arg(&mut source_pointer),
+                        arg(&mut bounds_pointer),
+                        arg(&mut selected_pointer),
+                        arg(&mut pooled_pointer),
+                        arg(&mut count),
+                        arg(&mut width),
+                        arg(&mut mode),
+                    ],
+                )?;
+            }
+            cast_f32_to_bf16(kernels, stream, pooled, output, product(rows, hidden)?)
+        }
+    }
+}
+
+fn apply_classifier_activation(
+    kernels: &ClassifierKernels,
+    activation: HeadActivation,
+    stream: &Stream,
+    values: &mut DeviceBuffer<Bf16>,
+    rows: usize,
+    width: usize,
+) -> Result<(), BackendError> {
+    match activation {
+        HeadActivation::Tanh => apply_tanh(kernels, stream, values, rows, width),
+        HeadActivation::GeluErf => {
+            let kernel = kernels
+                .gelu_erf
+                .as_ref()
+                .ok_or_else(|| infer("classifier GELU-ERF kernel is unavailable"))?;
+            let mut input = values.cu_deviceptr();
+            let mut count = u32_size(product(rows, width)?)?;
+            launch(
+                kernel,
+                stream,
+                blocks(count as usize)?,
+                0,
+                &mut [arg(&mut input), arg(&mut count)],
+            )
+        }
+        HeadActivation::GeluTanh | HeadActivation::Relu | HeadActivation::Silu => {
+            let kernel = match activation {
+                HeadActivation::GeluTanh => kernels.gelu_tanh.as_ref(),
+                HeadActivation::Relu => kernels.relu.as_ref(),
+                HeadActivation::Silu => kernels.silu.as_ref(),
+                _ => None,
+            }
+            .ok_or_else(|| infer("classifier pointwise activation kernel is unavailable"))?;
+            let mut input = values.cu_deviceptr();
+            let mut output = input;
+            let mut bias = 0u64;
+            let mut rows = u32_size(rows)?;
+            let mut width = u32_size(width)?;
+            let mut input_stride = width;
+            let mut output_stride = width;
+            launch(
+                kernel,
+                stream,
+                blocks(product(rows as usize, width as usize)?)?,
+                0,
+                &mut [
+                    arg(&mut input),
+                    arg(&mut bias),
+                    arg(&mut output),
+                    arg(&mut rows),
+                    arg(&mut width),
+                    arg(&mut input_stride),
+                    arg(&mut output_stride),
+                ],
+            )
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_classifier_norm(
+    kernels: &ClassifierKernels,
+    stream: &Stream,
+    norm: &DeviceHeadNorm,
+    values: &mut DeviceBuffer<Bf16>,
+    rows: usize,
+    width: usize,
+    eps: f32,
+) -> Result<(), BackendError> {
+    let kernel = kernels
+        .layer_norm
+        .as_ref()
+        .ok_or_else(|| infer("classifier head norm kernel is unavailable"))?;
+    let mut input = values.cu_deviceptr();
+    let mut gamma = norm.gamma.cu_deviceptr();
+    let mut beta = norm.beta.as_ref().map_or(0, DeviceBuffer::cu_deviceptr);
+    let mut output = input;
+    let mut rows = u32_size(rows)?;
+    let mut width = u32_size(width)?;
+    let mut eps = eps;
+    crate::launch_threads(
+        kernel,
+        stream,
+        (rows, 1, 1),
+        128,
+        0,
+        &mut [
+            arg(&mut input),
+            arg(&mut gamma),
+            arg(&mut beta),
+            arg(&mut output),
+            arg(&mut rows),
+            arg(&mut width),
+            arg(&mut eps),
+        ],
+    )
+}
+
+fn cast_f32_to_bf16(
+    kernels: &ClassifierKernels,
+    stream: &Stream,
+    input: &DeviceBuffer<f32>,
+    output: &DeviceBuffer<Bf16>,
+    elements: usize,
+) -> Result<(), BackendError> {
+    let kernel = kernels
+        .f32_to_bf16
+        .as_ref()
+        .ok_or_else(|| infer("classifier F32-to-BF16 kernel is unavailable"))?;
+    let mut input = input.cu_deviceptr();
+    let mut output = output.cu_deviceptr();
+    let mut elements = u32_size(elements)?;
+    launch(
+        kernel,
+        stream,
+        blocks(elements as usize)?,
+        0,
+        &mut [arg(&mut input), arg(&mut output), arg(&mut elements)],
+    )
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1683,8 +2374,8 @@ mod tests {
         assert_eq!(host.readout.task, ClassifierTask::Sequence);
         assert_eq!(host.readout.width, 1);
         assert_eq!(host.hidden, 384);
-        assert!(host.pooler.is_some());
-        assert!(!host.token_mlp);
+        assert!(host.first.is_some());
+        assert!(!host.first_tokens);
 
         let tokens = Fixture::new(config("BertForTokenClassification", 768, 3072, 12, 28996));
         tokens.weights(&token_entries(false));
@@ -1692,13 +2383,13 @@ mod tests {
         assert_eq!(host.readout.task, ClassifierTask::Tokens);
         assert_eq!(host.readout.width, 9);
         assert_eq!(host.hidden, 768);
-        assert!(host.pooler.is_none());
-        assert!(!host.token_mlp);
+        assert!(host.first.is_none());
+        assert!(!host.first_tokens);
 
         let tokens_with_pooler =
             Fixture::new(config("BertForTokenClassification", 768, 3072, 12, 28996));
         tokens_with_pooler.weights(&token_entries(true));
-        assert!(tokens_with_pooler.load().unwrap().pooler.is_some());
+        assert!(tokens_with_pooler.load().unwrap().first.is_some());
     }
 
     #[test]
@@ -1725,8 +2416,8 @@ mod tests {
             assert_eq!(host.readout.task, ClassifierTask::Sequence);
             assert_eq!(host.readout.width, 3);
             assert_eq!(host.hidden, 1024);
-            assert!(host.pooler.is_some());
-            assert!(host.token_mlp);
+            assert!(host.first.is_some());
+            assert!(host.first_tokens);
             assert!(validate_admission(&fixture.0, None).is_ok());
         }
         for (model_type, architecture, hidden, intermediate, heads, layers, vocab) in [
@@ -1775,8 +2466,8 @@ mod tests {
             assert_eq!(host.readout.task, ClassifierTask::Tokens);
             assert_eq!(host.readout.width, 9);
             assert_eq!(host.hidden, hidden);
-            assert!(host.pooler.is_none());
-            assert!(!host.token_mlp);
+            assert!(host.first.is_none());
+            assert!(!host.first_tokens);
         }
         let token_mlp = Fixture::new(family_config(
             "roberta",
@@ -1794,7 +2485,259 @@ mod tests {
         let host = token_mlp.load().unwrap();
         assert_eq!(host.readout.task, ClassifierTask::Tokens);
         assert_eq!(host.readout.width, 7);
-        assert!(host.token_mlp);
+        assert!(host.first_tokens);
+    }
+
+    fn gte_classifier_config(architecture: &str) -> serde_json::Value {
+        serde_json::json!({
+            "model_type": "new",
+            "architectures": [architecture],
+            "hidden_size": 768,
+            "intermediate_size": 3072,
+            "num_attention_heads": 12,
+            "num_hidden_layers": 1,
+            "max_position_embeddings": 8192,
+            "vocab_size": 250048,
+            "type_vocab_size": 0,
+            "layer_norm_eps": 1e-12,
+            "hidden_act": "gelu",
+            "position_embedding_type": "rope",
+            "rope_theta": 20000.0,
+            "rope_scaling": {"factor": 8.0, "type": "ntk"},
+            "layer_norm_type": "layer_norm",
+            "pack_qkv": true
+        })
+    }
+
+    fn modern_classifier_config(
+        architecture: &str,
+        hidden: usize,
+        heads: usize,
+        intermediate: usize,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "model_type": "modernbert",
+            "architectures": [architecture],
+            "hidden_size": hidden,
+            "intermediate_size": intermediate,
+            "num_attention_heads": heads,
+            "num_hidden_layers": 1,
+            "max_position_embeddings": 8192,
+            "vocab_size": 50368,
+            "norm_eps": 1e-5,
+            "hidden_activation": "gelu",
+            "classifier_activation": "gelu",
+            "classifier_pooling": "mean",
+            "classifier_bias": false,
+            "attention_bias": false,
+            "mlp_bias": false,
+            "norm_bias": false,
+            "global_attn_every_n_layers": 3,
+            "local_attention": 128,
+            "global_rope_theta": 160000.0,
+            "local_rope_theta": 10000.0,
+            "position_embedding_type": "absolute"
+        })
+    }
+
+    fn modern_sequence_entries(hidden: usize, width: usize) -> Vec<(String, Vec<usize>)> {
+        vec![
+            ("classifier.weight".into(), vec![width, hidden]),
+            ("head.dense.weight".into(), vec![hidden, hidden]),
+            ("head.norm.weight".into(), vec![hidden]),
+        ]
+    }
+
+    #[test]
+    fn admits_gte_multilingual_sequence_pooler_precedence_and_rejects_tokens() {
+        let fixture = Fixture::new(gte_classifier_config("NewForSequenceClassification"));
+        fixture.weights(&[
+            ("classifier.weight".into(), vec![1, 768]),
+            ("classifier.bias".into(), vec![1]),
+            ("new.pooler.dense.weight".into(), vec![768, 768]),
+            ("new.pooler.dense.bias".into(), vec![768]),
+            ("pooler.dense.weight".into(), vec![768, 768]),
+            ("pooler.dense.bias".into(), vec![768]),
+        ]);
+        let host = fixture.load().unwrap();
+        assert_eq!(host.readout.task, ClassifierTask::Sequence);
+        assert_eq!(host.readout.width, 1);
+        assert_eq!(host.hidden, 768);
+        assert!(host.first.is_some());
+        assert!(host.first_sequence);
+        assert!(!host.first_tokens);
+        assert_eq!(host.pooling, ClassifierPooling::First);
+
+        let fallback = Fixture::new(gte_classifier_config("NewForSequenceClassification"));
+        fallback.weights(&[
+            ("classifier.weight".into(), vec![1, 768]),
+            ("classifier.bias".into(), vec![1]),
+            ("new.pooler.dense.weight".into(), vec![768, 768]),
+            ("pooler.dense.weight".into(), vec![768, 768]),
+            ("pooler.dense.bias".into(), vec![768]),
+        ]);
+        assert!(fallback.load().unwrap().first.is_some());
+
+        let incomplete = Fixture::new(gte_classifier_config("NewForSequenceClassification"));
+        incomplete.weights(&[
+            ("classifier.weight".into(), vec![1, 768]),
+            ("classifier.bias".into(), vec![1]),
+            ("new.pooler.dense.weight".into(), vec![768, 768]),
+        ]);
+        assert!(incomplete.load().unwrap().first.is_none());
+
+        let token = Fixture::new(gte_classifier_config("NewForTokenClassification"));
+        token.weights(&[
+            ("classifier.weight".into(), vec![1, 768]),
+            ("classifier.bias".into(), vec![1]),
+        ]);
+        let error = token.load().unwrap_err().to_string();
+        assert!(
+            error.contains("GTE does not support token classification"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn admits_modern_sequence_mean_gelu_and_token_wide_heads_from_tensors() {
+        let sequence = Fixture::new(modern_classifier_config(
+            "ModernBertForSequenceClassification",
+            768,
+            12,
+            1152,
+        ));
+        let config =
+            crate::modern_encoder_model::ModernConfig::load_classifier(&sequence.0).unwrap();
+        assert_eq!(config.geometry.hidden_size, 768);
+        assert_eq!(config.geometry.num_attention_heads, 12);
+        assert_eq!(config.geometry.intermediate_size, 1152);
+        let policy = config.classifier.unwrap();
+        assert_eq!(policy.task, ClassifierTask::Sequence);
+        assert_eq!(policy.pooling, ClassifierPooling::Mean);
+        assert_eq!(policy.activation, HeadActivation::GeluTanh);
+        assert_eq!(policy.classifier_bias, Some(false));
+        sequence.weights(&modern_sequence_entries(768, 1));
+        let checkpoint = Checkpoint::open(&sequence.0).unwrap();
+        let host = ClassifierHeadHost::load_modern(&checkpoint, &config).unwrap();
+        assert_eq!(host.readout.task, ClassifierTask::Sequence);
+        assert_eq!(host.readout.width, 1);
+        assert_eq!(host.hidden, 768);
+        assert!(host.first.is_some());
+        assert!(host.requires_first_for_sequence);
+        assert_eq!(host.pooling, ClassifierPooling::Mean);
+        assert!(host.classifier.bias.is_none());
+
+        let token = Fixture::new(modern_classifier_config(
+            "ModernBertForTokenClassification",
+            1024,
+            16,
+            2624,
+        ));
+        let token_config =
+            crate::modern_encoder_model::ModernConfig::load_classifier(&token.0).unwrap();
+        assert_eq!(token_config.geometry.hidden_size, 1024);
+        assert_eq!(token_config.geometry.num_attention_heads, 16);
+        assert_eq!(token_config.geometry.intermediate_size, 2624);
+        token.weights(&modern_sequence_entries(1024, 3));
+        let checkpoint = Checkpoint::open(&token.0).unwrap();
+        let host = ClassifierHeadHost::load_modern(&checkpoint, &token_config).unwrap();
+        assert_eq!(host.readout.task, ClassifierTask::Tokens);
+        assert_eq!(host.readout.width, 3);
+        assert_eq!(host.hidden, 1024);
+        assert!(host.first.is_some());
+
+        let token_plain = Fixture::new(modern_classifier_config(
+            "ModernBertForTokenClassification",
+            1024,
+            16,
+            2624,
+        ));
+        token_plain.weights(&[("classifier.weight".into(), vec![3, 1024])]);
+        let token_config =
+            crate::modern_encoder_model::ModernConfig::load_classifier(&token_plain.0).unwrap();
+        let checkpoint = Checkpoint::open(&token_plain.0).unwrap();
+        let host = ClassifierHeadHost::load_modern(&checkpoint, &token_config).unwrap();
+        assert!(host.first.is_none());
+        assert_eq!(host.readout.task, ClassifierTask::Tokens);
+    }
+
+    #[test]
+    fn rejects_incomplete_modern_heads_bias_mismatch_and_sequence_without_head() {
+        let missing_norm = Fixture::new(modern_classifier_config(
+            "ModernBertForSequenceClassification",
+            768,
+            12,
+            1152,
+        ));
+        let config =
+            crate::modern_encoder_model::ModernConfig::load_classifier(&missing_norm.0).unwrap();
+        missing_norm.weights(&[
+            ("classifier.weight".into(), vec![1, 768]),
+            ("head.dense.weight".into(), vec![768, 768]),
+        ]);
+        let checkpoint = Checkpoint::open(&missing_norm.0).unwrap();
+        assert!(ClassifierHeadHost::load_modern(&checkpoint, &config).is_err());
+
+        let biased = Fixture::new(modern_classifier_config(
+            "ModernBertForSequenceClassification",
+            768,
+            12,
+            1152,
+        ));
+        let config = crate::modern_encoder_model::ModernConfig::load_classifier(&biased.0).unwrap();
+        biased.weights(&[
+            ("classifier.weight".into(), vec![1, 768]),
+            ("classifier.bias".into(), vec![1]),
+            ("head.dense.weight".into(), vec![768, 768]),
+            ("head.norm.weight".into(), vec![768]),
+        ]);
+        let checkpoint = Checkpoint::open(&biased.0).unwrap();
+        let error = ClassifierHeadHost::load_modern(&checkpoint, &config)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("classifier_bias"), "{error}");
+
+        let head_bias = Fixture::new(modern_classifier_config(
+            "ModernBertForSequenceClassification",
+            768,
+            12,
+            1152,
+        ));
+        let config =
+            crate::modern_encoder_model::ModernConfig::load_classifier(&head_bias.0).unwrap();
+        head_bias.weights(&[
+            ("classifier.weight".into(), vec![1, 768]),
+            ("head.dense.weight".into(), vec![768, 768]),
+            ("head.dense.bias".into(), vec![768]),
+            ("head.norm.weight".into(), vec![768]),
+        ]);
+        let checkpoint = Checkpoint::open(&head_bias.0).unwrap();
+        let error = ClassifierHeadHost::load_modern(&checkpoint, &config)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("head.dense.bias"), "{error}");
+    }
+
+    #[test]
+    fn modern_pooling_scratch_is_bounded_and_only_reserved_for_pooling_heads() {
+        let key = (64usize, 4usize, 4usize);
+        let plain =
+            ClassifierScratchLayout::for_key_with_pooling(1024, 3, key, false, false).unwrap();
+        let pooled =
+            ClassifierScratchLayout::for_key_with_pooling(1024, 3, key, false, true).unwrap();
+        assert_eq!(pooled.pooled, 4 * 1024);
+        assert_eq!(
+            pooled.bytes().unwrap() - plain.bytes().unwrap(),
+            4 * 1024 * 4
+        );
+        assert!(ClassifierScratchLayout::for_key_with_pooling(
+            8,
+            3,
+            (usize::MAX, 2, 1),
+            false,
+            true
+        )
+        .is_err());
     }
 
     #[test]
@@ -1826,7 +2769,7 @@ mod tests {
         let optional_pooler =
             Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
         optional_pooler.weights(&sequence_entries(false));
-        assert!(optional_pooler.load().unwrap().pooler.is_none());
+        assert!(optional_pooler.load().unwrap().first.is_none());
 
         let incomplete_pooler =
             Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
@@ -1873,6 +2816,63 @@ mod tests {
         assert!(BertConfig::load_classifier(&fixture.0).is_ok());
         let raw: serde_json::Value = read_json(&fixture.0.join("config.json")).unwrap();
         assert_eq!(raw["architectures"][0], "BertForSequenceClassification");
+    }
+
+    #[test]
+    fn facade_empty_dense_selection_ignores_discovery_but_explicit_override_rejects() {
+        let fixture = Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
+        fixture.weights(&sequence_entries(false));
+        std::fs::write(fixture.0.join("modules.json"), br#"[{"idx":0,"name":"0","path":"","type":"sentence_transformers.models.Transformer"},{"idx":1,"name":"1","path":"missing_dense","type":"sentence_transformers.models.Dense"}]"#).unwrap();
+        // This is the actual value supplied by oxide_effective_dense_paths for
+        // a classifier's discovered modules. It reaches head admission without
+        // trying to load the irrelevant embedding Dense module.
+        assert!(validate_admission(&fixture.0, Some(Vec::new())).is_ok());
+        assert!(validate_admission(&fixture.0, Some(vec!["missing_dense".into()])).is_err());
+        // Direct API discovery is a separate contract and still validates its
+        // declared embedding metadata; it is not the normal facade path.
+        assert!(validate_admission(&fixture.0, None).is_err());
+    }
+
+    #[test]
+    fn actual_admission_rejects_zero_classifier_width_before_cuda() {
+        let fixture = Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
+        fixture.weights(&[
+            ("classifier.weight".into(), vec![0, 384]),
+            ("classifier.bias".into(), vec![0]),
+        ]);
+        let error = validate_admission(&fixture.0, Some(Vec::new()))
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("width") || error.contains("shape"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn actual_admission_rejects_integer_head_storage_before_cuda() {
+        let fixture = Fixture::new(config("BertForSequenceClassification", 384, 1536, 6, 30522));
+        let weight_bytes = vec![0u8; 384 * 8];
+        let bias_bytes = vec![0u8; 4];
+        let tensors = BTreeMap::from([
+            (
+                "classifier.weight",
+                TensorView::new(Dtype::I64, vec![1, 384], &weight_bytes).unwrap(),
+            ),
+            (
+                "classifier.bias",
+                TensorView::new(Dtype::F32, vec![1], &bias_bytes).unwrap(),
+            ),
+        ]);
+        fs::write(
+            fixture.0.join("model.safetensors"),
+            serialize(tensors.iter().map(|(n, v)| (*n, v.clone())), None).unwrap(),
+        )
+        .unwrap();
+        let error = validate_admission(&fixture.0, Some(Vec::new()))
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("dtype") || error.contains("I64"), "{error}");
     }
 
     #[test]
@@ -1934,10 +2934,10 @@ mod tests {
         entries.push(("pooler.dense.weight".into(), vec![384, 384]));
         entries.push(("pooler.dense.bias".into(), vec![384]));
         fixture.weights(&entries);
-        assert!(fixture.load().unwrap().pooler.is_none());
+        assert!(fixture.load().unwrap().first.is_none());
         entries.extend(sequence_entries(true).into_iter().skip(2));
         fixture.weights(&entries);
-        assert!(fixture.load().unwrap().pooler.is_some());
+        assert!(fixture.load().unwrap().first.is_some());
     }
 
     #[test]
@@ -2306,6 +3306,7 @@ mod tests {
                 &stream,
                 &swapped,
                 bounds.cu_deviceptr(),
+                0,
                 &mut scratch,
             )
         }
@@ -2329,6 +3330,7 @@ mod tests {
                 &stream,
                 &source,
                 bounds.cu_deviceptr(),
+                0,
                 &mut scratch,
             )
         }

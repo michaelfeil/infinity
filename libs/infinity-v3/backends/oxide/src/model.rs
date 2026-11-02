@@ -108,7 +108,7 @@ impl EncoderFamily {
         match self {
             Self::Bert => matches!(
                 architecture,
-                "BertModel" | "BertForMaskedLM" | "BertForPreTraining"
+                "BertModel" | "BertForMaskedLM" | "BertForPreTraining" | "HF_ColBERT"
             ),
             Self::Roberta => matches!(
                 architecture,
@@ -157,6 +157,10 @@ impl EncoderFamily {
             Self::Camembert => matches!(
                 architecture,
                 "CamembertForSequenceClassification" | "CamembertForTokenClassification"
+            ),
+            Self::Gte => matches!(
+                architecture,
+                "NewForSequenceClassification" | "NewForTokenClassification"
             ),
             _ => false,
         }
@@ -336,6 +340,7 @@ pub(crate) struct BertConfig {
     pub(crate) architectures: Vec<String>,
     pub(crate) hidden_act: String,
     pub(crate) position_embedding_type: String,
+    pub(crate) position_biased_input: bool,
     pub(crate) is_decoder: bool,
     pub(crate) add_cross_attention: bool,
 }
@@ -378,6 +383,7 @@ impl BertConfig {
             architectures,
             hidden_act: "gelu".into(),
             position_embedding_type: "relative".into(),
+            position_biased_input: false,
             is_decoder: false,
             add_cross_attention: false,
         })
@@ -471,6 +477,7 @@ impl BertConfig {
             },
             hidden_act: "gelu".into(),
             position_embedding_type: "rope".into(),
+            position_biased_input: false,
             is_decoder: false,
             add_cross_attention: false,
         }
@@ -513,6 +520,7 @@ impl BertConfig {
             },
             hidden_act: "swiglu".into(),
             position_embedding_type: "rope".into(),
+            position_biased_input: false,
             is_decoder: false,
             add_cross_attention: false,
         }
@@ -552,6 +560,7 @@ impl BertConfig {
             },
             hidden_act: "gelu".into(),
             position_embedding_type: "alibi".into(),
+            position_biased_input: false,
             is_decoder: false,
             add_cross_attention: false,
         }
@@ -593,6 +602,7 @@ impl BertConfig {
             },
             hidden_act: "gelu".into(),
             position_embedding_type: "alibi".into(),
+            position_biased_input: false,
             is_decoder: false,
             add_cross_attention: false,
         }
@@ -776,6 +786,7 @@ impl BertConfig {
             architectures: raw.architectures.unwrap_or_default(),
             hidden_act,
             position_embedding_type,
+            position_biased_input: false,
             is_decoder: raw.is_decoder.unwrap_or(false),
             add_cross_attention: raw.add_cross_attention.unwrap_or(false),
         };
@@ -2079,28 +2090,68 @@ fn linear(
         bias: take(weights, &format!("{prefix}.bias"))?,
     })
 }
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BertLoadPurpose {
+    Embedding,
+    Classifier,
+    Splade,
+    Colbert,
+}
+
 impl BertWeights {
     pub(crate) fn load(path: &Path) -> Result<Self, BackendError> {
-        Self::load_admitted(path, false).map(|(weights, _)| weights)
+        Self::load_admitted(path, BertLoadPurpose::Embedding).map(|(weights, _)| weights)
     }
 
     /// Task-specific classifier backbone admission. The returned checkpoint is
     /// reused by the classifier-head loader so the strict head metadata and the
     /// backbone are validated from one opened shard set.
     pub(crate) fn load_classifier(path: &Path) -> Result<(Self, Checkpoint), BackendError> {
-        let (weights, checkpoint) = Self::load_admitted(path, true)?;
+        let (weights, checkpoint) = Self::load_admitted(path, BertLoadPurpose::Classifier)?;
         let checkpoint = checkpoint.ok_or_else(|| start("missing classifier checkpoint"))?;
         Ok((weights, checkpoint))
     }
 
+    /// SPLADE reuses the same opened shard set and the ordinary BERT body.
+    pub(crate) fn load_splade(path: &Path) -> Result<(Self, Checkpoint), BackendError> {
+        let (weights, checkpoint) = Self::load_admitted(path, BertLoadPurpose::Splade)?;
+        Ok((
+            weights,
+            checkpoint.ok_or_else(|| start("missing SPLADE checkpoint"))?,
+        ))
+    }
+
+    /// ColBERT shares the ordinary BERT body and keeps one opened shard set for
+    /// its learned token projection.
+    pub(crate) fn load_colbert(path: &Path) -> Result<(Self, Checkpoint), BackendError> {
+        let (weights, checkpoint) = Self::load_admitted(path, BertLoadPurpose::Colbert)?;
+        Ok((
+            weights,
+            checkpoint.ok_or_else(|| start("missing ColBERT checkpoint"))?,
+        ))
+    }
+
     fn load_admitted(
         path: &Path,
-        classifier: bool,
+        purpose: BertLoadPurpose,
     ) -> Result<(Self, Option<Checkpoint>), BackendError> {
+        let classifier = purpose == BertLoadPurpose::Classifier;
         let mut config = BertConfig::load_admitted(path, classifier)?;
-        validate_modules(path)?;
+        match purpose {
+            BertLoadPurpose::Splade => {
+                crate::splade::SpladeHeadHost::validate_config(&config)?;
+                crate::splade::validate_pipeline(path)?;
+            }
+            BertLoadPurpose::Colbert => {
+                crate::colbert::ColbertHeadHost::validate_config(&config)?;
+                crate::colbert::validate_modules(path)?;
+            }
+            BertLoadPurpose::Embedding | BertLoadPurpose::Classifier => validate_modules(path)?,
+        }
         if config.family == EncoderFamily::Gte {
-            return crate::rotary_encoder_model::load(path, config).map(|weights| (weights, None));
+            let (weights, checkpoint) =
+                crate::rotary_encoder_model::load_with_checkpoint(path, config)?;
+            return Ok((weights, classifier.then_some(checkpoint)));
         }
         if config.family == EncoderFamily::Mpnet {
             return crate::mpnet::load(path, config).map(|weights| (weights, None));
@@ -2218,7 +2269,10 @@ impl BertWeights {
             config,
             layers,
         };
-        Ok((weights, classifier.then_some(checkpoint)))
+        Ok((
+            weights,
+            (purpose != BertLoadPurpose::Embedding).then_some(checkpoint),
+        ))
     }
 }
 

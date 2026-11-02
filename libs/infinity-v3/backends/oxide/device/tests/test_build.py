@@ -27,7 +27,8 @@ infinity_add_rms_norm infinity_add_rms_norm_1024_exact_vector infinity_add_rms_n
 infinity_add_rms_norm_2048_exact infinity_add_rms_norm_2048_vector infinity_add_rms_norm_4096_vector infinity_add_rms_norm_rounded
 infinity_attention infinity_base_rope_tables_64_bf16 infinity_bf16_to_f32 infinity_classifier_bias_bf16
 infinity_classifier_embedding_norm_384_exact infinity_classifier_gather_first_bf16 infinity_classifier_layer_norm_384_exact infinity_deberta_divide
-infinity_deberta_embedding_word_norm_768 infinity_deberta_layer_norm_768 infinity_deberta_relative_transpose infinity_deberta_signed_buckets
+infinity_deberta_conv_768 infinity_deberta_embedding_compose infinity_deberta_embedding_word_norm_768 infinity_deberta_layer_norm_768
+infinity_deberta_relative_transpose infinity_deberta_signed_buckets
 infinity_deberta_unpack_scaled infinity_dense_tanh_bf16_inplace infinity_embedding_gather infinity_embedding_gather_scaled
 infinity_embedding_norm infinity_embedding_norm_1024_rounded_native infinity_embedding_norm_384 infinity_embedding_norm_384_f16
 infinity_embedding_norm_768_exact infinity_embedding_norm_768_exact_vector infinity_embedding_norm_mpnet_768_aten infinity_embedding_norm_rounded
@@ -49,6 +50,11 @@ infinity_silu_mul_bf16_vector8_native infinity_silu_mul_f32
 """.split()
 SYMBOLS += (DEVICE / "qwen35_exports.txt").read_text().split()
 SYMBOLS += (DEVICE / "rms5120_aten_exports.txt").read_text().split()
+SYMBOLS += (DEVICE / "encoder_activation_exports.txt").read_text().split()
+SYMBOLS += (DEVICE / "colbert_exports.txt").read_text().split()
+SYMBOLS += ["infinity_deberta_plain_norm_bf16_aten",
+            "infinity_plain_layer_norm_768_bf16_aten", "infinity_splade_pool_bf16_f32"]
+SYMBOLS = sorted(set(SYMBOLS))
 
 FAKE_COMPILER = textwrap.dedent(r'''#!/usr/bin/env python3
 import json, os, pathlib, sys, time
@@ -124,7 +130,8 @@ def write_executable(path, text):
 def source_digest(root):
     files = [root / name for name in (
         "build.sh", "Cargo.toml", "Cargo.lock", "rust-toolchain.toml",
-        "encoder_activation_exports.txt", "qwen35_exports.txt", "rms5120_aten_exports.txt", "LICENSE-Candle-BSD3",
+        "encoder_activation_exports.txt", "colbert_exports.txt", "SPARSE_COLBERT_ABI.json",
+        "qwen35_exports.txt", "rms5120_aten_exports.txt", "LICENSE-Candle-BSD3",
         "LICENSE-PyTorch-BSD3")]
     files += sorted((root / "src").rglob("*.rs"))
     files.append(root.parent / "NOTICE")

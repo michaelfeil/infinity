@@ -65,7 +65,7 @@ struct Kernels {
     raw_cast: Function,
 }
 impl Kernels {
-    fn load(context: &Arc<Context>) -> Result<Self, BackendError> {
+    fn load(context: &Arc<Context>, hidden: usize) -> Result<Self, BackendError> {
         let path = std::env::var_os(infinity_v3_config::infinity_env!("OXIDE_KERNEL_MODULE"))
             .ok_or_else(|| start("Modern requires INFINITY_OXIDE_KERNEL_MODULE"))?;
         let path = Path::new(&path);
@@ -78,18 +78,29 @@ impl Kernels {
         };
         let bytes = std::fs::read(&path).map_err(start)?;
         let module = context.load_module_from_image(&bytes).map_err(start)?;
+        let (word_norm, prenorm) = match hidden {
+            768 => (
+                "infinity_embedding_word_norm_768_candle",
+                "infinity_rounded_residual_norm_768_candle",
+            ),
+            1024 => (
+                "infinity_embedding_word_norm_1024_candle",
+                "infinity_rounded_residual_norm_1024_candle",
+            ),
+            other => {
+                return Err(start(format!(
+                    "Modern normalization kernels require hidden 768 or 1024, got {other}"
+                )))
+            }
+        };
         Ok(Self {
             table_init: Arc::new(
                 module
                     .load_function("infinity_base_rope_tables_64_bf16")
                     .map_err(start)?,
             ),
-            word_norm: module
-                .load_function("infinity_embedding_word_norm_768_candle")
-                .map_err(start)?,
-            prenorm: module
-                .load_function("infinity_rounded_residual_norm_768_candle")
-                .map_err(start)?,
+            word_norm: module.load_function(word_norm).map_err(start)?,
+            prenorm: module.load_function(prenorm).map_err(start)?,
             rope: module
                 .load_function("infinity_rope_neox_hfma")
                 .map_err(start)?,
@@ -259,6 +270,7 @@ impl Plans {
 
 pub(crate) struct ModernEncoder {
     pub(crate) config: ModernConfig,
+    pub(crate) classifier: Option<crate::classifier_head::ClassifierHead>,
     kernels: Kernels,
     weights: Weights,
     global: Tables,
@@ -284,10 +296,16 @@ impl ModernEncoder {
         }
         let root = std::env::var_os(infinity_v3_config::infinity_env!("FA4_ROOT"))
             .ok_or_else(|| start("Modern requires INFINITY_FA4_ROOT"))?;
+        let heads = config.geometry.num_attention_heads;
+        let head_dim = config
+            .geometry
+            .hidden_size
+            .checked_div(heads)
+            .ok_or_else(|| start("Modern head dimension overflow"))?;
         let spec = fa4::AttentionSpec {
-            heads: 12,
-            kv_heads: 12,
-            head_dim: 64,
+            heads,
+            kv_heads: heads,
+            head_dim,
             causal: false,
             window: fa4::Window::Global,
             dtype: fa4::DType::Bf16,
@@ -308,7 +326,7 @@ impl ModernEncoder {
         )?;
         let layout = packed_attention_layout(&config.geometry)?
             .ok_or_else(|| start("Modern requires aligned packed attention rows"))?;
-        let kernels = Kernels::load(context)?;
+        let kernels = Kernels::load(context, config.geometry.hidden_size)?;
         let global = Tables::new(
             config.global_theta,
             config.geometry.max_position_embeddings,
@@ -325,6 +343,7 @@ impl ModernEncoder {
         let weights = Weights::upload(host, schedule, stream)?;
         Ok(Self {
             config,
+            classifier: None,
             kernels,
             weights,
             global,
@@ -357,11 +376,12 @@ impl ModernEncoder {
     ) -> Result<(), BackendError> {
         let mut gamma = gamma.cu_deviceptr();
         let mut eps = self.config.geometry.layer_norm_eps as f32;
+        let (grid, threads) = ((rows.div_ceil(4), 1, 1), 128);
         launch_threads(
             &self.kernels.prenorm,
             stream,
-            (rows.div_ceil(4), 1, 1),
-            128,
+            grid,
+            threads,
             0,
             &mut [
                 arg(&mut input),
@@ -407,11 +427,12 @@ impl ModernEncoder {
         let mut gamma = self.weights.embedding_gamma.cu_deviceptr();
         let mut residual = w.x.cu_deviceptr();
         let mut eps = g.layer_norm_eps as f32;
+        let (grid, threads) = ((rows.div_ceil(4), 1, 1), 128);
         launch_threads(
             &self.kernels.word_norm,
             stream,
-            (rows.div_ceil(4), 1, 1),
-            128,
+            grid,
+            threads,
             0,
             &mut [
                 arg(&mut ids),
@@ -459,17 +480,22 @@ impl ModernEncoder {
             let mut cosine = tables.cosine.cu_deviceptr();
             let mut sine = tables.sine.cu_deviceptr();
             let mut pos = positions;
-            let mut heads = 12u32;
-            let mut kv_heads = 12u32;
-            let mut head_dim = 64u32;
-            let mut rotary_dim = 64u32;
+            let mut heads = u32_size(g.num_attention_heads)?;
+            let mut kv_heads = heads;
+            let mut head_dim = u32_size(g.hidden_size / g.num_attention_heads)?;
+            let mut rotary_dim = head_dim;
             let mut q_stride = u64::try_from(product(g.hidden_size, 3)?).map_err(infer)?;
             let mut k_stride = q_stride;
             let mut table_stride = tables.stride;
+            let rotary_pairs = usize::try_from(head_dim / 2).map_err(infer)?;
+            let rotary_elements = product(
+                product(tokens, g.num_attention_heads)?,
+                product(2, rotary_pairs)?,
+            )?;
             launch(
                 &self.kernels.rope,
                 stream,
-                blocks(product(product(tokens, 24)?, 32)?)?,
+                blocks(rotary_elements)?,
                 0,
                 &mut [
                     arg(&mut q),
@@ -564,6 +590,9 @@ impl ModernEncoder {
             0,
             rows,
         )?;
+        if self.classifier.is_some() {
+            return Ok(());
+        }
         let mut source = w.attention.cu_deviceptr();
         let mut bounds = boundaries;
         let mut indices = selected;

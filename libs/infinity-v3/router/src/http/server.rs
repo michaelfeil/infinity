@@ -109,6 +109,9 @@ async fn models(Extension(registry): Extension<ModelRegistry>) -> Json<ServedMod
                 ModelType::Embedding(model) if model.pooling == "splade" => {
                     vec!["embed_sparse", "tokenize", "decode"]
                 }
+                ModelType::Embedding(model) if model.pooling == "colbert" => {
+                    vec!["embed", "embed_all", "tokenize", "decode"]
+                }
                 ModelType::Embedding(_)
                     if model.backend_kind == infinity_v3_backend::BackendKind::Oxide =>
                 {

@@ -10,14 +10,68 @@ use crate::model::{
 };
 use infinity_v3_backend_core::BackendError;
 
-const HIDDEN_SIZE: usize = 768;
-const NUM_HEADS: usize = 12;
 const HEAD_SIZE: usize = 64;
-const INTERMEDIATE_SIZE: usize = 3072;
 const MAX_LAYERS: usize = 128;
 const MAX_POSITIONS: usize = 8192;
 const MAX_SPAN: usize = 4096;
 const MAX_CLASSIFIER_WIDTH: usize = 32_768;
+const MAX_EMBEDDING_SIZE: usize = 32_768;
+const MAX_TYPE_VOCAB: usize = 32_768;
+const MAX_CONV_KERNEL: usize = 15;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DebertaConvActivation {
+    Gelu,
+    Tanh,
+    Relu,
+    Silu,
+    GeluTanh,
+}
+
+impl DebertaConvActivation {
+    pub(crate) fn code(self) -> u32 {
+        match self {
+            Self::Gelu => 0,
+            Self::Tanh => 1,
+            Self::Relu => 2,
+            Self::Silu => 3,
+            Self::GeluTanh => 4,
+        }
+    }
+
+    fn parse(value: &str) -> Result<Self, BackendError> {
+        match value {
+            "gelu" => Ok(Self::Gelu),
+            "tanh" => Ok(Self::Tanh),
+            "relu" => Ok(Self::Relu),
+            "silu" => Ok(Self::Silu),
+            "gelu_new" | "gelu_pytorch_tanh" => Ok(Self::GeluTanh),
+            _ => Err(start(format!(
+                "Unsupported DeBERTa conv_act '{value}'; expected gelu, gelu_new, gelu_pytorch_tanh, tanh, relu or silu"
+            ))),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct DebertaConvConfig {
+    pub(crate) kernel: usize,
+    pub(crate) groups: usize,
+    pub(crate) activation: DebertaConvActivation,
+}
+
+impl DebertaConvConfig {
+    pub(crate) fn input_channels_per_group(self, hidden: usize) -> Result<usize, BackendError> {
+        hidden
+            .checked_div(self.groups)
+            .filter(|width| *width > 0 && width.checked_mul(self.groups) == Some(hidden))
+            .ok_or_else(|| start("DeBERTa conv_groups must divide hidden_size"))
+    }
+
+    pub(crate) fn weight_shape(self, hidden: usize) -> Result<[usize; 3], BackendError> {
+        Ok([hidden, self.input_channels_per_group(hidden)?, self.kernel])
+    }
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct DebertaConfig {
@@ -28,7 +82,18 @@ pub(crate) struct DebertaConfig {
     pub(crate) p2c: bool,
     pub(crate) share_att_key: bool,
     pub(crate) relative_layer_norm: bool,
+    pub(crate) relative_attention: bool,
     pub(crate) logarithmic: bool,
+    pub(crate) embedding_size: usize,
+    pub(crate) position_biased_input: bool,
+    pub(crate) conv: Option<DebertaConvConfig>,
+}
+
+pub(crate) struct DebertaConvWeights {
+    pub(crate) weight: WeightSource,
+    pub(crate) bias: WeightSource,
+    pub(crate) gamma: WeightSource,
+    pub(crate) beta: WeightSource,
 }
 
 pub(crate) struct RelativeLayerWeights {
@@ -39,11 +104,15 @@ pub(crate) struct RelativeLayerWeights {
 pub(crate) struct DebertaWeights {
     pub(crate) config: DebertaConfig,
     pub(crate) word: WeightSource,
+    pub(crate) position: Option<WeightSource>,
+    pub(crate) token_type: Option<WeightSource>,
+    pub(crate) embed_proj: Option<WeightSource>,
     pub(crate) gamma: WeightSource,
     pub(crate) beta: WeightSource,
-    pub(crate) relative: WeightSource,
+    pub(crate) relative: Option<WeightSource>,
     pub(crate) relative_gamma: Option<WeightSource>,
     pub(crate) relative_beta: Option<WeightSource>,
+    pub(crate) conv: Option<DebertaConvWeights>,
     pub(crate) layers: Vec<LayerWeights>,
     pub(crate) relative_layers: Vec<RelativeLayerWeights>,
     pub(crate) head: Option<DebertaHead>,
@@ -98,41 +167,76 @@ pub(crate) fn load(path: &Path) -> Result<DebertaWeights, BackendError> {
     let prefix = if prefixed { "deberta." } else { "" };
 
     for name in checkpoint.names() {
-        if !is_allowed_tensor(
-            name,
-            prefix,
-            layer_count,
-            config.relative_layer_norm,
-            head_kind,
-            config.share_att_key,
-        ) {
+        if !is_allowed_tensor(name, prefix, &config, layer_count, head_kind) {
             return Err(start(format!(
                 "DeBERTa checkpoint contains unsupported or mixed-namespace tensor: {name}"
             )));
         }
     }
 
+    let embedding_size = config.embedding_size;
     let word = checkpoint.source(
         &format!("{prefix}embeddings.word_embeddings.weight"),
-        &[vocab, hidden],
+        &[vocab, embedding_size],
     )?;
+    let position = if config.position_biased_input {
+        Some(checkpoint.source(
+            &format!("{prefix}embeddings.position_embeddings.weight"),
+            &[config.geometry.max_position_embeddings, embedding_size],
+        )?)
+    } else {
+        None
+    };
+    let token_type = if config.geometry.type_vocab_size > 0 {
+        Some(checkpoint.source(
+            &format!("{prefix}embeddings.token_type_embeddings.weight"),
+            &[config.geometry.type_vocab_size, embedding_size],
+        )?)
+    } else {
+        None
+    };
+    let embed_proj = if embedding_size != hidden {
+        Some(checkpoint.source(
+            &format!("{prefix}embeddings.embed_proj.weight"),
+            &[hidden, embedding_size],
+        )?)
+    } else {
+        None
+    };
     let gamma = checkpoint.source(&format!("{prefix}embeddings.LayerNorm.weight"), &[hidden])?;
     let beta = checkpoint.source(&format!("{prefix}embeddings.LayerNorm.bias"), &[hidden])?;
 
-    let relative_rows = config
-        .span
-        .checked_mul(2)
-        .ok_or_else(|| start("DeBERTa relative embedding row count overflows"))?;
-    let relative = checkpoint.source(
-        &format!("{prefix}encoder.rel_embeddings.weight"),
-        &[relative_rows, hidden],
-    )?;
+    let relative = if config.relative_attention {
+        let relative_rows = config
+            .span
+            .checked_mul(2)
+            .ok_or_else(|| start("DeBERTa relative embedding row count overflows"))?;
+        Some(checkpoint.source(
+            &format!("{prefix}encoder.rel_embeddings.weight"),
+            &[relative_rows, hidden],
+        )?)
+    } else {
+        None
+    };
     let (relative_gamma, relative_beta) = if config.relative_layer_norm {
         let gamma = checkpoint.source(&format!("{prefix}encoder.LayerNorm.weight"), &[hidden])?;
         let beta = checkpoint.source(&format!("{prefix}encoder.LayerNorm.bias"), &[hidden])?;
         (Some(gamma), Some(beta))
     } else {
         (None, None)
+    };
+    let conv = match config.conv {
+        Some(conv) => Some(DebertaConvWeights {
+            weight: checkpoint.source(
+                &format!("{prefix}encoder.conv.conv.weight"),
+                &conv.weight_shape(hidden)?,
+            )?,
+            bias: checkpoint.source(&format!("{prefix}encoder.conv.conv.bias"), &[hidden])?,
+            gamma: checkpoint
+                .source(&format!("{prefix}encoder.conv.LayerNorm.weight"), &[hidden])?,
+            beta: checkpoint.source(&format!("{prefix}encoder.conv.LayerNorm.bias"), &[hidden])?,
+        }),
+        None => None,
     };
 
     let mut layers = Vec::new();
@@ -316,11 +420,15 @@ pub(crate) fn load(path: &Path) -> Result<DebertaWeights, BackendError> {
     Ok(DebertaWeights {
         config,
         word,
+        position,
+        token_type,
+        embed_proj,
         gamma,
         beta,
         relative,
         relative_gamma,
         relative_beta,
+        conv,
         layers,
         relative_layers,
         head,
@@ -387,10 +495,9 @@ fn classifier_width(checkpoint: &Checkpoint) -> Result<usize, BackendError> {
 fn is_allowed_tensor(
     name: &str,
     prefix: &str,
+    config: &DebertaConfig,
     layers: usize,
-    relative_layer_norm: bool,
     head: HeadKind,
-    share_att_key: bool,
 ) -> bool {
     if head_tensor_allowed(name, head) {
         return true;
@@ -401,10 +508,22 @@ fn is_allowed_tensor(
     match rest {
         "embeddings.word_embeddings.weight"
         | "embeddings.LayerNorm.weight"
-        | "embeddings.LayerNorm.bias"
-        | "encoder.rel_embeddings.weight" => true,
-        "encoder.LayerNorm.weight" | "encoder.LayerNorm.bias" => relative_layer_norm,
-        _ => layer_tensor_allowed(rest, layers, share_att_key),
+        | "embeddings.LayerNorm.bias" => true,
+        "embeddings.position_embeddings.weight" => config.position_biased_input,
+        "embeddings.token_type_embeddings.weight" => config.geometry.type_vocab_size > 0,
+        "embeddings.embed_proj.weight" => config.embedding_size != config.geometry.hidden_size,
+        "encoder.rel_embeddings.weight" => config.relative_attention,
+        "encoder.LayerNorm.weight" | "encoder.LayerNorm.bias" => config.relative_layer_norm,
+        "encoder.conv.conv.weight"
+        | "encoder.conv.conv.bias"
+        | "encoder.conv.LayerNorm.weight"
+        | "encoder.conv.LayerNorm.bias" => config.conv.is_some(),
+        _ => layer_tensor_allowed(
+            rest,
+            layers,
+            config.relative_attention,
+            config.share_att_key,
+        ),
     }
 }
 
@@ -422,7 +541,12 @@ fn head_tensor_allowed(name: &str, head: HeadKind) -> bool {
     }
 }
 
-fn layer_tensor_allowed(name: &str, layers: usize, share_att_key: bool) -> bool {
+fn layer_tensor_allowed(
+    name: &str,
+    layers: usize,
+    relative_attention: bool,
+    share_att_key: bool,
+) -> bool {
     let Some(after_encoder) = name.strip_prefix("encoder.layer.") else {
         return false;
     };
@@ -435,7 +559,8 @@ fn layer_tensor_allowed(name: &str, layers: usize, share_att_key: bool) -> bool 
     if index >= layers {
         return false;
     }
-    if !share_att_key
+    if relative_attention
+        && !share_att_key
         && matches!(
             suffix,
             "attention.self.pos_key_proj.weight"
@@ -483,9 +608,14 @@ fn parse_config_value(value: &Value) -> Result<ParsedConfig, BackendError> {
     let heads = json_positive_usize(value, "num_attention_heads", None)?;
     let intermediate = json_positive_usize(value, "intermediate_size", None)?;
 
-    require_exact("hidden_size", hidden, HIDDEN_SIZE)?;
-    require_exact("num_attention_heads", heads, NUM_HEADS)?;
-    require_exact("intermediate_size", intermediate, INTERMEDIATE_SIZE)?;
+    if !matches!(
+        (hidden, heads, intermediate),
+        (384, 6, 1536) | (768, 12, 3072) | (1024, 16, 4096)
+    ) {
+        return Err(start(
+            "DeBERTa supports only H384/Q6/I1536, H768/Q12/I3072, or H1024/Q16/I4096",
+        ));
+    }
     if hidden % heads != 0 {
         return Err(start(
             "DeBERTa hidden_size is not divisible by num_attention_heads",
@@ -507,23 +637,26 @@ fn parse_config_value(value: &Value) -> Result<ParsedConfig, BackendError> {
         )));
     }
 
+    let embedding_size = match value.get("embedding_size") {
+        None | Some(Value::Null) => hidden,
+        Some(_) => json_positive_usize(value, "embedding_size", Some(MAX_EMBEDDING_SIZE))?,
+    };
     let relative_attention = json_bool(value, "relative_attention", false)?;
-    if !relative_attention {
-        return Err(start("DeBERTa relative_attention=false is not admitted"));
-    }
-    let share_att_key = json_bool(value, "share_att_key", false)?;
+    let share_att_key = if relative_attention {
+        json_bool(value, "share_att_key", false)?
+    } else {
+        false
+    };
     let position_biased_input = json_bool(value, "position_biased_input", true)?;
-    if position_biased_input {
-        return Err(start(
-            "DeBERTa position_biased_input=true is not admitted; absolute positions are unsupported",
-        ));
-    }
-    let type_vocab_size = json_i64(value, "type_vocab_size", Some(0))?;
-    if type_vocab_size != 0 {
-        return Err(start(
-            "DeBERTa type_vocab_size must be 0; token type embeddings are unsupported",
-        ));
-    }
+    let type_vocab = json_i64(value, "type_vocab_size", Some(0))?;
+    let type_vocab_size = usize::try_from(type_vocab)
+        .ok()
+        .filter(|size| *size <= MAX_TYPE_VOCAB)
+        .ok_or_else(|| {
+            start(format!(
+                "DeBERTa type_vocab_size {type_vocab} is outside 0..={MAX_TYPE_VOCAB}"
+            ))
+        })?;
 
     let hidden_act = json_str(value, "hidden_act", Some("gelu"))?;
     if hidden_act != "gelu" {
@@ -537,32 +670,71 @@ fn parse_config_value(value: &Value) -> Result<ParsedConfig, BackendError> {
             "Unsupported DeBERTa pooler_hidden_act '{pooler_hidden_act}'; expected gelu"
         )));
     }
+    if value
+        .get("pooler_hidden_size")
+        .filter(|entry| !entry.is_null())
+        .is_some()
+    {
+        let pooler_hidden_size = json_positive_usize(value, "pooler_hidden_size", None)?;
+        require_exact("pooler_hidden_size", pooler_hidden_size, hidden)?;
+    }
 
     let norm_rel_ebd = json_str(value, "norm_rel_ebd", Some("none"))?;
-    let relative_layer_norm = match norm_rel_ebd {
-        "" | "none" => false,
-        "layer_norm" | "none|layer_norm" | "layer_norm|none" => true,
-        _ => {
-            return Err(start(format!(
-                "Unsupported DeBERTa norm_rel_ebd '{norm_rel_ebd}'"
-            )));
+    let mut relative_layer_norm = false;
+    for token in norm_rel_ebd.split('|') {
+        match token.trim().to_ascii_lowercase().as_str() {
+            "" | "none" => {}
+            "layer_norm" => relative_layer_norm = true,
+            other => {
+                return Err(start(format!(
+                    "Unsupported DeBERTa norm_rel_ebd token '{other}'"
+                )));
+            }
         }
-    };
+    }
 
     let conv_kernel_size = json_i64(value, "conv_kernel_size", Some(0))?;
-    if conv_kernel_size != 0 {
-        return Err(start("DeBERTa convolution geometry is not admitted"));
+    let conv_kernel_size = usize::try_from(conv_kernel_size).map_err(|_| {
+        start(format!(
+            "DeBERTa conv_kernel_size {conv_kernel_size} must be non-negative"
+        ))
+    })?;
+    if conv_kernel_size != 0 && hidden != 768 {
+        return Err(start("DeBERTa convolution currently requires H768"));
     }
-    let conv_groups = json_i64(value, "conv_groups", Some(1))?;
-    if conv_groups != 1 {
-        return Err(start("DeBERTa conv_groups must be 1 in the admitted scope"));
-    }
-    for key in ["embed_proj", "embed_proj_bias"] {
-        if json_enabled(value, key)? {
+    let conv = if conv_kernel_size == 0 {
+        None
+    } else {
+        if conv_kernel_size > MAX_CONV_KERNEL || conv_kernel_size % 2 == 0 {
             return Err(start(format!(
-                "DeBERTa embedding projection modifier '{key}' is not admitted"
+                "DeBERTa conv_kernel_size {conv_kernel_size} must be odd and at most {MAX_CONV_KERNEL}"
             )));
         }
+        let conv_groups = json_i64(value, "conv_groups", Some(1))?;
+        let conv_groups = usize::try_from(conv_groups).map_err(|_| {
+            start(format!(
+                "DeBERTa conv_groups {conv_groups} must be positive"
+            ))
+        })?;
+        if conv_groups == 0 || hidden % conv_groups != 0 {
+            return Err(start(format!(
+                "DeBERTa conv_groups {conv_groups} must divide hidden_size {hidden}"
+            )));
+        }
+        if !json_bool(value, "conv_bias", true)? {
+            return Err(start("DeBERTa conv_bias=false is not admitted"));
+        }
+        let activation = DebertaConvActivation::parse(json_str(value, "conv_act", Some("tanh"))?)?;
+        Some(DebertaConvConfig {
+            kernel: conv_kernel_size,
+            groups: conv_groups,
+            activation,
+        })
+    };
+    if json_enabled(value, "embed_proj_bias")? {
+        return Err(start(
+            "DeBERTa embed_proj_bias=true is not admitted; the native projection is bias-free",
+        ));
     }
 
     for key in [
@@ -601,44 +773,57 @@ fn parse_config_value(value: &Value) -> Result<ParsedConfig, BackendError> {
         }
     }
 
-    let max_relative_raw = json_i64(value, "max_relative_positions", Some(-1))?;
-    let max_relative_i64 = if max_relative_raw < 1 {
-        i64::try_from(max_positions)
-            .map_err(|_| start("DeBERTa max_position_embeddings is too large"))?
-    } else {
-        max_relative_raw
-    };
-    let max_relative = usize::try_from(max_relative_i64)
-        .map_err(|_| start("DeBERTa max_relative_positions must be non-negative"))?;
-    let buckets = json_i64(value, "position_buckets", Some(-1))?;
-    let span = if buckets > 0 {
-        usize::try_from(buckets).map_err(|_| start("DeBERTa position_buckets is too large"))?
-    } else {
-        max_relative
-    };
-    if span == 0 || span > MAX_SPAN {
-        return Err(start(format!(
-            "DeBERTa relative span {span} is outside 1..={MAX_SPAN}"
-        )));
-    }
-    if buckets > 0 {
-        if span < 4 {
-            return Err(start("DeBERTa logarithmic buckets require span >= 4"));
+    let (span, max_relative, logarithmic, c2p, p2c) = if relative_attention {
+        let max_relative_raw = json_i64(value, "max_relative_positions", Some(-1))?;
+        let max_relative_i64 = if max_relative_raw < 1 {
+            i64::try_from(max_positions)
+                .map_err(|_| start("DeBERTa max_position_embeddings is too large"))?
+        } else {
+            max_relative_raw
+        };
+        let max_relative = usize::try_from(max_relative_i64)
+            .map_err(|_| start("DeBERTa max_relative_positions must be non-negative"))?;
+        let buckets = json_i64(value, "position_buckets", Some(-1))?;
+        let span = if buckets > 0 {
+            usize::try_from(buckets).map_err(|_| start("DeBERTa position_buckets is too large"))?
+        } else {
+            max_relative
+        };
+        if span == 0 || span > MAX_SPAN {
+            return Err(start(format!(
+                "DeBERTa relative span {span} is outside 1..={MAX_SPAN}"
+            )));
         }
-        let midpoint = span as f64 / 2.0;
-        if (max_relative as f64) <= midpoint + 1.0 {
+        if buckets > 0 {
+            if span < 4 {
+                return Err(start("DeBERTa logarithmic buckets require span >= 4"));
+            }
+            let midpoint = span as f64 / 2.0;
+            if (max_relative as f64) <= midpoint + 1.0 {
+                return Err(start(
+                    "DeBERTa max_relative_positions must exceed span/2 + 1 for logarithmic buckets",
+                ));
+            }
+        }
+        let (c2p, p2c) = parse_pos_att_type(value)?;
+        if !c2p && !p2c {
             return Err(start(
-                "DeBERTa max_relative_positions must exceed span/2 + 1 for logarithmic buckets",
+                "DeBERTa relative attention requires at least one of c2p or p2c",
             ));
         }
-    }
+        (span, max_relative, buckets > 0, c2p, p2c)
+    } else {
+        (0, 0, false, false, false)
+    };
 
-    let (c2p, p2c) = parse_pos_att_type(value)?;
-    if !c2p && !p2c {
-        return Err(start("DeBERTa requires at least one of c2p or p2c"));
-    }
-
-    let geometry = BertConfig::deberta_geometry(vocab, layers, max_positions, eps, architectures)?;
+    let mut geometry =
+        BertConfig::deberta_geometry(vocab, layers, max_positions, eps, architectures)?;
+    geometry.hidden_size = hidden;
+    geometry.num_attention_heads = heads;
+    geometry.intermediate_size = intermediate;
+    geometry.type_vocab_size = type_vocab_size;
+    geometry.configured_type_vocab_size = Some(type_vocab_size);
+    geometry.position_biased_input = position_biased_input;
 
     Ok(ParsedConfig {
         config: DebertaConfig {
@@ -649,7 +834,11 @@ fn parse_config_value(value: &Value) -> Result<ParsedConfig, BackendError> {
             p2c,
             share_att_key,
             relative_layer_norm,
-            logarithmic: buckets > 0,
+            relative_attention,
+            logarithmic,
+            embedding_size,
+            position_biased_input,
+            conv,
         },
         head,
         vocab,
@@ -690,15 +879,15 @@ fn parse_pos_att_type(value: &Value) -> Result<(bool, bool), BackendError> {
     let entry = value
         .get("pos_att_type")
         .ok_or_else(|| start("DeBERTa config is missing pos_att_type"))?;
-    let mut tokens = Vec::new();
+    let mut tokens: Vec<String> = Vec::new();
     match entry {
         Value::String(flags) => {
-            for token in flags.split('|') {
+            for token in flags.to_ascii_lowercase().split('|') {
                 let token = token.trim();
                 if token.is_empty() {
                     return Err(start("DeBERTa pos_att_type contains an empty token"));
                 }
-                tokens.push(token);
+                tokens.push(token.to_owned());
             }
         }
         Value::Array(entries) => {
@@ -713,7 +902,7 @@ fn parse_pos_att_type(value: &Value) -> Result<(bool, bool), BackendError> {
                 if token.is_empty() {
                     return Err(start("DeBERTa pos_att_type contains an empty token"));
                 }
-                tokens.push(token);
+                tokens.push(token.to_owned());
             }
         }
         _ => {
@@ -728,7 +917,7 @@ fn parse_pos_att_type(value: &Value) -> Result<(bool, bool), BackendError> {
     let mut c2p = false;
     let mut p2c = false;
     for token in tokens {
-        match token {
+        match token.as_str() {
             "c2p" => {
                 if c2p {
                     return Err(start("Duplicate DeBERTa pos_att_type token c2p"));
@@ -902,6 +1091,95 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    const MEDICAL_NER_CONFIG: &str = include_str!("../tests/fixtures/medical-ner-config.json");
+    const MEDICAL_NER_CONFIG_SHA256: &str =
+        "95ac7e777dd3d118d09dce4f66beffc1a17e428edcf3c359849a26ade02f3936";
+
+    fn actual_medical_ner_config() -> Value {
+        serde_json::from_str(MEDICAL_NER_CONFIG).expect("parse pinned Medical-NER config")
+    }
+
+    #[test]
+    fn pinned_mixedbread_rerankers_admit_their_actual_three_geometries() {
+        for (bytes, hidden, heads, intermediate) in [
+            (
+                include_str!("../tests/fixtures/mixedbread-rerank-xsmall-config.json"),
+                384,
+                6,
+                1536,
+            ),
+            (
+                include_str!("../tests/fixtures/mixedbread-rerank-base-config.json"),
+                768,
+                12,
+                3072,
+            ),
+            (
+                include_str!("../tests/fixtures/mixedbread-rerank-large-config.json"),
+                1024,
+                16,
+                4096,
+            ),
+        ] {
+            let value: Value = serde_json::from_str(bytes).unwrap();
+            let parsed = parse_ok(&value);
+            assert_eq!(
+                (
+                    parsed.hidden,
+                    parsed.config.geometry.num_attention_heads,
+                    parsed.intermediate
+                ),
+                (hidden, heads, intermediate)
+            );
+            assert!(parsed.config.relative_attention);
+            assert!(parsed.config.relative_layer_norm);
+            assert!(parsed.config.conv.is_none());
+            assert_eq!(parsed.config.embedding_size, hidden);
+            let mut wrong = value.clone();
+            wrong["num_attention_heads"] = json!(heads + 1);
+            assert_rejected(&wrong);
+        }
+    }
+
+    #[test]
+    fn wide_relative_checkpoint_headers_keep_projection_and_head_input_widths() {
+        for (hidden, heads, intermediate) in [(384, 6, 1536), (1024, 16, 4096)] {
+            let fixture = header_fixture_with(
+                |c| {
+                    apply(
+                        c,
+                        json!({"hidden_size":hidden,"num_attention_heads":heads,"intermediate_size":intermediate}),
+                    )
+                },
+                |shapes| {
+                    for shape in shapes.values_mut() {
+                        for dim in shape.iter_mut() {
+                            if *dim == 768 {
+                                *dim = hidden;
+                            } else if *dim == 3072 {
+                                *dim = intermediate;
+                            }
+                        }
+                    }
+                },
+            );
+            let host = load(&fixture.0).unwrap();
+            assert_eq!(host.config.geometry.hidden_size, hidden);
+            for projection in [
+                &host.layers[0].query,
+                &host.layers[0].key,
+                &host.layers[0].value,
+            ] {
+                assert_eq!(projection.weight.shape(), &[hidden, hidden]);
+            }
+            assert_eq!(host.relative.as_ref().unwrap().shape(), &[512, hidden]);
+            assert_eq!(
+                host.head.as_ref().unwrap().classifier.weight.shape(),
+                &[1, hidden]
+            );
+        }
+    }
+
     fn base_config() -> Value {
         json!({
             "model_type": "deberta-v2",
@@ -961,9 +1239,9 @@ mod tests {
         header_fixture_with(|_| {}, edit)
     }
 
-    fn header_fixture_with(
-        edit_config: impl FnOnce(&mut Value),
-        edit: impl FnOnce(&mut std::collections::BTreeMap<String, Vec<usize>>),
+    fn write_header_fixture(
+        config_bytes: &[u8],
+        shapes: std::collections::BTreeMap<String, Vec<usize>>,
     ) -> HeaderFixture {
         use std::io::Write;
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -973,16 +1251,35 @@ mod tests {
             NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         ));
         std::fs::create_dir(&path).unwrap();
+        std::fs::write(path.join("config.json"), config_bytes).unwrap();
+        let mut header = serde_json::Map::new();
+        let mut offset = 0usize;
+        for (name, shape) in shapes {
+            let end = offset + shape.iter().product::<usize>() * 2;
+            header.insert(
+                name,
+                json!({"dtype":"BF16","shape":shape,"data_offsets":[offset,end]}),
+            );
+            offset = end;
+        }
+        let bytes = serde_json::to_vec(&header).unwrap();
+        let mut file = std::fs::File::create(path.join("model.safetensors")).unwrap();
+        file.write_all(&(bytes.len() as u64).to_le_bytes()).unwrap();
+        file.write_all(&bytes).unwrap();
+        file.set_len(8 + bytes.len() as u64 + offset as u64)
+            .unwrap();
+        HeaderFixture(path)
+    }
+
+    fn header_fixture_with(
+        edit_config: impl FnOnce(&mut Value),
+        edit: impl FnOnce(&mut std::collections::BTreeMap<String, Vec<usize>>),
+    ) -> HeaderFixture {
         let mut config = with(
             base_config(),
             json!({"architectures":["DebertaV2ForSequenceClassification"],"norm_rel_ebd":"layer_norm","position_buckets":256}),
         );
         edit_config(&mut config);
-        std::fs::write(
-            path.join("config.json"),
-            serde_json::to_vec(&config).unwrap(),
-        )
-        .unwrap();
         let mut shapes = std::collections::BTreeMap::new();
         shapes.insert(
             "deberta.embeddings.word_embeddings.weight".into(),
@@ -1030,23 +1327,7 @@ mod tests {
             shapes.insert(format!("{stem}.bias"), vec![output]);
         }
         edit(&mut shapes);
-        let mut header = serde_json::Map::new();
-        let mut offset = 0usize;
-        for (name, shape) in shapes {
-            let end = offset + shape.iter().product::<usize>() * 2;
-            header.insert(
-                name,
-                json!({"dtype":"BF16","shape":shape,"data_offsets":[offset,end]}),
-            );
-            offset = end;
-        }
-        let bytes = serde_json::to_vec(&header).unwrap();
-        let mut file = std::fs::File::create(path.join("model.safetensors")).unwrap();
-        file.write_all(&(bytes.len() as u64).to_le_bytes()).unwrap();
-        file.write_all(&bytes).unwrap();
-        file.set_len(8 + bytes.len() as u64 + offset as u64)
-            .unwrap();
-        HeaderFixture(path)
+        write_header_fixture(&serde_json::to_vec(&config).unwrap(), shapes)
     }
 
     fn add_dedicated(
@@ -1093,7 +1374,7 @@ mod tests {
         let fixture = header_fixture(|_| {});
         let host = load(&fixture.0).unwrap();
         assert_eq!(host.layers.len(), 2);
-        assert_eq!(host.relative.shape(), &[512, 768]);
+        assert_eq!(host.relative.as_ref().unwrap().shape(), &[512, 768]);
         assert!(host.relative_gamma.is_some());
         assert!(host.relative_beta.is_some());
         let head = host.head.unwrap();
@@ -1355,6 +1636,335 @@ mod tests {
     }
 
     #[test]
+    fn full_embedding_projection_type_position_and_convolution_weights_load() {
+        let fixture = header_fixture_with(
+            |config| {
+                apply(
+                    config,
+                    json!({
+                        "position_biased_input": true,
+                        "type_vocab_size": 2,
+                        "embedding_size": 96,
+                        "conv_kernel_size": 3,
+                        "conv_groups": 2,
+                        "conv_act": "gelu"
+                    }),
+                )
+            },
+            |shapes| {
+                shapes.insert(
+                    "deberta.embeddings.word_embeddings.weight".into(),
+                    vec![1000, 96],
+                );
+                shapes.insert(
+                    "deberta.embeddings.position_embeddings.weight".into(),
+                    vec![512, 96],
+                );
+                shapes.insert(
+                    "deberta.embeddings.token_type_embeddings.weight".into(),
+                    vec![2, 96],
+                );
+                shapes.insert("deberta.embeddings.embed_proj.weight".into(), vec![768, 96]);
+                shapes.insert("deberta.encoder.conv.conv.weight".into(), vec![768, 384, 3]);
+                shapes.insert("deberta.encoder.conv.conv.bias".into(), vec![768]);
+                shapes.insert("deberta.encoder.conv.LayerNorm.weight".into(), vec![768]);
+                shapes.insert("deberta.encoder.conv.LayerNorm.bias".into(), vec![768]);
+            },
+        );
+        let host = load(&fixture.0).unwrap();
+        assert!(host.config.relative_attention);
+        assert!(host.config.position_biased_input);
+        assert_eq!(host.config.embedding_size, 96);
+        assert_eq!(host.config.geometry.type_vocab_size, 2);
+        assert_eq!(host.word.shape(), &[1000, 96]);
+        assert_eq!(host.position.as_ref().unwrap().shape(), &[512, 96]);
+        assert_eq!(host.token_type.as_ref().unwrap().shape(), &[2, 96]);
+        assert_eq!(host.embed_proj.as_ref().unwrap().shape(), &[768, 96]);
+        assert_eq!(host.conv.as_ref().unwrap().weight.shape(), &[768, 384, 3]);
+        assert_eq!(host.conv.as_ref().unwrap().bias.shape(), &[768]);
+        assert!(host.relative.is_some());
+        let head = host.head.unwrap();
+        assert!(head.pooler.is_some());
+        assert_eq!(head.width, 1);
+    }
+
+    #[test]
+    fn malformed_embedding_and_convolution_checkpoint_shapes_are_rejected() {
+        for (name, shape) in [
+            ("deberta.embeddings.word_embeddings.weight", vec![1000, 95]),
+            (
+                "deberta.embeddings.position_embeddings.weight",
+                vec![511, 96],
+            ),
+            (
+                "deberta.embeddings.token_type_embeddings.weight",
+                vec![1, 96],
+            ),
+            ("deberta.embeddings.embed_proj.weight", vec![768, 95]),
+            ("deberta.encoder.conv.conv.weight", vec![768, 384, 4]),
+            ("deberta.encoder.conv.conv.bias", vec![767]),
+            ("deberta.encoder.conv.LayerNorm.weight", vec![767]),
+        ] {
+            let fixture = full_embedding_fixture(|shapes| {
+                shapes.insert(name.into(), shape.clone());
+            });
+            assert!(load(&fixture.0).is_err(), "wrong shape for {name}");
+        }
+        for name in [
+            "deberta.embeddings.position_embeddings.weight",
+            "deberta.embeddings.token_type_embeddings.weight",
+            "deberta.embeddings.embed_proj.weight",
+            "deberta.encoder.conv.conv.weight",
+            "deberta.encoder.conv.conv.bias",
+            "deberta.encoder.conv.LayerNorm.bias",
+        ] {
+            let fixture = full_embedding_fixture(|shapes| {
+                shapes.remove(name);
+            });
+            assert!(load(&fixture.0).is_err(), "missing {name}");
+        }
+        let fixture = full_embedding_fixture(|shapes| {
+            shapes.insert("deberta.embeddings.embed_proj.bias".into(), vec![768]);
+        });
+        assert!(load(&fixture.0).is_err());
+    }
+
+    #[test]
+    fn non_relative_absolute_position_and_type_checkpoint_loads_without_relative_table() {
+        let fixture = header_fixture_with(
+            |config| {
+                apply(
+                    config,
+                    json!({
+                        "relative_attention": false,
+                        "pos_att_type": [],
+                        "position_biased_input": true,
+                        "type_vocab_size": 2
+                    }),
+                )
+            },
+            |shapes| {
+                shapes.remove("deberta.encoder.rel_embeddings.weight");
+                shapes.insert(
+                    "deberta.embeddings.position_embeddings.weight".into(),
+                    vec![512, 768],
+                );
+                shapes.insert(
+                    "deberta.embeddings.token_type_embeddings.weight".into(),
+                    vec![2, 768],
+                );
+            },
+        );
+        let host = load(&fixture.0).unwrap();
+        assert!(!host.config.relative_attention);
+        assert!(host.config.position_biased_input);
+        assert_eq!(host.config.geometry.type_vocab_size, 2);
+        assert!(host.position.is_some());
+        assert!(host.token_type.is_some());
+        assert!(host.relative.is_none());
+        assert!(host
+            .relative_layers
+            .iter()
+            .all(|layer| layer.key.is_none() && layer.query.is_none()));
+    }
+
+    fn full_embedding_fixture(
+        edit: impl FnOnce(&mut std::collections::BTreeMap<String, Vec<usize>>),
+    ) -> HeaderFixture {
+        header_fixture_with(
+            |config| {
+                apply(
+                    config,
+                    json!({
+                        "position_biased_input": true,
+                        "type_vocab_size": 2,
+                        "embedding_size": 96,
+                        "conv_kernel_size": 3,
+                        "conv_groups": 2,
+                        "conv_act": "gelu"
+                    }),
+                )
+            },
+            |shapes| {
+                shapes.insert(
+                    "deberta.embeddings.word_embeddings.weight".into(),
+                    vec![1000, 96],
+                );
+                shapes.insert(
+                    "deberta.embeddings.position_embeddings.weight".into(),
+                    vec![512, 96],
+                );
+                shapes.insert(
+                    "deberta.embeddings.token_type_embeddings.weight".into(),
+                    vec![2, 96],
+                );
+                shapes.insert("deberta.embeddings.embed_proj.weight".into(), vec![768, 96]);
+                shapes.insert("deberta.encoder.conv.conv.weight".into(), vec![768, 384, 3]);
+                shapes.insert("deberta.encoder.conv.conv.bias".into(), vec![768]);
+                shapes.insert("deberta.encoder.conv.LayerNorm.weight".into(), vec![768]);
+                shapes.insert("deberta.encoder.conv.LayerNorm.bias".into(), vec![768]);
+                edit(shapes);
+            },
+        )
+    }
+
+    fn medical_ner_header_fixture(
+        edit: impl FnOnce(&mut std::collections::BTreeMap<String, Vec<usize>>),
+    ) -> HeaderFixture {
+        let mut shapes = std::collections::BTreeMap::new();
+        shapes.insert(
+            "deberta.embeddings.word_embeddings.weight".into(),
+            vec![128_100, 768],
+        );
+        for stem in ["deberta.embeddings.LayerNorm", "deberta.encoder.LayerNorm"] {
+            shapes.insert(format!("{stem}.weight"), vec![768]);
+            shapes.insert(format!("{stem}.bias"), vec![768]);
+        }
+        shapes.insert(
+            "deberta.encoder.rel_embeddings.weight".into(),
+            vec![512, 768],
+        );
+        for layer in 0..12 {
+            for (stem, output, input) in [
+                ("attention.self.query_proj", 768, 768),
+                ("attention.self.key_proj", 768, 768),
+                ("attention.self.value_proj", 768, 768),
+                ("attention.output.dense", 768, 768),
+                ("intermediate.dense", 3072, 768),
+                ("output.dense", 768, 3072),
+            ] {
+                shapes.insert(
+                    format!("deberta.encoder.layer.{layer}.{stem}.weight"),
+                    vec![output, input],
+                );
+                shapes.insert(
+                    format!("deberta.encoder.layer.{layer}.{stem}.bias"),
+                    vec![output],
+                );
+            }
+            for stem in ["attention.output.LayerNorm", "output.LayerNorm"] {
+                shapes.insert(
+                    format!("deberta.encoder.layer.{layer}.{stem}.weight"),
+                    vec![768],
+                );
+                shapes.insert(
+                    format!("deberta.encoder.layer.{layer}.{stem}.bias"),
+                    vec![768],
+                );
+            }
+        }
+        shapes.insert("classifier.weight".into(), vec![83, 768]);
+        shapes.insert("classifier.bias".into(), vec![83]);
+        edit(&mut shapes);
+        write_header_fixture(MEDICAL_NER_CONFIG.as_bytes(), shapes)
+    }
+
+    #[test]
+    fn actual_medical_ner_saved_config_matches_pinned_provenance() {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(MEDICAL_NER_CONFIG.as_bytes());
+        let actual = digest
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        assert_eq!(actual, MEDICAL_NER_CONFIG_SHA256);
+    }
+
+    #[test]
+    fn actual_medical_ner_saved_config_is_admitted_without_weights_or_cuda() {
+        let parsed = parse_ok(&actual_medical_ner_config());
+        assert_eq!(parsed.head, HeadKind::Token);
+        assert_eq!(parsed.hidden, 768);
+        assert_eq!(parsed.vocab, 128_100);
+        assert_eq!(parsed.layers, 12);
+        assert_eq!(parsed.intermediate, 3072);
+        let config = parsed.config;
+        assert_eq!(config.geometry.hidden_size, 768);
+        assert_eq!(config.geometry.num_hidden_layers, 12);
+        assert_eq!(config.geometry.num_attention_heads, 12);
+        assert_eq!(config.geometry.intermediate_size, 3072);
+        assert_eq!(config.geometry.vocab_size, 128_100);
+        assert_eq!(config.geometry.max_position_embeddings, 512);
+        assert_eq!(config.geometry.type_vocab_size, 0);
+        assert!(!config.geometry.position_biased_input);
+        assert_eq!(config.embedding_size, 768);
+        assert!(config.relative_attention);
+        assert!(config.share_att_key);
+        assert!(config.c2p);
+        assert!(config.p2c);
+        assert_eq!(config.span, 256);
+        assert_eq!(config.max_relative, 512);
+        assert!(config.logarithmic);
+        assert!(config.relative_layer_norm);
+        assert!(config.conv.is_none());
+    }
+
+    #[test]
+    fn actual_medical_ner_checkpoint_headers_admit_without_payload_reads() {
+        let fixture = medical_ner_header_fixture(|_| {});
+        let host = load(&fixture.0).expect("Medical-NER metadata admission");
+        assert_eq!(
+            host.config.geometry.family,
+            crate::model::EncoderFamily::Deberta
+        );
+        assert_eq!(host.layers.len(), 12);
+        assert_eq!(host.relative_layers.len(), 12);
+        assert_eq!(host.word.shape(), &[128_100, 768]);
+        assert!(host.position.is_none());
+        assert!(host.token_type.is_none());
+        assert!(host.embed_proj.is_none());
+        assert!(host.conv.is_none());
+        assert_eq!(host.relative.as_ref().unwrap().shape(), &[512, 768]);
+        let head = host.head.expect("token classifier head");
+        assert!(head.tokenwise);
+        assert!(head.pooler.is_none());
+        assert_eq!(head.width, 83);
+        assert_eq!(head.classifier.weight.shape(), &[83, 768]);
+        assert_eq!(head.classifier.bias.shape(), &[83]);
+    }
+
+    #[test]
+    fn actual_medical_ner_wrong_widths_and_shapes_are_rejected_before_weights() {
+        for patch in [
+            json!({"hidden_size": 384}),
+            json!({"hidden_size": 1536}),
+            json!({"num_attention_heads": 6}),
+            json!({"num_attention_heads": 24}),
+            json!({"intermediate_size": 1536}),
+            json!({"intermediate_size": 768}),
+            json!({"attention_head_size": 32}),
+            json!({"attention_head_size": 128}),
+            json!({"vocab_size": 0}),
+            json!({"num_hidden_layers": 0}),
+            json!({"norm_rel_ebd": "unsupported"}),
+        ] {
+            assert_rejected(&with(actual_medical_ner_config(), patch));
+        }
+        for (name, shape) in [
+            (
+                "deberta.embeddings.word_embeddings.weight",
+                vec![128_100, 767],
+            ),
+            ("deberta.encoder.rel_embeddings.weight", vec![511, 768]),
+            ("deberta.embeddings.LayerNorm.weight", vec![767]),
+            (
+                "deberta.encoder.layer.0.attention.self.query_proj.weight",
+                vec![768, 767],
+            ),
+            (
+                "deberta.encoder.layer.11.output.dense.weight",
+                vec![767, 3072],
+            ),
+            ("classifier.weight", vec![83, 767]),
+        ] {
+            let fixture = medical_ner_header_fixture(|shapes| {
+                shapes.insert(name.into(), shape.clone());
+            });
+            assert!(load(&fixture.0).is_err(), "wrong shape for {name}");
+        }
+    }
+
+    #[test]
     fn malformed_checkpoint_headers_fail_before_any_weight_payload_read() {
         let missing = header_fixture(|shapes| {
             shapes.remove("deberta.encoder.layer.1.attention.self.value_proj.bias");
@@ -1390,7 +2000,10 @@ mod tests {
         assert_eq!(host.layers.len(), host.config.geometry.num_hidden_layers);
         assert_eq!(host.relative_layers.len(), host.layers.len());
         assert_eq!(host.word.shape(), &[host.config.geometry.vocab_size, 768]);
-        assert_eq!(host.relative.shape(), &[2 * host.config.span, 768]);
+        assert_eq!(
+            host.relative.as_ref().unwrap().shape(),
+            &[2 * host.config.span, 768]
+        );
         let head = host.head.expect("trained classification head");
         assert_eq!(head.width, 1);
         assert!(!head.tokenwise);
@@ -1473,14 +2086,14 @@ mod tests {
         }
         let parsed = parse_ok(&with(base_config(), json!({"norm_rel_ebd": ""})));
         assert!(!parsed.config.relative_layer_norm);
-        for mode in [
-            "none|none",
-            "layer_norm|layer_norm",
-            "NONE",
-            "layer_norm|",
-            " layer_norm",
-        ] {
+        for mode in ["unknown", "layer_norm|unknown", "NONE|bogus"] {
             assert_rejected(&with(base_config(), json!({"norm_rel_ebd": mode})));
+        }
+        let parsed = parse_ok(&with(base_config(), json!({"norm_rel_ebd": "NONE"})));
+        assert!(!parsed.config.relative_layer_norm);
+        for mode in [" Layer_Norm ", "none|Layer_Norm"] {
+            let parsed = parse_ok(&with(base_config(), json!({"norm_rel_ebd": mode})));
+            assert!(parsed.config.relative_layer_norm, "mode {mode}");
         }
     }
 
@@ -1513,24 +2126,22 @@ mod tests {
             json!("c2p|unknown"),
             json!(7),
             json!(["c2p", 7]),
-            json!("C2P"),
+            json!("C2P|unknown"),
         ] {
             assert_rejected(&with(base_config(), json!({"pos_att_type": bad})));
         }
+        let parsed = parse_ok(&with(base_config(), json!({"pos_att_type": "C2P|P2C"})));
+        assert!(parsed.config.c2p);
+        assert!(parsed.config.p2c);
     }
 
     #[test]
     fn unsupported_arithmetic_and_decoder_modifiers_are_rejected() {
         for patch in [
-            json!({"relative_attention": false}),
-            json!({"position_biased_input": true}),
-            json!({"type_vocab_size": 1}),
             json!({"hidden_act": "gelu_new"}),
             json!({"hidden_act": "relu"}),
             json!({"pooler_hidden_act": "relu"}),
-            json!({"conv_kernel_size": 3}),
-            json!({"conv_groups": 2}),
-            json!({"embed_proj": true}),
+            json!({"embed_proj_bias": true}),
             json!({"is_decoder": true}),
             json!({"add_cross_attention": true}),
             json!({"use_cache": true}),
@@ -1545,8 +2156,96 @@ mod tests {
         ] {
             assert_rejected(&with(base_config(), patch));
         }
-        assert_rejected(&without(base_config(), "relative_attention"));
-        assert_rejected(&without(base_config(), "position_biased_input"));
+        let parsed = parse_ok(&without(base_config(), "relative_attention"));
+        assert!(!parsed.config.relative_attention);
+        assert!(!parsed.config.c2p);
+        assert!(!parsed.config.p2c);
+        let parsed = parse_ok(&without(base_config(), "position_biased_input"));
+        assert!(parsed.config.position_biased_input);
+    }
+
+    #[test]
+    fn embedding_projection_position_type_and_convolution_variants_are_admitted() {
+        let parsed = parse_ok(&with(
+            base_config(),
+            json!({
+                "position_biased_input": true,
+                "type_vocab_size": 2,
+                "embedding_size": 96,
+                "conv_kernel_size": 3,
+                "conv_groups": 2,
+                "conv_act": "gelu"
+            }),
+        ));
+        assert!(parsed.config.relative_attention);
+        assert_eq!(parsed.config.geometry.type_vocab_size, 2);
+        assert_eq!(parsed.config.embedding_size, 96);
+        assert!(parsed.config.position_biased_input);
+        assert_eq!(
+            parsed.config.conv,
+            Some(DebertaConvConfig {
+                kernel: 3,
+                groups: 2,
+                activation: DebertaConvActivation::Gelu,
+            })
+        );
+        assert_eq!(
+            parsed.config.conv.unwrap().weight_shape(768).unwrap(),
+            [768, 384, 3]
+        );
+
+        let parsed = parse_ok(&with(
+            base_config(),
+            json!({"relative_attention": false, "pos_att_type": []}),
+        ));
+        assert!(!parsed.config.relative_attention);
+        assert_eq!(parsed.config.span, 0);
+        assert!(!parsed.config.c2p);
+        assert!(!parsed.config.p2c);
+
+        let parsed = parse_ok(&with(base_config(), json!({"conv_kernel_size": 3})));
+        assert_eq!(
+            parsed.config.conv.unwrap().activation,
+            DebertaConvActivation::Tanh
+        );
+        assert_eq!(parsed.config.embedding_size, 768);
+        assert!(!parsed.config.position_biased_input);
+        for name in ["gelu_new", "gelu_pytorch_tanh"] {
+            let parsed = parse_ok(&with(
+                base_config(),
+                json!({"conv_kernel_size": 3, "conv_act": name}),
+            ));
+            assert_eq!(
+                parsed.config.conv.unwrap().activation,
+                DebertaConvActivation::GeluTanh
+            );
+        }
+    }
+
+    #[test]
+    fn malformed_embedding_convolution_and_pooler_geometry_is_rejected() {
+        for patch in [
+            json!({"embedding_size": 0}),
+            json!({"embedding_size": 32769}),
+            json!({"conv_kernel_size": -2}),
+            json!({"conv_kernel_size": 2}),
+            json!({"conv_kernel_size": 17}),
+            json!({"conv_kernel_size": 3, "conv_groups": 0}),
+            json!({"conv_kernel_size": 3, "conv_groups": 5}),
+            json!({"conv_kernel_size": 3, "conv_act": "mish"}),
+            json!({"conv_kernel_size": 3, "conv_act": "linear"}),
+            json!({"conv_kernel_size": 3, "conv_bias": false}),
+            json!({"embed_proj_bias": true}),
+            json!({"pooler_hidden_size": 384}),
+            json!({"type_vocab_size": -1}),
+            json!({"type_vocab_size": 32769}),
+        ] {
+            assert_rejected(&with(base_config(), patch));
+        }
+        parse_ok(&with(
+            base_config(),
+            json!({"conv_kernel_size": 5, "conv_groups": 8, "conv_act": "silu"}),
+        ));
     }
 
     #[test]
@@ -1636,61 +2335,70 @@ mod tests {
     fn checkpoint_namespace_and_name_families_are_exact() {
         let sequence = HeadKind::Sequence;
         let base = HeadKind::Base;
+        let shared = parse_ok(&base_config()).config;
+        let dedicated = parse_ok(&with(base_config(), json!({"share_att_key": false}))).config;
+        let normalized =
+            parse_ok(&with(base_config(), json!({"norm_rel_ebd": "layer_norm"}))).config;
+        let full = parse_ok(&with(
+            base_config(),
+            json!({
+                "position_biased_input": true,
+                "type_vocab_size": 2,
+                "embedding_size": 96,
+                "conv_kernel_size": 3,
+                "conv_groups": 2,
+                "conv_act": "gelu"
+            }),
+        ))
+        .config;
         assert!(is_allowed_tensor(
             "embeddings.word_embeddings.weight",
             "",
+            &shared,
             2,
-            false,
-            sequence,
-            true
+            sequence
         ));
         assert!(is_allowed_tensor(
             "deberta.embeddings.word_embeddings.weight",
             "deberta.",
+            &shared,
             2,
-            false,
-            sequence,
-            true
+            sequence
         ));
         assert!(!is_allowed_tensor(
             "embeddings.word_embeddings.weight",
             "deberta.",
+            &shared,
             2,
-            false,
-            sequence,
-            true
+            sequence
         ));
         assert!(!is_allowed_tensor(
             "deberta.embeddings.word_embeddings.weight",
             "",
+            &shared,
             2,
-            false,
-            sequence,
-            true
+            sequence
         ));
         assert!(is_allowed_tensor(
             "deberta.encoder.rel_embeddings.weight",
             "deberta.",
+            &shared,
             2,
-            false,
-            sequence,
-            true
+            sequence
         ));
         assert!(!is_allowed_tensor(
             "deberta.encoder.LayerNorm.weight",
             "deberta.",
+            &shared,
             2,
-            false,
-            sequence,
-            true
+            sequence
         ));
         assert!(is_allowed_tensor(
             "deberta.encoder.LayerNorm.weight",
             "deberta.",
+            &normalized,
             2,
-            true,
-            sequence,
-            true
+            sequence
         ));
 
         for name in [
@@ -1707,8 +2415,23 @@ mod tests {
             "deberta.lm_head.weight",
         ] {
             assert!(
-                !is_allowed_tensor(name, "deberta.", 2, true, sequence, true),
+                !is_allowed_tensor(name, "deberta.", &shared, 2, sequence),
                 "name should be rejected: {name}"
+            );
+        }
+
+        for name in [
+            "deberta.embeddings.position_embeddings.weight",
+            "deberta.embeddings.token_type_embeddings.weight",
+            "deberta.embeddings.embed_proj.weight",
+            "deberta.encoder.conv.conv.weight",
+            "deberta.encoder.conv.conv.bias",
+            "deberta.encoder.conv.LayerNorm.weight",
+            "deberta.encoder.conv.LayerNorm.bias",
+        ] {
+            assert!(
+                is_allowed_tensor(name, "deberta.", &full, 2, sequence),
+                "name should be allowed for the full recipe: {name}"
             );
         }
 
@@ -1723,7 +2446,7 @@ mod tests {
             "deberta.encoder.layer.1.output.LayerNorm.bias",
         ] {
             assert!(
-                is_allowed_tensor(name, "deberta.", 2, false, sequence, true),
+                is_allowed_tensor(name, "deberta.", &shared, 2, sequence),
                 "name should be allowed: {name}"
             );
         }
@@ -1731,74 +2454,65 @@ mod tests {
         assert!(is_allowed_tensor(
             "classifier.weight",
             "deberta.",
+            &shared,
             2,
-            false,
-            sequence,
-            true
+            sequence
         ));
         assert!(is_allowed_tensor(
             "pooler.dense.bias",
             "deberta.",
+            &shared,
             2,
-            false,
-            sequence,
-            true
+            sequence
         ));
         assert!(!is_allowed_tensor(
             "classifier.weight",
             "deberta.",
+            &shared,
             2,
-            false,
-            base,
-            true
+            base
         ));
         assert!(!is_allowed_tensor(
             "pooler.dense.weight",
             "deberta.",
+            &shared,
             2,
-            false,
-            base,
-            true
+            base
         ));
         assert!(!is_allowed_tensor(
             "deberta.classifier.weight",
             "deberta.",
+            &shared,
             2,
-            false,
-            sequence,
-            true
+            sequence
         ));
         assert!(is_allowed_tensor(
             "deberta.encoder.layer.0.attention.self.pos_key_proj.weight",
             "deberta.",
+            &dedicated,
             2,
-            false,
-            sequence,
-            false
+            sequence
         ));
         assert!(is_allowed_tensor(
             "deberta.encoder.layer.1.attention.self.pos_query_proj.bias",
             "deberta.",
+            &dedicated,
             2,
-            false,
-            sequence,
-            false
+            sequence
         ));
         assert!(!is_allowed_tensor(
             "deberta.encoder.layer.0.attention.self.pos_key_proj.weight",
             "deberta.",
+            &shared,
             2,
-            false,
-            sequence,
-            true
+            sequence
         ));
         assert!(!is_allowed_tensor(
             "encoder.layer.0.attention.self.pos_key_proj.weight",
             "deberta.",
+            &dedicated,
             2,
-            false,
-            sequence,
-            false
+            sequence
         ));
     }
 }

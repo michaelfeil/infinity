@@ -111,6 +111,7 @@ pub(crate) fn config(raw: &RawEncoderConfig) -> Result<BertConfig, BackendError>
         },
         hidden_act: hidden_act.into(),
         position_embedding_type: position_embedding_type.into(),
+        position_biased_input: false,
         is_decoder: false,
         add_cross_attention: false,
     };

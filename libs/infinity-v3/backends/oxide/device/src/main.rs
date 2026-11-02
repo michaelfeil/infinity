@@ -9,6 +9,8 @@ use cuda_device::{convert, cuda_module, kernel, thread, warp, DynamicSharedArray
 mod aten_embedding;
 mod classifier;
 mod classifier_norm384;
+mod colbert;
+mod deberta_embedding;
 mod deberta_math;
 mod deberta_norm;
 mod decoder;
@@ -23,6 +25,8 @@ mod jina_code_qk;
 mod mpnet_norm;
 mod nomic_embedding;
 mod norm1024;
+mod modern_norm1024;
+mod plain_layer_norm_aten;
 mod norm1024_exact_vector;
 mod norm2048;
 mod norm2048_vector;
@@ -35,6 +39,7 @@ mod norm384;
 mod norm512;
 mod norm768;
 mod norm768_vector;
+mod plain_layer_norm_768;
 mod qk_norm_rope_128;
 mod readout;
 mod rms1536;
@@ -42,6 +47,7 @@ mod rms1536_vector;
 mod rms4096_vector;
 mod silu_pairs;
 mod silu_vector8;
+mod splade_pool;
 
 /// Interpret one BF16 storage element without numerical conversion error.
 /// The upper16 bits are the exponent, sign and significant FP32 bits.
@@ -284,6 +290,71 @@ unsafe fn layer_norm<const ROUND_RESIDUAL: bool>(
 mod kernels {
     use super::*;
 
+    /// Gather selected BF16 K/V rows for ColBERT key masking.
+    #[kernel]
+    pub unsafe fn infinity_attention_row_gather_bf16(
+        source: *const u16,
+        indices: *const u32,
+        out: *mut u16,
+        rows: u32,
+        width: u32,
+        source_stride: u32,
+    ) {
+        unsafe {
+            crate::colbert::attention_row_gather_bf16(
+                source,
+                indices,
+                out,
+                rows,
+                width,
+                source_stride,
+            )
+        };
+    }
+
+    /// F32 per-token L2 normalization over BF16 ColBERT projection rows.
+    #[kernel]
+    pub unsafe fn infinity_colbert_l2_bf16_f32(
+        input: *const u16,
+        output: *mut f32,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe { crate::colbert::colbert_l2_bf16_f32(input, output, rows, width, eps) };
+    }
+
+    /// Plain model-storage ATen Welford LN; grid rows, block128.
+    #[kernel]
+    pub unsafe fn infinity_plain_layer_norm_768_bf16_aten(
+        input: *const u16,
+        gamma: *const u16,
+        beta: *const u16,
+        output: *mut u16,
+        rows: u32,
+        width: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::plain_layer_norm_768::plain_layer_norm_768_bf16_aten(
+                input, gamma, beta, output, rows, width, eps,
+            )
+        };
+    }
+
+    /// BF16 SPLADE log1p/max with one final BF16 rounding and F32 widening.
+    /// Host validates nonempty spans; grid ceil(width/32)*selected, block128.
+    #[kernel]
+    pub unsafe fn infinity_splade_pool_bf16_f32(
+        input: *const u16,
+        spans: *const u32,
+        output: *mut f32,
+        width: u32,
+        selected: u32,
+    ) {
+        unsafe { crate::splade_pool::splade_pool_bf16_f32(input, spans, output, width, selected) };
+    }
+
     #[kernel]
     pub unsafe fn infinity_deberta_unpack_scaled(
         packed: *const u16,
@@ -308,8 +379,25 @@ mod kernels {
 
 
     #[kernel]
+    pub unsafe fn infinity_plain_layer_norm_bf16_aten(
+        input: *const u16, gamma: *const u16, beta: *const u16,
+        out: *mut u16, rows: u32, width: u32, eps: f32,
+    ) {
+        unsafe { crate::plain_layer_norm_aten::plain_layer_norm_bf16_aten(input,gamma,beta,out,rows,width,eps) };
+    }
+
+    #[kernel]
     pub unsafe fn infinity_deberta_divide(input: *mut u16, elements: u32, scale: f32) {
         unsafe { crate::deberta_math::divide(input, elements, scale) };
+    }
+
+    #[kernel]
+    pub unsafe fn infinity_deberta_plain_norm_bf16_aten(
+        input: *const u16, residual: *const u16, bias: *const u16,
+        gamma: *const u16, beta: *const u16, out: *mut u16,
+        rows: u32, width: u32, eps: f32,
+    ) {
+        unsafe { crate::plain_layer_norm_aten::deberta_plain_norm_bf16_aten(input,residual,bias,gamma,beta,out,rows,width,eps) };
     }
     #[kernel]
     pub unsafe fn infinity_deberta_signed_buckets(
@@ -333,6 +421,63 @@ mod kernels {
         eps: f32,
     ) {
         unsafe { crate::deberta_norm::word(ids, word, gamma, beta, out, rows, eps) };
+    }
+    /// DeBERTa word + optional absolute-position + optional token-type compose.
+    /// Grid=(tokens,1,1), block=(256,1,1).
+    #[kernel]
+    pub unsafe fn infinity_deberta_embedding_compose(
+        ids: *const u32,
+        positions: *const u32,
+        types: *const u32,
+        word: *const u16,
+        position: *const u16,
+        token_type: *const u16,
+        out: *mut u16,
+        tokens: u32,
+        width: u32,
+        position_biased: u32,
+        token_types: u32,
+    ) {
+        unsafe {
+            crate::deberta_embedding::embedding_compose(
+                ids,
+                positions,
+                types,
+                word,
+                position,
+                token_type,
+                out,
+                tokens,
+                width,
+                position_biased,
+                token_types,
+            )
+        };
+    }
+
+    /// Grouped Conv1d over packed sequences plus the configured activation.
+    /// Grid=(tokens,1,1), block=(256,1,1); the host validates the geometry.
+    #[kernel]
+    pub unsafe fn infinity_deberta_conv_768(
+        input: *const u16,
+        offsets: *const u32,
+        out: *mut u16,
+        weight: *const u16,
+        bias: *const u16,
+        tokens: u32,
+        batch: u32,
+        hidden: u32,
+        kernel: u32,
+        groups: u32,
+        padding: u32,
+        activation: u32,
+    ) {
+        unsafe {
+            crate::deberta_embedding::grouped_conv(
+                input, offsets, out, weight, bias, tokens, batch, hidden, kernel, groups, padding,
+                activation,
+            )
+        };
     }
     #[kernel]
     pub unsafe fn infinity_deberta_layer_norm_768(
@@ -601,6 +746,39 @@ mod kernels {
                 input, residual, bias, gamma, beta, out, rows, width, eps,
             )
         };
+    }
+
+    /// Modern width-1024 word-only rounded embedding norm.
+    /// Grid=(rows,1,1), block=(256,1,1); one row per CTA.
+    #[kernel]
+    pub unsafe fn infinity_embedding_word_norm_1024_candle(
+        ids: *const u32,
+        word: *const u16,
+        gamma: *const u16,
+        out: *mut u16,
+        rows: u32,
+        eps: f32,
+    ) {
+        unsafe { crate::modern_norm1024::embedding_word_norm_1024(ids, word, gamma, out, rows, eps) }
+    }
+
+    /// Modern width-1024 rounded residual norm retaining the BF16 summed stream.
+    /// Grid=(rows,1,1), block=(256,1,1); one row per CTA.
+    #[kernel]
+    pub unsafe fn infinity_rounded_residual_norm_1024_candle(
+        input: *const u16,
+        residual: *const u16,
+        gamma: *const u16,
+        normalized: *mut u16,
+        summed: *mut u16,
+        rows: u32,
+        eps: f32,
+    ) {
+        unsafe {
+            crate::modern_norm1024::rounded_residual_norm_1024(
+                input, residual, gamma, normalized, summed, rows, eps,
+            )
+        }
     }
 
     /// Exact width-2048 BF16 RMSNorm.

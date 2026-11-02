@@ -29,15 +29,15 @@ variant of these families.
 - Existing HTTP endpoints, tokenizer workers, batching interface, response
   encodings, and request-controlled normalization. When `modules.json` is present,
   validated BF16 Dense projections are supported in the ordered module chain.
-  Classifiers are limited to the BF16 configurations below. SPLADE, quantized
-  compute and other serving dtypes fail explicitly.
+  Classifiers, BERT SPLADE and BERT ColBERT use the BF16 configurations below.
+  Quantized compute and other serving dtypes fail explicitly.
 
 | Typed executor | Accepted configuration |
 | --- | --- |
 | BERT, RoBERTa, XLM-RoBERTa, CamemBERT | Encoder-only absolute position tables, tanh GELU, no cross-attention. BERT position capacity is at most 4096. Head width is at most 256; a matching provider profile is required for FA4. |
 | DistilBERT | The same packed encoder contract, with its checkpoint names/config aliases and fixed LayerNorm epsilon `1e-12`. An optional stored token-type table is validated and preserved; otherwise a zero table is used. |
 | MPNet | BF16 H768, intermediate width 3072, 12 attention heads, 32 relative buckets and at most 512 positions. Uses exact GELU, learned bucket attention and the native `positions + 2` lookup. Only token type `0` is accepted; classifier and MLM heads are rejected. |
-| DeBERTa-v2/v3 | BF16 H768, 12 heads, intermediate width 3072, word-only embeddings and learned relative attention. Shared or dedicated relative projections and c2p/p2c combinations are supported. Absolute position/type embeddings, embedding projection and convolution are rejected. Requires FA4. |
+| DeBERTa-v2/v3 | BF16 H384/Q6/I1536, H768/Q12/I3072 or H1024/Q16/I4096. Shared or dedicated relative projections, optional relative attention, absolute position/type tables and embedding projection are implemented. H768 also accepts grouped post-layer convolution. Wide models use plain ATen LayerNorm and normalized relative scores; H768 preserves its existing arithmetic. Requires FA4. The new variants await checkpoint qualification. |
 | Qwen2 | Dense SiLU text backbone, full split-half NeoX RoPE, global causal or noncausal attention, and a matching FA4 profile. The H896/d64 native RMS/rotary recipe is rejected. The exercised GTE-Qwen2-1.5B-instruct geometry is H1536, 12 Q/2 KV heads, d128, noncausal. |
 | Qwen3 | BF16 dense SiLU backbones at H1024, H2048, H2560, H4096 or H5120, d128 learned Q/K head norms, full NeoX RoPE, and a matching causal or noncausal FA4 profile. H5120 admits Q40/KV8 and Q64/KV8; query projection width may differ from hidden width. The `bidirectional_pplx_qwen3` alias follows Native configuration precedence. Qwen3 4B and Embedding 0.6B/8B are exercised; H5120 has separate kernel controls, with trained-checkpoint qualification pending. |
 | Qwen3 MoE | BF16 routed SiLU backbones with 128 experts, top-8 routing, d128 Q/K norms and a matching FA4 profile. Qwen3-30B-A3B at H2048 is checkpoint-qualified through the ordinary serving factory, including CLS/mean/last-token and raw/mixed outputs. Requires the architecture-specific MoE library under the kernel bundle's `moe/` directory. Larger geometries and performance remain unqualified. |
@@ -53,6 +53,19 @@ Additional BF16 encoder paths cover ModernBERT, Nomic BERT and Jina Small with
 their validated geometry, normalization, rotary/ALiBi and activation recipes.
 Their loader guards remain authoritative; family names do not imply all variants.
 
+GTE and ModernBERT sequence/token heads execute their trained projections,
+activation and optional head LayerNorm. ModernBERT includes H1024 geometry;
+classifier readout consumes the final normalized token state. Bias-free head
+projections retain the Native plain cuBLAS path.
+
+BERT SPLADE executes its MLM transform, vocabulary projection and selected
+sequence max/ReLU/log pooling. DistilBERT SPLADE is not yet admitted. BERT
+ColBERT executes the trained token projection and model-dtype L2 normalization;
+query MASK rows remain output queries while excluded attention keys and document
+punctuation follow the tokenizer policy. Both paths share request ownership and
+deferred completion with ordinary encoders. These additions have CPU validation;
+device primitive and trained-checkpoint qualification remain separate gates.
+
 Qwen3.5 uses the common serving constructor for ordinary text embeddings and
 OneJev lexical Decision heads. The checkpoint's modeling metadata selects causal
 or block Decision attention. Block Decision currently accepts one question per
@@ -66,7 +79,7 @@ Elephant and Mammoth have separate native text and single-question Decision
 qualification; this does not establish every Qwen3.5 geometry or performance.
 The cold runtime dependencies are selected by `INFINITY_FA4_ROOT`,
 `INFINITY_OXIDE_GDN_RAW_KERNELS`, `INFINITY_OXIDE_GDN_PROVIDER`, and
-`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 100 Rust
+`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 110 Rust
 exports; Qwen3.5 requires its nine additive exports. Dense decoders require the
 90-export bundle or newer for Native BF16 mean pooling. Other existing families
 can retain their older qualified bundles. H5120 Qwen3 requires the additive

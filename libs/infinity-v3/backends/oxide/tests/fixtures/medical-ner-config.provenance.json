@@ -1,0 +1,11 @@
+{
+  "model": "Clinical-AI-Apollo/Medical-NER",
+  "task": "Token classification and NER",
+  "file": "config.json",
+  "revision": "a9d5061193e969de80b24225f926cb224caac1ce",
+  "url": "https://huggingface.co/Clinical-AI-Apollo/Medical-NER/resolve/main/config.json",
+  "sha256": "95ac7e777dd3d118d09dce4f66beffc1a17e428edcf3c359849a26ade02f3936",
+  "bytes": 5141,
+  "weights_downloaded": false,
+  "usage": "Source-only CPU config admission fixture. No checkpoint weights or CUDA are read by its tests."
+}

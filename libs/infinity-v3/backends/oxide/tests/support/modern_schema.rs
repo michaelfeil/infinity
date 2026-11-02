@@ -217,7 +217,7 @@ pub(super) fn setup() -> (Oracle, Arc<Context>, Arc<Stream>, Kernels) {
     let (major, minor) = context.compute_capability().unwrap();
     assert_eq!(cap, serde_json::json!([major, minor]));
     let stream = context.new_stream().unwrap();
-    let kernels = Kernels::load(&context).unwrap();
+    let kernels = Kernels::load(&context, 768).unwrap();
     (oracle, context, stream, kernels)
 }
 #[test]

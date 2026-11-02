@@ -98,7 +98,10 @@ fn validate_root(root: &str, names: &BTreeSet<String>) -> Result<(), BackendErro
             }
         }
         "" => {
-            if let Some(name) = names.iter().find(|name| name.starts_with("new.")) {
+            if let Some(name) = names
+                .iter()
+                .find(|name| name.starts_with("new.") && !name.starts_with("new.pooler."))
+            {
                 return Err(start(format!(
                     "incoherent GTE checkpoint namespace: {name} uses the new. root"
                 )));
@@ -115,28 +118,45 @@ fn validate_root(root: &str, names: &BTreeSet<String>) -> Result<(), BackendErro
 
 fn reject_unexpected(
     checkpoint: &Checkpoint,
-    root: &str,
     used: &BTreeSet<String>,
+    classifier: bool,
 ) -> Result<(), BackendError> {
-    let pooler_weight = format!("{root}pooler.dense.weight");
-    let pooler_bias = format!("{root}pooler.dense.bias");
+    let pooler_weight = "new.pooler.dense.weight";
+    let pooler_bias = "new.pooler.dense.bias";
+    let root_pooler_weight = "pooler.dense.weight";
+    let root_pooler_bias = "pooler.dense.bias";
     for name in checkpoint.names() {
-        if used.contains(name) || name == &pooler_weight || name == &pooler_bias {
+        if used.contains(name)
+            || name == pooler_weight
+            || name == pooler_bias
+            || name == root_pooler_weight
+            || name == root_pooler_bias
+        {
+            continue;
+        }
+        if classifier && (name == "classifier.weight" || name == "classifier.bias") {
             continue;
         }
         return Err(start(format!(
-            "unsupported GTE checkpoint tensor {name}; only the final pooler may be ignored"
+            "unsupported GTE checkpoint tensor {name}; only the final pooler and admitted classifier head may be ignored"
         )));
     }
     Ok(())
 }
 
-pub(crate) fn load(path: &Path, config: BertConfig) -> Result<BertWeights, BackendError> {
+pub(crate) fn load_with_checkpoint(
+    path: &Path,
+    config: BertConfig,
+) -> Result<(BertWeights, Checkpoint), BackendError> {
     if config.family != EncoderFamily::Gte {
         return Err(start(
             "rotary encoder checkpoint loader requires the GTE NewModel family",
         ));
     }
+    let classifier = config.architectures.iter().any(|architecture| {
+        architecture == "NewForSequenceClassification"
+            || architecture == "NewForTokenClassification"
+    });
     let checkpoint = Checkpoint::open(path)?;
     let names = checkpoint.names().cloned().collect::<BTreeSet<_>>();
     let root = select_root(config.family, &names)?;
@@ -270,17 +290,20 @@ pub(crate) fn load(path: &Path, config: BertConfig) -> Result<BertWeights, Backe
             output_beta,
         });
     }
-    reject_unexpected(&checkpoint, root, &used)?;
-    Ok(BertWeights {
-        relative_bias: None,
-        config,
-        word,
-        position,
-        token_type,
-        gamma,
-        beta,
-        layers,
-    })
+    reject_unexpected(&checkpoint, &used, classifier)?;
+    Ok((
+        BertWeights {
+            relative_bias: None,
+            config,
+            word,
+            position,
+            token_type,
+            gamma,
+            beta,
+            layers,
+        },
+        checkpoint,
+    ))
 }
 
 #[cfg(test)]
@@ -569,6 +592,61 @@ mod tests {
             &[("classifier.weight", vec![2, HIDDEN])],
         );
         assert!(fixture.error().contains("only the final pooler"));
+    }
+
+    #[test]
+    fn admits_gte_sequence_classifier_head_and_pooler_namespaces() {
+        let fixture = Fixture::new();
+        fixture.config(serde_json::json!({
+            "architectures": ["NewForSequenceClassification"]
+        }));
+        fixture.weights(
+            "",
+            Dtype::F32,
+            &[],
+            &[
+                ("classifier.weight", vec![1, HIDDEN]),
+                ("classifier.bias", vec![1]),
+                ("new.pooler.dense.weight", vec![HIDDEN, HIDDEN]),
+                ("new.pooler.dense.bias", vec![HIDDEN]),
+                ("pooler.dense.weight", vec![HIDDEN, HIDDEN]),
+                ("pooler.dense.bias", vec![HIDDEN]),
+            ],
+        );
+        let (weights, checkpoint) = BertWeights::load_classifier(&fixture.0).unwrap();
+        assert_eq!(
+            weights.config.architectures,
+            vec!["NewForSequenceClassification".to_owned()]
+        );
+        let head =
+            crate::classifier_head::ClassifierHeadHost::load(&checkpoint, &weights.config).unwrap();
+        assert_eq!(
+            head.readout.task,
+            crate::classifier_head::ClassifierTask::Sequence
+        );
+        assert_eq!(head.readout.width, 1);
+        assert!(head.first.is_some());
+        assert!(crate::classifier_head::validate_admission(&fixture.0, None).is_ok());
+
+        let token = Fixture::new();
+        token.config(serde_json::json!({
+            "architectures": ["NewForTokenClassification"]
+        }));
+        token.weights(
+            "",
+            Dtype::F32,
+            &[],
+            &[
+                ("classifier.weight", vec![1, HIDDEN]),
+                ("classifier.bias", vec![1]),
+            ],
+        );
+        let (token_weights, token_checkpoint) = BertWeights::load_classifier(&token.0).unwrap();
+        assert!(crate::classifier_head::ClassifierHeadHost::load(
+            &token_checkpoint,
+            &token_weights.config,
+        )
+        .is_err());
     }
 
     #[test]

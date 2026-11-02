@@ -446,10 +446,6 @@ async fn initialize_model(
         }
         infinity_v3_backend::ModelType::Embedding(pool) => ModelType::Embedding(EmbeddingModel {
             pooling: if multi_vector {
-                anyhow::ensure!(
-                    backend_kind == infinity_v3_backend::BackendKind::Libtorch,
-                    "ColBERT requires the LibTorch backend"
-                );
                 "colbert".into()
             } else {
                 pool.to_string()

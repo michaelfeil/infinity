@@ -6,6 +6,7 @@
 //! creates checked metadata views into the safetensors shards; it does not read
 //! or materialize tensor payloads. The eventual engine owns uploads and math.
 
+use crate::classifier_head::{ClassifierPooling, ClassifierTask, HeadActivation};
 use crate::model::{
     read_json, BertConfig, Checkpoint, EncoderFamily, EncoderRecipe, FeedForwardRecipe,
     NormArithmetic, PositionRecipe, RotaryRecipe, WeightSource,
@@ -16,8 +17,8 @@ use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::path::Path;
 
-const MODERN_HIDDEN: usize = 768;
-const MODERN_HEADS: usize = 12;
+const MODERN_HEAD_DIM: usize = 64;
+const SUPPORTED_MODERN_WIDTHS: [usize; 2] = [768, 1024];
 const MAX_LAYERS: usize = 256;
 const MIN_POSITIONS: usize = 1;
 const MAX_POSITIONS: usize = 8192;
@@ -44,6 +45,9 @@ struct RawModernConfig {
     type_vocab_size: Option<usize>,
     norm_eps: Option<f64>,
     hidden_activation: Option<String>,
+    classifier_pooling: Option<String>,
+    classifier_activation: Option<String>,
+    classifier_bias: Option<bool>,
     attention_bias: Option<bool>,
     mlp_bias: Option<bool>,
     norm_bias: Option<bool>,
@@ -100,6 +104,14 @@ fn require_u32_shape(shape: &[usize]) -> Result<(), BackendError> {
     Ok(())
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct ModernClassifierPolicy {
+    pub(crate) task: ClassifierTask,
+    pub(crate) pooling: ClassifierPooling,
+    pub(crate) activation: HeadActivation,
+    pub(crate) classifier_bias: Option<bool>,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct ModernConfig {
     pub geometry: BertConfig,
@@ -107,33 +119,81 @@ pub(crate) struct ModernConfig {
     pub local_theta: f64,
     pub global_every: usize,
     pub local_radius: usize,
+    pub classifier: Option<ModernClassifierPolicy>,
+}
+
+fn classifier_pooling(value: &str) -> Result<ClassifierPooling, BackendError> {
+    match value {
+        "cls" | "first" => Ok(ClassifierPooling::First),
+        "mean" => Ok(ClassifierPooling::Mean),
+        "last_token" | "last-token" => Ok(ClassifierPooling::Last),
+        other => Err(start(format!(
+            "unsupported modernbert classifier_pooling {other}; expected cls, mean or last_token"
+        ))),
+    }
+}
+
+fn classifier_activation(value: &str) -> Result<HeadActivation, BackendError> {
+    match value {
+        "gelu" | "gelu_pytorch_tanh" | "gelu_new" | "gelu_fast" | "gelu_approx" => {
+            Ok(HeadActivation::GeluTanh)
+        }
+        "relu" => Ok(HeadActivation::Relu),
+        "silu" => Ok(HeadActivation::Silu),
+        other => Err(start(format!(
+            "unsupported modernbert classifier_activation {other}; expected gelu, relu or silu"
+        ))),
+    }
 }
 
 impl ModernConfig {
     pub(crate) fn load(path: &Path) -> Result<Self, BackendError> {
         let raw: RawModernConfig = read_json(&path.join("config.json"))?;
-        Self::from_raw(raw)
+        Self::from_raw(raw, false)
     }
 
-    fn from_raw(raw: RawModernConfig) -> Result<Self, BackendError> {
+    pub(crate) fn load_classifier(path: &Path) -> Result<Self, BackendError> {
+        let raw: RawModernConfig = read_json(&path.join("config.json"))?;
+        Self::from_raw(raw, true)
+    }
+
+    fn from_raw(raw: RawModernConfig, classifier: bool) -> Result<Self, BackendError> {
         if raw.model_type != "modernbert" {
             return Err(start(format!(
                 "unsupported modernbert model_type {}; expected modernbert",
                 raw.model_type
             )));
         }
-        if let Some(architectures) = raw.architectures.as_ref() {
-            for architecture in architectures {
-                if !matches!(
-                    architecture.as_str(),
-                    "ModernBertModel" | "ModernBertForMaskedLM"
-                ) {
+        let classifier_task = if classifier {
+            let [architecture] = raw.architectures.as_deref().unwrap_or_default() else {
+                return Err(start(
+                    "modernbert classifier admission requires exactly one ModernBertForSequenceClassification or ModernBertForTokenClassification architecture",
+                ));
+            };
+            match architecture.as_str() {
+                "ModernBertForSequenceClassification" => Some(ClassifierTask::Sequence),
+                "ModernBertForTokenClassification" => Some(ClassifierTask::Tokens),
+                other => {
                     return Err(start(format!(
-                        "unsupported modernbert architecture {architecture}; expected ModernBertModel or ModernBertForMaskedLM"
-                    )));
+                        "unsupported modernbert classifier architecture {other}; expected ModernBertForSequenceClassification or ModernBertForTokenClassification"
+                    )))
                 }
             }
-        }
+        } else {
+            if let Some(architectures) = raw.architectures.as_ref() {
+                for architecture in architectures {
+                    if !matches!(
+                        architecture.as_str(),
+                        "ModernBertModel" | "ModernBertForMaskedLM"
+                    ) {
+                        return Err(start(format!(
+                            "unsupported modernbert architecture {architecture}; expected ModernBertModel or ModernBertForMaskedLM"
+                        )));
+                    }
+                }
+            }
+            None
+        };
 
         let hidden_size = required_usize(raw.hidden_size, "hidden_size")?;
         let intermediate_size = required_usize(raw.intermediate_size, "intermediate_size")?;
@@ -143,14 +203,17 @@ impl ModernConfig {
             required_usize(raw.max_position_embeddings, "max_position_embeddings")?;
         let vocab_size = required_usize(raw.vocab_size, "vocab_size")?;
 
-        if hidden_size != MODERN_HIDDEN {
+        if !SUPPORTED_MODERN_WIDTHS.contains(&hidden_size) {
             return Err(start(format!(
-                "modernbert hidden_size must be {MODERN_HIDDEN}, got {hidden_size}"
+                "modernbert hidden_size must be one of {SUPPORTED_MODERN_WIDTHS:?}, got {hidden_size}"
             )));
         }
-        if num_attention_heads != MODERN_HEADS {
+        if num_attention_heads == 0
+            || !hidden_size.is_multiple_of(num_attention_heads)
+            || hidden_size / num_attention_heads != MODERN_HEAD_DIM
+        {
             return Err(start(format!(
-                "modernbert num_attention_heads must be {MODERN_HEADS}, got {num_attention_heads}"
+                "modernbert num_attention_heads {num_attention_heads} with hidden_size {hidden_size} must yield head dimension {MODERN_HEAD_DIM}"
             )));
         }
         if num_hidden_layers == 0 || num_hidden_layers > MAX_LAYERS {
@@ -186,6 +249,17 @@ impl ModernConfig {
         if let Some(value) = raw.hidden_activation.as_deref() {
             check_activation(value, "hidden_activation")?;
         }
+        let classifier_policy = match classifier_task {
+            Some(task) => Some(ModernClassifierPolicy {
+                task,
+                pooling: classifier_pooling(raw.classifier_pooling.as_deref().unwrap_or("cls"))?,
+                activation: classifier_activation(
+                    raw.classifier_activation.as_deref().unwrap_or("gelu"),
+                )?,
+                classifier_bias: raw.classifier_bias,
+            }),
+            None => None,
+        };
         for (name, value) in [
             ("attention_bias", raw.attention_bias),
             ("mlp_bias", raw.mlp_bias),
@@ -316,6 +390,7 @@ impl ModernConfig {
             local_theta,
             global_every,
             local_radius,
+            classifier: classifier_policy,
         })
     }
 }
@@ -393,6 +468,7 @@ pub(crate) struct ModernWeights {
     pub embedding_gamma: WeightSource,
     pub final_gamma: WeightSource,
     pub layers: Vec<ModernLayerWeights>,
+    pub classifier: Option<crate::classifier_head::ClassifierHeadHost>,
 }
 
 fn source(
@@ -489,9 +565,16 @@ fn validate_mlm_headers(
     Ok(())
 }
 
-fn reject_unexpected(checkpoint: &Checkpoint, used: &BTreeSet<String>) -> Result<(), BackendError> {
+fn reject_unexpected(
+    checkpoint: &Checkpoint,
+    used: &BTreeSet<String>,
+    classifier: bool,
+) -> Result<(), BackendError> {
     for name in checkpoint.names() {
         if used.contains(name) || is_mlm_header(name) {
+            continue;
+        }
+        if classifier && (name.starts_with("classifier.") || name.starts_with("head.")) {
             continue;
         }
         if name.ends_with(".bias") {
@@ -500,7 +583,7 @@ fn reject_unexpected(checkpoint: &Checkpoint, used: &BTreeSet<String>) -> Result
             )));
         }
         return Err(start(format!(
-            "unsupported modernbert checkpoint tensor {name}; only optional MLM head tensors may be ignored"
+            "unsupported modernbert checkpoint tensor {name}; only optional trained head tensors may be ignored"
         )));
     }
     Ok(())
@@ -528,7 +611,19 @@ pub(crate) fn canonical_up_gate(
 
 impl ModernWeights {
     pub(crate) fn load(path: &Path) -> Result<Self, BackendError> {
-        let config = ModernConfig::load(path)?;
+        Self::load_internal(path, false)
+    }
+
+    pub(crate) fn load_classifier(path: &Path) -> Result<Self, BackendError> {
+        Self::load_internal(path, true)
+    }
+
+    fn load_internal(path: &Path, classifier: bool) -> Result<Self, BackendError> {
+        let config = if classifier {
+            ModernConfig::load_classifier(path)?
+        } else {
+            ModernConfig::load(path)?
+        };
         crate::model::validate_modules(path)?;
 
         let checkpoint = Checkpoint::open(path)?;
@@ -644,7 +739,15 @@ impl ModernWeights {
                 used.len()
             )));
         }
-        reject_unexpected(&checkpoint, &used)?;
+        reject_unexpected(&checkpoint, &used, classifier)?;
+        let classifier_head = if classifier {
+            Some(crate::classifier_head::ClassifierHeadHost::load_modern(
+                &checkpoint,
+                &config,
+            )?)
+        } else {
+            None
+        };
 
         Ok(Self {
             config,
@@ -652,6 +755,7 @@ impl ModernWeights {
             embedding_gamma,
             final_gamma,
             layers,
+            classifier: classifier_head,
         })
     }
 }
@@ -1307,6 +1411,123 @@ mod tests {
         assert_eq!(
             config.geometry.recipe.feed_forward,
             FeedForwardRecipe::GatedGeluUpFirst
+        );
+    }
+
+    fn wide_entries(
+        layers: usize,
+        root: &str,
+        hidden: usize,
+        intermediate: usize,
+    ) -> Vec<(String, Vec<usize>, String)> {
+        let mut entries = vec![
+            (
+                format!("{root}embeddings.tok_embeddings.weight"),
+                vec![VOCAB, hidden],
+                "word".into(),
+            ),
+            (
+                format!("{root}embeddings.norm.weight"),
+                vec![hidden],
+                "embedding_gamma".into(),
+            ),
+            (
+                format!("{root}final_norm.weight"),
+                vec![hidden],
+                "final_gamma".into(),
+            ),
+        ];
+        for layer in 0..layers {
+            let prefix = format!("{root}layers.{layer}");
+            for (suffix, shape, canonical) in [
+                (
+                    "attn.Wqkv.weight",
+                    vec![3 * hidden, hidden],
+                    format!("layer{layer}.qkv"),
+                ),
+                (
+                    "attn.Wo.weight",
+                    vec![hidden, hidden],
+                    format!("layer{layer}.attention"),
+                ),
+                (
+                    "mlp.Wi.weight",
+                    vec![2 * intermediate, hidden],
+                    format!("layer{layer}.wi"),
+                ),
+                (
+                    "mlp.Wo.weight",
+                    vec![hidden, intermediate],
+                    format!("layer{layer}.output"),
+                ),
+                (
+                    "mlp_norm.weight",
+                    vec![hidden],
+                    format!("layer{layer}.mlp_gamma"),
+                ),
+            ] {
+                entries.push((format!("{prefix}.{suffix}"), shape, canonical));
+            }
+            if layer > 0 {
+                entries.push((
+                    format!("{prefix}.attn_norm.weight"),
+                    vec![hidden],
+                    format!("layer{layer}.attention_gamma"),
+                ));
+            }
+        }
+        entries
+    }
+
+    #[test]
+    fn loads_modern_token_classifier_head_at_wide_1024_geometry() {
+        let fixture = Fixture::new(1);
+        fixture.config(
+            1,
+            serde_json::json!({
+                "architectures": ["ModernBertForTokenClassification"],
+                "hidden_size": 1024,
+                "num_attention_heads": 16,
+                "intermediate_size": 2624,
+                "classifier_bias": false,
+                "classifier_pooling": "mean",
+                "classifier_activation": "gelu"
+            }),
+        );
+        let mut entries = wide_entries(1, "model.", 1024, 2624);
+        entries.extend([
+            (
+                "classifier.weight".into(),
+                vec![3, 1024],
+                "classifier_weight".into(),
+            ),
+            (
+                "head.dense.weight".into(),
+                vec![1024, 1024],
+                "head_dense".into(),
+            ),
+            ("head.norm.weight".into(), vec![1024], "head_norm".into()),
+        ]);
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        fixture.write_entries(entries, Dtype::F32);
+        let weights = ModernWeights::load_classifier(&fixture.0).unwrap();
+        assert_eq!(weights.config.geometry.hidden_size, 1024);
+        assert_eq!(weights.config.geometry.num_attention_heads, 16);
+        assert_eq!(weights.config.geometry.intermediate_size, 2624);
+        let head = weights.classifier.as_ref().unwrap();
+        assert_eq!(head.readout.task, ClassifierTask::Tokens);
+        assert_eq!(head.readout.width, 3);
+        assert_eq!(head.hidden, 1024);
+        assert!(head.first.is_some());
+        assert!(crate::classifier_head::validate_admission(&fixture.0, None).is_ok());
+        assert!(crate::classifier_head::validate_admission(
+            &fixture.0,
+            Some(vec!["2_Dense".into()])
+        )
+        .is_err());
+        assert!(
+            ModernWeights::load(&fixture.0).is_err(),
+            "ordinary modern embeddings must reject classifier architectures"
         );
     }
 

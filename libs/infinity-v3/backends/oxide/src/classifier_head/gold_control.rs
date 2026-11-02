@@ -256,6 +256,47 @@ fn batch(rows: usize, mode: ReadoutMode) -> Batch {
     }
 }
 #[allow(clippy::too_many_arguments)]
+fn run_project(
+    plan: &mut HeadLinearPlan,
+    device: &DeviceHeadLinear,
+    kernels: &ClassifierKernels,
+    provider: &LtProvider,
+    blas: &Blas,
+    stream: &Arc<Stream>,
+    input: &DeviceBuffer<Bf16>,
+    rows: usize,
+    output: &mut DeviceBuffer<Bf16>,
+) {
+    let prepared = unsafe {
+        plan.prepare(
+            provider,
+            blas,
+            rows,
+            stream,
+            input,
+            &device.weight,
+            &device.bias,
+            output,
+        )
+    }
+    .unwrap();
+    unsafe {
+        plan.launch(
+            &prepared,
+            provider,
+            blas,
+            &kernels.bias_seed,
+            stream,
+            input,
+            &device.weight,
+            &device.bias,
+            output,
+        )
+    }
+    .unwrap();
+}
+
+#[allow(clippy::too_many_arguments)]
 fn project(
     head: &mut ClassifierHead,
     pooler: bool,
@@ -266,39 +307,34 @@ fn project(
     rows: usize,
     output: &mut DeviceBuffer<Bf16>,
 ) {
-    let linear = if pooler {
-        head.pooler.as_mut().expect("stored trained pooler")
-    } else {
-        &mut head.classifier
-    };
-    let prepared = unsafe {
-        linear.plan.prepare(
+    if pooler {
+        let stage = head.first.as_mut().expect("stored trained pooler");
+        run_project(
+            &mut stage.plan,
+            &stage.device,
+            &head.kernels,
             provider,
             blas,
+            stream,
+            input,
             rows,
-            stream,
-            input,
-            &linear.device.weight,
-            &linear.device.bias,
             output,
-        )
-    }
-    .unwrap();
-    unsafe {
-        linear.plan.launch(
-            &prepared,
+        );
+    } else {
+        run_project(
+            &mut head.classifier.plan,
+            &head.classifier.device,
+            &head.kernels,
             provider,
             blas,
-            &head.kernels.bias_seed,
             stream,
             input,
-            &linear.device.weight,
-            &linear.device.bias,
+            rows,
             output,
-        )
+        );
     }
-    .unwrap();
 }
+
 #[allow(clippy::too_many_arguments)]
 fn full(
     head: &mut ClassifierHead,
@@ -314,7 +350,7 @@ fn full(
     let mut scratch = ClassifierScratchBuffers::new(stream.clone(), layout).unwrap();
     let b = batch(rows, mode);
     unsafe { head.prepare(provider, blas, &b, mode, stream, input, &mut scratch) }.unwrap();
-    unsafe { head.enqueue(provider, blas, stream, input, bounds, &mut scratch) }.unwrap();
+    unsafe { head.enqueue(provider, blas, stream, input, bounds, 0, &mut scratch) }.unwrap();
     let mut out = scratch.logits().to_host_vec(stream).unwrap();
     out.truncate(rows * head.readout.width);
     out
@@ -455,7 +491,7 @@ fn trained_heads_match_full_native_default_bf16_stages() {
         let config = crate::model::BertConfig::load_classifier(&model).unwrap();
         let checkpoint = Checkpoint::open(&model).unwrap();
         let host = ClassifierHeadHost::load(&checkpoint, &config).unwrap();
-        assert!(host.pooler.is_some());
+        assert!(host.first.is_some());
         let mut head = ClassifierHead::new(host, &context, &stream, &provider).unwrap();
         context.bind_to_thread().unwrap();
         for (_, _, _, _, n, data, name) in assets.iter().filter(|x| x.0 == key) {
@@ -554,7 +590,7 @@ fn trained_heads_match_full_native_default_bf16_stages() {
             checked += 1;
             let queries = (
                 head.classifier.plan.native_lt_queries(&provider),
-                head.pooler
+                head.first
                     .as_ref()
                     .unwrap()
                     .plan
@@ -562,7 +598,7 @@ fn trained_heads_match_full_native_default_bf16_stages() {
             );
             let entries = (
                 head.classifier.plan.native_lt_cache_len(&provider),
-                head.pooler
+                head.first
                     .as_ref()
                     .unwrap()
                     .plan
@@ -585,7 +621,7 @@ fn trained_heads_match_full_native_default_bf16_stages() {
                 queries,
                 (
                     head.classifier.plan.native_lt_queries(&provider),
-                    head.pooler
+                    head.first
                         .as_ref()
                         .unwrap()
                         .plan
@@ -597,7 +633,7 @@ fn trained_heads_match_full_native_default_bf16_stages() {
                 entries,
                 (
                     head.classifier.plan.native_lt_cache_len(&provider),
-                    head.pooler
+                    head.first
                         .as_ref()
                         .unwrap()
                         .plan

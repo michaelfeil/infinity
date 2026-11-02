@@ -16,9 +16,9 @@ use cuda_core::{Context, DeviceBuffer, Function, Stream};
 use infinity_v3_backend_core::BackendError;
 use std::{mem::ManuallyDrop, path::Path, sync::Arc};
 
+#[cfg(test)]
 const HEADS: usize = 12;
 const DIM: usize = 64;
-const HIDDEN: usize = HEADS * DIM;
 
 /// Column-major C[2span,tokens] = R[2span,64] Q[64,tokens], per head.
 /// Values can be contiguous Q rows or original K inside packed QKV rows.
@@ -34,17 +34,30 @@ pub(crate) struct RelativeDot {
     pub(crate) output_elements: usize,
 }
 impl RelativeDot {
+    #[cfg(test)]
     pub(crate) fn new(tokens: usize, span: usize, values_row: usize) -> Result<Self, BackendError> {
-        if tokens == 0 || span == 0 || span > 4096 || values_row < HIDDEN {
+        Self::for_heads(tokens, span, values_row, HEADS)
+    }
+    pub(crate) fn for_heads(
+        tokens: usize,
+        span: usize,
+        values_row: usize,
+        heads: usize,
+    ) -> Result<Self, BackendError> {
+        if !matches!(heads, 6 | 12 | 16) {
+            return Err(infer("Unsupported DeBERTa relative head count"));
+        }
+        let hidden = product(heads, DIM)?;
+        if tokens == 0 || span == 0 || span > 4096 || values_row < hidden {
             return Err(infer("Invalid DeBERTa relative matrix geometry"));
         }
         let columns = product(span, 2)?;
         let values_elements = product(tokens - 1, values_row)?
-            .checked_add(HIDDEN)
+            .checked_add(hidden)
             .ok_or_else(|| infer("DeBERTa value extent overflow"))?;
-        let projection_elements = product(columns, HIDDEN)?;
+        let projection_elements = product(columns, hidden)?;
         let output_stride = product(tokens, columns)?;
-        let output_elements = product(HEADS, output_stride)?;
+        let output_elements = product(heads, output_stride)?;
         u32_size(output_elements)?;
         i32::try_from(output_elements).map_err(infer)?;
         Ok(Self {
@@ -68,7 +81,7 @@ struct Kernels {
     norm: Function,
 }
 impl Kernels {
-    fn load(context: &Arc<Context>) -> Result<Self, BackendError> {
+    fn load(context: &Arc<Context>, hidden: usize) -> Result<Self, BackendError> {
         let path = std::env::var_os(infinity_v3_config::infinity_env!("OXIDE_KERNEL_MODULE"))
             .ok_or_else(|| start("DeBERTa requires INFINITY_OXIDE_KERNEL_MODULE"))?;
         let path = Path::new(&path);
@@ -96,7 +109,11 @@ impl Kernels {
                 .load_function("infinity_deberta_signed_buckets")
                 .map_err(start)?,
             norm: module
-                .load_function("infinity_deberta_layer_norm_768")
+                .load_function(if hidden == 768 {
+                    "infinity_deberta_layer_norm_768"
+                } else {
+                    "infinity_deberta_plain_norm_bf16_aten"
+                })
                 .map_err(start)?,
         })
     }
@@ -110,8 +127,16 @@ pub(crate) struct Scratch {
     released: bool,
 }
 impl Scratch {
+    #[cfg(test)]
     pub(crate) fn bytes(tokens: usize, span: usize) -> Result<usize, BackendError> {
-        let dot = RelativeDot::new(tokens, span, HIDDEN)?;
+        Self::bytes_for_heads(tokens, span, HEADS)
+    }
+    pub(crate) fn bytes_for_heads(
+        tokens: usize,
+        span: usize,
+        heads: usize,
+    ) -> Result<usize, BackendError> {
+        let dot = RelativeDot::for_heads(tokens, span, product(heads, DIM)?, heads)?;
         let buckets = tokens
             .checked_mul(2)
             .and_then(|n| n.checked_sub(1))
@@ -124,8 +149,9 @@ impl Scratch {
         stream: &Arc<Stream>,
         tokens: usize,
         span: usize,
+        heads: usize,
     ) -> Result<Self, BackendError> {
-        let dot = RelativeDot::new(tokens, span, HIDDEN)?;
+        let dot = RelativeDot::for_heads(tokens, span, product(heads, DIM)?, heads)?;
         let bucket_count = tokens
             .checked_mul(2)
             .and_then(|n| n.checked_sub(1))
@@ -263,6 +289,13 @@ impl PreparedDeberta {
         lt: &LtProvider,
     ) -> Result<Self, BackendError> {
         let config = host.config.clone();
+        let hidden = config.geometry.hidden_size;
+        let heads = config.geometry.num_attention_heads;
+        if !config.relative_attention {
+            return Err(start(
+                "Prepared DeBERTa relative attention requires relative_attention=true",
+            ));
+        }
         validate_relative_layers(
             &host.relative_layers,
             host.layers.len(),
@@ -271,12 +304,15 @@ impl PreparedDeberta {
         )?;
         let logarithmic = config.logarithmic;
         let rows = product(config.span, 2)?;
-        let elements = product(rows, HIDDEN)?;
-        let kernels = Arc::new(Kernels::load(&context)?);
+        let elements = product(rows, hidden)?;
+        let kernels = Arc::new(Kernels::load(&context, hidden)?);
         let divisor = ((1 + usize::from(config.c2p) + usize::from(config.p2c)) * DIM) as f32;
         let scale = half::bf16::from_f32(divisor.sqrt()).to_f32();
-        let (provider, score_mode) =
-            Fa4Deberta::new(context, stream.clone(), root, config.span, scale)?;
+        let (provider, score_mode) = if heads == 12 {
+            Fa4Deberta::new(context, stream.clone(), root, config.span, scale)?
+        } else {
+            Fa4Deberta::new_with_heads(context, stream.clone(), root, config.span, scale, heads)?
+        };
         let mut layers = Vec::new();
         layers.try_reserve_exact(host.layers.len()).map_err(start)?;
         let mut staging = Vec::new();
@@ -306,7 +342,11 @@ impl PreparedDeberta {
         // drains or retains pinned staging on failure. LtPlan does likewise for
         // descriptors. Consumers can follow each upload without a cold fence.
         let mut uploader = WeightUploader::new((*result.stream).clone())?;
-        result.push_source(&mut uploader, &host.relative)?;
+        let relative = host
+            .relative
+            .as_ref()
+            .ok_or_else(|| start("DeBERTa relative embedding weight is missing"))?;
+        result.push_source(&mut uploader, relative)?;
         if let (Some(gamma), Some(beta)) = (&host.relative_gamma, &host.relative_beta) {
             let gi = result.push_source(&mut uploader, gamma)?;
             let bi = result.push_source(&mut uploader, beta)?;
@@ -316,12 +356,20 @@ impl PreparedDeberta {
             let mut beta = result.stage(bi)?.cu_deviceptr();
             let mut output = input;
             let mut nrows = u32_size(rows)?;
-            let mut width = HIDDEN as u32;
+            let mut width = hidden as u32;
             let mut eps = host.config.geometry.layer_norm_eps as f32;
             launch_threads(
                 &result.kernels.norm,
                 &result.stream,
-                (nrows.div_ceil(4), 1, 1),
+                (
+                    if hidden == 768 {
+                        nrows.div_ceil(4)
+                    } else {
+                        nrows
+                    },
+                    1,
+                    1,
+                ),
                 128,
                 0,
                 &mut [
@@ -337,7 +385,7 @@ impl PreparedDeberta {
                 ],
             )?;
         }
-        let mut plan = lt.prepare_native_small_bias_shape::<Bf16>(HIDDEN, HIDDEN)?;
+        let mut plan = lt.prepare_native_small_bias_shape::<Bf16>(hidden, hidden)?;
         lt.set_logical_rows(&mut plan, rows)
             .map_err(|error| start(format!("DeBERTa relative plan: {error:?}")))?;
         for (index, layer) in host.relative_layers.iter().enumerate() {
@@ -402,7 +450,7 @@ impl PreparedDeberta {
                 let mut input = temporary.cu_deviceptr();
                 let mut output = output.cu_deviceptr();
                 let mut count = u32_size(rows)?;
-                let mut width = HIDDEN as u32;
+                let mut width = hidden as u32;
                 launch(
                     &result.kernels.transpose,
                     &result.stream,
@@ -488,6 +536,8 @@ impl PreparedDeberta {
         batch: usize,
         maximum: usize,
     ) -> Result<(), BackendError> {
+        let hidden = self.config.geometry.hidden_size;
+        let heads = self.config.geometry.num_attention_heads;
         self.provider.check_stream(stream)?;
         if tokens > self.provider.token_limit() {
             return Err(infer("DeBERTa native table token limit exceeded"));
@@ -495,7 +545,7 @@ impl PreparedDeberta {
         if blas.stream().cu_stream() != stream.cu_stream() {
             return Err(infer("DeBERTa BLAS stream mismatch"));
         }
-        let active = product(tokens, HIDDEN)?;
+        let active = product(tokens, hidden)?;
         if product(active, 3)? > packed_elements {
             return Err(infer("DeBERTa packed QKV scratch too small"));
         }
@@ -504,7 +554,7 @@ impl PreparedDeberta {
         let mut k = key;
         let mut v = value;
         let mut elements = u32_size(active)?;
-        let mut width = HIDDEN as u32;
+        let mut width = hidden as u32;
         let mut scale = self.scale;
         launch(
             &self.kernels.unpack,
@@ -526,20 +576,20 @@ impl PreparedDeberta {
             .get(layer)
             .ok_or_else(|| infer("Missing DeBERTa relative layer"))?;
         for (projection, values, row_stride, destination) in [
-            (layer.key.as_ref(), query, HIDDEN, &scratch.c2p),
+            (layer.key.as_ref(), query, hidden, &scratch.c2p),
             (
                 layer.query.as_ref(),
                 packed
-                    .checked_add(u64::try_from(product(HIDDEN, 2)?).map_err(infer)?)
+                    .checked_add(u64::try_from(product(hidden, 2)?).map_err(infer)?)
                     .ok_or_else(|| infer("DeBERTa raw K address overflow"))?,
-                3 * HIDDEN,
+                3 * hidden,
                 &scratch.p2c,
             ),
         ] {
             let Some(projection) = projection else {
                 continue;
             };
-            let dot = RelativeDot::new(tokens, self.config.span, row_stride)?;
+            let dot = RelativeDot::for_heads(tokens, self.config.span, row_stride, heads)?;
             if projection.len() < dot.projection_elements || destination.len() < dot.output_elements
             {
                 return Err(infer("DeBERTa relative score scratch too small"));
@@ -560,7 +610,7 @@ impl PreparedDeberta {
                     dot.projection_stride,
                     DIM as i64,
                     dot.output_stride,
-                    HEADS as i32,
+                    heads as i32,
                 )?;
             }
             if self.score_mode == ColdScoreMode::Normalized {
@@ -622,6 +672,24 @@ impl Drop for PreparedDeberta {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn relative_views_and_accounting_follow_actual_heads_without_padding() {
+        for heads in [6, 12, 16] {
+            let hidden = heads * 64;
+            for tokens in [1, 7, 129] {
+                let dot = RelativeDot::for_heads(tokens, 256, 3 * hidden, heads).unwrap();
+                assert_eq!(dot.output_elements, heads * tokens * 512);
+                assert_eq!(dot.projection_elements, hidden * 512);
+                assert_eq!(dot.values_elements, (tokens - 1) * 3 * hidden + hidden);
+                assert_eq!(
+                    Scratch::bytes_for_heads(tokens, 256, heads).unwrap(),
+                    dot.output_elements * 4 + (2 * tokens - 1) * 4
+                );
+                assert!(RelativeDot::for_heads(tokens, 256, hidden - 1, heads).is_err());
+            }
+        }
+        assert!(RelativeDot::for_heads(7, 256, 768, 8).is_err());
+    }
     #[test]
     fn relative_views_preserve_native_head_and_packed_k_coordinates() {
         for tokens in [1, 7, 127, 128, 129, 1024] {

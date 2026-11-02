@@ -163,6 +163,7 @@ const PREFERENCE_MIN_ALIGNMENT_B_BYTES: i32 = 6;
 const PREFERENCE_MIN_ALIGNMENT_C_BYTES: i32 = 7;
 const PREFERENCE_MIN_ALIGNMENT_D_BYTES: i32 = 8;
 const EPILOGUE_BIAS: i32 = 4;
+const EPILOGUE_RELU_BIAS: i32 = 6;
 const EPILOGUE_GELU_BIAS: i32 = 36;
 
 const SEED_ROWS: usize = 128;
@@ -954,13 +955,41 @@ impl LtProvider {
         output: usize,
         rows: usize,
     ) -> Result<LtPlan<E>, BackendError> {
+        self.prepare_native_default_epilogue_shape(input, output, rows, Epilogue::Bias)
+    }
+
+    pub(crate) fn prepare_native_default_gelu_bias_shape<E: Element>(
+        &self,
+        input: usize,
+        output: usize,
+        rows: usize,
+    ) -> Result<LtPlan<E>, BackendError> {
+        self.prepare_native_default_epilogue_shape(input, output, rows, Epilogue::GeluBias)
+    }
+
+    pub(crate) fn prepare_native_default_relu_bias_shape<E: Element>(
+        &self,
+        input: usize,
+        output: usize,
+        rows: usize,
+    ) -> Result<LtPlan<E>, BackendError> {
+        self.prepare_native_default_epilogue_shape(input, output, rows, Epilogue::ReluBias)
+    }
+
+    fn prepare_native_default_epilogue_shape<E: Element>(
+        &self,
+        input: usize,
+        output: usize,
+        rows: usize,
+        epilogue: Epilogue,
+    ) -> Result<LtPlan<E>, BackendError> {
         if self.core.workspace.bytes < NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES {
             return Err(super::infer(
                 "native-default cuBLASLt provider does not own the required backing workspace",
             ));
         }
         let geometry = Geometry::contiguous_rows::<E>(input, output, rows)?;
-        let mut plan = self.allocate_plan(geometry, Epilogue::Bias)?;
+        let mut plan = self.allocate_plan(geometry, epilogue)?;
         let workspace_limit = NATIVE_DEFAULT_WORKSPACE_PREFERENCE_BYTES as u64;
         set_preference(
             &plan.api,
@@ -1871,6 +1900,7 @@ fn after_rollback(
 pub(crate) enum Epilogue {
     Bias,
     GeluBias,
+    ReluBias,
 }
 
 impl Epilogue {
@@ -1878,6 +1908,7 @@ impl Epilogue {
         match self {
             Self::Bias => EPILOGUE_BIAS,
             Self::GeluBias => EPILOGUE_GELU_BIAS,
+            Self::ReluBias => EPILOGUE_RELU_BIAS,
         }
     }
 }
@@ -2875,6 +2906,8 @@ mod tests {
         assert_eq!(MATMUL_DESC_BIAS_DATA_TYPE, 26);
         assert_eq!(PREFERENCE_MAX_WORKSPACE_BYTES, 1);
         assert_eq!(EPILOGUE_BIAS, 4);
+        assert_eq!(EPILOGUE_RELU_BIAS, 6);
+        assert_eq!(Epilogue::ReluBias.attribute(), 6);
         assert_eq!(EPILOGUE_GELU_BIAS, 36);
         assert_eq!((size_of::<Algo>(), align_of::<Algo>()), (64, 8));
         assert_eq!(
@@ -3007,6 +3040,13 @@ mod tests {
         let value = sum + E::decode(bias[column]);
         match epilogue {
             Epilogue::Bias => value,
+            Epilogue::ReluBias => {
+                if value < 0.0 {
+                    0.0
+                } else {
+                    value
+                }
+            }
             Epilogue::GeluBias => {
                 let inner = 0.797_884_6 * value * (1.0 + 0.044715 * value * value);
                 0.5 * value * (1.0 + inner.tanh())
@@ -3303,6 +3343,10 @@ mod tests {
         ] {
             let mut plan = match epilogue {
                 Epilogue::Bias => provider.prepare_bias_shape::<Bf16>(input, width),
+                Epilogue::ReluBias => provider.prepare(
+                    Geometry::contiguous::<Bf16>(input, width).unwrap(),
+                    Epilogue::ReluBias,
+                ),
                 Epilogue::GeluBias => provider.prepare_gelu_bias_shape::<Bf16>(input, width),
             }
             .unwrap();
@@ -3359,6 +3403,13 @@ mod tests {
                     let value = sum + Bf16::decode(host_bias[column]);
                     let expected = match epilogue {
                         Epilogue::Bias => value,
+                        Epilogue::ReluBias => {
+                            if value < 0.0 {
+                                0.0
+                            } else {
+                                value
+                            }
+                        }
                         Epilogue::GeluBias => {
                             let inner = 0.797_884_6 * value * (1.0 + 0.044715 * value * value);
                             0.5 * value * (1.0 + inner.tanh())

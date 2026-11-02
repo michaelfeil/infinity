@@ -496,6 +496,43 @@ impl Blas {
         })
     }
 
+    /// Native BF16 matmul without a fabricated bias epilogue. The private
+    /// handle keeps default math mode; shape/pointer validation occurs in the
+    /// caller's pre-enqueue LinearPlan binding.
+    ///
+    /// # Safety
+    /// The context must be bound, `arguments` must describe live nonaliasing
+    /// buffers in this handle's context, and all owners must survive the stream.
+    pub(crate) unsafe fn linear_native_default_bound(
+        &self,
+        arguments: &GemmArguments,
+    ) -> Result<(), BackendError> {
+        let (alpha, beta) = (1.0f32, 0.0f32);
+        check(unsafe {
+            (self.gemm)(
+                self.handle,
+                1,
+                0,
+                arguments.width,
+                arguments.rows,
+                arguments.input,
+                &alpha,
+                arguments.weight as *const c_void,
+                arguments.cuda_type,
+                arguments.weight_stride,
+                arguments.x as *const c_void,
+                arguments.cuda_type,
+                arguments.x_stride,
+                &beta,
+                arguments.output as *mut c_void,
+                arguments.cuda_type,
+                arguments.output_stride,
+                68,
+                CUBLAS_GEMM_DEFAULT_TENSOR_OP,
+            )
+        })
+    }
+
     /// Enqueue one prepared X W^T operation with borrowed, checked storage.
     ///
     /// # Safety

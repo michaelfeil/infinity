@@ -934,9 +934,16 @@ mod tests {
     }
 
     #[test]
-    fn source_inventory_keeps_legacy_78_and_appends_exactly_eight() {
+    fn source_inventory_keeps_base_78_with_additive_encoder_heads() {
+        const HEAD_ADDITIONS: [&str; 5] = [
+            "infinity_deberta_embedding_compose",
+            "infinity_deberta_conv_768",
+            "infinity_deberta_plain_norm_bf16_aten",
+            "infinity_plain_layer_norm_768_bf16_aten",
+            "infinity_splade_pool_bf16_f32",
+        ];
         let symbols = build_symbols();
-        assert_eq!(symbols.len(), 86);
+        assert_eq!(symbols.len(), 91);
         let gemma2: Vec<_> = symbols
             .iter()
             .copied()
@@ -946,10 +953,13 @@ mod tests {
         for name in EXPORTS {
             assert!(symbols.contains(name));
         }
+        for name in HEAD_ADDITIONS {
+            assert!(symbols.contains(name));
+        }
         let legacy: Vec<_> = symbols
             .iter()
             .copied()
-            .filter(|name| !name.starts_with("infinity_gemma2_"))
+            .filter(|name| !name.starts_with("infinity_gemma2_") && !HEAD_ADDITIONS.contains(name))
             .collect();
         assert_eq!(legacy.len(), 78);
         assert_eq!(

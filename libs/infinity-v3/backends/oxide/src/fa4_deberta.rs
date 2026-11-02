@@ -94,6 +94,14 @@ pub(crate) enum ColdScoreMode {
     ExactMul,
 }
 
+fn runtime_score_mode(declared: ColdScoreMode, heads: usize) -> Result<ColdScoreMode, String> {
+    match heads {
+        12 => Ok(declared),
+        6 | 16 => Ok(ColdScoreMode::Normalized),
+        _ => Err("unsupported DeBERTa runtime head count".into()),
+    }
+}
+
 /// Caller-owned device buffers for one packed DeBERTa launch.
 pub(crate) struct DebertaBatch {
     pub(crate) q: u64,
@@ -155,6 +163,7 @@ impl EngineMutex {
 pub struct Fa4Deberta {
     engine: EngineMutex,
     span: usize,
+    heads: usize,
 }
 
 // Safety: device work is serialized by the engine mutex, and the resident
@@ -421,7 +430,18 @@ fn checked_extent(elements: usize, width: u64) -> Result<u64, String> {
     Ok(bytes)
 }
 
+#[cfg(test)]
 fn validate_batch(batch: &DebertaBatch, span: usize) -> Result<(), String> {
+    validate_batch_with_heads(batch, span, HEADS)
+}
+fn validate_batch_with_heads(
+    batch: &DebertaBatch,
+    span: usize,
+    heads: usize,
+) -> Result<(), String> {
+    if !matches!(heads, 6 | 12 | 16) {
+        return Err("unsupported DeBERTa runtime head count".into());
+    }
     if !(1..=4096).contains(&span) {
         return Err("DeBERTa span must be between 1 and 4096".to_string());
     }
@@ -465,8 +485,8 @@ fn validate_batch(batch: &DebertaBatch, span: usize) -> Result<(), String> {
     let two_span = span
         .checked_mul(2)
         .ok_or_else(|| "DeBERTa span extent overflows usize".to_string())?;
-    let qkv_extent = checked_extent(checked_element_count(&[batch.tokens, HEADS, HEAD_DIM])?, 2)?;
-    let table_extent = checked_extent(checked_element_count(&[HEADS, batch.tokens, two_span])?, 2)?;
+    let qkv_extent = checked_extent(checked_element_count(&[batch.tokens, heads, HEAD_DIM])?, 2)?;
+    let table_extent = checked_extent(checked_element_count(&[heads, batch.tokens, two_span])?, 2)?;
     let offset_extent = checked_extent(
         checked_element_count(&[batch
             .batch
@@ -524,6 +544,19 @@ impl Fa4Deberta {
         span: usize,
         relative_scale: f32,
     ) -> Result<(Self, ColdScoreMode), BackendError> {
+        Self::new_with_heads(context, stream, root, span, relative_scale, HEADS)
+    }
+    pub(crate) fn new_with_heads(
+        context: Arc<Context>,
+        stream: Arc<Stream>,
+        root: &Path,
+        span: usize,
+        relative_scale: f32,
+        heads: usize,
+    ) -> Result<(Self, ColdScoreMode), BackendError> {
+        if !matches!(heads, 6 | 12 | 16) {
+            return Err(bad("unsupported DeBERTa runtime head count"));
+        }
         if !valid_exact_mul_scale(relative_scale) {
             return Err(bad(
                 "InfinityFA4 exact-mul DeBERTa scale must be exactly 13.875 or 11.3125",
@@ -550,7 +583,10 @@ impl Fa4Deberta {
             .map_err(|_| bad("CUDA device ordinal does not fit the kernel ABI"))?;
         let directory = root.join(format!("sm_{capability}"));
         let manifest_path = directory.join("manifest.json");
-        let score_mode = load_manifest_with_mode(&manifest_path)?;
+        let declared_score_mode = load_manifest_with_mode(&manifest_path)?;
+        // The compiled normalized callback uses dynamic DLTensor head shapes.
+        // Exact-mul's existing C ABI deliberately admits only the 12-head path.
+        let score_mode = runtime_score_mode(declared_score_mode, heads).map_err(bad)?;
         let library_path = directory.join("libinfinityfa4.so");
         let library = unsafe { Library::new(&library_path) }
             .map_err(|error| bad(format!("cannot load {}: {error}", library_path.display())))?;
@@ -594,6 +630,7 @@ impl Fa4Deberta {
                     device,
                 }),
                 span,
+                heads,
             },
             score_mode,
         ))
@@ -613,7 +650,7 @@ impl Fa4Deberta {
     }
 
     pub fn token_limit(&self) -> usize {
-        i32::MAX as usize / (HEADS * (2 * self.span).max(HEAD_DIM))
+        i32::MAX as usize / (self.heads * (2 * self.span).max(HEAD_DIM))
     }
 
     /// # Safety
@@ -635,7 +672,7 @@ impl Fa4Deberta {
                 "InfinityFA4 DeBERTa launch stream belongs to another context",
             ));
         }
-        validate_batch(batch, self.span).map_err(bad)?;
+        validate_batch_with_heads(batch, self.span, self.heads).map_err(bad)?;
         let status = match engine.kernel {
             Kernel::Normalized(deberta) => unsafe {
                 (deberta)(
@@ -652,7 +689,7 @@ impl Fa4Deberta {
                     batch.buckets as *mut c_void,
                     batch.tokens as i64,
                     batch.batch as i64,
-                    HEADS as i64,
+                    self.heads as i64,
                     self.span as i64,
                     batch.bucket_count as i64,
                     batch.max_sequence as c_int,
@@ -673,7 +710,7 @@ impl Fa4Deberta {
                     batch.buckets as *mut c_void,
                     batch.tokens as i64,
                     batch.batch as i64,
-                    HEADS as i64,
+                    self.heads as i64,
                     self.span as i64,
                     batch.bucket_count as i64,
                     batch.max_sequence as c_int,
@@ -710,6 +747,24 @@ pub(crate) fn test_exact_mul_kernel(symbol: &str) -> serde_json::Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn dynamic_heads_preserve_the_existing_exact_mul_abi_limit() {
+        assert_eq!(
+            runtime_score_mode(ColdScoreMode::ExactMul, 12).unwrap(),
+            ColdScoreMode::ExactMul
+        );
+        for heads in [6, 16] {
+            assert_eq!(
+                runtime_score_mode(ColdScoreMode::ExactMul, heads).unwrap(),
+                ColdScoreMode::Normalized
+            );
+            assert_eq!(
+                runtime_score_mode(ColdScoreMode::Normalized, heads).unwrap(),
+                ColdScoreMode::Normalized
+            );
+        }
+        assert!(runtime_score_mode(ColdScoreMode::Normalized, 8).is_err());
+    }
 
     fn entry() -> ManifestEntry {
         ManifestEntry {

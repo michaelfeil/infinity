@@ -565,12 +565,12 @@ async fn init_backend(
         let dtype = oxide_dtype(dtype)?;
         if !matches!(
             &model_type,
-            ModelType::Embedding(Pool::Cls | Pool::Mean | Pool::LastToken)
+            ModelType::Embedding(Pool::Cls | Pool::Mean | Pool::LastToken | Pool::Splade)
                 | ModelType::Classifier
                 | ModelType::Decision
         ) {
             return Err(BackendError::Start(
-                "The plain CUDA backend supports dense embeddings, BF16 BERT classifiers, and Qwen3.5 decisions".into(),
+                "The plain CUDA backend supports dense embeddings, BF16 BERT SPLADE, BF16 BERT classifiers, and Qwen3.5 decisions".into(),
             ));
         }
         // Decision is admitted only through the Qwen3.5 cold dispatch inside the
@@ -1112,12 +1112,12 @@ mod startup_tests {
                 "bfloat16 or float16",
             ),
             (
-                DType::Bfloat16,
+                DType::Float16,
                 ModelType::Embedding(Pool::Splade),
                 None,
                 false,
                 TorchDevice::Cuda,
-                "dense embeddings",
+                "SPLADE requires bfloat16",
             ),
         ] {
             let result = runtime.block_on(init_backend(

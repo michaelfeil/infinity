@@ -6,8 +6,11 @@ mod cache;
 mod classifier_head;
 #[cfg(test)]
 mod classifier_primitives;
+mod colbert;
+mod colbert_runtime;
 mod cublas;
 mod deberta;
+mod deberta_embedding;
 mod deberta_encoder_model;
 #[allow(dead_code)]
 mod decision_head;
@@ -33,6 +36,7 @@ mod gdn_aot_provider;
 #[allow(dead_code)]
 pub mod gdn_prepared;
 pub mod gemma2_math;
+mod head_linear;
 mod input_layout;
 mod jina_code_encoder_model;
 #[cfg(test)]
@@ -101,6 +105,8 @@ pub use qwen35_runtime::Qwen35TextOptions;
 mod rotary;
 mod rotary_encoder;
 mod rotary_encoder_model;
+mod splade;
+mod splade_runtime;
 mod staging;
 pub mod tensor;
 mod upload;
@@ -114,6 +120,8 @@ use classifier_head::{
     ClassifierHeadHost, ClassifierReadout, ClassifierScratchBuffers, ClassifierScratchLayout,
     ClassifierTask, ReadoutMode,
 };
+use colbert::{ColbertHeadHost, ColbertSelection, ColbertTokenizerPolicy};
+use colbert_runtime::{ColbertHead, ColbertWork};
 use cublas::Blas;
 use cuda_core::{launch_kernel, Context, DeviceBuffer, Function, Stream};
 use decoder_classifier::{DecoderClassifierTask, RowPlan};
@@ -137,10 +145,11 @@ use modern_encoder_model::{ModernConfig, ModernWeights};
 use nomic_encoder_model::{MatrixSources, NomicLayerWeights, NomicWeights};
 use qwen35_block_layout::Qwen35BlockMode;
 use rotary_encoder::{PreparedGatedActivation, RotaryEncoder, RotaryFunctions};
+use splade_runtime::{SpladeHead, SpladeSelection, SpladeWork};
 use staging::{HostIo, HostIoLease, SlotPool};
 use std::{
     ffi::c_void,
-    mem::ManuallyDrop,
+    mem::{size_of, ManuallyDrop},
     path::Path,
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -471,6 +480,8 @@ impl<E: UploadElement> Layer<E> {
 #[allow(clippy::large_enum_variant)]
 enum EncoderHostWeights {
     Standard(BertWeights),
+    Splade(BertWeights),
+    Colbert(BertWeights),
     Nomic(NomicWeights),
     Jina(JinaWeights),
     JinaCode(JinaCodeHost),
@@ -490,7 +501,7 @@ impl JinaCodeHost {
 impl EncoderHostWeights {
     fn config(&self) -> &BertConfig {
         match self {
-            Self::Standard(host) => &host.config,
+            Self::Standard(host) | Self::Splade(host) | Self::Colbert(host) => &host.config,
             Self::Nomic(host) => &host.config,
             Self::Jina(host) => &host.geometry,
             Self::JinaCode(host) => &host.geometry,
@@ -758,7 +769,11 @@ impl Kernels {
         };
         let norm_name = match config.recipe.residual {
             NormArithmetic::RoundedAddBeforeStats if config.family == EncoderFamily::Deberta => {
-                "infinity_deberta_layer_norm_768"
+                if config.hidden_size == 768 {
+                    "infinity_deberta_layer_norm_768"
+                } else {
+                    "infinity_deberta_plain_norm_bf16_aten"
+                }
             }
             NormArithmetic::ExactBiased if exact_classifier_384 => {
                 "infinity_classifier_layer_norm_384_exact"
@@ -862,17 +877,19 @@ impl Kernels {
                 MPNET_H768_GEOMETRY
             } else if exact_768_embedding
                 || exact_classifier_384
-                || config.family == EncoderFamily::Deberta
+                || (config.family == EncoderFamily::Deberta && config.hidden_size == 768)
             {
                 H768_GEOMETRY
             } else {
                 GENERIC_GEOMETRY
             },
-            norm_geometry: if mpnet_768_rounded {
+            norm_geometry: if mpnet_768_rounded
+                || (config.family == EncoderFamily::Deberta && config.hidden_size != 768)
+            {
                 MPNET_H768_GEOMETRY
             } else if exact_768_norm
                 || exact_classifier_384
-                || config.family == EncoderFamily::Deberta
+                || (config.family == EncoderFamily::Deberta && config.hidden_size == 768)
             {
                 H768_GEOMETRY
             } else {
@@ -1140,10 +1157,18 @@ enum PreparedDown<E: UploadElement> {
 }
 impl<E: UploadElement> PreparedDown<E> {
     fn new(provider: &LtProvider, c: &BertConfig) -> Result<Self, BackendError> {
-        Ok(match down_policy(c) {
+        Self::new_with_policy(provider, c, down_policy(c))
+    }
+
+    fn new_with_policy(
+        provider: &LtProvider,
+        c: &BertConfig,
+        policy: DownPolicy,
+    ) -> Result<Self, BackendError> {
+        Ok(match policy {
             DownPolicy::NativeDefault | DownPolicy::ClassifierNativeDefault => {
                 Self::NativeDefault {
-                    lt_for_single_row: down_policy(c) == DownPolicy::ClassifierNativeDefault,
+                    lt_for_single_row: policy == DownPolicy::ClassifierNativeDefault,
                     m1: Box::new(
                         math::LinearPlan::<E>::contiguous(1, c.intermediate_size, c.hidden_size)
                             .map_err(infer)?,
@@ -1323,7 +1348,7 @@ struct Plans<E: UploadElement> {
     output: PreparedDown<E>,
 }
 impl<E: UploadElement> Plans<E> {
-    fn new(provider: &LtProvider, c: &BertConfig) -> Result<Self, BackendError> {
+    fn new(provider: &LtProvider, c: &BertConfig, splade: bool) -> Result<Self, BackendError> {
         let h = c.hidden_size;
         let intermediate = match c.recipe.feed_forward {
             FeedForwardRecipe::DenseGeluErf => IntermediatePlan::DenseExact(Box::new(
@@ -1352,7 +1377,11 @@ impl<E: UploadElement> Plans<E> {
             qkv: projection(h, product(h, 3)?)?,
             attention: projection(h, h)?,
             intermediate,
-            output: PreparedDown::new(provider, c)?,
+            output: if splade {
+                PreparedDown::new_with_policy(provider, c, DownPolicy::NativeDefault)?
+            } else {
+                PreparedDown::new(provider, c)?
+            },
         })
     }
 
@@ -1442,6 +1471,24 @@ enum ExecutableModel {
     Qwen35(Box<qwen35_runtime::Qwen35Model>),
 }
 impl ExecutableModel {
+    fn splade_head(&self) -> Option<&SpladeHead> {
+        match self {
+            Self::Encoder(model) => model.splade.as_ref(),
+            _ => None,
+        }
+    }
+    fn colbert_head(&self) -> Option<&ColbertHead> {
+        match self {
+            Self::Encoder(model) => model.colbert.as_ref(),
+            _ => None,
+        }
+    }
+    fn colbert_policy(&self) -> Option<&ColbertTokenizerPolicy> {
+        match self {
+            Self::Encoder(model) => model.colbert_policy.as_ref(),
+            _ => None,
+        }
+    }
     fn supports_raw_output(&self) -> bool {
         match self {
             Self::Encoder(model) => model.kernels.raw_cast.is_some(),
@@ -1459,6 +1506,11 @@ impl ExecutableModel {
         match self {
             Self::Encoder(model) => {
                 model.plans.set_rows(provider, batch.input_ids.len())?;
+                if let Some(embedding) = model.deberta_embedding.as_mut() {
+                    embedding
+                        .set_rows(provider, batch.input_ids.len())
+                        .map_err(ShapeError::Rejected)?;
+                }
                 match (readout_mode, &model.classifier) {
                     (Some(mode), Some(classifier)) => {
                         classifier.preflight(provider, batch, mode).map(|_| ())
@@ -1467,7 +1519,15 @@ impl ExecutableModel {
                 }
             }
             Self::EncoderF16(model) => model.plans.set_rows(provider, batch.input_ids.len()),
-            Self::Modern(model) => model.preflight(batch.input_ids.len()),
+            Self::Modern(model) => {
+                model.preflight(batch.input_ids.len())?;
+                match (readout_mode, &model.classifier) {
+                    (Some(mode), Some(classifier)) => {
+                        classifier.preflight(provider, batch, mode).map(|_| ())
+                    }
+                    _ => Ok(()),
+                }
+            }
             Self::Decoder(model) => {
                 if let Some(mode) = readout_mode {
                     model.admit_readout(mode).map_err(ShapeError::Rejected)?;
@@ -1563,7 +1623,12 @@ impl ExecutableModel {
                 .as_ref()
                 .map(|classifier| classifier.scratch_layout(key))
                 .transpose(),
-            Self::EncoderF16(_) | Self::Modern(_) | Self::Decoder(_) | Self::Qwen35(_) => Ok(None),
+            Self::Modern(model) => model
+                .classifier
+                .as_ref()
+                .map(|classifier| classifier.scratch_layout(key))
+                .transpose(),
+            Self::EncoderF16(_) | Self::Decoder(_) | Self::Qwen35(_) => Ok(None),
         }
     }
     fn workspace_bytes(&self, key: WorkKey) -> Result<usize, BackendError> {
@@ -1573,9 +1638,17 @@ impl ExecutableModel {
                 &model.config,
                 self.classifier_layout(key)?,
                 model.deberta.as_ref().map(|policy| policy.span()),
+                model
+                    .deberta_embedding
+                    .as_ref()
+                    .map(|embedding| embedding.scratch_width()),
             ),
             Self::EncoderF16(model) => Work::<F16>::allocation_bytes(key, &model.config),
-            Self::Modern(model) => Work::<Bf16>::allocation_bytes(key, &model.config.geometry),
+            Self::Modern(model) => Work::<Bf16>::allocation_bytes_with_classifier(
+                key,
+                &model.config.geometry,
+                self.classifier_layout(key)?,
+            ),
             Self::Decoder(model) => model.workspace_bytes(key),
             Self::Qwen35(model) => model.workspace_bytes(key),
         }
@@ -1588,16 +1661,21 @@ impl ExecutableModel {
                 key,
                 self.classifier_layout(key)?,
                 model.deberta.as_ref().map(|policy| policy.span()),
+                model
+                    .deberta_embedding
+                    .as_ref()
+                    .map(|embedding| embedding.scratch_width()),
             )?)),
             Self::EncoderF16(model) => Ok(Workspace::EncoderF16(Work::<F16>::new(
                 stream,
                 &model.config,
                 key,
             )?)),
-            Self::Modern(model) => Ok(Workspace::Encoder(Work::<Bf16>::new(
+            Self::Modern(model) => Ok(Workspace::Encoder(Work::<Bf16>::new_with_classifier(
                 stream,
                 &model.config.geometry,
                 key,
+                self.classifier_layout(key)?,
             )?)),
             Self::Decoder(model) => Ok(Workspace::Decoder(model.workspace(stream, key)?)),
             Self::Qwen35(model) => Ok(Workspace::Qwen35(Box::new(model.workspace(stream, key)?))),
@@ -1606,6 +1684,7 @@ impl ExecutableModel {
     fn classifier_readout(&self) -> Option<ClassifierReadout> {
         match self {
             Self::Encoder(model) => model.classifier.as_ref().map(ClassifierHead::readout),
+            Self::Modern(model) => model.classifier.as_ref().map(ClassifierHead::readout),
             Self::Decoder(model) => model.classifier_task().map(|task| ClassifierReadout {
                 task: match task {
                     DecoderClassifierTask::Sequence => ClassifierTask::Sequence,
@@ -1613,7 +1692,7 @@ impl ExecutableModel {
                 },
                 width: model.classifier_width().unwrap_or(0),
             }),
-            Self::EncoderF16(_) | Self::Modern(_) | Self::Qwen35(_) => None,
+            Self::EncoderF16(_) | Self::Qwen35(_) => None,
         }
     }
 }
@@ -1630,6 +1709,10 @@ struct EncoderModel<E: UploadElement> {
     fa4_layout: Option<PackedAttention>,
     classifier: Option<ClassifierHead>,
     deberta: Option<Box<deberta::PreparedDeberta>>,
+    deberta_embedding: Option<Box<deberta_embedding::PreparedEmbedding<E>>>,
+    splade: Option<SpladeHead>,
+    colbert: Option<ColbertHead>,
+    colbert_policy: Option<ColbertTokenizerPolicy>,
 }
 
 enum Workspace {
@@ -1821,6 +1904,19 @@ impl Work<Bf16> {
             .ok_or_else(|| infer("Missing classifier workspace"))?;
         Ok((source, classifier.as_mut()))
     }
+
+    /// ModernBERT retains its final normalized states in `attention`; the
+    /// residual stream in `x` is not the classifier source.
+    fn classifier_parts_attention(
+        &mut self,
+    ) -> Result<(&DeviceBuffer<Bf16>, &mut ClassifierScratchBuffers), BackendError> {
+        let source = &self.attention;
+        let classifier = self
+            .classifier
+            .as_mut()
+            .ok_or_else(|| infer("Missing classifier workspace"))?;
+        Ok((source, classifier.as_mut()))
+    }
 }
 
 struct Engine {
@@ -1833,6 +1929,8 @@ struct Engine {
     io: Arc<SlotPool<HostIo>>,
     workspace: Option<Workspace>,
     dense_workspace: Option<DenseWork>,
+    splade_workspace: Option<SpladeWork>,
+    colbert_workspace: Option<ColbertWork>,
     cached: cache::WorkspaceCache<WorkKey, Workspace>,
     retired: RetirementQueue<RetiredOwner>,
     failed: bool,
@@ -1901,6 +1999,14 @@ impl Drop for Engine {
             if let Some(mut dense) = self.dense_workspace.take() {
                 // SAFETY: the drain above proved every queued Dense use done.
                 unsafe { dense.drop_after_drain() };
+            }
+            if let Some(mut splade) = self.splade_workspace.take() {
+                // SAFETY: the shared stream drain covers all head references.
+                unsafe { splade.drop_after_drain() };
+            }
+            if let Some(mut colbert) = self.colbert_workspace.take() {
+                // SAFETY: the shared stream drain covers all head references.
+                unsafe { colbert.drop_after_drain() };
             }
             // SAFETY: Engine is dropped once, and all GPU uses have finished.
             // If drain fails, retaining these owners also retains their CUDA
@@ -2275,6 +2381,7 @@ struct Work<E: UploadElement> {
     pooled: ManuallyDrop<DeviceBuffer<f32>>,
     classifier: ManuallyDrop<Option<Box<ClassifierScratchBuffers>>>,
     deberta: ManuallyDrop<Option<deberta::Scratch>>,
+    deberta_embedding: ManuallyDrop<Option<DeviceBuffer<E>>>,
     last_completion: Option<CompletionTicket>,
     released: bool,
 }
@@ -2417,6 +2524,7 @@ impl<E: UploadElement> Work<E> {
             ManuallyDrop::drop(&mut self.pooled);
             ManuallyDrop::drop(&mut self.classifier);
             ManuallyDrop::drop(&mut self.deberta);
+            ManuallyDrop::drop(&mut self.deberta_embedding);
         }
         LIVE_ARENA_BYTES.fetch_sub(self.bytes, Ordering::Relaxed);
         record_live_arena_bytes();
@@ -2437,13 +2545,14 @@ impl<E: UploadElement> Work<E> {
         c: &BertConfig,
         classifier: Option<ClassifierScratchLayout>,
     ) -> Result<usize, BackendError> {
-        Self::allocation_bytes_with_deberta(key, c, classifier, None)
+        Self::allocation_bytes_with_deberta(key, c, classifier, None, None)
     }
     fn allocation_bytes_with_deberta(
         key: WorkKey,
         c: &BertConfig,
         classifier: Option<ClassifierScratchLayout>,
         span: Option<usize>,
+        embedding_width: Option<usize>,
     ) -> Result<usize, BackendError> {
         let (tokens, _, _) = key;
         i32::try_from(tokens).map_err(infer)?;
@@ -2464,13 +2573,19 @@ impl<E: UploadElement> Work<E> {
                 .ok_or_else(|| infer("Workspace arena overflow"))?;
         }
         let classifier = classifier.map_or(Ok(0), ClassifierScratchLayout::bytes)?;
-        let deberta = span.map_or(Ok(0), |span| deberta::Scratch::bytes(tokens, span))?;
+        let deberta = span.map_or(Ok(0), |span| {
+            deberta::Scratch::bytes_for_heads(tokens, span, c.num_attention_heads)
+        })?;
+        let deberta_embedding = embedding_width.map_or(Ok(0), |width| {
+            product(product(tokens, width)?, size_of::<E>())
+        })?;
         product(input, 4)?
             .checked_add(product(output, 4)?)
             .and_then(|n| n.checked_add(hidden))
             .and_then(|n| n.checked_add(intermediate))
             .and_then(|n| n.checked_add(classifier))
             .and_then(|n| n.checked_add(deberta))
+            .and_then(|n| n.checked_add(deberta_embedding))
             .ok_or_else(|| infer("Workspace arena overflow"))
     }
     fn fits(&self, key: WorkKey) -> bool {
@@ -2482,7 +2597,7 @@ impl<E: UploadElement> Work<E> {
         key: WorkKey,
         classifier_layout: Option<ClassifierScratchLayout>,
     ) -> Result<Self, BackendError> {
-        Self::new_with_deberta(s, c, key, classifier_layout, None)
+        Self::new_with_deberta(s, c, key, classifier_layout, None, None)
     }
     fn new_with_deberta(
         s: Arc<Stream>,
@@ -2490,8 +2605,10 @@ impl<E: UploadElement> Work<E> {
         key: WorkKey,
         classifier_layout: Option<ClassifierScratchLayout>,
         span: Option<usize>,
+        embedding_width: Option<usize>,
     ) -> Result<Self, BackendError> {
-        let bytes = Self::allocation_bytes_with_deberta(key, c, classifier_layout, span)?;
+        let bytes =
+            Self::allocation_bytes_with_deberta(key, c, classifier_layout, span, embedding_width)?;
         let (tokens, sequences, selections) = key;
         let hidden = product(tokens, c.hidden_size)?;
         let input_len = staging::input_capacity(key)?;
@@ -2539,8 +2656,12 @@ impl<E: UploadElement> Work<E> {
             .transpose()?
             .map(Box::new);
         let deberta = span
-            .map(|span| deberta::Scratch::new(&s, tokens, span))
+            .map(|span| deberta::Scratch::new(&s, tokens, span, c.num_attention_heads))
             .transpose()?;
+        let deberta_embedding = match embedding_width {
+            Some(width) => Some(alloc(product(tokens, width)?)?),
+            None => None,
+        };
         metrics::counter!("oxide_arena_allocations_total").increment(1);
         LIVE_ARENA_BYTES.fetch_add(bytes, Ordering::Relaxed);
         record_live_arena_bytes();
@@ -2562,6 +2683,7 @@ impl<E: UploadElement> Work<E> {
             pooled: ManuallyDrop::new(pooled),
             classifier: ManuallyDrop::new(classifier),
             deberta: ManuallyDrop::new(deberta),
+            deberta_embedding: ManuallyDrop::new(deberta_embedding),
             last_completion: None,
             released: false,
             stream: s,
@@ -2680,6 +2802,14 @@ impl Engine {
         if let Some(dense) = self.dense_workspace.take() {
             metrics::counter!("oxide_arena_retained_bytes_total").increment(dense.bytes() as u64);
             std::mem::forget(dense);
+        }
+        if let Some(splade) = self.splade_workspace.take() {
+            metrics::counter!("oxide_arena_retained_bytes_total").increment(splade.bytes() as u64);
+            std::mem::forget(splade);
+        }
+        if let Some(colbert) = self.colbert_workspace.take() {
+            metrics::counter!("oxide_arena_retained_bytes_total").increment(colbert.bytes() as u64);
+            std::mem::forget(colbert);
         }
     }
     fn quarantine_workspace(workspace: Workspace) {
@@ -2988,19 +3118,53 @@ impl Engine {
         record_live_arena_bytes();
         let hidden = self.model.hidden_size();
         let classifier = self.model.classifier_readout();
+        let splade_selection = self
+            .model
+            .splade_head()
+            .map(|_| SpladeSelection::new(b))
+            .transpose()?;
+        let colbert_selection = match (self.model.colbert_head(), self.model.colbert_policy()) {
+            (Some(head), Some(policy)) => {
+                let selection = ColbertSelection::new(b, policy)?;
+                selection.geometry(head.output_width())?;
+                Some(selection)
+            }
+            _ => None,
+        };
         let geometry = if let Some(readout) = classifier {
             output::OutputGeometry::new(readout.width(), readout.width())?
         } else {
-            let pooled_width = (*self.dense)
-                .as_ref()
-                .map_or(hidden, DenseHead::output_width);
-            output::OutputGeometry::new(pooled_width, hidden)?
+            let pooled_width = if let Some(head) = self.model.colbert_head() {
+                head.output_width()
+            } else {
+                self.model.splade_head().map_or_else(
+                    || {
+                        (*self.dense)
+                            .as_ref()
+                            .map_or(hidden, DenseHead::output_width)
+                    },
+                    SpladeHead::output_width,
+                )
+            };
+            let raw_width = self
+                .model
+                .colbert_head()
+                .map_or(hidden, ColbertHead::output_width);
+            output::OutputGeometry::new(pooled_width, raw_width)?
         };
         let pooled_rows = b.pooled_indices.len();
         let raw_rows = output::raw_rows(b)?;
         let host_elements = geometry.host_elements(b)?;
         let plan = workspace.key;
-        let host_plan = if matches!(&*self.model, ExecutableModel::Qwen35(_)) {
+        let metadata_elements =
+            splade_selection.map_or(0, |selection| selection.metadata_elements());
+        let metadata_capacity = match splade_selection.filter(|selection| selection.pooled() > 0) {
+            Some(selection) => bucketed(selection.rows(), 1)?
+                .checked_add(product(bucketed(selection.pooled(), 1)?, 2)?)
+                .ok_or_else(|| infer("SPLADE pinned metadata capacity overflow"))?,
+            None => 0,
+        };
+        let mut host_plan = if matches!(&*self.model, ExecutableModel::Qwen35(_)) {
             if workspace.reuse_active {
                 self.workspace.as_ref().map_or(plan, Workspace::key)
             } else {
@@ -3012,6 +3176,10 @@ impl Engine {
             // Existing families retain their original requested host capacity.
             plan
         };
+        host_plan.2 = host_plan
+            .2
+            .checked_add(metadata_capacity)
+            .ok_or_else(|| infer("SPLADE pinned metadata capacity overflow"))?;
         let host_input_elements = self.model.input_capacity(host_plan)?;
         let host_before = lease.bytes()?;
         let host_after = lease
@@ -3052,8 +3220,74 @@ impl Engine {
             )?,
             None => (None, 0),
         };
+        let (splade_capacity, splade_bytes) = match (self.model.splade_head(), splade_selection) {
+            (Some(head), Some(selection)) if selection.pooled() > 0 => {
+                let capacity = (
+                    bucketed(selection.rows(), 1)?,
+                    bucketed(selection.pooled(), 1)?,
+                );
+                match self.splade_workspace.as_ref() {
+                    Some(work)
+                        if work.fits(selection.rows(), selection.pooled())
+                            && (work.bytes() <= cache::BYTE_BUDGET
+                                || work.capacity().0 == capacity.0) =>
+                    {
+                        (None, work.bytes())
+                    }
+                    _ => (Some(capacity), head.work_bytes(capacity.0, capacity.1)?),
+                }
+            }
+            _ => (
+                None,
+                self.splade_workspace.as_ref().map_or(0, SpladeWork::bytes),
+            ),
+        };
+        if splade_capacity.is_some() && self.splade_workspace.is_some() {
+            // Retire the old sparse arena before reserving/allocating its
+            // replacement. Only cold capacity changes drain; held outputs
+            // remain in their distinct pinned result leases.
+            self.stream.synchronize().map_err(infer)?;
+            if let Some(mut previous) = self.splade_workspace.take() {
+                // SAFETY: the owning ordered stream was just drained.
+                unsafe { previous.drop_after_drain() };
+            }
+        }
+        let (colbert_capacity, colbert_bytes) =
+            match (self.model.colbert_head(), colbert_selection.as_ref()) {
+                (Some(head), Some(selection)) => {
+                    let capacity = (
+                        bucketed(selection.tokens(), 1)?,
+                        bucketed(selection.sequences(), 1)?,
+                    );
+                    match self.colbert_workspace.as_ref() {
+                        Some(work)
+                            if work.fits(selection.tokens(), selection.sequences())
+                                && (work.bytes() <= cache::BYTE_BUDGET
+                                    || work.capacity().0 == capacity.0) =>
+                        {
+                            (None, work.bytes())
+                        }
+                        _ => (Some(capacity), head.work_bytes(capacity.0, capacity.1)?),
+                    }
+                }
+                _ => (
+                    None,
+                    self.colbert_workspace
+                        .as_ref()
+                        .map_or(0, ColbertWork::bytes),
+                ),
+            };
+        if colbert_capacity.is_some() && self.colbert_workspace.is_some() {
+            self.stream.synchronize().map_err(infer)?;
+            if let Some(mut previous) = self.colbert_workspace.take() {
+                // SAFETY: the owning ordered stream was just drained.
+                unsafe { previous.drop_after_drain() };
+            }
+        }
         let gpu_bytes = workspace_bytes
             .checked_add(dense_bytes)
+            .and_then(|bytes| bytes.checked_add(splade_bytes))
+            .and_then(|bytes| bytes.checked_add(colbert_bytes))
             .ok_or_else(|| infer("Workspace arena overflow"))?;
         let mut exclusive = needs_exclusive_staging(gpu_bytes, pinned);
         if exclusive {
@@ -3140,6 +3374,22 @@ impl Engine {
                 .ok_or_else(|| infer("Missing Dense chain"))?;
             self.dense_workspace = Some(head.work(self.stream.clone(), capacity)?);
         }
+        if let Some((rows, pooled)) = splade_capacity {
+            let head = self
+                .model
+                .splade_head()
+                .ok_or_else(|| infer("Missing SPLADE head"))?;
+            drop(self.splade_workspace.take());
+            self.splade_workspace = Some(head.work(self.stream.clone(), rows, pooled)?);
+        }
+        if let Some((tokens, sequences)) = colbert_capacity {
+            let head = self
+                .model
+                .colbert_head()
+                .ok_or_else(|| infer("Missing ColBERT head"))?;
+            drop(self.colbert_workspace.take());
+            self.colbert_workspace = Some(head.work(self.stream.clone(), tokens, sequences)?);
+        }
         // All request arena pointers are now fixed. Preselect the actual-M
         // GTE down metadata before host staging, H2D upload, or request kernels.
         let tokens = b.input_ids.len();
@@ -3169,6 +3419,10 @@ impl Engine {
         };
         let (input_elements, _) = if readout_mode.is_some() {
             w.stage_classifier(b, geometry, lease)?
+        } else if position_offset == 0 && colbert_selection.is_some() {
+            // ColBERT writes its token matrix into the dedicated head work, so
+            // the backbone pooling arena is not a destination or capacity bound.
+            stage_batch(b, geometry, lease)?
         } else if position_offset == 0 {
             w.stage(b, geometry, lease)?
         } else {
@@ -3180,6 +3434,18 @@ impl Engine {
             }
             stage_batch_with_position_offset(b, geometry, lease, position_offset)?
         };
+        if let Some(selection) = splade_selection {
+            let end = input_elements
+                .checked_add(metadata_elements)
+                .ok_or_else(|| infer("SPLADE staging extent overflow"))?;
+            let metadata = lease
+                .slot_mut()?
+                .input
+                .as_mut_slice()
+                .get_mut(input_elements..end)
+                .ok_or_else(|| infer("SPLADE metadata exceeds retained pinned arena"))?;
+            selection.write_metadata(b, metadata)?;
+        }
         // The decoder classifier writes its host-prepared physical row ids into
         // the existing InputLayout.selections region exactly once, after the
         // ordinary packed metadata and before the first upload.
@@ -3207,6 +3473,62 @@ impl Engine {
                 // SAFETY: the engine context is bound and every pointer is
                 // fixed by the reserved arena before the lease begins.
                 unsafe { head.prepare(lt, blas, b, mode, &stream, source, scratch)? };
+            }
+        }
+        if let (ExecutableModel::Modern(model), Workspace::Encoder(work)) =
+            (&mut *self.model, &mut *w)
+        {
+            if let Some(head) = model.classifier.as_mut() {
+                let blas = plain_blas
+                    .ok_or_else(|| infer("ModernBERT classifier requires plain cuBLAS"))?;
+                let stream = self.stream.clone();
+                let (source, scratch) = work.classifier_parts_attention()?;
+                let mode = readout_mode.ok_or_else(|| {
+                    infer("Classifier head requires a call-selected readout mode")
+                })?;
+                // SAFETY: the engine context is bound and every pointer is
+                // fixed by the reserved arena before the lease begins.
+                unsafe { head.prepare(lt, blas, b, mode, &stream, source, scratch)? };
+            }
+        }
+        if let Some(selection) = splade_selection.filter(|selection| selection.pooled() > 0) {
+            let (ExecutableModel::Encoder(model), Workspace::Encoder(work)) =
+                (&mut *self.model, &mut *w)
+            else {
+                return Err(infer("SPLADE requires the BF16 BERT executor").into());
+            };
+            let head = model
+                .splade
+                .as_mut()
+                .ok_or_else(|| infer("Missing SPLADE head"))?;
+            let scratch = self
+                .splade_workspace
+                .as_mut()
+                .ok_or_else(|| infer("Missing SPLADE work"))?;
+            // SAFETY: the engine context is bound, all pointer capacities are
+            // fixed, and this runs before lease.begin()/request submission.
+            unsafe {
+                head.prepare(lt, selection, &work.x, &model.weights.word, scratch)?;
+            }
+        }
+        if let Some(selection) = colbert_selection.as_ref() {
+            let (ExecutableModel::Encoder(model), Workspace::Encoder(work)) =
+                (&mut *self.model, &mut *w)
+            else {
+                return Err(infer("ColBERT requires the BF16 BERT executor").into());
+            };
+            let head = model
+                .colbert
+                .as_mut()
+                .ok_or_else(|| infer("Missing ColBERT head"))?;
+            let scratch = self
+                .colbert_workspace
+                .as_mut()
+                .ok_or_else(|| infer("Missing ColBERT work"))?;
+            // SAFETY: the engine context is bound, all pointer capacities are
+            // fixed, and this runs before lease.begin()/request submission.
+            unsafe {
+                head.prepare(lt, selection, &work.x, scratch)?;
             }
         }
         // SAFETY: enqueue_request bound the engine context above and keeps it
@@ -3238,18 +3560,69 @@ impl Engine {
         #[cfg(test)]
         bump_lease_begin();
         w.upload(lease.slot()?.input.as_slice(), input_elements)?;
+        if splade_selection.is_some_and(|selection| selection.pooled() > 0) {
+            let scratch = self
+                .splade_workspace
+                .as_ref()
+                .ok_or_else(|| infer("Missing SPLADE metadata work"))?;
+            let metadata = lease
+                .slot()?
+                .input
+                .as_slice()
+                .get(input_elements..)
+                .ok_or_else(|| infer("Missing leased SPLADE metadata"))?;
+            upload_input(s, scratch.metadata(), metadata, metadata_elements)?;
+        }
+        if let Some(selection) = colbert_selection.as_ref() {
+            let scratch = self
+                .colbert_workspace
+                .as_mut()
+                .ok_or_else(|| infer("Missing ColBERT metadata work"))?;
+            let head = self
+                .model
+                .colbert_head()
+                .ok_or_else(|| infer("Missing ColBERT head"))?;
+            head.upload_selection(s, selection, scratch)?;
+        }
         match (&mut *self.model, &mut *w) {
-            (ExecutableModel::Modern(model), Workspace::Encoder(work)) => model
-                .enqueue(
-                    plain_blas.ok_or_else(|| infer("Modern requires plain cuBLAS"))?,
-                    s,
-                    work,
-                    b,
-                    pool,
-                    max_length,
-                    tokens,
-                )
-                .map_err(EnqueueError::from),
+            (ExecutableModel::Modern(model), Workspace::Encoder(work)) => {
+                model
+                    .enqueue(
+                        plain_blas.ok_or_else(|| infer("Modern requires plain cuBLAS"))?,
+                        s,
+                        work,
+                        b,
+                        pool,
+                        max_length,
+                        tokens,
+                    )
+                    .map_err(EnqueueError::from)?;
+                if let Some(head) = model.classifier.as_mut() {
+                    let blas = plain_blas
+                        .ok_or_else(|| infer("ModernBERT classifier requires plain cuBLAS"))?;
+                    let mode = readout_mode.ok_or_else(|| {
+                        infer("Classifier head requires a call-selected readout mode")
+                    })?;
+                    let layout = InputLayout::new(
+                        tokens,
+                        b.cumulative_seq_lengths.len(),
+                        b.pooled_indices.len(),
+                    )?;
+                    let boundaries = layout.boundaries().address(work.input.cu_deviceptr())?;
+                    let selected = layout.selections().address(work.input.cu_deviceptr())?;
+                    let (source, scratch) = work.classifier_parts_attention()?;
+                    // SAFETY: pre-enqueue preparation fixed all pointers; the bound context and owner survive stream drain.
+                    unsafe {
+                        head.enqueue(lt, blas, s, source, boundaries, selected, scratch)?;
+                    }
+                    let elements = product(head.rows(b, mode)?, head.readout().width())?;
+                    let host = lease.slot_mut()?.output.as_mut_slice();
+                    download_output_range(s, scratch.logits(), 0, host, 0, elements)?;
+                    lease.record()?;
+                    return Ok(());
+                }
+                Ok(())
+            }
             (ExecutableModel::Decoder(model), Workspace::Decoder(work)) => {
                 model.enqueue(
                     lt,
@@ -3289,7 +3662,45 @@ impl Engine {
                 )
                 .map_err(EnqueueError::from),
             (ExecutableModel::Encoder(model), Workspace::Encoder(w)) => {
-                enqueue_encoder(model, w, lt, plain_blas, s, b, pool, max_length, tokens)?;
+                {
+                    let colbert = match (
+                        model.colbert.as_ref(),
+                        colbert_selection.as_ref(),
+                        self.colbert_workspace.as_ref(),
+                    ) {
+                        (Some(head), Some(selection), Some(work)) => Some(ColbertAttention {
+                            head: head as *const ColbertHead,
+                            selection,
+                            work,
+                        }),
+                        (None, _, _) => None,
+                        _ => return Err(infer("Missing ColBERT attention work").into()),
+                    };
+                    enqueue_encoder(
+                        model, w, lt, plain_blas, s, b, pool, max_length, tokens, colbert,
+                    )?;
+                }
+                if let Some(head) = model.colbert.as_mut() {
+                    let selection = colbert_selection
+                        .as_ref()
+                        .ok_or_else(|| infer("Missing ColBERT selection"))?;
+                    let scratch = self
+                        .colbert_workspace
+                        .as_mut()
+                        .ok_or_else(|| infer("Missing ColBERT work"))?;
+                    // SAFETY: the projection plan and buffers were fixed before
+                    // lease.begin(); the ordered stream and lease retain them.
+                    unsafe {
+                        let blas = plain_blas
+                            .ok_or_else(|| infer("ColBERT projection requires plain cuBLAS"))?;
+                        head.enqueue(lt, blas, s, selection, &w.x, scratch)?;
+                    }
+                    let elements = product(selection.tokens(), head.output_width())?;
+                    let host = lease.slot_mut()?.output.as_mut_slice();
+                    download_output_range(s, scratch.output(), 0, host, 0, elements)?;
+                    lease.record()?;
+                    return Ok(());
+                }
                 if let Some(head) = model.classifier.as_mut() {
                     let blas = plain_blas
                         .ok_or_else(|| infer("Classifier head requires a plain cuBLAS handle"))?;
@@ -3302,10 +3713,11 @@ impl Engine {
                         b.pooled_indices.len(),
                     )?;
                     let boundaries = layout.boundaries().address(w.input.cu_deviceptr())?;
+                    let selected = layout.selections().address(w.input.cu_deviceptr())?;
                     let (source, scratch) = w.classifier_parts()?;
                     // SAFETY: pre-enqueue preparation fixed all pointers; the bound context and owner survive stream drain.
                     unsafe {
-                        head.enqueue(lt, blas, s, source, boundaries, scratch)?;
+                        head.enqueue(lt, blas, s, source, boundaries, selected, scratch)?;
                     }
                     let elements = product(head.rows(b, mode)?, head.readout().width())?;
                     let host = lease.slot_mut()?.output.as_mut_slice();
@@ -3313,11 +3725,48 @@ impl Engine {
                     lease.record()?;
                     return Ok(());
                 }
+                if let Some(head) = model.splade.as_mut() {
+                    let selection =
+                        splade_selection.ok_or_else(|| infer("Missing SPLADE selection"))?;
+                    let host = lease.slot_mut()?.output.as_mut_slice();
+                    if pooled_rows > 0 {
+                        let scratch = self
+                            .splade_workspace
+                            .as_mut()
+                            .ok_or_else(|| infer("Missing SPLADE work"))?;
+                        // SAFETY: the actual selected-M invocations were
+                        // prepared before any request submission; all owners
+                        // remain retained through the common lease event.
+                        unsafe {
+                            head.enqueue(lt, s, selection, &w.x, &model.weights.word, scratch)?;
+                        }
+                        download_output_range(
+                            s,
+                            scratch.output(),
+                            0,
+                            host,
+                            0,
+                            product(pooled_rows, geometry.pooled_width)?,
+                        )?;
+                    }
+                    if raw_rows > 0 {
+                        download_output_range(
+                            s,
+                            &w.pooled,
+                            geometry.raw_source_offset(pooled_rows)?,
+                            host,
+                            geometry.raw_host_offset(pooled_rows)?,
+                            product(raw_rows, hidden)?,
+                        )?;
+                    }
+                    lease.record()?;
+                    return Ok(());
+                }
                 Ok(())
             }
-            (ExecutableModel::EncoderF16(model), Workspace::EncoderF16(w)) => {
-                enqueue_encoder(model, w, lt, plain_blas, s, b, pool, max_length, tokens)
-            }
+            (ExecutableModel::EncoderF16(model), Workspace::EncoderF16(w)) => enqueue_encoder(
+                model, w, lt, plain_blas, s, b, pool, max_length, tokens, None,
+            ),
             _ => Err(infer("Oxide model/workspace mismatch").into()),
         }?;
         let dense = match ((*self.dense).as_mut(), self.dense_workspace.as_mut()) {
@@ -3581,6 +4030,13 @@ impl Engine {
     }
 }
 
+#[derive(Clone, Copy)]
+struct ColbertAttention<'a> {
+    head: *const ColbertHead,
+    selection: &'a ColbertSelection,
+    work: &'a ColbertWork,
+}
+
 #[allow(clippy::too_many_arguments)]
 fn enqueue_encoder<E: UploadElement>(
     model: &mut EncoderModel<E>,
@@ -3592,6 +4048,7 @@ fn enqueue_encoder<E: UploadElement>(
     pool: &Pool,
     max_length: usize,
     tokens: usize,
+    colbert: Option<ColbertAttention<'_>>,
 ) -> Result<(), EnqueueError> {
     let c = &model.config;
     let k = &model.kernels;
@@ -3601,6 +4058,7 @@ fn enqueue_encoder<E: UploadElement>(
     let fa4_layout = model.fa4_layout;
     let rotary = model.rotary.as_ref();
     let deberta = model.deberta.as_ref();
+    let deberta_embedding = model.deberta_embedding.as_ref();
     let gated = model.gated.as_ref();
     let plans = &mut model.plans;
     let h = c.hidden_size;
@@ -3648,7 +4106,25 @@ fn enqueue_encoder<E: UploadElement>(
     );
     let (mut gamma, mut beta) = (weights.gamma.cu_deviceptr(), weights.beta.cu_deviceptr());
     let (mut x, mut eps) = (w.x.cu_deviceptr(), c.layer_norm_eps as f32);
-    if c.recipe.embedding == NormArithmetic::ExactWordTypeBiased {
+    if let Some(embedding) = deberta_embedding {
+        let scratch = w
+            .deberta_embedding
+            .as_ref()
+            .ok_or_else(|| infer("Missing DeBERTa embedding scratch"))?;
+        embedding.enqueue_embedding(
+            lt,
+            plain_blas,
+            s,
+            tokens,
+            &weights.word,
+            ids,
+            pos,
+            types,
+            scratch,
+            &mut w.x,
+            eps,
+        )?;
+    } else if c.recipe.embedding == NormArithmetic::ExactWordTypeBiased {
         launch_threads(
             &k.embedding,
             s,
@@ -3914,6 +4390,62 @@ fn enqueue_encoder<E: UploadElement>(
             }
         } else if c.family == EncoderFamily::Mpnet {
             return Err(infer("Missing MPNet native attention").into());
+        } else if colbert.is_some_and(|attention| attention.selection.excludes_attention_keys()) {
+            // Query MASK expansion rows remain output queries. Only K/V follow
+            // the selected key rows, so no padded attention mask is created.
+            let attention = colbert.ok_or_else(|| infer("Missing ColBERT attention"))?;
+            let provider = fa4.ok_or_else(|| {
+                infer("ColBERT MASK key exclusion requires prepared FA4 attention")
+            })?;
+            let layout = fa4_layout.ok_or_else(|| infer("Missing ColBERT packed layout"))?;
+            let q = w.qkv.cu_deviceptr();
+            let k = q
+                .checked_add(layout.k_offset)
+                .ok_or_else(|| infer("ColBERT K address overflow"))?;
+            let v = q
+                .checked_add(layout.v_offset)
+                .ok_or_else(|| infer("ColBERT V address overflow"))?;
+            let row_stride = c
+                .hidden_size
+                .checked_mul(3)
+                .ok_or_else(|| infer("ColBERT packed stride overflow"))?;
+            // SAFETY: the packed QKV and gathered K/V buffers are retained by
+            // this Work through the common request completion event.
+            // SAFETY: the head is owned by this encoder model and remains alive
+            // through the ordered request completion.
+            unsafe {
+                (*attention.head).gather_kv(
+                    s,
+                    k,
+                    v,
+                    row_stride,
+                    &w.key,
+                    &w.value,
+                    attention.selection,
+                    attention.work,
+                )?;
+            }
+            let packed = layout.strides;
+            let strides = [
+                packed[0], packed[1], packed[2], packed[9], packed[10], packed[11], packed[9],
+                packed[10], packed[11], packed[9], packed[10], packed[11],
+            ];
+            let batch = fa4::AttentionBatch {
+                q,
+                k: w.key.cu_deviceptr(),
+                v: w.value.cu_deviceptr(),
+                out: w.attention.cu_deviceptr(),
+                q_offsets: boundaries,
+                k_offsets: attention.work.key_offsets_ptr(),
+                q_tokens: tokens,
+                k_tokens: attention.selection.keys(),
+                batch: batch_count,
+                max_q: max_length,
+                strides,
+            };
+            // SAFETY: Engine::enqueue_inner bound this context once on this
+            // thread; all buffers and key metadata remain retained.
+            unsafe { provider.forward_batch_bound(s, &batch)? };
         } else if let Some(provider) = fa4 {
             let layout = fa4_layout.ok_or_else(|| infer("Missing FA4 packed layout"))?;
             let q = w.qkv.cu_deviceptr();
@@ -4213,21 +4745,45 @@ fn enqueue_encoder<E: UploadElement>(
                 &format!("layer_{_layer_index:02}_output_norm"),
             );
         }
+        if _layer_index == 0 {
+            if let Some(embedding) = deberta_embedding {
+                if embedding.has_conv() {
+                    let scratch = w
+                        .deberta_embedding
+                        .as_ref()
+                        .ok_or_else(|| infer("Missing DeBERTa convolution input scratch"))?;
+                    embedding.enqueue_conv(
+                        s,
+                        tokens,
+                        batch_count,
+                        boundaries,
+                        scratch,
+                        &mut w.temp,
+                        &mut w.x,
+                        eps,
+                    )?;
+                }
+            }
+        }
     }
     #[cfg(test)]
     if let Some(trace) = trace.take() {
         trace.finish();
     }
-    if model.classifier.is_some() {
+    if model.classifier.is_some() || model.colbert.is_some() {
         return Ok(());
     }
     let (mut bounds, mut indices, mut out) = (boundaries, selected, w.pooled.cu_deviceptr());
-    let mut count = u32_size(b.pooled_indices.len())?;
+    let mut count = if model.splade.is_some() {
+        0
+    } else {
+        u32_size(b.pooled_indices.len())?
+    };
     let mut mode = match pool {
         Pool::Cls => 0u32,
         Pool::Mean => 1,
         Pool::LastToken => 2,
-        Pool::Splade => return Err(infer("Oxide SPLADE unsupported").into()),
+        Pool::Splade => 0,
     };
     if count > 0 && mode == 1 {
         launch(
@@ -4387,6 +4943,7 @@ pub struct OxideBackend {
     output_width: usize,
     pool: Pool,
     readout: Option<ClassifierReadout>,
+    colbert_policy: Option<ColbertTokenizerPolicy>,
     attention_length_limit: Option<usize>,
     raw_output_supported: bool,
     engine: Arc<Mutex<Engine>>,
@@ -4478,13 +5035,16 @@ impl OxideBackend {
         dense_paths: Option<Vec<String>>,
         moe_candidate: bool,
     ) -> Result<Self, BackendError> {
+        let precision = EncoderPrecision::from_dtype(dtype)?;
+        if model_type == ModelType::Embedding(Pool::Splade) && precision != EncoderPrecision::Bf16 {
+            return Err(start("Oxide SPLADE requires bfloat16"));
+        }
         if qwen35_serving::is_qwen35_checkpoint(path)? {
             return Self::new_qwen35_serving(path, dtype, model_type, device_id, dense_paths);
         }
         if model_type == ModelType::Decision {
             return Err(start("Oxide decisions require a dense Qwen3.5 checkpoint"));
         }
-        let precision = EncoderPrecision::from_dtype(dtype)?;
         let admitted_model_type = model_type.clone();
         let mut deberta_host = None;
         let early_architecture = detects_architecture(path)?;
@@ -4521,12 +5081,44 @@ impl OxideBackend {
                 classifier_head::validate_admission(path, dense_paths.clone())?;
             }
         }
+        let splade = model_type == ModelType::Embedding(Pool::Splade);
+        // Open the trained backbone/head shard set once before CUDA state.
+        // Lazy WeightSource views share it through upload, including aliases.
+        let mut splade_host = if splade {
+            if precision != EncoderPrecision::Bf16 {
+                return Err(start("Oxide SPLADE requires bfloat16"));
+            }
+            splade::validate_admission(path, dense_paths.as_deref())?;
+            let (host, checkpoint) = BertWeights::load_splade(path)?;
+            let head = splade::SpladeHeadHost::load(&checkpoint, &host.config, &host.word)?;
+            Some((host, head))
+        } else {
+            None
+        };
+        let colbert = !splade
+            && matches!(model_type, ModelType::Embedding(_))
+            && colbert::is_checkpoint(path)?;
+        let mut colbert_host = if colbert {
+            if precision != EncoderPrecision::Bf16 {
+                return Err(start("Oxide ColBERT requires bfloat16"));
+            }
+            colbert::validate_admission(path, dense_paths.as_deref())?;
+            let (host, checkpoint) = BertWeights::load_colbert(path)?;
+            let head = ColbertHeadHost::load(&checkpoint, &host.config)?;
+            let policy = ColbertTokenizerPolicy::load(path)?;
+            Some((host, head, policy))
+        } else {
+            None
+        };
+        let colbert_policy = colbert_host.as_ref().map(|(_, _, policy)| policy.clone());
         let pool = match model_type {
-            ModelType::Embedding(p @ (Pool::Cls | Pool::Mean | Pool::LastToken)) => p,
+            ModelType::Embedding(p @ (Pool::Cls | Pool::Mean | Pool::LastToken | Pool::Splade)) => {
+                p
+            }
             ModelType::Classifier => Pool::Cls,
             _ => {
                 return Err(start(
-                    "Oxide currently supports dense embeddings and classifiers",
+                    "Oxide supports dense embeddings, BF16 BERT SPLADE and classifiers",
                 ))
             }
         };
@@ -4562,7 +5154,7 @@ impl OxideBackend {
             ));
         }
         let decoder = architecture == CheckpointArchitecture::Decoder;
-        let native_default = classifier || architecture.uses_native_default();
+        let native_default = classifier || splade || colbert || architecture.uses_native_default();
         let lt = if native_default {
             LtProvider::new_native_default(context.clone(), stream.clone())?
         } else {
@@ -4577,29 +5169,75 @@ impl OxideBackend {
             mut output_width,
             mut readout,
         ) = if classifier && !decoder_classifier {
-            let (host, head_host) = if architecture == CheckpointArchitecture::Deberta {
-                let mut host = deberta_host
+            if architecture == CheckpointArchitecture::Modern {
+                let mut host = ModernWeights::load_classifier(path)?;
+                let config = host.config.clone();
+                let head_host = host
+                    .classifier
                     .take()
-                    .ok_or_else(|| start("DeBERTa host weights were not preloaded"))?;
-                let head = host
-                    .head
-                    .take()
-                    .ok_or_else(|| start("DeBERTa classifier head is missing"))?;
+                    .ok_or_else(|| start("ModernBERT classifier head is missing"))?;
+                let readout = head_host.readout;
+                let output_width = readout.width();
+                let mut model = ModernEncoder::new(host, &context, &stream)?;
+                model.classifier = Some(ClassifierHead::new(head_host, &context, &stream, &lt)?);
                 (
-                    EncoderHostWeights::Deberta(host),
-                    ClassifierHeadHost::from_deberta(head),
+                    ExecutableModel::Modern(Box::new(model)),
+                    LoadedConfig::Modern(config),
+                    Some(Blas::new(context.clone(), stream.clone())?),
+                    None,
+                    None,
+                    output_width,
+                    Some(readout),
                 )
             } else {
-                let (host, checkpoint) = BertWeights::load_classifier(path)?;
-                let head = ClassifierHeadHost::load(&checkpoint, &host.config)?;
-                (EncoderHostWeights::Standard(host), head)
-            };
-            let config = host.config().clone();
-            let readout = head_host.readout;
-            let output_width = readout.width();
-            let mut model =
-                encoder_model::<Bf16>(host, &context, &stream, &lt, EncoderPrecision::Bf16)?;
-            model.classifier = Some(ClassifierHead::new(head_host, &context, &stream, &lt)?);
+                let (host, head_host) = if architecture == CheckpointArchitecture::Deberta {
+                    let mut host = deberta_host
+                        .take()
+                        .ok_or_else(|| start("DeBERTa host weights were not preloaded"))?;
+                    let head = host
+                        .head
+                        .take()
+                        .ok_or_else(|| start("DeBERTa classifier head is missing"))?;
+                    (
+                        EncoderHostWeights::Deberta(host),
+                        ClassifierHeadHost::from_deberta(head),
+                    )
+                } else {
+                    let (host, checkpoint) = BertWeights::load_classifier(path)?;
+                    let head = ClassifierHeadHost::load(&checkpoint, &host.config)?;
+                    (EncoderHostWeights::Standard(host), head)
+                };
+                let config = host.config().clone();
+                let readout = head_host.readout;
+                let output_width = readout.width();
+                let mut model =
+                    encoder_model::<Bf16>(host, &context, &stream, &lt, EncoderPrecision::Bf16)?;
+                model.classifier = Some(ClassifierHead::new(head_host, &context, &stream, &lt)?);
+                (
+                    ExecutableModel::Encoder(Box::new(model)),
+                    LoadedConfig::Encoder(config),
+                    Some(Blas::new(context.clone(), stream.clone())?),
+                    None,
+                    None,
+                    output_width,
+                    Some(readout),
+                )
+            }
+        } else if colbert {
+            let (host, head_host, policy) = colbert_host
+                .take()
+                .ok_or_else(|| start("Missing admitted ColBERT weights"))?;
+            let config = host.config.clone();
+            let output_width = head_host.output;
+            let mut model = encoder_model::<Bf16>(
+                EncoderHostWeights::Colbert(host),
+                &context,
+                &stream,
+                &lt,
+                EncoderPrecision::Bf16,
+            )?;
+            model.colbert = Some(ColbertHead::new(head_host, &context, &stream, &lt)?);
+            model.colbert_policy = Some(policy);
             (
                 ExecutableModel::Encoder(Box::new(model)),
                 LoadedConfig::Encoder(config),
@@ -4607,7 +5245,30 @@ impl OxideBackend {
                 None,
                 None,
                 output_width,
-                Some(readout),
+                None,
+            )
+        } else if splade {
+            let (host, head_host) = splade_host
+                .take()
+                .ok_or_else(|| start("Missing admitted SPLADE weights"))?;
+            let config = host.config.clone();
+            let output_width = head_host.vocab;
+            let mut model = encoder_model::<Bf16>(
+                EncoderHostWeights::Splade(host),
+                &context,
+                &stream,
+                &lt,
+                EncoderPrecision::Bf16,
+            )?;
+            model.splade = Some(SpladeHead::new(head_host, &context, &stream, &lt)?);
+            (
+                ExecutableModel::Encoder(Box::new(model)),
+                LoadedConfig::Encoder(config),
+                Some(Blas::new(context.clone(), stream.clone())?),
+                None,
+                None,
+                output_width,
+                None,
             )
         } else {
             let (model, config, plain_blas, attention_length_limit, dense, output_width) =
@@ -4740,7 +5401,7 @@ impl OxideBackend {
                         .transpose()?;
                     let plain_blas = if dense.as_ref().is_some_and(DenseHead::uses_plain)
                         || config.recipe.feed_forward.is_gated()
-                        || config.family == EncoderFamily::Deberta
+                        || (config.family == EncoderFamily::Deberta && config.hidden_size == 768)
                     {
                         Some(Blas::new(context.clone(), stream.clone())?)
                     } else {
@@ -4789,6 +5450,7 @@ impl OxideBackend {
             attention_length_limit,
             raw_output_supported,
             readout,
+            colbert_policy,
             engine: Arc::new(Mutex::new(Engine {
                 lt: ManuallyDrop::new(lt),
                 model: ManuallyDrop::new(model),
@@ -4799,6 +5461,8 @@ impl OxideBackend {
                 io: io.clone(),
                 workspace: None,
                 dense_workspace: None,
+                splade_workspace: None,
+                colbert_workspace: None,
                 cached: cache::WorkspaceCache::new(),
                 retired: RetirementQueue::new(),
                 failed: false,
@@ -4888,6 +5552,7 @@ impl OxideBackend {
             output_width,
             pool,
             readout: None,
+            colbert_policy: None,
             attention_length_limit: None,
             raw_output_supported: true,
             engine: Arc::new(Mutex::new(Engine {
@@ -4900,6 +5565,8 @@ impl OxideBackend {
                 io: io.clone(),
                 workspace: None,
                 dense_workspace: None,
+                splade_workspace: None,
+                colbert_workspace: None,
                 cached: cache::WorkspaceCache::new(),
                 retired: RetirementQueue::new(),
                 failed: false,
@@ -5055,6 +5722,7 @@ impl OxideBackend {
             output_width: config.hidden_size,
             pool: Pool::LastToken,
             readout: None,
+            colbert_policy: None,
             attention_length_limit: None,
             raw_output_supported: true,
             engine: Arc::new(Mutex::new(Engine {
@@ -5067,6 +5735,8 @@ impl OxideBackend {
                 io: io.clone(),
                 workspace: None,
                 dense_workspace: None,
+                splade_workspace: None,
+                colbert_workspace: None,
                 cached: cache::WorkspaceCache::new(),
                 retired: RetirementQueue::new(),
                 failed: false,
@@ -5320,7 +5990,12 @@ fn encoder_model<E: UploadElement>(
     precision: EncoderPrecision,
 ) -> Result<EncoderModel<E>, BackendError> {
     let config = host.config().clone();
+    let splade = matches!(&host, EncoderHostWeights::Splade(_));
     let is_deberta = config.family == EncoderFamily::Deberta;
+    let deberta_relative = match &host {
+        EncoderHostWeights::Deberta(host) => host.config.relative_attention,
+        _ => false,
+    };
     if is_deberta && <E as crate::tensor::Element>::FORMAT != crate::tensor::ScalarFormat::Bf16 {
         return Err(start("DeBERTa is qualified only for BF16 storage"));
     }
@@ -5385,7 +6060,7 @@ fn encoder_model<E: UploadElement>(
     } else {
         None
     };
-    let fa4 = if mpnet_native.is_some() || is_deberta {
+    let fa4 = if mpnet_native.is_some() || deberta_relative {
         None
     } else {
         match attention_mode.as_str() {
@@ -5436,6 +6111,9 @@ fn encoder_model<E: UploadElement>(
             _ => return Err(start("INFINITY_OXIDE_ATTENTION must be auto,simt or fa4")),
         }
     };
+    if is_deberta && !deberta_relative && fa4.is_none() {
+        return Err(start("DeBERTa requires prepared FA4 attention"));
+    }
     if config.family == EncoderFamily::Nomic && fa4.is_none() {
         return Err(start("Dense Nomic requires prepared FA4 attention"));
     }
@@ -5471,24 +6149,34 @@ fn encoder_model<E: UploadElement>(
             Some(RotaryEncoder::new(recipe, &config, stream, functions)?)
         }
     };
-    let plans = Plans::<E>::new(lt, &config)?;
-    let deberta = if let EncoderHostWeights::Deberta(host) = &host {
-        let root = fa4_root
-            .as_ref()
-            .ok_or_else(|| start("DeBERTa requires INFINITY_FA4_ROOT"))?;
-        Some(Box::new(deberta::PreparedDeberta::new(
-            host,
-            context.clone(),
-            stream.clone(),
-            Path::new(root),
-            lt,
-        )?))
+    let plans = Plans::<E>::new(lt, &config, splade)?;
+    let (deberta, deberta_embedding) = if let EncoderHostWeights::Deberta(host) = &host {
+        let relative = if deberta_relative {
+            let root = fa4_root
+                .as_ref()
+                .ok_or_else(|| start("DeBERTa requires INFINITY_FA4_ROOT"))?;
+            Some(Box::new(deberta::PreparedDeberta::new(
+                host,
+                context.clone(),
+                stream.clone(),
+                Path::new(root),
+                lt,
+            )?))
+        } else {
+            None
+        };
+        (
+            relative,
+            deberta_embedding::PreparedEmbedding::new(host, context, stream)?.map(Box::new),
+        )
     } else {
-        None
+        (None, None)
     };
     let mut uploader = WeightUploader::new(stream.clone())?;
     let weights = match host {
-        EncoderHostWeights::Standard(host) => Weights::<E> {
+        EncoderHostWeights::Standard(host)
+        | EncoderHostWeights::Splade(host)
+        | EncoderHostWeights::Colbert(host) => Weights::<E> {
             relative_bias: host
                 .relative_bias
                 .as_ref()
@@ -5580,13 +6268,17 @@ fn encoder_model<E: UploadElement>(
         fa4_layout,
         classifier: None,
         deberta,
+        deberta_embedding,
+        splade: None,
+        colbert: None,
+        colbert_policy: None,
     })
 }
 
 fn validate(batch: &Batch, c: &BertConfig) -> Result<usize, BackendError> {
-    let inputs = if c.family == model::EncoderFamily::Deberta
-        || c.family == model::EncoderFamily::Gte
-            && c.recipe.embedding == NormArithmetic::AtenEmbedding
+    let inputs = if (c.family == model::EncoderFamily::Deberta && c.type_vocab_size == 0)
+        || (c.family == model::EncoderFamily::Gte
+            && c.recipe.embedding == NormArithmetic::AtenEmbedding)
     {
         EmbeddingInputs::WordsOnly
     } else {
@@ -5604,10 +6296,13 @@ fn validate_encoder_inputs(
     let position_limit = if c.family == EncoderFamily::Mpnet {
         mpnet::position_capacity(c)? as usize
     } else if c.family == EncoderFamily::Deberta {
-        // Word-only relative attention does not index an absolute-position
-        // table. Keep its explicit qualification bound independent of the
-        // configuration's relative-distance fallback of typically 512.
-        8192
+        // Relative attention does not index an absolute-position table unless
+        // the Native configuration explicitly enables position_biased_input.
+        if c.position_biased_input {
+            c.max_position_embeddings
+        } else {
+            8192
+        }
     } else {
         c.max_position_embeddings
     };
@@ -5659,7 +6354,7 @@ fn validate_encoder_inputs(
                 .token_type_ids
                 .iter()
                 .any(|&i| i as usize >= c.type_vocab_size))
-        || (c.family != EncoderFamily::Deberta
+        || ((c.family != EncoderFamily::Deberta || c.position_biased_input)
             && batch
                 .position_ids
                 .iter()
@@ -5835,6 +6530,21 @@ fn validate_decoder(batch: &Batch, c: &DecoderConfig) -> Result<usize, BackendEr
 }
 
 impl Backend for OxideBackend {
+    fn probe(&self, mut batch: Batch, model_type: &ModelType) -> Result<(), BackendError> {
+        if self.colbert_policy.is_some() {
+            batch.raw_indices = (0..batch.len() as u32).collect();
+            batch.pooled_indices.clear();
+        }
+        match model_type {
+            ModelType::Decision => {
+                let count = batch.len();
+                self.decide(batch, vec![DecisionInput::Warmup; count])
+                    .map(|_| ())
+            }
+            ModelType::Classifier => self.predict(batch).map(|_| ()),
+            ModelType::Embedding(_) => self.embed(batch).map(|_| ()),
+        }
+    }
     fn decide(
         &self,
         batch: Batch,
@@ -5886,6 +6596,9 @@ impl Backend for OxideBackend {
                 "Dynamic block OneJev requires the block decision submission path",
             ));
         }
+        if self.colbert_policy.is_some() {
+            colbert::validate_request(&batch)?;
+        }
         let max_length = validate_loaded(&batch, &self.config)?;
         if let Some(limit) = self.attention_length_limit {
             if max_length > limit {
@@ -5904,7 +6617,12 @@ impl Backend for OxideBackend {
         }
         let hidden = self.config.hidden_size();
         let output_width = self.output_width;
-        let geometry = output::OutputGeometry::new(output_width, hidden)?;
+        let raw_width = if self.colbert_policy.is_some() {
+            output_width
+        } else {
+            hidden
+        };
+        let geometry = output::OutputGeometry::new(output_width, raw_width)?;
         let elements = geometry.host_elements(&batch)?;
         u32_size(elements)?;
         // Only the packed result rows are result-memory. Input/output pins are
@@ -5912,7 +6630,7 @@ impl Backend for OxideBackend {
         let memory = result_memory::global_pool()?.reserve(output::result_bytes(
             &batch,
             output_width,
-            hidden,
+            raw_width,
         )?)?;
         let slot = self.io.acquire()?;
         let mut lease = HostIoLease::new(
@@ -5936,6 +6654,20 @@ impl Backend for OxideBackend {
             engine.enqueue(&batch, &self.pool, max_length, None, &mut lease)?;
         }
         if !batch.raw_indices.is_empty() {
+            if let Some(policy) = self.colbert_policy.clone() {
+                let batch = batch.clone();
+                return Ok(Inference::Deferred(Box::new(move || {
+                    lease.wait()?;
+                    let output = lease.output(elements)?;
+                    if output.iter().any(|value| !value.is_finite()) {
+                        lease.poison();
+                        return Err(infer("Invalid oxide ColBERT token output"));
+                    }
+                    let mut result = colbert::pack(output, output_width, &batch, &policy)?;
+                    result.memory = Some(memory);
+                    Ok(result)
+                })));
+            }
             let pooled = batch.pooled_indices;
             let raw = batch.raw_indices;
             let boundaries = batch.cumulative_seq_lengths;
@@ -6631,9 +7363,28 @@ mod tests {
         let key = (256, 4, 2);
         let plain = Work::<Bf16>::allocation_bytes_with_classifier(key, &c, None).unwrap();
         let relative =
-            Work::<Bf16>::allocation_bytes_with_deberta(key, &c, None, Some(256)).unwrap();
+            Work::<Bf16>::allocation_bytes_with_deberta(key, &c, None, Some(256), None).unwrap();
         assert_eq!(relative - plain, deberta::Scratch::bytes(256, 256).unwrap());
+        let embedded =
+            Work::<Bf16>::allocation_bytes_with_deberta(key, &c, None, Some(256), Some(96))
+                .unwrap();
+        assert_eq!(embedded - relative, product(key.0, 96).unwrap() * 2);
         assert_eq!(down_policy(&c), DownPolicy::ClassifierNativeDefault);
+
+        let mut absolute = c.clone();
+        absolute.position_biased_input = true;
+        absolute.type_vocab_size = 2;
+        absolute.configured_type_vocab_size = Some(2);
+        let mut request = batch();
+        request.position_ids = vec![0, 511, 511];
+        request.token_type_ids = vec![0, 1, 1];
+        assert!(validate(&request, &absolute).is_ok());
+        request.position_ids[0] = 512;
+        assert!(validate(&request, &absolute).is_err());
+        request.position_ids[0] = 511;
+        request.token_type_ids[1] = 2;
+        assert!(validate(&request, &absolute).is_err());
+        assert!(validate(&request, &c).is_ok());
     }
 
     #[test]
@@ -6646,6 +7397,7 @@ mod tests {
             local_theta: 10000.0,
             global_every: 3,
             local_radius: 64,
+            classifier: None,
         });
         let mut request = batch();
         request.token_type_ids = vec![1, u32::MAX, 0];

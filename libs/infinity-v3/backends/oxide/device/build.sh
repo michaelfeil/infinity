@@ -149,7 +149,8 @@ symbols = sorted(["infinity_attention", "infinity_embedding_norm", "infinity_emb
 # Additive FP16 H384 MiniLM elementwise exports; the original list above is unchanged.
 symbols = sorted(symbols + ["infinity_deberta_unpack_scaled", "infinity_deberta_relative_transpose",
                            "infinity_deberta_divide", "infinity_deberta_signed_buckets",
-                           "infinity_deberta_embedding_word_norm_768", "infinity_deberta_layer_norm_768"])
+                           "infinity_deberta_embedding_word_norm_768", "infinity_deberta_layer_norm_768",
+                           "infinity_deberta_embedding_compose", "infinity_deberta_conv_768", "infinity_deberta_plain_norm_bf16_aten"])
 symbols = sorted(symbols + [
     "infinity_embedding_norm_384_f16", "infinity_layer_norm_384_f16",
     "infinity_plain_norm_384_f16", "infinity_mean_pool_f16",
@@ -159,6 +160,13 @@ symbols = sorted(symbols + [
 symbols = sorted(symbols + ["infinity_classifier_bias_bf16", "infinity_classifier_gather_first_bf16", "infinity_classifier_embedding_norm_384_exact", "infinity_classifier_layer_norm_384_exact"])
 
 symbols = sorted(symbols + ["infinity_embedding_norm_mpnet_768_aten", "infinity_layer_norm_mpnet_768_aten", "infinity_gelu_exact"])
+symbols = sorted(symbols + ["infinity_plain_layer_norm_768_bf16_aten", "infinity_splade_pool_bf16_f32"])
+colbert_exports = [
+    line.strip()
+    for line in (root / "colbert_exports.txt").read_text().splitlines()
+    if line.strip()
+]
+symbols = sorted(symbols + colbert_exports)
 symbols = sorted(symbols + ["infinity_gemma2_norm_bf16_f32scale",
                             "infinity_gemma2_residual_norm_bf16_f32scale",
                             "infinity_gemma2_unit_norm_bf16",
@@ -229,13 +237,20 @@ manifest["sources"]["src/encoder_f16.rs"] = digest(root / "src/encoder_f16.rs")
 manifest["sources"]["src/jina_code_qk.rs"] = digest(root / "src/jina_code_qk.rs")
 manifest["sources"]["src/classifier.rs"] = digest(root / "src/classifier.rs")
 manifest["sources"]["src/classifier_norm384.rs"] = digest(root / "src/classifier_norm384.rs")
+manifest["sources"]["src/plain_layer_norm_768.rs"] = digest(root / "src/plain_layer_norm_768.rs")
+manifest["sources"]["src/splade_pool.rs"] = digest(root / "src/splade_pool.rs")
+manifest["sources"]["src/colbert.rs"] = digest(root / "src/colbert.rs")
+manifest["sources"]["colbert_exports.txt"] = digest(root / "colbert_exports.txt")
+manifest["sources"]["SPARSE_COLBERT_ABI.json"] = digest(root / "SPARSE_COLBERT_ABI.json")
 manifest["sources"]["src/gemma2.rs"] = digest(root / "src/gemma2.rs")
+manifest["sources"]["src/modern_norm1024.rs"] = digest(root / "src/modern_norm1024.rs")
+manifest["sources"]["src/plain_layer_norm_aten.rs"] = digest(root / "src/plain_layer_norm_aten.rs")
 manifest["sources"]["src/encoder_activation.rs"] = digest(root / "src/encoder_activation.rs")
 manifest["sources"]["encoder_activation_exports.txt"] = digest(root / "encoder_activation_exports.txt")
 manifest["sources"]["qwen35_exports.txt"] = digest(root / "qwen35_exports.txt")
 manifest["sources"]["src/rms5120_aten.rs"] = digest(root / "src/rms5120_aten.rs")
 manifest["sources"]["rms5120_aten_exports.txt"] = digest(root / "rms5120_aten_exports.txt")
-for name in ["src/deberta_math.rs", "src/deberta_norm.rs", "src/gelu_exact.rs"]:
+for name in ["src/deberta_math.rs", "src/deberta_norm.rs", "src/gelu_exact.rs", "src/deberta_embedding.rs"]:
     manifest["sources"][name] = digest(root / name)
 for name in ["src/packed_mean_bf16.rs", "src/qwen35_norm.rs",
              "src/qwen35_attention.rs", "src/qwen35_copy.rs"]:

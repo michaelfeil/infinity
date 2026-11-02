@@ -1,0 +1,77 @@
+{
+  "schema": "infinity-oxide-device-export-contract/v1",
+  "status": "source-only; not device compiled or GPU qualified",
+  "exports": [
+    {
+      "name": "infinity_plain_layer_norm_768_bf16_aten",
+      "source": "src/plain_layer_norm_768.rs",
+      "purpose": "SPLADE model-dtype plain ATen LayerNorm",
+      "grid": "rows,1,1",
+      "block": 128,
+      "shared_bytes": "static",
+      "args": [
+        "input:*const u16",
+        "gamma:*const u16",
+        "beta:*const u16",
+        "output:*mut u16",
+        "rows:u32",
+        "width:u32",
+        "eps:f32"
+      ]
+    },
+    {
+      "name": "infinity_splade_pool_bf16_f32",
+      "source": "src/splade_pool.rs",
+      "purpose": "SPLADE vocabulary max over selected tokens then BF16 log1p then F32 widening",
+      "grid": "ceil(vocab/32)*selected,1,1",
+      "block": 128,
+      "shared_bytes": "static",
+      "args": [
+        "logits:*const u16",
+        "spans:*const u32 (selected,2)",
+        "output:*mut f32",
+        "width:u32",
+        "selected:u32"
+      ]
+    },
+    {
+      "name": "infinity_attention_row_gather_bf16",
+      "source": "src/colbert.rs",
+      "purpose": "ColBERT K/V row gather for MASK-excluded attention keys",
+      "grid": "ceil(rows*width/256),1,1",
+      "block": 256,
+      "shared_bytes": 0,
+      "args": [
+        "source:*const u16",
+        "indices:*const u32",
+        "out:*mut u16",
+        "rows:u32",
+        "width:u32",
+        "source_stride:u32"
+      ]
+    },
+    {
+      "name": "infinity_colbert_l2_bf16_f32",
+      "source": "src/colbert.rs",
+      "purpose": "ColBERT model-dtype BF16 norm/clamp/division, widened to F32 result rows",
+      "grid": "rows,1,1",
+      "block": 256,
+      "shared_bytes": 32,
+      "args": [
+        "input:*const u16",
+        "output:*mut f32",
+        "rows:u32",
+        "width:u32",
+        "eps:f32"
+      ]
+    }
+  ],
+  "host_contract": {
+    "device_pointers": "CUDA addresses in the backend's bound context; retained through ordered-stream completion",
+    "row_stride": "source_stride >= width; K/V packed row stride is 3*hidden for BERT QKV",
+    "attention": "ColBERT passes q_offsets=original token boundaries, k_offsets=selected key boundaries, k_tokens=selected keys; MASK rows remain query rows",
+    "l2": "projection is BF16; F32 norm accumulation followed by BF16 norm output, BF16 epsilon clamp, BF16 quotient and F32 widening; exact ATen reduction remains GPU gated",
+    "eps": "ColBERT default 1e-12",
+    "fa4_boundary_contract": "ColBERT reuses the existing additive AttentionBatch contract with separate INT32 q_offsets (original query token boundaries) and k_offsets (selected key boundaries). No padded query/key lengths are synthesized. The shared fa4 check_batch/separate_qk_forbidden guard returns a typed rejection for providers/geometries that require shared lengths; the documented BERT d32/d64 geometries do not hit that guard."
+  }
+}
