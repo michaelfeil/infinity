@@ -230,8 +230,10 @@ fn admit_geometry(config: &BertConfig, task: ClassifierTask) -> Result<(), Backe
         ),
         EncoderFamily::Gte => (
             true,
-            config.recipe.embedding == NormArithmetic::AtenEmbedding
-                && config.recipe.residual == NormArithmetic::ExactBiased
+            matches!(
+                config.recipe.embedding,
+                NormArithmetic::AtenEmbedding | NormArithmetic::ExactWordTypeBiased
+            ) && config.recipe.residual == NormArithmetic::ExactBiased
                 && matches!(config.recipe.positions, PositionRecipe::Rotary(_))
                 && config.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst,
         ),

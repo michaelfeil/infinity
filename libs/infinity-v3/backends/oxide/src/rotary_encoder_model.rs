@@ -146,7 +146,7 @@ fn reject_unexpected(
 
 pub(crate) fn load_with_checkpoint(
     path: &Path,
-    config: BertConfig,
+    mut config: BertConfig,
 ) -> Result<(BertWeights, Checkpoint), BackendError> {
     if config.family != EncoderFamily::Gte {
         return Err(start(
@@ -193,11 +193,32 @@ pub(crate) fn load_with_checkpoint(
         &[hidden],
         &mut used,
     )?;
-    // GTE NewModel is word-only. The common struct still carries position/type
-    // sources, so retain single-row zero placeholders until the engine drops
-    // those fields; the rotary engine neither uploads nor reads them.
+    // Native consumes a segment table when the checkpoint actually has one.
+    // Without it, both declared type-vocabulary hints and incoming type IDs
+    // are irrelevant to the word-only ATen embedding normalization.
     let position = WeightSource::zeroed(vec![1, hidden])?;
-    let token_type = WeightSource::zeroed(vec![1, hidden])?;
+    let type_name = format!("{root}embeddings.token_type_embeddings.weight");
+    let token_type = match checkpoint.shape(&type_name) {
+        Some([rows, width]) if (1..=2).contains(rows) && *width == hidden => {
+            if config
+                .configured_type_vocab_size
+                .is_some_and(|configured| configured != 0 && configured != *rows)
+            {
+                return Err(start(format!("wrong shape for {type_name}: checkpoint rows {rows} disagree with configured type_vocab_size")));
+            }
+            config.type_vocab_size = *rows;
+            config.recipe.embedding = crate::model::NormArithmetic::ExactWordTypeBiased;
+            used.insert(type_name.clone());
+            checkpoint.source(&type_name, &[*rows, hidden])?
+        }
+        Some(shape) => {
+            return Err(start(format!(
+                "wrong shape for {type_name}: expected [1 or 2, {hidden}], got {shape:?}"
+            )))
+        }
+        None => WeightSource::zeroed(vec![1, hidden])?,
+    };
+    config.validate()?;
 
     let mut layers = Vec::new();
     layers
@@ -290,7 +311,15 @@ pub(crate) fn load_with_checkpoint(
             output_beta,
         });
     }
-    reject_unexpected(&checkpoint, &used, classifier)?;
+    let embedding_companion = config.architectures.len() == 2
+        && config.architectures.iter().any(|name| name == "NewModel")
+        && config
+            .architectures
+            .iter()
+            .any(|name| name == "NewForTokenClassification");
+    // The companion's unused root classifier does not change embedding math.
+    // Every other unexpected checkpoint group remains rejected.
+    reject_unexpected(&checkpoint, &used, classifier || embedding_companion)?;
     Ok((
         BertWeights {
             relative_bias: None,
@@ -492,6 +521,209 @@ mod tests {
         out[0]
     }
 
+    fn segment_request(segment: u32) -> infinity_v3_backend_core::Batch {
+        infinity_v3_backend_core::Batch {
+            multimodal: vec![],
+            input_ids: vec![1],
+            token_type_ids: vec![segment],
+            position_ids: vec![8191],
+            cumulative_seq_lengths: vec![0, 1],
+            max_length: 1,
+            pooled_indices: vec![0],
+            raw_indices: vec![],
+            compact_input_ids: None,
+            compact_position_ids: None,
+            scatter_unfold: None,
+            fold_gather: None,
+            tokens: vec![],
+            offsets: vec![],
+        }
+    }
+
+    #[test]
+    fn actual_large_geometry_and_full_checkpoint_headers_load_without_payload_reads() {
+        use std::io::Write;
+        for with_segment_table in [false, true] {
+            let fixture = Fixture::new();
+            let config: serde_json::Value =
+                serde_json::from_str(include_str!("../tests/fixtures/gte-large-config.json"))
+                    .unwrap();
+            std::fs::write(
+                fixture.0.join("config.json"),
+                serde_json::to_vec(&config).unwrap(),
+            )
+            .unwrap();
+            let mut tensors = Vec::new();
+            for (name, mut shape, _) in Fixture::gte_entries("") {
+                for dim in &mut shape {
+                    *dim = match *dim {
+                        768 => 1024,
+                        2304 => 3072,
+                        3072 => 4096,
+                        6144 => 8192,
+                        other => other,
+                    };
+                }
+                if name.contains(".layer.0.") {
+                    for layer in 0..24 {
+                        tensors.push((
+                            name.replace(".layer.0.", &format!(".layer.{layer}.")),
+                            shape.clone(),
+                        ));
+                    }
+                } else {
+                    if name.ends_with("embeddings.word_embeddings.weight") {
+                        shape[0] = 30528;
+                    }
+                    tensors.push((name, shape));
+                }
+            }
+            if with_segment_table {
+                tensors.push((
+                    "embeddings.token_type_embeddings.weight".into(),
+                    vec![2, 1024],
+                ));
+            }
+            let mut offset = 0u64;
+            let mut header = serde_json::Map::new();
+            for (name, shape) in tensors {
+                let end = offset + shape.iter().product::<usize>() as u64 * 2;
+                header.insert(
+                    name,
+                    serde_json::json!({"dtype":"BF16","shape":shape,"data_offsets":[offset,end]}),
+                );
+                offset = end;
+            }
+            let mut bytes = serde_json::to_vec(&header).unwrap();
+            while !bytes.len().is_multiple_of(8) {
+                bytes.push(b' ');
+            }
+            let mut file = std::fs::File::create(fixture.0.join("model.safetensors")).unwrap();
+            file.write_all(&(bytes.len() as u64).to_le_bytes()).unwrap();
+            file.write_all(&bytes).unwrap();
+            file.set_len(8 + bytes.len() as u64 + offset).unwrap();
+            drop(file);
+            let weights = BertWeights::load(&fixture.0).unwrap();
+            assert_eq!(weights.word.shape(), &[30528, 1024]);
+            assert_eq!(weights.layers.len(), 24);
+            assert_eq!(weights.config.num_attention_heads, 16);
+            assert_eq!(weights.config.intermediate_size, 4096);
+            assert_eq!(weights.layers[0].query.weight.shape(), &[1024, 1024]);
+            assert_eq!(weights.layers[0].intermediate.weight.shape(), &[8192, 1024]);
+            assert_eq!(weights.layers[23].output.weight.shape(), &[1024, 4096]);
+            assert_eq!(
+                weights.config.recipe.embedding,
+                if with_segment_table {
+                    crate::model::NormArithmetic::ExactWordTypeBiased
+                } else {
+                    crate::model::NormArithmetic::AtenEmbedding
+                }
+            );
+            assert_eq!(
+                weights.config.recipe.residual,
+                crate::model::NormArithmetic::ExactBiased
+            );
+            let mut request = segment_request(1);
+            assert!(crate::validate(&request, &weights.config).is_ok());
+            request.token_type_ids[0] = 2;
+            assert_eq!(
+                crate::validate(&request, &weights.config).is_err(),
+                with_segment_table
+            );
+            if with_segment_table {
+                assert_eq!(weights.token_type.shape(), &[2, 1024]);
+            }
+            request.input_ids[0] = 30528;
+            assert!(crate::validate(&request, &weights.config).is_err());
+        }
+    }
+
+    #[test]
+    fn actual_multilingual_embedding_companion_loads_the_existing_shared_backbone() {
+        use std::io::Write;
+        let fixture = Fixture::new();
+        let config: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/gte-multilingual-base-config.json"
+        ))
+        .unwrap();
+        std::fs::write(
+            fixture.0.join("config.json"),
+            serde_json::to_vec(&config).unwrap(),
+        )
+        .unwrap();
+        let vocab = config["vocab_size"].as_u64().unwrap() as usize;
+        let layers = config["num_hidden_layers"].as_u64().unwrap() as usize;
+        let mut tensors = Vec::new();
+        for (name, mut shape, _) in Fixture::gte_entries("new.") {
+            if name.contains(".layer.0.") {
+                for layer in 0..layers {
+                    tensors.push((
+                        name.replace(".layer.0.", &format!(".layer.{layer}.")),
+                        shape.clone(),
+                    ));
+                }
+            } else {
+                if name.ends_with("embeddings.word_embeddings.weight") {
+                    shape[0] = vocab;
+                }
+                tensors.push((name, shape));
+            }
+        }
+        tensors.push(("classifier.weight".into(), vec![2, HIDDEN]));
+        tensors.push(("classifier.bias".into(), vec![2]));
+        tensors.push((
+            "new.embeddings.token_type_embeddings.weight".into(),
+            vec![1, HIDDEN],
+        ));
+        let mut offset = 0u64;
+        let mut header = serde_json::Map::new();
+        for (name, shape) in tensors {
+            let end = offset + shape.iter().product::<usize>() as u64 * 2;
+            header.insert(
+                name,
+                serde_json::json!({"dtype":"BF16","shape":shape,"data_offsets":[offset,end]}),
+            );
+            offset = end;
+        }
+        let mut bytes = serde_json::to_vec(&header).unwrap();
+        while !bytes.len().is_multiple_of(8) {
+            bytes.push(b' ');
+        }
+        let mut file = std::fs::File::create(fixture.0.join("model.safetensors")).unwrap();
+        file.write_all(&(bytes.len() as u64).to_le_bytes()).unwrap();
+        file.write_all(&bytes).unwrap();
+        file.set_len(8 + bytes.len() as u64 + offset).unwrap();
+        drop(file);
+        let weights = BertWeights::load(&fixture.0).unwrap();
+        assert_eq!(weights.layers.len(), 12);
+        assert_eq!(weights.word.shape(), &[250048, HIDDEN]);
+        assert_eq!(weights.token_type.shape(), &[1, HIDDEN]);
+        assert_eq!(
+            weights.config.recipe.embedding,
+            crate::model::NormArithmetic::ExactWordTypeBiased
+        );
+        assert!(!crate::classifier_head::is_classifier_config(
+            &weights.config
+        ));
+        // The two markers select an embedding route only; an explicit task
+        // request still has no unambiguous classifier and remains rejected.
+        assert!(BertConfig::load_classifier(&fixture.0).is_err());
+        for architectures in [
+            serde_json::json!(["NewForTokenClassification"]),
+            serde_json::json!(["NewModel", "NewForTokenClassification", "OtherModel"]),
+            serde_json::json!(["NewModel", "NewModel", "NewForTokenClassification"]),
+        ] {
+            let mut wrong = config.clone();
+            wrong["architectures"] = architectures;
+            std::fs::write(
+                fixture.0.join("config.json"),
+                serde_json::to_vec(&wrong).unwrap(),
+            )
+            .unwrap();
+            assert!(BertConfig::load(&fixture.0).is_err());
+        }
+    }
+
     #[test]
     fn loads_both_roots_and_splits_distinct_packed_qkv_views() {
         for root in ["", "new."] {
@@ -596,37 +828,43 @@ mod tests {
 
     #[test]
     fn admits_gte_sequence_classifier_head_and_pooler_namespaces() {
-        let fixture = Fixture::new();
-        fixture.config(serde_json::json!({
-            "architectures": ["NewForSequenceClassification"]
-        }));
-        fixture.weights(
-            "",
-            Dtype::F32,
-            &[],
-            &[
+        for segment_rows in [0, 2] {
+            let fixture = Fixture::new();
+            fixture.config(serde_json::json!({
+                "architectures": ["NewForSequenceClassification"],
+                "type_vocab_size": segment_rows
+            }));
+            let mut additional = vec![
                 ("classifier.weight", vec![1, HIDDEN]),
                 ("classifier.bias", vec![1]),
                 ("new.pooler.dense.weight", vec![HIDDEN, HIDDEN]),
                 ("new.pooler.dense.bias", vec![HIDDEN]),
                 ("pooler.dense.weight", vec![HIDDEN, HIDDEN]),
                 ("pooler.dense.bias", vec![HIDDEN]),
-            ],
-        );
-        let (weights, checkpoint) = BertWeights::load_classifier(&fixture.0).unwrap();
-        assert_eq!(
-            weights.config.architectures,
-            vec!["NewForSequenceClassification".to_owned()]
-        );
-        let head =
-            crate::classifier_head::ClassifierHeadHost::load(&checkpoint, &weights.config).unwrap();
-        assert_eq!(
-            head.readout.task,
-            crate::classifier_head::ClassifierTask::Sequence
-        );
-        assert_eq!(head.readout.width, 1);
-        assert!(head.first.is_some());
-        assert!(crate::classifier_head::validate_admission(&fixture.0, None).is_ok());
+            ];
+            if segment_rows > 0 {
+                additional.push((
+                    "embeddings.token_type_embeddings.weight",
+                    vec![segment_rows, HIDDEN],
+                ));
+            }
+            fixture.weights("", Dtype::F32, &[], &additional);
+            let (weights, checkpoint) = BertWeights::load_classifier(&fixture.0).unwrap();
+            assert_eq!(
+                weights.config.architectures,
+                vec!["NewForSequenceClassification".to_owned()]
+            );
+            let head =
+                crate::classifier_head::ClassifierHeadHost::load(&checkpoint, &weights.config)
+                    .unwrap();
+            assert_eq!(
+                head.readout.task,
+                crate::classifier_head::ClassifierTask::Sequence
+            );
+            assert_eq!(head.readout.width, 1);
+            assert!(head.first.is_some());
+            assert!(crate::classifier_head::validate_admission(&fixture.0, None).is_ok());
+        }
 
         let token = Fixture::new();
         token.config(serde_json::json!({
@@ -682,7 +920,7 @@ mod tests {
     fn rejects_unsupported_gte_configurations_before_reading_weights() {
         for (overrides, expected) in [
             (serde_json::json!({"hidden_size": 384}), "GTE NewModel"),
-            (serde_json::json!({"type_vocab_size": 2}), "type_vocab_size"),
+            (serde_json::json!({"type_vocab_size": 3}), "type_vocab_size"),
             (
                 serde_json::json!({"architectures": ["BertModel"]}),
                 "architecture",

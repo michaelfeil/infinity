@@ -683,6 +683,7 @@ fn selects_mpnet_h768(c: &BertConfig) -> bool {
 
 struct Kernels {
     embedding: Function,
+    gte_word_gather: Option<Function>,
     embedding_384: Option<Function>,
     norm: Function,
     norm_384: Option<Function>,
@@ -760,12 +761,18 @@ impl Kernels {
             && config.recipe.residual == NormArithmetic::RoundedAddBeforeStats;
         let aten_768_embedding =
             config.hidden_size == 768 && config.recipe.embedding == NormArithmetic::AtenEmbedding;
+        let gte_1024 = config.family == EncoderFamily::Gte && config.hidden_size == 1024;
+        let aten_1024_embedding =
+            gte_1024 && config.recipe.embedding == NormArithmetic::AtenEmbedding;
         let embedding_name = match config.recipe.embedding {
             NormArithmetic::RoundedAddBeforeStats if config.family == EncoderFamily::Deberta => {
                 "infinity_deberta_embedding_word_norm_768"
             }
             NormArithmetic::ExactBiased if exact_classifier_384 => {
                 "infinity_classifier_embedding_norm_384_exact"
+            }
+            NormArithmetic::ExactWordTypeBiased if gte_1024 => {
+                "infinity_gte_layer_norm_1024_candle"
             }
             NormArithmetic::ExactWordTypeBiased if config.hidden_size == 768 => {
                 "infinity_embedding_word_type_norm_768_exact"
@@ -790,9 +797,12 @@ impl Kernels {
             NormArithmetic::AtenEmbedding if aten_768_embedding => {
                 "infinity_embedding_norm_word_768_aten"
             }
+            NormArithmetic::AtenEmbedding if aten_1024_embedding => {
+                "infinity_plain_layer_norm_bf16_aten"
+            }
             NormArithmetic::AtenEmbedding => {
                 return Err(start(
-                    "AtenEmbedding requires the GTE 768 word-only embedding kernel",
+                    "AtenEmbedding requires a GTE768/1024 word-only method",
                 ))
             }
             NormArithmetic::ExactBiased => "infinity_embedding_norm",
@@ -810,6 +820,7 @@ impl Kernels {
                 "infinity_classifier_layer_norm_384_exact"
             }
             NormArithmetic::ExactBiased if exact_768_norm => "infinity_layer_norm_768_exact_vector",
+            NormArithmetic::ExactBiased if gte_1024 => "infinity_gte_layer_norm_1024_candle",
             NormArithmetic::RoundedAddBeforeStats if mpnet_768_rounded => {
                 "infinity_layer_norm_mpnet_768_aten"
             }
@@ -903,6 +914,15 @@ impl Kernels {
             },
             mean_pool: module.load_function("infinity_mean_pool").map_err(start)?,
             embedding: module.load_function(embedding_name).map_err(start)?,
+            gte_word_gather: if gte_1024 {
+                Some(
+                    module
+                        .load_function("infinity_embedding_gather")
+                        .map_err(start)?,
+                )
+            } else {
+                None
+            },
             norm: module.load_function(norm_name).map_err(start)?,
             embedding_geometry: if mpnet_768_rounded {
                 MPNET_H768_GEOMETRY
@@ -919,6 +939,7 @@ impl Kernels {
             {
                 MPNET_H768_GEOMETRY
             } else if exact_768_norm
+                || gte_1024
                 || exact_classifier_384
                 || (config.family == EncoderFamily::Deberta && config.hidden_size == 768)
             {
@@ -972,6 +993,7 @@ impl Kernels {
             embedding: module
                 .load_function("infinity_embedding_norm_384_f16")
                 .map_err(start)?,
+            gte_word_gather: None,
             embedding_384: Some(embedding),
             norm: module
                 .load_function("infinity_layer_norm_384_f16")
@@ -4315,6 +4337,78 @@ fn enqueue_encoder<E: UploadElement>(
             &mut w.x,
             eps,
         )?;
+    } else if let Some(gather) = k.gte_word_gather.as_ref() {
+        // Reuse the existing word gather and select the checkpoint-bound norm.
+        // Work.x and the temporary segment rows share the ordered stream lease.
+        launch(
+            gather,
+            s,
+            blocks(product(tokens, h)?)?,
+            0,
+            &mut [
+                arg(&mut ids),
+                arg(&mut word),
+                arg(&mut x),
+                arg(&mut t),
+                arg(&mut width),
+            ],
+        )?;
+        let mut normalized = x;
+        if c.recipe.embedding == NormArithmetic::ExactWordTypeBiased {
+            // This existing arena is dead until the first attention projection.
+            // Gather the segment row separately so its sum stays FP32 through
+            // the native Candle statistics rather than being rounded to BF16.
+            let mut segment_rows = w.temp.cu_deviceptr();
+            launch(
+                gather,
+                s,
+                blocks(product(tokens, h)?)?,
+                0,
+                &mut [
+                    arg(&mut types),
+                    arg(&mut type_weight),
+                    arg(&mut segment_rows),
+                    arg(&mut t),
+                    arg(&mut width),
+                ],
+            )?;
+            let mut no_bias = 0u64;
+            launch_threads(
+                &k.embedding,
+                s,
+                (t.div_ceil(4), 1, 1),
+                128,
+                0,
+                &mut [
+                    arg(&mut x),
+                    arg(&mut segment_rows),
+                    arg(&mut no_bias),
+                    arg(&mut gamma),
+                    arg(&mut beta),
+                    arg(&mut normalized),
+                    arg(&mut t),
+                    arg(&mut width),
+                    arg(&mut eps),
+                ],
+            )?;
+        } else {
+            launch_threads(
+                &k.embedding,
+                s,
+                (t, 1, 1),
+                128,
+                0,
+                &mut [
+                    arg(&mut x),
+                    arg(&mut gamma),
+                    arg(&mut beta),
+                    arg(&mut normalized),
+                    arg(&mut t),
+                    arg(&mut width),
+                    arg(&mut eps),
+                ],
+            )?;
+        }
     } else if c.recipe.embedding == NormArithmetic::ExactWordTypeBiased {
         launch_threads(
             &k.embedding,

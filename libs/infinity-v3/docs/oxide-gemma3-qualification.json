@@ -1,0 +1,64 @@
+{
+  "scope": "Gemma3 Harrier 270M BF16 H100; no performance claim",
+  "checkpoint": "microsoft/harrier-oss-v1-270m",
+  "revision": "31de22b673913c7d658c0f03f792d77c2dcf8ebd",
+  "source_state": "c57c661 plus public Gemma3 implementation (c23bbab)",
+  "oxide_binary_sha256": "125e5eb70aba994fee80e115941bd15dcfa503bc35e16a8372ee12d55ec9d27d",
+  "native_sdk_sha256": "b66d70b61b39e1bf0d565aca33bac7c5e21849677396ce5216f5baf73027d37e",
+  "native_graphs": {
+    "enabled": true,
+    "max_tokens": 4096,
+    "entries": 4,
+    "reuse": 3,
+    "max_bytes": 536870912,
+    "max_captures": 8
+  },
+  "fixture_manifest_sha256": "fe791aa76623a1a64510225a9dfde989c6ac9b61e353fecdf13abccf240272cf",
+  "routes": [
+    {
+      "pool": "cls",
+      "valid_cases": 20,
+      "invalid_cases": 5,
+      "compared_values": 49280,
+      "atol": 0,
+      "rtol": 0,
+      "max_abs": 0.0,
+      "status": "ok",
+      "report_sha256": "10daf6261d7a58b0851cf8b6508894bacc52897b679db138e8ee1fc2f5347338"
+    },
+    {
+      "pool": "last-token",
+      "valid_cases": 20,
+      "invalid_cases": 5,
+      "compared_values": 49280,
+      "atol": 0,
+      "rtol": 0,
+      "max_abs": 0.0,
+      "status": "ok",
+      "report_sha256": "d6155a893ad80b7c17fb48ae792dbdb55d14b19ed0ceaad9f1011600eb5b3dec"
+    },
+    {
+      "pool": "mean",
+      "valid_cases": 20,
+      "invalid_cases": 5,
+      "compared_values": 49280,
+      "atol": 0,
+      "rtol": 0,
+      "max_abs": 0.0,
+      "status": "ok",
+      "report_sha256": "fa1e7f531474ac3edfff108dcb83aec2616a27a69638632c6782abe7908e8782"
+    }
+  ],
+  "lifetime": {
+    "two_held": true,
+    "changing_shapes": true,
+    "cancellation_recovery": true,
+    "out_of_order_completion": true,
+    "completion_after_engine_drop": true,
+    "max_held": 2,
+    "report_sha256": "77b902e3ccee09734a20eb2f81f0cf68d03f145ce61deffb4ea827fbf426e92e"
+  },
+  "recovery_branch": "wip/oxide-node-recovery-20261102",
+  "recovery_commit": "8722024bb76e77aba44d1df6d77f8763b2af629f",
+  "native_gold_sha256": "d4b58c42e884bd6a925c809342361d35c4f9e219012c0ba97b1564a47db3bb6c"
+}

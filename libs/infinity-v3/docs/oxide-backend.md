@@ -48,8 +48,11 @@ variant of these families.
 Gemma3 text adds the documented Harrier 270M/27B and KaLM 12B configurations:
 BF16 H640/H3840/H5376, checkpoint-defined local/global attention, offset RMS
 scales, Q/K norms, embedding scaling and per-layer residual norms. Raw and
-pooled embeddings use the normal factory and deferred ownership. Trained
-checkpoint and performance qualification are pending.
+pooled embeddings use the normal factory and deferred ownership. Harrier 270M
+matches Native exactly across 20 valid requests per pooling mode, including raw
+and mixed selections; five invalid requests per mode and deferred lifetime checks
+also pass. See [the scoped evidence](oxide-gemma3-qualification.json). Other
+checkpoints and performance qualification remain pending.
 
 Gemma2 adds text, image and audio execution, including projected media rows,
 PLE and shared KV. Gemma4 adds dense E2B/E4B and sparse Rune-26B execution,
@@ -66,6 +69,9 @@ workspace, deferred results, pooling, raw output and Dense-module handling.
 Additional BF16 encoder paths cover ModernBERT, Nomic BERT and Jina Small with
 their validated geometry, normalization, rotary/ALiBi and activation recipes.
 Their loader guards remain authoritative; family names do not imply all variants.
+GTE additionally loads H1024/24-layer GTE-large and the documented multilingual
+architecture markers, including optional token-type embeddings. GTE-large uses
+a separate width-1024 Candle LayerNorm; trained-checkpoint qualification is pending.
 
 GTE and ModernBERT sequence/token heads execute their trained projections,
 activation and optional head LayerNorm. ModernBERT includes H1024 geometry;
@@ -97,7 +103,7 @@ Elephant and Mammoth have separate native text and single-question Decision
 qualification; this does not establish every Qwen3.5 geometry or performance.
 The cold runtime dependencies are selected by `INFINITY_FA4_ROOT`,
 `INFINITY_OXIDE_GDN_RAW_KERNELS`, `INFINITY_OXIDE_GDN_PROVIDER`, and
-`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 159 Rust
+`INFINITY_OXIDE_GDN_AUX_KERNELS`. The current combined builder emits 160 Rust
 exports; Qwen3.5 requires its nine additive exports. Dense decoders require the
 90-export bundle or newer for Native BF16 mean pooling. Other existing families
 can retain their older qualified bundles. H5120 Qwen3 requires the additive

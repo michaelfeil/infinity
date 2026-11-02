@@ -29,6 +29,7 @@ mod jina_code_qk;
 mod mpnet_norm;
 mod nomic_embedding;
 mod norm1024;
+mod gte_norm1024;
 mod modern_norm1024;
 mod plain_layer_norm_aten;
 mod norm1024_exact_vector;
@@ -389,6 +390,12 @@ mod kernels {
         out: *mut u16, rows: u32, width: u32, eps: f32,
     ) {
         unsafe { crate::plain_layer_norm_aten::plain_layer_norm_bf16_aten(input,gamma,beta,out,rows,width,eps) };
+    }
+
+    /// GTE H1024 Candle affine norm with unrounded residual statistics.
+    #[kernel]
+    pub unsafe fn infinity_gte_layer_norm_1024_candle(input:*const u16,residual:*const u16,bias:*const u16,gamma:*const u16,beta:*const u16,out:*mut u16,rows:u32,width:u32,eps:f32) {
+        unsafe{crate::gte_norm1024::gte1024_layer_norm_1024(input,residual,bias,gamma,beta,out,rows,width,eps)};
     }
 
     #[kernel]

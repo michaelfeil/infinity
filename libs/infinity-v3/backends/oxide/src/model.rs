@@ -637,10 +637,19 @@ impl BertConfig {
                 ));
             }
         } else if let Some(architectures) = raw.architectures.as_deref() {
-            if let Some(architecture) = architectures
-                .iter()
-                .find(|architecture| !family.accepts_architecture(architecture))
-            {
+            // gte-multilingual-base publishes both its embedding class and a
+            // token-head companion. An explicit embedding request still uses
+            // NewModel; this does not admit GTE token prediction.
+            let embedding_companion = family == EncoderFamily::Gte
+                && architectures.len() == 2
+                && architectures.iter().any(|name| name == "NewModel")
+                && architectures
+                    .iter()
+                    .any(|name| name == "NewForTokenClassification");
+            if let Some(architecture) = architectures.iter().find(|architecture| {
+                !(family.accepts_architecture(architecture)
+                    || embedding_companion && architecture.as_str() == "NewForTokenClassification")
+            }) {
                 return Err(start(format!(
                     "unsupported encoder architecture {architecture} for model_type {}",
                     raw.model_type
@@ -713,10 +722,10 @@ impl BertConfig {
         }
         let type_vocab_size = if gte {
             match raw.type_vocab_size {
-                None | Some(0) => 1,
+                None | Some(0..=2) => 1,
                 Some(value) => {
                     return Err(start(format!(
-                        "GTE NewModel type_vocab_size must be 0, got {value}"
+                        "GTE NewModel type_vocab_size must be 0, 1 or 2, got {value}"
                     )))
                 }
             }
@@ -844,11 +853,18 @@ impl BertConfig {
             ));
         }
         if self.family == EncoderFamily::Gte {
-            let recipe_valid = self.hidden_size == 768
-                && self.num_attention_heads == 12
-                && self.intermediate_size == 3072
-                && self.max_position_embeddings <= 8192
-                && self.recipe.embedding == NormArithmetic::AtenEmbedding
+            let recipe_valid = matches!(
+                (
+                    self.hidden_size,
+                    self.num_attention_heads,
+                    self.intermediate_size
+                ),
+                (768, 12, 3072) | (1024, 16, 4096)
+            ) && self.max_position_embeddings <= 8192
+                && matches!(
+                    self.recipe.embedding,
+                    NormArithmetic::AtenEmbedding | NormArithmetic::ExactWordTypeBiased
+                )
                 && self.recipe.residual == NormArithmetic::ExactBiased
                 && self.recipe.feed_forward == FeedForwardRecipe::GatedGeluUpFirst;
             let PositionRecipe::Rotary(rotary) = self.recipe.positions else {
