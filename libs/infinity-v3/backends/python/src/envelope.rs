@@ -3,9 +3,9 @@ use numpy::{PyArrayDyn, PyArrayMethods, PyUntypedArrayMethods};
 use pyo3::exceptions::{PyMemoryError, PyRuntimeError};
 use pyo3::prelude::*;
 use std::sync::Arc;
-use tokio::sync::{oneshot, OwnedSemaphorePermit};
+use tokio::sync::oneshot;
 
-/// A forward result stays in Rust until the completion thread consumes it.
+/// A forward result stays in Rust until the synchronous submit returns.
 /// The snapshot owns its float32 values so later mutation through a numpy alias
 /// cannot change a response that has already been accepted.
 pub(crate) struct OutputSnapshot {
@@ -17,24 +17,21 @@ pub(crate) struct OutputSnapshot {
 
 pub(crate) type ForwardResult = Result<OutputSnapshot, PyErr>;
 
-/// Bridge used by the Python executor to complete a deferred Rust submission.
+/// Bridge used by the Python executor to complete a synchronous Rust submission.
 #[pyclass]
 pub(crate) struct ResponseEnvelope {
     sender: Option<oneshot::Sender<ForwardResult>>,
-    lease: Option<OwnedSemaphorePermit>,
 }
 
 impl ResponseEnvelope {
     pub(crate) fn channel(
         py: Python<'_>,
-        lease: Option<OwnedSemaphorePermit>,
     ) -> PyResult<(Py<Self>, oneshot::Receiver<ForwardResult>)> {
         let (sender, receiver) = oneshot::channel();
         let envelope = Py::new(
             py,
             Self {
                 sender: Some(sender),
-                lease,
             },
         )?;
         Ok((envelope, receiver))
@@ -45,9 +42,6 @@ impl ResponseEnvelope {
             .sender
             .take()
             .ok_or_else(|| PyRuntimeError::new_err("response already completed"))?;
-        // The admission permit must not outlive completion: the Rust receiver
-        // may be waiting for it before it wakes the deferred request.
-        self.lease = None;
         let _ = sender.send(result);
         Ok(())
     }
@@ -147,8 +141,6 @@ mod tests {
     use super::*;
     use numpy::PyArray1;
     use pyo3::types::PyDict;
-    use std::sync::Arc;
-    use tokio::sync::Semaphore;
 
     fn contiguous_array<'py>(
         py: Python<'py>,
@@ -187,63 +179,50 @@ mod tests {
     }
 
     #[test]
-    fn envelope_is_single_use_and_releases_its_permit() {
+    fn envelope_is_single_use_and_delivers_its_result_immediately() {
         Python::initialize();
         Python::attach(|py| {
-            let semaphore = Arc::new(Semaphore::new(1));
-            let permit = semaphore.clone().try_acquire_owned().unwrap();
-            let (envelope, receiver) = ResponseEnvelope::channel(py, Some(permit)).unwrap();
+            let (envelope, mut receiver) = ResponseEnvelope::channel(py).unwrap();
             envelope
                 .borrow_mut(py)
                 .set_result(contiguous_array(py, &[1.0, 2.0, 3.0, 4.0], 2, 2))
                 .unwrap();
-            assert_eq!(semaphore.available_permits(), 1);
-            let snapshot = receiver.blocking_recv().unwrap().unwrap();
+            let snapshot = receiver.try_recv().unwrap().unwrap();
             assert_eq!((snapshot.rows, snapshot.width), (2, 2));
             assert_eq!(snapshot.values, vec![1.0, 2.0, 3.0, 4.0]);
             assert!(envelope
                 .borrow_mut(py)
                 .set_result(contiguous_array(py, &[5.0], 1, 1))
                 .is_err());
-            drop(envelope);
-            assert_eq!(semaphore.available_permits(), 1);
         });
     }
 
     #[test]
-    fn failed_envelope_releases_its_permit_before_delivery() {
+    fn failed_envelope_delivers_its_error_before_submit_returns() {
         Python::initialize();
         Python::attach(|py| {
-            let semaphore = Arc::new(Semaphore::new(1));
-            let permit = semaphore.clone().try_acquire_owned().unwrap();
-            let (envelope, receiver) = ResponseEnvelope::channel(py, Some(permit)).unwrap();
+            let (envelope, mut receiver) = ResponseEnvelope::channel(py).unwrap();
             let error = pyo3::exceptions::PyValueError::new_err("boom");
             envelope
                 .borrow_mut(py)
                 .set_exception(error.value(py).clone().into_any())
                 .unwrap();
-            assert_eq!(semaphore.available_permits(), 1);
-            assert!(receiver.blocking_recv().unwrap().is_err());
+            assert!(receiver.try_recv().unwrap().is_err());
             drop(envelope);
-            assert_eq!(semaphore.available_permits(), 1);
         });
     }
 
     #[test]
-    fn canceled_receiver_still_releases_the_permit() {
+    fn canceled_receiver_accepts_completion() {
         Python::initialize();
         Python::attach(|py| {
-            let semaphore = Arc::new(Semaphore::new(1));
-            let permit = semaphore.clone().try_acquire_owned().unwrap();
-            let (envelope, receiver) = ResponseEnvelope::channel(py, Some(permit)).unwrap();
+            let (envelope, receiver) = ResponseEnvelope::channel(py).unwrap();
             drop(receiver);
             envelope
                 .borrow_mut(py)
                 .set_result(contiguous_array(py, &[1.0, 2.0], 1, 2))
                 .unwrap();
-            assert_eq!(semaphore.available_permits(), 1);
             drop(envelope);
-            assert_eq!(semaphore.available_permits(), 1);
         });
     }
 
@@ -266,9 +245,9 @@ view = base.reshape(2, 2)",
                 .unwrap()
                 .extract::<Bound<'_, PyArrayDyn<f32>>>()
                 .unwrap();
-            let (envelope, receiver) = ResponseEnvelope::channel(py, None).unwrap();
+            let (envelope, mut receiver) = ResponseEnvelope::channel(py).unwrap();
             envelope.borrow_mut(py).set_result(view).unwrap();
-            let snapshot = receiver.blocking_recv().unwrap().unwrap();
+            let snapshot = receiver.try_recv().unwrap().unwrap();
             py.run(c"base[:] = 99.0", None, Some(&locals)).unwrap();
             assert_eq!(snapshot.values, vec![1.0, 2.0, 3.0, 4.0]);
         });
@@ -289,7 +268,7 @@ strided = np.arange(6, dtype=np.float32).reshape(2, 3)[:, ::2]",
                 Some(&locals),
             )
             .unwrap();
-            let (envelope, receiver) = ResponseEnvelope::channel(py, None).unwrap();
+            let (envelope, mut receiver) = ResponseEnvelope::channel(py).unwrap();
             for name in ["rank_one", "rank_three", "zero_width", "strided"] {
                 let array = locals
                     .get_item(name)
@@ -307,7 +286,7 @@ strided = np.arange(6, dtype=np.float32).reshape(2, 3)[:, ::2]",
                 .borrow_mut(py)
                 .set_exception(error.value(py).clone().into_any())
                 .unwrap();
-            assert!(receiver.blocking_recv().unwrap().is_err());
+            assert!(receiver.try_recv().unwrap().is_err());
         });
     }
 }

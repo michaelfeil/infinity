@@ -429,6 +429,19 @@ mod tests {
     }
 
     #[test]
+    fn input_owner_releases_the_rust_buffers_when_payload_drops() {
+        Python::initialize();
+        let inputs = Arc::new(pad_batch(&batch()).unwrap());
+        Python::attach(|py| {
+            assert_eq!(Arc::strong_count(&inputs), 1);
+            let payload = PaddedInputs::to_python(inputs.clone(), py).unwrap();
+            assert!(Arc::strong_count(&inputs) > 1);
+            drop(payload);
+            assert_eq!(Arc::strong_count(&inputs), 1);
+        });
+    }
+
+    #[test]
     fn packs_pooled_and_raw_rows_in_request_order() {
         let padded = pad_batch(&batch()).unwrap();
         let values = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];

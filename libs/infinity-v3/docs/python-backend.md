@@ -19,7 +19,7 @@ Run with:
 infinity_v3 \
   --model-id /models/all-MiniLM-L6-v2 \
   --backend python-backend \
-  --python-config '{"backend":"my-backend","device":"auto","queue_depth":32}'
+  --python-config '{"backend":"my-backend","device":"auto"}'
 ```
 
 `--python-config` is a JSON object. Repeat it per model when serving multiple
@@ -35,12 +35,11 @@ Reserved keys:
 - `backend`: entry-point name in `infinity_v3.backends` or a
   `module:attribute` factory. If omitted, the sole installed entry point is
   used.
-- `queue_depth`: positive integer maximum in-flight forwards. Defaults to 32.
-  Admission uses the full validated value; the deferred completion queue is
-  capped separately.
 
 All other keys are passed to the plugin as opaque configuration. `device` is a
-common convention but is not interpreted by the frontend.
+common convention but is not interpreted by the frontend. The former
+`queue_depth` key is rejected with a startup error; remove it from existing
+configurations.
 
 `INFINITY_PYTHON_CONFIG` is the environment equivalent of `--python-config`.
 `INFINITY_PYTHONPATH` can add import paths for source checkouts.
@@ -50,7 +49,7 @@ The frontend pads each batch to its longest sequence. `input_ids`,
 arrays that reshape to `[batch_size, seq_len]`. The mask is 1 for real tokens
 and 0 for padding; `lengths` contains the unpadded length of each sequence.
 Input arrays are numpy views over Rust-owned buffers; the payload keeps those
-buffers alive while the request is queued. Treat the arrays as read-only.
+buffers alive for the synchronous `submit` call. Treat the arrays as read-only.
 The plugin owns model loading, device placement, and model-specific preprocessing.
 The response is one contiguous `float32` numpy array.
 
@@ -90,7 +89,6 @@ The factory receives:
 - `pooling`: `cls`, `mean`, `last_token`, or `splade`
 - `device_id`: replica/device ordinal
 - `config_json`: the `--python-config` JSON string
-- `queue_size`: the resolved `queue_depth`
 
 The returned executor must implement:
 
@@ -110,7 +108,7 @@ token_type_ids, position_ids, lengths,
 pooled_indices, raw_indices
 ```
 
-`response.set_result(array)` completes the Rust future. The array must be
+`response.set_result(array)` completes the request. The array must be
 `float32`, C-contiguous, and shaped `[rows, width]` with `width > 0`:
 
 - `embed`: one row per pooled index, followed by the real token rows for each
@@ -124,19 +122,18 @@ raise an exception without completing the response; the executor must deliver
 that error with `set_exception`.
 
 `response.set_exception(error)` completes the request with an error. Both
-completion methods release the in-flight permit even if the plugin retains the
-response object. The executor must not block the calling Rust worker; a common implementation uses one
-dedicated Python thread and a bounded queue. `close` must join that thread and
-release model resources.
+completion methods must be called exactly once before `submit` returns. The
+Rust model worker calls `submit` synchronously, so one Python forward runs at a
+time per model worker and no completion worker is used. A `submit` that returns
+without completing its response fails that request with a synchronous-contract
+error. Do not hand work to another thread or queue and return early. `close`
+must release model resources.
 
 ## Lifecycle and threading
 
-- One executor thread per process is recommended. The Rust backend already
-  serializes a single model worker and completion worker.
-- The Rust backend bounds outstanding forwards with `queue_depth`. The deferred
-  completion queue is bounded by `min(queue_depth, 256)`, so the model worker
-  can keep accepting coalesced batches without preallocating an oversized
-  channel. Other backend kinds retain their completion depth of 2.
+- The shared Rust frontend serializes one model worker per accelerator
+  configuration. That worker calls `submit` synchronously, so one Python
+  forward runs at a time and inflight work is bounded by the frontend queue.
 - `healthy` is called by the shared health endpoint.
 - The Python interpreter stays initialized for the process lifetime. The plugin
   must be importable before the first model is created.
@@ -146,8 +143,8 @@ release model resources.
 ## Buffer ownership
 
 - **Rust to Python:** input arrays are borrowed numpy views over the Rust
-  `PaddedInputs` buffers. A Python owner object keeps the `Arc` alive while the
-  executor queue holds the payload.
+  `PaddedInputs` buffers. A Python owner object keeps the `Arc` alive for the
+  duration of the synchronous `submit` call.
 - **Python to Rust:** `set_result` validates the array and copies its values into
   one Rust-owned snapshot. Making a numpy view read-only cannot prevent writes
   through its base array, so Python-owned output memory is never shared with

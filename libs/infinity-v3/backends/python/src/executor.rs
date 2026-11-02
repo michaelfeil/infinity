@@ -13,7 +13,6 @@ pub(crate) struct ExecutorConfig {
     pub pooling: String,
     pub device_id: usize,
     pub config_json: String,
-    pub queue_size: usize,
 }
 
 pub(crate) struct Executor {
@@ -49,9 +48,6 @@ impl Executor {
             kwargs
                 .set_item("config_json", config.config_json)
                 .map_err(start_error)?;
-            kwargs
-                .set_item("queue_size", config.queue_size)
-                .map_err(start_error)?;
             let inner = factory
                 .call((), Some(&kwargs))
                 .map_err(|error| {
@@ -79,7 +75,7 @@ impl Executor {
             .bind(py)
             .call_method1("submit", (route, envelope, payload))
             .map(|_| ())
-            .map_err(submit_error)
+            .map_err(|error| submit_error(py, error))
     }
 
     pub(crate) fn health(&self) -> Result<(), BackendError> {
@@ -165,11 +161,9 @@ fn start_error(error: PyErr) -> BackendError {
     ))
 }
 
-fn submit_error(error: PyErr) -> BackendError {
+fn submit_error(py: Python<'_>, error: PyErr) -> BackendError {
     let message = error.to_string();
-    if Python::attach(|py| error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py))
-        || message.contains("queue is full")
-    {
+    if error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py) {
         BackendError::Overloaded(message)
     } else if message.contains("executor is closed") {
         BackendError::Unhealthy

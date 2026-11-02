@@ -163,8 +163,8 @@ struct Args {
     )]
     torch_device: Vec<infinity_v3_backend::TorchDevice>,
 
-    /// JSON object for the Python backend. Reserved keys: backend, queue_depth.
-    /// Other keys are passed to the plugin.
+    /// JSON object for the synchronous Python backend. Reserved key: backend.
+    /// Other keys are passed to the plugin; request scheduling stays in Rust.
     #[clap(long, env = infinity_v3_config::infinity_env!("PYTHON_CONFIG"), value_parser = optional_string)]
     python_config: Vec<Optional<String>>,
 

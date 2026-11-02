@@ -1,9 +1,10 @@
 //! Bring-your-own-Python inference backend.
 //!
-//! Rust owns scheduling, batching geometry and response envelopes. One Python
-//! executor thread owns the model; the native backend worker never blocks on a
-//! forward pass. The executor is selected at runtime through an installed entry
-//! point or a `module:attribute` factory.
+//! Rust owns scheduling, batching geometry and response envelopes. The native
+//! model worker calls the Python executor synchronously, and each submit must
+//! complete its response before returning so one forward runs at a time. The
+//! executor is selected at runtime through an installed entry point or a
+//! `module:attribute` factory.
 
 mod batch;
 mod envelope;
@@ -17,27 +18,16 @@ use infinity_v3_backend_core::{
     TokenPredictions,
 };
 use pyo3::prelude::*;
-use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::Semaphore;
-
-const DEFAULT_QUEUE_DEPTH: usize = 32;
+use tokio::sync::oneshot;
 
 /// Runtime configuration supplied by the shared frontend.
 #[derive(Clone, Debug, Default)]
 pub struct PythonBackendConfig {
-    /// JSON object. Reserved keys: `backend`, `queue_depth`; other keys are
-    /// passed to the plugin.
+    /// JSON object. Reserved key: `backend`; other keys are passed to the
+    /// plugin.
     pub config: Option<String>,
-}
-
-impl PythonBackendConfig {
-    /// Resolve the validated in-flight admission limit.
-    pub fn queue_depth(&self) -> Result<NonZeroUsize, BackendError> {
-        let value = parse_config_json(self.config.as_deref().unwrap_or("{}"))?;
-        resolve_queue_depth(config_object(&value)?)
-    }
 }
 
 fn parse_config_json(config_json: &str) -> Result<serde_json::Value, BackendError> {
@@ -53,30 +43,23 @@ fn config_object(
         .ok_or_else(|| BackendError::Start("--python-config must be a JSON object".into()))
 }
 
-fn resolve_queue_depth(
+fn reject_obsolete_queue_depth(
     object: &serde_json::Map<String, serde_json::Value>,
-) -> Result<NonZeroUsize, BackendError> {
-    match object.get("queue_depth") {
-        Some(value) => value
-            .as_u64()
-            .filter(|&value| value > 0 && value <= Semaphore::MAX_PERMITS as u64)
-            .and_then(|value| usize::try_from(value).ok())
-            .and_then(NonZeroUsize::new)
-            .ok_or_else(|| {
-                BackendError::Start(
-                    "--python-config queue_depth must be a positive integer within the semaphore limit".into(),
-                )
-            }),
-        None => Ok(
-            NonZeroUsize::new(DEFAULT_QUEUE_DEPTH).unwrap_or(NonZeroUsize::MIN),
-        ),
+) -> Result<(), BackendError> {
+    if object.contains_key("queue_depth") {
+        return Err(BackendError::Start(
+            "--python-config queue_depth is no longer supported: the Python backend now executes \
+             each forward synchronously on the model worker. Remove queue_depth from \
+             --python-config; the shared frontend still controls request scheduling."
+                .into(),
+        ));
     }
+    Ok(())
 }
 
 pub struct PythonBackend {
     executor: Executor,
     classifier: bool,
-    admission: Arc<Semaphore>,
 }
 
 impl PythonBackend {
@@ -99,6 +82,7 @@ impl PythonBackend {
         let config_json = config.config.unwrap_or_else(|| "{}".into());
         let value = parse_config_json(&config_json)?;
         let object = config_object(&value)?;
+        reject_obsolete_queue_depth(object)?;
         let selector = match object.get("backend") {
             Some(serde_json::Value::String(value)) => Some(value.clone()),
             Some(_) => {
@@ -108,7 +92,6 @@ impl PythonBackend {
             }
             None => None,
         };
-        let queue_size = resolve_queue_depth(object)?.get();
         let executor = Executor::new(ExecutorConfig {
             selector,
             model_path: model_path.to_owned(),
@@ -117,12 +100,10 @@ impl PythonBackend {
             pooling: pool.to_string(),
             device_id,
             config_json,
-            queue_size,
         })?;
         Ok(Self {
             executor,
             classifier,
-            admission: Arc::new(Semaphore::new(queue_size)),
         })
     }
 
@@ -130,48 +111,35 @@ impl PythonBackend {
         &self,
         route: &str,
         inputs: Arc<PaddedInputs>,
-        complete: impl FnOnce(OutputSnapshot, &PaddedInputs) -> Result<InferenceResult, BackendError>
-            + Send
-            + 'static,
+        complete: impl FnOnce(OutputSnapshot, &PaddedInputs) -> Result<InferenceResult, BackendError>,
     ) -> Result<Inference<InferenceResult>, BackendError> {
-        let permit =
-            self.admission.clone().try_acquire_owned().map_err(|_| {
-                BackendError::Overloaded("Python backend pending queue is full".into())
-            })?;
-        let receiver = Python::attach(|py| {
-            let (envelope, receiver) = ResponseEnvelope::channel(py, Some(permit))
+        let output = Python::attach(|py| {
+            let (envelope, mut receiver) = ResponseEnvelope::channel(py)
                 .map_err(|error| BackendError::Inference(error.to_string()))?;
             let payload = PaddedInputs::to_python(inputs.clone(), py)
                 .map_err(|error| BackendError::Inference(error.to_string()))?;
-            self.executor
-                .submit(py, route, envelope, payload)
-                .map(|_| receiver)
+            self.executor.submit(py, route, envelope, payload)?;
+            match receiver.try_recv() {
+                Ok(Ok(snapshot)) => Ok(snapshot),
+                Ok(Err(error)) => Err(forward_error(py, error)),
+                Err(oneshot::error::TryRecvError::Empty | oneshot::error::TryRecvError::Closed) => {
+                    Err(BackendError::Inference(
+                        "Python backend submit returned without completing its response; \
+                         call response.set_result or response.set_exception before submit returns"
+                            .into(),
+                    ))
+                }
+            }
         })?;
-        let owned = inputs.clone();
-        Ok(Inference::Deferred(Box::new(move || {
-            let result = receiver
-                .blocking_recv()
-                .map_err(|_| {
-                    BackendError::Inference("Python backend executor dropped its response".into())
-                })?
-                .map_err(|error| {
-                    Python::try_attach(|py| {
-                        if error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py) {
-                            BackendError::Overloaded(error.to_string())
-                        } else {
-                            BackendError::Inference(format!(
-                                "Python backend forward failed: {error}"
-                            ))
-                        }
-                    })
-                    .unwrap_or_else(|| {
-                        BackendError::Inference(
-                            "Python interpreter is unavailable for backend completion".into(),
-                        )
-                    })
-                })?;
-            complete(result, &owned)
-        })))
+        complete(output, &inputs).map(Inference::Ready)
+    }
+}
+
+fn forward_error(py: Python<'_>, error: PyErr) -> BackendError {
+    if error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py) {
+        BackendError::Overloaded(error.to_string())
+    } else {
+        BackendError::Inference(format!("Python backend forward failed: {error}"))
     }
 }
 
@@ -304,21 +272,19 @@ mod tests {
     }
 
     #[test]
-    fn completed_requests_release_admission_permits() {
-        let mut config = config();
-        config.config = Some(
-            r#"{"backend":"infinity_v3_python.testing:create_executor","queue_depth":1}"#.into(),
-        );
+    fn repeated_synchronous_requests_complete_inline() {
         let backend = PythonBackend::new(
             Path::new("."),
             "float32",
             ModelType::Embedding(Pool::Mean),
             0,
-            config,
+            config(),
         )
         .unwrap();
         for _ in 0..5 {
-            let embeddings = backend.embed(batch()).unwrap();
+            let submission = backend.submit_embed(batch()).unwrap();
+            assert!(matches!(submission, Inference::Ready(_)));
+            let embeddings = submission.complete().unwrap();
             assert_eq!(embeddings.len(), 2);
         }
         backend.shutdown();
@@ -340,33 +306,155 @@ mod tests {
         assert_eq!(predictions[&1], vec![0.0, 1.0]);
         backend.shutdown();
     }
+
     #[test]
-    fn invalid_queue_depths_are_startup_errors() {
-        let values = [
-            "0".to_string(),
-            "true".to_string(),
-            "\"32\"".to_string(),
-            (Semaphore::MAX_PERMITS + 1).to_string(),
-        ];
-        for value in values {
-            let result = PythonBackend::new(
-                Path::new("."),
-                "float32",
-                ModelType::Embedding(Pool::Mean),
-                0,
-                PythonBackendConfig {
-                    config: Some(format!(r#"{{"queue_depth":{value}}}"#)),
-                },
-            );
-            assert!(matches!(result, Err(BackendError::Start(_))), "{value}");
+    fn obsolete_queue_depth_is_rejected_with_an_actionable_error() {
+        let result = PythonBackend::new(
+            Path::new("."),
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            0,
+            PythonBackendConfig {
+                config: Some(
+                    r#"{"backend":"infinity_v3_python.testing:create_executor","queue_depth":32}"#
+                        .into(),
+                ),
+            },
+        );
+        match result {
+            Err(BackendError::Start(message)) => {
+                assert!(message.contains("queue_depth"), "{message}");
+                assert!(message.contains("Remove queue_depth"), "{message}");
+            }
+            Err(error) => panic!("expected a startup error, got {error}"),
+            Ok(_) => panic!("queue_depth must be rejected"),
         }
     }
-    #[test]
-    fn python_memory_error_completes_as_overload_and_releases_admission() {
+
+    fn install_module(name: &str, source: &str) {
         Python::attach(|py| {
+            let source = std::ffi::CString::new(source).unwrap();
+            let filename = std::ffi::CString::new(format!("{name}.py")).unwrap();
+            let module_name = std::ffi::CString::new(name).unwrap();
             let module = pyo3::types::PyModule::from_code(
                 py,
-                c"
+                source.as_c_str(),
+                filename.as_c_str(),
+                module_name.as_c_str(),
+            )
+            .unwrap();
+            pyo3::types::PyModule::import(py, "sys")
+                .unwrap()
+                .getattr("modules")
+                .unwrap()
+                .set_item(name, module)
+                .unwrap();
+        });
+    }
+
+    fn expect_error(result: Result<Inference<Embeddings>, BackendError>) -> BackendError {
+        match result {
+            Ok(_) => panic!("expected a Python backend error"),
+            Err(error) => error,
+        }
+    }
+
+    #[test]
+    fn submit_without_completion_fails_with_a_sync_contract_error() {
+        install_module(
+            "_infinity_pending_test",
+            "
+PROTOCOL_VERSION = 1
+class Executor:
+    def submit(self, route, response, payload):
+        pass
+    def healthy(self):
+        return True
+    def close(self):
+        pass
+def create_executor(**kwargs):
+    return Executor()
+",
+        );
+        let backend = PythonBackend::new(
+            Path::new("."),
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            0,
+            PythonBackendConfig {
+                config: Some(r#"{"backend":"_infinity_pending_test:create_executor"}"#.into()),
+            },
+        )
+        .unwrap();
+        let started = std::time::Instant::now();
+        let error = expect_error(backend.submit_embed(batch()));
+        assert!(started.elapsed() < std::time::Duration::from_secs(5));
+        assert!(
+            matches!(error, BackendError::Inference(ref message)
+                if message.contains("without completing") && message.contains("set_result")),
+            "{error}"
+        );
+        backend.shutdown();
+    }
+
+    #[test]
+    fn submit_callback_errors_are_contained_and_the_backend_recovers() {
+        install_module(
+            "_infinity_callback_error_test",
+            "
+import numpy as np
+PROTOCOL_VERSION = 1
+class Executor:
+    def __init__(self):
+        self.calls = 0
+    def submit(self, route, response, payload):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError('callback exploded')
+        if self.calls == 2:
+            response.set_exception(ValueError('callback reported failure'))
+            return
+        response.set_result(np.ones((2, 8), dtype=np.float32))
+    def healthy(self):
+        return True
+    def close(self):
+        pass
+def create_executor(**kwargs):
+    return Executor()
+",
+        );
+        let backend = PythonBackend::new(
+            Path::new("."),
+            "float32",
+            ModelType::Embedding(Pool::Mean),
+            0,
+            PythonBackendConfig {
+                config: Some(
+                    r#"{"backend":"_infinity_callback_error_test:create_executor"}"#.into(),
+                ),
+            },
+        )
+        .unwrap();
+        let error = expect_error(backend.submit_embed(batch()));
+        assert!(
+            matches!(error, BackendError::Inference(ref message) if message.contains("callback exploded")),
+            "{error}"
+        );
+        let error = expect_error(backend.submit_embed(batch()));
+        assert!(
+            matches!(error, BackendError::Inference(ref message) if message.contains("callback reported failure")),
+            "{error}"
+        );
+        let embeddings = backend.submit_embed(batch()).unwrap().complete().unwrap();
+        assert_eq!(embeddings.len(), 2);
+        backend.shutdown();
+    }
+
+    #[test]
+    fn python_memory_error_completes_as_overload_and_recovers() {
+        install_module(
+            "_infinity_memory_error_test",
+            "
 PROTOCOL_VERSION = 1
 class Executor:
     def submit(self, route, response, payload):
@@ -379,33 +467,20 @@ class Executor:
 def create_executor(**kwargs):
     return Executor()
 ",
-                c"_infinity_memory_error_test.py",
-                c"_infinity_memory_error_test",
-            )
-            .unwrap();
-            pyo3::types::PyModule::import(py, "sys")
-                .unwrap()
-                .getattr("modules")
-                .unwrap()
-                .set_item("_infinity_memory_error_test", module)
-                .unwrap();
-        });
+        );
         let backend = PythonBackend::new(
             Path::new("."),
             "float32",
             ModelType::Embedding(Pool::Mean),
             0,
             PythonBackendConfig {
-                config: Some(
-                    r#"{"backend":"_infinity_memory_error_test:create_executor","queue_depth":1}"#
-                        .into(),
-                ),
+                config: Some(r#"{"backend":"_infinity_memory_error_test:create_executor"}"#.into()),
             },
         )
         .unwrap();
         for _ in 0..2 {
-            let result = backend.submit_embed(batch()).unwrap().complete();
-            assert!(matches!(result, Err(BackendError::Overloaded(message))
+            let error = expect_error(backend.submit_embed(batch()));
+            assert!(matches!(error, BackendError::Overloaded(ref message)
                 if message.contains("result budget exhausted")));
         }
         backend.shutdown();

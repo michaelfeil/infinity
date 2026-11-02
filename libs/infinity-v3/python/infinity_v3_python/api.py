@@ -26,10 +26,14 @@ class Response(Protocol):
 
 
 class ModelExecutor(Protocol):
-    """Request executor owned by one Python worker thread."""
+    """Synchronous request executor called by the Rust backend worker."""
 
     def submit(self, route: str, response: Response, payload: dict[str, Any]) -> None:
-        """Accept one request without blocking the Rust backend worker."""
+        """Execute one request and complete ``response`` before returning.
+
+        Exactly one of ``response.set_result`` or ``response.set_exception``
+        must be called before this method returns.
+        """
 
     def healthy(self) -> bool:
         """Return whether the executor can accept work."""

@@ -3,7 +3,6 @@ mod dtype;
 use hf_hub::api::tokio::{ApiError, ApiRepo};
 use infinity_v3_backend_core::{Backend as CoreBackend, Inference};
 use std::cmp::{max, min};
-use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread::JoinHandle;
@@ -127,29 +126,6 @@ impl BackendKind {
             Self::PythonBackend => Ok(1),
         }
     }
-}
-
-const DEFAULT_DEFERRED_COMPLETION_DEPTH: usize = 2;
-const MAX_COMPLETION_QUEUE_DEPTH: usize = 256;
-
-fn bounded_completion_depth(depth: usize) -> NonZeroUsize {
-    NonZeroUsize::new(depth.min(MAX_COMPLETION_QUEUE_DEPTH)).unwrap_or(NonZeroUsize::MIN)
-}
-
-/// Resolve the deferred completion bound once before starting the worker.
-/// Python admission keeps the full validated `queue_depth`; its deferred
-/// completion queue is capped to avoid preallocating an oversized channel.
-/// Every other backend keeps the small default matching the command channel.
-fn deferred_completion_depth(
-    kind: BackendKind,
-    python: &PythonBackendConfig,
-) -> Result<NonZeroUsize, BackendError> {
-    #[cfg(feature = "python-backend")]
-    if kind == BackendKind::PythonBackend {
-        return Ok(bounded_completion_depth(python.queue_depth()?.get()));
-    }
-    let _ = (kind, python);
-    Ok(bounded_completion_depth(DEFAULT_DEFERRED_COMPLETION_DEPTH))
 }
 
 /// LibTorch accelerator family; availability depends on the installed C++ distribution.
@@ -287,7 +263,6 @@ impl Backend {
         python: PythonBackendConfig,
     ) -> Result<Self, BackendError> {
         kind.ensure_compiled()?;
-        let completion_depth = deferred_completion_depth(kind, &python)?;
         let (backend_sender, backend_receiver) = mpsc::channel(8);
 
         let backend = init_backend(
@@ -307,12 +282,8 @@ impl Backend {
         let max_batch_size = backend.max_batch_size();
 
         let (health_sender, health_receiver) = watch::channel(false);
-        let _backend_thread = Arc::new(BackendThread::new(
-            backend,
-            backend_receiver,
-            health_sender,
-            completion_depth,
-        ));
+        let _backend_thread =
+            Arc::new(BackendThread::new(backend, backend_receiver, health_sender));
 
         Ok(Self {
             backend_sender,
@@ -666,9 +637,8 @@ struct CompletionThread {
     handle: Option<JoinHandle<()>>,
 }
 impl CompletionThread {
-    fn new(depth: NonZeroUsize) -> std::io::Result<Self> {
-        let capacity = depth.get().min(MAX_COMPLETION_QUEUE_DEPTH);
-        let (sender, receiver) = std::sync::mpsc::sync_channel::<CompletionJob>(capacity);
+    fn new() -> std::io::Result<Self> {
+        let (sender, receiver) = std::sync::mpsc::sync_channel::<CompletionJob>(2);
         let handle = std::thread::Builder::new()
             .name("tei-completion".into())
             .spawn(move || {
@@ -692,21 +662,17 @@ impl Drop for CompletionThread {
 }
 
 struct DeferredCompletions {
-    depth: NonZeroUsize,
     thread: Option<CompletionThread>,
 }
 
 impl DeferredCompletions {
-    fn new(depth: NonZeroUsize) -> Self {
-        Self {
-            depth,
-            thread: None,
-        }
+    fn new() -> Self {
+        Self { thread: None }
     }
 
     fn submit(&mut self, job: CompletionJob) -> Result<(), CompletionJob> {
         if self.thread.is_none() {
-            let Ok(thread) = CompletionThread::new(self.depth) else {
+            let Ok(thread) = CompletionThread::new() else {
                 return Err(job);
             };
             self.thread = Some(thread);
@@ -784,10 +750,9 @@ impl BackendThread {
         backend: Box<dyn CoreBackend + Send>,
         mut backend_receiver: mpsc::Receiver<BackendCommand>,
         health_sender: watch::Sender<bool>,
-        completion_depth: NonZeroUsize,
     ) -> Self {
         let handle = std::thread::spawn(move || {
-            let mut completion = DeferredCompletions::new(completion_depth);
+            let mut completion = DeferredCompletions::new();
             while let Some(cmd) = backend_receiver.blocking_recv() {
                 let start = Instant::now();
                 match cmd {
@@ -1209,10 +1174,6 @@ mod completion_tests {
             offsets: vec![],
         }
     }
-    fn default_completion_depth() -> NonZeroUsize {
-        deferred_completion_depth(BackendKind::Libtorch, &PythonBackendConfig::default()).unwrap()
-    }
-
     struct AdmittedBackend(Arc<result_memory::ResultPool>);
     impl CoreBackend for AdmittedBackend {
         fn health(&self) -> Result<(), BackendError> {
@@ -1250,12 +1211,7 @@ mod completion_tests {
         let held = pool.reserve(64).unwrap();
         let (sender, receiver) = mpsc::channel(8);
         let (health, health_receiver) = watch::channel(true);
-        let worker = BackendThread::new(
-            Box::new(AdmittedBackend(pool.clone())),
-            receiver,
-            health,
-            default_completion_depth(),
-        );
+        let worker = BackendThread::new(Box::new(AdmittedBackend(pool.clone())), receiver, health);
         let backend = Backend {
             backend_sender: sender,
             health_receiver,
@@ -1300,12 +1256,8 @@ mod completion_tests {
             let held = pool.reserve(64).unwrap();
             let (sender, receiver) = mpsc::channel(8);
             let (health, health_receiver) = watch::channel(true);
-            let worker = BackendThread::new(
-                Box::new(AdmittedBackend(pool.clone())),
-                receiver,
-                health,
-                default_completion_depth(),
-            );
+            let worker =
+                BackendThread::new(Box::new(AdmittedBackend(pool.clone())), receiver, health);
             let backend = Backend {
                 backend_sender: sender,
                 health_receiver,
@@ -1346,7 +1298,7 @@ mod completion_tests {
         });
         let (commands, receiver) = mpsc::channel(8);
         let (health, _) = watch::channel(false);
-        let worker = BackendThread::new(backend, receiver, health, default_completion_depth());
+        let worker = BackendThread::new(backend, receiver, health);
         let (response, canceled) = oneshot::channel();
         commands
             .blocking_send(BackendCommand::Embed(batch(), Span::none(), response))
@@ -1407,172 +1359,6 @@ mod completion_tests {
         assert_eq!(completed.load(Ordering::SeqCst), 3);
     }
 
-    #[cfg(feature = "python-backend")]
-    #[test]
-    fn configured_python_queue_depth_admits_more_than_eleven_deferred_submissions() {
-        fn wait_deferred(
-            runtime: &tokio::runtime::Runtime,
-            receiver: oneshot::Receiver<Result<Submission<Embeddings>, BackendError>>,
-        ) -> Option<Result<Submission<Embeddings>, BackendError>> {
-            runtime.block_on(async {
-                match tokio::time::timeout(Duration::from_secs(5), receiver).await {
-                    Ok(result) => result.ok(),
-                    Err(_) => None,
-                }
-            })
-        }
-
-        let depth = deferred_completion_depth(
-            BackendKind::PythonBackend,
-            &PythonBackendConfig {
-                config: Some(r#"{"queue_depth":32}"#.into()),
-            },
-        )
-        .unwrap();
-        assert_eq!(depth.get(), 32);
-
-        let (gate, wait) = std::sync::mpsc::channel();
-        let (started, start) = std::sync::mpsc::channel();
-        let completed = Arc::new(AtomicUsize::new(0));
-        let dropped = Arc::new(AtomicUsize::new(0));
-        let probes = Arc::new(AtomicUsize::new(0));
-        let backend = Box::new(DeferredBackend {
-            gate: Arc::new(Mutex::new(wait)),
-            started,
-            completed: completed.clone(),
-            dropped: dropped.clone(),
-            probes: probes.clone(),
-        });
-        let (commands, receiver) = mpsc::channel(8);
-        let (health, _) = watch::channel(false);
-        let worker = BackendThread::new(backend, receiver, health, depth);
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .unwrap();
-
-        let (response, first) = oneshot::channel();
-        commands
-            .blocking_send(BackendCommand::Embed(batch(), Span::none(), response))
-            .unwrap();
-        let mut failure = match wait_deferred(&runtime, first) {
-            Some(Ok(Submission::Deferred(_))) => {
-                if start.recv_timeout(Duration::from_secs(5)).is_ok() {
-                    None
-                } else {
-                    Some("first deferred completion did not start".to_string())
-                }
-            }
-            Some(Ok(Submission::Ready(..))) => {
-                Some("expected the first submission to be deferred".to_string())
-            }
-            Some(Err(error)) => Some(format!("first submission failed: {error}")),
-            None => Some("first deferred submission timed out".to_string()),
-        };
-        // The first completion is held in the worker while the configured
-        // depth admits a full Python-sized queue beyond the old eleven slots.
-        if failure.is_none() {
-            for index in 0..depth.get() {
-                let (response, submission) = oneshot::channel();
-                commands
-                    .blocking_send(BackendCommand::Embed(batch(), Span::none(), response))
-                    .unwrap();
-                match wait_deferred(&runtime, submission) {
-                    Some(Ok(Submission::Deferred(_))) => {}
-                    Some(Ok(Submission::Ready(..))) => {
-                        failure = Some(format!("submission {index} was not deferred"));
-                        break;
-                    }
-                    Some(Err(error)) => {
-                        failure = Some(format!("submission {index} failed: {error}"));
-                        break;
-                    }
-                    None => {
-                        failure = Some(format!(
-                            "submission {index} did not reach deferred completion"
-                        ));
-                        break;
-                    }
-                }
-            }
-        }
-
-        let completed_before_release = completed.load(Ordering::SeqCst);
-        let probes_before_release = probes.load(Ordering::SeqCst);
-        // Always release and drain held completions before any assertion so a
-        // shallow queue cannot leave the worker join blocked on test unwinding.
-        for _ in 0..=depth.get() {
-            let _ = gate.send(Ok(()));
-        }
-        let _ = commands.blocking_send(BackendCommand::Shutdown);
-        drop(worker);
-        assert!(commands.is_closed());
-        if let Some(message) = failure {
-            panic!("{message}");
-        }
-        assert_eq!(completed_before_release, 0);
-        assert_eq!(probes_before_release, 0);
-        assert_eq!(dropped.load(Ordering::SeqCst), 1);
-        assert_eq!(completed.load(Ordering::SeqCst), depth.get() + 1);
-    }
-
-    fn assert_bounded_completion_queue(depth: NonZeroUsize) {
-        let completion = CompletionThread::new(depth).unwrap();
-        let (release, wait) = std::sync::mpsc::channel();
-        let (started, start) = std::sync::mpsc::channel();
-        completion
-            .sender
-            .as_ref()
-            .unwrap()
-            .send(Box::new(move || {
-                started.send(()).unwrap();
-                let _ = wait.recv();
-            }))
-            .unwrap();
-        start.recv_timeout(Duration::from_secs(5)).unwrap();
-        for _ in 0..depth.get() {
-            completion
-                .sender
-                .as_ref()
-                .unwrap()
-                .try_send(Box::new(|| {}))
-                .unwrap();
-        }
-        assert!(matches!(
-            completion
-                .sender
-                .as_ref()
-                .unwrap()
-                .try_send(Box::new(|| {})),
-            Err(std::sync::mpsc::TrySendError::Full(_))
-        ));
-        release.send(()).unwrap();
-        drop(completion);
-    }
-
-    #[test]
-    fn default_completion_depth_stays_small_and_bounded() {
-        let depth = default_completion_depth();
-        assert_eq!(depth.get(), 2);
-        assert_bounded_completion_queue(depth);
-    }
-
-    #[cfg(feature = "python-backend")]
-    #[test]
-    fn huge_python_queue_depth_uses_bounded_completion_capacity() {
-        let python = PythonBackendConfig {
-            config: Some(format!(
-                r#"{{"queue_depth":{}}}"#,
-                tokio::sync::Semaphore::MAX_PERMITS
-            )),
-        };
-        let admission = python.queue_depth().unwrap();
-        assert_eq!(admission.get(), tokio::sync::Semaphore::MAX_PERMITS);
-        let depth = deferred_completion_depth(BackendKind::PythonBackend, &python).unwrap();
-        assert_eq!(depth.get(), MAX_COMPLETION_QUEUE_DEPTH);
-        assert_bounded_completion_queue(depth);
-    }
-
     struct CompletionGuard {
         completed: Arc<AtomicUsize>,
         dropped_after_completion: Arc<AtomicUsize>,
@@ -1592,7 +1378,6 @@ mod completion_tests {
         let (native_sender, native_receiver) = std::sync::mpsc::sync_channel::<CompletionJob>(1);
         drop(native_receiver);
         let mut completion = DeferredCompletions {
-            depth: default_completion_depth(),
             thread: Some(CompletionThread {
                 sender: Some(native_sender),
                 handle: Some(std::thread::spawn(|| {})),
