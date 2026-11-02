@@ -17,9 +17,12 @@ use infinity_v3_backend_core::{
     TokenPredictions,
 };
 use pyo3::prelude::*;
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
+
+const DEFAULT_QUEUE_DEPTH: usize = 32;
 
 /// Runtime configuration supplied by the shared frontend.
 #[derive(Clone, Debug, Default)]
@@ -27,6 +30,47 @@ pub struct PythonBackendConfig {
     /// JSON object. Reserved keys: `backend`, `queue_depth`; other keys are
     /// passed to the plugin.
     pub config: Option<String>,
+}
+
+impl PythonBackendConfig {
+    /// Resolve the validated in-flight admission limit.
+    pub fn queue_depth(&self) -> Result<NonZeroUsize, BackendError> {
+        let value = parse_config_json(self.config.as_deref().unwrap_or("{}"))?;
+        resolve_queue_depth(config_object(&value)?)
+    }
+}
+
+fn parse_config_json(config_json: &str) -> Result<serde_json::Value, BackendError> {
+    serde_json::from_str(config_json)
+        .map_err(|error| BackendError::Start(format!("Invalid --python-config JSON: {error}")))
+}
+
+fn config_object(
+    value: &serde_json::Value,
+) -> Result<&serde_json::Map<String, serde_json::Value>, BackendError> {
+    value
+        .as_object()
+        .ok_or_else(|| BackendError::Start("--python-config must be a JSON object".into()))
+}
+
+fn resolve_queue_depth(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> Result<NonZeroUsize, BackendError> {
+    match object.get("queue_depth") {
+        Some(value) => value
+            .as_u64()
+            .filter(|&value| value > 0 && value <= Semaphore::MAX_PERMITS as u64)
+            .and_then(|value| usize::try_from(value).ok())
+            .and_then(NonZeroUsize::new)
+            .ok_or_else(|| {
+                BackendError::Start(
+                    "--python-config queue_depth must be a positive integer within the semaphore limit".into(),
+                )
+            }),
+        None => Ok(
+            NonZeroUsize::new(DEFAULT_QUEUE_DEPTH).unwrap_or(NonZeroUsize::MIN),
+        ),
+    }
 }
 
 pub struct PythonBackend {
@@ -53,12 +97,8 @@ impl PythonBackend {
             }
         };
         let config_json = config.config.unwrap_or_else(|| "{}".into());
-        let value: serde_json::Value = serde_json::from_str(&config_json).map_err(|error| {
-            BackendError::Start(format!("Invalid --python-config JSON: {error}"))
-        })?;
-        let object = value
-            .as_object()
-            .ok_or_else(|| BackendError::Start("--python-config must be a JSON object".into()))?;
+        let value = parse_config_json(&config_json)?;
+        let object = config_object(&value)?;
         let selector = match object.get("backend") {
             Some(serde_json::Value::String(value)) => Some(value.clone()),
             Some(_) => {
@@ -68,18 +108,7 @@ impl PythonBackend {
             }
             None => None,
         };
-        let queue_size = match object.get("queue_depth") {
-            Some(value) => value
-                .as_u64()
-                .filter(|&value| value > 0 && value <= Semaphore::MAX_PERMITS as u64)
-                .and_then(|value| usize::try_from(value).ok())
-                .ok_or_else(|| {
-                    BackendError::Start(
-                        "--python-config queue_depth must be a positive integer within the semaphore limit".into(),
-                    )
-                })?,
-            None => 32,
-        };
+        let queue_size = resolve_queue_depth(object)?.get();
         let executor = Executor::new(ExecutorConfig {
             selector,
             model_path: model_path.to_owned(),
@@ -312,20 +341,25 @@ mod tests {
         backend.shutdown();
     }
     #[test]
-    fn excessive_queue_depth_is_a_startup_error() {
-        let result = PythonBackend::new(
-            Path::new("."),
-            "float32",
-            ModelType::Embedding(Pool::Mean),
-            0,
-            PythonBackendConfig {
-                config: Some(format!(
-                    r#"{{"queue_depth":{}}}"#,
-                    Semaphore::MAX_PERMITS + 1
-                )),
-            },
-        );
-        assert!(matches!(result, Err(BackendError::Start(_))));
+    fn invalid_queue_depths_are_startup_errors() {
+        let values = [
+            "0".to_string(),
+            "true".to_string(),
+            "\"32\"".to_string(),
+            (Semaphore::MAX_PERMITS + 1).to_string(),
+        ];
+        for value in values {
+            let result = PythonBackend::new(
+                Path::new("."),
+                "float32",
+                ModelType::Embedding(Pool::Mean),
+                0,
+                PythonBackendConfig {
+                    config: Some(format!(r#"{{"queue_depth":{value}}}"#)),
+                },
+            );
+            assert!(matches!(result, Err(BackendError::Start(_))), "{value}");
+        }
     }
     #[test]
     fn python_memory_error_completes_as_overload_and_releases_admission() {
