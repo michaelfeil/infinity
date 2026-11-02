@@ -70,7 +70,8 @@ Additional BF16 encoder paths cover ModernBERT, Nomic BERT and Jina Small with
 their validated geometry, normalization, rotary/ALiBi and activation recipes.
 Their loader guards remain authoritative; family names do not imply all variants.
 GTE additionally loads H1024/24-layer GTE-large and the documented multilingual
-architecture markers, including optional token-type embeddings. GTE-large uses
+architecture markers, including optional token-type embeddings. Snowflake
+`GteModel` checkpoints share the same GTE path. GTE-large uses
 a separate width-1024 Candle LayerNorm. That operator matches Native exactly
 across 49 cases with zero GPU memory or initialization errors; see the
 [scoped evidence](oxide-gte1024-qualification.json). Trained-checkpoint

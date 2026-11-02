@@ -124,7 +124,9 @@ impl EncoderFamily {
                 architecture,
                 "MPNetModel" | "MPNetForMaskedLM" | "MPNetForPreTraining"
             ),
-            Self::Gte => matches!(architecture, "NewModel"),
+            // The native `new` and `gte` model-type aliases select the same
+            // packed rotary encoder. Snowflake publishes that class as GteModel.
+            Self::Gte => matches!(architecture, "NewModel" | "GteModel"),
             Self::Modern => matches!(architecture, "ModernBertModel" | "ModernBertForMaskedLM"),
             Self::Nomic => matches!(architecture, "NomicBertModel"),
             Self::Jina => architecture.starts_with("JinaBert"),

@@ -639,6 +639,114 @@ mod tests {
     }
 
     #[test]
+    fn snowflake_gte_alias_loads_full_original_geometry_through_the_shared_encoder() {
+        use std::io::Write;
+        let original: serde_json::Value = serde_json::from_str(include_str!(
+            "../tests/fixtures/snowflake-arctic-m-v2-config.json"
+        ))
+        .unwrap();
+        // Both namespaces are selected by the same native weight-presence
+        // rule; the architecture alias never changes projection layouts.
+        for root in ["", "new."] {
+            let fixture = Fixture::new();
+            std::fs::write(
+                fixture.0.join("config.json"),
+                serde_json::to_vec(&original).unwrap(),
+            )
+            .unwrap();
+            let mut tensors = Vec::new();
+            for (name, mut shape, _) in Fixture::gte_entries(root) {
+                if name.contains(".layer.0.") {
+                    for layer in 0..12 {
+                        tensors.push((
+                            name.replace(".layer.0.", &format!(".layer.{layer}.")),
+                            shape.clone(),
+                        ));
+                    }
+                } else {
+                    if name.ends_with("embeddings.word_embeddings.weight") {
+                        shape[0] = 250048;
+                    }
+                    tensors.push((name, shape));
+                }
+            }
+            tensors.push((
+                format!("{root}embeddings.token_type_embeddings.weight"),
+                vec![1, HIDDEN],
+            ));
+            let mut offset = 0u64;
+            let mut header = serde_json::Map::new();
+            for (name, shape) in tensors {
+                let end = offset + shape.iter().product::<usize>() as u64 * 2;
+                header.insert(
+                    name,
+                    serde_json::json!({"dtype":"BF16","shape":shape,"data_offsets":[offset,end]}),
+                );
+                offset = end;
+            }
+            let mut bytes = serde_json::to_vec(&header).unwrap();
+            while !bytes.len().is_multiple_of(8) {
+                bytes.push(b' ');
+            }
+            let mut file = std::fs::File::create(fixture.0.join("model.safetensors")).unwrap();
+            file.write_all(&(bytes.len() as u64).to_le_bytes()).unwrap();
+            file.write_all(&bytes).unwrap();
+            file.set_len(8 + bytes.len() as u64 + offset).unwrap();
+            drop(file);
+            let host = BertWeights::load(&fixture.0).unwrap();
+            assert_eq!(host.word.shape(), &[250048, 768]);
+            assert_eq!(host.layers.len(), 12);
+            assert_eq!(host.layers[0].query.weight.shape(), &[768, 768]);
+            assert_eq!(host.layers[0].intermediate.weight.shape(), &[6144, 768]);
+            assert_eq!(host.layers[0].output.weight.shape(), &[768, 3072]);
+            assert_eq!(host.config.family, EncoderFamily::Gte);
+            assert_eq!(
+                host.config.recipe.embedding,
+                crate::model::NormArithmetic::ExactWordTypeBiased
+            );
+            assert_eq!(
+                host.config.recipe.residual,
+                crate::model::NormArithmetic::ExactBiased
+            );
+            assert_eq!(
+                host.config.recipe.feed_forward,
+                crate::model::FeedForwardRecipe::GatedGeluUpFirst
+            );
+            assert!(matches!(
+                host.config.recipe.positions,
+                crate::model::PositionRecipe::Rotary(crate::model::RotaryRecipe {
+                    theta: 160000.0,
+                    ntk_factor: None
+                })
+            ));
+            assert!(BertConfig::load_classifier(&fixture.0).is_err());
+            let mut request = segment_request(0);
+            assert!(crate::validate(&request, &host.config).is_ok());
+            request.token_type_ids[0] = 1;
+            assert!(crate::validate(&request, &host.config).is_err());
+            for fields in [
+                serde_json::json!({"architectures":["GteForTokenClassification"]}),
+                serde_json::json!({"architectures":["GteModel","UnrelatedModel"]}),
+                serde_json::json!({"logn_attention_scale":true}),
+                serde_json::json!({"layer_norm_type":"rms_norm"}),
+                serde_json::json!({"pack_qkv":false}),
+                serde_json::json!({"position_embedding_type":"absolute"}),
+            ] {
+                let mut wrong = original.clone();
+                for (key, value) in fields.as_object().unwrap() {
+                    wrong[key] = value.clone();
+                }
+                std::fs::write(
+                    fixture.0.join("config.json"),
+                    serde_json::to_vec(&wrong).unwrap(),
+                )
+                .unwrap();
+                assert!(BertConfig::load(&fixture.0).is_err());
+            }
+        }
+    }
+
+    #[test]
     fn actual_multilingual_embedding_companion_loads_the_existing_shared_backbone() {
         use std::io::Write;
         let fixture = Fixture::new();
