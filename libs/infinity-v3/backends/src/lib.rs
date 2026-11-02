@@ -183,12 +183,18 @@ pub struct Backend {
     /// Health status
     health_receiver: watch::Receiver<bool>,
     _backend_thread: Arc<BackendThread>,
+    kind: BackendKind,
     pub radix_mlp_supported: bool,
     pub max_batch_size: Option<usize>,
     pub model_type: ModelType,
 }
 
 impl Backend {
+    /// Selected runtime, used by the shared frontend to choose its dispatch shape.
+    pub fn kind(&self) -> BackendKind {
+        self.kind
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         model_path: PathBuf,
@@ -289,6 +295,7 @@ impl Backend {
             backend_sender,
             health_receiver,
             _backend_thread,
+            kind,
             radix_mlp_supported,
             max_batch_size,
             model_type,
@@ -1216,6 +1223,7 @@ mod completion_tests {
             backend_sender: sender,
             health_receiver,
             _backend_thread: Arc::new(worker),
+            kind: BackendKind::Libtorch,
             radix_mlp_supported: false,
             max_batch_size: Some(1),
             model_type: ModelType::Embedding(Pool::Mean),
@@ -1262,6 +1270,7 @@ mod completion_tests {
                 backend_sender: sender,
                 health_receiver,
                 _backend_thread: Arc::new(worker),
+                kind: BackendKind::Libtorch,
                 radix_mlp_supported: false,
                 max_batch_size: Some(1),
                 model_type,

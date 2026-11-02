@@ -1,7 +1,9 @@
 //! Exclusive replica leases shared by inference and health calls.
 //! The pool contains no prepared-batch queue.
 //! All transitions use one short lock; model calls and queue operations run outside it.
-use infinity_v3_backend::{Backend, BackendError, Batch, Embeddings, ModelType, Submission};
+use infinity_v3_backend::{
+    Backend, BackendError, BackendKind, Batch, Embeddings, ModelType, Submission,
+};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -51,6 +53,7 @@ impl Inner {
 #[derive(Debug, Clone)]
 pub struct BackendPool {
     inner: Arc<Inner>,
+    kind: BackendKind,
     pub radix_mlp_supported: bool,
     pub max_batch_size: Option<usize>,
     pub model_type: ModelType,
@@ -66,13 +69,16 @@ impl BackendPool {
             BackendError::Start("At least one backend replica is required".into())
         })?;
         if backends.iter().any(|b| {
-            b.model_type != first.model_type || b.radix_mlp_supported != first.radix_mlp_supported
+            b.model_type != first.model_type
+                || b.radix_mlp_supported != first.radix_mlp_supported
+                || b.kind() != first.kind()
         }) {
             return Err(BackendError::Start(
                 "Backend replicas have incompatible capabilities".into(),
             ));
         }
         let result = Self {
+            kind: first.kind(),
             radix_mlp_supported: first.radix_mlp_supported,
             max_batch_size: backends.iter().filter_map(|b| b.max_batch_size).min(),
             model_type: first.model_type.clone(),
@@ -114,6 +120,9 @@ impl BackendPool {
     }
     pub fn is_closed(&self) -> bool {
         self.inner.state.lock().unwrap().closed
+    }
+    pub(crate) fn kind(&self) -> BackendKind {
+        self.kind
     }
 
     pub async fn shutdown(&self) {
@@ -440,6 +449,32 @@ impl Drop for Execution {
 }
 
 #[cfg(test)]
+pub(crate) fn test_pool(kind: BackendKind, model_type: ModelType, replicas: usize) -> BackendPool {
+    BackendPool {
+        inner: Arc::new(Inner {
+            model_name: "test".into(),
+            backends: vec![],
+            state: Mutex::new(State {
+                replicas: (0..replicas)
+                    .map(|_| Replica {
+                        busy: false,
+                        healthy: true,
+                        batches: 0,
+                    })
+                    .collect(),
+                idle: (0..replicas).collect(),
+                closed: false,
+            }),
+            changed: watch::channel(()).0,
+        }),
+        kind,
+        model_type,
+        radix_mlp_supported: false,
+        max_batch_size: None,
+    }
+}
+
+#[cfg(test)]
 mod completion_tests {
     use super::*;
     fn execution() -> Execution {
@@ -458,6 +493,7 @@ mod completion_tests {
                 }),
                 changed: watch::channel(()).0,
             }),
+            kind: BackendKind::Libtorch,
             model_type: ModelType::Classifier,
             radix_mlp_supported: false,
             max_batch_size: None,

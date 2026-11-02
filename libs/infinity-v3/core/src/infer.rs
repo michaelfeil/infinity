@@ -3,7 +3,7 @@ use crate::queue_actor::{prune_canceled_batch, Entry, Metadata, NextBatch, Queue
 use crate::tokenization::{EncodingInput, RawEncoding, Tokenization};
 use crate::TextEmbeddingsError;
 use infinity_v3_backend::result_memory::{retain_for_request, HasResultMemory, ResultLease};
-use infinity_v3_backend::{Backend, BackendError, Embedding, ModelType, SharedF32};
+use infinity_v3_backend::{Backend, BackendError, BackendKind, Embedding, ModelType, SharedF32};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -209,22 +209,34 @@ impl Infer {
         backend: BackendPool,
     ) -> Self {
         let notify_batching_task = Arc::new(Notify::new());
-        let (sender, receiver) = mpsc::channel(1);
-        let receiver = Arc::new(Mutex::new(receiver));
-        let mut tasks = vec![tokio::spawn(batching_task(
-            backend.clone(),
-            queue.clone(),
-            notify_batching_task.clone(),
-            sender,
-        ))];
-        for replica in 0..backend.len() {
-            tasks.push(tokio::spawn(backend_task(
+        let tasks = if backend.kind() == BackendKind::PythonBackend {
+            // A synchronous model has no useful forward overlap. Hold the only
+            // replica while selecting the next batch so queued inputs accumulate
+            // instead of being frozen into held/parked prepared batches.
+            vec![tokio::spawn(sync_batching_task(
                 backend.clone(),
                 queue.clone(),
-                receiver.clone(),
-                replica,
-            )));
-        }
+                notify_batching_task.clone(),
+            ))]
+        } else {
+            let (sender, receiver) = mpsc::channel(1);
+            let receiver = Arc::new(Mutex::new(receiver));
+            let mut tasks = vec![tokio::spawn(batching_task(
+                backend.clone(),
+                queue.clone(),
+                notify_batching_task.clone(),
+                sender,
+            ))];
+            for replica in 0..backend.len() {
+                tasks.push(tokio::spawn(backend_task(
+                    backend.clone(),
+                    queue.clone(),
+                    receiver.clone(),
+                    replica,
+                )));
+            }
+            tasks
+        };
         let lifetime = Arc::new(PipelineLifetime {
             pool: backend.clone(),
             queue: queue.clone(),
@@ -972,6 +984,93 @@ async fn backend_task(
     queue.close();
 }
 
+async fn sync_batching_task(pool: BackendPool, queue: Queue, notify: Arc<Notify>) {
+    let model_type = pool.model_type.clone();
+    sync_batching_task_with(pool, queue, notify, move |execution, batch| {
+        let model_type = model_type.clone();
+        async move { complete_batch(execution, model_type, batch).await }
+    })
+    .await;
+}
+
+/// Select a batch only while the replica lease is held, then finish it before
+/// selecting again. This intentionally has no prepared-batch lookahead.
+async fn sync_batching_task_with<F, Fut>(
+    pool: BackendPool,
+    queue: Queue,
+    notify: Arc<Notify>,
+    mut run: F,
+) where
+    F: FnMut(crate::backend_pool::Execution, NextBatch) -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let mut changed = pool.changes();
+    loop {
+        if queue.is_closed() {
+            break;
+        }
+        // Enable before waiting on the lease so an enqueue cannot be lost while
+        // the previous batch is completing.
+        let arrival = notify.notified();
+        tokio::pin!(arrival);
+        arrival.as_mut().enable();
+        let execution = tokio::select! {
+            execution = pool.acquire_replica(0) => match execution {
+                Ok(execution) => execution,
+                Err(_) => break,
+            },
+            _ = changed.changed() => {
+                if pool.is_closed() {
+                    break;
+                }
+                continue;
+            }
+        };
+        // Acquiring the lease signals `changed`; consume that self-notification
+        // before waiting for a real pool state transition.
+        changed.borrow_and_update();
+        if pool.is_closed() {
+            drop(execution);
+            break;
+        }
+        let started = Instant::now();
+        let batch = tokio::select! {
+            batch = queue.next_batch() => batch,
+            _ = changed.changed() => {
+                drop(execution);
+                if pool.is_closed() {
+                    break;
+                }
+                continue;
+            }
+        };
+        let Some(batch) = batch else {
+            // Releasing the lease also signals `changed`; consume it before
+            // sleeping so an empty poll cannot spin.
+            drop(execution);
+            if queue.is_closed() {
+                break;
+            }
+            changed.borrow_and_update();
+            if pool.is_closed() {
+                break;
+            }
+            tokio::select! { _ = arrival => {}, _ = changed.changed() => {} }
+            // Let already-ready tokenization futures enqueue together before
+            // the next selection, matching the shared batching task.
+            tokio::task::yield_now().await;
+            continue;
+        };
+        pool.observe_preparation(started.elapsed());
+        let Some(batch) = prune_canceled_batch(batch) else {
+            drop(execution);
+            continue;
+        };
+        run(execution, batch).await;
+    }
+    queue.close();
+}
+
 async fn complete_batch(
     execution: crate::backend_pool::Execution,
     model_type: ModelType,
@@ -1490,6 +1589,173 @@ mod completion_tests {
         }
         assert_eq!(pool.used(), 0);
         assert!(pool.reserve(96).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::*;
+    use std::sync::Mutex as StdMutex;
+
+    fn entry(tokens: usize) -> (Entry, oneshot::Receiver<Result<InferResult, BackendError>>) {
+        let (response_tx, response_rx) = oneshot::channel();
+        let entry = Entry {
+            encoding: crate::tokenization::ValidEncoding {
+                multimodal: None,
+                input_ids: vec![1; tokens],
+                token_type_ids: vec![0; tokens],
+                position_ids: (0..tokens as u32).collect(),
+                tokens: Vec::new(),
+                offsets: Vec::new(),
+            },
+            metadata: Metadata {
+                service_tier: ServiceTier::Default,
+                input_memory: None,
+                queue_reservation: None,
+                decision: None,
+                client_batch: None,
+                response_tx,
+                tokenization: Duration::ZERO,
+                queue_time: Instant::now(),
+                prompt_tokens: tokens,
+                pooling: true,
+                token_classification: false,
+            },
+        };
+        (entry, response_rx)
+    }
+
+    async fn append(
+        queue: &Queue,
+        tokens: usize,
+    ) -> oneshot::Receiver<Result<InferResult, BackendError>> {
+        let (entry, response) = entry(tokens);
+        let _lease = queue.append(entry).await.unwrap();
+        response
+    }
+
+    #[tokio::test]
+    async fn synchronous_loop_does_not_freeze_partial_next_batch() {
+        let queue = Queue::new(4096, Some(16), 0.0, 1);
+        let pool =
+            crate::backend_pool::test_pool(BackendKind::PythonBackend, ModelType::Classifier, 1);
+        let notify = Arc::new(Notify::new());
+        let mut receivers = Vec::new();
+        for _ in 0..4 {
+            receivers.push(append(&queue, 1).await);
+        }
+
+        let sizes = Arc::new(StdMutex::new(Vec::new()));
+        let runs = Arc::new(AtomicUsize::new(0));
+        let first_started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let second_started = Arc::new(Notify::new());
+        let run = {
+            let sizes = sizes.clone();
+            let runs = runs.clone();
+            let first_started = first_started.clone();
+            let release = release.clone();
+            let second_started = second_started.clone();
+            move |_execution: crate::backend_pool::Execution, (entries, _): NextBatch| {
+                let index = runs.fetch_add(1, Ordering::SeqCst);
+                sizes.lock().unwrap().push(entries.len());
+                let first_started = first_started.clone();
+                let release = release.clone();
+                let second_started = second_started.clone();
+                async move {
+                    if index == 0 {
+                        first_started.notify_one();
+                        release.notified().await;
+                    } else if index == 1 {
+                        second_started.notify_one();
+                    }
+                }
+            }
+        };
+        let task = tokio::spawn(sync_batching_task_with(
+            pool.clone(),
+            queue.clone(),
+            notify.clone(),
+            run,
+        ));
+        tokio::time::timeout(Duration::from_secs(2), first_started.notified())
+            .await
+            .expect("first batch must be selected");
+        assert_eq!(sizes.lock().unwrap().as_slice(), &[4]);
+
+        // These inputs arrive while the fake forward is still running. A
+        // prepared-batch prefetch would freeze the first one into a partial
+        // second batch; the synchronous loop must wait and select all twelve.
+        receivers.push(append(&queue, 1).await);
+        notify.notify_one();
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        for _ in 0..11 {
+            receivers.push(append(&queue, 1).await);
+            notify.notify_one();
+        }
+        assert_eq!(
+            runs.load(Ordering::SeqCst),
+            1,
+            "next batch selected while the first forward was still running"
+        );
+
+        release.notify_one();
+        tokio::time::timeout(Duration::from_secs(2), second_started.notified())
+            .await
+            .expect("second batch must be selected after the first completes");
+        assert_eq!(sizes.lock().unwrap().as_slice(), &[4, 12]);
+
+        pool.close();
+        queue.close();
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("synchronous loop must exit after shutdown")
+            .unwrap();
+        queue.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn synchronous_loop_prunes_canceled_and_exits_when_idle() {
+        let queue = Queue::new(16, Some(16), 0.0, 1);
+        let pool =
+            crate::backend_pool::test_pool(BackendKind::PythonBackend, ModelType::Classifier, 1);
+        let notify = Arc::new(Notify::new());
+        let (canceled, canceled_response) = entry(1);
+        drop(canceled_response);
+        let _lease = queue.append(canceled).await.unwrap();
+        let _live_response = append(&queue, 1).await;
+
+        let sizes = Arc::new(StdMutex::new(Vec::new()));
+        let ran = Arc::new(Notify::new());
+        let run = {
+            let sizes = sizes.clone();
+            let ran = ran.clone();
+            move |_execution: crate::backend_pool::Execution, (entries, _): NextBatch| {
+                sizes.lock().unwrap().push(entries.len());
+                let ran = ran.clone();
+                async move { ran.notify_one() }
+            }
+        };
+        let task = tokio::spawn(sync_batching_task_with(
+            pool.clone(),
+            queue.clone(),
+            notify,
+            run,
+        ));
+        tokio::time::timeout(Duration::from_secs(2), ran.notified())
+            .await
+            .expect("live batch must run");
+        assert_eq!(sizes.lock().unwrap().as_slice(), &[1]);
+
+        // The loop is now idle waiting for work. Shutdown must wake it through
+        // the pool watch even though no new queue entry arrives.
+        pool.close();
+        queue.close();
+        tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .expect("idle synchronous loop must exit on shutdown")
+            .unwrap();
+        queue.shutdown().await;
     }
 }
 
